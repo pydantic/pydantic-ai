@@ -5,6 +5,7 @@ capability routes it through a `durable_operation`. Each scenario runs one capab
 DBOS workflow, then re-executes the workflow from after its last recorded step, the way recovering a
 committed run does, and checks that no request was made again. Planning's tools also run with an
 event stream handler, whose steps for the events a tool emits must replay in their recorded order.
+Shell's `shell` tool names its job in workflow code, so a recovered workflow must report the job it started.
 
 The other engines run function tools in their own durable unit, which needs the toolset's `id`; the
 construction tests below check every capability supplies one.
@@ -51,6 +52,7 @@ from pydantic_ai_harness.planning import (
     PlanStatusChangedEvent,
     SqlitePlanStore,
 )
+from pydantic_ai_harness.shell import Shell
 from tests.conftest import detach_dbos_logging
 
 # Module scope builds the agents and registers their DBOS workflows, which DBOS requires before launch.
@@ -417,6 +419,51 @@ async def test_dbos_recovery_does_not_repeat_tool_requests(
     for operation in _EXPECTED_STEPS[scenario]:
         capability_id, name = operation.split('.')
         assert f'{agent_name}__capability__{capability_id}.{name}' in step_names
+
+
+_SHELL_DIRECTORY = Path(tempfile.mkdtemp(prefix='harness_durable_tool_io_shell_'))
+_SHELL_AGENT = Agent(
+    _call_tools(('shell', {'command': 'echo one >> side-effects.txt', 'mode': 'background'})),
+    name='shell_agent',
+    deps_type=type(None),
+    capabilities=[LocalWorkspace[None](str(_SHELL_DIRECTORY)), Shell[None](tools=['shell']), DBOSDurability[None]()],
+)
+_shell_returns: list[str] = []
+
+
+class _ProcessCrash(BaseException):
+    """Stands in for the process dying: DBOS leaves the workflow `PENDING` for recovery."""
+
+
+@DBOS.workflow(name='shell_agent_workflow')
+async def _shell_workflow() -> str:
+    result = await _SHELL_AGENT.run('go')
+    _shell_returns.extend(
+        str(part.content)
+        for message in result.new_messages()
+        for part in message.parts
+        if part.part_kind == 'tool-return'
+    )
+    if len(_shell_returns) == 1:
+        raise _ProcessCrash
+    return result.output
+
+
+async def test_dbos_recovery_reports_the_same_shell_job(dbos: DBOS) -> None:
+    """The `shell` tool runs in workflow code, so a recovered workflow must name the job its replayed launch started."""
+    _shell_returns.clear()
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id), pytest.raises(_ProcessCrash):
+        await _shell_workflow()
+
+    # Resuming the pending workflow re-executes it under the same ID, the way recovery does.
+    handle = await DBOS.resume_workflow_async(workflow_id)
+    assert await handle.get_result(polling_interval_sec=0.01) == 'done'
+    first, recovered = _shell_returns
+    assert recovered == first
+    status = next(line for line in first.splitlines() if line.startswith('Status: '))
+    assert Path(status.removeprefix('Status: ')).exists()
+    assert (_SHELL_DIRECTORY / 'side-effects.txt').read_text().splitlines() == ['one']
 
 
 _READINESS_WAIT_TIMEOUT = 5.0

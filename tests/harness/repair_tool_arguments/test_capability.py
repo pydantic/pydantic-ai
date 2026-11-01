@@ -1,3 +1,5 @@
+import importlib
+import sys
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
@@ -170,3 +172,18 @@ class TestRepairToolArguments:
         spans = [span for span in capfire.exporter.exported_spans_as_dict() if span['name'] == 'repair_tool_arguments']
         assert len(spans) == int(isinstance(arguments, str) and arguments.endswith(',}'))
         assert 'secret' not in str(spans)
+
+
+@pytest.mark.parametrize('module', ['pydantic_ai_harness.repair_tool_arguments', 'pydantic_ai_harness.coder'])
+def test_missing_json_repair_fails_at_import_with_install_hint(monkeypatch: pytest.MonkeyPatch, module: str) -> None:
+    """Importing either capability without `json-repair` names the extras that install it."""
+    monkeypatch.setitem(sys.modules, 'json_repair', None)
+    for name in [
+        name for name in sys.modules if name.startswith((module, 'pydantic_ai_harness.repair_tool_arguments'))
+    ]:
+        monkeypatch.delitem(sys.modules, name)
+    with pytest.raises(
+        ImportError,
+        match=r'Install `pydantic-ai-harness\[coder\]` to use `Coder`, or `pydantic-ai-harness\[repair-tool-arguments\]`',
+    ):
+        importlib.import_module(module)

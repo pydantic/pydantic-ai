@@ -27,6 +27,7 @@ from pydantic_graph import End
 
 from .. import (
     _agent_graph,
+    _display,
     _instructions,
     _utils,
     exceptions,
@@ -43,7 +44,7 @@ from .._run_context import set_current_run_context
 from ..capabilities import AgentCapability
 from ..conversation import Conversation
 from ..exceptions import RunCancelled
-from ..output import OutputDataT, OutputSpec
+from ..output import OutputDataT, OutputSpec, PendingModelResponse
 from ..result import AgentStream, FinalResult, StreamedRunResult
 from ..run import AgentRun, AgentRunResult, AgentRunResultEvent
 from ..settings import ModelSettings
@@ -285,6 +286,10 @@ class AgentRunEvents(
     async def _ensure_started(self) -> None:
         if self._task is not None:
             return
+
+        # Whoever is iterating is on the stack now, but not in the background task that runs the agent.
+        if _display.banner_pending():
+            self._binding.started_by_installed_package = _display.started_by_installed_package(inspect.currentframe())
 
         # Zero-buffer stream: the run blocks on `send` until this iterator pulls, giving natural backpressure
         # and keeping the run no more than one event ahead of the consumer.
@@ -1127,9 +1132,12 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 # So we call `process_tool_calls` directly and then end the run with the found final result.
 
                                 parts: list[_messages.ModelRequestPart] = []
+                                # A response the provider is still working on ended the run as `PendingModelResponse`,
+                                # so its tool calls aren't complete and don't run.
+                                pending = isinstance(final_result.output, PendingModelResponse)
                                 async for _event in _agent_graph.process_tool_calls(
                                     tool_manager=graph_ctx.deps.tool_manager,
-                                    tool_calls=stream.response.tool_calls,
+                                    tool_calls=[] if pending else stream.response.tool_calls,
                                     tool_call_results=None,
                                     tool_call_metadata=None,
                                     final_result=final_result,
@@ -1212,7 +1220,16 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 )
 
         if not yielded:
-            raise exceptions.AgentRunError('Agent run finished without producing a final result')  # pragma: no cover
+            # The loop above only ends without yielding by raising, so the run failed before it streamed a final
+            # result, and `wrap_run` or `on_run_error` recovered it with a result, which `iter()` sets on the run as
+            # it suppresses the error.
+            run_result = agent_run.result
+            assert run_result is not None
+            yield StreamedRunResult(
+                agent_run.ctx.state.message_history,
+                agent_run.ctx.deps.new_message_index,
+                run_result=run_result,
+            )
 
     @overload
     def run_stream_sync(
@@ -1740,6 +1757,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                             cost=Decimal('0.000196'), input_tokens=56, output_tokens=7
                         ),
                         model_name='gpt-5.2',
+                        model_id='openai:gpt-5.2',
                         timestamp=datetime.datetime(...),
                         run_id='...',
                         conversation_id='...',
@@ -1932,7 +1950,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 (but not `new_messages()`). Hand off from a prior session or a standard
                 [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] by passing its messages here.
         """
-        message_history, usage, conversation_id = _agent_graph.resolve_conversation(
+        # A realtime session's history can rewrite turns it already recorded (a reply cut off by a barge-in), so its
+        # `conversation` doesn't track the unsaved messages: a store compares it with the stored history instead.
+        message_history, usage, conversation_id, conversation_revision, _, _ = _agent_graph.resolve_conversation(
             conversation, message_history=message_history, usage=usage, conversation_id=conversation_id
         )
         # Infer the agent name from the calling frame like `run`/`iter` do, so an unnamed agent's
@@ -1952,6 +1972,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             _usage_limits=usage_limits,
             _metadata=metadata,
             _conversation_id=conversation_id,
+            _conversation_revision=conversation_revision,
             _run_id=run_id,
             _message_history=message_history,
         )
@@ -2314,6 +2335,7 @@ class AgentRealtime(Generic[AgentDepsT]):
         _usage_limits: _usage.UsageLimits | None = None,
         _metadata: AgentMetadata[AgentDepsT] | None = None,
         _conversation_id: str | None = None,
+        _conversation_revision: str | None = None,
         _run_id: str | None = None,
         _message_history: Sequence[_messages.ModelMessage] | None = None,
     ) -> None:
@@ -2328,6 +2350,7 @@ class AgentRealtime(Generic[AgentDepsT]):
         self._usage_limits = _usage_limits
         self._metadata = _metadata
         self._conversation_id = _conversation_id
+        self._conversation_revision = _conversation_revision
         self._run_id = _run_id
         self._message_history = _message_history
 
@@ -2519,4 +2542,7 @@ class AgentRealtime(Generic[AgentDepsT]):
             retain_audio_max_seconds=retain_audio_max_seconds,
             provider_session=provider_session,
         ) as session:
+            # Only the session's `conversation` and result carry the revision, so it is handed to the
+            # session here rather than through every agent's `_open_realtime_session`.
+            session._conversation_revision = self._conversation_revision  # pyright: ignore[reportPrivateUsage]
             yield session

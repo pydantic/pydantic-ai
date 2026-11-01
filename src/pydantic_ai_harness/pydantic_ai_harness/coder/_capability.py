@@ -5,19 +5,24 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any
 
-from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability
+from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability, ValidatedToolArgs
+from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavior
+from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai_harness._warn import warn_argument_ignored
 from pydantic_ai_harness._workspace import RequireWorkspace
-from pydantic_ai_harness.coder._instructions import INSTRUCTIONS, project_instructions
+from pydantic_ai_harness.coder._instructions import coder_instructions, project_instructions
 from pydantic_ai_harness.compaction import ClearToolResults
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.shell import MAX_FOREGROUND_WAIT, Shell
-from pydantic_ai_harness.subagents import SubAgents
+from pydantic_ai_harness.subagents import SubAgents, TaskControl
+from pydantic_ai_harness.subagents._control import ASK_PARENT_TOOL_NAME
+from pydantic_ai_harness.subagents._toolset import CONTROL_TOOL_NAMES
 from pydantic_ai_harness.tool_output_limits import Band, ToolOutputLimits, Truncate
 
 FILE_TOOL_NAMES: tuple[str, ...] = ('read_file', 'write_file', 'edit_file', 'list_files', 'grep')
@@ -51,6 +56,52 @@ class _DefaultCaching(AbstractCapability[AgentDepsT]):
         return unless_configured
 
 
+@dataclass
+class _SetToolStrict(AbstractCapability[AgentDepsT]):
+    """Sets `strict` on the named tools that leave it unset.
+
+    Tool names are unique within an agent, so the names select `Coder`'s own tools and no tool bound next to it.
+    """
+
+    strict: bool
+    tool_names: frozenset[str]
+
+    async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        return [
+            replace(tool_def, strict=self.strict)
+            if tool_def.strict is None and tool_def.name in self.tool_names
+            else tool_def
+            for tool_def in tool_defs
+        ]
+
+
+@dataclass
+class _ReportExhaustedRetries(AbstractCapability[AgentDepsT]):
+    """Returns a tool's last error to the model once its retry budget is spent, instead of ending the run.
+
+    A tool that keeps asking for a retry (a stale `edit_file` match, a denied path) would otherwise
+    raise `UnexpectedModelBehavior` and discard the whole run. The model gets the error as a failed
+    tool result and can change approach; run-level usage limits still bound a model that never does.
+    """
+
+    async def on_tool_execute_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        error: Exception,
+    ) -> Any:
+        cause = error.__cause__
+        if not isinstance(error, UnexpectedModelBehavior) or not isinstance(cause, ModelRetry):
+            raise error
+        raise ToolFailed(
+            f'{cause.message}\n\n`{call.tool_name}` has failed several times in a row. Do not repeat the same '
+            'call: check the current state and try a different approach.'
+        ) from error
+
+
 MAX_READ_CHARS = 50_000
 """Characters of complete lines per `read_file`, below the output cap."""
 
@@ -58,7 +109,7 @@ MAX_OUTPUT_CHARS = 64000
 """Characters kept from any tool result."""
 
 MAX_FILE_TOOL_RETRIES = 5
-"""Consecutive retries each file tool allows before the run fails.
+"""Consecutive retries each file tool allows before its execution errors come back as plain failures.
 
 A denied path or a stale edit is corrected from the error message. With the agent's default
 budget of one, a second consecutive mistake with the same tool ends a long autonomous run
@@ -99,11 +150,19 @@ class Coder(CombinedCapability[AgentDepsT]):
     passing it to `run()`. `sub_agents=False` leaves delegation out.
     `agent_folders` optionally adds disk-defined delegates using `SubAgents`' folder
     names or explicit workspace paths. It defaults to `None` (no disk discovery).
+    `task_control=TaskControl()` is passed to `SubAgents(task_control=...)`, so the agent can run
+    delegations in the background, steer, answer, and cancel them; it requires `sub_agents=True`.
 
     `caching=True` turns on prompt caching through the unified `cache` model setting,
     unless the model, the agent, or a capability listed before `Coder` already sets
     `cache`; a capability listed after it and the run's own `model_settings` take
     precedence as usual. `caching=False` leaves it out.
+
+    `strict=False` turns off [strict mode](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#strict-mode)
+    for the tools `Coder` contributes, where OpenAI and Gemini 2.5+ would otherwise turn it on.
+    The bundled `RepairToolArguments` repairs malformed arguments instead. `strict=True` forces
+    strict mode on those tools, and `strict=None` leaves the choice to the provider. Tools bound
+    next to `Coder` keep their own `strict` value.
     """
 
     def __init__(
@@ -115,8 +174,12 @@ class Coder(CombinedCapability[AgentDepsT]):
         repo_context: bool = True,
         sub_agents: bool = True,
         agent_folders: str | Sequence[str | Path] | None = None,
+        task_control: TaskControl | None = None,
         caching: bool = True,
+        strict: bool | None = False,
     ) -> None:
+        if task_control is not None and not sub_agents:
+            raise ValueError('`task_control` requires `sub_agents=True`.')
         if workspace is not None:
             warn_argument_ignored(
                 'Coder',
@@ -125,13 +188,22 @@ class Coder(CombinedCapability[AgentDepsT]):
                 f'`LocalWorkspace({str(workspace)!r})` (or a sandbox) alongside `Coder()`.',
                 stacklevel=3,
             )
+        delegation = (
+            SubAgents[AgentDepsT](include_self=True, agent_folders=agent_folders, task_control=task_control)
+            if sub_agents
+            else None
+        )
         capabilities: list[AbstractCapability[AgentDepsT]] = [
             RequireWorkspace[AgentDepsT]('Coder'),
             # The id also names its (empty) function toolset, which durable execution requires.
             Capability[AgentDepsT](
                 id='coder_instructions',
                 instructions=[
-                    INSTRUCTIONS + ('\n' + instructions if instructions else ''),
+                    coder_instructions(
+                        repo_context=repo_context,
+                        delegate_tool=delegation.tool_name if delegation is not None else None,
+                    )
+                    + ('\n' + instructions if instructions else ''),
                     # Naming the directory creates a lazily created sandbox, so it comes only with
                     # `RepoContext`, which reads the workspace at run start anyway.
                     *([project_instructions(unrestricted=unrestricted_filesystem)] if repo_context else []),
@@ -148,8 +220,13 @@ class Coder(CombinedCapability[AgentDepsT]):
         ]
         if repo_context:
             capabilities.append(RepoContext[AgentDepsT](expose_inventory_tool=False))
-        if sub_agents:
-            capabilities.append(SubAgents[AgentDepsT](include_self=True, agent_folders=agent_folders))
+        tool_names = {*FILE_TOOL_NAMES, 'shell'}
+        if delegation is not None:
+            capabilities.append(delegation)
+            tool_names.add(delegation.tool_name)
+            if task_control is not None:
+                # The task-control tools, and the `ask_parent` tool each delegated run gets.
+                tool_names |= {*CONTROL_TOOL_NAMES, ASK_PARENT_TOOL_NAME}
         capabilities += [
             ClearToolResults[AgentDepsT](max_fraction=0.7),
             _BoundToolOutputs[AgentDepsT](
@@ -157,7 +234,10 @@ class Coder(CombinedCapability[AgentDepsT]):
                 bands=[Band(over=MAX_OUTPUT_CHARS, action=Truncate(max_chars=MAX_OUTPUT_CHARS))],
             ),
             RepairToolArguments[AgentDepsT](),
+            _ReportExhaustedRetries[AgentDepsT](),
         ]
         if caching:
             capabilities.append(_DefaultCaching[AgentDepsT]())
+        if strict is not None:
+            capabilities.append(_SetToolStrict[AgentDepsT](strict=strict, tool_names=frozenset(tool_names)))
         super().__init__(capabilities)

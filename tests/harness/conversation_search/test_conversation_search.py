@@ -25,6 +25,7 @@ from pydantic_ai.capabilities import Capability
 from pydantic_ai.messages import (
     AgentInstructionSource,
     BinaryContent,
+    CompactionPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
     InstructionId,
@@ -51,6 +52,7 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.compaction import SlidingWindowCompaction, SummarizingCompaction
 from pydantic_ai_harness.compaction._summarizing_compaction import SUMMARY_PREFIX
+from pydantic_ai_harness.compaction._summary import summary_request
 from pydantic_ai_harness.conversation_search import (
     ConversationSearch,
     ConversationSearchToolset,
@@ -183,6 +185,63 @@ class TestSnapshotHistorySource:
 
         history = await SnapshotHistorySource(store).run_history(run_id='r1')
         assert history == [original, reply, follow_up]
+
+    async def test_a_compaction_part_summary_is_skipped(self) -> None:
+        store = InMemoryStepStore()
+        original = _user('the ZEBRA passphrase is 42')
+        reply = _reply('noted')
+        summary = summary_request('older context')
+        follow_up = _user('what was it again?')
+        await _seed_run(store, 'r1', [original, reply], [summary, reply, follow_up])
+
+        history = await SnapshotHistorySource(store).run_history(run_id='r1')
+        assert history == [original, reply, follow_up]
+
+    async def test_a_legacy_summary_merged_with_a_user_turn_keeps_the_turn(self) -> None:
+        """Continuing a history merges the old summary's request with real turns; only the summary is dropped."""
+        store = InMemoryStepStore()
+        merged = ModelRequest(
+            parts=[SystemPromptPart(content=f'{SUMMARY_PREFIX}older context'), UserPromptPart('the HERON detail')]
+        )
+        await _seed_run(store, 'r1', [merged, _reply('ok')])
+
+        history = await SnapshotHistorySource(store).run_history(run_id='r1')
+        assert [[part.part_kind for part in message.parts] for message in history] == [['user-prompt'], ['text']]
+        assert 'HERON' in await _search(SnapshotHistorySource(store), 'HERON')
+
+    async def test_a_harness_system_prompt_that_opens_like_a_summary_stays_searchable(self) -> None:
+        """A system prompt a harness capability marked with its `origin`, such as a lasting reminder, is never a summary."""
+        store = InMemoryStepStore()
+        reminder = ModelRequest(
+            parts=[
+                SystemPromptPart(
+                    content=f'{SUMMARY_PREFIX}the KESTREL rule',
+                    metadata={'origin': 'pydantic-ai-harness.system_reminders.reminder.v1'},
+                )
+            ]
+        )
+        prompt = _user('go on')
+        await _seed_run(store, 'r1', [prompt, reminder, _reply('ok')])
+
+        history = await SnapshotHistorySource(store).run_history(run_id='r1')
+        assert history[:2] == [prompt, reminder]
+
+    async def test_an_empty_compaction_part_adds_nothing_to_search(self) -> None:
+        store = InMemoryStepStore()
+        await _seed_run(store, 'r1', [ModelRequest(parts=[CompactionPart(content=''), UserPromptPart('the OSPREY')])])
+
+        assert 'OSPREY' in await _search(SnapshotHistorySource(store), 'OSPREY')
+
+    async def test_an_app_authored_compaction_part_stays_searchable(self) -> None:
+        """Only the summaries `SummarizingCompaction` wrote are artifacts; an application's own is content."""
+        store = InMemoryStepStore()
+        prompt = _user('go on')
+        app = ModelRequest(parts=[CompactionPart(content='the PELICAN plan'), UserPromptPart('continuing')])
+        await _seed_run(store, 'r1', [prompt, app])
+
+        history = await SnapshotHistorySource(store).run_history(run_id='r1')
+        assert history == [prompt, app]
+        assert 'PELICAN' in await _search(SnapshotHistorySource(store), 'PELICAN')
 
     async def test_repeated_identical_messages_keep_distinct_positions(self) -> None:
         store = InMemoryStepStore()

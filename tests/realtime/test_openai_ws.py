@@ -193,11 +193,7 @@ async def test_session_when_idle_enqueue_waits_for_response_boundary(
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='<system>Say exactly "QUEUED MARKER RECEIVED".</system>', timestamp=IsDatetime()
-                    )
-                ],
+                parts=[SystemPromptPart(content='Say exactly "QUEUED MARKER RECEIVED".', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -206,14 +202,14 @@ async def test_session_when_idle_enqueue_waits_for_response_boundary(
                 parts=[TextPart(content='QUEUED MARKER RECEIVED')],
                 usage=RequestUsage(
                     details={
-                        'input_text_tokens': 52,
+                        'input_text_tokens': 46,
                         'input_image_tokens': 0,
                         'output_text_tokens': 9,
                         'audio_tokens': 0,
                     },
                     output_tokens=9,
-                    input_tokens=52,
-                    cost=Decimal('0.000352'),
+                    input_tokens=46,
+                    cost=Decimal('0.000328'),
                 ),
                 model_name='gpt-realtime',
                 timestamp=IsDatetime(),
@@ -1093,8 +1089,11 @@ async def test_tool_can_close_session(openai_ws_cassette: tuple[Provider[Any], R
 async def test_tool_error_ends_transcript_only_session(
     openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
 ) -> None:
-    """A raising tool ends a transcript-only consumer instead of leaving the live session mute."""
-    provider, _ = openai_ws_cassette
+    """A raising tool ends a transcript-only consumer instead of leaving the live session mute.
+
+    The model is still told the call failed, with the generic failure rather than the exception's message.
+    """
+    provider, cassette = openai_ws_cassette
     model = OpenAIRealtimeModel(
         'gpt-realtime', provider=provider, settings=OpenAIRealtimeModelSettings(output_modality='text')
     )
@@ -1112,6 +1111,15 @@ async def test_tool_error_ends_transcript_only_session(
             with anyio.fail_after(30):
                 assert [part async for part in session.stream_transcripts()] == []
 
+    assert [frame['item'] for frame in sent_frames_containing(cassette, 'function_call_output')] == snapshot(
+        [
+            {
+                'type': 'function_call_output',
+                'call_id': 'call_BSv1euCBWWPx0G2p',
+                'output': '{"error":"The tool raised an unhandled error."}',
+            }
+        ]
+    )
     assert session is not None
     assert session.all_messages() == snapshot(
         [
@@ -1134,7 +1142,7 @@ async def test_tool_error_ends_transcript_only_session(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_response_id='resp_EKSoZDrBYT3y3OzgBEMya',
+                provider_response_id='resp_EbvwPGkU9z92dqA0voJCF',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
                 state='interrupted',
@@ -1240,6 +1248,7 @@ def test_profile_allow_seeding() -> None:
         supports_output_truncation=True,
         supports_text_output=True,
         supports_session_seeding=True,
+        supports_system_messages=True,
         supports_webrtc=True,
         supports_seeding_images=True,
         supports_seeding_audio=True,
@@ -1249,6 +1258,7 @@ def test_profile_allow_seeding() -> None:
         supports_tool_return_schema=False,  # no native surface; opted-in schemas go into descriptions
         supported_native_tools=frozenset(),
         emits_input_speech_events=True,
+        output_speech_timestamp_granularity=None,
         synthesizes_turn_boundary=False,
         responses_are_requests=True,
         response_usage_covers_context=True,

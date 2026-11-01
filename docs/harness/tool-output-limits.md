@@ -15,6 +15,8 @@ the reduction is not recomputed per request.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![ToolOutputLimits runs in the after_tool_execute hook, on a tool result before it enters the history. With the default band, a 48,000-character result is spilled: the full payload is written to the workspace store under .pydantic-ai-harness/tool-output/, and the model gets a short marker with the handle and a head and tail preview. The model reads slices back with the read_tool_result tool.](../img/harness/tool-output-limits.svg)
+
 ## The problem
 
 A tool can return a payload large enough to dominate the context window: a big file read, a
@@ -59,7 +61,9 @@ agent = Agent('{{ anthropic:large }}', capabilities=[LocalWorkspace('.'), ToolOu
 The capability registers a single `read_tool_result` tool so the model can page back into any
 spilled payload. Its own returns are exempt from reduction. With `FileSystem` on the agent,
 `read_file` takes its place for spills in the run's workspace, and its reads of spills are exempt
-too ([Reading spills with `FileSystem`](#reading-spills-with-filesystem)).
+too ([Reading spills with `FileSystem`](#reading-spills-with-filesystem)). Core's `load_capability`
+and `search_tools` returns are never reduced either: core reads them back from history to know which
+[on-demand capabilities](../capabilities/on-demand.md) are loaded and which tools are revealed.
 
 ## Bands: combine the modes
 
@@ -95,6 +99,9 @@ cost and no silent drop.
 
 `Passthrough()` is an explicit no-op action for `bands` or `per_tool` lists, leaving matching
 returns untouched.
+
+When an agent gets two `ToolOutputLimits` with the same `id`, their `bands` merge into one list
+that is still matched largest threshold first. At a threshold both state, the later band wins.
 
 ### Fallbacks with `then`
 
@@ -387,15 +394,19 @@ instance to `Summarize(model=...)` to override, or a `summarize` callable to byp
 built-in prompt entirely. The `summary_prompt` template on the capability must contain both
 `{tool_name}` and `{output}` placeholders.
 
-With a durable-execution capability attached, built-in model summarization is a journaled
-capability operation. `ToolOutputLimits` carries the stable default `id='tool_output_limits'`, so
-durable recovery works without configuration.
+With a durable-execution capability attached, spill writes and built-in model summarization are
+journaled capability operations: a replay reuses the recorded handle, fallback, or summary instead
+of writing or summarizing again. `ToolOutputLimits` carries the stable default
+`id='tool_output_limits'`, so durable recovery works without configuration.
 
-Two details matter when choosing a band under durability. The text being summarized is part of the
-journaled operation input, so prefer `Spill` over built-in `Summarize` for outputs near the
-engine's payload limit. And a custom `summarize` callable runs directly rather than as a durable
-operation -- arbitrary callables cannot be reconstructed on the worker side -- so it may be called
-again on replay.
+Three details matter when choosing a band and store under durability. The output being spilled or
+summarized is part of the journaled operation input, so on an engine that runs operations on a
+worker, such as Temporal, it counts against the engine's payload limit, as the tool's own result
+already does. A write that succeeds just before a worker crash, before the engine records it, runs
+again on recovery, so a custom `OverflowStore` should treat a repeated `write` of the same key as an
+overwrite. And a custom `summarize` callable runs directly rather than as a durable operation --
+arbitrary callables cannot be reconstructed on the worker side -- so it may be called again on
+replay.
 
 ## Edge cases
 

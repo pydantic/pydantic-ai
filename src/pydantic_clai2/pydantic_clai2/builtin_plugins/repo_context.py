@@ -4,15 +4,20 @@ The built-in `repo_context` plugin: the workspace's instruction files, through h
 """
 
 from collections.abc import Sequence
+from contextlib import suppress
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from pydantic_ai.capabilities import AgentCapability
+from pydantic_ai.tools import RunContext
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_clai2.plugins import DepsT, Plugin
-from pydantic_clai2.runtime._session import supports_local_workspace
+from pydantic_clai2.runtime.session import WorkspacelessCapability, supports_local_workspace
+
+_WALK_UP_ROOT = TypeAdapter(str)
+_SYMLINK_ROOTS = TypeAdapter(list[str])
 
 
 class RepoContextSettings(BaseModel):
@@ -20,13 +25,18 @@ class RepoContextSettings(BaseModel):
 
     model_config = ConfigDict(extra='forbid', frozen=True, strict=True)
     walk_up: bool = Field(
-        default=False, description='Also load instruction files from every directory between the workspace and home.'
+        default=False,
+        description='Also load ancestor instructions up to `repo_context.walk_up_root` (home by default).',
     )
     inventory_tool: bool = Field(
         default=False, description="Expose `inventory_agent_context`, which maps the repo's coding-assistant assets."
     )
     nested_traversal: bool = Field(
-        default=False, description="Surface a directory's instruction file when the agent reads or lists it."
+        default=False,
+        description=(
+            'Surface the instruction files of a directory the agent reads or lists, and of every directory between it '
+            'and the workspace.'
+        ),
     )
     nested_inject: Literal['pointer', 'contents'] = Field(
         default='pointer', description='What nested traversal adds: a one-line pointer or the file contents.'
@@ -39,12 +49,23 @@ class RepoContextPlugin(Plugin[RepoContextSettings, DepsT]):
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
         if not supports_local_workspace():
             return ()
-        settings = self.settings
-        return (
-            RepoContext[DepsT](
-                home_dir=Path.home() if settings.walk_up else None,
-                expose_inventory_tool=settings.inventory_tool,
-                nested_traversal=settings.nested_traversal,
-                nested_inject=settings.nested_inject,
-            ),
+        return (WorkspacelessCapability(self._for_run),)
+
+    def _for_run(self, _ctx: RunContext[DepsT]) -> RepoContext[DepsT]:
+        # Read once per run: settings edits apply to the next run, not its cached instructions.
+        walk_up_root = '~'
+        symlink_roots: list[str] = []
+        # The store validates path policy; narrow the host's JSON values without depending on unrelated settings.
+        with suppress(KeyError):
+            walk_up_root = _WALK_UP_ROOT.validate_python(self.host.setting('repo_context.walk_up_root'), strict=True)
+        with suppress(KeyError):
+            symlink_roots = _SYMLINK_ROOTS.validate_python(
+                self.host.setting('repo_context.autoload_symlink_roots'), strict=True
+            )
+        return RepoContext[DepsT](
+            home_dir=Path(walk_up_root).expanduser() if self.settings.walk_up else None,
+            autoload_symlink_roots=[Path(root).expanduser() for root in symlink_roots],
+            expose_inventory_tool=self.settings.inventory_tool,
+            nested_traversal=self.settings.nested_traversal,
+            nested_inject=self.settings.nested_inject,
         )

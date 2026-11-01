@@ -80,7 +80,7 @@ GH = GhToken(hostname='github.com', setup=SETUP)
 
 
 def github(auth: SavedKey | GhToken = GH, *, read_only: bool = True) -> list[GitHub[None]]:
-    return [GitHub[None](auth=auth, url=GITHUB_MCP_URL, read_only=read_only)]
+    return [GitHub[None](defer_loading=True, auth=auth, url=GITHUB_MCP_URL, read_only=read_only)]
 
 
 def test_declared_disabled_with_no_settings() -> None:
@@ -134,6 +134,7 @@ async def test_enable_opens_the_menu_and_every_option_saves_immediately(
     assert b'ghp_new' not in shell.path.read_bytes()
     assert shell.loader.capabilities() == [
         GitHub[None](
+            defer_loading=True,
             auth=SavedKey(name='GITHUB_TOKEN', setup=SETUP),
             url='https://copilot-api.octocorp.ghe.com/mcp',
             read_only=False,

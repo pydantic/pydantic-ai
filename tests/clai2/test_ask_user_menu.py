@@ -12,7 +12,10 @@ import pytest
 from prompt_toolkit.input import PipeInput, create_pipe_input
 from rich.cells import cell_len
 from rich.console import Console
+from rich.style import Style
 from rich.text import Text
+from termflow.ansi import make_clipboard_copy
+from termflow.live.buffer import REVERSE
 
 from pydantic_ai import Agent, FunctionToolCallEvent
 from pydantic_ai.capabilities import AbstractCapability
@@ -40,7 +43,7 @@ from pydantic_clai2.plugins import PluginHost, load_plugin
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallStartedEvent
 from pydantic_clai2.ui.menus.menu_worker import menu_key
 from pydantic_clai2.ui.prompt.prompt_surface import ENTER, LEAVE, MODES_OFF, PromptSurface
-from pydantic_clai2.ui.prompt.question_input import Paste
+from pydantic_clai2.ui.prompt.question_input import Paste, QuestionKey, TranscriptKey
 from pydantic_clai2.ui.rendering import theme
 from tests.clai2.surface_terminal import SurfaceTerminal
 
@@ -656,18 +659,19 @@ async def test_custom_answer_reaches_model_through_inline_picker(question_pipe: 
     returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
     assert returns[0].content == {'Approach': ['Use another approach']}
     assert screen.events == ['taken', 'released']
-    console = Console(file=output)
-    console.print(
-        render_answer(
-            AskUserAnsweredEvent(
-                request_id='custom',
-                response=AskUserResponse(
-                    answers=(AskUserAnswer(header='Approach', custom_answer='[red]Custom answer'),)
-                ),
-            )
+    rendered = render_answer(
+        AskUserAnsweredEvent(
+            request_id='custom',
+            response=AskUserResponse(answers=(AskUserAnswer(header='Approach', custom_answer='[red]Custom answer'),)),
         )
     )
-    assert 'Approach: [red]Custom answer' in output.getvalue()
+    Console(file=output).print(rendered)
+    # A typed answer reads like a typed prompt: an accent marker and bold text, not muted tool output.
+    assert '● Approach:\n> [red]Custom answer\n' in output.getvalue()
+    assert isinstance(rendered, Text)
+    answer = rendered.plain.index('[red]')
+    assert rendered.get_style_at_offset(Console(), answer).bold
+    assert rendered.get_style_at_offset(Console(), answer - 2).color == Style.parse(theme.color(theme.ACCENT)).color
 
 
 async def test_bracketed_paste_is_atomic_and_does_not_answer_next_question(question_pipe: PipeInput) -> None:
@@ -719,9 +723,9 @@ async def test_custom_decoder_cancellation_detaches_before_editor_resumes(
             finally:
                 screen.events.append('detached')
 
-    def track_paint(surface: PromptSurface, rows: tuple[str, ...]) -> None:
+    def track_paint(surface: PromptSurface, rows: tuple[str, ...], *, select_pinned: bool = False) -> None:
         nonlocal frames
-        paint(surface, rows)
+        paint(surface, rows, select_pinned=select_pinned)
         frames += 1
         # The third frame follows selection and an idle input poll in the custom editor.
         if frames == 3:
@@ -745,6 +749,45 @@ async def test_custom_decoder_cancellation_detaches_before_editor_resumes(
                 )
             assert scope.cancelled_caught
     assert screen.events == ['taken', 'attached', 'detached', 'released']
+
+
+@pytest.mark.parametrize(
+    ('question', 'target'),
+    [
+        (APPROACH, 'Approach'),
+        (APPROACH, 'How should we do it?'),
+        (APPROACH, 'Refactor - Rewrite the module'),
+        (APPROACH, 'Patch'),
+        (TARGETS, 'api.py'),
+    ],
+)
+def test_dragging_question_text_highlights_and_copies_without_answering(question: Question, target: str) -> None:
+    terminal = SurfaceTerminal(width=80, height=24)
+    surface = PromptSurface(output=terminal, size=lambda: (80, 24))
+    surface.write('Transcript control\n')
+    menu = QuestionMenu(question=question, position=1, total=1)
+
+    def keys() -> Generator[QuestionKey]:
+        for text in (target, 'Transcript control'):
+            row, line = next((row, line) for row, line in enumerate(terminal.lines()) if text in line)
+            column = line.index(text)
+            yield TranscriptKey(key='mouse', data=f'\x1b[<0;{column + 1};{row + 1}M')
+            yield TranscriptKey(key='mouse', data=f'\x1b[<32;{column + len(text)};{row + 1}M')
+            frame = surface._frame  # pyright: ignore[reportPrivateUsage]
+            assert frame is not None
+            start = row * frame.width + column
+            assert all(frame.attrs[index] & REVERSE for index in range(start, start + len(text)))
+            yield TranscriptKey(key='mouse', data=f'\x1b[<0;{column + len(text)};{row + 1}m')
+            assert make_clipboard_copy(text) in terminal.getvalue()
+            assert menu.cursor == 0 and not menu.selected and not menu.editing_custom
+        yield 'escape'
+
+    assert (
+        menu.run(console=Console(file=surface, width=80, height=24, color_system=None), key_source=keys().__next__)
+        is None
+    )
+    output = terminal.getvalue()
+    assert output.index(make_clipboard_copy(target)) < output.index(make_clipboard_copy('Transcript control'))
 
 
 def test_output_streamed_while_answering_stays_above_the_pinned_question() -> None:
