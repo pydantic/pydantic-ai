@@ -676,9 +676,11 @@ name), so the summary records the correction rather than the rejected call as so
 feedback that answers no tool call is shown as the model saw it. Content that looks like the transcript's
 own tags or a framing tag Pydantic AI writes (`<system>`, `<context>`, `<tool_result>` and the rest), in
 any case or spacing, is escaped, so a tool return stays inside its own message and can't end the
-transcript early. Each tool return and retry feedback is capped, after that escaping, at
-`tool_return_max_chars` (default 500) characters using the same explicit truncation marker as kept user
-turns. Raise it, or set it to `None` to render each return and retry feedback whole, when the summarizer's context window is large enough to absorb the payloads.
+transcript early. Each tool return and retry feedback is rendered whole by default: a fact that only a
+tool result carries reaches the summary only if the summarizer sees it, and the summarized messages were
+already part of a request the run's model accepted. Set `tool_return_max_chars` to cap each one, after
+that escaping, at that many characters using the same explicit truncation marker as kept user turns, when
+`model` is a summarizer with a smaller context window than the run's model.
 Content a harness capability added on the user channel and tagged with an `origin` in its
 `TextContent.metadata` starting with `pydantic-ai-harness.` is not a user message. Today that's a
 `BackgroundTools` result, `TrajectoryJudge` feedback and a `Memory` snapshot, including one an older release marked with a plain string. Tagged content is
@@ -950,6 +952,5 @@ outcome changes what compaction keeps or drops.
 
 These strategies compress or drop context *inside* the window. Moving large tool outputs *out* of the
 window -- overflowing them to a file the agent (or a subagent) can query on demand -- is a separate
-capability, not lossy truncation. Within `SummarizingCompaction`, `tool_return_max_chars` makes the
-summarizer's per-return cap tunable (or `None` to render returns whole), but the summary request still
-reads a lossy rendering; prefer tool output limits when a payload must be queryable in full.
+capability, not lossy truncation. Within `SummarizingCompaction`, the summarizer reads tool returns
+whole unless `tool_return_max_chars` caps them, but the summary it writes is still lossy; prefer tool output limits when a payload must be queryable in full.

@@ -5053,6 +5053,28 @@ class TestStructuralFeaturesThroughAgent:
         assert len(prompts) == 1
         assert f'<message role="tool_return" name="read">\n{"z" * 600}\n</message>' in prompts[0]
 
+    async def test_fact_only_in_a_tool_return_reaches_the_summarizer_by_default(self):
+        """A fact deep in a tool result reaches the summarizer, which a 500-character default cut lost."""
+        assert SummarizingCompaction(max_messages=3).tool_return_max_chars is None
+        prompts: list[str] = []
+        result = '\n'.join(f'line_{i} = compute({i})' for i in range(90)) + '\nDB_HOST = "pg-7f3a.internal"'
+        agent = Agent(
+            _recording_model([]),
+            capabilities=[SummarizingCompaction(model=_recording_summarizer(prompts), max_messages=3, keep_messages=1)],
+        )
+        await agent.run(
+            'go',
+            message_history=[
+                _tool_call('read_file', 'c1'),
+                _tool_return('read_file', 'c1', result),
+                _assistant('db.py connects to the database host from settings.'),
+                _user('recent'),
+            ],
+        )
+        assert len(prompts) == 1
+        assert len(result) > 500
+        assert f'<message role="tool_return" name="read_file">\n{result}\n</message>' in prompts[0]
+
     async def test_summary_events_reach_a_caller_supplied_handler(self):
         seen: list[list[ModelMessage]] = []
         prompts: list[str] = []
