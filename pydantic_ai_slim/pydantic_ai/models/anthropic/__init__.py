@@ -318,6 +318,7 @@ try:
         map_tool_search_tool_result_block,
         map_web_fetch_tool_result_block,
         map_web_search_tool_result_block,
+        provisions_code_execution,
         text_editor_code_execution_tool_result_content_ta,
         web_search_tool_result_content_ta,
     )
@@ -356,6 +357,7 @@ __all__ = (
     'AnthropicStaleThinkingBlockWarning',
     'AnthropicStreamedResponse',
     'AnthropicTaskBudget',
+    'AnthropicWebToolCaller',
     'DEPRECATED_ANTHROPIC_MODELS',
     'LatestAnthropicModelNames',
     'advisor_tool_result_content_ta',
@@ -539,6 +541,11 @@ _AssistantContentBlockParam: TypeAlias = (
 AnthropicTaskBudget: TypeAlias = BetaTokenTaskBudgetParam
 """Anthropic task budget payload for `output_config.task_budget`."""
 
+AnthropicWebToolCaller: TypeAlias = Literal[
+    'direct', 'code_execution_20250825', 'code_execution_20260120', 'code_execution_20260521'
+]
+"""Who may invoke Anthropic's web search and web fetch tools, as sent in their `allowed_callers` field."""
+
 
 class AnthropicModelSettings(ModelSettings, total=False):
     """Settings used for an Anthropic model request."""
@@ -672,6 +679,29 @@ class AnthropicModelSettings(ModelSettings, total=False):
     `'20260120'` for Sonnet 4.5+ and Opus 4.5+, otherwise `'20250825'`.
     Set a concrete version to force that tool version; a `UserError` is raised if
     the selected model profile does not support that version.
+    """
+
+    anthropic_web_tools_allowed_callers: list[AnthropicWebToolCaller]
+    """Who may invoke [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] and
+    [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool], sent as their `allowed_callers`.
+
+    By default the field is omitted and Anthropic picks the caller from the tool version. The
+    `web_search_20260209` and `web_fetch_20260209` versions let the model call the tools from code
+    execution, which gives it a server-side code execution sandbox to filter results in ("dynamic
+    filtering") even when [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] is not
+    enabled. Results the model reads from code execution come back without citations.
+
+    Set `['direct']` to have the model always call the web tools itself with no sandbox, which turns off
+    dynamic filtering and makes the tools eligible for Zero Data Retention. A value set here is sent
+    on whichever web tool version the model uses. A code execution caller gives the model the sandbox
+    on any version. Anthropic rejects an empty list, `code_execution_20250825`, and a code execution
+    caller on models without programmatic tool calling, such as Claude Haiku 4.5.
+    See [the Anthropic docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers).
+
+    Tools passed as `extra_body['tools']` replace the ones Pydantic AI builds, so the setting isn't
+    applied to a request that has them. Message history from a run that used code execution carries
+    its container, which Pydantic AI sends with later requests, and Anthropic rejects a container on a
+    request without code execution, so a `['direct']` request that continues such a history fails.
     """
 
     anthropic_eager_input_streaming: bool
@@ -2285,14 +2315,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # The native memory tool is client-executed and surfaces as a regular `tool_use` block.
         enabled_server_tool_names.discard('memory')
 
-        implicit_code_execution_names = {'code_execution', 'bash_code_execution', 'text_editor_code_execution'}
-        if 'code_execution' in enabled_server_tool_names:
-            enabled_server_tool_names.update(implicit_code_execution_names)
-        # The 20260209 web tools provision code execution for dynamic filtering server-side.
-        if self.profile.get('anthropic_supports_dynamic_filtering', False) and any(
-            isinstance(tool, WebSearchTool | WebFetchTool) for tool in model_request_parameters.native_tools
-        ):
-            enabled_server_tool_names.update(implicit_code_execution_names)
+        if provisions_code_execution(native_tools):
+            enabled_server_tool_names.update({'code_execution', 'bash_code_execution', 'text_editor_code_execution'})
         return frozenset(enabled_server_tool_names)
 
     async def _process_streamed_response(
@@ -2487,6 +2511,24 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 raise UserError(  # pragma: no cover
                     f'`{tool.__class__.__name__}` is not supported by `AnthropicModel`. If it should be, please file an issue.'
                 )
+
+        # `extra_body['tools']` replaces these tools on the wire, so the setting isn't applied to them. That keeps
+        # `_get_enabled_server_tool_names`, which rebuilds the tools through this method, filtering as if it were unset.
+        extra_body = model_settings.get('extra_body')
+        if (allowed_callers := model_settings.get('anthropic_web_tools_allowed_callers')) is not None and not (
+            _is_str_mapping(extra_body) and 'tools' in extra_body
+        ):
+            for web_tool in tools:
+                match web_tool:
+                    case {
+                        'type': 'web_search_20250305'
+                        | 'web_search_20260209'
+                        | 'web_fetch_20250910'
+                        | 'web_fetch_20260209'
+                    }:
+                        web_tool['allowed_callers'] = allowed_callers
+                    case _:
+                        pass
         return tools, mcp_servers, beta_features
 
     def _tool_choice_declarations(

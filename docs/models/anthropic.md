@@ -893,6 +893,26 @@ agent = Agent(
 
 The response's usage, and so its cost, stays the sum of the passes either way.
 
+## Web Tool Callers
+
+On models that support dynamic filtering, [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] and [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] are sent as Anthropic's `20260209` versions. By default, Anthropic lets the model call these from a server-side code execution sandbox, where it can filter results before they reach the context window. The sandbox is provided even when [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] isn't enabled, so an agent that also has its own shell or code tool has two places to run code, and the sandbox has none of the agent's files, credentials, or environment. Results the model reads in the sandbox aren't added to its context, so they come back without [citations](../citations.md).
+
+Set [`AnthropicModelSettings.anthropic_web_tools_allowed_callers`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_web_tools_allowed_callers] to `['direct']` to have the model always call both web tools itself, with no sandbox. This turns off dynamic filtering, so the model reads every result in full, and makes the tools eligible for Zero Data Retention ([Anthropic docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers)). A value you set is sent on whichever web tool version the model uses.
+
+```py {title="anthropic_web_tools_allowed_callers.py"}
+from pydantic_ai import Agent, WebSearchTool
+from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+agent = Agent(
+    '{{ anthropic:medium }}',
+    capabilities=[NativeTool(WebSearchTool())],
+    model_settings=AnthropicModelSettings(anthropic_web_tools_allowed_callers=['direct']),
+)
+```
+
+Message history from a run that used the sandbox carries its [container](#code-execution-containers), and Anthropic rejects a container on a request without code execution, so a `['direct']` request that continues such a history fails.
+
 ## Code Execution Tool Version
 
 By default, Pydantic AI chooses a compatible Anthropic code execution tool version for the selected model. You can override this with [`AnthropicModelSettings.anthropic_code_execution_tool_version`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_code_execution_tool_version] when you need a specific supported Anthropic tool version:
