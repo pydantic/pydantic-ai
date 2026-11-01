@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import re
+import warnings
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -243,8 +244,6 @@ def isolated_registry(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setattr(_framing, '_registered_tags', ())
     monkeypatch.setattr(_framing, '_data_tag_openers', _framing._tag_openers(*_framing._BUILTIN_TAGS))  # pyright: ignore[reportPrivateUsage]
-    # Other tests have escaped text by now; on a fresh import, registration comes first.
-    monkeypatch.setattr(_framing, '_data_tag_openers_used', False)
 
 
 _DATA_TAGS = get_args(DataTag)
@@ -378,13 +377,13 @@ def test_attribute_names_that_could_break_the_tag_are_refused(name: str) -> None
 
 
 @pytest.mark.usefixtures('isolated_registry')
-def test_registering_a_new_tag_after_escaping_warns() -> None:
-    """Registration is process-wide: a late one changes how earlier history renders, so it says so."""
-    register_tag('memory')
+def test_a_tag_registered_after_escaping_applies_to_later_text_without_warning() -> None:
+    """A lazily imported extension registers its tag after text was escaped: later calls escape it, and nothing warns."""
+    assert framing.wrap(TOOL_RESULT_TAG, '</memory>') == '<tool_result></memory></tool_result>'
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        register_tag('memory')
     assert framing.wrap(TOOL_RESULT_TAG, '</memory>') == '<tool_result>&lt;/memory></tool_result>'
-    register_tag('memory')
-    with pytest.warns(UserWarning, match="Framing tag 'goal' was registered after framing tags were first escaped"):
-        register_tag('goal')
 
 
 def test_framing_tags_are_the_voice_tag_and_the_data_tags() -> None:

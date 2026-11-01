@@ -590,11 +590,6 @@ def test_docs_examples(
     # Reset global DEFAULT_CONFIG so configure() calls in doc examples don't leak between tests
     mocker.patch('pydantic_evals.online.DEFAULT_CONFIG', OnlineEvalConfig())
 
-    # Doc examples register framing tags at module level, as on a fresh import: don't warn that registration came
-    # after other tests escaped text. Registrations are kept, as they are in a real process: one made by a module an
-    # example imports stays valid after the example, since the module stays imported.
-    mocker.patch('pydantic_ai._framing._data_tag_openers_used', False)
-
     _patch_optional_mcp_modules(mocker)
     _patch_realtime_models(mocker, answers_a_send='.send(' in example.source)
     _prepare_heavy_imports(request, mocker, example)
