@@ -442,7 +442,11 @@ def _comparable(text: str) -> str:
     `<`), invisible format characters (Unicode category `Cf`, such as a zero-width space or joiner) dropped, and
     Cyrillic and Greek look-alikes of the letters in the system-voice tags folded to Latin.
     """
-    text = unicodedata.normalize('NFKC', _ENTITY_CLOSER.sub('>', _ENTITY_OPENER.sub('<', text)))
+    text = _ENTITY_CLOSER.sub('>', _ENTITY_OPENER.sub('<', text))
+    if text.isascii():
+        # Every history item is checked on every request, so skip the per-character passes where they change nothing.
+        return text
+    text = unicodedata.normalize('NFKC', text)
     return ''.join(char for char in text if unicodedata.category(char) != 'Cf').translate(_CONFUSABLES)
 
 
