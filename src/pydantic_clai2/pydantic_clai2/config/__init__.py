@@ -16,6 +16,11 @@ STORED_MAIN_CHANNEL = 'bleeding'
 """`main`'s former name, still what is saved for it: older builds accept only this name."""
 ToolCallDisplay = Literal['detailed', 'grouped']
 TOOL_CALL_DISPLAYS: tuple[ToolCallDisplay, ...] = get_args(ToolCallDisplay)
+PermissionMode = Literal['full', 'auto', 'read-only']
+"""harness `PermissionMode`, spelled out so reading settings imports no harness code."""
+PERMISSION_MODES: tuple[PermissionMode, ...] = get_args(PermissionMode)
+PERMISSIONS_SETTING = 'run.permissions'
+"""The setting `/permissions` changes, defined once for every reader."""
 
 
 class Settings(BaseModel):
@@ -52,6 +57,13 @@ class Settings(BaseModel):
         description=(
             'Also start read-only calls in run_code before the model reaches them. Turns on code mode '
             'for its runs. Ctrl+X Ctrl+S toggles it.'
+        ),
+    )
+    permissions: PermissionMode = Field(
+        default='full',
+        description=(
+            'What runs without asking: full runs everything; auto asks before commands that delete, push, '
+            'install, or reach the network; read-only asks before every file write and command. /permissions sets it.'
         ),
     )
     instructions: str = Field(
@@ -182,6 +194,7 @@ SETTING_FIELDS = {
     'run.tool_retries': 'tool_retries',
     'run.code_mode': 'code_mode',
     'run.speculative_code_mode': 'speculative_code_mode',
+    'run.permissions': 'permissions',
     'run.instructions': 'instructions',
     'accounts.pool': 'pool_accounts',
     'sessions.naming': 'session_namer',
@@ -191,7 +204,15 @@ SETTING_FIELDS = {
 }
 
 STRING_SETTINGS = frozenset(
-    {'model', 'run.instructions', 'display.theme', 'display.spinner', 'display.tool_calls', 'updates.channel'}
+    {
+        'model',
+        'run.instructions',
+        'run.permissions',
+        'display.theme',
+        'display.spinner',
+        'display.tool_calls',
+        'updates.channel',
+    }
 )
 """Keys whose typed value is taken as text rather than parsed as JSON."""
 

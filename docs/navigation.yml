@@ -610,6 +610,9 @@ navigation:
           - page: "Approval Reviewer"
             path: "harness/approval-reviewer.md"
             slug: "harness/approval-reviewer"
+          - page: "Permissions"
+            path: "harness/permissions.md"
+            slug: "harness/permissions"
       - section: "Self-Extension"
         slug: ""
         contents:

@@ -18,8 +18,8 @@ from termflow.themes import PALETTES
 
 from pydantic_ai import AgentRunResult, AgentStreamEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
-from pydantic_ai_harness.ask_user import Answerer
 from pydantic_ai_harness.subagents import DelegationTasks
+from pydantic_clai2.builtin_plugins.ask_user_menu import TerminalAnswerer
 from pydantic_clai2.builtin_plugins.web.channel import SessionChannel
 from pydantic_clai2.builtin_plugins.web.dialogs import BrowserDialogs
 from pydantic_clai2.builtin_plugins.web.files import WorkspaceFiles
@@ -106,13 +106,18 @@ class WebService:
     page opened or started last while it is live, else the newest live one.
     """
 
-    def __init__(self, *, host: PluginHost[None], terminal: Answerer | None = None) -> None:
-        """`terminal` races the browser to answer the model's questions, where CLAI has a terminal."""
+    def __init__(self, *, host: PluginHost[None], terminal: TerminalAnswerer | None = None) -> None:
+        """`terminal` races the browser to answer the model's questions and approvals, where CLAI has a terminal."""
         self.host = host
         self.live: LiveSessions = host.live if host.live is not None else HostSessions(host)
         """The process's live sessions; a host built outside CLAI's loader is its own one."""
         self.hub = Hub(default=self._default_id)
-        self.answerer = BrowserAnswerer(publish=self._question, terminal=terminal, session=self._asking)
+        self.answerer = BrowserAnswerer(
+            publish=self._question,
+            terminal=terminal,
+            session=self._asking,
+            terminal_approval=None if terminal is None else terminal.ask_approval,
+        )
         """Asks the model's questions in the browsers watching the session asking."""
         self.dialogs = BrowserDialogs(publish=self.hub.publish)
         """Where the settings menus opened in this page ask their questions."""

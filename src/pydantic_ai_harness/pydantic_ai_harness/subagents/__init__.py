@@ -58,6 +58,7 @@ from pydantic_ai_harness.subagents._tasks import (
     DelegationTasks,
 )
 from pydantic_ai_harness.subagents._toolset import (
+    SELF_AGENT_NAME,
     DelegationWorkspaceRequest,
     SubAgent,
     SubAgentToolset,
@@ -77,6 +78,7 @@ if TYPE_CHECKING:
 __all__ = [
     'MAX_EVENT_TEXT_CHARS',
     'MINIMUM_EFFORT_FLOOR',
+    'SELF_AGENT_NAME',
     'SUB_AGENTS_EVENTS',
     'AgentCreatedEvent',
     'AgentOverride',
