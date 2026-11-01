@@ -144,8 +144,9 @@ is therefore cancelled before the handler returns, and `run_durable` waits `canc
 (5 by default) for it to unwind. Raise that for a workload whose cleanup is genuinely slow. If the
 timeout expires, the abandoned cleanup keeps running on a retired loop for at most the retired
 loop's grace period and can overlap the next warm invocation. At the end of the grace period the
-cleanup is cancelled again, and the retired loop stops once that cancellation has been delivered;
-a cleanup that suppresses it is left unfinished. Do not share mutable module-global
+cleanup is cancelled again, and the retired loop stops a few event-loop iterations later. A cleanup
+that suppresses that cancellation, or is still awaiting something by then, is left unfinished. Do
+not share mutable module-global
 state between the agent run and the handler. An external side effect from cleanup, such as writing
 to a store, releasing a shared lock, or emitting a metric, can also land during a later invocation.
 Loop-bound resources are isolated: the next invocation gets a fresh loop, so the abandoned cleanup

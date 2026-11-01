@@ -62,8 +62,8 @@ _LOOP_START_TIMEOUT_SECONDS = 5.0
 _RETIRED_LOOP_GRACE_SECONDS = 5.0
 """Maximum extra time a retired loop gets to finish cancellation cleanup.
 
-Whatever is still running at the deadline is cancelled, and the loop stops once that cancellation
-has been delivered.
+Whatever is still running at the deadline is cancelled, and the loop stops a few event-loop
+iterations later, whether or not that cleanup has finished by then.
 """
 
 _LOOP_LIVENESS_POLL_SECONDS = 5.0
@@ -155,8 +155,9 @@ class _AgentLoop:
 
         The retired loop gets a bounded grace period for the abandoned task's cleanup, and stops as
         soon as cleanup finishes. At the grace deadline, whatever is still running is cancelled and
-        the loop stops once that cancellation has been delivered; a cleanup that suppresses it is
-        left unfinished. The loop's own thread closes it after `run_forever()` exits.
+        the loop stops a few iterations later; a cleanup that suppresses the cancellation, or is
+        still awaiting something by then, is left unfinished. The loop's own thread closes it after
+        `run_forever()` exits.
         """
         with self._lock:
             if self._loop is not loop:
@@ -197,8 +198,8 @@ class _AgentLoop:
             cleaning = loop.create_task(clean_up())
             # Stopping at the deadline itself would end the loop before `clean_up` wakes from its
             # timed-out waits to cancel them, leaving it and the abandoned task pending on a closed
-            # loop. Its waits end at the deadline, so stop once it has finished, or at once if
-            # something else already cancelled it.
+            # loop. Its waits end at the deadline, so stop once it has finished, or at once if user
+            # code already cancelled it along with every other task on the loop.
             loop.call_at(deadline, lambda: cleaning.add_done_callback(lambda _: loop.stop()))
 
         try:

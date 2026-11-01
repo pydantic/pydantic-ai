@@ -1400,6 +1400,51 @@ class TestBridgeFailureModes:
         assert loop.is_closed()
         assert not thread.is_alive()
 
+    def test_retirement_stops_the_loop_at_the_grace_deadline_when_its_cleanup_is_cancelled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An abandoned task's cleanup that cancels every other task on its loop also cancels the
+        retirement's own cleanup, which would otherwise be what stops the loop."""
+        loops = _bridge._AgentLoop()  # pyright: ignore[reportPrivateUsage]
+        monkeypatch.setattr(_bridge, '_RETIRED_LOOP_GRACE_SECONDS', 0.05)
+        loop = loops.get()
+        thread = loops._thread  # pyright: ignore[reportPrivateUsage]
+        assert thread is not None
+        task_started = threading.Event()
+        retiring = asyncio.Event()
+        cancelled_others: list[int] = []
+        task_holder: list[asyncio.Task[None]] = []
+
+        async def cancel_every_other_task() -> None:
+            task_started.set()
+            await retiring.wait()
+            current = asyncio.current_task()
+            others = [other for other in asyncio.all_tasks() if other is not current]
+            for other in others:
+                other.cancel()
+            cancelled_others.append(len(others))
+
+        loop.call_soon_threadsafe(lambda: task_holder.append(loop.create_task(cancel_every_other_task())))
+        assert task_started.wait(timeout=_READINESS_WAIT_TIMEOUT)
+        schedule = loop.call_soon_threadsafe
+
+        def release_after(callback: Callable[..., object], *args: Any) -> asyncio.Handle:
+            # Queue the release right behind the retirement's shutdown callback, so the retirement's
+            # cleanup task already exists, well before the grace deadline, when this one runs.
+            handle = schedule(callback, *args)
+            schedule(retiring.set)
+            return handle
+
+        monkeypatch.setattr(loop, 'call_soon_threadsafe', release_after)
+
+        loops.retire(loop, task_holder[0])
+
+        thread.join(timeout=_READINESS_WAIT_TIMEOUT)
+        assert cancelled_others == [1]
+        assert task_holder[0].done()
+        assert loop.is_closed()
+        assert not thread.is_alive()
+
     def test_a_stopped_loop_is_not_handed_to_the_next_invocation(self) -> None:
         """`is_closed()` answers `False` for a stopped-but-open loop, so deciding reuse on that
         alone would hand the next invocation a loop that never runs a callback: `schedule_run`
