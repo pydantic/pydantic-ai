@@ -146,6 +146,25 @@ async def test_repeat_with_unnamed_cases():
     assert all(c.source_case_name is not None for c in report.cases)
 
 
+async def test_repeat_with_unnamed_case_name_collision_keeps_groups_separate():
+    """Repeated unnamed and explicitly named cases must not be merged by case_groups()."""
+
+    async def task(inputs: str) -> str:
+        return inputs.upper()
+
+    dataset = Dataset(
+        name='case_name_collision',
+        cases=[Case(inputs='hello'), Case(name='Case 1', inputs='world')],
+    )
+    report = await dataset.evaluate(task, name='test', progress=False, repeat=2)
+
+    groups = report.case_groups()
+    assert groups is not None
+    assert len(groups) == 2
+    assert {group.name for group in groups} == {'Case 1', 'Case 1 (2)'}
+    assert all(len(group.runs) == 2 for group in groups)
+
+
 async def test_repeat_invalid_value():
     """repeat < 1 should raise ValueError."""
 
