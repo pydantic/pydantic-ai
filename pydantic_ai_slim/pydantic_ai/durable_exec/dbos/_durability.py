@@ -25,10 +25,11 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from ._agent import DBOSParallelExecutionMode
-from ._operation_backend import DBOSBoundOperation, DBOSOperationBackend, DBOSOperationConfig
+from ._operation_backend import DBOSBoundOperation, DBOSOperationBackend, DBOSOperationConfig, SnapshotStepReservation
 from ._utils import StepConfig, guard_enqueue_in_workflow, in_workflow_code, using_durable_sleep
 
 if TYPE_CHECKING:
+    from dbos import StepReservation
     from dbos._context import DBOSContext
 
 _default_run_ids_by_step: WeakKeyDictionary[DBOSContext, dict[int, int]] = WeakKeyDictionary()
@@ -143,7 +144,9 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         self._legacy_run_workflow: Any = None
         self._legacy_run_sync_workflow: Any = None
         self._operation_backend: DBOSOperationBackend | None = None
-        self._event_step_contexts: dict[tuple[str | None, str | None], dict[int, deque[DBOSContext | None]]] = {}
+        self._event_step_reservations: dict[
+            tuple[str | None, str | None], dict[int, deque[StepReservation | SnapshotStepReservation | None]]
+        ] = {}
         self._init_legacy_context_vars()
 
     def _init_legacy_context_vars(self) -> None:
@@ -173,7 +176,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
                 tool=self._mcp_step_config,
             ),
         )
-        self._event_step_contexts = {}
+        self._event_step_reservations = {}
         self._bound_model_operations = self._bind_model_operations(
             self._operation_backend, model_id=None, model_name='default'
         )
@@ -271,16 +274,13 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         return True
 
     def _prepare_event_dispatch(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
-        reservations = self._event_step_contexts.get((DBOS.workflow_id, ctx.run_id))
+        reservations = self._event_step_reservations.get((DBOS.workflow_id, ctx.run_id))
         if reservations is not None:
             # Reserve in buffer order, before immediate listeners can yield or emit another event.
-            step_ctx = None
+            reservation = None
             if ctx.tool_call_id is not None and self.in_durable_context:
-                # TODO: Replace the private reservation API: https://github.com/dbos-inc/dbos-transact-py/issues/915
-                from dbos._context import snapshot_step_context
-
-                step_ctx = snapshot_step_context()
-            reservations.setdefault(id(event), deque()).append(step_ctx)
+                reservation = DBOS.reserve_step() if hasattr(DBOS, 'reserve_step') else SnapshotStepReservation()
+            reservations.setdefault(id(event), deque()).append(reservation)
 
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
         if self._in_legacy_workflow.get():
@@ -292,15 +292,15 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             assert handler is not None
             await handler(ctx, self._single_event_stream(event))
             return
-        reservations = self._event_step_contexts.get((DBOS.workflow_id, ctx.run_id))
+        reservations = self._event_step_reservations.get((DBOS.workflow_id, ctx.run_id))
         if reservations is not None and (pending := reservations.get(id(event))):
-            step_ctx = pending.popleft()
+            reservation = pending.popleft()
             if not pending:
                 del reservations[id(event)]
-            if step_ctx is not None:
+            if reservation is not None:
                 event_operation = self._bound_event_operation
                 assert isinstance(event_operation, DBOSBoundOperation)
-                await event_operation.call_reserved(step_ctx, EventStreamHandlerParams(event, run_context=ctx))
+                await event_operation.call_reserved(reservation, EventStreamHandlerParams(event, run_context=ctx))
                 return
         await super()._dispatch_event_stream_event(ctx, event)
 
@@ -326,10 +326,10 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             self.in_durable_context and self._event_stream_handler is not None and not self._in_legacy_workflow.get()
         )
         if reserve_events:
-            self._event_step_contexts[key] = {}
+            self._event_step_reservations[key] = {}
         try:
             with agent.parallel_tool_call_execution_mode(mode), using_durable_sleep():
                 return await handler()
         finally:
             if reserve_events:
-                self._event_step_contexts.pop(key)
+                self._event_step_reservations.pop(key)
