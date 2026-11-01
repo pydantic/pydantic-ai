@@ -964,20 +964,11 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                         for index in segment:
                             if event := await handle_call_or_result(tasks_by_index[index], index):
                                 yield event
-                except asyncio.CancelledError as e:
-                    await cancel_and_drain(*tasks_by_index.values(), msg=e.args[0] if len(e.args) != 0 else None)
-                    record_completed_results(tasks_by_index)
-                    # Drop task owners from the escaping traceback after preserving partial results.
-                    tasks_by_index.clear()
-                    index_by_task.clear()
-                    item = None
-                    raise
-                except BaseException:
-                    # Cancel any still-running sibling tasks so they don't become
-                    # orphaned asyncio tasks when a non-CancelledError exception
-                    # (e.g. RuntimeError, ConnectionError) propagates out of
-                    # handle_call_or_result().
-                    await cancel_and_drain(*tasks_by_index.values())
+                except BaseException as e:
+                    await cancel_and_drain(
+                        *tasks_by_index.values(),
+                        msg=e.args[0] if isinstance(e, asyncio.CancelledError) and len(e.args) != 0 else None,
+                    )
                     record_completed_results(tasks_by_index)
                     # Drop task owners from the escaping traceback after preserving partial results.
                     tasks_by_index.clear()
