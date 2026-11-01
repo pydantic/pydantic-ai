@@ -251,6 +251,9 @@ Gotchas:
   `BROWSER_USE_API_KEY`, outside your observability. Pass `llm` for a cheaper sub-agent model.
 - Costs: `use_vision=True` sends a screenshot every step; a judge call runs per task unless
   `BrowserAgentSettings(use_judge=False)`.
+- Usage: browser calls on Pydantic AI models (host model, model `llm`, `*_llm` settings) count toward
+  the host run's usage and `UsageLimits`; exhaustion raises `UsageLimitExceeded` from `browse_web`.
+  Native browser-use chat models (`ChatAnthropic`, `ChatBrowserUse`) are not counted.
 - Flat `sensitive_data` values require explicit-hostname `allowed_domains` (globs rejected) and are
   substituted only on allowlisted pages; prefer the domain-scoped form `{'https://site': {'key': 'value'}}`.
   Secret values, and their JSON-escaped and `quote_plus`-encoded forms, are replaced with

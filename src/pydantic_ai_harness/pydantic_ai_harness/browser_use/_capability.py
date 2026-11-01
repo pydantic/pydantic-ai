@@ -104,6 +104,9 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
     settings, including its content-redaction policy. browser-use's hosted model is opt-in: pass
     `browser_use.ChatBrowserUse()`, which needs a browser-use account and
     `BROWSER_USE_API_KEY`.
+
+    Calls on a Pydantic AI model count toward the host run's usage and are bounded
+    by its `UsageLimits`; a browser-use chat model's calls are neither.
     """
 
     browser_profile: BrowserProfile | None = field(default=None, repr=False)
