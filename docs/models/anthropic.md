@@ -631,6 +631,8 @@ See [mid-conversation system prompts](../message-history.md#mid-conversation-sys
 !!! note "Placement"
     Anthropic requires a system message to sit between a user turn and the model's reply, so Pydantic AI nudges the position when a history doesn't already satisfy that: an instruction arriving with no user content alongside it gets a minimal `.` user message to follow, and one that would land ahead of another user turn moves to just before the reply it governs. Neither changes which turn the instruction applies to — only where it sits on the wire.
 
+    Claude Haiku 5.5 can read a system message that comes right after a tool result as part of the tool output and ignore it, as [Anthropic's docs](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#placement-after-tool-results) warn. That's where a loaded [on-demand capability](../capabilities/on-demand.md)'s instructions and an instruction change during a tool loop land, so on Haiku 5.5 Pydantic AI ends those tool results with a short text block saying they end there and the system message comes from the application. The profile flag is [`anthropic_distrusts_system_after_tool_result`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_distrusts_system_after_tool_result].
+
 ### Refusals on repeated prompts
 
 Claude's `reasoning_extraction` classifier can refuse a conversation that repeats the same user prompt while the model's earlier reasoning is in context, and a refusal is more likely right after an instruction changes, whether the instructions are rewritten or [appended](../agent.md#appending-instruction-changes). Conversations with varied prompts and tool loops were unaffected in testing. The refusal propagates as a [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. If you hit it, configure a [fallback model](overview.md#fallback-model) or strip thinking from history with [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory].
@@ -907,6 +909,26 @@ Other models get a function tool, and so does every model with `ComputerUse(nati
 Claude Opus 4.7, Opus 4.8 and the Claude 5 models take screenshots up to 2576 pixels on the longer side, and earlier
 models up to 1568 pixels and about 1.15 megapixels; on a larger screen, `ComputerUse` sends them a scaled-down
 screenshot (see [Screen size](../harness/computer-use.md#screen-size)).
+
+## Web Tool Callers
+
+On models that support dynamic filtering, [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] and [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] are sent as Anthropic's `20260209` versions. By default, Anthropic lets the model call these from a server-side code execution sandbox, where it can filter results before they reach the context window. The sandbox is provided even when [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] isn't enabled, so an agent that also has its own shell or code tool has two places to run code, and the sandbox has none of the agent's files, credentials, or environment. Results the model reads in the sandbox aren't added to its context, so they come back without [citations](../citations.md).
+
+Set [`AnthropicModelSettings.anthropic_web_tools_allowed_callers`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_web_tools_allowed_callers] to `['direct']` to have the model always call both web tools itself, with no sandbox. This turns off dynamic filtering, so the model reads every result in full, and makes the tools eligible for Zero Data Retention ([Anthropic docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers)). A value you set is sent on whichever web tool version the model uses.
+
+```py {title="anthropic_web_tools_allowed_callers.py"}
+from pydantic_ai import Agent, WebSearchTool
+from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+agent = Agent(
+    '{{ anthropic:medium }}',
+    capabilities=[NativeTool(WebSearchTool())],
+    model_settings=AnthropicModelSettings(anthropic_web_tools_allowed_callers=['direct']),
+)
+```
+
+Message history from a run that used the sandbox carries its [container](#code-execution-containers), and Anthropic rejects a container on a request without code execution, so a `['direct']` request that continues such a history fails.
 
 ## Code Execution Tool Version
 

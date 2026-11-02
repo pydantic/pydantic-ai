@@ -150,7 +150,7 @@ def function_schema(  # noqa: C901
     var_positional_field: str | None = None
     decorators = _decorators.DecoratorInfos()
 
-    description, field_descriptions = doc_descriptions(original_func, sig, docstring_format=docstring_format)
+    description, field_descriptions = doc_descriptions(original_func, docstring_format=docstring_format)
     missing_param_descriptions: set[str] = set()
 
     # A `POSITIONAL_OR_KEYWORD` parameter that precedes `*args` must be passed positionally at call

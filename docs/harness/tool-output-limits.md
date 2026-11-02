@@ -15,6 +15,8 @@ the reduction is not recomputed per request.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![ToolOutputLimits runs in the after_tool_execute hook, on a tool result before it enters the history. With the default band, a 48,000-character result is spilled: the full payload is written to the workspace store under .pydantic-ai-harness/tool-output/, and the model gets a short marker with the handle and a head and tail preview. The model reads slices back with the read_tool_result tool.](../img/harness/tool-output-limits.svg)
+
 ## The problem
 
 A tool can return a payload large enough to dominate the context window: a big file read, a

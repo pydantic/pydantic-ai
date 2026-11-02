@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import KW_ONLY, dataclass, field
+from collections.abc import Awaitable, Callable
+from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeAlias, TypeVar, cast
 
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse
@@ -333,9 +333,7 @@ class DurableOperation(Generic[ParamsT, WireT, ResultT]):
         result_codec: Codec for the handler result.
         config_role: Coarse configuration category for the operation.
         invocation_label: Optional per-call display or naming label.
-        policies: Step policies by kind of invocation, the kind being what `policy_key` returns for one. An
-            invocation of a kind without one runs under the engine's config unchanged.
-        policy_key: The kind of one invocation, for `policies`.
+        policy: The step policy every invocation runs under, or `None` to run under the engine's config unchanged.
     """
 
     operation_id: DurableOperationId
@@ -345,12 +343,7 @@ class DurableOperation(Generic[ParamsT, WireT, ResultT]):
     result_codec: ResultCodec[ResultT]
     config_role: OperationConfigRole
     invocation_label: Callable[[ParamsT], str] | None = None
-    policies: Mapping[str, StepPolicy] = field(default_factory=dict[str, StepPolicy])
-    policy_key: Callable[[ParamsT], str] | None = None
-
-    def policy(self, params: ParamsT) -> StepPolicy | None:
-        """The step policy of one invocation, or `None` to run it under the engine's config unchanged."""
-        return self.policies.get(self.policy_key(params)) if self.policy_key is not None else None
+    policy: StepPolicy | None = None
 
 
 class IdentityParameterTransport(ParameterTransport[ParamsT, ParamsT], Generic[ParamsT]):

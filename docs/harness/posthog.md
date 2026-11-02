@@ -11,6 +11,8 @@ description: Connect a Pydantic AI agent to PostHog's hosted MCP server to query
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![Inside your agent, the PostHog capability connects to PostHog's hosted MCP server at mcp.posthog.com/mcp with a personal API key as a bearer token. By default the server offers one command-driven tool, which the model sees as posthog_posthog. The features option is sent as a ?features= query that limits the server to those feature groups, and read_only=True sends the x-posthog-read-only header so the server drops every tool that makes changes.](../img/harness/posthog.svg)
+
 ## Before you start
 
 Create a personal API key with the MCP Server preset ([US](https://us.posthog.com/settings/user-api-keys?preset=mcp_server) or [EU](https://eu.posthog.com/settings/user-api-keys?preset=mcp_server) Cloud). US and EU Cloud accounts use the same server. See the [provider setup](https://posthog.com/docs/model-context-protocol).

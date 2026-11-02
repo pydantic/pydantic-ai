@@ -33,6 +33,7 @@ from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
 from pydantic_clai2.ui.prompt.question_input import Paste, QuestionKey, TranscriptKey, question_input
 from pydantic_clai2.ui.rendering import theme
+from pydantic_clai2.ui.rendering.rendering import prompt_line
 from pydantic_clai2.ui.rendering.tool_output import tool_header
 
 
@@ -284,8 +285,12 @@ def render_answer(event: AskUserAnsweredEvent) -> RenderableType:
             text.append('\n')
         text.append('● ', style=theme.color(theme.MUTED))
         text.append(answer.header, style=theme.color(theme.ACCENT))
-        value = answer.custom_answer if answer.custom_answer is not None else ', '.join(answer.selected)
-        text.append(f': {value}', style=theme.color(theme.MUTED))
+        if answer.custom_answer is not None:
+            # A typed answer is the user's own words, so it reads like a prompt they typed, not muted output.
+            text.append(':\n', style=theme.color(theme.MUTED))
+            text.append_text(prompt_line(answer.custom_answer))
+        else:
+            text.append(f': {", ".join(answer.selected)}', style=theme.color(theme.MUTED))
     return text
 
 

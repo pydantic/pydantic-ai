@@ -917,7 +917,7 @@ interactions:
                     default: []
                     description: |-
                       Modifier keys held while scrolling: `ctrl`, `shift`, `alt` or `super`.
-                      
+
                       `shift` scrolls sideways in some applications.
                     items:
                       type: string
@@ -931,7 +931,7 @@ interactions:
                 additionalProperties: false
                 description: |-
                   Type text at the keyboard focus. Use `keypress` for shortcuts and special keys.
-                  
+
                   `\n` presses Enter and `\t` presses Tab. Other control characters, including `\r`, are refused when the action
                   is validated, so every backend types the same keys.
                 properties:
@@ -1405,7 +1405,7 @@ interactions:
                     default: []
                     description: |-
                       Modifier keys held while scrolling: `ctrl`, `shift`, `alt` or `super`.
-                      
+
                       `shift` scrolls sideways in some applications.
                     items:
                       type: string
@@ -1419,7 +1419,7 @@ interactions:
                 additionalProperties: false
                 description: |-
                   Type text at the keyboard focus. Use `keypress` for shortcuts and special keys.
-                  
+
                   `\n` presses Enter and `\t` presses Tab. Other control characters, including `\r`, are refused when the action
                   is validated, so every backend types the same keys.
                 properties:
@@ -1910,7 +1910,7 @@ interactions:
                     default: []
                     description: |-
                       Modifier keys held while scrolling: `ctrl`, `shift`, `alt` or `super`.
-                      
+
                       `shift` scrolls sideways in some applications.
                     items:
                       type: string
@@ -1924,7 +1924,7 @@ interactions:
                 additionalProperties: false
                 description: |-
                   Type text at the keyboard focus. Use `keypress` for shortcuts and special keys.
-                  
+
                   `\n` presses Enter and `\t` presses Tab. Other control characters, including `\r`, are refused when the action
                   is validated, so every backend types the same keys.
                 properties:
@@ -2402,7 +2402,7 @@ interactions:
                     default: []
                     description: |-
                       Modifier keys held while scrolling: `ctrl`, `shift`, `alt` or `super`.
-                      
+
                       `shift` scrolls sideways in some applications.
                     items:
                       type: string
@@ -2416,7 +2416,7 @@ interactions:
                 additionalProperties: false
                 description: |-
                   Type text at the keyboard focus. Use `keypress` for shortcuts and special keys.
-                  
+
                   `\n` presses Enter and `\t` presses Tab. Other control characters, including `\r`, are refused when the action
                   is validated, so every backend types the same keys.
                 properties:

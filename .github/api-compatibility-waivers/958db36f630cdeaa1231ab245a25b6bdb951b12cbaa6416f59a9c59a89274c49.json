@@ -1,0 +1,5 @@
+{
+  "against": "v2.61.0",
+  "reason": "Adds `CustomEvent` and `CapabilityEvent` to `RealtimeEvent`, since a session now yields the events emitted with `RunContext.emit`; every existing member is unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11369"
+}
