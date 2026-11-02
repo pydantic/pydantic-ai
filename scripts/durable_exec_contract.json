@@ -7192,8 +7192,7 @@
         "override"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.act",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::WorkspaceCall.execute"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.act"
       ]
     },
     "Workspace.attached": {
@@ -7232,8 +7231,7 @@
         "override"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.cursor_position",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::WorkspaceCall.execute"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.cursor_position"
       ]
     },
     "Workspace.display_size": {
@@ -7379,8 +7377,7 @@
         "override"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.scaled_screenshot",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::WorkspaceCall.execute"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.scaled_screenshot"
       ]
     },
     "Workspace.screenshot": {
@@ -7392,8 +7389,7 @@
         "override"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.screenshot",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::WorkspaceCall.execute"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.screenshot"
       ]
     },
     "Workspace.stat": {
@@ -7444,8 +7440,7 @@
         "override"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.zoom",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::WorkspaceCall.execute"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.zoom"
       ]
     },
     "WrapperWorkspace": {
