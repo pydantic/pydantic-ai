@@ -635,7 +635,7 @@ See [mid-conversation system prompts](../message-history.md#mid-conversation-sys
 
 ### Refusals on repeated prompts
 
-Claude's `reasoning_extraction` classifier can refuse a conversation that repeats the same user prompt while the model's earlier reasoning is in context, and a refusal is more likely right after an instruction changes, whether the instructions are rewritten or [appended](../agent.md#appending-instruction-changes). Conversations with varied prompts and tool loops were unaffected in testing. The refusal propagates as a [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. If you hit it, configure a [fallback model](overview.md#fallback-model) or strip thinking from history with [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory].
+Claude's `reasoning_extraction` classifier can refuse a conversation that repeats the same user prompt while the model's earlier reasoning is in context, and a refusal is more likely right after an instruction changes, whether the instructions are rewritten or [appended](../agent.md#appending-instruction-changes). Conversations with varied prompts and tool loops were unaffected in testing. The refusal propagates as a [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. If you hit it, add [`ModelFallback`](../capabilities/model-fallback.md), which falls back to another model on such a refusal by default, or strip thinking from history with [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory].
 
 ### Turn-scoped system messages
 
