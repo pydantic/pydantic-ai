@@ -193,7 +193,7 @@ const isSession = (value: unknown): boolean =>
 const isWorktree = (value: unknown): boolean =>
   isObject(value) && hasStrings(value, ['label']) && Array.isArray(value.sessions) && value.sessions.every(isSession)
 
-/** Projects typed where a wrong type would throw while the cached list renders, before it is fetched again. */
+/** Whether a cached project list has the right types wherever a wrong one would crash rendering before the list is fetched again. */
 export const isList = (value: unknown): value is Project[] =>
   Array.isArray(value) &&
   value.every(
