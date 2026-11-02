@@ -232,29 +232,35 @@ class TestPixeltableMemoryStoreSchema:
 class TestPixeltableMemoryStoreRecovery:
     """A writer that crashed between its pending receipt and completing it."""
 
-    @pytest.mark.parametrize('mutation', ['write', 'delete'])
-    async def test_mutation_that_landed_is_replayed(
-        self, store: PixeltableMemoryStore, table_name: str, monkeypatch: pytest.MonkeyPatch, mutation: str
+    async def test_write_that_landed_is_replayed(
+        self, store: PixeltableMemoryStore, table_name: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         base = await store.write('a.md', 'base', expected_version=None)
-        operation = MemoryOperation(id=f'crash-after-{mutation}', fingerprint=mutation)
+        operation = MemoryOperation(id='crash-after-write', fingerprint='write:a.md:next')
         _intercept(monkeypatch, store.table, 'update', receipt=True, around=_crash)
         with pytest.raises(RuntimeError, match='crashed'):
-            if mutation == 'write':
-                await store.write('a.md', 'next', expected_version=base.version, operation=operation)
-            else:
-                await store.delete('a.md', expected_version=base.version, operation=operation)
+            await store.write('a.md', 'next', expected_version=base.version, operation=operation)
 
         restarted = PixeltableMemoryStore(table_name=table_name)
         replay = await restarted.get_operation(operation)
         file = await restarted.read('a.md', max_chars=10)
-        assert replay is not None
-        assert (replay.replayed, replay.existed) == (True, True)
-        if mutation == 'write':
-            assert file is not None
-            assert (file.content, file.version) == ('next', replay.version)
-        else:
-            assert file is None
+        assert file is not None
+        assert replay == MemoryMutation(version=file.version, replayed=True, existed=True)
+        assert file.content == 'next'
+
+    async def test_delete_that_landed_is_not_replayed(
+        self, store: PixeltableMemoryStore, table_name: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Absence cannot tell this delete from another writer's, so the retry finds the file gone instead.
+        base = await store.write('a.md', 'base', expected_version=None)
+        operation = MemoryOperation(id='crash-after-delete', fingerprint='delete:a.md')
+        _intercept(monkeypatch, store.table, 'update', receipt=True, around=_crash)
+        with pytest.raises(RuntimeError, match='crashed'):
+            await store.delete('a.md', expected_version=base.version, operation=operation)
+
+        restarted = PixeltableMemoryStore(table_name=table_name)
+        assert await restarted.get_operation(operation) is None
+        assert await restarted.read('a.md', max_chars=10) is None
 
     async def test_mutation_that_never_landed_is_applied_by_the_retry(
         self, store: PixeltableMemoryStore, table_name: str, monkeypatch: pytest.MonkeyPatch
@@ -274,7 +280,7 @@ class TestPixeltableMemoryStoreRecovery:
             version=retried.version, replayed=True, existed=False
         )
 
-    async def test_pending_receipt_does_not_block_the_operation_after_another_writer(
+    async def test_pending_receipt_is_dropped_once_another_writer_moves_the_path(
         self, store: PixeltableMemoryStore, table_name: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         operation = MemoryOperation(id='crash-then-other-writer', fingerprint='write:a.md:hello')
@@ -291,13 +297,14 @@ class TestPixeltableMemoryStoreRecovery:
         assert file is not None
         assert file.content == 'other'
 
-    async def test_write_after_a_lost_receipt_still_checks_the_version(self, store: PixeltableMemoryStore) -> None:
+    async def test_write_with_a_lost_receipt_is_replayed_from_the_file_row(self, store: PixeltableMemoryStore) -> None:
         operation = MemoryOperation(id='run-1:call-1', fingerprint='write:notes/main.md:one')
-        await store.write('notes/main.md', 'one', expected_version=None, operation=operation)
+        first = await store.write('notes/main.md', 'one', expected_version=None, operation=operation)
         table = store.table
         table.delete(where=table.path == f'__op__/{operation.id}')
-        with pytest.raises(MemoryConflictError):
-            await store.write('notes/main.md', 'one', expected_version=None, operation=operation)
+        # The file row records the operation id with the content, so the write is not applied again.
+        replay = await store.write('notes/main.md', 'one', expected_version=first.version, operation=operation)
+        assert replay == MemoryMutation(version=first.version, replayed=True, existed=True)
 
     async def test_landed_mutation_is_replayed_after_another_writer(
         self, store: PixeltableMemoryStore, table_name: str, monkeypatch: pytest.MonkeyPatch
