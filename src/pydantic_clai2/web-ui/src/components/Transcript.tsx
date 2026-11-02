@@ -47,17 +47,29 @@ function Thumbnail({ id }: { id: string }) {
 }
 
 /** Rewind the conversation to the prompt `runId` started and send `text` in its place; `false` when it failed. */
-export type Rewind = (runId: string, text: string) => Promise<boolean>
+export type Rewind = (runId: string, text: string | null) => Promise<boolean>
 
 const REWIND_NOTE = 'Later messages are removed; files are not restored.'
 
 /** A sent prompt; with `rewind`, Edit and Retry send it again from here once no turn runs. */
 function UserEntry({ entry, rewind, running }: { entry: Item; rewind?: Rewind; running: boolean }) {
-  const [draft, setDraft] = useState<string | null>(null)
   const runId = rewind ? entry.run_id : null
-  const send = async (text: string) => {
-    if (runId && (await rewind?.(runId, text))) setDraft(null)
+  // Kept by the prompt it edits: a snapshot that puts another prompt in this row drops it.
+  const [editing, setEditing] = useState<{ runId: string; text: string } | null>(null)
+  const draft = editing && editing.runId === runId ? editing.text : null
+  const [sending, setSending] = useState(false)
+  const blocked = running || sending
+  /** Send `text` in the prompt's place; `null` sends it again as it was saved. */
+  const send = async (text: string | null) => {
+    if (!runId || blocked) return
+    setSending(true)
+    try {
+      if (await rewind?.(runId, text)) setEditing(null)
+    } finally {
+      setSending(false)
+    }
   }
+  const setDraft = (text: string | null) => setEditing(text === null || !runId ? null : { runId, text })
   const images = entry.images.length > 0 && (
     <div className={`user-images ${entry.text || draft !== null ? 'captioned' : ''}`}>
       {entry.images.map((id, index) => (
@@ -80,7 +92,7 @@ function UserEntry({ entry, rewind, running }: { entry: Item; rewind?: Rewind; r
               if (event.key === 'Escape') {
                 event.preventDefault()
                 setDraft(null)
-              } else if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && !running) {
+              } else if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
                 event.preventDefault()
                 void send(draft)
               }
@@ -91,7 +103,7 @@ function UserEntry({ entry, rewind, running }: { entry: Item; rewind?: Rewind; r
             <button className="ghost" onClick={() => setDraft(null)}>
               Cancel
             </button>
-            <button className="primary" disabled={running} onClick={() => void send(draft)}>
+            <button className="primary" disabled={blocked} onClick={() => void send(draft)}>
               Send
             </button>
           </div>
@@ -106,7 +118,7 @@ function UserEntry({ entry, rewind, running }: { entry: Item; rewind?: Rewind; r
             className="icon-button"
             title={`Edit and send from here. ${REWIND_NOTE}`}
             aria-label="Edit prompt"
-            disabled={running}
+            disabled={blocked}
             onClick={() => setDraft(entry.text)}
           >
             <PencilIcon size={13} />
@@ -115,8 +127,8 @@ function UserEntry({ entry, rewind, running }: { entry: Item; rewind?: Rewind; r
             className="icon-button"
             title={`Send again from here. ${REWIND_NOTE}`}
             aria-label="Retry prompt"
-            disabled={running}
-            onClick={() => void send(entry.text)}
+            disabled={blocked}
+            onClick={() => void send(null)}
           >
             <RetryIcon size={13} />
           </button>

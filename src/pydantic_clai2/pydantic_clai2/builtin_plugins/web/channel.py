@@ -314,8 +314,10 @@ class SessionChannel:
         self.session.remove_queued(input_id)
         return True
 
-    async def rewind(self, run_id: str, text: str) -> None:
+    async def rewind(self, run_id: str, text: str | None) -> None:
         """Drop the turn `run_id` started and every later one, then send `text` with that prompt's images in its place.
+
+        `None` sends the prompt again as it was saved, as Retry does.
 
         As the terminal's rewind, files and tool side effects are not undone.
         """
@@ -333,7 +335,7 @@ class SessionChannel:
         )
         if point is None:
             raise LookupError('That prompt can no longer be edited: it left the conversation or predates a compaction.')
-        text = _entered(text, images=point.images)
+        text = _entered(point.text if text is None else text, images=point.images)
         if is_command_input(expand_bare_command(text)):
             raise ValueError('Send a prompt in its place, not a /command.')
         await conversation.commit_messages(messages[: point.message_index])

@@ -390,6 +390,7 @@ Routes for one live session, `{id}` its conversation ID; each answers 404 when i
 | `POST /api/sessions/{id}/steer` | Alt+Enter: send a prompt to its running turn, body `{"text": "…"}`; answers `{"steered": true, "menu": null}`, or, when nothing takes it (no turn runs, or a `/command`), enters it as `/input` does and answers `{"steered": false, "menu": …}` |
 | `PUT /api/sessions/{id}/queue/{input_id}` | rewrite a queued input in place, body `{"text": "…"}`; 404 once it ran or was removed |
 | `DELETE /api/sessions/{id}/queue/{input_id}` | remove a queued input; 404 once it ran or was removed |
+| `POST /api/sessions/{id}/rewind/{run_id}` | Edit or Retry: drop the turn that `run_id` (a `user` item's `run_id`) started and every later one, then send body `{"text": "…"}` with that prompt's images in its place, or the prompt as saved for `{"text": null}`; answers 204, 400 for a `/command` or `!` line, 404 once that prompt can no longer be rewound to, 409 while the session is busy |
 | `POST /api/sessions/{id}/queue/{input_id}/steer` | send a queued prompt to the running turn, taking it out of the queue; answers `{"steered": false}` and leaves it queued when nothing takes it |
 | `GET /api/sessions/{id}/complete?text=…` | Tab completions |
 | `GET /api/sessions/{id}/files?q=…` | the composer's `@` picker: the 50 files and folders in the session's folder that best match `q` (Git's tracked and unignored files in a checkout), each a completion of `@q` |
@@ -416,7 +417,7 @@ choosing a model in session B's `/model` menu switches B alone, and B's `/effort
 CLAI shares, such as `display.*`, still reach every session, as typing `/set` does. Plugin menus
 (`/api/plugins/…`) and dialogs belong to the page.
 
-The unprefixed routes (`/api/state`, `/api/images/…`, `/api/changes`, `/api/input`, `/api/steer`, `/api/queue/…`, `/api/interrupt`,
+The unprefixed routes (`/api/state`, `/api/images/…`, `/api/changes`, `/api/input`, `/api/steer`, `/api/queue/…`, `/api/rewind/…`, `/api/interrupt`,
 `/api/complete`, `/api/files`, `/api/model`, `/api/switch`, `/api/dialogs/…`, `/api/commands/…`) and a `/ws` without `watch` keep working on the
 default session: the one this page last opened or started while it stays live, else the most recently opened.
 `/api/questions/…` answers any live session's question by its ID, as before. `web/client.py` and the

@@ -16,9 +16,15 @@ from tests.clai2.test_web_sessions import Fleet
 
 
 async def echo(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    """Answer with the prompt and how many requests this model has answered, so a repeated prompt answers anew."""
     request = messages[-1]
     assert isinstance(request, ModelRequest)
-    yield ' '.join(f'Echo {part.content}' for part in request.parts if isinstance(part, UserPromptPart))
+    ANSWERED.append(request)
+    prompt = ' '.join(str(part.content) for part in request.parts if isinstance(part, UserPromptPart))
+    yield f'Echo {prompt} #{len(ANSWERED)}'
+
+
+ANSWERED: list[ModelRequest] = []
 
 
 @dataclass
@@ -59,7 +65,7 @@ async def test_edit_and_retry_go_on_from_an_earlier_prompt(page: Page, rewind_ui
         await expect(composer).to_be_enabled()
         await composer.fill(prompt)
         await composer.press('Enter')
-        await expect(answers.filter(has_text=f'Echo {prompt}')).to_have_count(1)
+        await expect(answers.filter(has_text=f'Echo {prompt} #')).to_have_count(1)
         await expect(activity).to_have_text('ready')
 
     first = page.locator('.user-row').first
@@ -71,7 +77,7 @@ async def test_edit_and_retry_go_on_from_an_earlier_prompt(page: Page, rewind_ui
     async with page.expect_response(f'**/api/sessions/{rewind_ui.session}/rewind/*') as rewound:
         await editor.press('Enter')
     assert (await rewound.value).status == 204
-    await expect(answers).to_have_text(["Echo A'"])
+    await expect(answers).to_have_text(["Echo A' #3"])
     await expect(prompts).to_have_text(["A'"])
     await expect(activity).to_have_text('ready')
 
@@ -80,6 +86,6 @@ async def test_edit_and_retry_go_on_from_an_earlier_prompt(page: Page, rewind_ui
     async with page.expect_response(f'**/api/sessions/{rewind_ui.session}/rewind/*') as retried:
         await first.get_by_role('button', name='Retry prompt').click()
     assert (await retried.value).status == 204
-    await expect(answers).to_have_text(["Echo A'"])
+    await expect(answers).to_have_text(["Echo A' #4"])
     await expect(prompts).to_have_text(["A'"])
     await expect(activity).to_have_text('ready')
