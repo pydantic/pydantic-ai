@@ -584,8 +584,8 @@ def test_render_at_most_once_operation_raises_a_shorter_configured_timeout_and_k
     app = RecordingWorkflows()
     durability = RenderWorkflows(app, capability_options=Options(timeout_seconds=configured))
     Agent(TestModel(), name='compat', capabilities=[durability, AtMostOnceCapability()])
-    # Render task options are fixed per task, so an operation with a step policy has its own task.
-    send = app.options['compat__capability__once.send.send']
+    # Render task options are fixed when the task is registered, so the step policy goes into them.
+    send = app.options['compat__capability__once.send']
     assert (send.retry and send.retry.max_retries, send.timeout_seconds) == (0, expected)
 
 

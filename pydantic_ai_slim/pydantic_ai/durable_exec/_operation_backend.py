@@ -146,7 +146,7 @@ class CallableOperationBackend(DurableOperationBackend[ConfigT]):
                 if explicit_config is not None
                 else self._config.base(operation.config_role, operation_id=operation.operation_id)
             )
-            if explicit_config is None and (policy := operation.policy(params)) is not None:
+            if explicit_config is None and (policy := operation.policy) is not None:
                 resolved_config = self.apply_policy(resolved_config, policy)
             cache_key = operation.cache_identity.project(params)
 
