@@ -350,26 +350,28 @@ The `prepare_tools` function should be of type [`ToolsPrepareFunc`][pydantic_ai.
     The list of tool definitions passed to `prepare_tools` includes both regular function tools and tools from any [toolsets](toolsets.md) registered on the agent, but not [output tools](output.md#tool-output).
 To modify output tools, you can set a `prepare_output_tools` function instead.
 
-Here's an example that makes all tools strict if the model is an OpenAI model:
+Here's an example that makes all tools strict if the model's [profile](models/overview.md#inspecting-a-models-profile) says it supports JSON schema output, with [`supports_json_schema_output`][pydantic_ai.profiles.ModelProfile.supports_json_schema_output]. That flag describes native structured output, not strict tool definitions; it stands in here because there's no provider-agnostic strict-tools flag:
 
 ```python {title="agent_prepare_tools_customize.py" noqa="I001"}
 from dataclasses import replace
 
 from pydantic_ai import Agent, RunContext, ToolDefinition
 from pydantic_ai.capabilities import PrepareTools
+from pydantic_ai.models import Model
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.profiles import ModelProfile
 
 
-async def turn_on_strict_if_openai(
+async def turn_on_strict_if_supported(
     ctx: RunContext, tool_defs: list[ToolDefinition]
 ) -> list[ToolDefinition]:
-    if ctx.model.system == 'openai':
+    if isinstance(ctx.model, Model) and ctx.model.profile.get('supports_json_schema_output', False):
         return [replace(tool_def, strict=True) for tool_def in tool_defs]
     return tool_defs
 
 
 test_model = TestModel()
-agent = Agent(test_model, capabilities=[PrepareTools(turn_on_strict_if_openai)])
+agent = Agent(test_model, capabilities=[PrepareTools(turn_on_strict_if_supported)])
 
 
 @agent.tool_plain
@@ -381,11 +383,10 @@ agent.run_sync('testing...')
 assert test_model.last_model_request_parameters is not None
 assert test_model.last_model_request_parameters.function_tools[0].strict is None
 
-# Set the system attribute of the test_model to 'openai'
-test_model._system = 'openai'
-
-agent.run_sync('testing with openai...')
-assert test_model.last_model_request_parameters.function_tools[0].strict
+structured_model = TestModel(profile=ModelProfile(supports_json_schema_output=True))
+agent.run_sync('testing with JSON schema output...', model=structured_model)
+assert structured_model.last_model_request_parameters is not None
+assert structured_model.last_model_request_parameters.function_tools[0].strict
 ```
 
 _(This example is complete, it can be run "as is")_
