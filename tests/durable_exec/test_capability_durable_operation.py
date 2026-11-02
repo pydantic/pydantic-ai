@@ -31,7 +31,7 @@ from pydantic_ai.capabilities import (
     durable_operation,
 )
 from pydantic_ai.capabilities.abstract import AgentModel
-from pydantic_ai.durable_exec import DurabilityEngineSpec
+from pydantic_ai.durable_exec import DurabilityEngineSpec, StepPolicy
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._capability_operation import (
     CapabilityMethodDeclaration,
@@ -407,6 +407,59 @@ def test_a_wrapped_durable_engine_still_counts() -> None:
             name='wrapped_engine',
             capabilities=[_BindLoggingDurability(bound).prefix_tools('p'), _OtherEngineDurability(bound)],
         )
+
+
+class PolicyRecordingDurability(RecordingDurability):
+    def __init__(self) -> None:
+        super().__init__()
+        self.policies: list[StepPolicy] = []
+
+    def get_durable_operation_backend(self) -> CallableOperationBackend[ToolConfig]:
+        return _PolicyRecordingBackend(self)
+
+
+class _PolicyRecordingBackend(_RecordingBackend):
+    def __init__(self, durability: PolicyRecordingDurability) -> None:
+        super().__init__(durability)
+        self._policies = durability.policies
+
+    def apply_policy(self, config: ToolConfig, policy: StepPolicy) -> ToolConfig:
+        self._policies.append(policy)
+        return config
+
+
+class SendsOnce(AbstractCapability[Any]):
+    id = 'sends'
+
+    async def before_run(self, ctx: RunContext[Any]) -> None:
+        await self.send(ctx)
+        await self.look(ctx)
+
+    @durable_operation('send', policy=StepPolicy(repeatable=False, timeout=900))
+    async def send(self, ctx: RunContext[Any]) -> None:
+        pass
+
+    @durable_operation('look')
+    async def look(self, ctx: RunContext[Any]) -> None:
+        pass
+
+
+async def test_a_capability_operation_runs_under_the_step_policy_it_declares() -> None:
+    durability = PolicyRecordingDurability()
+    agent = Agent(TestModel(), name='policies', capabilities=[SendsOnce(), durability])
+    await agent.run('go')
+    # Both ran as units; only `send` declared a policy, so only it reached the engine with one.
+    names = [name for name, _ in durability.calls if '__capability__' in name]
+    assert names == ['policies__capability__sends.send', 'policies__capability__sends.look']
+    assert durability.policies == [StepPolicy(repeatable=False, timeout=900)]
+
+
+async def test_an_engine_without_retries_or_timeouts_runs_a_policy_operation_under_its_own_config() -> None:
+    durability = RecordingDurability()
+    agent = Agent(TestModel(), name='plain', capabilities=[SendsOnce(), durability])
+    await agent.run('go')
+    names = [name for name, _ in durability.calls if '__capability__' in name]
+    assert names == ['plain__capability__sends.send', 'plain__capability__sends.look']
 
 
 async def test_capability_operation_is_direct_outside_durable_context() -> None:

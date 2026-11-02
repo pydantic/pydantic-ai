@@ -294,6 +294,9 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     )
     if thinking_levels is not None:
         profile['google_thinking_levels'] = thinking_levels
+    if is_modern_gemini and not is_image_model:
+        # Gemini 3 points accurately on a 0-999 grid but not in pixels; Gemini 2.5 is no better on the grid.
+        profile['computer_use_coordinate_grid'] = 1000
     return profile
 
 

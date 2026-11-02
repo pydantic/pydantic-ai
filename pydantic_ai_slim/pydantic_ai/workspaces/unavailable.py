@@ -36,12 +36,12 @@ class UnavailableWorkspace(WorkspaceBackend, SupportsCommands):
 
 
 NO_WORKSPACE = UnavailableWorkspace(
-    "No workspace is attached to this run. Attach `capabilities=[LocalWorkspace('.')]` to the agent, or pass "
-    "`workspace=LocalWorkspaceBackend('.')` to the run method, to use the local machine (unsafe: commands and "
-    'file operations run with the full permissions of this process); attach another capability that supplies a '
-    'workspace through its `get_workspace` hook; or, with a capability that can reconnect to an existing '
-    'environment, pass its `WorkspaceRef`. '
-    'See https://pydantic.dev/docs/ai/workspace/ for details.'
+    "No workspace is attached to this run. Attach `capabilities=[LocalWorkspace('.')]` to the agent to use the local "
+    'machine (unsafe: commands and file operations run with the full permissions of this process), or another '
+    'capability that supplies a workspace through its `get_workspace` hook. Outside durable execution, a run can '
+    "also take a backend directly, such as `workspace=LocalWorkspaceBackend('.')`; under a durable engine, attach "
+    'the capability when the agent is constructed, and `workspace=` only names an environment it can reconnect to, '
+    'such as a `WorkspaceRef`. See https://pydantic.dev/docs/ai/workspace/ for details.'
 )
 """The backend of a run with no workspace. Unlike an `UnavailableWorkspace` a caller passes, it is not a choice:
 a child run handed it still selects its own workspace."""

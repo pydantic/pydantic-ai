@@ -151,6 +151,21 @@ class ModelProfile(TypedDict, total=False):
     See `supports_image_input` for how the file-input flags are used.
     """
 
+    computer_use_coordinate_grid: int
+    """The size of the grid the model points on instead of pixels. Default: unset, meaning pixels.
+
+    With `1000`, a computer-use capability, such as Pydantic AI Harness's `ComputerUse`, asks the model for
+    coordinates from 0 to 999 across the screenshot and scales them to pixels. Gemini 3 profiles set it.
+    """
+
+    computer_use_screenshot_limit: tuple[int, int]
+    """The largest screenshot the model takes, as `(longest side, pixel count)`. Default: unset, meaning no limit.
+
+    A computer-use capability, such as Pydantic AI Harness's `ComputerUse`, sends a larger screen scaled down to fit
+    and scales the model's coordinates back up. Claude profiles set it: Claude refuses a larger image, or, on its
+    earlier computer use tools, is sent it scaled down and answers in the smaller image's pixels.
+    """
+
     supports_inline_system_prompts: bool
     """Whether the provider's API accepts `SystemPromptPart`s inline at any position. Default: `False`.
 

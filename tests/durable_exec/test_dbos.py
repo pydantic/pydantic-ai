@@ -3179,6 +3179,40 @@ async def test_dbos_dynamic_tool_model_retry_crosses_step_without_engine_retries
     assert calls == 2
 
 
+async def test_dbos_at_most_once_capability_step_runs_once_despite_step_retries(dbos: DBOS) -> None:
+    """A capability step whose policy says it isn't repeatable fails on its first error, whatever the step config."""
+    from pydantic_ai.capabilities import durable_operation
+    from pydantic_ai.durable_exec import StepPolicy
+
+    calls = 0
+
+    class SendsOnce(AbstractCapability[object]):
+        id = 'sends'
+
+        async def before_run(self, ctx: RunContext[object]) -> None:
+            await self.send(ctx)
+
+        @durable_operation('send', policy=StepPolicy(repeatable=False))
+        async def send(self, ctx: RunContext[object]) -> None:
+            nonlocal calls
+            calls += 1
+            raise RuntimeError('lost')
+
+    agent = Agent(
+        TestModel(),
+        name='at_most_once_agent',
+        capabilities=[SendsOnce(), DBOSDurability(mcp_step_config=StepConfig(retries_allowed=True, max_attempts=3))],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('go')
+
+    with pytest.raises(RuntimeError, match='lost'):
+        await run_workflow()
+    assert calls == 1
+
+
 @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_dbos_mcp_step_rejects_enqueue_in_workflow(dbos: DBOS, monkeypatch: pytest.MonkeyPatch) -> None:
     """The MCP step path guards enqueue too: a `process_tool_call=` hook receives the run context."""

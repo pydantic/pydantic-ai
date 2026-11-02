@@ -16,6 +16,7 @@ from pydantic_ai.workspaces import (
     WorkspaceReadOnlyError,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
+    WorkspaceUnsupportedActionError,
 )
 
 from ._types import TaskConfig
@@ -34,6 +35,7 @@ _NON_RETRYABLE_ERRORS = (
     WorkspaceTimeoutError,
     WorkspaceOutputLimitError,
     WorkspaceReadOnlyError,
+    WorkspaceUnsupportedActionError,
     WorkspaceUnavailableError,
 )
 

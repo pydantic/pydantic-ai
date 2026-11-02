@@ -3,8 +3,9 @@
 Inside a durable container, [`RunContext.workspace`][pydantic_ai.tools.RunContext.workspace] is a
 `DurableWorkspace`: every call made in workflow code (capability hooks, output functions,
 `result.workspace`) runs as the durability capability's workspace operation, so it is journaled and
-never repeated on replay. Inside a durable unit (a tool, a `@durable_operation`) calls go straight to
-the workspace, rebuilt from the run's `WorkspaceRef`.
+never repeated on replay. Display calls other than `display_size` raise a `UserError` there instead.
+Inside a durable unit (a tool, a `@durable_operation`) calls go straight to the workspace, rebuilt from
+the run's `WorkspaceRef`.
 
 An `ensure` call runs first, once per run: it creates or attaches to the environment and journals its
 ref and working directory, so every later unit, parallel tools included, reattaches to that one
@@ -16,7 +17,15 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, Never, TypeAlias, assert_never, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    Never,
+    TypeAlias,
+    assert_never,
+    cast,
+)
 
 import anyio
 from pydantic import ConfigDict
@@ -29,7 +38,10 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import (
     CommandResult,
+    ComputerAction,
     FileEntry,
+    Point,
+    Region,
     Workspace,
     WorkspaceBackend,
     WorkspaceCommand,
@@ -39,6 +51,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
+    WorkspaceUnsupportedActionError,
     WrapperWorkspace,
 )
 
@@ -55,9 +68,29 @@ WORKSPACE_OPERATION_ID = CapabilityOperationId('workspace', operation='call')
 
 # Base64 for `bytes`: Temporal's payload converter serializes by runtime type, ignoring annotations.
 _BYTES_CONFIG = ConfigDict(ser_json_bytes='base64', val_json_bytes='base64')
+# Calls and results refuse fields they don't have, so an older worker fails a newer call instead of dropping its
+# options.
+# So that only records using a new field fail: a field added later is left out of serialized data while it holds its
+# default (`Field(exclude_if=...)`), and a new result field never changes what an existing one means (JPEG bytes
+# would get their own field, not `data`), since engines that pickle results skip the check.
+_JOURNAL_CONFIG = ConfigDict(ser_json_bytes='base64', val_json_bytes='base64', extra='forbid')
 
+# Of the display methods only `display_size` is journaled, for code such as a tool's `prepare` that reads it in
+# workflow code. The rest run inside a durable unit, such as a capability running each tool call that clicks and
+# looks as one `@durable_operation`, so a display fact added later never adds a journaled step that recorded
+# histories lack.
 WorkspaceMethod: TypeAlias = Literal[
-    'ensure', 'run', 'read_bytes', 'write_bytes', 'stat', 'list_dir', 'make_dir', 'remove', 'exists', 'realpath'
+    'ensure',
+    'run',
+    'read_bytes',
+    'write_bytes',
+    'stat',
+    'list_dir',
+    'make_dir',
+    'remove',
+    'exists',
+    'realpath',
+    'display_size',
 ]
 
 
@@ -67,6 +100,8 @@ class WorkspaceCallError:
 
     type: str
     message: str
+    bases: tuple[str, ...] = ()
+    """The names of `type`'s base classes, nearest first, so a version that doesn't know `type` raises a base."""
     stdout: str = ''
     stderr: str = ''
     limit: int | None = None
@@ -81,7 +116,7 @@ class WorkspaceCallError:
     reason: str | None = None
 
 
-@pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
+@pydantic_dataclass(frozen=True, kw_only=True, config=_JOURNAL_CONFIG)
 class WorkspaceCallResult:
     """The journaled outcome of a call: the field for the method's return shape, or the error."""
 
@@ -90,11 +125,12 @@ class WorkspaceCallResult:
     flag: bool = False
     entries: list[FileEntry] = field(default_factory=list[FileEntry])
     command: CommandResult | None = None
+    size: tuple[int, int] | None = None
     ref: WorkspaceRef | None = None
     error: WorkspaceCallError | None = None
 
 
-@pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
+@pydantic_dataclass(frozen=True, kw_only=True, config=_JOURNAL_CONFIG)
 class WorkspaceCall:
     """One `Workspace` method call: the method and the arguments it takes."""
 
@@ -142,6 +178,8 @@ class WorkspaceCall:
                 return WorkspaceCallResult(flag=await workspace.exists(self.path))
             case 'realpath':
                 return WorkspaceCallResult(text=await workspace.realpath(self.path))
+            case 'display_size':
+                return WorkspaceCallResult(size=await workspace.display_size())
         assert_never(self.method)
 
 
@@ -166,6 +204,7 @@ _EXPECTED_ERRORS: tuple[type[Exception], ...] = (
     WorkspaceUnavailableError,
     WorkspaceReadOnlyError,
     WorkspaceOutputLimitError,
+    WorkspaceUnsupportedActionError,
     WorkspaceError,
     FileNotFoundError,
     NotADirectoryError,
@@ -191,10 +230,12 @@ def error_as_data(error: Exception) -> WorkspaceCallError | None:
     ):
         # Transient OS failures belong to the engine's retry path, not the journaled result.
         return None
+    bases = tuple(base.__name__ for base in error_type.__mro__[1:] if issubclass(base, Exception))
     if isinstance(error, OSError) and not isinstance(error, WorkspaceError):
         return WorkspaceCallError(
             type=error_type.__name__,
             message=str(error),
+            bases=bases,
             errno=error.errno,
             strerror=error.strerror,
             filename=error.filename,
@@ -204,6 +245,7 @@ def error_as_data(error: Exception) -> WorkspaceCallError | None:
         return WorkspaceCallError(
             type=error_type.__name__,
             message=str(error),
+            bases=bases,
             encoding=error.encoding,
             object=error.object,
             start=error.start,
@@ -212,18 +254,27 @@ def error_as_data(error: Exception) -> WorkspaceCallError | None:
         )
     if isinstance(error, WorkspaceOutputLimitError):
         return WorkspaceCallError(
-            type=error_type.__name__, message=str(error), limit=error.limit, stdout=error.stdout, stderr=error.stderr
+            type=error_type.__name__,
+            message=str(error),
+            bases=bases,
+            limit=error.limit,
+            stdout=error.stdout,
+            stderr=error.stderr,
         )
     if isinstance(error, WorkspaceTimeoutError):
         return WorkspaceCallError(
-            type=error_type.__name__, message=str(error), stdout=error.stdout, stderr=error.stderr
+            type=error_type.__name__, message=str(error), bases=bases, stdout=error.stdout, stderr=error.stderr
         )
-    return WorkspaceCallError(type=error_type.__name__, message=str(error))
+    return WorkspaceCallError(type=error_type.__name__, message=str(error), bases=bases)
 
 
 def raise_error(error: WorkspaceCallError) -> Never:
-    """Re-raise an error that crossed a durable boundary as data, with its original type."""
-    error_type = cast(type[Exception], _EXPECTED_ERRORS_BY_NAME[error.type])
+    """Re-raise an error that crossed a durable boundary as data, with its original type.
+
+    A type this version doesn't know, journaled by a newer one, is raised as its nearest base this version knows.
+    """
+    known = next((name for name in (error.type, *error.bases) if name in _EXPECTED_ERRORS_BY_NAME), None)
+    error_type = cast(type[Exception], _EXPECTED_ERRORS_BY_NAME[known] if known else WorkspaceError)
     if error_type is WorkspaceOutputLimitError:
         assert error.limit is not None
         raise WorkspaceOutputLimitError(error.message, limit=error.limit, stdout=error.stdout, stderr=error.stderr)
@@ -348,6 +399,38 @@ class DurableWorkspace(WrapperWorkspace):
             return await self.wrapped.realpath(path)
         return (await self._call(WorkspaceCall(method='realpath', path=path))).text
 
+    async def display_size(self) -> tuple[int, int]:
+        if not self._in_container():
+            return await self.wrapped.display_size()
+        size = (await self._call(WorkspaceCall(method='display_size'))).size
+        assert size is not None
+        return size
+
+    async def screenshot(self) -> bytes:
+        if not self._in_container():
+            return await self.wrapped.screenshot()
+        raise _display_in_workflow('screenshot')
+
+    async def act(self, action: ComputerAction) -> None:
+        if not self._in_container():
+            return await self.wrapped.act(action)
+        raise _display_in_workflow('act')
+
+    async def zoom(self, region: Region) -> bytes:
+        if not self._in_container():
+            return await self.wrapped.zoom(region)
+        raise _display_in_workflow('zoom')
+
+    async def scaled_screenshot(self, width: int, height: int) -> bytes:
+        if not self._in_container():
+            return await self.wrapped.scaled_screenshot(width, height)
+        raise _display_in_workflow('scaled_screenshot')
+
+    async def cursor_position(self) -> Point:
+        if not self._in_container():
+            return await self.wrapped.cursor_position()
+        raise _display_in_workflow('cursor_position')
+
     async def _call(self, call: WorkspaceCall) -> WorkspaceCallResult:
         await self._ensure()
         return await self._dispatch(call, ref=self._ref)
@@ -434,3 +517,11 @@ class RejectWorkspaceInContainer(AbstractCapability[AgentDepsT]):
             f'wrapper agent. Use `Agent(..., capabilities=[{self._capability}()])`, which runs every workspace '
             f'operation as a durable unit, and attach the workspace through a capability such as `LocalWorkspace`.'
         )
+
+
+def _display_in_workflow(method: str) -> UserError:
+    # Journaling each display call would freeze the order a caller makes them in into every recorded history.
+    return UserError(
+        f"`{method}` reaches the display, which durable workflow code can't: call it from a tool that runs as an "
+        'activity, step or task, or from a capability method marked with `@durable_operation`.'
+    )

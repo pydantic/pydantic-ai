@@ -751,6 +751,7 @@ def test_google_gemini_3_pro():
             ),
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
+            'computer_use_coordinate_grid': 1000,
         }
     )
 
@@ -829,6 +830,7 @@ def test_google_gemini_3_7_flash_thinking_levels():
             'supports_thinking': True,
             'google_web_search_billed_per_prompt': False,
             'supports_tool_return_schema': True,
+            'computer_use_coordinate_grid': 1000,
         }
     )
 
@@ -1454,6 +1456,7 @@ def test_openrouter_google_gemini_3_pro():
             ),
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
+            'computer_use_coordinate_grid': 1000,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
@@ -1500,6 +1503,7 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
             'openai_chat_supports_max_completion_tokens': False,
             'google_web_search_billed_per_prompt': False,
             'openai_chat_supports_web_search': True,
+            'computer_use_coordinate_grid': 1000,
             'openai_chat_thinking_field': 'reasoning',
             'openrouter_max_cache_points': None,
             'openrouter_supports_cache_control': True,
@@ -1675,6 +1679,7 @@ def test_github_copilot_google_gemini_3_pro():
             ),
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
+            'computer_use_coordinate_grid': 1000,
             'openai_chat_supports_max_completion_tokens': True,
             'openai_chat_thinking_field': 'reasoning_text',
         }
@@ -2624,6 +2629,7 @@ def test_vercel_vertex_gemini():
             ),
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
+            'computer_use_coordinate_grid': 1000,
         }
     )
 
