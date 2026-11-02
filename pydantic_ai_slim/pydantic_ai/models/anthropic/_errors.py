@@ -119,11 +119,22 @@ def api_error(
     error = nested if _utils.is_str_dict(body) and _utils.is_str_dict(nested := body.get('error')) else {}
     error_type, error_message = error.get('type'), error.get('message')
     category = _ERROR_TYPE_CATEGORIES.get(error_type) if isinstance(error_type, str) else None
+    details = error.get('details')
+    error_code = details.get('error_code') if _utils.is_str_dict(details) else None
+    error_code = error_code if isinstance(error_code, str) else None
+    if error_code == 'enforced_spend_limit_reached':
+        # A tier spend cap is a 429 `rate_limit_error` that keeps failing until access resumes, told apart from a rate
+        # limit only by this code: https://platform.claude.com/docs/en/api/rate-limits
+        category = ModelQuotaExceededError
     if error_type == 'invalid_request_error' and isinstance(error_message, str):
-        if 'prompt is too long' in error_message.lower():
+        lower_message = error_message.lower()
+        if 'prompt is too long' in lower_message:
             category = ModelContextWindowExceededError
-        elif 'credit balance is too low' in error_message.lower():
-            # Anthropic reports an exhausted prepaid balance as a 400, identifiable only by its message.
+        elif 'credit balance is too low' in lower_message or (
+            lower_message.startswith('you have reached your specified') and 'api usage limits' in lower_message
+        ):
+            # Anthropic reports an exhausted prepaid balance and a reached user- or workspace-set spend limit as a
+            # 400, identifiable only by its message.
             category = ModelQuotaExceededError
     provider_error_type = error_type if isinstance(error_type, str) else None
     if status_code >= 400:
@@ -132,7 +143,7 @@ def api_error(
             suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
         reported = reported_error_body(body)
         reported_message = reported.get('message') if _utils.is_str_dict(reported) else None
-        provider_error_code = None
+        provider_error_code = error_code
         if category is None and headers and (amzn_error_type := headers.get('x-amzn-errortype')):
             # Bedrock (`AsyncAnthropicBedrock`) reports the error's code in this header, as `Code:namespace`, and
             # only a `message` in the body, so it's classified the way `BedrockConverseModel` classifies the code.

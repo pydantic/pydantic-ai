@@ -987,6 +987,61 @@ CASES = [
         attrs={'status_code': 400, 'provider_error_type': 'invalid_request_error'},
     ),
     Case(
+        id='anthropic-tier-spend-cap',
+        model=_anthropic,
+        handler=_json(
+            429,
+            {
+                'type': 'error',
+                'error': {
+                    'type': 'rate_limit_error',
+                    'message': 'This request would exceed your spend limit.',
+                    'details': {'error_code': 'enforced_spend_limit_reached'},
+                },
+            },
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={
+            'status_code': 429,
+            'provider_error_type': 'rate_limit_error',
+            'provider_error_code': 'enforced_spend_limit_reached',
+        },
+    ),
+    Case(
+        id='anthropic-user-spend-limit',
+        model=_anthropic,
+        handler=_json(
+            400,
+            {
+                'type': 'error',
+                'error': {
+                    'type': 'invalid_request_error',
+                    'message': 'You have reached your specified API usage limits. You will regain access on '
+                    '2026-12-01 at 00:00 UTC.',
+                },
+            },
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 400, 'provider_error_type': 'invalid_request_error'},
+    ),
+    Case(
+        id='anthropic-workspace-spend-limit',
+        model=_anthropic,
+        handler=_json(
+            400,
+            {
+                'type': 'error',
+                'error': {
+                    'type': 'invalid_request_error',
+                    'message': 'You have reached your specified workspace API usage limits. You will regain access '
+                    'on 2026-12-01 at 00:00 UTC.',
+                },
+            },
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 400, 'provider_error_type': 'invalid_request_error'},
+    ),
+    Case(
         id='anthropic-api-error',
         model=_anthropic,
         handler=_json(500, {'type': 'error', 'error': {'type': 'api_error', 'message': 'Internal server error'}}),
@@ -1009,6 +1064,32 @@ CASES = [
         ),
         categories={ModelHTTPError, ModelRateLimitError},
         attrs={'status_code': 429, 'in_stream': True, 'provider_error_type': 'rate_limit_error'},
+        stream=True,
+    ),
+    Case(
+        id='anthropic-stream-tier-spend-cap',
+        model=_anthropic,
+        handler=_sse(
+            _ANTHROPIC_MESSAGE_START,
+            (
+                'error',
+                {
+                    'type': 'error',
+                    'error': {
+                        'type': 'rate_limit_error',
+                        'message': 'This request would exceed your spend limit.',
+                        'details': {'error_code': 'enforced_spend_limit_reached'},
+                    },
+                },
+            ),
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={
+            'status_code': 429,
+            'in_stream': True,
+            'provider_error_type': 'rate_limit_error',
+            'provider_error_code': 'enforced_spend_limit_reached',
+        },
         stream=True,
     ),
     Case(
