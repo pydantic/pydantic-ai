@@ -1,10 +1,11 @@
 from __future__ import annotations as _annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from enum import Enum
-from typing import Any, Self
+from enum import Enum, Flag, IntFlag
+from typing import Any, NamedTuple, Self
 from uuid import UUID
 
 import pytest
@@ -716,4 +717,115 @@ def test_model_with_non_primitive_types():
 <name>John</name>
 <age>123.45</age>
 <uuid>123e4567-e89b-12d3-a456-426614174000</uuid>\
+""")
+
+
+def test_generator_of_nested_models_matches_list():
+    class Inner(BaseModel):
+        value: int = Field(description='Inner value')
+
+    class Outer(BaseModel):
+        name: str = Field(title='Name')
+        inner: Inner
+
+    models = [Outer(name='a', inner=Inner(value=1)), Outer(name='b', inner=Inner(value=2))]
+
+    assert format_as_xml((m for m in models), include_field_info=True) == format_as_xml(models, include_field_info=True)
+
+
+def test_generator_after_model_sibling_in_dict_matches_list():
+    class Inner(BaseModel):
+        value: int = Field(description='Inner value')
+
+    models = [Inner(value=1), Inner(value=2)]
+    generator_data = {'first': Inner(value=0), 'rest': (m for m in models)}
+    list_data = {'first': Inner(value=0), 'rest': models}
+
+    assert format_as_xml(generator_data, include_field_info=True) == format_as_xml(list_data, include_field_info=True)
+    assert format_as_xml([Inner(value=0), (m for m in models)]) == format_as_xml([Inner(value=0), models])
+
+
+def test_named_tuple_unaffected():
+    class P(NamedTuple):
+        a: int
+        b: str
+
+    assert format_as_xml(P(1, 'x'), root_tag='r') == snapshot("""\
+<r>
+  <item>1</item>
+  <item>x</item>
+</r>\
+""")
+    assert format_as_xml({'p': P(1, 'x')}, root_tag='r') == snapshot("""\
+<r>
+  <p>
+    <item>1</item>
+    <item>x</item>
+  </p>
+</r>\
+""")
+
+
+def test_generators_inside_deque_match_list():
+    class Item(BaseModel):
+        a: int
+
+    def make() -> Any:
+        return (Item(a=i) for i in range(2))
+
+    assert format_as_xml(deque([make(), make()]), root_tag='r') == format_as_xml([make(), make()], root_tag='r')
+    assert format_as_xml({'k': deque([make()])}, root_tag='r') == format_as_xml({'k': [make()]}, root_tag='r')
+
+
+def test_iterable_dataclass_formats_by_fields():
+    @dataclass
+    class ListData(list[Any]):
+        x: int = 0
+
+    @dataclass
+    class IterData:
+        x: int
+
+        def __iter__(self) -> Any:
+            return self
+
+        def __next__(self) -> Any:
+            raise StopIteration
+
+    assert list(IterData(3)) == []  # it really is an iterator, yet is formatted by its fields below
+    list_data = ListData(x=5)
+    list_data.append(i for i in range(2))
+    assert format_as_xml(list_data, root_tag='r') == snapshot("""\
+<r>
+  <x>5</x>
+</r>\
+""")
+    assert format_as_xml(IterData(3), root_tag='r') == snapshot("""\
+<r>
+  <x>3</x>
+</r>\
+""")
+
+
+def test_flag_members_format_as_scalars():
+    class F(Flag):
+        A = 1
+        B = 2
+
+    class G(IntFlag):
+        A = 1
+        B = 2
+
+    assert format_as_xml(F.A, root_tag='r') == '<r>F.A</r>'
+    assert format_as_xml([F.A, G.A | G.B], root_tag='r') == snapshot("""\
+<r>
+  <item>F.A</item>
+  <item>3</item>
+</r>\
+""")
+    assert format_as_xml({'k': G.A | G.B, 'f': F.B}, root_tag='r') == snapshot("""\
+<r>
+  <k>3</k>
+  <f>F.B</f>
+</r>\
 """)
