@@ -250,8 +250,9 @@ runtime before publishing an integration.
 An operation can declare a [`StepPolicy`][pydantic_ai.durable_exec.StepPolicy] for some kinds of
 invocation: its `policies`, keyed by what its `policy_key` returns for an invocation, and read with
 `operation.policy(params)`. A capability operation declared with
-`@durable_operation(..., policy=StepPolicy(repeatable=False))` gets one for every invocation, such as the
-harness `ComputerUse` running each `computer` call at most once with its own timeout. Map `repeatable=False` onto the engine's at-most-once mode, and raise the attempt timeout to at
+`@durable_operation(..., policy=StepPolicy(repeatable=False))` gets one for every invocation made from workflow
+code, such as a capability whose tool clicks running each click at most once with its own timeout; one called
+inside another unit runs inline under that unit's config. Map `repeatable=False` onto the engine's at-most-once mode, and raise the attempt timeout to at
 least `timeout`, keeping a longer one the user configured. A `CallableOperationBackend` overrides
 `apply_policy`; an engine whose options are fixed at registration registers a unit per kind with a policy.
 

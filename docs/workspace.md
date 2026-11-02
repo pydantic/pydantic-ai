@@ -558,8 +558,10 @@ Under [durable execution](durable_execution/overview.md), workflow code can read
 journaled like a file call, but not the rest of the display: `screenshot()`, `act()` and the others raise a
 `UserError` there. Call them from a tool that runs as an activity, step or task, or from a capability method
 marked with [`@durable_operation`][pydantic_ai.capabilities.durable_operation], so a sequence of looks and actions
-is one durable unit instead of one journaled step each. Give an operation that acts
-`policy=StepPolicy(repeatable=False)` so it runs at most once.
+is one durable unit instead of one journaled step each. A `@durable_operation` called from workflow code is its
+own unit, so giving one that acts `policy=StepPolicy(repeatable=False)` (see
+[`StepPolicy`][pydantic_ai.durable_exec.StepPolicy]) makes it run at most once. Called from inside a tool's activity, step or task, it runs inline under that unit's retry
+config, so give such a tool one attempt in its engine's config instead.
 
 ### Resolving symlinks
 
