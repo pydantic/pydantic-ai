@@ -144,9 +144,18 @@ def render_context_file(file: ContextFile, *, label: str) -> str:
     return f'<context-file path="{html.escape(label)}">\n{content}\n</context-file>'
 
 
-def render_context_file_path(label: str) -> str:
-    """Name a file without its contents, as an empty `<context-file>` tag with the label attribute-escaped."""
-    return f'<context-file path="{html.escape(label)}" />'
+_CONTEXT_FILE_PART_TAG_OPENER = re.compile(r'<(?=\s*(?:/\s*)?context_file(?=[\s/>]|$))', re.IGNORECASE)
+"""The `<` of an opening or closing `context_file` tag, the frame a `ContextFilePart` renders in, in every spelling."""
+
+
+def context_file_part_content(file: ContextFile) -> str:
+    """A nested file's text as a `ContextFilePart` holds it: without trailing line terminators, unable to end its frame.
+
+    Pydantic AI renders a data part's content as written and notes only text that resembles one of its own frames,
+    so the `<` of every `context_file` tag in the file is escaped as `&lt;` here: the file can't close its frame and
+    go on outside it. Everything else goes in as written.
+    """
+    return _CONTEXT_FILE_PART_TAG_OPENER.sub('&lt;', file.content.rstrip('\r\n'))
 
 
 def render_context_files(files: Sequence[ContextFile], *, relative_to: Path) -> str:
