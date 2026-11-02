@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 import logging
 import operator
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from unittest.mock import MagicMock
 
 import pytest
@@ -19,6 +19,8 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    OperatorSource,
+    OperatorText,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -40,9 +42,10 @@ from pydantic_ai_harness.system_reminders import (
     LLMReminder,
     Reminder,
     ReminderFiredEvent,
+    ReminderPart,
     SystemReminders,
 )
-from tests.conftest import IsDatetime, try_import
+from tests.conftest import IsDatetime, IsStr, try_import
 from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY, REQUEST_SCOPED_PROMPT_DROPPED
 from tests.harness._recording_durability import (
     RecordingDurability,
@@ -118,11 +121,22 @@ async def _run_before(
 _ORIGIN = {'origin': 'pydantic-ai-harness.system_reminders.reminder.v1'}
 
 
+def _reminder(content: str, *, scope: Literal['conversation', 'request'] = 'request') -> ReminderPart:
+    """A `ReminderPart` as a firing enqueues it, matching any timestamp and record id."""
+    return ReminderPart(
+        content=OperatorText(content), source=OperatorSource(), scope=scope, timestamp=IsDatetime(), record_id=IsStr()
+    )
+
+
 def _fired_text(messages: list[ModelMessage]) -> str | None:
     """The reminder text added this turn, its system prompts and any quoted data joined, or None if nothing fired."""
     last = messages[-1]
     assert isinstance(last, ModelRequest)
-    notes = [part.content for part in last.parts if isinstance(part, SystemPromptPart) and part.metadata == _ORIGIN]
+    notes = [
+        part.content
+        for part in last.parts
+        if isinstance(part, ReminderPart) or (isinstance(part, SystemPromptPart) and part.metadata == _ORIGIN)
+    ]
     if not notes:
         return None
     data = [
@@ -200,12 +214,13 @@ def _all_text(messages: list[ModelMessage]) -> str:
 
 
 def _request_scoped_texts(messages: list[ModelMessage]) -> list[str]:
+    """The request-scoped reminders in history, or the request-scoped system prompts a model was sent."""
     return [
         part.content
         for msg in messages
         if isinstance(msg, ModelRequest)
         for part in msg.parts
-        if isinstance(part, SystemPromptPart) and part.scope == 'request'
+        if isinstance(part, ReminderPart | SystemPromptPart) and part.scope == 'request'
     ]
 
 
@@ -466,18 +481,14 @@ class TestInjectionMechanics:
         request_context = await cap.before_model_request(ctx, _make_request_context(list(messages)))
         # Enqueued, so the agent delivers it into this request and into the run's history, where the
         # request-scoped prompt is kept and the model's provider can clear it rather than see it deleted.
-        assert ctx.enqueued == [
-            ModelRequest(parts=[SystemPromptPart('r', scope='request', metadata=_ORIGIN, timestamp=IsDatetime())])
-        ]
+        assert ctx.enqueued == [ModelRequest(parts=[_reminder('r', scope='request')])]
         assert request_context.messages == messages
 
     async def test_conversation_scope_is_enqueued_as_a_lasting_prompt(self) -> None:
         cap = SystemReminders[None](reminders=[Reminder('r', tag=None, scope='conversation')])
         ctx = _ctx(messages=_fresh_request())
         await cap.before_model_request(ctx, _make_request_context(_fresh_request()))
-        assert ctx.enqueued == [
-            ModelRequest(parts=[SystemPromptPart('r', scope='conversation', metadata=_ORIGIN, timestamp=IsDatetime())])
-        ]
+        assert ctx.enqueued == [ModelRequest(parts=[_reminder('r', scope='conversation')])]
 
     async def test_reminders_of_each_scope_share_a_prompt_in_their_configured_order(self) -> None:
         cap = SystemReminders[None](
@@ -526,7 +537,7 @@ class TestInjectionMechanics:
         reminder = result.all_messages()[1]
         note = SystemPromptPart(_LLM_NOTE, metadata=_ORIGIN, timestamp=IsDatetime())
         data = UserPromptPart([TextContent(_llm_data('refocus'), metadata=_ORIGIN)], timestamp=IsDatetime())
-        terse = SystemPromptPart('Be terse.', scope='request', metadata=_ORIGIN, timestamp=IsDatetime())
+        terse = _reminder('Be terse.', scope='request')
         assert isinstance(reminder, ModelRequest)
         assert reminder.parts == ([note, data, terse] if generated_first else [terse, note, data])
         assert fired == (
@@ -666,9 +677,7 @@ class TestGoalReanchor:
         cap = SystemReminders[None](dynamic_reminders=[GoalReanchor()])
         messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('do X')])]
         seen = await _run_before(cap, messages, ctx=_ctx(messages=messages))
-        assert seen[-1] == ModelRequest(
-            parts=[SystemPromptPart(_GOAL_NOTE, scope='request', metadata=_ORIGIN, timestamp=IsDatetime())]
-        )
+        assert seen[-1] == ModelRequest(parts=[_reminder(_GOAL_NOTE, scope='request')])
 
 
 # --- LLMReminder ---
@@ -1430,10 +1439,7 @@ class TestEndToEnd:
             3,
         ]
         lasting = [
-            part
-            for message in result.all_messages()
-            for part in message.parts
-            if isinstance(part, SystemPromptPart) and part.metadata == _ORIGIN
+            part for message in result.all_messages() for part in message.parts if isinstance(part, ReminderPart)
         ]
         assert [(part.content, part.scope) for part in lasting] == [('Run the tests.', 'conversation')] * 3
         # Each request starts with the one before it: the lasting copies are appended, never moved or dropped.
@@ -1722,7 +1728,7 @@ class TestEndToEnd:
         ]
 
     async def test_lasting_reminder_is_never_taken_for_a_previous_summary(self) -> None:
-        """A lasting reminder that opens like an earlier release's summary is recognized as a reminder by its origin."""
+        """A lasting reminder that opens like an earlier release's summary is recognized as a reminder by its type."""
         summary_prompts: list[str] = []
 
         def summarizer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1757,7 +1763,7 @@ class TestEndToEnd:
         assert all('forged' not in prompt.partition('<previous-summary>')[2] for prompt in summary_prompts)
         # Not dropped from the history as a superseded summary either: the latest copy is still there.
         assert any(
-            isinstance(part, SystemPromptPart) and part.content == forged and part.metadata == _ORIGIN
+            isinstance(part, ReminderPart) and part.content == forged
             for message in result.all_messages()
             for part in message.parts
         )

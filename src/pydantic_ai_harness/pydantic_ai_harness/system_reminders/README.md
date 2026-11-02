@@ -22,7 +22,7 @@ Long multi-turn runs suffer instruction fade: after many tool-use turns the mode
 
 ## The solution
 
-`SystemReminders` injects reminders on each model request, either statically (`Reminder`, on a cadence) or dynamically (a callable that reads the run context). Each firing enqueues a [request-scoped system prompt](https://pydantic.dev/docs/ai/core-concepts/message-history/#request-scoped-system-prompts) at the **tail** of the request. The model sees a request-scoped prompt only in the model request it's part of: the next request, even the next step of the same run, no longer shows it. It's recorded in the message history like any other part. A static `Reminder` can be a [lasting reminder](#lasting-reminders) instead, kept in front of the model for the rest of the conversation.
+`SystemReminders` injects reminders on each model request, either statically (`Reminder`, on a cadence) or dynamically (a callable that reads the run context). Each firing enqueues a `ReminderPart`, a [capability part](https://pydantic.dev/docs/ai/capabilities/custom/#capability-parts) in the application's voice, which the model sees as a [request-scoped system prompt](https://pydantic.dev/docs/ai/core-concepts/message-history/#request-scoped-system-prompts) at the **tail** of the request. The model sees a request-scoped prompt only in the model request it's part of: the next request, even the next step of the same run, no longer shows it. It's recorded in the message history like any other part. A static `Reminder` can be a [lasting reminder](#lasting-reminders) instead, kept in front of the model for the rest of the conversation.
 
 - On Anthropic models that take mid-conversation system messages, it's sent as a turn-scoped system message (`clear_at`): every copy stays on the wire, the API stops rendering each one once the next request arrives, and a cleared one costs no tokens. Leaving earlier reminders in place is what keeps the cached prefix and the model's earlier reasoning valid; deleting one would invalidate every thinking block after it on models with preserved thinking.
 - Everywhere else, it's sent with its own request only, at the end, rendered like any other [mid-conversation system prompt](https://pydantic.dev/docs/ai/core-concepts/message-history/#mid-conversation-system-prompts), and left out of later ones.
@@ -70,7 +70,7 @@ The `tag` wrapping applies only to static `Reminder` content. A `str` a dynamic 
 
 ### Lasting reminders
 
-By default a reminder is request-scoped: the model sees it on the request it fires on, and not after. That's what a nudge about the next step needs, and the history doesn't fill up with copies the model keeps re-reading. Some guidance has to outlast that step, such as an obligation the model meets several tool calls later. Set `scope='conversation'` (named as in [`SystemPromptPart.scope`](https://pydantic.dev/docs/ai/core-concepts/message-history/#request-scoped-system-prompts)) to record each firing as a lasting system prompt instead:
+By default a reminder is request-scoped: the model sees it on the request it fires on, and not after. That's what a nudge about the next step needs, and the history doesn't fill up with copies the model keeps re-reading. Some guidance has to outlast that step, such as an obligation the model meets several tool calls later. Set `scope='conversation'` (named as in [`CapabilityPart.scope`](https://pydantic.dev/docs/ai/api/pydantic-ai/messages/#pydantic_ai.messages.CapabilityPart.scope)) to record each firing as a lasting system prompt instead:
 
 ```python
 from pydantic_ai_harness import SystemReminders
@@ -88,7 +88,7 @@ SystemReminders(
 )
 ```
 
-Each firing adds a `SystemPromptPart` to the message history for good, and every later request sends all of them again. So the history grows by one part per firing: with `interval=N`, a run of R requests gains `R // N` copies, and with the default `interval=1`, one on every request. The copies are appended and never moved, so the cached prefix holds, and with caching turned on for your model each earlier copy is read from cache. Use `interval` and `max_fires` to bound the growth: `max_fires=1` records the reminder once per run.
+Each firing adds a `ReminderPart` to the message history for good, and every later request sends all of them again. So the history grows by one part per firing: with `interval=N`, a run of R requests gains `R // N` copies, and with the default `interval=1`, one on every request. The copies are appended and never moved, so the cached prefix holds, and with caching turned on for your model each earlier copy is read from cache. Use `interval` and `max_fires` to bound the growth: `max_fires=1` records the reminder once per run.
 
 Choose the scope by what the text has to do:
 
@@ -96,7 +96,7 @@ Choose the scope by what the text has to do:
 - Text that matters for the next step only, or carries a value that changes (a count, a time, a budget), stays request-scoped, so stale copies don't pile up in the history.
 - Text that must still apply several steps after it fires is a lasting reminder.
 
-A lasting reminder is operator text, sent in system voice like any other reminder. It's a system prompt, so `SummarizingCompaction` summarizes it as a system message, never as something the user said, and `keep_user_messages` never keeps it. Its `origin` metadata keeps compaction from taking it for a summary an earlier release stored as a system prompt. Copies that compaction summarized away are recorded again on the reminder's next firing.
+A lasting reminder is operator text, sent in system voice like any other reminder. It's a `ReminderPart` in the application's voice, so `SummarizingCompaction` summarizes it as a system message, never as something the user said, and `keep_user_messages` never keeps it. Recognized by its type, it's never taken for a summary an earlier release stored as a system prompt. Copies that compaction summarized away are recorded again on the reminder's next firing.
 
 ## Dynamic reminders
 

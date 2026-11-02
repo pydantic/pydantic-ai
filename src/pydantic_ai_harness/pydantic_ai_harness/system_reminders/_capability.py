@@ -17,9 +17,12 @@ from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.messages import (
     CompactionPart,
+    InstructionCapabilityPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    OperatorSource,
+    OperatorText,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -62,15 +65,23 @@ else:
 
 
 _REMINDER_ORIGIN = 'pydantic-ai-harness.system_reminders.reminder.v1'
-"""The `origin` in the `metadata` of the parts a `SystemReminders` firing enqueues.
+"""The `origin` in the `metadata` of the parts a `GeneratedReminder` firing enqueues.
 
-The `SystemPromptPart` holds the reminders in system voice, and each `TextContent` on
-the user channel holds text a reminder quotes but didn't write. Identify reminders by this metadata,
-never by their model-visible text.
+The `SystemPromptPart` holds the framework's note in system voice, and the `TextContent` on the user channel
+holds the text the reminder model generated. Identify them by this metadata, never by their model-visible text.
 """
 
 _Scope: TypeAlias = Literal['conversation', 'request']
-"""A reminder firing's `SystemPromptPart.scope`; `Reminder.scope` spells it out so the API docs show the values."""
+"""A reminder firing's `ReminderPart.scope`; `Reminder.scope` spells it out so the API docs show the values."""
+
+
+@dataclass(kw_only=True)
+class ReminderPart(InstructionCapabilityPart, namespace='system_reminders', name='reminder'):
+    """Reminders in the operator's or the framework's own wording, as a `SystemReminders` firing enqueues them.
+
+    Consecutive reminders of the same scope that fire together share one part, their texts separated by a blank
+    line. Find reminders in history by this type, never by their text.
+    """
 
 
 @dataclass(frozen=True)
@@ -142,7 +153,8 @@ class Reminder(Generic[AgentDepsT]):
     scope: Literal['conversation', 'request'] = 'request'
     """How long each firing stays in front of the model.
 
-    Named as in [`SystemPromptPart.scope`][pydantic_ai.messages.SystemPromptPart.scope], which it sets.
+    Named as in [`CapabilityPart.scope`][pydantic_ai.messages.CapabilityPart.scope], which it sets on the
+    `ReminderPart` it fires as.
 
     `'request'` (the default) shows it for the request it fires on only. `'conversation'` records each firing as a
     lasting system prompt, sent again on every later request, so the history gains one part per firing: with
@@ -195,8 +207,8 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
     guidance mid-run, either on a fixed cadence (`Reminder`) or reactively from a callable
     (`dynamic_reminders`).
 
-    Each firing enqueues a [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] system
-    prompt at the end of the request: the model sees it for that request only, and it stays in the
+    Each firing enqueues a [request-scoped][pydantic_ai.messages.CapabilityPart.scope] `ReminderPart`, a
+    capability part in the application's voice, at the end of the request: the model sees it for that request only, and it stays in the
     message history, so the cached prefix and the model's earlier reasoning stay valid. On Anthropic
     models that support it, it's sent as a turn-scoped `clear_at` system message that costs nothing
     once its request has been answered; elsewhere it's sent with its own request only. The cache
@@ -592,23 +604,28 @@ class _StaticText:
         return self.text
 
 
-def _reminder_parts(texts: Sequence[str | _StaticText | GeneratedReminder]) -> list[SystemPromptPart | TextContent]:
-    """The parts a firing enqueues, in the reminders' configured order, each carrying the same origin metadata.
+def _reminder_parts(
+    texts: Sequence[str | _StaticText | GeneratedReminder],
+) -> list[ReminderPart | SystemPromptPart | TextContent]:
+    """The parts a firing enqueues, in the reminders' configured order.
 
-    Reminders in the framework's or the operator's own wording are system prompts of their scope (request-scoped
+    Reminders in the framework's or the operator's own wording are `ReminderPart`s of their scope (request-scoped
     unless a `Reminder` asks for `'conversation'`), consecutive ones of the same scope sharing one. A reminder
     that quotes content it didn't write, such as a model's generated reminder, is a record of two parts kept
     together in the history: the framework's note in system voice and the quoted content on the user channel.
     Neither is request-scoped, so no later request, compaction or summary sees the quoted content without the
     note that says what it is.
     """
-    parts: list[SystemPromptPart | TextContent] = []
+    parts: list[ReminderPart | SystemPromptPart | TextContent] = []
     plain: list[str] = []
     plain_scope: _Scope = 'request'
 
     def flush_plain() -> None:
         if plain:
-            parts.append(SystemPromptPart('\n\n'.join(plain), scope=plain_scope, metadata={'origin': _REMINDER_ORIGIN}))
+            # A `str` reminder is the operator's text by contract (see `DynamicReminder`); generated text is a
+            # `GeneratedReminder`, which never gets here.
+            text = OperatorText('\n\n'.join(plain))
+            parts.append(ReminderPart(content=text, source=OperatorSource(), scope=plain_scope))
             plain.clear()
 
     for text in texts:
