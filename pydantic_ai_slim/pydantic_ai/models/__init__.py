@@ -82,6 +82,7 @@ from .._json_schema import (
 )
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
+from .._removed_names import removed_names_getattr
 from .._run_context import RunContext
 from .._unsupported_settings import SUPPRESSED_WARNINGS, warn_unsupported_settings
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
@@ -4823,3 +4824,12 @@ def _synthesize_tool_availability_delta_messages(
             transformed.append(replace(message, parts=request_parts))
 
     return transformed if changed else messages
+
+
+_REMOVED_IN_V2 = {
+    'cached_async_http_client': 'use `create_async_http_client()`.',
+}
+
+# Kept from type checkers, which would otherwise accept any name on this module.
+if not TYPE_CHECKING:  # pragma: no branch
+    __getattr__ = removed_names_getattr(__name__, _REMOVED_IN_V2)

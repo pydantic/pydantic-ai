@@ -96,9 +96,9 @@ The [V1 → V2 Migration Map](migration.md) lists every renamed or removed API. 
 
 | Error | V1 | V2 |
 |---|---|---|
-| `ImportError: cannot import name 'OpenAIModel' from 'pydantic_ai.models.openai'` | `OpenAIModel` | [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] |
+| `ImportError: ...OpenAIModel was removed in Pydantic AI V2` | `OpenAIModel` | [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] |
 | `TypeError: Agent.__init__() got an unexpected keyword argument 'result_type'` | `result_type=` | `output_type=` |
-| `TypeError: 'RunUsage' object is not callable` | `result.usage()` | `result.usage` |
+| `PydanticAIDeprecationWarning: ...usage is a property, not a method` (`TypeError: 'RunUsage' object is not callable` before v2.64.0) | `result.usage()` | `result.usage` |
 | `AttributeError: 'FunctionToolResultEvent' object has no attribute 'result'` | `event.result` | [`event.part`][pydantic_ai.messages.ToolResultEvent.part] |
 | `AttributeError: 'dict' object has no attribute 'supports_thinking'` | `profile.supports_thinking` | `profile.get('supports_thinking')` |
 

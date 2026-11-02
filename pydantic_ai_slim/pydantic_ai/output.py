@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar, Generic, Literal, Protocol, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, Protocol, cast, overload
 
 from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
 from pydantic.json_schema import JsonSchemaValue
@@ -12,6 +12,7 @@ from typing_extensions import TypeAliasType, TypeForm, TypeVar
 
 from . import _utils, exceptions
 from ._json_schema import InlineDefsJsonSchemaTransformer
+from ._removed_names import removed_names_getattr
 from ._run_context import RunContext
 from .messages import ModelResponse, ToolCallPart
 from .tools import ObjectJsonSchema, ToolDefinition
@@ -790,3 +791,11 @@ You should not need to import or use this type directly.
 
 See [output docs](../output.md) for more information.
 """
+
+_REMOVED_IN_V2 = {
+    'DeferredToolCalls': 'use `pydantic_ai.tools.DeferredToolRequests`, whose `calls` replaces `tool_calls`.',
+}
+
+# Kept from type checkers, which would otherwise accept any name on this module.
+if not TYPE_CHECKING:  # pragma: no branch
+    __getattr__ = removed_names_getattr(__name__, _REMOVED_IN_V2)
