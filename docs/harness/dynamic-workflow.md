@@ -232,7 +232,7 @@ runs close to it can stop at a different point on replay and cause a `Nondetermi
 
 ## Observability
 
-The [Logfire](https://pydantic.dev/logfire) trace is the best way to see what a workflow did. Each sub-agent run appears nested under the `run_workflow` span, and the span carries the exact `code` argument the model wrote, so you can read the script it actually ran. Until first-class progress streaming ships, set `event_stream_handler` on each sub-agent `Agent` to watch sub-agent runs inside the one tool call.
+The [Logfire](https://pydantic.dev/logfire) trace is the best way to see what a workflow did. Each sub-agent run appears nested under the `run_workflow` span, and the span carries the exact `code` argument the model wrote, so you can read the script it actually ran. To watch sub-agent runs inside the one tool call, set `event_stream_handler` on each sub-agent `Agent`.
 
 ## API
 

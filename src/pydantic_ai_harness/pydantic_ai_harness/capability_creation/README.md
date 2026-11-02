@@ -59,21 +59,17 @@ string; set `guidance=''` to omit it entirely.
 ## Activation boundary
 
 Writing and validation happen in the current run; activation happens on the next run.
-A capability **cannot** be added to a live, already-executing run. pydantic-ai resolves
-the effective capability set once at the start of each run (the run's `root_capability`
-is fixed; there is no setter). So an authored capability is live on the **next**
-`agent.run(...)`, not the run that authored it. Authoring writes and validates the
-capability immediately, but its tools and hooks only exist once the next run's toolset and
-capability chain are assembled at run start.
+pydantic-ai resolves the effective capability set once at the start of each run (the run's
+`root_capability` is fixed; there is no setter), so an authored capability's tools and hooks only
+exist once the next run's toolset and capability chain are assembled.
 
 ### Integration contract
 
 The successful `author_capability` result tells the model the capability does not take effect
 in the current run. Writing and validating a capability does not schedule or inject it automatically.
 
-The orchestrator drives the loop, so it owns the one-line contract: thread the store's
-active capabilities into each run. With `agent.run(..., capabilities=...)`, the authored
-capability is live on the very next loop iteration -- no process restart:
+Pass `creation.store.load_active()` as `capabilities=` on each run; an authored capability is then
+active from the next run, without a process restart:
 
 ```python
 from pathlib import Path
@@ -154,7 +150,7 @@ model that it changes nothing.
 
 Authoring executes arbitrary Python in-process at import, construction, and run time. That
 is the same trust boundary an agent that already runs shell commands and edits files
-operates under, which is the deliberate choice here. Do not point it at a directory whose
+operates under. Do not point it at a directory whose
 contents you would not run yourself, and treat authored capabilities as code the agent is
 executing on your host.
 

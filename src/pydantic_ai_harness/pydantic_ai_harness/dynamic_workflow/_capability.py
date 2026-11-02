@@ -81,11 +81,9 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
     inherit_model: bool = False
     """Run every sub-agent with the parent run's resolved model instead of its constructed model.
 
-    Use this when the host can switch models per run, such as a `/model` command that passes a
-    run-level model override to the parent agent. Without it, that per-run choice silently leaves
-    catalog sub-agents on the model they were bound to when constructed; `inherit_model=True` makes
-    the workflow crew follow the parent run's resolved model. Keep `False` to pin sub-agents to
-    their own configured models.
+    Use this when the host switches models per run (for example a `/model` command passing a
+    run-level model override); without it, catalog sub-agents keep the model they were constructed
+    with. Keep `False` to pin sub-agents to their own configured models.
     """
 
     sub_agent_usage_limits: UsageLimits | None = None
@@ -129,7 +127,7 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
         return WorkflowAgent(agent=entry)
 
     def reveal(self, agent: AbstractAgent[AgentDepsT, object] | WorkflowAgent[AgentDepsT]) -> None:
-        """Reveal a sub-agent on the next model step (the supported runtime API for doing so).
+        """Reveal a sub-agent on the next model step.
 
         The sub-agent is announced to the model on the next step and becomes callable then; the
         `run_workflow` description stays frozen at the agents present when the run started. Reveal

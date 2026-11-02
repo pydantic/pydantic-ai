@@ -43,7 +43,7 @@ Durable execution integrations can record nested calls for deterministic replay.
 | State | Per run, plus an optional `repl_store` | A kernel per run, or one `IPythonKernel` kept across runs |
 
 !!! warning "Use Code Mode for anything web-facing"
-    IPython Code Mode runs model-written code with the permissions of the user running the agent. Do not run it in a webserver, or anywhere it handles untrusted input, without a sandbox around the agent. For production and web-facing agents, Code Mode is strongly recommended.
+    IPython Code Mode runs model-written code with the permissions of the user running the agent. Do not run it in a webserver, or anywhere it handles untrusted input, without a sandbox around the agent.
 
 ## Installation
 
@@ -230,9 +230,8 @@ denied. Calls that did not finish are included rather than filtered out, since a
 before it stops. That detail is bounded -- arguments and results are previewed, and the list stops
 at a size cap and says how many entries it left out -- so a large payload cannot inflate the
 retry. The reported total stays exact whether or not the list was cut, which is what tells the
-model some calls are missing from what it can see. The list is context for the model, not a guard:
-nothing stops it from calling those tools again, so treat it as informing the next attempt rather
-than preventing a repeat.
+model some calls are missing from what it can see. Nothing stops the model from calling those
+tools again.
 
 Override them with `resource_limits={'max_duration_secs': 10, 'max_memory': 134_217_728, 'max_suspensions': 10_000}` and
 `max_tool_calls=25`. Pass `resource_limits='unlimited'` only when another execution boundary
@@ -633,7 +632,7 @@ answered by Monty from the mounts first and reach the handler on another thread.
 
 ## Observability
 
-Nested tool calls inside `run_code` produce their own spans when instrumented with [Logfire](https://pydantic.dev/logfire) or any OpenTelemetry backend -- the easiest way to understand what code mode actually did, since each `run_code` span fans out into the tool calls the model issued from inside the sandbox. See the [Pydantic AI Logfire docs](../logfire.md#using-logfire) for setup.
+Nested tool calls inside `run_code` produce their own spans when instrumented with [Logfire](https://pydantic.dev/logfire) or any OpenTelemetry backend: each `run_code` span fans out into the tool calls the model issued from inside the sandbox. See the [Pydantic AI Logfire docs](../logfire.md#using-logfire) for setup.
 
 Suspension-limit retries use the existing `run_code` error span and nested tool spans, rather
 than a separate capability span. The retry includes bounded started-call context and recovery
@@ -779,7 +778,7 @@ agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode(os_access=my_os)]
 The callback takes keyword arguments and may be `async`. The older positional form, `my_os(name, args, kwargs)`,
 still works but is deprecated and will be removed in the next breaking release.
 
-Your callback's return value decides the call's fate, and the two outcomes are easy to confuse:
+Your callback's return value decides the call's fate:
 
 - **Return any value** -- including `None`, `''`, or `0` -- and that becomes the result the sandbox sees. `os.getenv` returning `None` looks exactly like a normal unset variable, so the agent's code keeps running. This is how you *hide* something: answer with an empty value.
 - **Return `NOT_HANDLED`** and the call is treated as unsupported: it raises inside the sandbox and the model gets a retry. This *refuses* a capability outright -- use it to block, not to say "no value". Returning `NOT_HANDLED` for a key the agent reasonably expects will burn retries.
