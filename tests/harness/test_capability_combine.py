@@ -61,6 +61,7 @@ from pydantic_ai_harness import (
     Coder,
     CompactOnRequest,
     ComputerUse,
+    LocalDesktop,
     Planning,
     RelevanceCompaction,
     Researcher,
@@ -217,6 +218,10 @@ def _check_computer_use(merged: ComputerUse[Any]) -> None:
     assert (merged.requires_approval, merged.settle_seconds, merged.keep_screenshots) == (True, 0, 2)
 
 
+def _check_local_desktop(merged: LocalDesktop[Any]) -> None:
+    assert (merged.working_dir, merged.real_screen, merged.env) == (str(_TMP_A), True, None)
+
+
 def _check_ssh_workspace(merged: SSHWorkspace[Any]) -> None:
     assert (merged.destination, merged.env, merged.read_only) == ('second', None, False)
 
@@ -307,6 +312,11 @@ COMBINE_POLICY: dict[str, Policy] = {
             Advisor[Any]('anthropic:claude-fable-5', max_tokens=4096),
         ),
         _check_advisor,
+    ),
+    'LocalDesktop': Combines(
+        'the later configuration replaces the earlier one whole, as `LocalWorkspace` does, so an `env` never carries over',
+        lambda: (LocalDesktop[Any](_TMP_B, env={'FIRST_SECRET': 'x'}), LocalDesktop[Any](_TMP_A, real_screen=True)),
+        _check_local_desktop,
     ),
     'SSHWorkspace': Combines(
         'the later configuration replaces the earlier one whole, so an `env` (and its secrets) never carries over',
