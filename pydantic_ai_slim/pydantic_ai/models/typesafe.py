@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import ClassVar, Literal, assert_never, cast
 
 import httpx2
-from pydantic import JsonValue
+from pydantic import JsonValue, ValidationError
 
 from .. import _model_errors
 from .._http import to_httpx2_timeout
@@ -45,6 +45,7 @@ try:
         AsyncTypeSafeClient,
         Choice as TypeSafeChoice,
         ChoiceAnswer as TypeSafeChoiceAnswer,
+        Image as TypeSafeImage,
         JSONContent,
         Noul as TypeSafeNoul,
         NoulAnswer as TypeSafeNoulAnswer,
@@ -106,8 +107,8 @@ TypeSafeStreamedResponse = DecisionStreamedResponse
 class TypeSafeModel(DecisionModel[AsyncTypeSafeClient]):
     """The model class for TypeSafe's Jev, a [decision model][pydantic_ai.models.decision.DecisionModel].
 
-    Jev answers typed questions about a text, each with a confidence, rather than writing text. An agent whose job is
-    to decide something runs on it like on any other model, with the `output_type` as the questions:
+    Jev answers typed questions about text and images, each with a confidence, rather than writing text. An agent whose
+    job is to decide something runs on it like on any other model, with the `output_type` as the questions:
 
     ```python
     from typing import Literal
@@ -137,6 +138,7 @@ class TypeSafeModel(DecisionModel[AsyncTypeSafeClient]):
     # leaves them out.
     max_choice_options: ClassVar[int | None] = _JEV_MAX_CHOICE_OPTIONS
     max_score_levels: ClassVar[int | None] = _JEV_MAX_SCORE_LEVELS
+    supports_image_input: ClassVar[bool] = True
 
     _model_name: TypeSafeModelName = field(repr=False)
     _provider: Provider[AsyncTypeSafeClient] = field(repr=False)
@@ -220,19 +222,26 @@ class TypeSafeModel(DecisionModel[AsyncTypeSafeClient]):
 
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
         """Send one request to TypeSafe's Decisions API."""
-        if request.images:
-            raise UserError('TypeSafe does not support image input.')
-        questions = {name: _to_typesafe_question(question) for name, question in request.questions.items()}
+        if not all(image.is_image for image in request.images):
+            raise UserError('TypeSafe supports image evidence only; `request.images` contains a non-image.')
         timeout = model_settings.get('timeout')
         max_retries = model_settings.get('max_retries')
+        extra_headers = httpx2.Headers(model_settings.get('extra_headers'))
+        if request.images:
+            # TypeSafe refuses a request with an image unless it opts in to the still-experimental image input.
+            extra_headers.setdefault('TypeSafe-Danger-Zone-Images', 'true')
         try:
-            response = await self.client.system_one(
+            questions = {name: _to_typesafe_question(question) for name, question in request.questions.items()}
+            # The SDK's recursive JSON type aliases read as partially unknown.
+            response = await self.client.system_one(  # pyright: ignore[reportUnknownMemberType]
                 cast(JSONContent, request.state),
                 questions,
                 model=self._model_name,
+                # The mapper writes each image's label into the state once, and the API puts the image in its place.
+                assets={f'<image {i}>': TypeSafeImage(image.data) for i, image in enumerate(request.images, start=1)},
                 retry=None if max_retries is None else TypeSafeRetryPolicy(max_retries=max_retries),
                 timeout=None if timeout is None else to_httpx2_timeout(timeout),
-                extra_headers=model_settings.get('extra_headers'),
+                extra_headers=extra_headers,
                 extra_body=cast('Mapping[str, JsonValue] | None', model_settings.get('extra_body')),
             )
         except TypeSafeAPIResponseValidationError as e:
@@ -252,9 +261,9 @@ class TypeSafeModel(DecisionModel[AsyncTypeSafeClient]):
         except httpx2.HTTPStatusError as e:
             # A retrying transport raises this for a status it gave up on, and the TypeSafe SDK lets it through.
             raise _model_errors.transport_status_error(self._model_name, e.response) from e
-        except TypeSafeError as e:
+        except (TypeSafeError, ValidationError) as e:
             # What is left is the SDK refusing to send what it was given, such as an `extra_body` that will
-            # not encode as JSON. That is the caller's to fix, not the model's.
+            # not encode as JSON or a question it will not build. That is the caller's to fix, not the model's.
             raise UserError(f'TypeSafe could not send this request: {e}') from e
 
         answers = {name: _from_typesafe_answer(answer) for name, answer in response.answers.items()}
@@ -289,7 +298,9 @@ def _to_typesafe_question(question: DecisionQuestion) -> TypeSafeNoul | TypeSafe
                     },
                 )
             )
-        return TypeSafeNoul(instructions=cast('JSONContent | None', question.instructions), criteria=sdk_criteria)
+        # Validated like the overloaded constructor, which only types a `Noul` that has instructions or a described
+        # outcome; one with neither is refused by the SDK when sent.
+        return TypeSafeNoul.model_validate({'instructions': question.instructions, 'criteria': sdk_criteria})
     if isinstance(question, ChoiceQuestion):
         return TypeSafeChoice(
             instructions=cast('JSONContent | None', question.instructions),

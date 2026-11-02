@@ -15,11 +15,11 @@ from typing_extensions import TypedDict
 from pydantic_ai import (
     Agent,
     BinaryContent,
+    BinaryImage,
     BoolCriteria,
     CachePoint,
     Choices,
     CompactionPart,
-    FilePart,
     ModelConnectionError,
     ModelHTTPError,
     ModelMessage,
@@ -53,7 +53,7 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.models import ModelRequestParameters, decision
-from pydantic_ai.models.decision import DecisionRequest, NoulQuestion
+from pydantic_ai.models.decision import DecisionRequest, NoulQuestion, ScoreQuestion
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -138,15 +138,17 @@ class Empty(BaseModel):
 
 @pytest.fixture
 def typesafe_model(typesafe_api_key: str, request_capture: RequestCapture) -> TypeSafeModel:
-    """A model whose requests `request_capture` records, replayed or live."""
-    provider = TypeSafeProvider(api_key=typesafe_api_key, http_client=request_capture.client)
-    return TypeSafeModel('jev-latest', provider=provider)
+    """A model whose requests `request_capture` records, replayed or live, with request compression off to read them."""
+    client = AsyncTypeSafeClient(api_key=typesafe_api_key, http_client=request_capture.client, compression=False)
+    return TypeSafeModel('jev-latest', provider=TypeSafeProvider(typesafe_client=client))
 
 
 def mock_model(handler: Callable[[httpx2.Request], httpx2.Response]) -> TypeSafeModel:
-    """A model whose HTTP goes to `handler`, with the SDK's own retries off."""
+    """A model whose HTTP goes to `handler`, with the SDK's own retries and request compression off."""
     http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
-    client = AsyncTypeSafeClient(api_key='api-key', http_client=http_client, retry=RetryPolicy(max_retries=0))
+    client = AsyncTypeSafeClient(
+        api_key='api-key', http_client=http_client, retry=RetryPolicy(max_retries=0), compression=False
+    )
     return TypeSafeModel('jev-latest', provider=TypeSafeProvider(typesafe_client=client))
 
 
@@ -540,6 +542,20 @@ async def test_unencodable_extra_body_is_a_user_error(allow_model_requests: None
     )
     with pytest.raises(UserError, match='TypeSafe could not send this request'):
         await agent.run('anything')
+
+
+async def test_a_question_the_sdk_refuses_is_a_user_error(
+    allow_model_requests: None, typesafe_model: TypeSafeModel, request_capture: RequestCapture
+):
+    """The SDK validates each question as it is built, so one it refuses is the caller's to fix, like a refused body.
+
+    Only a direct `decide` call can build such a question: the agent never asks a rubric with no levels.
+    """
+    with pytest.raises(UserError, match='TypeSafe could not send this request'):
+        await typesafe_model.decide(
+            DecisionRequest(state='Grade this.', questions={'q': ScoreQuestion(criteria=[])}), {}
+        )
+    assert request_capture.paths == []
 
 
 class Ticket(BaseModel):
@@ -2507,25 +2523,142 @@ Say more.
     )
 
 
-async def test_file_in_history_rejected(allow_model_requests: None, typesafe_model: TypeSafeModel):
+def multipart(headers: httpx2.Headers, content: bytes) -> tuple[dict[str, Any], list[bytes]]:
+    """The JSON `request` part of a multipart body, and the contents of the asset parts after it, in order."""
+    boundary = headers['content-type'].partition('boundary=')[2].encode()
+    parts = [part.partition(b'\r\n\r\n')[2].removesuffix(b'\r\n') for part in content.split(b'--' + boundary)[1:-1]]
+    return json.loads(parts[0]), parts[1:]
+
+
+@pytest.mark.vcr
+async def test_image_input(
+    allow_model_requests: None,
+    typesafe_model: TypeSafeModel,
+    image_content: BinaryImage,
+    request_capture: RequestCapture,
+):
+    """Jev judges a photo in the prompt, sent as an asset on a request that opts in to TypeSafe's image input."""
+    agent = Agent(typesafe_model, output_type=bool, instructions='Is there a fruit in the photo?')
+    result = await agent.run(['Here is the photo.', image_content])
+
+    assert result.output == snapshot(True)
+    assert result.response.model_name == snapshot('jev-1.13.0')
+    assert request_capture.headers[0]['typesafe-danger-zone-images'] == 'true'
+    body, assets = multipart(request_capture.headers[0], request_capture.raw_bodies[0])
+    assert body['state'] == snapshot("""\
+Here is the photo.
+
+<image 1>\
+""")
+    assert body['assets'] == snapshot({'<image 1>': {'type': 'image', 'part': 'asset-0'}})
+    assert assets == [image_content.data]
+
+
+@pytest.mark.vcr
+async def test_image_in_history_and_text_in_current_prompt(
+    allow_model_requests: None,
+    typesafe_model: TypeSafeModel,
+    image_content: BinaryImage,
+    request_capture: RequestCapture,
+):
+    """An image earlier in the conversation is still seen where its label sits inside the history in the state.
+
+    The input tokens are the image's: the text alone is a few dozen.
+    """
     history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart('Draw a cat.')]),
-        ModelResponse(parts=[FilePart(BinaryContent(b'\x89PNG', media_type='image/png'))]),
+        ModelRequest(parts=[UserPromptPart(['This is what I bought at the market.', image_content])]),
+        ModelResponse(parts=[TextPart('Thanks, noted.')]),
     ]
-    agent = Agent(typesafe_model, output_type=bool, instructions='Is this fine?')
-    with pytest.raises(UserError, match='Files are not supported'):
-        await agent.run('Is it a cat?', message_history=history)
+    agent = Agent(typesafe_model, output_type=bool, instructions='Is the fruit the customer bought green inside?')
+    result = await agent.run('Can I eat it as it is?', message_history=history)
+
+    assert result.output == snapshot(True)
+    assert result.response.usage.input_tokens == snapshot(1258)
+    body, assets = multipart(request_capture.headers[0], request_capture.raw_bodies[0])
+    assert body['state'] == snapshot(
+        {
+            'history': [
+                {
+                    'user': """\
+This is what I bought at the market.
+
+<image 1>\
+"""
+                },
+                {'assistant': 'Thanks, noted.'},
+            ],
+            'text': 'Can I eat it as it is?',
+        }
+    )
+    assert assets == [image_content.data]
 
 
-async def test_decide_rejects_image_evidence_before_a_request(
+async def test_images_are_sent_as_assets_with_the_opt_in_header(allow_model_requests: None):
+    """Each image goes as an asset under the label the state gives it, on a request that opts in to images.
+
+    A user's own spelling of the opt-in header is kept rather than sent twice, and a text-only request neither
+    opts in nor turns multipart. Not a recording: `test_image_input` shows the API accepts such a request, and this
+    pins how several images and a user's headers are sent without recording more images.
+    """
+    seen: list[httpx2.Request] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request)
+        return answers(response={'type': 'noul', 'noul': 0.9})
+
+    agent = Agent(mock_model(record), output_type=bool, instructions='Are these the same cat?')
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(['Here is my cat.', BinaryContent(b'first', media_type='image/png')])]),
+        ModelResponse(parts=[TextPart('Noted.')]),
+    ]
+    await agent.run(
+        ['Is this the same one?', BinaryContent(b'second', media_type='image/jpeg')],
+        message_history=history,
+        model_settings={'extra_headers': {'typesafe-danger-zone-images': 'true', 'X-Trace': 'abc'}},
+    )
+    await agent.run('Is a cat a mammal?')
+
+    images_request, text_request = seen
+    assert images_request.headers.get_list('typesafe-danger-zone-images') == ['true']
+    assert images_request.headers['x-trace'] == 'abc'
+    body, assets = multipart(images_request.headers, images_request.content)
+    assert body['state'] == snapshot(
+        {
+            'history': [
+                {
+                    'user': """\
+Here is my cat.
+
+<image 1>\
+"""
+                },
+                {'assistant': 'Noted.'},
+            ],
+            'text': """\
+Is this the same one?
+
+<image 2>\
+""",
+        }
+    )
+    assert body['assets'] == snapshot(
+        {'<image 1>': {'type': 'image', 'part': 'asset-0'}, '<image 2>': {'type': 'image', 'part': 'asset-1'}}
+    )
+    assert assets == [b'first', b'second']
+    assert 'typesafe-danger-zone-images' not in text_request.headers
+    assert json.loads(text_request.content)['state'] == 'Is a cat a mammal?'
+
+
+async def test_decide_rejects_non_image_evidence_before_a_request(
     allow_model_requests: None, typesafe_model: TypeSafeModel, request_capture: RequestCapture
 ):
-    with pytest.raises(UserError, match='TypeSafe does not support image input'):
+    """A direct `decide` call skips the history mapper, which refuses such a file before it gets here."""
+    with pytest.raises(UserError, match=r'`request\.images` contains a non-image'):
         await typesafe_model.decide(
             DecisionRequest(
-                state='Review this image.',
+                state='Review <image 1>.',
                 questions={'q': NoulQuestion()},
-                images=(BinaryContent(b'image', media_type='image/png'),),
+                images=(BinaryContent(b'%PDF', media_type='application/pdf'),),
             ),
             {},
         )
@@ -2533,10 +2666,10 @@ async def test_decide_rejects_image_evidence_before_a_request(
     assert request_capture.paths == []
 
 
-async def test_non_text_prompt_rejected(allow_model_requests: None, typesafe_model: TypeSafeModel):
+async def test_non_image_file_in_prompt_rejected(allow_model_requests: None, typesafe_model: TypeSafeModel):
     agent = Agent(typesafe_model, output_type=bool, instructions='Is this fine?')
-    with pytest.raises(UserError, match='Files are not supported'):
-        await agent.run(['look at this', BinaryContent(b'\x89PNG', media_type='image/png')])
+    with pytest.raises(UserError, match='A user prompt contains an unsupported file'):
+        await agent.run(['look at this', BinaryContent(b'%PDF', media_type='application/pdf')])
 
 
 async def test_empty_prompt_rejected(allow_model_requests: None, typesafe_model: TypeSafeModel):
@@ -2568,60 +2701,6 @@ async def test_text_content_and_cache_points_are_text(allow_model_requests: None
     agent = Agent(mock_model(record), output_type=bool, instructions='Is this fine?')
     await agent.run([TextContent('first', metadata={'source': 'form'}), CachePoint(), 'second'])
     assert seen[0]['state'] == 'first\n\nsecond'
-
-
-@pytest.mark.parametrize(
-    'history',
-    [
-        pytest.param(
-            [
-                ModelRequest(parts=[UserPromptPart('Take a photo.')]),
-                ModelResponse(
-                    parts=[
-                        NativeToolReturnPart(
-                            'camera', ['A cat.', BinaryContent(b'\x89PNG', media_type='image/png')], 'call-1'
-                        )
-                    ]
-                ),
-            ],
-            id='native_tool_return',
-        ),
-    ],
-)
-async def test_file_in_tool_result_rejected(
-    allow_model_requests: None, typesafe_model: TypeSafeModel, history: list[ModelMessage]
-):
-    """`model_response_str` leaves a tool result's files out, so a result carrying one is refused rather than sent short."""
-    agent = Agent(typesafe_model, output_type=bool, instructions='Is this fine?')
-    with pytest.raises(UserError, match='a file in a tool result'):
-        await agent.run('Is it a cat?', message_history=history)
-
-
-async def test_file_in_tool_return_is_sent_as_a_note(allow_model_requests: None):
-    """Jev reads no images, so one a tool returned reaches it as a note naming it, rather than failing the run."""
-    seen: list[dict[str, Any]] = []
-
-    def record(request: httpx2.Request) -> httpx2.Response:
-        seen.append(json.loads(request.content))
-        return answers(response={'type': 'noul', 'noul': 0.9})
-
-    history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart('Take a photo.')]),
-        ModelResponse(parts=[ToolCallPart('camera', {}, 'call-1')]),
-        ModelRequest(
-            parts=[
-                ToolReturnPart(
-                    'camera',
-                    ['A cat.', BinaryContent(b'\x89PNG', media_type='image/png', identifier='photo')],
-                    'call-1',
-                )
-            ]
-        ),
-    ]
-    agent = Agent(mock_model(record), output_type=bool, instructions='Is this fine?')
-    await agent.run('Is it a cat?', message_history=history)
-
-    assert 'File photo (image/png, 4 bytes) was not sent: this model cannot read images.' in json.dumps(seen[0])
 
 
 async def test_system_prompts_are_judged_not_asked(allow_model_requests: None):

@@ -1291,7 +1291,7 @@ requires-dist = [
     { name = "tiktoken", marker = "extra == 'openai'", specifier = ">=0.12.0" },
     { name = "tiktoken", marker = "extra == 'openai-realtime'", specifier = ">=0.12.0" },
     { name = "tiktoken", marker = "extra == 'xai-realtime'", specifier = ">=0.12.0" },
-    { name = "typesafe-sdk", marker = "extra == 'typesafe'", specifier = ">=0.6.0" },
+    { name = "typesafe-sdk", marker = "extra == 'typesafe'", specifier = ">=0.7.5" },
     { name = "typing-inspection", specifier = ">=0.4.0" },
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.38.0" },
     { name = "voyageai", marker = "python_full_version < '3.14' and extra == 'voyageai'", specifier = ">=0.3.7" },
