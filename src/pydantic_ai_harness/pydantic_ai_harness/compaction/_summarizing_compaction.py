@@ -1289,29 +1289,42 @@ def _summary_input_budget(
     return max(1, window - min(window // 4, _SUMMARY_OUTPUT_RESERVE_TOKENS))
 
 
+def _transcript_copies(summary_prompt: str) -> int:
+    """How many copies of the transcript *summary_prompt* renders.
+
+    More than one is unusual but allowed, and every copy is sent, so what one copy may take is the
+    transcript's share divided by this. `_summary_prompt` has already rendered the template, which
+    fails wherever parsing would, so parsing here needs no guard.
+    """
+    return sum(1 for _, name, _, _ in Formatter().parse(summary_prompt) if name is not None) or 1
+
+
 def _fit_summary_input(
     summarizer: SummarizingCompaction[AgentDepsT],
     model: AbstractModel,
-    prompt: str,
-    formatted: str,
+    overhead_prompt: str,
     entries: Sequence[tuple[_TranscriptEntryKind, str]],
 ) -> str | None:
-    """The transcript trimmed to the summarizer's share of *model*'s window, or `None` when *prompt* fits.
+    """The transcript trimmed to the summarizer's share of *model*'s window, or `None` when it fits.
 
     The budget is the whole request's, so what the request carries besides the transcript is measured
     and taken off the transcript's share: the template around it, the harness-data instruction, the
-    previous summary, and the summarizer agent's own static instructions. That the summarizer saw
-    less than the whole history is recorded on the enclosing `compact_messages` span, because a
-    summary of part of the history is a different thing, and a difference nobody can see is what
-    makes compaction hard to trust.
+    previous summary, and the summarizer agent's own static instructions. That fixed part is measured
+    by rendering the template with an empty transcript, not by subtracting one copy of the rendered
+    transcript: a template may show `{messages}` more than once, and a previous summary may quote the
+    transcript back, and subtracting one copy would bill the extra copies as fixed text.
+
+    That the summarizer saw less than the whole history is recorded on the enclosing
+    `compact_messages` span, because a summary of part of the history is a different thing, and a
+    difference nobody can see is what makes compaction hard to trust.
     """
     budget = _summary_input_budget(summarizer, model)
     if budget is None:
         return None
     tokenizer = summarizer.tokenizer
-    overhead = estimate_text_tokens(prompt, tokenizer) - estimate_text_tokens(formatted, tokenizer)
+    overhead = estimate_text_tokens(overhead_prompt, tokenizer)
     overhead += estimate_text_tokens(summarizer.instructions, tokenizer)
-    trimmed = _fit_transcript(entries, budget - overhead, tokenizer)
+    trimmed = _fit_transcript(entries, (budget - overhead) // _transcript_copies(summarizer.summary_prompt), tokenizer)
     if trimmed is None:
         return None
     record_span_attribute('compaction.summary_request_trimmed', True)
@@ -1344,7 +1357,9 @@ async def write_summary(
     prompt = _summary_prompt(summarizer, formatted, harness_data=harness_data, previous_summary=previous_summary)
 
     model = summarizer.model if summarizer.model is not None else ctx.model
-    fitted = _fit_summary_input(summarizer, model, prompt, formatted, entries)
+    # Rendering the template with an empty transcript measures what the request carries besides it.
+    overhead_prompt = _summary_prompt(summarizer, '', harness_data=harness_data, previous_summary=previous_summary)
+    fitted = _fit_summary_input(summarizer, model, overhead_prompt, entries)
     if fitted is not None:
         prompt = _summary_prompt(summarizer, fitted, harness_data=harness_data, previous_summary=previous_summary)
 

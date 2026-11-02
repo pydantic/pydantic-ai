@@ -3635,6 +3635,30 @@ class TestSummarizerContextWindow:
         with pytest.raises(ValueError, match='summary_request_max_tokens must be positive'):
             SummarizingCompaction(max_messages=2, summary_request_max_tokens=0)
 
+    async def test_a_prompt_that_shows_the_transcript_twice_still_keeps_what_fits(self):
+        # A prompt may render `{messages}` more than once, and every copy is sent. The template was
+        # measured by subtracting one copy from the rendered prompt, which billed the other copy as
+        # fixed overhead, so only half the history that fits in the budget was kept.
+        seen: list[str] = []
+        comp = _always_compacting(
+            FunctionModel(_capture_summary_requests(seen), model_name='tiny'),
+            summary_prompt='<messages>{messages}</messages>\nagain:\n<messages>{messages}</messages>',
+            summary_request_max_tokens=1_200,
+        )
+        messages = [
+            _user('oldest question ' + 'u' * 800),
+            _assistant('first answer ' + 'a' * 800),
+            _user('second question ' + 'q' * 800),
+            _assistant('second answer ' + 's' * 800),
+            _user('newest question'),
+            _user('kept turn'),
+        ]
+        await comp.before_model_request(_make_ctx(messages), _make_request_context(messages))
+
+        [request] = seen
+        assert len(request) // 4 <= 1_200
+        assert 'second question' in request
+
     def test_the_run_models_context_window_override_is_the_budget(self):
         comp = SummarizingCompaction(max_messages=2, context_window=4_000)
 
