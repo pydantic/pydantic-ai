@@ -23,7 +23,6 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai.workspaces._telemetry import stop_span
 from pydantic_ai_harness._workspace_provider import check_timeout
 
 __all__ = ('SSHWorkspaceBackend',)
@@ -284,7 +283,7 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
     async def _stop(self, tag: str) -> None:
         # Killing the local `ssh` leaves the remote command running, so a second connection stops it.
         # Best effort: a host that stalls or can't be reached now has nothing to report.
-        with anyio.CancelScope(shield=True), stop_span():
+        with anyio.CancelScope(shield=True):
             try:
                 await self._runner.run(
                     [*self._ssh, f'/bin/sh -c {shlex.quote(_STOP)} /bin/sh {tag}'], timeout=_STOP_TIMEOUT

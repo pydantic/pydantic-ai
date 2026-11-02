@@ -52,7 +52,6 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai.workspaces._telemetry import lifecycle_span, stop_span
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env,
@@ -493,7 +492,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
             return await self._acquire(boxes, ref.id, create=True)
 
     async def _acquire(self, boxes: _Runtime, name: str, *, create: bool) -> _Box:
-        with _marking(_acquiring, name), lifecycle_span('create' if create else 'attach', self):
+        with _marking(_acquiring, name):
             if create:
                 try:
                     box = await _finish(boxes.create(self._options, name=name), f'creating box {name!r}')
@@ -610,8 +609,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
         except BaseException as error:
             if execution is not None:
                 # Timed out, cancelled, over the output cap, or the SDK failed during the command.
-                with stop_span():
-                    await _finish(_stop(execution), f'stopping a command in box {_key(box)!r}')
+                await _finish(_stop(execution), f'stopping a command in box {_key(box)!r}')
             if isinstance(error, boxlite.BoxliteError) and (unavailable := await self._unavailable(box)) is not None:
                 raise unavailable from error
             raise

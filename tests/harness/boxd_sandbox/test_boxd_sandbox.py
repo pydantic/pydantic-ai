@@ -9,13 +9,8 @@ from typing import Any
 import anyio
 import boxd
 import pytest
-from inline_snapshot import snapshot
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
@@ -24,7 +19,6 @@ from pydantic_ai.messages import (
     TextPart,
     UserPromptPart,
 )
-from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
@@ -203,49 +197,6 @@ async def test_continuing_the_history_attaches_to_the_same_machine(host: FakeBox
     second = await agent.run('continue', message_history=first.all_messages())
     assert len(host.create_names) == 1
     assert second.workspace.ref == first.workspace.ref
-
-
-async def test_the_machines_lifecycle_is_traced(host: FakeBoxd) -> None:
-    """Creating, reattaching to and destroying the machine each get a span, under the call or tool that needed it."""
-    exporter = InMemorySpanExporter()
-    tracer_provider = TracerProvider()
-    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
-    settings = InstrumentationSettings(tracer_provider=tracer_provider, include_content=False)
-    sandbox = BoxdSandbox[None]()
-    agent = Agent(
-        TestModel(call_tools=['_touch']),
-        deps_type=type(None),
-        tools=[_touch],
-        capabilities=[sandbox, Instrumentation(settings=settings)],
-    )
-    ref = (await agent.run('touch')).workspace.ref
-    assert ref is not None
-    await agent.run('touch', workspace=ref)
-    cleanup = Agent(TestModel(call_tools=['destroy']), capabilities=[Instrumentation(settings=settings)])
-
-    @cleanup.tool_plain
-    async def destroy() -> None:
-        await sandbox.destroy(ref)
-
-    await cleanup.run('go')
-
-    spans = sorted(exporter.get_finished_spans(), key=lambda span: span.start_time or 0)
-    names = {span.context.span_id: span.name for span in spans if span.context is not None}
-    assert [
-        (
-            span.name,
-            names.get(span.parent.span_id) if span.parent else None,
-            (span.attributes or {}).get('pydantic_ai.workspace.id') == ref.id,
-        )
-        for span in spans
-        if span.name in ('workspace create', 'workspace attach', 'workspace destroy')
-    ] == snapshot(
-        [
-            ('workspace create', 'workspace write_bytes', True),
-            ('workspace attach', 'workspace write_bytes', True),
-            ('workspace destroy', 'execute_tool destroy', True),
-        ]
-    )
 
 
 async def test_history_in_a_boxd_machine_without_the_capability_names_it() -> None:

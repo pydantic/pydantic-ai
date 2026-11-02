@@ -6,9 +6,9 @@ import base64
 import posixpath
 import shlex
 import uuid
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
-from typing import TypeVar, cast
+from typing import cast
 
 import anyio
 from opentelemetry.trace import INVALID_SPAN, Span
@@ -16,7 +16,7 @@ from typing_extensions import get_protocol_members
 
 from pydantic_ai.exceptions import UserError
 
-from ._telemetry import Operation, Step, command_span, operation_span, set_content, traced_run
+from ._telemetry import Operation, Step, command_span, operation_span, set_command, set_content
 from .protocol import (
     CommandResult,
     FileEntry,
@@ -67,9 +67,6 @@ _SHELL_CHECK_PARENTS = (
     f'if test -d "$parent"; then test -w "$parent" || exit {_SHELL_EXIT_PERMISSION}; break; fi; '
     'parent=${parent%/*}; [ -n "$parent" ] || parent=/; done; '
 )
-
-
-_T = TypeVar('_T')
 
 
 class _DamagedOutputError(WorkspaceError):
@@ -455,11 +452,6 @@ class Workspace(WorkspaceBackend):
         set_content(span, 'file.path', resolved)
         return resolved
 
-    async def _on_path(self, operation: Operation, path: str, call: Callable[[str], Awaitable[_T]]) -> _T:
-        """Trace `operation` and `call` it with `path` resolved."""
-        with self._operation(operation) as span:
-            return await call(await self._resolve_traced(path, span))
-
     async def run(
         self,
         command: WorkspaceCommand,
@@ -480,9 +472,11 @@ class Workspace(WorkspaceBackend):
         backend = self._backend
         if not isinstance(backend, SupportsCommands):
             raise UserError('This workspace does not support command execution.')
-        return await traced_run(
-            self._operation('run'), command, lambda: backend.run(command, shell=shell, env=env, timeout=timeout)
-        )
+        with self._operation('run') as span:
+            set_command(span, command)
+            result = await backend.run(command, shell=shell, env=env, timeout=timeout)
+            span.set_attribute('process.exit.code', result.exit_code)
+            return result
 
     async def working_dir(self) -> str:
         """The default working directory, which relative paths resolve against."""
@@ -518,23 +512,28 @@ class Workspace(WorkspaceBackend):
 
     async def stat(self, path: str) -> FileEntry:
         """Return metadata for a file or directory."""
-        return await self._on_path('stat', path, self._filesystem.stat)
+        with self._operation('stat') as span:
+            return await self._filesystem.stat(await self._resolve_traced(path, span))
 
     async def list_dir(self, path: str) -> Sequence[FileEntry]:
         """List the entries of a directory (non-recursive)."""
-        return await self._on_path('list_dir', path, self._filesystem.list_dir)
+        with self._operation('list_dir') as span:
+            return await self._filesystem.list_dir(await self._resolve_traced(path, span))
 
     async def make_dir(self, path: str) -> None:
         """Create a directory, including missing parents."""
-        await self._on_path('make_dir', path, self._filesystem.make_dir)
+        with self._operation('make_dir') as span:
+            await self._filesystem.make_dir(await self._resolve_traced(path, span))
 
     async def remove(self, path: str) -> None:
         """Remove a file, or a directory and its contents."""
-        await self._on_path('remove', path, self._filesystem.remove)
+        with self._operation('remove') as span:
+            await self._filesystem.remove(await self._resolve_traced(path, span))
 
     async def exists(self, path: str) -> bool:
         """Whether a file or directory exists at the path."""
-        return await self._on_path('exists', path, self._filesystem.exists)
+        with self._operation('exists') as span:
+            return await self._filesystem.exists(await self._resolve_traced(path, span))
 
     async def realpath(self, path: str) -> str:
         """Follow every symlink in `path` in the environment, like `os.path.realpath(path, strict=False)`.

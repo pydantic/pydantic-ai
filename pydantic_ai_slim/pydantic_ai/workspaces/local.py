@@ -24,7 +24,6 @@ import anyio.abc
 
 from pydantic_ai._utils import BaseExceptionGroup, run_in_executor
 
-from ._telemetry import stop_span
 from .protocol import (
     CommandResult,
     FileEntry,
@@ -482,16 +481,15 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     async def _terminate(self, process: anyio.abc.Process) -> PermissionError | None:
         """Kill the process group and reap it; return a group-kill denial."""
         denial = None
-        with stop_span():
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            except PermissionError as error:
-                denial = error
-                with suppress(ProcessLookupError):
-                    process.kill()
-            # Teardown must not hold a cancelled caller indefinitely if a pipe or reap stalls.
-            with suppress(TimeoutError):
-                await _shielded(self._close(process), anyio.current_time() + _REAP_GRACE)
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except PermissionError as error:
+            denial = error
+            with suppress(ProcessLookupError):
+                process.kill()
+        # Teardown must not hold a cancelled caller indefinitely if a pipe or reap stalls.
+        with suppress(TimeoutError):
+            await _shielded(self._close(process), anyio.current_time() + _REAP_GRACE)
         return denial

@@ -13,7 +13,6 @@ import anyio
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import WorkspaceCommand, WorkspaceTimeoutError
-from pydantic_ai.workspaces._telemetry import stop_span
 
 # Optional, not a dependency: it used to arrive only transitively, and AnyIO dropped it in 4.12.
 try:
@@ -110,12 +109,6 @@ async def stop_shielded(stop: Callable[[], Awaitable[object]], *, grace: float =
                 group.start_soon(best_effort_stop)
 
 
-async def stop_command(stop: Callable[[], Awaitable[object]], *, grace: float = 2.0) -> None:
-    """Stop a workspace command as `stop_shielded` does, traced as `workspace stop` under the command's span."""
-    with stop_span():
-        await stop_shielded(stop, grace=grace)
-
-
 @asynccontextmanager
 async def command_deadline(
     timeout: float | None,
@@ -128,7 +121,7 @@ async def command_deadline(
         try:
             yield
         except BaseException:
-            await stop_command(stop)
+            await stop_shielded(stop)
             raise
     if scope.cancelled_caught:
         stdout, stderr = output()
