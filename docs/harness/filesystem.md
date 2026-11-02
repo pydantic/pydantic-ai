@@ -130,6 +130,12 @@ beyond the project directory without spelling out absolute paths. `root_dir`
 must contain the working directory. To work in a subdirectory, set it on the
 workspace instead (`LocalWorkspace('./repo')`).
 
+[`PrefixTools`](../capabilities/prefix-tools.md) renames the tools so the model can tell two
+`FileSystem`s apart (`FileSystem().prefix_tools('wiki')` offers `wiki_read_file`), but it
+doesn't scope them to a folder. Every `FileSystem` in a run works in the run's one
+workspace, under a `root_dir` that contains its working directory, so two prefixed
+`FileSystem`s reach the same files.
+
 `list_directory`, `find_files`, `search_files`, `list_files`, and `grep` return
 paths relative to the working directory, even when searching a subdirectory.
 These paths can be passed directly to read/write tools. Files outside the
@@ -193,10 +199,7 @@ is called in the run:
   `directory` inside the working directory.
 - `RepoContext`'s inventory tool, when its asset roots are inside the working directory.
 
-A `FileSystem` tool can't be called under a new name yet, such as under `PrefixTools`, because
-Pydantic AI refuses its capability events ([#10927](https://github.com/pydantic/pydantic-ai/issues/10927)).
-The dedicated reader steps aside for a renamed `FileSystem` all the same, so keep `FileSystem` under
-its own names for now.
+The dedicated reader steps aside for a renamed `FileSystem` too, such as one under `PrefixTools`.
 
 The capability decides from its own configuration, not from `FileSystem`'s access rules. With
 `denied_patterns` that cover those files (`.pydantic-ai-harness/` for spills, the memory directory,
