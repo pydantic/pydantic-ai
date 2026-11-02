@@ -12,7 +12,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
-from pydantic_ai.workspaces import Click, TypeText
+from pydantic_ai.workspaces import Click, PressKeys, TypeText
 from pydantic_ai_harness.computer_use import ComputerUse
 from tests.models.conftest import content_blocks
 
@@ -87,6 +87,37 @@ async def test_gpt_computer_calls_go_back_to_a_request_without_the_computer_tool
     # As function calls without their `cu_` ids, which the API refuses on a function call.
     calls = _items(request_capture.bodies('/responses')[-1], 'function_call')
     assert calls and all(call['name'] == 'computer' and 'id' not in call for call in calls)
+
+
+@needs_openai
+@pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='the second agent sends the computer tool as a function, not the native tool')
+async def test_gpt_continues_a_native_history_after_the_tool_opts_out(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+) -> None:
+    """A run recorded with the native tool goes on with `ComputerUse(native=False)`, and the API accepts it."""
+    provider = InMemoryProvider()
+    model = _gpt(openai_api_key, request_capture)
+    capabilities = [provider.capability(), ComputerUse(settle_seconds=0)]
+    result = await Agent(model, capabilities=capabilities).run(TASK)
+
+    opted_out = [provider.capability(), ComputerUse(settle_seconds=0, native=False)]
+    await Agent(model, capabilities=opted_out).run(
+        'Now press Enter, then reply "done". Do nothing else.', message_history=result.all_messages()
+    )
+
+    assert provider.actions == [Click(x=100, y=200), TypeText(text='hello'), PressKeys(keys=('enter',))]
+    first_native, *_, last = request_capture.bodies('/responses')
+    assert {'type': 'computer'} in cast(list[Any], first_native['tools'])
+    # The opted-out agent declares a function, and the earlier native calls go back as function calls without
+    # their `cu_` ids, after the reasoning that made them.
+    assert [tool['name'] for tool in cast(list[dict[str, Any]], last['tools'])] == ['computer']
+    kinds = [item.get('type') for item in cast(list[dict[str, Any]], last['input'])]
+    assert 'computer_call' not in kinds and 'computer_call_output' not in kinds
+    calls = _items(last, 'function_call')
+    assert calls and all(call['name'] == 'computer' for call in calls)
+    assert not any(str(call.get('id', '')).startswith('cu_') for call in calls)
+    assert 'reasoning' in kinds
 
 
 def _claude(model_name: str, anthropic_api_key: str, capture: RequestCapture) -> AnthropicModel:
