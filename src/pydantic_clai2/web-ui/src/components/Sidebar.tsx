@@ -466,7 +466,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
               <button
                 className="project-title"
                 onClick={() => setCollapsed((current) => ({ ...current, [project.key]: !closed }))}
-                title={project.key.includes('\0') ? undefined : project.key}
+                title={project.folder ?? undefined}
               >
                 <FolderIcon size={14} />
                 <span className="project-name">{project.name}</span>

@@ -365,6 +365,7 @@ export interface Worktree {
 
 export interface Project {
   key: string
+  folder: string | null
   name: string
   current: boolean
   worktrees: Worktree[]

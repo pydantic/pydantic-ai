@@ -64,14 +64,19 @@ def worktrees(
     return sorted(worktrees, key=lambda worktree: (not worktree.current, worktree.missing))
 
 
+def project_folder(key: str) -> PurePath:
+    """A project's folder: a repository's key is its Git folder, `.git` inside the main checkout, or the folder itself."""
+    path = PurePath(key)
+    return path.parent if path.name == '.git' else path
+
+
 def project_names(identities: Mapping[str, ProjectIdentity]) -> dict[str, str]:
     """Each project's name by its key, as the sidebar heads it.
 
     Projects that share a name each show the shortest end of their folder's path that no other of them shares,
     as `a/scratch` and `b/scratch`, or else their key.
     """
-    # A repository's key is its Git folder, as its name is: `.git` inside the main checkout, or the folder itself.
-    folders = {key: PurePath(key).parent if PurePath(key).name == '.git' else PurePath(key) for key in identities}
+    folders = {key: project_folder(key) for key in identities}
     names = {key: identity.name for key, identity in identities.items()}
     for key, folder in folders.items():
         name = identities[key].name
@@ -121,6 +126,7 @@ def completions(typed: str) -> list[Project]:
     return [
         Project(
             key=key,
+            folder=str(project_folder(key)),
             name=checkouts[0].name,
             current=False,
             worktrees=[

@@ -1073,6 +1073,22 @@ def test_sidebar_lists_removed_worktrees_after_live_ones(make_web: 'MakeWeb', tm
     ]
 
 
+def test_sidebar_project_folder_is_its_main_checkout(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """A repository's folder is its main checkout, not the Git folder that keys it; Removed folders has none."""
+    web_ = make_web(Agent(TestModel()))
+    repo, feature, gone = tmp_path / 'repo', tmp_path / 'wt' / 'feature', tmp_path / 'gone'
+    repository(repo, linked=feature, branch='feature')
+    gone.mkdir()
+    for title, workspace in [('Feature', feature), ('Gone', gone)]:
+        summary = ConversationSummary(workspace=str(workspace.resolve()), title=title)
+        web_.portal.call(lambda summary=summary: web_.shell.sessions.store.save(summary=summary, messages=[]))
+    gone.rmdir()
+    web_.shell.session.workspace = str(feature.resolve())
+
+    folders = {project['name']: project['folder'] for project in web_.get('/api/sessions').json()}
+    assert folders == {'repo': str(repo.resolve()), 'Removed folders': None}
+
+
 def test_archiving_a_worktree_archives_every_session_in_it(make_web: 'MakeWeb') -> None:
     """One request archives a group's sessions and lists them no more; ones it refuses stay, with the reasons."""
     web_ = make_web(Agent(TestModel()))

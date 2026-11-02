@@ -366,6 +366,26 @@ async def test_sidebar_search_accessible_name(page: Page, web_ui: WebUI) -> None
     await expect(sidebar.get_by_text('Browser Alpha', exact=True)).to_have_count(0)
 
 
+async def test_project_heading_title_is_its_folder(page: Page, web_ui: WebUI) -> None:
+    """A repository's heading shows its main checkout's folder, not the Git folder that keys it."""
+
+    async def sessions(route: Route) -> None:
+        await route.fulfill(
+            json=[
+                {'key': '/x/scratch/.git', 'folder': '/x/scratch', 'name': 'scratch', 'current': True, 'worktrees': []},
+                {'key': '\0missing', 'folder': None, 'name': 'Removed folders', 'current': False, 'worktrees': []},
+            ]
+        )
+
+    await page.route('**/api/sessions?*', sessions)
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    await expect(sidebar.locator('.project-title').filter(has_text='scratch')).to_have_attribute('title', '/x/scratch')
+    await expect(sidebar.locator('.project-title').filter(has_text='Removed folders')).not_to_have_attribute(
+        'title', re.compile('.*')
+    )
+
+
 async def test_removed_worktrees_fold_after_live_ones_and_archive_as_a_group(page: Page, web_ui: WebUI) -> None:
     """A project's removed worktrees wait, closed, in one group after its live ones; each archives at once."""
 
