@@ -831,6 +831,9 @@ class MockMCPServer(AbstractToolset[Any]):
 
 
 text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
+    # docs/models/openai.md
+    'Triage the open tickets.': 'The open tickets are triaged.',
+    'Draft the replies.': 'The replies are drafted.',
     # docs/capabilities/thinking.md
     'Plan the database migration.': 'Export, recreate the schema, import, then verify row counts.',
     'Now check the plan for anything that could lose data.': 'Take a backup before the import.',

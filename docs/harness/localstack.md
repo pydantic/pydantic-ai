@@ -261,6 +261,7 @@ Pass `custom_capability_types` so the spec loader knows how to instantiate
 
 ## Further reading
 
+- [Ten agents, ten clouds, one answer](https://pydantic.dev/articles/harness-localstack) (Pydantic): a fan-out of sub-agents, each with its own emulated AWS
 - [LocalStack documentation](https://docs.localstack.cloud/)
 - [Pydantic AI capabilities](../capabilities/overview.md)
 - [Toolsets](../toolsets.md)

@@ -246,7 +246,7 @@ Load only the most relevant reference first. Read additional references only if 
 
 | I want to... | Reference |
 |---|---|
-| Create/configure agents, choose models or output types, validate output, use deps, define specs, or pick run methods | [Agents Core](./references/AGENTS-CORE.md) |
+| Create/configure agents, choose output types, validate output, use deps, define specs, reuse an OpenAI Responses WebSocket, or pick run methods | [Agents Core](./references/AGENTS-CORE.md) |
 | Bundle reusable behavior or intercept lifecycle events | [Capabilities and Hooks](./references/CAPABILITIES-AND-HOOKS.md) |
 | Decide what should load eagerly vs on demand, apply progressive disclosure, defer capability loading, or explain `load_capability` | [Capabilities on Demand](./references/ON-DEMAND-CAPABILITIES.md) |
 | Build or change voice agents, speech-to-speech sessions, audio streaming, or browser voice transports | [Realtime Sessions](./references/REALTIME.md) — read before realtime work starts |
@@ -303,7 +303,19 @@ These are mistakes agents commonly make with Pydantic AI. Getting these wrong pr
 
 ## Task-Family References
 
-Use the [Task Routing Table](#task-routing-table) to choose the relevant reference. Load additional
-references only when the task spans multiple areas.
+Load exactly one of these unless the task clearly spans multiple families:
+
+| Task family | Reference |
+|---|---|
+| Core agent setup, output and output validators, deps, specs, models, OpenAI Responses WebSockets, run methods | [Agents Core](./references/AGENTS-CORE.md) |
+| Capabilities, hooks, and reusable behavior | [Capabilities and Hooks](./references/CAPABILITIES-AND-HOOKS.md) |
+| Progressive disclosure, deferred capabilities, capabilities on demand, and `load_capability` semantics | [Capabilities on Demand](./references/ON-DEMAND-CAPABILITIES.md) |
+| Function tools, toolsets, MCP, explicit search tools | [Tools Core](./references/TOOLS-CORE.md) |
+| Workspaces, workspace-backed tools, lifecycle ownership, and durable references | [Workspaces](./references/WORKSPACES.md) |
+| Provider-native tools | [Native Tools](./references/NATIVE-TOOLS.md) |
+| Approval, retries, failed tool results, validators, timeouts, rich tool returns, tool search, tool-level deferred loading, and mid-run tool additions | [Tools Advanced](./references/TOOLS-ADVANCED.md) |
+| Multimodal or structured input (`StructuredContent`, `FileUnderstanding`), message history, `run_id` / `conversation_id`, history processors | [Input and History](./references/INPUT-AND-HISTORY.md) |
+| Testing, request inspection, failed-run recovery, and Logfire debugging | [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md) |
+| Multi-agent patterns, graphs, direct API, A2A, durable execution, embeddings, image generation, evals, third-party integrations | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md) |
 
 Use [Task Reference Map](./references/COMMON-TASKS.md) only for compatibility with older links or when you need a pointer from an old section name to the new file.

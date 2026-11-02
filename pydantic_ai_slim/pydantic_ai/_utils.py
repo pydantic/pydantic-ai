@@ -1235,6 +1235,15 @@ def is_str_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
     return isinstance(obj, dict)
 
 
+def is_google_files_api_url(url: str) -> bool:
+    """Whether a URL uses the Google Files API prefix recognized by the Google adapters.
+
+    This is a literal, case-sensitive prefix check, not URL validation: the bare prefix and
+    suffixes without a path separator also match.
+    """
+    return url.startswith('https://generativelanguage.googleapis.com/v1beta/files')
+
+
 def is_text_like_media_type(media_type: str) -> bool:
     """Check if a media type represents text-like content.
 

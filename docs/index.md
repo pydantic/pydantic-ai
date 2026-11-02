@@ -253,7 +253,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
 - **Durable execution.** [Durable execution](durable_execution/overview.md) on eight engines: Temporal, DBOS, Prefect, Restate, AWS Lambda, Airflow, Absurd, and pgtask, the first five co-maintained with the vendor teams. Agents survive restarts and run for days on the engine you already operate, with [human-in-the-loop approval](deferred-tools.md#human-in-the-loop-tool-approval) built in.
 
-- **Coming from another framework?** The [comparisons](comparisons/index.md) show where Pydantic AI differs from LangChain, Google ADK, the Claude Agent SDK and seven more, and the [migration skills](framework-migration.md) let your coding agent port an existing application over.
+- **Coming from another framework?** The [comparisons](comparisons/index.md) show where Pydantic AI differs from LangChain, Google ADK, Microsoft Agent Framework, the Claude Agent SDK and the other frameworks people ask us about, and the [migration skills](framework-migration.md) let your coding agent port an existing application over.
 
 Built by the [Pydantic](https://docs.pydantic.dev) team: [Pydantic Validation](https://pydantic.dev/docs/) is the validation layer of the OpenAI SDK, the Anthropic SDK, the Google ADK, LangChain, and most of the AI ecosystem (and the foundation FastAPI was built on). Pydantic AI brings that same feeling to agents. [Built with Pydantic AI](built-with.md) lists open source projects and organizations that run on it.
 

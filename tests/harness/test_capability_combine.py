@@ -312,6 +312,9 @@ COMBINE_POLICY: dict[str, Policy] = {
     '_BoundToolOutputs': Anonymous('Coder-local truncation composes with standalone output policies'),
     '_DefaultCaching': Anonymous('Coder-local caching default; it yields to any `cache` already set'),
     '_SetToolStrict': Anonymous('Coder-local strict default; it only fills a `strict` still unset, so the first wins'),
+    '_ReportExhaustedRetries': Anonymous(
+        'Coder-local retry reporting; whichever sees the exhausted retry turns it into a tool failure, and the other passes that on'
+    ),
     'Coder': Anonymous('a packaged harness; composing two is composing their members'),
     'DockerSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'E2BSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),

@@ -331,6 +331,7 @@ instances always build the default client from `YDC_API_KEY`. In specs,
 
 ## Further reading
 
+- [You.com is now a Pydantic AI capability](https://pydantic.dev/articles/youdotcom-pydantic-ai-harness) (Pydantic)
 - [Pydantic AI capabilities](../capabilities/overview.md)
 - [Toolsets](../toolsets.md)
 - [You.com API documentation](https://documentation.you.com)
