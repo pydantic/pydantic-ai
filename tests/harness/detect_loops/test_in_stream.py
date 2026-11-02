@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 import pytest
 from inline_snapshot import snapshot
+from logfire.testing import CaptureLogfire
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
@@ -39,11 +43,14 @@ from pydantic_ai_harness.detect_loops import (
     DetectedLoop,
     LoopDetectedError,
     LoopDetector,
+    LoopHandler,
     LoopJudge,
     Repetition,
     RepetitionDetector,
     StreamSample,
 )
+from tests.conftest import no_leaked_tasks
+from tests.harness.conftest import agent_run_names
 
 Chunk = str | DeltaToolCalls | DeltaThinkingCalls
 
@@ -382,7 +389,8 @@ class TestDetectLoops:
 
         await agent.run('Read a.txt')
 
-        assert [(loop.pattern, loop.count, loop.window) for loop in loops][:1] == [('repeated_parallel_call', 5, 5)]
+        # Reported once: the response's calls are not counted again across responses.
+        assert [(loop.pattern, loop.count, loop.window) for loop in loops] == [('repeated_parallel_call', 5, 5)]
 
     async def test_a_response_that_was_not_streamed_is_checked_on_the_chosen_channels(self):
         loops: list[DetectedLoop] = []
@@ -400,6 +408,93 @@ class TestDetectLoops:
 
         assert result.output == LOOP * 40
         assert loops == []
+
+    async def test_a_nudged_response_is_not_counted_again_across_responses(self):
+        calls = [ToolCallPart('read_file', {'path': 'a.txt'}, tool_call_id=f'call_{index}') for index in range(6)]
+        responses = iter([ModelResponse(parts=calls)])
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return next(responses, ModelResponse(parts=[TextPart('done')]))
+
+        agent = Agent(FunctionModel(model), capabilities=[DetectLoops()])
+
+        @agent.tool_plain
+        def read_file(path: str) -> str:
+            raise AssertionError('repeated calls must not run')  # pragma: no cover
+
+        result = await agent.run('Read a.txt')
+
+        assert [nudge.metadata for nudge in _nudges(result.all_messages())] == [
+            {
+                'origin': 'pydantic-ai-harness.detect_loops.nudge.v1',
+                'pattern': 'repeated_parallel_call',
+                'tool_names': ['read_file'],
+            }
+        ]
+
+    async def test_a_streamed_loop_a_handler_let_through_is_not_counted_again(self):
+        loops, detector = _collect()
+        calls = [_args('{"path": "a.txt"}', index=index, name='read_file') for index in range(6)]
+
+        await _agent(_script(calls), detector).run('Read a.txt', event_stream_handler=_drain)
+
+        assert [(loop.pattern, loop.count) for loop in loops] == [('repeated_parallel_call', 5)]
+
+    async def test_arguments_that_arrive_as_an_object_are_checked_as_json(self):
+        loops, detector = _collect()
+        call = ToolCallPart('write_file', {'path': 'a.py', 'content': 'value = transform(value, step)\n' * 40})
+        responses = iter([ModelResponse(parts=[call])])
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return next(responses, ModelResponse(parts=[TextPart('done')]))
+
+        agent = Agent(FunctionModel(model), capabilities=[detector])
+
+        @agent.tool_plain
+        def write_file(path: str, content: str) -> str:
+            return 'written'
+
+        await agent.run('Write a.py')
+
+        assert [(loop.pattern, loop.tool_names) for loop in loops][:1] == [('repeated_tool_args', ('write_file',))]
+
+    async def test_run_stream_cannot_retry_output_that_already_streamed(self):
+        script = _script([LOOP] * 60)
+
+        with pytest.raises(UnexpectedModelBehavior, match='retries are not supported in `run_stream\\(\\)`'):
+            async with _agent(script, DetectLoops()).run_stream('Explain') as result:
+                await result.get_output()
+
+        assert script.sent[0] < 20
+
+    async def test_no_task_outlives_a_stopped_or_finished_stream(self):
+        def stop(ctx: RunContext[object], loop: DetectedLoop) -> None:
+            raise ModelRetry('Stop repeating yourself.')
+
+        def let_through(ctx: RunContext[object], loop: DetectedLoop) -> None:
+            pass
+
+        actions: list[Literal['nudge', 'error'] | LoopHandler[object]] = ['nudge', 'error', stop, let_through]
+        for action in actions:
+            with no_leaked_tasks(), contextlib.suppress(LoopDetectedError):
+                await _agent(_script([LOOP] * 60), DetectLoops(action=action)).run(
+                    'Explain', event_stream_handler=_drain
+                )
+
+    async def test_cancelling_the_run_while_a_loop_is_handled(self):
+        handling = asyncio.Event()
+
+        async def block(ctx: RunContext[object], loop: DetectedLoop) -> None:
+            handling.set()
+            await asyncio.Event().wait()
+
+        agent = _agent(_script([LOOP] * 60), DetectLoops(action=block))
+        with no_leaked_tasks():
+            run = asyncio.create_task(agent.run('Explain', event_stream_handler=_drain))
+            await handling.wait()
+            run.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await run
 
     async def test_streamed_and_whole_responses_reach_the_same_decision(self):
         streamed, streamed_detector = _collect()
@@ -432,7 +527,7 @@ class TestDetectLoops:
 
         await _agent(script, detector).run('Explain', event_stream_handler=_drain)
 
-        assert [(loop.pattern, loop.count, loop.repeated_text) for loop in loops][:1] == [
+        assert [(loop.pattern, loop.count, loop.repeated_text) for loop in loops] == [
             ('repeated_stream_text', 3, 'Hmm.')
         ]
 
@@ -553,7 +648,7 @@ class TestLoopJudge:
 
     async def test_the_judge_can_overrule_the_heuristic(self):
         verdicts = [False] * 20
-        loops, _ = _collect()
+        loops: list[DetectedLoop] = []
         detector = DetectLoops[object](
             stream_detector=LoopJudge(model=_judge(verdicts)), action=lambda ctx, loop: loops.append(loop)
         )
@@ -583,6 +678,32 @@ class TestLoopJudge:
         assert (loop.pattern, loop.repeated_text) == ('repeated_stream_text', passage)
         assert loop.count > 2
 
+    @pytest.mark.usefixtures('instrument_all_agents')
+    async def test_the_judge_agent_is_named_after_the_capability(self, capfire: CaptureLogfire):
+        judge = LoopJudge[object](model=_judge([True]))
+
+        await Agent(_script([LOOP] * 60).model(), name='outer', capabilities=[DetectLoops(stream_detector=judge)]).run(
+            'Explain', event_stream_handler=_drain
+        )
+
+        assert 'loop_judge' in agent_run_names(capfire)
+
+    async def test_a_judge_that_quotes_no_repeating_passage(self):
+        judge = LoopJudge[object](model=_judge([True], passage=''), every=600)
+        script = _script([f'Let me check the config file again (attempt {index}). ' for index in range(40)])
+
+        with pytest.raises(LoopDetectedError) as exc_info:
+            await _agent(script, DetectLoops(stream_detector=judge, action='error')).run(
+                'Explain', event_stream_handler=_drain
+            )
+
+        assert (exc_info.value.loop.count, exc_info.value.loop.message) == snapshot(
+            (
+                0,
+                'Your response kept repeating itself without making progress. Change your approach, or explain what is blocking you.',
+            )
+        )
+
     async def test_a_failing_judge_falls_back_to_the_heuristic(self):
         def broken(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             raise RuntimeError('judge is down')
@@ -601,7 +722,7 @@ class TestLoopJudge:
             'repeated_stream_text'
         ]
         [span] = [span for span in exporter.get_finished_spans() if span.name == 'loop judge failed']
-        assert dict(span.attributes or {}) == {'detect_loops.error_type': 'RuntimeError'}
+        assert dict(span.attributes or {}) == {'error.type': 'RuntimeError'}
 
     async def test_a_slow_judge_falls_back_to_the_heuristic(self):
         async def slow(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

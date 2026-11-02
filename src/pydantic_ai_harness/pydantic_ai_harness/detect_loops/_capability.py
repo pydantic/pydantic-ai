@@ -7,7 +7,7 @@ import inspect
 import json
 import re
 from collections import Counter
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from hashlib import sha256
@@ -324,6 +324,10 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
     _streaming: _ResponseCheck | None = field(default=None, init=False, repr=False, compare=False)
     """The checks on the response being streamed, while one is."""
 
+    _reported_in_stream: bool = field(default=False, init=False, repr=False, compare=False)
+    """Whether a loop was reported in the response being streamed, which then went on, so the response
+    `after_model_request` records next isn't counted again across responses."""
+
     def __post_init__(self) -> None:
         if self.window < 2:
             raise ValueError(f'`window` must be at least 2, got {self.window}.')
@@ -371,6 +375,8 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
         text = None if calls else ' '.join((response.text or '').split()).lower() or None
         self._steps.append(_Step(timestamp=response.timestamp, calls=calls, text=text))
         self._results_pending = True
+        if self._reported_in_stream:
+            self._counted_steps = len(self._steps)
         return response
 
     async def before_model_request(
@@ -421,10 +427,13 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
                 response = await self._watch_stream(ctx, check, request_context, handler)
             finally:
                 self._streaming = None
+                self._reported_in_stream = False
         else:
             response = await handler(request_context)
-        if not check.streamed:
-            for loop in await self._whole_response_loops(ctx, check, response):
+        if not check.streamed and (loops := await self._whole_response_loops(ctx, check, response)):
+            # `after_model_request` already recorded the response; it isn't counted again across responses.
+            self._counted_steps = len(self._steps)
+            for loop in loops:
                 await self._act(ctx, loop, in_response=True)
         return response
 
@@ -440,14 +449,14 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
         async def run_request() -> ModelResponse:
             return await handler(request_context)
 
-        request = asyncio.create_task(run_request())
+        request = asyncio.create_task(run_request(), name='detect_loops:model_request')
         try:
             while True:
-                detected = asyncio.create_task(check.detected.wait())
+                detected = asyncio.create_task(check.detected.wait(), name='detect_loops:detected')
                 try:
                     await asyncio.wait({request, detected}, return_when=asyncio.FIRST_COMPLETED)
                 finally:
-                    detected.cancel()
+                    await _stop(detected)
                 if not check.detected.is_set():
                     return request.result()
                 try:
@@ -458,6 +467,7 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
                     raise
                 finally:
                     check.release(stopped=request.done())
+                self._reported_in_stream = True
         finally:
             await _stop(request)
             check.release(stopped=True)
@@ -500,7 +510,7 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
         elif isinstance(part, TextPart):
             channel, tool_name, text = 'text', None, part.content
         elif isinstance(part, ToolCallPart):
-            channel, tool_name, text = 'tool_args', part.tool_name, _args_text(part.args)
+            channel, tool_name, text = 'tool_args', part.tool_name, part.args if isinstance(part.args, str) else ''
         else:
             return None
         if channel not in self.stream_channels:
@@ -530,6 +540,9 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
     ) -> list[DetectedLoop]:
         """Check the rest of a finished part, and count it if it's a tool call."""
         loops: list[DetectedLoop] = []
+        if index in check.parts and isinstance(part, ToolCallPart) and part.args and not isinstance(part.args, str):
+            # Arguments that came as an object are checked as JSON, the way a model writes them.
+            loops += await self._feed(ctx, check, index, json.dumps(part.args))
         checked = check.parts.pop(index, None)
         if checked is not None and checked.unchecked and (loop := await self._check_part(ctx, checked)) is not None:
             loops.append(loop)
@@ -713,14 +726,14 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
         ctx.tracer.start_span('loop detected', attributes=attributes).end()
 
 
-async def _stop(request: asyncio.Task[ModelResponse]) -> None:
-    """Cancel the model request and wait for it to finish tearing its stream down."""
-    request.cancel()
+async def _stop(task: asyncio.Task[object]) -> None:
+    """Cancel `task` and wait for it to finish, such as a model request tearing its stream down."""
+    task.cancel()
     # Shielded, so an outer cancellation doesn't leave the stream half torn down.
     with anyio.CancelScope(shield=True):
-        await asyncio.wait({request})
-    if not request.cancelled():
-        request.exception()
+        await asyncio.wait({task})
+    if not task.cancelled():
+        task.exception()
 
 
 def _in_part_loop(part: _Part, repetition: Repetition, *, window: int) -> DetectedLoop:
@@ -738,24 +751,23 @@ def _in_part_loop(part: _Part, repetition: Repetition, *, window: int) -> Detect
         count=count,
         window=window,
         fingerprints=(_digest(repetition.text),),
-        message=f'{what} repeated the same passage {count} times in a row, which is not making progress. {_CHANGE_APPROACH}',
+        message=(
+            f'{what} repeated the same passage {count} times in a row, which is not making progress. {_CHANGE_APPROACH}'
+            if count > 1
+            # A judge can report a loop without a passage that repeats exactly.
+            else f'{what} kept repeating itself without making progress. {_CHANGE_APPROACH}'
+        ),
         repeated_text=repetition.text,
     )
 
 
 def _delta_text(delta: ModelResponsePartDelta) -> str | None:
     if isinstance(delta, ToolCallPartDelta):
-        return _args_text(delta.args_delta)
+        # Arguments that arrive as an object are merged key by key, so they're checked once the call ends.
+        return delta.args_delta if isinstance(delta.args_delta, str) else None
     # Only thinking parts, text parts and tool calls are checked.
     assert isinstance(delta, TextPartDelta | ThinkingPartDelta)
     return delta.content_delta
-
-
-def _args_text(args: str | Mapping[str, object] | None) -> str:
-    """Tool call arguments as the text the model wrote: as streamed, or as JSON when they came as an object."""
-    if args is None:
-        return ''
-    return args if isinstance(args, str) else json.dumps(args)
 
 
 def _call_keys(response: ModelResponse) -> list[tuple[str, str, str]]:

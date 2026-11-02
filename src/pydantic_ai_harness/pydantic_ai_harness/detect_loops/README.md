@@ -85,7 +85,7 @@ A response that isn't streamed, such as one from `agent.run()` without an `event
 | `min_repeats` | `4` | How many times in a row the passage has to repeat. |
 | `min_chars` | `400` | How many characters the repeats have to cover together. |
 
-It compares characters exactly over the part's last `min_repeats * max_period` characters, which takes microseconds per check and gives the same answer every time. It doesn't catch a loop that changes a little on each pass, such as a counter in every sentence: a model judge can.
+It compares characters exactly, over the part's most recent `sample_chars` characters: enough for `min_repeats` repeats of a `max_period` passage. That's cheap enough to run on every check, and gives the same answer every time. It doesn't catch a loop that changes a little on each pass, such as a counter in every sentence: a model judge can.
 
 ### A model judge
 
@@ -156,9 +156,9 @@ Find nudges in history by that `origin`, not by their text ([identifying system 
 
 For a [loop within a response](#loops-within-a-response), the stream is also stopped and the request made again, with the nudge. The capability raises `ModelRetry`, so the model also sees `Your previous response was rejected because it kept repeating itself.` as retry feedback, and each such retry counts against the agent's [output retries](https://pydantic.dev/docs/ai/core-concepts/agent/#how-output-retries-are-enforced): a model that keeps looping ends the run with `UnexpectedModelBehavior` once they run out. A streamed response that was stopped isn't kept in history, and the tokens it used aren't added to the run's usage. A response that arrived whole stays in history ahead of the retry, as any rejected response does.
 
-`run_stream()` can't make a request again once its output has started streaming, so there a loop in the text that is the run's output ends the run with `UnexpectedModelBehavior`, after the text streamed so far. Loops in thinking or tool call arguments are retried as usual. Use `agent.run()` with an `event_stream_handler`, or `agent.iter()`, to have output text retried too.
+`run_stream()` can't make a request again once the run's output has started streaming, as output text or an output tool call. A loop found from then on ends the run with `UnexpectedModelBehavior`, after the output streamed so far. A loop found before that, in thinking or in a function tool call's arguments, is retried as usual. Use `agent.run()` with an `event_stream_handler`, or `agent.iter()`, to have loops in the output retried too.
 
-A nudge doesn't stop a model that ignores it. Combine it with [`UsageLimits`](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits) for a hard stop.
+A nudge doesn't stop a model that ignores it. Combine it with [`UsageLimits`](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits) for a hard stop. A stopped stream adds no request or tokens to the run's usage, so for a loop within a response the hard stop is the output retries, or `action='error'`.
 
 ### `'error'`
 
@@ -228,7 +228,7 @@ A `DetectedLoop` has:
 
 What a run recorded lives in memory, in the instance `for_run` creates for that run. Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) the recording and detection hooks (`after_model_request` and `before_model_request`) run in workflow code, so when Temporal, DBOS, or Prefect replays a run, they run again in the same order over the journaled responses and reach the same decisions. A handler runs there too, so keep it deterministic and free of I/O: log through the engine's workflow logger, or move I/O into a [durable capability operation](https://pydantic.dev/docs/ai/capabilities/custom/#durable-capability-operations). `LoopDetectedError` is an `AgentRunError`, so under Temporal it fails the workflow rather than the workflow task.
 
-A response streams inside the durable model request unit (activity, step or task), and the workflow only sees it whole, so the checks within a response run on the whole response, in workflow code, and the stream isn't stopped early. `LoopJudge` never asks its model in workflow code, where that model call wouldn't be checkpointed and could be repeated on replay: only its heuristic runs there, which is deterministic.
+A response streams inside the durable model request unit (activity, step or task), and the workflow only sees it whole, so the checks within a response run on the whole response, in workflow code, and the stream isn't stopped early. `LoopJudge` never asks its model in workflow code, where that model call wouldn't be checkpointed and could be repeated on replay: only its heuristic runs there, which is deterministic. A `LoopDetector` of your own runs in workflow code too, so keep it deterministic and free of I/O, like a handler.
 
 ## Telemetry
 
@@ -246,7 +246,7 @@ Each detection emits a zero-duration `loop detected` span through `ctx.tracer`, 
 
 Without `trace_include_content`, the span contains no arguments, results, or response text. The fingerprints are left out too, because a short argument can be recovered from its hash. Checks that find nothing emit nothing.
 
-When a `LoopJudge` fails or times out, a zero-duration `loop judge failed` span records it, with the exception's class name in `detect_loops.error_type`. The judge's own requests are traced as its agent's runs, when that agent is instrumented.
+When a `LoopJudge` fails or times out, a zero-duration `loop judge failed` span records it, with the exception's class name in `error.type`. The judge's own requests are traced as runs of its agent, named `loop_judge` when you pass `model=`, when that agent is instrumented.
 
 ## Composition
 

@@ -88,8 +88,8 @@ class RepetitionDetector(LoopDetector[AgentDepsT]):
     whose repeating unit is shorter than `min_period`, such as a divider line or a row of zeros, is
     not reported, even when the passage is a multiple of that unit.
 
-    It compares characters exactly, which takes microseconds per check, so it costs nothing a run would
-    notice and is deterministic.
+    It compares characters exactly, so it's cheap enough to run on every check and gives the same answer
+    every time.
     """
 
     min_period: int = 20
@@ -214,7 +214,7 @@ class LoopJudge(LoopDetector[AgentDepsT]):
         if self.agent is None:
             if self.model is None:
                 raise ValueError('Provide a judge `model` or a judge `agent`.')
-            self._judge = Agent(self.model)
+            self._judge = Agent(self.model, name='loop_judge')
         else:
             if self.model is not None:
                 raise ValueError('Provide either a judge `model` or a judge `agent`, not both.')
@@ -240,9 +240,7 @@ class LoopJudge(LoopDetector[AgentDepsT]):
             verdict = result.output
         # Any failure, a timeout included, falls back to the heuristic: the judge is optional, the run isn't.
         except Exception as error:
-            ctx.tracer.start_span(
-                'loop judge failed', attributes={'detect_loops.error_type': type(error).__name__}
-            ).end()
+            ctx.tracer.start_span('loop judge failed', attributes={'error.type': type(error).__qualname__}).end()
             return suspected
         if not verdict.looping:
             return None
