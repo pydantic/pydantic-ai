@@ -291,6 +291,11 @@ def _same_durable_workspace(left: Workspace, right: Workspace) -> bool:
     return workspace_layers(left) == workspace_layers(right) and _durable_policies(left) == _durable_policies(right)
 
 
+def _constant_key(key: str) -> Callable[[object], str]:
+    """A `policy_key` that puts every invocation of an operation under its one policy."""
+    return lambda _params: key
+
+
 def _as_capability(value: object, capability: AbstractCapability[Any]) -> object:
     """Name `capability` on a `RunContext` argument, the way a durable unit's operation body sees it."""
     if isinstance(value, RunContext):
@@ -654,6 +659,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                         mode='identity' if self.engine_spec.codec is IDENTITY_CODEC else 'json',
                     ),
                     config_role='capability',
+                    policies={} if declaration.policy is None else {operation_name: declaration.policy},
+                    policy_key=None if declaration.policy is None else _constant_key(operation_name),
                 )
                 self._bound_capability_operations[key] = backend.bind(operation)
                 self._capability_declarations[key] = declaration

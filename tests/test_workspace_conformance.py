@@ -199,7 +199,6 @@ async def test_native_realpath_rule_runs_without_commands() -> None:
         await rule(_RelativeRealpathBackend(FakeWorkspace('relative-realpath')))
 
 
-@pytest.mark.anyio
 async def test_the_zoom_and_pointer_checks_skip_a_display_without_them() -> None:
     suite = WorkspaceBackendSuite()
     backend = DisplayOnlyBackend(InMemoryProvider().backend(None))
@@ -213,7 +212,6 @@ async def test_the_zoom_and_pointer_checks_skip_a_display_without_them() -> None
             await check(backend)
 
 
-@pytest.mark.anyio
 async def test_the_display_check_fails_a_backend_with_a_new_display_each_time() -> None:
     class NewDisplayEachTime(DisplayOnlyBackend):
         @property
@@ -225,7 +223,6 @@ async def test_the_display_check_fails_a_backend_with_a_new_display_each_time() 
         await WorkspaceBackendSuite().test_display_is_the_same_object_each_time(backend)
 
 
-@pytest.mark.anyio
 async def test_the_zoom_check_allows_a_full_resolution_capture_of_the_region() -> None:
     """On a display whose screenshots are scaled down, a zoom at full resolution is larger than the region."""
 
@@ -243,7 +240,6 @@ async def test_the_zoom_check_allows_a_full_resolution_capture_of_the_region() -
         await rule(StretchedZoom(InMemoryProvider().backend(None)))
 
 
-@pytest.mark.anyio
 async def test_the_pointer_check_fails_a_display_that_ignores_actions() -> None:
     class InertDisplay(_ProviderFilesAndDisplay):
         async def act(self, action: ComputerAction) -> None:
@@ -255,7 +251,6 @@ async def test_the_pointer_check_fails_a_display_that_ignores_actions() -> None:
         await rule(InertDisplay(InMemoryProvider().backend(None)))
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize('extra', [None, 1], ids=['full-size', 'one-pixel-over'])
 async def test_the_scaled_screenshot_check_fails_a_display_larger_than_asked(extra: int | None) -> None:
     class TooLarge(_ProviderFilesAndDisplay):
