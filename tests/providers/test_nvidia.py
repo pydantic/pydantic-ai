@@ -17,7 +17,8 @@ from ..conftest import RequestCapture, TestEnv, try_import
 with try_import() as imports_successful:
     import openai
 
-    from pydantic_ai.embeddings import Embedder
+    from pydantic_ai.embeddings import Embedder, infer_embedding_model
+    from pydantic_ai.embeddings.openai import OpenAIEmbeddingModel
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.nvidia import NvidiaProvider
 
@@ -184,7 +185,7 @@ class CityLocation(BaseModel):
 async def test_nvidia_nemotron_forced_tool_choice(
     allow_model_requests: None, nvidia_api_key: str, request_capture: RequestCapture
 ):
-    """Tool output sends `tool_choice: 'required'`, which some Nemotron servings answer with the call as text."""
+    """Output tools send `tool_choice: 'required'`, which Nemotron answered as text on other hosts (#6280)."""
     provider = NvidiaProvider(api_key=nvidia_api_key, http_client=request_capture.client)
     agent = Agent(
         OpenAIChatModel('nvidia/nemotron-3.5-super-vl-120b-a12b', provider=provider), output_type=CityLocation
@@ -195,10 +196,18 @@ async def test_nvidia_nemotron_forced_tool_choice(
 
 
 @pytest.mark.vcr
-async def test_nvidia_embeddings(allow_model_requests: None, nvidia_api_key: str, env: TestEnv):
+async def test_nvidia_embeddings(
+    allow_model_requests: None, nvidia_api_key: str, request_capture: RequestCapture, env: TestEnv
+):
     """`nvidia:` embedding models route through `OpenAIEmbeddingModel` to NIM's `/v1/embeddings`."""
     env.set('NVIDIA_API_KEY', nvidia_api_key)
     env.remove('NVIDIA_BASE_URL')
-    embedder = Embedder('nvidia:nvidia/nemotron-3.5-embed-1b')
+    inferred = infer_embedding_model('nvidia:nvidia/nemotron-3.5-embed-1b')
+    assert isinstance(inferred, OpenAIEmbeddingModel)
+    assert inferred.system == 'nvidia'
+
+    provider = NvidiaProvider(api_key=nvidia_api_key, http_client=request_capture.client)
+    embedder = Embedder(OpenAIEmbeddingModel('nvidia/nemotron-3.5-embed-1b', provider=provider))
     result = await embedder.embed_query('Hello, world!')
     assert result == snapshot()
+    assert request_capture.paths == ['/v1/embeddings']
