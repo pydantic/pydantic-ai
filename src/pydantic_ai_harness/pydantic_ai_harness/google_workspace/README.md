@@ -111,6 +111,6 @@ A fixed `auth` is one set of connections shared by every run; see [Per-user cred
 
 ## Telemetry
 
-`GoogleWorkspace` emits no spans of its own. Core's [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) already records each Google Workspace tool call as a tool span, and connecting makes no decision worth a span of its own.
+`GoogleWorkspace` emits no spans of its own. Core's [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) already records each Google Workspace tool call as a tool span.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/google_workspace/)

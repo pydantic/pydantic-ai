@@ -71,7 +71,8 @@ def test_edit_and_retry_replace_a_prompt_and_every_later_turn(make_web: MakeWeb)
                 400,
                 {'detail': 'These images exceed the 32 MiB limit; send fewer at a time.'},
             )
-            assert receive_until(socket, Snapshot)[1].items[-1].text == 'done', 'the browser gets the history back'
+            restored = receive_until(socket, Snapshot)[1].items
+            assert [item.kind for item in restored] == ['user', 'assistant', 'turn'] * 2, 'the browser gets it back'
         assert prompts() == [('A', [image_id(red)]), ('B', [])], 'a refusal keeps the history'
 
         assert web_.post(route, {'text': " A' "}).status_code == 204
@@ -83,7 +84,11 @@ def test_edit_and_retry_replace_a_prompt_and_every_later_turn(make_web: MakeWeb)
         assert web_.post(f'/api/rewind/{retried["run_id"]}', {'text': "A'"}).status_code == 204
         settle(socket)
         items = web_.get('/api/state').json()['items']
-        assert [(item['kind'], item['text']) for item in items] == [('user', "A'"), ('assistant', 'done')]
+        assert [(item['kind'], item.get('text')) for item in items] == [
+            ('user', "A'"),
+            ('assistant', 'done'),
+            ('turn', None),
+        ]
         assert items[0]['run_id'] != retried['run_id']
         web_.post('/api/input', {'text': '/exit'})
         assert running.result(timeout=10) == 'exit'
