@@ -1,0 +1,237 @@
+"""`AgentCoreSandboxBackend` behavior over the fake client, beyond what the conformance suite checks."""
+
+from __future__ import annotations
+
+import re
+
+import anyio
+import pytest
+from botocore.exceptions import ClientError, NoCredentialsError, ReadTimeoutError
+
+from pydantic_ai.workspaces import (
+    WorkspaceError,
+    WorkspaceOutputLimitError,
+    WorkspaceRef,
+    WorkspaceTimeoutError,
+    WorkspaceUnavailableError,
+)
+from pydantic_ai_harness.agentcore_sandbox import AgentCoreSandboxBackend
+
+from .fake_agentcore import FakeAgentCore, client_error
+
+
+@pytest.mark.parametrize(
+    ('ref', 'message'),
+    [
+        (WorkspaceRef(provider='e2b', id='x'), "unsupported workspace provider 'e2b'; expected 'agentcore'"),
+        (
+            WorkspaceRef(provider='agentcore', id='no-slash'),
+            "must be '<code interpreter>/<session id>', got 'no-slash'",
+        ),
+        (WorkspaceRef(provider='agentcore', id='interpreter/'), "got 'interpreter/'"),
+    ],
+)
+def test_an_invalid_ref_fails_at_construction(ref: WorkspaceRef, message: str) -> None:
+    with pytest.raises(ValueError, match=re.escape(message)):
+        AgentCoreSandboxBackend(ref=ref)
+
+
+@pytest.mark.parametrize('session_timeout', [0, 1.5, True])
+def test_an_invalid_session_timeout_fails_at_construction(session_timeout: object) -> None:
+    with pytest.raises(ValueError, match='session_timeout must be an integer of at least 1'):
+        AgentCoreSandboxBackend(session_timeout=session_timeout)  # pyright: ignore[reportArgumentType]
+
+
+def test_an_arn_ref_keeps_the_whole_code_interpreter() -> None:
+    arn = 'arn:aws:bedrock-agentcore:us-east-1:123456789012:code-interpreter/my-interpreter-abc'
+    ref = WorkspaceRef(provider='agentcore', id=f'{arn}/session1')
+    assert AgentCoreSandboxBackend(ref=ref).ref == ref
+
+
+async def test_the_client_never_retries(fake_agentcore: FakeAgentCore) -> None:
+    await AgentCoreSandboxBackend(region_name='us-west-2').working_dir()
+    [settings] = fake_agentcore.clients
+    assert settings['region_name'] == 'us-west-2'
+    assert settings['config'].retries == {'max_attempts': 1}
+
+
+@pytest.mark.parametrize('anyio_backend', ['trio'])
+async def test_works_on_trio(fake_agentcore: FakeAgentCore) -> None:
+    backend = AgentCoreSandboxBackend()
+    assert (await backend.run(['printf', 'trio'])).stdout == 'trio'
+    assert backend.ref is not None
+
+
+async def test_concurrent_first_use_starts_one_session(fake_agentcore: FakeAgentCore) -> None:
+    backend = AgentCoreSandboxBackend()
+    async with anyio.create_task_group() as group:
+        for _ in range(3):
+            group.start_soon(backend.working_dir)
+    assert len(fake_agentcore.sessions) == 1
+
+
+@pytest.mark.parametrize(
+    ('error', 'message'),
+    [
+        (NoCredentialsError(), r'^No AWS credentials found for AgentCore'),
+        (
+            client_error('UnrecognizedClientException', 'bad token', 'StartCodeInterpreterSession'),
+            r'^AgentCore refused the AWS credentials \(UnrecognizedClientException\)\.$',
+        ),
+        (
+            client_error('ValidationException', 'sessionTimeoutSeconds too big', 'StartCodeInterpreterSession'),
+            r'^AgentCore refused the request: .*sessionTimeoutSeconds too big',
+        ),
+    ],
+)
+async def test_a_start_that_cannot_succeed_is_unavailable(
+    fake_agentcore: FakeAgentCore, error: Exception, message: str
+) -> None:
+    fake_agentcore.queue('start', error)
+    backend = AgentCoreSandboxBackend()
+    with pytest.raises(WorkspaceUnavailableError, match=message):
+        await backend.working_dir()
+    assert backend.ref is None
+
+
+async def test_an_unknown_code_interpreter_is_unavailable(fake_agentcore: FakeAgentCore) -> None:
+    with pytest.raises(WorkspaceUnavailableError, match='Code Interpreter not found: missing'):
+        await AgentCoreSandboxBackend(code_interpreter='missing').working_dir()
+
+
+async def test_a_transient_start_failure_propagates_and_a_retry_starts_a_session(fake_agentcore: FakeAgentCore) -> None:
+    throttled = client_error('ThrottlingException', 'slow down', 'StartCodeInterpreterSession')
+    fake_agentcore.queue('start', throttled)
+    backend = AgentCoreSandboxBackend()
+    with pytest.raises(ClientError, match='slow down'):
+        await backend.working_dir()
+    await backend.working_dir()
+    assert backend.ref is not None
+
+
+async def test_transient_invoke_failures_propagate_unchanged(fake_agentcore: FakeAgentCore) -> None:
+    backend = AgentCoreSandboxBackend()
+    await backend.working_dir()
+    fake_agentcore.queue('executeCode', client_error('InternalServerException', 'try again'))
+    with pytest.raises(ClientError, match='try again'):
+        await backend.exists('/tmp')
+    timeout = ReadTimeoutError(endpoint_url='https://bedrock-agentcore.us-east-1.amazonaws.com')
+    fake_agentcore.queue('executeCode', timeout)
+    with pytest.raises(ReadTimeoutError):
+        await backend.exists('/tmp')
+
+
+async def test_an_attached_session_must_have_the_working_dir(fake_agentcore: FakeAgentCore) -> None:
+    session = AgentCoreSandboxBackend()
+    await session.working_dir()
+    assert session.ref is not None
+    missing = str(fake_agentcore.home / 'missing')
+    attached = AgentCoreSandboxBackend(ref=session.ref, working_dir=missing)
+    with pytest.raises(WorkspaceError, match=re.escape(f'working_dir {missing!r} does not exist')):
+        await attached.working_dir()
+    assert not (fake_agentcore.home / 'missing').exists()
+
+
+async def test_a_started_session_creates_the_working_dir(fake_agentcore: FakeAgentCore) -> None:
+    work = fake_agentcore.home / 'a' / 'b'
+    backend = AgentCoreSandboxBackend(working_dir=str(work))
+    assert await backend.working_dir() == str(work)
+    assert (await backend.run(['pwd'])).stdout == f'{work}\n'
+
+
+async def test_a_command_whose_working_dir_was_removed_fails(fake_agentcore: FakeAgentCore) -> None:
+    work = fake_agentcore.home / 'work'
+    backend = AgentCoreSandboxBackend(working_dir=str(work))
+    await backend.working_dir()
+    work.rmdir()
+    with pytest.raises(WorkspaceError, match='no longer exists in AgentCore session'):
+        await backend.run(['true'])
+
+
+async def test_output_over_the_limit_raises_with_its_beginning(
+    fake_agentcore: FakeAgentCore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr('pydantic_ai_harness.agentcore_sandbox._backend._MAX_OUTPUT_BYTES', 8)
+    monkeypatch.setattr('pydantic_ai_harness.agentcore_sandbox._backend._OUTPUT_PREVIEW_BYTES', 4)
+    backend = AgentCoreSandboxBackend()
+    with pytest.raises(WorkspaceOutputLimitError) as caught:
+        await backend.run(['sh', '-c', 'printf 0123456789; printf abcdef >&2'])
+    assert (caught.value.stdout, caught.value.stderr, caught.value.limit) == ('0123', 'abcd', 8)
+
+
+async def test_files_and_output_travel_in_chunks(
+    fake_agentcore: FakeAgentCore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr('pydantic_ai_harness.agentcore_sandbox._backend._READ_CHUNK_BYTES', 4)
+    monkeypatch.setattr('pydantic_ai_harness.agentcore_sandbox._backend._WRITE_CHUNK_BYTES', 3)
+    backend = AgentCoreSandboxBackend()
+    path = str(fake_agentcore.home / 'chunked.bin')
+    fake_agentcore.calls.clear()
+    await backend.write_bytes(path, b'0123456789')
+    assert fake_agentcore.calls.count('executeCode') == 4
+    assert await backend.read_bytes(path) == b'0123456789'
+    assert (await backend.run(['cat', path])).stdout == '0123456789'
+
+
+async def test_an_empty_write_creates_the_file(fake_agentcore: FakeAgentCore) -> None:
+    path = fake_agentcore.home / 'empty'
+    await AgentCoreSandboxBackend().write_bytes(str(path), b'')
+    assert path.read_bytes() == b''
+
+
+async def test_a_timeout_returns_the_partial_output_and_stops_the_task(fake_agentcore: FakeAgentCore) -> None:
+    backend = AgentCoreSandboxBackend()
+    with pytest.raises(WorkspaceTimeoutError) as caught:
+        await backend.run(['sh', '-c', 'printf started; printf warn >&2; sleep 30'], timeout=1)
+    assert (caught.value.stdout, caught.value.stderr) == ('started', 'warn')
+    assert 'stopTask' in fake_agentcore.calls
+    [session] = fake_agentcore.sessions.values()
+    assert all(task.poll() is not None for task in session.tasks.values())
+
+
+async def test_a_failed_start_still_cleans_up(fake_agentcore: FakeAgentCore) -> None:
+    backend = AgentCoreSandboxBackend()
+    await backend.working_dir()
+    fake_agentcore.queue('startCommandExecution', client_error('ThrottlingException', 'slow down'))
+    with pytest.raises(ClientError, match='slow down'):
+        await backend.run(['true'])
+    assert 'stopTask' not in fake_agentcore.calls
+
+
+async def test_unexpected_service_replies_are_workspace_errors(fake_agentcore: FakeAgentCore) -> None:
+    backend = AgentCoreSandboxBackend()
+    await backend.working_dir()
+
+    fake_agentcore.queue_task('startCommandExecution', taskStatus='running')
+    with pytest.raises(WorkspaceError, match='startCommandExecution returned no task id'):
+        await backend.run(['true'])
+
+    # An event type this backend does not know is skipped, like one botocore adds in a later release.
+    fake_agentcore.queue('getTask', [{'futureEvent': {}}])
+    with pytest.raises(WorkspaceError, match='AgentCore getTask returned no result'):
+        await backend.run(['true'])
+
+    fake_agentcore.queue_code_reply('Traceback: MemoryError', error=True)
+    with pytest.raises(WorkspaceError, match='AgentCore executeCode failed: Traceback: MemoryError'):
+        await backend.exists('/tmp')
+
+    fake_agentcore.queue_code_reply('not json')
+    with pytest.raises(WorkspaceError, match="unexpected reply to 'exists': 'not json'"):
+        await backend.exists('/tmp')
+
+    fake_agentcore.queue_code_reply('{"error": ["OSError", "No space left on device"]}')
+    with pytest.raises(OSError, match="No space left on device \\(in the AgentCore session, for '/tmp/x'\\)"):
+        await backend.write_bytes('/tmp/x', b'x')
+
+
+async def test_a_command_that_left_no_exit_code_fails(fake_agentcore: FakeAgentCore) -> None:
+    backend = AgentCoreSandboxBackend()
+    await backend.working_dir()
+    fake_agentcore.queue_code_reply('{"ok": {"exit_code": null, "size": 0}}')
+    with pytest.raises(WorkspaceError, match='ended without recording an exit code'):
+        await backend.run(['true'])
+
+
+async def test_a_program_that_fails_outside_the_filesystem_is_a_workspace_error(fake_agentcore: FakeAgentCore) -> None:
+    with pytest.raises(WorkspaceError, match=r'(?s)AgentCore executeCode failed: .*ValueError: .*embedded null'):
+        await AgentCoreSandboxBackend().read_bytes('/tmp/bad\x00name')

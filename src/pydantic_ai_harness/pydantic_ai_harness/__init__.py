@@ -7,6 +7,7 @@ from ._warn import HarnessDeprecationWarning, MCPReadOnlyNoToolsWarning
 if TYPE_CHECKING:
     from .absurd import AbsurdDurability
     from .advisor import Advisor
+    from .agentcore_sandbox import AgentCoreSandbox, AgentCoreSandboxBackend
     from .approval_reviewer import ApprovalReviewer
     from .artifact_scanning import ArtifactScanner
     from .ask_user import AskUser
@@ -88,6 +89,8 @@ if TYPE_CHECKING:
 __all__ = [
     'AbsurdDurability',
     'Advisor',
+    'AgentCoreSandbox',
+    'AgentCoreSandboxBackend',
     'ApprovalReviewer',
     'ArtifactScanner',
     'AskUser',
@@ -184,6 +187,7 @@ __all__ = [
 _CAPABILITY_EXPORTS = {
     'AbsurdDurability': 'absurd',
     'Advisor': 'advisor',
+    'AgentCoreSandbox': 'agentcore_sandbox',
     'ApprovalReviewer': 'approval_reviewer',
     'AskUser': 'ask_user',
     'BackgroundTools': 'background_tools',
@@ -253,6 +257,7 @@ _CAPABILITY_EXPORTS = {
 }
 
 _CONSTANT_EXPORTS = {
+    'AgentCoreSandboxBackend': 'agentcore_sandbox',
     'ArtifactScanner': 'artifact_scanning',
     'BoxdSandboxBackend': 'boxd_sandbox',
     'BoxLiteSandboxBackend': 'boxlite_sandbox',
