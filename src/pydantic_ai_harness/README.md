@@ -204,6 +204,7 @@ Finding and reading things on the open web.
 | [You.com Research](pydantic_ai_harness/youdotcom/) | Harness | Cited answers and multi-step research via the You.com Answer, Research, and Finance Research APIs |
 | [Browser Use](pydantic_ai_harness/browser_use/) | Harness | Hand web tasks to an autonomous [browser-use](https://github.com/browser-use/browser-use) agent driving a real browser |
 | [Playwright Browser](pydantic_ai_harness/playwright/) | Harness | Drive a real Chromium page yourself: navigate, click, type, read, and inspect what the page did |
+| [Computer Use](pydantic_ai_harness/computer_use/) | Harness | See and control the desktop of the run's workspace with screenshots, mouse, and keyboard |
 
 ### Reasoning, planning & delegation
 

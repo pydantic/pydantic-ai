@@ -13,6 +13,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from pydantic_ai import ToolDefinition
+from pydantic_ai.computer_use import COMPUTER_KIND
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, UsageLimitExceeded, UserError
 from pydantic_ai.function_signature import FunctionSignature
 from pydantic_ai.messages import (
@@ -37,11 +38,13 @@ def can_be_sandboxed(tool_def: ToolDefinition) -> bool:
 
     Framework control tools (tool search, capability loading) drive protocol-level flows; a local fallback
     (`unless_native`) has to stay native so `Model.prepare_request` can drop it when the provider supports
-    the native tool; and a tool that is itself a code-execution sandbox (e.g. DynamicWorkflow's
-    `run_workflow`) is a peer of `run_code`, not something to fold inside it.
+    the native tool; a tool that is itself a code-execution sandbox (e.g. DynamicWorkflow's
+    `run_workflow`) is a peer of `run_code`, not something to fold inside it; and `ComputerUse`'s `computer` tool is
+    sent as the provider's native computer tool and returns a screenshot the model has to see.
     """
     return (
         tool_def.tool_kind not in _FRAMEWORK_CONTROL_TOOL_KINDS
+        and tool_def.tool_kind != COMPUTER_KIND.id
         and not tool_def.unless_native
         and not is_code_execution_tool(tool_def)
     )
