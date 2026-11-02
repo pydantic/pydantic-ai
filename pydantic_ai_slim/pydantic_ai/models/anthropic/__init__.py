@@ -173,6 +173,7 @@ try:
         DEFAULT_TIMEOUT,
         NOT_GIVEN,
         APIStatusError,
+        AsyncAnthropicAWS,
         AsyncAnthropicBedrock,  # pyright: ignore[reportPrivateImportUsage]
         AsyncAnthropicBedrockMantle,  # pyright: ignore[reportPrivateImportUsage]
         AsyncAnthropicFoundry,
@@ -482,6 +483,17 @@ _COUNT_TOKENS_SERVER_TOOLS_UNVERIFIED_CLIENTS = (
 # Anthropic's explicit strict-schema limits were verified live on the Messages API and on both Bedrock clients. Vertex
 # and Foundry weren't reachable with our credentials, so they keep sending such requests for the API to judge.
 _STRICT_SCHEMA_LIMITS_UNVERIFIED_CLIENTS = (AsyncAnthropicFoundry, AsyncAnthropicVertex)
+# Citations route the `20260209` web tools to direct calls on the direct API, where uncited sandbox results were
+# reproduced and the direct calls recorded. Foundry and Claude Platform on AWS (`AsyncAnthropicAWS`, an
+# `AsyncAnthropic` subclass) also send those versions but aren't verified to accept `allowed_callers` with citations,
+# so `anthropic_calls_cited_web_tools_directly` stays off for them. The other clients don't send those versions.
+_CITED_WEB_TOOLS_DIRECT_UNVERIFIED_CLIENTS = (
+    AsyncAnthropicAWS,
+    AsyncAnthropicBedrock,
+    AsyncAnthropicBedrockMantle,
+    AsyncAnthropicFoundry,
+    AsyncAnthropicVertex,
+)
 
 _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
 _ANTHROPIC_TURN_SCOPED_SYSTEM_BETA = 'mid-conversation-system-clear-at-2026-08-21'
@@ -700,8 +712,8 @@ class AnthropicModelSettings(ModelSettings, total=False):
     enabled. Results the model reads from code execution come back without citations, so when a request
     asks for citations, with [`Citations`][pydantic_ai.capabilities.Citations] and text output or, for
     web fetch, [`WebFetchTool.enable_citations`][pydantic_ai.native_tools.WebFetchTool.enable_citations],
-    Pydantic AI sends `['direct']` on those versions of the cited tools, unless the request needs code
-    execution. See [Web Tool Callers](../models/anthropic.md#web-tool-callers).
+    Pydantic AI sends `['direct']` on those versions of the cited tools on the Anthropic API, unless the
+    request needs code execution. See [Web Tool Callers](../models/anthropic.md#web-tool-callers).
 
     Set `['direct']` to have the model always call the web tools itself with no sandbox, which turns off
     dynamic filtering and makes the tools eligible for Zero Data Retention. A value set here is sent
@@ -1162,6 +1174,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         Anthropic's strict-schema limits are only checked on the clients they were verified on, and a user whose
         Vertex or Foundry deployment is known to enforce them can opt in with `anthropic_enforces_strict_schema_limits`.
+
+        `anthropic_calls_cited_web_tools_directly` is on for `AsyncAnthropic` clients and off for Claude Platform on
+        AWS and the platform clients, unless the provider's profile already sets it.
         """
         client = self._provider.client
         profile = merge_profile(
@@ -1186,6 +1201,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             profile = merge_profile(profile, AnthropicModelProfile(supports_auto_cache=False))
         if isinstance(client, _STRICT_SCHEMA_LIMITS_UNVERIFIED_CLIENTS):
             profile = merge_profile(profile, AnthropicModelProfile(anthropic_enforces_strict_schema_limits=False))
+        if 'anthropic_calls_cited_web_tools_directly' not in profile:
+            profile = merge_profile(
+                profile,
+                AnthropicModelProfile(
+                    anthropic_calls_cited_web_tools_directly=not isinstance(
+                        client, _CITED_WEB_TOOLS_DIRECT_UNVERIFIED_CLIENTS
+                    )
+                ),
+            )
         return profile
 
     @property
@@ -2587,7 +2611,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     case _:
                         pass
         # A container set by the user is only accepted on a request with code execution.
-        elif not model_settings.get('anthropic_container'):
+        elif self.profile.get('anthropic_calls_cited_web_tools_directly', False) and not model_settings.get(
+            'anthropic_container'
+        ):
             route_cited_web_tools_direct(
                 tools, citations_included(model_settings, model_request_parameters), code_execution_in_open_turn
             )

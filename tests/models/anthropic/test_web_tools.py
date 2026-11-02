@@ -9,7 +9,7 @@ the dynamic-filtering `caller` round-trip on web-fetch history, and the live req
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
@@ -64,6 +64,7 @@ with try_import() as imports_successful:
     from anthropic import (
         APIStatusError,
         AsyncAnthropic,
+        AsyncAnthropicAWS,
         AsyncAnthropicBedrock,
         AsyncAnthropicBedrockMantle,
         AsyncAnthropicFoundry,
@@ -86,15 +87,17 @@ with try_import() as imports_successful:
     from anthropic.types.beta.beta_container_params import BetaContainerParams
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings, AnthropicWebToolCaller
-    from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.profiles.anthropic import AnthropicModelProfile
+    from pydantic_ai.providers.anthropic import AnthropicProvider, AsyncAnthropicClient
 
 if not imports_successful():  # pragma: lax no cover
-    AsyncAnthropicBedrock = AsyncAnthropicBedrockMantle = AsyncAnthropicVertex = AsyncAnthropicFoundry = None
+    AsyncAnthropicBedrock = AsyncAnthropicBedrockMantle = AsyncAnthropicVertex = None
     if not TYPE_CHECKING:
-        # `AsyncAnthropic` is referenced in a module-level `pytest.param`, so it must resolve at collection
-        # time even without `anthropic` installed; guarded from the type checker to keep it typed as the class
-        # at its annotation sites (which only execute inside tests skipped when `anthropic` is absent).
-        AsyncAnthropic = None
+        # `AsyncAnthropic` and `AsyncAnthropicFoundry` are referenced in module-level `pytest.param`s, so they must
+        # resolve at collection time even without `anthropic` installed; guarded from the type checker to keep them
+        # typed as the classes at their call sites (which only execute inside tests skipped when `anthropic` is
+        # absent).
+        AsyncAnthropic = AsyncAnthropicFoundry = None
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
@@ -219,6 +222,159 @@ def test_anthropic_explicit_profile_instance_narrows_web_tools():
     profile = provider.model_profile('claude-sonnet-4-6')
     m = AnthropicModel('claude-sonnet-4-6', provider=provider, profile=profile)
     assert WebSearchTool not in m.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+
+
+@pytest.mark.parametrize(
+    'client,profile,tools',
+    [
+        pytest.param(
+            lambda: AsyncAnthropic(api_key='x'),
+            None,
+            snapshot(
+                [
+                    {
+                        'name': 'web_search',
+                        'type': 'web_search_20260209',
+                        'max_uses': None,
+                        'allowed_domains': None,
+                        'blocked_domains': None,
+                        'user_location': None,
+                        'allowed_callers': ['direct'],
+                    },
+                    {
+                        'name': 'web_fetch',
+                        'type': 'web_fetch_20260209',
+                        'max_uses': None,
+                        'allowed_domains': None,
+                        'blocked_domains': None,
+                        'citations': {'enabled': True},
+                        'max_content_tokens': None,
+                        'allowed_callers': ['direct'],
+                    },
+                ]
+            ),
+            id='api',
+        ),
+        pytest.param(
+            lambda: AsyncAnthropicAWS(api_key='x', aws_region='us-east-1', workspace_id='w'),
+            None,
+            snapshot(
+                [
+                    {
+                        'name': 'web_search',
+                        'type': 'web_search_20260209',
+                        'max_uses': None,
+                        'allowed_domains': None,
+                        'blocked_domains': None,
+                        'user_location': None,
+                    },
+                    {
+                        'name': 'web_fetch',
+                        'type': 'web_fetch_20260209',
+                        'max_uses': None,
+                        'allowed_domains': None,
+                        'blocked_domains': None,
+                        'citations': {'enabled': True},
+                        'max_content_tokens': None,
+                    },
+                ]
+            ),
+            id='claude-platform-on-aws',
+        ),
+        pytest.param(
+            lambda: AsyncAnthropicFoundry(api_key='x', base_url='https://example.services.ai.azure.com/anthropic'),
+            None,
+            snapshot(
+                [
+                    {
+                        'name': 'web_search',
+                        'type': 'web_search_20260209',
+                        'max_uses': None,
+                        'allowed_domains': None,
+                        'blocked_domains': None,
+                        'user_location': None,
+                    },
+                    {
+                        'name': 'web_fetch',
+                        'type': 'web_fetch_20260209',
+                        'max_uses': None,
+                        'allowed_domains': None,
+                        'blocked_domains': None,
+                        'citations': {'enabled': True},
+                        'max_content_tokens': None,
+                    },
+                ]
+            ),
+            id='foundry',
+        ),
+        pytest.param(
+            lambda: AsyncAnthropicFoundry(api_key='x', base_url='https://example.services.ai.azure.com/anthropic'),
+            {'anthropic_calls_cited_web_tools_directly': True},
+            snapshot(
+                [
+                    {
+                        'name': 'web_search',
+                        'type': 'web_search_20260209',
+                        'max_uses': None,
+                        'allowed_domains': None,
+                        'blocked_domains': None,
+                        'user_location': None,
+                        'allowed_callers': ['direct'],
+                    },
+                    {
+                        'name': 'web_fetch',
+                        'type': 'web_fetch_20260209',
+                        'max_uses': None,
+                        'allowed_domains': None,
+                        'blocked_domains': None,
+                        'citations': {'enabled': True},
+                        'max_content_tokens': None,
+                        'allowed_callers': ['direct'],
+                    },
+                ]
+            ),
+            id='foundry-profile-on',
+        ),
+    ],
+)
+async def test_anthropic_citations_web_tool_callers_by_client(
+    allow_model_requests: None,
+    client: Callable[[], AsyncAnthropicClient],
+    profile: AnthropicModelProfile | None,
+    tools: list[dict[str, Any]],
+):
+    """`Citations()` calls the `20260209` web tools directly on the Anthropic API client only.
+
+    Claude Platform on AWS and Foundry send the same versions but aren't verified to accept `allowed_callers` with
+    citations, so they keep Anthropic's default callers unless the profile turns the routing on.
+
+    Mocked at the HTTP transport rather than recorded, because Claude Platform on AWS and Foundry can't be recorded
+    here. Going through each real SDK client checks the `tools` list survives the client's own request rewriting.
+    """
+    bodies: list[dict[str, Any]] = []
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(request.content))
+        return _anthropic_response(
+            'msg_1', [{'type': 'text', 'text': 'Done.'}], 'end_turn', container=None, stream=False
+        )
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as http_client:
+        model = AnthropicModel(
+            'claude-sonnet-4-6',
+            provider=AnthropicProvider(anthropic_client=client().copy(http_client=http_client)),
+            profile=profile,
+        )
+        settings: AnthropicModelSettings = {'max_tokens': 1024}
+        agent = Agent(
+            model,
+            capabilities=[NativeTool(WebSearchTool()), NativeTool(WebFetchTool()), Citations()],
+            model_settings=settings,
+        )
+        await agent.run('Where are the Pydantic AI docs?')
+
+    [body] = bodies
+    assert body['tools'] == tools
 
 
 _FETCH_PROMPT = 'Use web fetch to read https://ai.pydantic.dev and say in one sentence what Pydantic AI is.'
