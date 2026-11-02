@@ -546,8 +546,19 @@ RepoContext(home_dir='..', nested_traversal=True)  # walk up one level; follow t
 
 `home_dir=None` (default) scans only the working directory; set it to walk up to that ancestor. It is
 a workspace path (on E2B, `/home/user`, not `Path.home()`); `~` raises `UserError`.
-`nested_traversal=True` surfaces a directory's instruction file when `FileSystem` reads or lists it
-(`nested_inject='pointer'` or `'contents'`), in the message tail so the cached prefix stays stable.
+Use keyword-only `autoload_symlink_roots=()` to authorize shared instruction
+targets for autoload only; the default is empty. Authorize only a directory of
+trusted instructions, not `/` or all of home; repository links can select readable
+files beneath it. See
+[Repo Context](https://pydantic.dev/docs/ai/harness/repo-context/#shared-instruction-symlinks)
+for resolution, labels, and backend requirements.
+
+`nested_traversal=True` surfaces the instruction files between the working directory and whatever
+`FileSystem` reads or lists, shallowest first, each directory once while its note is in the
+conversation (`nested_inject='pointer'` or `'contents'`), in the message tail so the cached prefix
+stays stable.
+With it on, the instructions also gain one static sentence: each instruction file applies to its
+subtree, the deeper file wins, and the user's direct instructions win over all of them.
 
 ## Macroscope
 
@@ -573,20 +584,6 @@ exclusive. The default image needs `LOCALSTACK_AUTH_TOKEN` (forwarded automatica
 and write host files (`file://`, `s3 cp`), but gets its own empty AWS config and credentials files instead of
 `~/.aws/config` and `~/.aws/credentials`.
 
-## CLAI 2
-
-`pydantic-clai2` is a separate terminal client (`clai2`) whose default agent is
-`Coder(unrestricted_filesystem=True)` in the launch directory, with no sandbox or approval layer.
-`clai2 --worktree NAME` starts in a new git worktree (not a sandbox). To chat with your own agent:
-`asyncio.run(chat(agent, deps=None))` with `from pydantic_clai2 import chat`.
-
-To run CLAI's stock coding agent from code or over ACP, without the terminal:
-`async with open_stock_agent(workspace=path, model=...) as agent:` from `pydantic_clai2`. It binds the
-`coder`, `repo_context`, and `compaction` built-ins plus your `capabilities`, and ignores the user's
-saved CLAI configuration. `plugin_settings={'coder': {...}}` overrides built-in settings. With a
-capability that requires approval over ACP, pass `{'coder': {'sub_agents': False}}`: a delegated
-task's approval fails the run.
-
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/coder/
@@ -603,5 +600,4 @@ task's approval fails the run.
 - https://pydantic.dev/docs/ai/harness/repo-context/
 - https://pydantic.dev/docs/ai/harness/macroscope/
 - https://pydantic.dev/docs/ai/harness/localstack/
-- https://pydantic.dev/docs/ai/harness/clai2/
 - https://pydantic.dev/docs/ai/core-concepts/workspace/

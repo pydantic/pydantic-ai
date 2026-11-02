@@ -6,6 +6,8 @@ Run your agent's commands and file edits in an isolated [Modal](https://modal.co
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. ModalSandbox's get_workspace hook gives the run a Modal cloud sandbox as ctx.workspace, so each command and file operation goes over the Modal API, authenticated with your Modal token, and runs in the sandbox as root; output comes back to the tool. The first use creates the sandbox, its WorkspaceRef is saved in the message history and on the result, a later run reattaches with it, and destroy(ref) terminates it. The sandbox also ends when sandbox_timeout, at most 24 hours, or an idle_timeout runs out; a later run with its ref then raises WorkspaceUnavailableError.](https://pydantic.dev/docs/ai/img/harness/modal-sandbox.svg)
+
 ## Install
 
 uv:
@@ -173,6 +175,8 @@ A failed run returns no result, so there is no ref to store, and `after_run` doe
 ```python
 from typing import Any
 
+import anyio
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.run import AgentRunResult
@@ -185,7 +189,10 @@ hooks = Hooks()
 @hooks.on.run_error
 async def terminate_failed_run(ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[Any]:
     if ctx.workspace.ref is not None:
-        await ModalSandbox().destroy(ctx.workspace.ref)
+        # Shielded, so an `anyio` deadline around the run doesn't cut the kill short,
+        # and bounded, so a hung API call can't hang the run indefinitely.
+        with anyio.move_on_after(30, shield=True):
+            await ModalSandbox().destroy(ctx.workspace.ref)
     raise error
 
 

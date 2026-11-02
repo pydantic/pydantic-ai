@@ -6,6 +6,8 @@ Run your agent's commands and file edits on another machine over SSH, using your
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. SSHWorkspace's get_workspace hook gives the run a remote host as ctx.workspace, so each command and file operation opens an SSH connection with your own ssh client, logs in with a key in BatchMode, and runs on the host as the login user; output comes back to the tool. The WorkspaceRef names the host and directory. A ref from the message history for the same host and directory reattaches; a ref for any other host or directory raises ValueError.](https://pydantic.dev/docs/ai/img/harness/ssh-workspace.svg)
+
 ## Install
 
 uv:

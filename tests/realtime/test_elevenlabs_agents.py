@@ -1512,6 +1512,57 @@ def test_elevenlabs_parameters_reject_inexpressible_shapes() -> None:
         rt_elevenlabs._tool_config(recursive_tool)  # pyright: ignore[reportPrivateUsage]
 
 
+def test_elevenlabs_parameters_drop_keywords_outside_the_dialect() -> None:
+    """`propertyNames` and `contains` never reach the dialect, so a recursion through them still syncs.
+
+    Pydantic never emits `contains`, so the schema is written by hand. A unit test for the same reason
+    as the conversion test above.
+    """
+    tool = ToolDefinition(
+        name='tree',
+        description='Tree tool.',
+        parameters_json_schema={
+            '$defs': {
+                'Node': {
+                    'type': 'object',
+                    'properties': {
+                        'name': {'type': 'string', 'description': 'Name'},
+                        'kids': {
+                            'type': 'array',
+                            'items': {'type': 'string', 'description': 'Kid name'},
+                            'contains': {'$ref': '#/$defs/Node'},
+                            'description': 'Kids',
+                        },
+                    },
+                    'propertyNames': {'$ref': '#/$defs/Node'},
+                },
+            },
+            'type': 'object',
+            'properties': {
+                'nodes': {
+                    'type': 'array',
+                    'items': {'type': 'string', 'description': 'Node name'},
+                    'contains': {'$ref': '#/$defs/Node'},
+                    'description': 'Nodes',
+                }
+            },
+        },
+    )
+    config = rt_elevenlabs._tool_config(tool)  # pyright: ignore[reportPrivateUsage]
+    assert config['parameters'] == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'nodes': {
+                    'type': 'array',
+                    'description': 'Nodes',
+                    'items': {'type': 'string', 'description': 'Node name'},
+                }
+            },
+        }
+    )
+
+
 @pytest.mark.parametrize(
     'local,remote,expected',
     [

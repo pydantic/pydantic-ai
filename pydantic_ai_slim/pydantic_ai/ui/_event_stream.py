@@ -14,6 +14,7 @@ from ..messages import (
     INTERRUPTED_TOOL_RETURN_CONTENT,
     AgentStreamEvent,
     CapabilityEvent,
+    CapabilityLoadDeltaEvent,
     CompactionPart,
     CustomEvent,
     DeferredToolRequestsEvent,
@@ -437,6 +438,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         - [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] -> `handle_function_tool_call`
         - [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] -> `handle_function_tool_result`
         - [`ToolAvailabilityDeltaEvent`][pydantic_ai.messages.ToolAvailabilityDeltaEvent] -> `handle_tool_availability_delta`
+        - [`CapabilityLoadDeltaEvent`][pydantic_ai.messages.CapabilityLoadDeltaEvent] -> `handle_capability_load_delta`
         - [`ModelSettingsDeltaEvent`][pydantic_ai.messages.ModelSettingsDeltaEvent] -> `handle_model_settings_delta`
         - [`OutputToolCallEvent`][pydantic_ai.messages.OutputToolCallEvent] -> `handle_output_tool_call`
         - [`OutputToolResultEvent`][pydantic_ai.messages.OutputToolResultEvent] -> `handle_output_tool_result`
@@ -473,6 +475,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                     yield e
             case ToolAvailabilityDeltaEvent():
                 async for e in self.handle_tool_availability_delta(event):
+                    yield e
+            case CapabilityLoadDeltaEvent():
+                async for e in self.handle_capability_load_delta(event):
                     yield e
             case ModelSettingsDeltaEvent():
                 async for e in self.handle_model_settings_delta(event):
@@ -872,6 +877,18 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
         Args:
             event: The function tool result event.
+        """
+        return  # pragma: no cover
+        yield  # Make this an async generator
+
+    async def handle_capability_load_delta(self, event: CapabilityLoadDeltaEvent) -> AsyncIterator[EventT]:
+        """Handle a `CapabilityLoadDeltaEvent`.
+
+        By default no protocol events are emitted. Override this to carry the recorded load to a frontend that
+        rebuilds history from the event stream, so a capability loaded from code stays loaded on the next request.
+
+        Args:
+            event: The capability load delta event.
         """
         return  # pragma: no cover
         yield  # Make this an async generator

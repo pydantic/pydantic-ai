@@ -6,6 +6,8 @@ Run your agent's commands and file edits in a [smolvm](https://github.com/smol-m
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. SmolSandbox's get_workspace hook gives the run a smolvm microVM on your own machine as ctx.workspace. The smolvm engine runs inside your process, and each command and file operation runs in the VM, which has its own kernel and filesystem and no network by default; output comes back to the tool. The first use boots the VM, its WorkspaceRef is saved in the message history and on the result, a later run reattaches with it, and destroy(ref) deletes it. File changes are kept when the VM is stopped with machine.stop() before the process exits, and can be lost otherwise.](https://pydantic.dev/docs/ai/img/harness/smol-sandbox.svg)
+
 ## Install
 
 uv:

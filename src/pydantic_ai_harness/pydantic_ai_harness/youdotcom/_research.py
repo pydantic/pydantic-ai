@@ -388,6 +388,8 @@ class YouResearch(AbstractCapability[AgentDepsT]):
         guidance: str | None = None,
         timeout_ms: int = DEFAULT_RESEARCH_TIMEOUT_MS,
         id: str | None = 'you_research',
+        description: str | None = None,
+        defer_loading: bool = False,
     ) -> YouResearch[AgentDepsT]:
         """Construct the capability from serializable spec options.
 
@@ -406,4 +408,6 @@ class YouResearch(AbstractCapability[AgentDepsT]):
             guidance=guidance,
             timeout_ms=timeout_ms,
             id=id,
+            description=description,
+            defer_loading=defer_loading,
         )

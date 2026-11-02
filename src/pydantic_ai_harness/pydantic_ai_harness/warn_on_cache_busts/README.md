@@ -36,6 +36,8 @@ every request.
 The verdict is cross-provider for free -- pyai normalizes every provider into the
 `cache_read_tokens` / `cache_write_tokens` fields on `RequestUsage`.
 
+![WarnOnCacheBusts runs in the after_model_request hook and only observes. For each response it compares cache_read_tokens with the cacheable prefix the conversation has established. Requests 2 to 4 read back the whole prefix; request 5 reads back 4K of an established 40K, so it emits a CacheBustWarning with reason unexpected. Collapses explained by an expired cache, compaction or unreported usage do not warn.](https://pydantic.dev/docs/ai/img/harness/warn-on-cache-busts.svg)
+
 ## Retention and classification
 
 A collapse has two shapes the token counts can't tell apart: the cacheable prefix

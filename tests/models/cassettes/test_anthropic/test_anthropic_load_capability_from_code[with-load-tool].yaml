@@ -1,0 +1,859 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1580"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: Where is my refund for order ABC-123?
+            type: text
+        model: claude-haiku-4-5
+        stream: true
+        system:
+        - type: text
+          text: >-
+            First call open_ticket on its own. Once it returns, call refund_status for the
+            order. Never call load_capability.
+        - type: text
+          text: |-
+            <context id="capability:deferred_capabilities">
+            The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+            - refunds: Refund tools.
+            </context>
+            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        thinking:
+          type: enabled
+          budget_tokens: 10000
+        tool_choice:
+          type: auto
+        tools:
+        - name: load_capability
+          description: >-
+            Load a listed capability whenever it is plausibly relevant to the task. Loading
+            makes the capability instructions and any tools it provides available.
+          input_schema:
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                type: string
+            required:
+            - id
+            type: object
+        - name: open_ticket
+          description: Open the customer's support ticket for order ABC-123.
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+        - name: refund_status
+          description: Look up the refund status for an order.
+          input_schema:
+            additionalProperties: false
+            properties:
+              order_id:
+                type: string
+            required:
+            - order_id
+            type: object
+          defer_loading: true
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=131
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-e549ad0c94ddc37bbce61e8cb1252955-791a7d931cad207a-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-haiku-4-5-20251001","id":"msg_011CgTSzGMRLXHq1nRotsdqc","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":807,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":4,"service_tier":"standard","inference_geo":"not_available","speed":"standard"},"diagnostics":null}            }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}  }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The user is asking"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" about a refund"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" status"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" for order ABC-"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"123. According"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" to the instructions"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":":"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n1"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":". First"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" call"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" open_ticket on"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" its own\n2"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":". Once"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" it returns, call"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" refund_status"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" for the order"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n3. Never call"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" load_capability"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\nLet"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" me start by calling"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" open_ticket since"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" that's the first"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" step."} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"ErAECrgBCBMYAipAIp3fIM/kEYqwL4kXXuYU+dZjqQd2e7mms6VJQ/pXmmSsfsN0WngFB4YEHuRMWgS5qze8Q69hTLwWyubYu8T+FDIZY2xhdWRlLWhhaWt1LTQtNS0yMDI1MTAwMTgAQgh0aGlua2luZ1okNDRhZTY3NmMtOTU4Zi00ZDY4LTkxMDgtZWFlOWRlN2IzNjZimgEbChljbGF1ZGUtaGFpa3UtNC01LTIwMjUxMDAxqAHwrYTXBhIMoe2ocBog+xjz04+KGgwFn9uUzBjVSREo6DUiMPu+fVoEarT0POgYot7aiPw5qJwReXn5aQVVeLQG2t34tNmjqq23rTi1v/EG0Y/U6iqkAg0K183VtV2UQlaubiWdsUa7Ath1bxebTC+crB+ztH0YuYaDVq00k3tkFR6cTbStQaBL9l760dyKXy9lJDvbit6GFFFlDo4H2WOpSq1oPVKwHh2gevWhfT7zQ1veqZnBSn+5BQMmgpH4bUzXNpxe0820XMgZEySUuqhW+Mkcgd7WBIXh1WJ9XkDaBhpl2CbnVMqS/RaalqhYCUXChiKWDsIa9xHMWf2MQLmFnDukTqJQiJWgpG+iV+plakAuyKgHMtcrXldCcxq8vlYkTQOtaZyomLWnCYnrHdqmjWyop+HwL7FFyXL8A6ju3Vcd7BoB6Lcj56TOmd1bil1jDBSq/zRrV13GIavSPzJXBE8ncd8RA5mlrIvOKFcQ8bKF8lVvNxlQx5cYAQ=="}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0            }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"I'll help you"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" check on"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" your"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" refund for order"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" ABC-123."}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Let me start"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" by opening your"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" support"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" ticket."}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_0182atcNKCfUTiDAoKTAnpRN","name":"open_ticket","input":{},"caller":{"type":"direct"}}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}         }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2        }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":807,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":139,"output_tokens_details":{"thinking_tokens":75}}     }
+
+        event: message_stop
+        data: {"type":"message_stop"     }
+
+  recorded_at: 2026-10-27T21:26:08.664188+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "3561"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: Where is my refund for order ABC-123?
+            type: text
+        - role: assistant
+          content:
+          - thinking: |-
+              The user is asking about a refund status for order ABC-123. According to the instructions:
+              1. First call open_ticket on its own
+              2. Once it returns, call refund_status for the order
+              3. Never call load_capability
+
+              Let me start by calling open_ticket since that's the first step.
+            signature: >-
+              ErAECrgBCBMYAipAIp3fIM/kEYqwL4kXXuYU+dZjqQd2e7mms6VJQ/pXmmSsfsN0WngFB4YEHuRMWgS5qze8Q69hTLwWyubYu8T+FDIZY2xhdWRlLWhhaWt1LTQtNS0yMDI1MTAwMTgAQgh0aGlua2luZ1okNDRhZTY3NmMtOTU4Zi00ZDY4LTkxMDgtZWFlOWRlN2IzNjZimgEbChljbGF1ZGUtaGFpa3UtNC01LTIwMjUxMDAxqAHwrYTXBhIMoe2ocBog+xjz04+KGgwFn9uUzBjVSREo6DUiMPu+fVoEarT0POgYot7aiPw5qJwReXn5aQVVeLQG2t34tNmjqq23rTi1v/EG0Y/U6iqkAg0K183VtV2UQlaubiWdsUa7Ath1bxebTC+crB+ztH0YuYaDVq00k3tkFR6cTbStQaBL9l760dyKXy9lJDvbit6GFFFlDo4H2WOpSq1oPVKwHh2gevWhfT7zQ1veqZnBSn+5BQMmgpH4bUzXNpxe0820XMgZEySUuqhW+Mkcgd7WBIXh1WJ9XkDaBhpl2CbnVMqS/RaalqhYCUXChiKWDsIa9xHMWf2MQLmFnDukTqJQiJWgpG+iV+plakAuyKgHMtcrXldCcxq8vlYkTQOtaZyomLWnCYnrHdqmjWyop+HwL7FFyXL8A6ju3Vcd7BoB6Lcj56TOmd1bil1jDBSq/zRrV13GIavSPzJXBE8ncd8RA5mlrIvOKFcQ8bKF8lVvNxlQx5cYAQ==
+            type: thinking
+          - text: >-
+              I'll help you check on your refund for order ABC-123. Let me start by opening
+              your support ticket.
+            type: text
+          - id: toolu_0182atcNKCfUTiDAoKTAnpRN
+            type: tool_use
+            name: open_ticket
+            input: {}
+        - role: user
+          content:
+          - tool_use_id: toolu_0182atcNKCfUTiDAoKTAnpRN
+            type: tool_result
+            content:
+            - text: Ticket for order ABC-123 opened.
+              type: text
+            is_error: false
+        - role: assistant
+          content:
+          - id: pyd_ai_7b07ccd818575915
+            type: tool_use
+            name: search_tools
+            input:
+              queries:
+              - refund_status
+        - role: user
+          content:
+          - tool_use_id: pyd_ai_7b07ccd818575915
+            type: tool_result
+            content:
+            - tool_name: refund_status
+              type: tool_reference
+            is_error: false
+          - text: |-
+              <system><context id="capability:refunds">
+              Always give the refund date in the format DD/MM/YYYY.
+              </context></system>
+            type: text
+        model: claude-haiku-4-5
+        stream: true
+        system:
+        - type: text
+          text: >-
+            First call open_ticket on its own. Once it returns, call refund_status for the
+            order. Never call load_capability.
+        - type: text
+          text: |-
+            <context id="capability:deferred_capabilities">
+            The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+            - refunds: Refund tools.
+            </context>
+            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        thinking:
+          type: enabled
+          budget_tokens: 10000
+        tool_choice:
+          type: auto
+        tools:
+        - name: load_capability
+          description: >-
+            Load a listed capability whenever it is plausibly relevant to the task. Loading
+            makes the capability instructions and any tools it provides available.
+          input_schema:
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                type: string
+            required:
+            - id
+            type: object
+        - name: open_ticket
+          description: Open the customer's support ticket for order ABC-123.
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+        - name: refund_status
+          description: Look up the refund status for an order.
+          input_schema:
+            additionalProperties: false
+            properties:
+              order_id:
+                type: string
+            required:
+            - order_id
+            type: object
+          defer_loading: true
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=105
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-7f3c74ff898183b0372d72e07119a00a-b7dac843c2c78ed8-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-haiku-4-5-20251001","id":"msg_011CgTSzNqbNbARj3WapFosL","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1076,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":4,"service_tier":"standard","inference_geo":"not_available","speed":"standard"},"diagnostics":null} }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}         }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The user is asking"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" about their"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" refund for order"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" ABC-123."}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" I"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"'ve"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" already"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" opened the ticket."}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" Now I need to"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" check the refund"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" status."} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" "}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\nLooking at the"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" previous"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" search"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" results, I can"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" see that there"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"'s a `"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"refund_status"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"` tool"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" available"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" with"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" parameter"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" `order_id"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"`."}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" I should call"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" this tool with order"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"_id \"ABC"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"-123\" to"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" get the refund"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" status information"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":".\n\nThe"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" context"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" now"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" tells"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" me to"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" always give the ref"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"und date in the"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" format DD/MM"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"/YYYY,"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" so I'll keep"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" that in mind when"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" presenting"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" the result."}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EvcFCrgBCBMYAipANi3RYHl87vDxmPkTvyvHqm/rLnbGSrndJBljcF1Es7KXAWlvz3T4YGBDjZghaqfUKRsFHnSTfJ1gTu9JJssWqzIZY2xhdWRlLWhhaWt1LTQtNS0yMDI1MTAwMTgAQgh0aGlua2luZ1okNDRhZTY3NmMtOTU4Zi00ZDY4LTkxMDgtZWFlOWRlN2IzNjZimgEbChljbGF1ZGUtaGFpa3UtNC01LTIwMjUxMDAxqAHyrYTXBhIMfd3U2NqnDSPajCgPGgyEBM33ZMM36EXEghEiMDv/HpnptAZ6el7O1WjjcNdenDWrf1zHD+aOUigHwNqthv12bJ7OT0/If8W/ZA701yrrA3PaNVw/ufix42iCyBTubVPNitVVq+P11MzjHNo7CZ2Xp+lrI4hILDPKjFWw3cvWAh764C3gtyP+lc6Ynyk2/GRjioQnkScwpoJWnLMfjLFYrYXnSghxHnSNiDqHLNM7D6fFHm9r0/2Ry1HkdAiW9Fa+ACV7+ZhBKPRN9JTB+VzgQskl/PogHkc0MD7IPsxdBDUn+Aq8U+U5zzMizIQTmxoBPYiHDhtkAhuzb5MGLq3xpvVOSlY9NtzfCU4lBr1CyNQK8Pp1N4c/vV9ZMf4lGDi941RMfPtT/K3oV1kMd7Mhd9413Ahavn72MKndC7QUe42nz+XeSX3RgvR2i2bV00LyqhS1iXI6Z2X3dmQPEAA74a6WYW7Go+WOEF8fHK4CTgovGT2E2Zc5SbyR1+OTk0m2VjhZmBeEoghWxbHkfK3pG4ziHc6ztRLQSb9AiVHPtnKfSZORWU9Dx8C4hSRBpholgQmKBQRVZi+wvN6GpRp+u+1tb61wKBe8qBtcmwTPYIvV7ivIgvwUL/ZjUaCaJHuC4696E441tR4E1dtib9Y/wwX+7BVUIp/e2kn8TvkJ3oBXa7O2gj4Ioy3FDD65RZ/CPwid3g68OdwGS/3V9hwbziqks7wDNnDvsNya90wp7rpyeS9+jdGesCtXGAE="}         }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0       }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01JDMnPaavgkUgJc77qqmgCJ","name":"refund_status","input":{},"caller":{"type":"direct"}}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"order"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"_id\": \""}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ABC-123"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"}"}  }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1             }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1076,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":185,"output_tokens_details":{"thinking_tokens":124}}             }
+
+        event: message_stop
+        data: {"type":"message_stop"         }
+
+  recorded_at: 2026-10-27T21:26:10.569715+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "5452"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: Where is my refund for order ABC-123?
+            type: text
+        - role: assistant
+          content:
+          - thinking: |-
+              The user is asking about a refund status for order ABC-123. According to the instructions:
+              1. First call open_ticket on its own
+              2. Once it returns, call refund_status for the order
+              3. Never call load_capability
+
+              Let me start by calling open_ticket since that's the first step.
+            signature: >-
+              ErAECrgBCBMYAipAIp3fIM/kEYqwL4kXXuYU+dZjqQd2e7mms6VJQ/pXmmSsfsN0WngFB4YEHuRMWgS5qze8Q69hTLwWyubYu8T+FDIZY2xhdWRlLWhhaWt1LTQtNS0yMDI1MTAwMTgAQgh0aGlua2luZ1okNDRhZTY3NmMtOTU4Zi00ZDY4LTkxMDgtZWFlOWRlN2IzNjZimgEbChljbGF1ZGUtaGFpa3UtNC01LTIwMjUxMDAxqAHwrYTXBhIMoe2ocBog+xjz04+KGgwFn9uUzBjVSREo6DUiMPu+fVoEarT0POgYot7aiPw5qJwReXn5aQVVeLQG2t34tNmjqq23rTi1v/EG0Y/U6iqkAg0K183VtV2UQlaubiWdsUa7Ath1bxebTC+crB+ztH0YuYaDVq00k3tkFR6cTbStQaBL9l760dyKXy9lJDvbit6GFFFlDo4H2WOpSq1oPVKwHh2gevWhfT7zQ1veqZnBSn+5BQMmgpH4bUzXNpxe0820XMgZEySUuqhW+Mkcgd7WBIXh1WJ9XkDaBhpl2CbnVMqS/RaalqhYCUXChiKWDsIa9xHMWf2MQLmFnDukTqJQiJWgpG+iV+plakAuyKgHMtcrXldCcxq8vlYkTQOtaZyomLWnCYnrHdqmjWyop+HwL7FFyXL8A6ju3Vcd7BoB6Lcj56TOmd1bil1jDBSq/zRrV13GIavSPzJXBE8ncd8RA5mlrIvOKFcQ8bKF8lVvNxlQx5cYAQ==
+            type: thinking
+          - text: >-
+              I'll help you check on your refund for order ABC-123. Let me start by opening
+              your support ticket.
+            type: text
+          - id: toolu_0182atcNKCfUTiDAoKTAnpRN
+            type: tool_use
+            name: open_ticket
+            input: {}
+        - role: user
+          content:
+          - tool_use_id: toolu_0182atcNKCfUTiDAoKTAnpRN
+            type: tool_result
+            content:
+            - text: Ticket for order ABC-123 opened.
+              type: text
+            is_error: false
+        - role: assistant
+          content:
+          - id: pyd_ai_7b07ccd818575915
+            type: tool_use
+            name: search_tools
+            input:
+              queries:
+              - refund_status
+        - role: user
+          content:
+          - tool_use_id: pyd_ai_7b07ccd818575915
+            type: tool_result
+            content:
+            - tool_name: refund_status
+              type: tool_reference
+            is_error: false
+          - text: |-
+              <system><context id="capability:refunds">
+              Always give the refund date in the format DD/MM/YYYY.
+              </context></system>
+            type: text
+        - role: assistant
+          content:
+          - thinking: |-
+              The user is asking about their refund for order ABC-123. I've already opened the ticket. Now I need to check the refund status.
+
+              Looking at the previous search results, I can see that there's a `refund_status` tool available with parameter `order_id`. I should call this tool with order_id "ABC-123" to get the refund status information.
+
+              The context now tells me to always give the refund date in the format DD/MM/YYYY, so I'll keep that in mind when presenting the result.
+            signature: >-
+              EvcFCrgBCBMYAipANi3RYHl87vDxmPkTvyvHqm/rLnbGSrndJBljcF1Es7KXAWlvz3T4YGBDjZghaqfUKRsFHnSTfJ1gTu9JJssWqzIZY2xhdWRlLWhhaWt1LTQtNS0yMDI1MTAwMTgAQgh0aGlua2luZ1okNDRhZTY3NmMtOTU4Zi00ZDY4LTkxMDgtZWFlOWRlN2IzNjZimgEbChljbGF1ZGUtaGFpa3UtNC01LTIwMjUxMDAxqAHyrYTXBhIMfd3U2NqnDSPajCgPGgyEBM33ZMM36EXEghEiMDv/HpnptAZ6el7O1WjjcNdenDWrf1zHD+aOUigHwNqthv12bJ7OT0/If8W/ZA701yrrA3PaNVw/ufix42iCyBTubVPNitVVq+P11MzjHNo7CZ2Xp+lrI4hILDPKjFWw3cvWAh764C3gtyP+lc6Ynyk2/GRjioQnkScwpoJWnLMfjLFYrYXnSghxHnSNiDqHLNM7D6fFHm9r0/2Ry1HkdAiW9Fa+ACV7+ZhBKPRN9JTB+VzgQskl/PogHkc0MD7IPsxdBDUn+Aq8U+U5zzMizIQTmxoBPYiHDhtkAhuzb5MGLq3xpvVOSlY9NtzfCU4lBr1CyNQK8Pp1N4c/vV9ZMf4lGDi941RMfPtT/K3oV1kMd7Mhd9413Ahavn72MKndC7QUe42nz+XeSX3RgvR2i2bV00LyqhS1iXI6Z2X3dmQPEAA74a6WYW7Go+WOEF8fHK4CTgovGT2E2Zc5SbyR1+OTk0m2VjhZmBeEoghWxbHkfK3pG4ziHc6ztRLQSb9AiVHPtnKfSZORWU9Dx8C4hSRBpholgQmKBQRVZi+wvN6GpRp+u+1tb61wKBe8qBtcmwTPYIvV7ivIgvwUL/ZjUaCaJHuC4696E441tR4E1dtib9Y/wwX+7BVUIp/e2kn8TvkJ3oBXa7O2gj4Ioy3FDD65RZ/CPwid3g68OdwGS/3V9hwbziqks7wDNnDvsNya90wp7rpyeS9+jdGesCtXGAE=
+            type: thinking
+          - id: toolu_01JDMnPaavgkUgJc77qqmgCJ
+            type: tool_use
+            name: refund_status
+            input:
+              order_id: ABC-123
+        - role: user
+          content:
+          - tool_use_id: toolu_01JDMnPaavgkUgJc77qqmgCJ
+            type: tool_result
+            content:
+            - text: "Order ABC-123: refund issued on 2026-05-01."
+              type: text
+            is_error: false
+        model: claude-haiku-4-5
+        stream: true
+        system:
+        - type: text
+          text: >-
+            First call open_ticket on its own. Once it returns, call refund_status for the
+            order. Never call load_capability.
+        - type: text
+          text: |-
+            <context id="capability:deferred_capabilities">
+            The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+            - refunds: Refund tools.
+            </context>
+            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        thinking:
+          type: enabled
+          budget_tokens: 10000
+        tool_choice:
+          type: auto
+        tools:
+        - name: load_capability
+          description: >-
+            Load a listed capability whenever it is plausibly relevant to the task. Loading
+            makes the capability instructions and any tools it provides available.
+          input_schema:
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                type: string
+            required:
+            - id
+            type: object
+        - name: open_ticket
+          description: Open the customer's support ticket for order ABC-123.
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+        - name: refund_status
+          description: Look up the refund status for an order.
+          input_schema:
+            additionalProperties: false
+            properties:
+              order_id:
+                type: string
+            required:
+            - order_id
+            type: object
+          defer_loading: true
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=94
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-68626a11b667f549b969dfcf7110ce54-1d39df936adb15ea-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-haiku-4-5-20251001","id":"msg_011CgTSzWqJmf1cVm8cugRQq","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1289,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available","speed":"standard"},"diagnostics":null}           }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}     }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Great"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"!"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" I found"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" information"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" about your refund"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":". Your"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" refund for order"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" ABC-123 "}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"was **"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"issued on 01"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"/05/2"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"026**"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":". \n\nIf"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" you haven"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'t received the"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" refund yet,"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" it"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" may take a few"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" business"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" days to appear in"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" your account depending"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" on your"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" bank or"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" payment method"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":". If"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" you have"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" any other concerns"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":","} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" your"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" support ticket"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" is"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" now"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" open"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and our"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" team can assist you"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" further."}      }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0      }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1289,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":89,"output_tokens_details":{"thinking_tokens":0}}         }
+
+        event: message_stop
+        data: {"type":"message_stop"          }
+
+  recorded_at: 2026-10-27T21:26:11.924558+00:00

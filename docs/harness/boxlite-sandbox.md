@@ -11,6 +11,8 @@ Run your agent's commands and file edits in a [BoxLite](https://github.com/boxli
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. BoxLiteSandbox's get_workspace hook gives the run a BoxLite micro-VM on your own machine as ctx.workspace. The BoxLite runtime runs inside your process, and each command and file operation runs in the VM, which has its own kernel and filesystem; output comes back to the tool. The first use boots the box, its WorkspaceRef is saved in the message history and on the result, a later run reattaches with it, and destroy(ref) deletes it. A new box has no network; with allow_internet_access=True and allowed_hosts it can reach only the listed hosts.](../img/harness/boxlite-sandbox.svg)
+
 ## Install
 
 ```bash

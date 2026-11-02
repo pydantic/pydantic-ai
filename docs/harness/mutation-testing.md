@@ -17,6 +17,8 @@ scripts/run-mutmut.sh results
 scripts/run-mutmut.sh show <mutant-name>
 ```
 
+![mutmut makes small changes, called mutants, to the filesystem and shell toolset sources and runs the test suite against each one. A mutant that makes a test fail is killed. A mutant that survives is triaged: either a test is missing and should be written, or the change is an equivalent mutant that no test could tell apart from the original, such as a mutated default parameter that the mutmut wrapper never uses.](../img/harness/mutation-testing.svg)
+
 ## Interpreting survivors
 
 A surviving mutant is either a missing test or an equivalent mutant -- a change

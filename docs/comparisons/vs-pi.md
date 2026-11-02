@@ -13,10 +13,11 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Language | TypeScript | Python |
 | License | MIT | MIT |
 | Model providers | Many | [Many](../models/overview.md) |
-| Extensibility | Extensions, skills, `pi install` | [Capabilities and toolsets](../extensibility.md); [50+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
+| Extensibility | Extensions, skills, `pi install` | [Capabilities and toolsets](../extensibility.md); [80+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | Pi itself; extend it or embed it | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | Telemetry contract, no exporter | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
-| Durable execution | No | [Seven integrations](../durable_execution/overview.md) |
+| Enterprise support | None documented | [For the framework itself](../enterprise-support.md), no platform required |
+| Durable execution | No | [Eight integrations](../durable_execution/overview.md) |
 | Interfaces | CLI | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) |
 | Realtime voice | No | [Realtime](../realtime/overview.md) |
 | Evals | No | [Pydantic Evals](../evals.md) |
@@ -41,3 +42,10 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) capability, or start from the harness
 repository's [complete coding agent](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/examples/coding_agent.py),
 built from the pieces `Coder` puts together.
+
+*Last checked: 2026-09-26*
+
+## Sources
+
+- [Pi coding agent documentation](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent)
+- [Pi packages](https://github.com/badlogic/pi-mono/tree/main/packages)
