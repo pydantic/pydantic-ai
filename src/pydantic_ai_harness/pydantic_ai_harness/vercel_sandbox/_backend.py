@@ -88,7 +88,7 @@ _TEARDOWN_TIMEOUT = 30.0
 _POLL_INTERVAL = 0.5
 # The local backend's cap and preview: output is held in memory until the command ends.
 _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
-_OUTPUT_PREVIEW_CHARS = 64 * 1024
+_OUTPUT_PREVIEW_BYTES = 64 * 1024
 # Runs a command as `exec "$@"` in the directory `$1` (none when empty), with stdin at EOF. `exec` replaces
 # the shell, so a kill reaches the command itself, a program named like a builtin is looked up on `PATH`,
 # and a missing one exits 127. A missing directory exits 125 with only the marker `$2` on stderr.
@@ -151,7 +151,7 @@ def _translate(error: Exception, context: str) -> Exception:
     """
     if _credentials_rejected(error):
         return WorkspaceUnavailableError(_AUTH_MESSAGE)
-    if _status(error) in (400, 422):
+    if _status(error) in (400, 409, 422):
         return WorkspaceError(f'{context}: {error}')
     return error
 
@@ -259,6 +259,10 @@ class _Output(io.StringIO):
         if self._sizes[0] > _MAX_OUTPUT_BYTES:
             raise _OutputOverflow
         return written
+
+
+def _preview(text: str) -> str:
+    return text.encode(errors='replace')[:_OUTPUT_PREVIEW_BYTES].decode(errors='replace')
 
 
 class _OutputOverflow(Exception):
@@ -535,14 +539,17 @@ class VercelSandboxBackend(WorkspaceBackend, SupportsCommands):
                             stdout=stdout,
                             stderr=stderr,
                             on_start=started.append,
+                            # Vercel kills the command itself if the client-side kill never reaches it, such
+                            # as when the deadline passes before `on_start` reports the process.
+                            kill_after=timeout,
                         )
                     except _OutputOverflow:
-                        await kill()
+                        # Raising out of `command_deadline` kills the command.
                         raise WorkspaceOutputLimitError(
                             _OUTPUT_LIMIT_MESSAGE,
                             limit=_MAX_OUTPUT_BYTES,
-                            stdout=stdout.getvalue()[:_OUTPUT_PREVIEW_CHARS],
-                            stderr=stderr.getvalue()[:_OUTPUT_PREVIEW_CHARS],
+                            stdout=_preview(stdout.getvalue()),
+                            stderr=_preview(stderr.getvalue()),
                         ) from None
             out, err = output()
             if completed.returncode == 125 and not out and err == self._missing_cwd_marker:

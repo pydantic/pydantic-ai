@@ -83,9 +83,11 @@ class FakeSandbox:
         stderr: TextIO | None = None,
         capture_output: bool = False,
         on_start: Any = None,
+        kill_after: float | None = None,
     ) -> FakeCompleted:
         owner = self.owner
         owner.check_call()
+        owner.kill_afters.append(kill_after)
         if owner.run_error is not None:
             raise owner.run_error
         process = await asyncio.create_subprocess_exec(
@@ -173,6 +175,8 @@ class FakeClient:
     async def get_sandbox(self, *, name: str) -> FakeSandbox:
         owner = self._owner
         owner.check_call()
+        if owner.get_errors:
+            raise owner.get_errors.pop(0)
         if (sandbox := owner.sandboxes.get(name)) is None:
             raise api_error(404, 'not_found')
         if sandbox.pending_polls:
@@ -208,6 +212,10 @@ class FakeVercel:
         self.create_errors: list[Exception] = []
         # Raised by every call while set.
         self.call_error: Exception | None = None
+        # Raised by the next `get_sandbox` lookups, in order.
+        self.get_errors: list[Exception] = []
+        # The `kill_after` each `run_process` was given.
+        self.kill_afters: list[float | None] = []
         # Raised by every `run_process` while set.
         self.run_error: Exception | None = None
         self.close_error: Exception | None = None

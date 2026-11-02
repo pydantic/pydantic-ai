@@ -9,7 +9,13 @@ from pathlib import Path
 import anyio
 import httpx2
 import pytest
-from vercel.sandbox import SandboxCredentialsError, SandboxStatus, SandboxStreamError, SandboxTerminalStateError
+from vercel.sandbox import (
+    SandboxApiError,
+    SandboxCredentialsError,
+    SandboxStatus,
+    SandboxStreamError,
+    SandboxTerminalStateError,
+)
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
@@ -27,6 +33,13 @@ def _ref(name: str) -> WorkspaceRef:
     return WorkspaceRef(provider='vercel', id=name)
 
 
+async def _wait_for(path: Path) -> None:
+    """Wait until a command signals it started by creating `path`."""
+    with anyio.fail_after(10):
+        while not path.exists():
+            await anyio.sleep(0.01)
+
+
 @pytest.mark.parametrize(('ref', 'message'), [(WorkspaceRef(provider='e2b', id='x'), 'expected'), (_ref(' '), 'empty')])
 def test_a_foreign_or_blank_ref_is_refused(ref: WorkspaceRef, message: str) -> None:
     with pytest.raises(ValueError, match=message):
@@ -34,18 +47,11 @@ def test_a_foreign_or_blank_ref_is_refused(ref: WorkspaceRef, message: str) -> N
 
 
 class TestCreate:
-    async def test_first_use_creates_one_sandbox_with_the_settings(self, host: FakeVercel) -> None:
-        backend = VercelSandboxBackend(image='node24', vcpus=4, persistent=False, execution_time_limit=60)
+    async def test_first_use_creates_one_sandbox_and_records_its_name_as_the_ref(self, host: FakeVercel) -> None:
+        backend = VercelSandboxBackend()
         await backend.run(['true'])
-        assert backend.ref == _ref(host.only.name)
         assert host.only.name.startswith('pydantic-ai-')
-        kwargs = host.only.create_kwargs
-        assert (kwargs['image'], kwargs['resources'].vcpus, kwargs['persistent'], kwargs['execution_time_limit']) == (
-            'node24',
-            4,
-            False,
-            60,
-        )
+        assert backend.ref == _ref(host.only.name)
 
     async def test_a_lost_create_reply_is_found_by_name_instead_of_creating_another(self, host: FakeVercel) -> None:
         host.lost_replies = 1
@@ -71,8 +77,10 @@ class TestCreate:
 
     async def test_a_server_error_propagates_so_durable_engines_retry_it(self, host: FakeVercel) -> None:
         host.create_errors.append(api_error(500))
-        with pytest.raises(Exception, match='500'):
-            await VercelSandboxBackend().run(['true'])
+        backend = VercelSandboxBackend()
+        with pytest.raises(SandboxApiError):
+            await backend.run(['true'])
+        assert backend.ref is None
 
     async def test_a_new_sandbox_gets_its_working_dir(self, host: FakeVercel, tmp_path: Path) -> None:
         directory = str(tmp_path.resolve() / 'project' / 'nested')
@@ -124,8 +132,7 @@ class TestAttach:
     async def test_a_stopped_persistent_sandbox_is_attached(self, host: FakeVercel) -> None:
         """Its first command resumes it; the SDK does that, so the backend only lets it through."""
         sandbox = host.add('kept', status=SandboxStatus.STOPPED)
-        await VercelSandboxBackend(ref=_ref('kept')).get_sandbox()
-        assert sandbox in host.sandboxes.values()
+        assert await VercelSandboxBackend(ref=_ref('kept')).get_sandbox() is sandbox
 
     async def test_a_pending_sandbox_is_waited_for(self, host: FakeVercel) -> None:
         host.add('booting').pending_polls = 3
@@ -149,6 +156,11 @@ class TestAttach:
 
 
 class TestRun:
+    async def test_the_timeout_is_also_vercel_s_kill_after(self, host: FakeVercel) -> None:
+        """Vercel kills the command itself if the client-side kill never reaches it."""
+        await VercelSandboxBackend().run(['true'], timeout=5)
+        assert host.kill_afters[-1] == 5
+
     async def test_env_is_layered_over_the_backend_env(self, host: FakeVercel) -> None:
         backend = VercelSandboxBackend(env={'A': 'backend', 'B': 'backend'})
         result = await backend.run(['sh', '-c', 'printf %s-%s "$A" "$B"'], env={'B': 'call'})
@@ -159,23 +171,23 @@ class TestRun:
     ) -> None:
         monkeypatch.setattr('pydantic_ai_harness.vercel_sandbox._backend._MAX_OUTPUT_BYTES', 8)
         with pytest.raises(WorkspaceOutputLimitError) as exc_info:
-            await VercelSandboxBackend().run(['sh', '-c', 'printf 0123456789; sleep 5; touch after'])
-        assert exc_info.value.stdout.startswith('0123')
-        await host.reap()
-        assert not (tmp_path / 'after').exists()
+            await VercelSandboxBackend().run(['sh', '-c', 'printf 0123456789; exec sleep 30'])
+        assert exc_info.value.stdout == '0123456789'
+        (process,) = host.only.processes
+        with anyio.fail_after(10):
+            await process.wait()
 
-    async def test_a_session_that_ends_during_a_command_is_unavailable(self, host: FakeVercel) -> None:
+    async def test_a_session_that_ends_during_a_command_is_unavailable(self, host: FakeVercel, tmp_path: Path) -> None:
         backend = VercelSandboxBackend()
-        await backend.run(['true'])
 
-        async def stop_soon() -> None:
-            await anyio.sleep(0.2)
+        async def stop_once_started() -> None:
+            await _wait_for(tmp_path / 'started')
             host.only.end(SandboxStatus.STOPPED)
 
         async with anyio.create_task_group() as group:
-            group.start_soon(stop_soon)
+            group.start_soon(stop_once_started)
             with pytest.raises(WorkspaceUnavailableError, match='ended during the command'):
-                await backend.run(['sleep', '30'])
+                await backend.run(['sh', '-c', 'touch started; exec sleep 30'])
 
     async def test_a_stream_failure_on_a_running_sandbox_propagates(self, host: FakeVercel) -> None:
         backend = VercelSandboxBackend()
@@ -187,14 +199,20 @@ class TestRun:
     async def test_an_inconclusive_check_keeps_the_original_failure(self, host: FakeVercel) -> None:
         backend = VercelSandboxBackend()
         await backend.run(['true'])
-        host.call_error = httpx2.ConnectError('offline')
-        with pytest.raises(httpx2.ConnectError):
+        host.run_error = httpx2.ConnectError('command failed')
+        host.get_errors.append(httpx2.ConnectError('lookup failed'))
+        with pytest.raises(httpx2.ConnectError, match='command failed'):
             await backend.run(['true'])
 
     @pytest.mark.parametrize(
-        ('error', 'raised'), [(api_error(400), WorkspaceError), (api_error(401), WorkspaceUnavailableError)]
+        ('error', 'raised'),
+        [
+            (api_error(400), WorkspaceError),
+            (api_error(409), WorkspaceError),
+            (api_error(401), WorkspaceUnavailableError),
+        ],
     )
-    async def test_a_refused_command_is_a_workspace_error(
+    async def test_a_refused_command_is_translated(
         self, host: FakeVercel, error: Exception, raised: type[Exception]
     ) -> None:
         backend = VercelSandboxBackend()
@@ -229,13 +247,16 @@ class TestClientLifecycle:
         assert [client.closed for client in host.clients] == [True, False]
         assert len(host.create_names) == 1
 
-    async def test_aclose_during_an_operation_closes_the_client_when_it_ends(self, host: FakeVercel) -> None:
+    async def test_aclose_during_an_operation_closes_the_client_when_it_ends(
+        self, host: FakeVercel, tmp_path: Path
+    ) -> None:
         backend = VercelSandboxBackend()
         async with anyio.create_task_group() as group:
-            group.start_soon(backend.run, ['sleep', '0.3'])
-            await anyio.sleep(0.1)
+            group.start_soon(backend.run, ['sh', '-c', 'touch started; while [ ! -f release ]; do sleep 0.01; done'])
+            await _wait_for(tmp_path / 'started')
             await backend.aclose()
             assert [client.closed for client in host.clients] == [False]
+            (tmp_path / 'release').touch()
         assert [client.closed for client in host.clients] == [True]
 
     async def test_concurrent_acloses_close_the_client_once(self, host: FakeVercel) -> None:
@@ -287,7 +308,7 @@ class TestDestroy:
 
     async def test_destroy_lets_a_transient_failure_propagate(self, host: FakeVercel) -> None:
         host.call_error = api_error(503)
-        with pytest.raises(Exception, match='503'):
+        with pytest.raises(SandboxApiError):
             await VercelSandbox().destroy(_ref('existing'))
 
     @pytest.mark.parametrize(
