@@ -1333,7 +1333,7 @@ Two global user-only `/set` keys control autoload boundaries, not plugin JSON fi
 
 | `/set` key | Default | Does |
 |---|---|---|
-| `repo_context.walk_up_roots` | `["~"]` | JSON string list of inclusive stops used only when `walk_up` is `true`; the nearest one containing the workspace applies |
+| `repo_context.walk_up_roots` | `["~"]` | JSON string list of inclusive stops, resolved through symlinks, used only when `walk_up` is `true`; the nearest one containing the workspace applies |
 | `repo_context.autoload_symlink_roots` | `[]` | JSON string list of authorized external instruction-symlink target directories |
 
 These keys are rejected in `.clai/settings.json` and plugin JSON. Changes apply
