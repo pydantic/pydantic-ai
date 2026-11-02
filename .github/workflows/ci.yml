@@ -1733,6 +1733,7 @@ jobs:
             tests/harness/_postgres_sqlite.py "$H/integration_tests/postgres"
           detect redis "$H/pydantic_ai_harness/spend" tests/harness/spend "$H/integration_tests/redis"
           detect kubernetes "$H/pydantic_ai_harness/kubernetes_sandbox" tests/harness/kubernetes_sandbox \
+            "$H/pydantic_ai_harness/_workspace_provider.py" "$H/pydantic_ai_harness/_workspace.py" \
             "$H/integration_tests/kubernetes" pydantic_ai_slim/pydantic_ai/workspaces
 
   harness-localstack-integration:

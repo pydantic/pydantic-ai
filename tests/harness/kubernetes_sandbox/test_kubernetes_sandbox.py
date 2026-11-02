@@ -5,11 +5,13 @@ from __future__ import annotations
 import importlib
 import sys
 from pathlib import Path
+from typing import Any
 
 import anyio
 import pytest
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import (
@@ -77,6 +79,37 @@ def test_backend_arguments_are_checked_without_io() -> None:
     # The SDK's other configs reach its legacy runtime, not sandboxd.
     with pytest.raises(ValueError, match='got SandboxDirectConnectionConfig: commands run through sandboxd'):
         KubernetesSandboxBackend(warm_pool='pool', connection=SandboxDirectConnectionConfig(api_url='http://router'))  # type: ignore[arg-type]
+
+
+def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
+    """The SDK connection configs in `connection`'s annotation must not erase the whole schema entry."""
+    definitions = AgentSpec.model_json_schema_with_capabilities([KubernetesSandbox])['$defs']
+    params = definitions['spec_params_KubernetesSandbox']
+    assert sorted(params['properties']) == [
+        'connection',
+        'description',
+        'env',
+        'id',
+        'namespace',
+        'sandbox_timeout',
+        'warm_pool',
+        'working_dir',
+    ]
+    assert params['required'] == ['warm_pool']
+
+
+def test_from_spec_forwards_the_spec_fields() -> None:
+    spec_fields: dict[str, Any] = {
+        'id': 'kubernetes',
+        'description': 'a sandbox',
+        'warm_pool': 'python-pool',
+        'namespace': 'agents',
+        'connection': 'in-cluster-service',
+        'sandbox_timeout': 600,
+        'working_dir': '/work',
+        'env': {'A': '1'},
+    }
+    assert KubernetesSandbox[None].from_spec(**spec_fields) == KubernetesSandbox(**spec_fields)
 
 
 @asyncio_only
@@ -239,6 +272,29 @@ async def test_aclose_waits_for_commands_in_flight(cluster: FakeCluster) -> None
 
 
 @asyncio_only
+async def test_a_deferred_aclose_closes_only_the_connection_in_use(cluster: FakeCluster) -> None:
+    """After the deferred close, later operations share one connection again until the next `aclose()`."""
+    backend = KubernetesSandboxBackend(warm_pool='pool')
+    root = Path(await backend.working_dir())
+
+    async def wait_for_go() -> None:
+        await backend.run('touch started; until [ -e go ]; do sleep 0.01; done', shell=True)
+
+    async with anyio.create_task_group() as group:
+        group.start_soon(wait_for_go)
+        await _wait_for_file(root / 'started')
+        await backend.aclose()
+        (root / 'go').touch()
+    assert cluster.clients[0].closed
+
+    await backend.run('true', shell=True)
+    await backend.run('true', shell=True)
+    assert len(cluster.clients) == 2 and not cluster.clients[1].closed
+    await backend.aclose()
+    assert cluster.clients[1].closed
+
+
+@asyncio_only
 async def test_a_closed_connection_mid_command_is_a_connection_error(cluster: FakeCluster) -> None:
     backend = KubernetesSandboxBackend(warm_pool='pool')
     root = Path(await backend.working_dir())
@@ -347,7 +403,7 @@ async def test_a_stream_without_an_exit_event_is_an_error(cluster: FakeCluster) 
 async def test_a_timeout_keeps_the_output_so_far(cluster: FakeCluster) -> None:
     backend = KubernetesSandboxBackend(warm_pool='pool')
     with pytest.raises(WorkspaceTimeoutError) as info:
-        await backend.run('echo before; sleep 30', shell=True, timeout=2)
+        await backend.run('echo before; sleep 30', shell=True, timeout=0.5)
     assert info.value.stdout == 'before\n'
     await backend.aclose()
 

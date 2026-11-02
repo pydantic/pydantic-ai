@@ -15,6 +15,7 @@ from pydantic_ai_harness._workspace_provider import check_integer, check_working
 from pydantic_ai_harness.kubernetes_sandbox._backend import (
     DEFAULT_SANDBOX_TIMEOUT,
     PROVIDER,
+    ConnectionMode,
     KubernetesSandboxBackend,
     connection_problem,
     destroy_sandbox,
@@ -46,8 +47,8 @@ class KubernetesSandbox(AbstractCapability[AgentDepsT]):
 
     A run with no reference claims a sandbox from `warm_pool` on first use; pass a `WorkspaceRef`
     to attach to an existing claim. Ending a run does not delete the sandbox; `destroy(ref)` does,
-    and `sandbox_timeout` deletes it in any case. Commands run in the pod's sandboxd container, so its
-    image decides which tools are available.
+    and `sandbox_timeout`, unless `None`, deletes it after that many seconds. Commands run in the
+    pod's sandboxd container, so its image decides which tools are available.
 
     This capability supplies the workspace only. Compose it with capabilities that use it, such
     as `Coder`, `Shell`, and `FileSystem`. See
@@ -89,6 +90,40 @@ class KubernetesSandbox(AbstractCapability[AgentDepsT]):
         check_working_dir(self.working_dir)
         if problem := connection_problem(self.connection):
             raise UserError(problem)
+
+    @classmethod
+    def from_spec(
+        cls,
+        *,
+        id: str | None = None,
+        description: str | None = None,
+        warm_pool: str,
+        namespace: str = 'default',
+        connection: ConnectionMode = 'port-forward',
+        sandbox_timeout: int | None = DEFAULT_SANDBOX_TIMEOUT,
+        working_dir: str | None = None,
+        env: Mapping[str, str] | None = None,
+        **kwargs: Any,
+    ) -> KubernetesSandbox[Any]:
+        """Build from an agent spec, naming the fields a spec can express.
+
+        Core reads this signature to generate the spec's JSON schema. Inherited, core falls back
+        to the variadic base `from_spec`, because the `connection` field's SDK config types are a
+        `TYPE_CHECKING` import, and publishes only the bare `'KubernetesSandbox'`. A spec names a
+        connection by its mode string. `**kwargs` reaches the constructor unchanged, so
+        `defer_loading` keeps its refusal.
+        """
+        return cls(
+            id=id,
+            description=description,
+            warm_pool=warm_pool,
+            namespace=namespace,
+            connection=connection,
+            sandbox_timeout=sandbox_timeout,
+            working_dir=working_dir,
+            env=env,
+            **kwargs,
+        )
 
     def backend(self, ref: WorkspaceRef) -> KubernetesSandboxBackend:
         """Construct a lazy backend for an existing claim; close its connection with `aclose()`."""

@@ -227,6 +227,8 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
         # Set while nothing will call `aclose()`: the connection (a `kubectl port-forward` process,
         # with `connection='port-forward'`) then closes when the last operation in flight ends.
         self._close_after_operation = False
+        # An `aclose()` that came while operations were in flight; the last of them closes the connection once.
+        self._close_requested = False
         self._operations = 0
 
     @property
@@ -302,7 +304,7 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
         """Close the connection to the sandbox (including a `kubectl port-forward`); the sandbox keeps running."""
         if self._operations:
             # Closing the channel would cancel the commands still using it: the last one closes it.
-            self._close_after_operation = True
+            self._close_requested = True
             return
 
         async def detach_and_close() -> None:
@@ -322,10 +324,12 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
             yield
         finally:
             self._operations -= 1
-            if self._operations == 0 and self._close_after_operation and self._client is not None:
-                # Detached before any await, so an operation starting meanwhile opens its own client.
-                client, self._client, self._sandbox = self._client, None, None
-                await run_to_completion(client.close)
+            if self._operations == 0:
+                close, self._close_requested = self._close_after_operation or self._close_requested, False
+                if close and self._client is not None:
+                    # Detached before any await, so an operation starting meanwhile opens its own client.
+                    client, self._client, self._sandbox = self._client, None, None
+                    await run_to_completion(client.close)
 
     async def _acquire(self) -> AsyncSandbox:
         """Claim or attach on first use; the caller holds `_lock`, so concurrent first operations share one claim."""
