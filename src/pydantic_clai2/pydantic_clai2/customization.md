@@ -175,9 +175,10 @@ delete its source file yourself to remove it from disk.
 Use the built-in repo_context plugin's `walk_up` option to enable ancestor
 instructions; its default is false. List the inclusive stops with
 `/set repo_context.walk_up_roots '["~", "/srv/projects"]'` (default `["~"]`,
-home): the walk stops at the nearest listed root containing the workspace, and
-scans only the workspace when none does. Authorize shared instruction targets
-with `/set repo_context.autoload_symlink_roots '["~/agent-context"]'` (default `[]`).
+home): roots are resolved, following symlinks, and the walk stops at the nearest
+one containing the workspace, or scans only the workspace when none does.
+Authorize shared instruction targets with
+`/set repo_context.autoload_symlink_roots '["~/agent-context"]'` (default `[]`).
 
 Use absolute paths, `~`, or `~/...`, and single-quote the whole JSON list,
 which also covers paths containing spaces. Keep these user-only settings out of

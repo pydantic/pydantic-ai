@@ -3,7 +3,6 @@
 The built-in `repo_context` plugin: the workspace's instruction files, through harness `RepoContext`.
 """
 
-import os
 from collections.abc import Sequence
 from contextlib import suppress
 from pathlib import Path
@@ -67,9 +66,10 @@ class RepoContextPlugin(Plugin[RepoContextSettings, DepsT]):
             )
         home_dir = None
         if self.settings.walk_up:
-            # As `RepoContext` compares `home_dir`: the normalized root against the resolved working directory.
+            # `RepoContext` compares `home_dir` as given against the resolved working directory, so resolve the
+            # roots too: one spelled through a symlink would otherwise never contain the workspace.
             working_dir = Path(await anyio.Path(self.host.workspace).resolve())
-            roots = [Path(os.path.normpath(Path(root).expanduser())) for root in walk_up_roots]
+            roots = [Path(await anyio.Path(Path(root).expanduser()).resolve()) for root in walk_up_roots]
             home_dir = max(
                 (root for root in roots if working_dir.is_relative_to(root)),
                 key=lambda root: len(root.parts),

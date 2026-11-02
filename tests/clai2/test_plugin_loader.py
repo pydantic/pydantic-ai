@@ -1498,6 +1498,7 @@ async def test_repo_context_user_boundaries_reach_the_model(
             ['~', '{tmp}/volume'], 'home/projects/team/ws', ['home', 'projects', 'team', 'ws'], id='home-tree'
         ),
         pytest.param(['~', '{tmp}/volume'], 'volume/repo/ws', ['volume', 'repo', 'ws'], id='volume-tree'),
+        pytest.param(['~', '{tmp}/link'], 'home/projects/team/ws', ['projects', 'team', 'ws'], id='symlinked-root'),
         pytest.param(['{tmp}/volume'], 'home/projects/team/ws', ['ws'], id='no-containing-root'),
         pytest.param([], 'home/projects/team/ws', ['ws'], id='no-roots'),
     ],
@@ -1508,6 +1509,7 @@ async def test_repo_context_walks_up_to_the_nearest_listed_root(
     monkeypatch.setenv('HOME', str(tmp_path / 'home'))
     workspace = tmp_path / workspace_dir
     workspace.mkdir(parents=True)
+    (tmp_path / 'link').symlink_to(tmp_path / 'home' / 'projects', target_is_directory=True)
     for directory in [Path(workspace_dir), *Path(workspace_dir).parents[:-1]]:
         (tmp_path / directory / 'AGENTS.md').write_text(f'{directory.name} sentinel.')
     values: dict[str, JsonValue] = {

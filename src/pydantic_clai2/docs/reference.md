@@ -467,8 +467,8 @@ rejects their fields. Use absolute paths, `~`, or `~/...`, not relative paths,
 `~other-user`, or environment-variable interpolation. Single-quote each whole
 JSON list as above, which also keeps paths containing spaces in one argument,
 such as `/set repo_context.walk_up_roots '["~", "/srv/My Projects"]'`. Paths are
-normalized when used and need not exist when saved. Changes apply on the next
-run, not during a running turn.
+resolved, following symlinks, when used and need not exist when saved. Changes
+apply on the next run, not during a running turn.
 
 Authorize a directory holding only trusted instructions, not `/` or all of home:
 repository symlinks can select any readable file beneath it. See
