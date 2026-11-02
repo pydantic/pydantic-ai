@@ -680,9 +680,9 @@ except LoopDetectedError as error:
     #> repeated_result
 ```
 
-- `action='nudge'` (default) enqueues a `SystemPromptPart` (conversation scope, so it keeps
-  applying) into the current request; find it by `metadata['origin'] == 'pydantic-ai-harness.detect_loops.nudge.v1'`, never by
-  text. `'error'` raises `LoopDetectedError` (an `AgentRunError`, `.loop` is the `DetectedLoop`). A
+- `action='nudge'` (default) enqueues a `LoopNudgePart` (an `InstructionCapabilityPart` from
+  `pydantic_ai_harness.detect_loops`, conversation scope, so it keeps applying) into the current request; find it
+  by `isinstance(part, LoopNudgePart)`, never by text. Its `pattern` and `tool_names` fields never reach the model. `'error'` raises `LoopDetectedError` (an `AgentRunError`, `.loop` is the `DetectedLoop`). A
   sync or async `(ctx, loop)` callable decides itself; type `ctx` as `RunContext[object]` on an agent
   without `deps_type`.
 - Calls, results, and text are recorded as they arrive (the capability runs outermost), so

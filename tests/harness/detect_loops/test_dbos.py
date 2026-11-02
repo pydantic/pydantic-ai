@@ -14,7 +14,7 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai_harness.detect_loops import DetectLoops
 from tests.conftest import detach_dbos_logging, try_import
 
-from ._stuck_agent import NUDGE_METADATA, model_calls, nudges, read_file, stuck_model
+from ._stuck_agent import NUDGE, model_calls, nudges, read_file, stuck_model
 
 with try_import() as imports_successful:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -70,7 +70,7 @@ def test_recovery_reaches_the_same_decision(dbos: DBOS) -> None:
     DBOS.resume_workflow(workflow_id).get_result()
 
     first, recovered = attempts
-    assert nudges(first) == [NUDGE_METADATA]
-    assert nudges(recovered) == [NUDGE_METADATA]
+    assert nudges(first) == [NUDGE]
+    assert nudges(recovered) == [NUDGE]
     # Recovery read every model response from the journal; the hooks ran again over them.
     assert len(model_calls) == 4

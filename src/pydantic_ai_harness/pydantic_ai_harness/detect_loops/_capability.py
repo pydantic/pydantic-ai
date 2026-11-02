@@ -15,13 +15,21 @@ from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
 from pydantic_ai.exceptions import AgentRunError
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, ToolReturnPart
+from pydantic_ai.messages import (
+    InstructionCapabilityPart,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    OperatorSource,
+    OperatorText,
+    ToolReturnPart,
+)
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
 
-__all__ = ['DetectLoops', 'DetectedLoop', 'LoopDetectedError', 'LoopHandler', 'LoopPattern']
+__all__ = ['DetectLoops', 'DetectedLoop', 'LoopDetectedError', 'LoopHandler', 'LoopNudgePart', 'LoopPattern']
 
 LoopPattern: TypeAlias = Literal['repeated_call', 'repeated_result', 'alternating_calls', 'repeated_text']
 """Which kind of loop was detected.
@@ -31,9 +39,6 @@ LoopPattern: TypeAlias = Literal['repeated_call', 'repeated_result', 'alternatin
 - `'alternating_calls'`: two different tool calls made in turn, A-B-A-B.
 - `'repeated_text'`: consecutive responses without tool calls whose text is the same.
 """
-
-_NUDGE_ORIGIN = 'pydantic-ai-harness.detect_loops.nudge.v1'
-"""The `origin` in the `metadata` of the `SystemPromptPart` a nudge is delivered as."""
 
 _UNSAFE_NAME_CHARACTERS = re.compile(r'[^A-Za-z0-9_]')
 
@@ -86,6 +91,21 @@ class LoopDetectedError(AgentRunError):
     def __init__(self, loop: DetectedLoop) -> None:
         self.loop = loop
         super().__init__(loop.message)
+
+
+@dataclass(kw_only=True)
+class LoopNudgePart(InstructionCapabilityPart, namespace='detect_loops', name='nudge'):
+    """The nudge `DetectLoops(action='nudge')` adds to the conversation when it detects a loop.
+
+    Its `content` is the loop's `message`, in the application's voice. Find nudges in history by this type.
+    """
+
+    pattern: LoopPattern
+    """Which kind of loop it is. Never sent to the model."""
+
+    tool_names: tuple[str, ...] = ()
+    """The real names of the tools involved, which the message spells with only letters, digits and `_`. Never
+    sent to the model."""
 
 
 LoopHandler: TypeAlias = Callable[[RunContext[AgentDepsT], DetectedLoop], Awaitable[None] | None]
@@ -165,7 +185,7 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
     action: Literal['nudge', 'error'] | LoopHandler[AgentDepsT] = 'nudge'
     """What to do when a loop is detected.
 
-    - `'nudge'`: enqueue a system prompt telling the model which loop it is in and asking it to change
+    - `'nudge'`: enqueue a `LoopNudgePart` telling the model which loop it is in and asking it to change
       its approach. It joins the current request and keeps the default conversation scope, so it keeps
       applying on later requests instead of being shown once.
     - `'error'`: raise `LoopDetectedError`, ending the run.
@@ -366,8 +386,15 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
         elif action == 'error':
             raise LoopDetectedError(loop)
         else:
-            metadata = {'origin': _NUDGE_ORIGIN, 'pattern': loop.pattern, 'tool_names': list(loop.tool_names)}
-            ctx.enqueue(SystemPromptPart(loop.message, metadata=metadata))
+            ctx.enqueue(
+                LoopNudgePart(
+                    # The capability's own wording, with tool names reduced to letters, digits and `_`.
+                    content=OperatorText(loop.message),
+                    source=OperatorSource(),
+                    pattern=loop.pattern,
+                    tool_names=loop.tool_names,
+                )
+            )
 
 
 def _call_keys(response: ModelResponse) -> list[tuple[str, str, str]]:
