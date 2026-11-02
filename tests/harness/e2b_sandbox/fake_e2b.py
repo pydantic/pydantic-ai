@@ -711,6 +711,8 @@ class FakeAsyncSandboxFactory:
         return await existing.kill() if existing is not None else False
 
     async def get_info(self, id: str) -> types.SimpleNamespace:
+        if self._control.get_info_error is not None:
+            raise self._control.get_info_error
         existing = next((sandbox for sandbox in self._control.sandboxes if sandbox.sandbox_id == id), None)
         if existing is None or existing.killed:
             raise SandboxNotFoundException(f'Sandbox {id} not found')
@@ -753,8 +755,9 @@ class FakeE2B:
     read_error: Exception | None = None
     is_running_error: Exception | None = None
     sandbox_is_running: bool = True
-    # What `AsyncSandbox.get_info` reports for a sandbox that isn't killed.
+    # What `AsyncSandbox.get_info` reports for a sandbox that isn't killed, unless it raises `get_info_error`.
     sandbox_paused: bool = False
+    get_info_error: Exception | None = None
     # When set, sandboxes run commands and file operations on the host under this directory.
     host_root: Path | None = None
 

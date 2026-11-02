@@ -36,8 +36,8 @@ class FakeDisplay:
             return STARTED, '', 0
         elif 'xwininfo -root' in command:
             self.xdotool.append('xwininfo -root')
-            if not self.up:
-                return '', 'xwininfo: error: unable to open display ":1"', 1
+            # The backend reads the size only from a display it started.
+            assert self.up, 'xwininfo before the display started'
             return '  Width: 1280\n  Height: 800\n', '', 0
         elif command.startswith('xdotool '):
             self.xdotool.append(command)
@@ -141,6 +141,8 @@ async def test_a_sandbox_without_a_desktop_has_no_display(fake_e2b: FakeE2B) -> 
     assert Workspace(backend).has_display is False
     with pytest.raises(UserError, match='has no display'):
         await Workspace(backend).screenshot()
+    with pytest.raises(UserError, match='has no display: create it with `desktop=True`'):
+        await backend.live_view_url()
     assert fake_e2b.create_calls == []
 
 

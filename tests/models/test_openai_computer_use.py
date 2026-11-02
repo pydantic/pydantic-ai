@@ -278,6 +278,20 @@ async def test_the_native_tool_is_sent_and_a_call_with_no_actions_is_answered_wi
     assert second['input'][-1] is output
 
 
+async def test_a_refused_action_reaches_gpt_beside_the_screenshot(allow_model_requests: None) -> None:
+    # Otherwise GPT would take the click on the read-only workspace to have run.
+    provider = InMemoryProvider()
+    client = MockOpenAIResponses.create_mock(
+        [_computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'}), _done()]
+    )
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    await Agent(model, toolsets=[computer_toolset()], capabilities=[provider.capability(read_only=True)]).run('Go.')
+
+    assert provider.actions == []
+    _, second = get_mock_responses_kwargs(client)
+    assert 'Ran 0 of 1 actions. The next one failed: ' in str(second['input'])
+
+
 async def test_a_call_with_a_single_action_runs_it(allow_model_requests: None) -> None:
     response = _computer_call()
     item = cast(resp.ResponseComputerToolCall, response.output[0])
@@ -528,11 +542,14 @@ def test_openai_actions_map_onto_the_computer_tool(
 def _is_a_valid_png(data_uri: str) -> bool:
     """Whether the data URI holds a PNG whose every chunk checksum matches, ending in `IEND`."""
     data = base64.b64decode(data_uri.removeprefix('data:image/png;base64,'))
-    position, chunk = 8, b''
+    position, chunks = 8, list[tuple[bytes, int]]()
     while position < len(data):
         (length,) = struct.unpack('>I', data[position : position + 4])
-        chunk = data[position + 4 : position + 8 + length]
-        if struct.unpack('>I', data[position + 8 + length : position + 12 + length])[0] != zlib.crc32(chunk):
-            return False
+        (checksum,) = struct.unpack('>I', data[position + 8 + length : position + 12 + length])
+        chunks.append((data[position + 4 : position + 8 + length], checksum))
         position += 12 + length
-    return data.startswith(b'\x89PNG') and chunk == b'IEND'
+    return (
+        data.startswith(b'\x89PNG')
+        and all(zlib.crc32(chunk) == checksum for chunk, checksum in chunks)
+        and chunks[-1][0] == b'IEND'
+    )
