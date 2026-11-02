@@ -172,7 +172,7 @@ The OpenSandbox SDK runs on asyncio only, so under Trio the capability raises `U
 
 ## Durable execution
 
-Compose `OpenSandbox(image=...)` with [`TemporalDurability`](https://pydantic.dev/docs/ai/durable-execution/temporal/), [`DBOSDurability`](https://pydantic.dev/docs/ai/durable-execution/dbos/) or [`PrefectDurability`](https://pydantic.dev/docs/ai/durable-execution/prefect/). Durable execution records the initial workspace operation's ref so later operations and replays can reach the same sandbox. Configure the same workspace capability and server connection on every worker.
+Compose `OpenSandbox(image=...)` with [`TemporalDurability`](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/), [`DBOSDurability`](https://pydantic.dev/docs/ai/capabilities/durable_execution/dbos/) or [`PrefectDurability`](https://pydantic.dev/docs/ai/capabilities/durable_execution/prefect/). Durable execution records the initial workspace operation's ref so later operations and replays can reach the same sandbox. Configure the same workspace capability and server connection on every worker.
 
 Temporal's activity-local backends close their SDK-owned HTTP transports after each workspace operation. In-process engines can keep the run-owned transport open until the run ends. A transport passed through `ConnectionConfig` remains yours to close.
 
