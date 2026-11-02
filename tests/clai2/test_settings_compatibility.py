@@ -292,6 +292,8 @@ def test_upgrade_legacy_database_preserves_data(tmp_path: Path, version: int, ha
     assert store.load().update_channel == 'stable'
     # Databases from before grouped tool calls keep one line per call.
     assert store.load().tool_calls == 'detailed'
+    # Databases from before `/permissions` run everything without asking.
+    assert store.load().permissions == 'full'
     # Older databases show the model in delegated-task rows unless the user turns it off.
     assert store.load().task_models is True
     # Databases from before `/system_prompt` add no instructions of the user's own.
@@ -415,6 +417,7 @@ def test_unknown_saved_settings_survive_edits(tmp_path: Path, key: str, value_js
         ('display.spinner', '3'),
         ('run.speculative_code_mode', '"yes"'),
         ('run.instructions', '42'),
+        ('run.permissions', '"sometimes"'),
         ('accounts.pool', '"off"'),
         ('repo_context.walk_up_root', '"relative"'),
         ('repo_context.autoload_symlink_roots', '["~other-user/shared"]'),
@@ -948,6 +951,49 @@ async def test_saved_background_compaction_loads_in_builds_with_and_without_the_
     )
     assert store.plugins() == saved
     await loader.close('exit')
+
+
+async def test_saved_on_demand_mcp_servers_load_in_builds_with_and_without_the_feature(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`mcp` plugin-settings servers using `defer_loading` are tagged; a build lacking the feature drops them."""
+    store = SettingsStore(tmp_path / 'settings.db')
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'mcp',
+                '{"id": "mcp", "factory": "pydantic_clai2.mcp", "enabled": true, "settings": '
+                '{"servers": {"docs": {"type": "stdio", "command": "docs", "defer_loading": true}}}}',
+            ),
+        )
+
+    def loader() -> PluginLoader[None]:
+        return PluginLoader(
+            store=store,
+            console=Console(file=io.StringIO(), width=200),
+            commands=Commands(),
+            session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+        )
+
+    this_build = loader()
+    await this_build.load_all()
+    await this_build.disable('mcp')
+    await this_build.enable('mcp')
+    await this_build.close('exit')
+    assert store.plugin_requirements('mcp') == {'servers': ['mcp-defer-loading']}, 'saving tags the servers'
+    saved = store.plugins()
+
+    monkeypatch.setattr(features, 'SUPPORTED_FEATURES', features.SUPPORTED_FEATURES - {'mcp-defer-loading'})
+    older = loader()
+    await older.load_all()
+
+    [entry] = [entry for entry in older.entries() if entry.name == 'mcp']
+    assert entry.loaded is not None, 'a build without on-demand servers drops them, not the plugin'
+    assert entry.loaded.plugin.settings.model_dump() == {'servers': {}}
+    assert entry.ignored == 'mcp: ignored saved servers (needs mcp-defer-loading); using defaults.'
+    assert store.plugins() == saved
+    await older.close('exit')
 
 
 @pytest.mark.parametrize('supported', [True, False], ids=['this-build', 'build-without-disabled-skills'])

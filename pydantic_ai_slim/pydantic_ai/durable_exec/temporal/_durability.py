@@ -31,7 +31,13 @@ from pydantic_ai.durable_exec._operation import (
 )
 from pydantic_ai.durable_exec._toolset import DurableToolsetBase
 from pydantic_ai.durable_exec._utils import disable_threads, managed_model_scope
-from pydantic_ai.exceptions import ModelAPIError, UserError
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelQuotaExceededError,
+    ModelRequestRejectedError,
+    ModelRequestTimeout,
+    UserError,
+)
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, infer_model
 from pydantic_ai.output import OutputDataT
@@ -77,6 +83,18 @@ from ._transports import (
 
 _STABLE_DEFAULT_RUN_ID_PATCH = 'pydantic_ai:stable_default_run_id'
 """`workflow.patched()` ID marking histories in which every agent run drew its default `run_id`."""
+
+_DEFAULT_NON_RETRYABLE_MODEL_ERRORS: tuple[type[ModelAPIError], ...] = (
+    ModelRequestRejectedError,
+    ModelQuotaExceededError,
+    ModelRequestTimeout,
+)
+"""The model errors another attempt of the same request can't fix, which Temporal doesn't retry by default.
+
+A rejected request (including a rejected API key, an unknown model and an overflowing context window) is rejected
+again, an exhausted quota stays exhausted until it resets, and a request that ran out of its deadline has no time
+left for another attempt.
+"""
 
 _DEFAULT_MODEL_HEARTBEAT_TIMEOUT = timedelta(seconds=30)
 """Default `heartbeat_timeout` for the model-request activities.
@@ -171,7 +189,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         toolset_activity_config: dict[str, ActivityConfig] | None = None,
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
         continue_as_new: ContinueAsNewHandler[AgentDepsT] | None = None,
-        non_retryable_model_errors: Sequence[type[ModelAPIError]] = (),
+        non_retryable_model_errors: Sequence[type[ModelAPIError]] = _DEFAULT_NON_RETRYABLE_MODEL_ERRORS,
     ):
         """Create a TemporalDurability capability.
 
@@ -227,12 +245,17 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 is true. It receives the run's `RunContext` and calls `workflow.continue_as_new()`
                 with the arguments the workflow needs to resume, or returns without calling it to
                 defer to the next model request. `None` disables continuation.
-            non_retryable_model_errors: Model error classes, such as
-                [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] or
-                [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError], that fail a model
-                activity without Temporal retrying it, whatever its retry policy says. An error matches when
-                it's an instance of a listed class, so a category also covers its subclasses. The workflow
-                still receives the error as its own class.
+            non_retryable_model_errors: Model error classes that fail a model activity without Temporal
+                retrying it, whatever its retry policy says. An error matches when it's an instance of a listed
+                class, so a category also covers its subclasses. The workflow still receives the error as its
+                own class. Defaults to the errors another attempt can't fix:
+                [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] (which covers
+                [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError],
+                [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError] and
+                [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError]),
+                [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError] and
+                [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout]. A list you pass replaces
+                the default, and `()` lets the retry policy retry every model error.
 
         Note:
             Per-tool activity config (custom timeouts, retry policies, or disabling

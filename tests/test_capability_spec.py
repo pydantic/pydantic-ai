@@ -796,7 +796,7 @@ def test_model_json_schema_with_capabilities():
                 'CacheConfig': {
                     'additionalProperties': False,
                     'properties': {
-                        'retention': {'enum': ['5m', '30m', '1h'], 'title': 'Retention', 'type': 'string'},
+                        'retention': {'enum': ['5m', '30m', '1h', '12h'], 'title': 'Retention', 'type': 'string'},
                         'messages': {'title': 'Messages', 'type': 'boolean'},
                     },
                     'title': 'CacheConfig',
@@ -1791,7 +1791,7 @@ def test_model_json_schema_with_capabilities():
                         'cache': {
                             'anyOf': [
                                 {'type': 'boolean'},
-                                {'enum': ['5m', '30m', '1h'], 'type': 'string'},
+                                {'enum': ['5m', '30m', '1h', '12h'], 'type': 'string'},
                                 {'$ref': '#/$defs/CacheConfig'},
                             ],
                             'title': 'Cache',
@@ -2266,7 +2266,7 @@ def test_model_json_schema_with_capabilities():
                         'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                         'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
                         'retention': {
-                            'anyOf': [{'type': 'boolean'}, {'enum': ['5m', '30m', '1h'], 'type': 'string'}],
+                            'anyOf': [{'type': 'boolean'}, {'enum': ['5m', '30m', '1h', '12h'], 'type': 'string'}],
                             'title': 'Retention',
                         },
                         'messages': {'title': 'Messages', 'type': 'boolean'},

@@ -128,7 +128,7 @@ class ExamplesConfig(BaseExamplesConfig):
         return config
 
 
-RUNNABLE_HARNESS_PAGES = frozenset({'artifact-scanning.md', 'detect-loops.md', 'memory.md'})
+RUNNABLE_HARNESS_PAGES = frozenset({'artifact-scanning.md', 'detect-loops.md', 'memory.md', 'permissions.md'})
 """`docs/harness` pages whose examples run here; the rest are skipped until they are made runnable."""
 
 
