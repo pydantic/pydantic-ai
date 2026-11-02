@@ -51,6 +51,10 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def _empty_str_dict() -> dict[str, str]:
+    return {}
+
+
 @dataclass(kw_only=True)
 class StepEvent:
     """A single append-only event recorded during agent execution.
@@ -76,7 +80,7 @@ class StepEvent:
     tool_call_id: str | None = None
     tool_name: str | None = None
     error: str | None = None
-    metadata: dict[str, str] = field(default_factory=dict[str, str])
+    metadata: dict[str, str] = field(default_factory=_empty_str_dict)
     idempotency_key: str | None = None
     """Stable boundary identity used by stores to suppress a retried append."""
 
@@ -139,7 +143,7 @@ class RunRecord:
     conversation_id: str | None = None
     parent_run_id: str | None = None
     agent_name: str | None = None
-    metadata: dict[str, str] = field(default_factory=dict[str, str])
+    metadata: dict[str, str] = field(default_factory=_empty_str_dict)
     started_at: datetime = field(default_factory=_utcnow)
     registration_id: str | None = None
     """Durable registration invocation that claimed this run id."""

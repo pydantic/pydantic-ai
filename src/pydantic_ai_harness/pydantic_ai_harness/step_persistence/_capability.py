@@ -35,6 +35,10 @@ from pydantic_ai_harness.step_persistence._types import (
 )
 
 
+def _empty_metadata() -> dict[str, str]:
+    return {}
+
+
 def _snapshot_state(messages: list[ModelMessage]) -> SnapshotState:
     return 'complete' if is_provider_valid(messages) else 'interrupted'
 
@@ -136,7 +140,7 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
     cross-process delegation where `ContextVar`s do not propagate).
     """
 
-    metadata: dict[str, str] = field(default_factory=dict[str, str])
+    metadata: dict[str, str] = field(default_factory=_empty_metadata)
     """Free-form metadata stored on the `RunRecord` and on each event."""
 
     capture_frontier: bool = False
