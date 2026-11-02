@@ -204,7 +204,8 @@ export const isList = (value: unknown): value is Project[] =>
       project.worktrees.every(isWorktree),
   )
 
-export const isFlags = (value: unknown): value is Record<string, boolean> => isObject(value)
+export const isFlags = (value: unknown): value is Record<string, boolean> =>
+  isObject(value) && Object.values(value).every((flag) => typeof flag === 'boolean')
 
 /** Save a small JSON value in `localStorage`; a full or disabled store only loses it. */
 export function keep(key: string, value: unknown): void {
