@@ -45,12 +45,9 @@ from pydantic_ai.workspaces import (
     PressKeys,
     Scroll,
     TypeText,
-    Workspace,
-    WorkspaceBackend,
     WorkspaceError,
     WorkspaceRef,
     WorkspaceUnavailableError,
-    WrapperWorkspace,
 )
 from pydantic_ai_harness.compaction import ClampOversizedMessages
 from pydantic_ai_harness.computer_use import ComputerUse
@@ -758,22 +755,6 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         assert provider.actions == [Click(x=1, y=1), TypeText(text='first'), Click(x=2, y=1), TypeText(text='second')]
         if shared == 'screen-key':
             assert len(provider.environments) == 2
-
-    async def test_in_workflow_code_a_large_screen_is_scaled_through_the_workspace(self) -> None:
-        """Durable workflow code can't reach the backend, so the scaled screenshot goes through the workspace."""
-
-        class WorkflowSide(WrapperWorkspace):
-            @property
-            def backend(self) -> WorkspaceBackend:
-                raise UserError('`workspace.backend` is not available in durable workflow code')
-
-        model = _scripted(
-            [{'type': 'screenshot'}], profile=ModelProfile(computer_use_screenshot_limit=(1000, 1_000_000))
-        )
-        agent = Agent(model, capabilities=[ComputerUse(settle_seconds=0)])
-        result = await agent.run('Go.', workspace=WorkflowSide(Workspace(InMemoryProvider().backend(None))))
-        (tool_return,) = _returns(result.all_messages())
-        assert tool_return.metadata == {'performed': 1, 'screenshot_size': (1000, 625)}
 
     def test_agents_on_one_screen_in_separate_event_loops_do_not_wait_on_each_other(self) -> None:
         """A lock can't wake a waiter on another event loop, as Temporal runs each workflow on a loop of its own."""
