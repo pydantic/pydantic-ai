@@ -33,6 +33,7 @@ from pydantic_ai._utils import (
     get_first_param_type,
     group_by_temporal,
     is_async_callable,
+    is_google_files_api_url,
     is_str_dict,
     merge_json_schema_defs,
     replace_no_init,
@@ -43,10 +44,36 @@ from pydantic_ai._utils import (
 from pydantic_ai.models.test import TestModel
 
 from ._inline_snapshot import snapshot
-from .conftest import undrivable_event_loop
+from .conftest import no_leaked_tasks, undrivable_event_loop
 from .models.mock_async_stream import MockAsyncStream
 
 READINESS_WAIT_TIMEOUT = 5
+
+
+@pytest.mark.parametrize(
+    'url,expected',
+    [
+        pytest.param('https://generativelanguage.googleapis.com/v1beta/files/abc123', True, id='file'),
+        pytest.param('https://generativelanguage.googleapis.com/v1beta/files', True, id='bare-prefix'),
+        # Current prefix behavior, not a URL-validity requirement.
+        pytest.param('https://generativelanguage.googleapis.com/v1beta/filesOther', True, id='prefix-only'),
+        pytest.param(
+            'https://generativelanguage.googleapis.com/v1beta/files/abc?alt=media#ref', True, id='query-fragment'
+        ),
+        pytest.param('', False, id='empty'),
+        pytest.param('http://generativelanguage.googleapis.com/v1beta/files/abc123', False, id='http'),
+        pytest.param('https://generativelanguage.googleapis.com/v1/files/abc123', False, id='other-version'),
+        pytest.param('https://generativelanguage.googleapis.com/v1beta/file/abc123', False, id='other-path'),
+        pytest.param('https://GENERATIVELANGUAGE.googleapis.com/v1beta/files/abc123', False, id='case-sensitive'),
+        pytest.param('https://generativelanguage.googleapis.com.evil/v1beta/files/abc123', False, id='other-host'),
+        pytest.param('https://generativelanguage.googleapis.com:443/v1beta/files/abc123', False, id='explicit-port'),
+        pytest.param(' https://generativelanguage.googleapis.com/v1beta/files/abc123', False, id='leading-space'),
+        pytest.param('gs://bucket/file.png', False, id='cloud-storage'),
+    ],
+)
+def test_is_google_files_api_url(url: str, expected: bool):
+    """Pin classification directly: cassette matching alone does not protect prefix edge cases."""
+    assert is_google_files_api_url(url) is expected
 
 
 async def test_await_maybe():
@@ -320,7 +347,6 @@ def test_run_until_complete_cleans_up_own_task_on_interrupt():
         await asyncio.Event().wait()
 
     bystander_task = loop.create_task(bystander())
-    tasks_before = asyncio.all_tasks(loop)
 
     real_run_until_complete = loop.run_until_complete
     calls = 0
@@ -336,14 +362,13 @@ def test_run_until_complete_cleans_up_own_task_on_interrupt():
             raise KeyboardInterrupt
         return real_run_until_complete(future)
 
-    with pytest.MonkeyPatch.context() as mp:
+    with no_leaked_tasks(loop), pytest.MonkeyPatch.context() as mp:
         mp.setattr(loop, 'run_until_complete', interrupt_once)
         with pytest.raises(KeyboardInterrupt):
             utils_module.run_until_complete(coro())
 
     assert cleaned == ['cleaned']  # our coroutine's cleanup ran
     assert not bystander_task.cancelled()  # the unrelated task was left alone
-    assert asyncio.all_tasks(loop) == tasks_before  # our task didn't leak, nothing else was touched
 
     bystander_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):

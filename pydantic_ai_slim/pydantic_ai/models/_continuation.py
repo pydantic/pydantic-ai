@@ -467,7 +467,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
             self._segment_stream = _utils.PeekableAsyncStream(self._get_event_iterator())
             events: AsyncIterator[ModelResponseStreamEvent] = self._segment_stream
             # The `request_timeout` deadline covers opening each segment, the waits between segments, and reading
-            # each segment's events.
+            # each segment's events; the `first_event_timeout` one, all of that until the first event.
             if self._request_deadline is not None:
                 events = self._request_deadline.iterate(events)
             self._event_iterator = self._iterator_with_cancel_guard(events)
@@ -497,7 +497,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
             try:
                 # A run that returns pending responses checks on a resumed one straight away, as the segment loop does.
                 if (delay := self.model.continuation_delay(seed)) and not self.return_pending:
-                    # The `request_timeout` deadline covers this wait, as it does the waits between later segments.
+                    # The deadlines cover this wait, as they do the waits between later segments.
                     with enforce_request_deadline(self._request_deadline):
                         await self.sleep_func(delay)
             except BaseException:
@@ -511,7 +511,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
             with self.segment_context():
                 sub = await stack.enter_async_context(
                     request_stream_until_first_event(
-                        # The `request_timeout` deadline covers opening the segment and waiting for its first event.
+                        # The deadlines cover opening the segment and waiting for its first event.
                         self.model,
                         self._request_deadline,
                         messages,
