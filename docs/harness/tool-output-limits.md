@@ -166,6 +166,8 @@ selects the whole text, subject to the same cap. Negative `keep_tail_lines` valu
 
 This applies to the text after serialization and optional ANSI stripping, independently
 for `ToolReturn.return_value` and textual `content`. Binary fallbacks are unchanged.
+Tail-line selection adds no telemetry spans: it is a slicing choice within the existing
+tool-result reduction, rather than a separate operation.
 
 ## Layering with Shell
 
