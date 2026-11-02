@@ -51,9 +51,10 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import CombinedToolset, FunctionToolset
-from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import FileSystem, Shell
+from pydantic_ai_harness.compaction import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.experimental import HarnessExperimentalWarning
 from pydantic_ai_harness.experimental.acp import (
     AcpSession,
@@ -141,6 +142,8 @@ class FakeClient(RecordingClientBase):
                 out.append((kind, getattr(update, 'title', '')))
             elif kind == 'tool_call_update':
                 out.append((kind, getattr(update, 'status', '')))
+            elif kind == 'usage_update':
+                continue
             else:  # pragma: no cover - guards against schema drift, not exercised
                 raise AssertionError(f'unexpected session/update kind: {kind!r}')
         return out
@@ -670,6 +673,36 @@ class TestStreaming:
         assert response.usage is not None
         assert response.usage.input_tokens > 0 and response.usage.output_tokens > 0
         assert response.usage.total_tokens == response.usage.input_tokens + response.usage.output_tokens
+
+    async def test_usage_update_uses_inclusive_input_token_count(self) -> None:
+        adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(Agent(TestModel()))
+        client = FakeClient()
+        adapter.on_connect(client)
+        request_usage = RequestUsage(input_tokens=100, cache_read_tokens=30, cache_write_tokens=40, output_tokens=20)
+
+        await adapter._send_usage_update('sid', request_usage, None)  # pyright: ignore[reportPrivateUsage]
+
+        [update] = [item for item in client.updates if isinstance(item, schema.UsageUpdate)]
+        assert update.used == request_usage.total_tokens == 120
+
+    async def test_usage_update_is_skipped_without_a_connection(self) -> None:
+        adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(Agent(TestModel()))
+
+        # Best-effort: no client is connected, so the notification is dropped rather than raising.
+        await adapter._send_usage_update('sid', RequestUsage(input_tokens=1, output_tokens=1), None)  # pyright: ignore[reportPrivateUsage]
+
+        assert adapter._conn is None  # pyright: ignore[reportPrivateUsage]
+
+    def test_max_context_tokens_falls_back_to_the_default(self) -> None:
+        # Neither the run nor the agent has a model, so the conservative default is the denominator.
+        adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(Agent())
+        tokens = adapter._get_max_context_tokens(None)  # pyright: ignore[reportPrivateUsage]
+        assert tokens == DEFAULT_CONTEXT_WINDOW
+
+        # A model the pricing registry has no window for falls back too, rather than reporting zero.
+        unknown = 'a-model-no-registry-knows'
+        tokens = adapter._get_max_context_tokens(unknown)  # pyright: ignore[reportPrivateUsage]
+        assert tokens == DEFAULT_CONTEXT_WINDOW
 
     async def test_usage_sums_across_approval_passes(self) -> None:
         # An approval pause splits the turn into two model passes; the reported usage must cover
@@ -1280,7 +1313,8 @@ class TestPermission:
 
         stored = await store.load(session_id)
         assert stored is not None
-        assert stored.updates == [acp.update_user_message_text('delete'), *client.updates]
+        persisted_updates = [update for update in client.updates if not isinstance(update, schema.UsageUpdate)]
+        assert stored.updates == [acp.update_user_message_text('delete'), *persisted_updates]
 
     async def test_allow_always_skips_the_prompt_on_later_turns(self) -> None:
         executed: list[str] = []
