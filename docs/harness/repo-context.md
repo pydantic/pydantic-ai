@@ -136,7 +136,8 @@ surfaces it again. The working directory's files are not surfaced again when
 the walk-up already loaded them. Every part of a note carries
 `{'origin': 'pydantic-ai-harness.repo_context.nested_note.v1', 'directory': ...}`
 in its `metadata`, which is how `RepoContext` and compaction recognize it.
-Same-directory instruction symlinks are named after their targets. Where the
+Same-directory instruction symlinks are named after their targets, and load
+only when the target is itself an instruction file, as in the walk-up. Where the
 backend resolves symlinks, external instruction symlinks are skipped, even when
 `autoload_symlink_roots` authorizes their targets for autoload.
 
@@ -153,7 +154,9 @@ the same types by importing `FileReadEvent` and `DirectoryListedEvent` from
 The traversed location is `root_dir / path`, so a `FileSystem` rooted at a
 subdirectory of the working directory still surfaces the right directory. A
 traversal that resolves outside the working directory is ignored: it is not nested in
-the workspace, so there is no nested context to surface.
+the workspace, so there is no nested context to surface. Each directory in the
+chain must itself resolve inside the working directory, so a symlinked directory
+in the path can't surface an instruction file from outside it.
 
 `traversal_tool_names` and `traversal_path_arg` are deprecated. Setting either
 to a non-default value emits `HarnessDeprecationWarning` and keeps the old
