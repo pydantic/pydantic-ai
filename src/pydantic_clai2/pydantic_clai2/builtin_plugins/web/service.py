@@ -658,7 +658,11 @@ class WebService:
         Without a search, each workspace's checkout is listed under its repository too, before any session runs
         there; with `include_worktrees`, so is every worktree Git lists for a listed repository, for New session.
         """
-        entries = await self.catalog.listing(query=query, archived=None if include_archived else False)
+        # The sidebar orders by creation, so it lists the newest created, not the most recently active: a turn in an
+        # old session would otherwise pull it into the page and push another out, moving every row between.
+        entries = await self.catalog.listing(
+            query=query, archived=None if include_archived else False, order_by='created_at'
+        )
         workspace = str(self.default().session.workspace)
         empty = [] if query else await checkouts(self.host.plugins)
         workspaces = {entry.workspace for entry in entries} | {workspace} | set(empty)

@@ -851,8 +851,12 @@ class SessionEntry:
     title: str
     workspace: str
     updated_at: datetime
+    created_at: datetime
+    """When it was first saved, which the sidebar orders by, so activity and renames never move a row."""
     state: SessionState
     """`running`: a turn of a session live in this CLAI; `busy`: a turn another CLAI process is running."""
+    owner_pid: int | None = None
+    """The process running a `busy` session's turn."""
     messages: int
     model: str | None
     current: bool
