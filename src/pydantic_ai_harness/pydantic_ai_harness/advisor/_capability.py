@@ -100,10 +100,9 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
     """
 
     caching: Literal['5m', '1h'] | None
-    """Anthropic-native advisor prompt caching.
+    """Anthropic-native advisor prompt-cache TTL.
 
-    This is an opportunistic optimization. OpenRouter and the local fallback do
-    not provide an equivalent cache control.
+    OpenRouter and the local fallback have no equivalent cache control.
     """
 
     forward_history: bool

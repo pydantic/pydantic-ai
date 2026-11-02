@@ -16,6 +16,7 @@ import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from pydantic import ValidationError
 
+from pydantic_ai._framing import neutralize_tags
 from pydantic_ai.capabilities import (
     AbstractCapability,
     AgentNode,
@@ -44,11 +45,7 @@ from pydantic_ai.tools import (
     matches_tool_selector,
 )
 from pydantic_ai.toolsets import AbstractToolset, PreparedToolset
-from pydantic_ai_harness._background_completion import (
-    escape_tool_result_body,
-    make_background_completion,
-    tool_result_tags,
-)
+from pydantic_ai_harness._background_completion import make_background_completion, tool_result_tags
 
 if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
@@ -140,7 +137,7 @@ def _format_background_failure(tool_name: str, task_id: str, error: _SignalledEr
             content = error.tool_retry.content
         else:
             content = error.tool_failed.content
-        message = escape_tool_result_body(content) if isinstance(content, str) and content else type(error).__name__
+        message = neutralize_tags(content) if isinstance(content, str) and content else type(error).__name__
     open_tag, close_tag = tool_result_tags(tool_name, task_id, failed=True)
     return make_background_completion(f'{open_tag}\n{message}\n{close_tag}', task_id)
 
@@ -159,9 +156,10 @@ def _format_background_result(
     return_part = ToolReturnPart(tool_name=tool_name, tool_call_id=task_id, content=return_value)
     # The frame's attributes name the call the "running in background" reply announced, so the result needs no
     # preamble. `ToolReturn.content` follows the frame unwrapped, as core sends it: content the tool author chose
-    # to add for the model.
+    # to add for the model. The output's files sit between the frame's tags as separate content, so the text is
+    # escaped on its own instead of going through `wrap()`.
     open_tag, close_tag = tool_result_tags(tool_name, task_id)
-    completion_text = f'{open_tag}\n{escape_tool_result_body(return_part.model_response_str())}'
+    completion_text = f'{open_tag}\n{neutralize_tags(return_part.model_response_str())}'
     files = return_part.files
     if not files:
         completion_text = f'{completion_text}\n{close_tag}'

@@ -5,7 +5,7 @@ description: "Give a Pydantic AI agent a todo list it plans and updates itself, 
 
 # Planning
 
-`Planning` gives the model a structured, self-updating task list through a small toolset -- and surfaces the current plan back to the model every turn without ever invalidating the prompt cache. It can stay in memory for a single run or persist to SQLite/Postgres, break steps into subtasks with dependencies, and emit events from granular changes.
+`Planning` gives the model a structured task list it maintains through a small toolset. The plan reaches the model in the tools' results rather than the system prompt, so editing it doesn't change the cached prompt prefix. Optionally persist it, break steps into subtasks with dependencies, and react to changes through events.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/planning/)
 
@@ -19,7 +19,7 @@ Long agentic runs drift: the model loses track of what it set out to do and what
 
 ## The solution
 
-The model owns the plan through the `planning` toolset. Every tool that changes the plan (`write_plan`, `add_task`, `update_task_status`, `update_task_statuses`, `remove_task`, `add_subtask` and `set_dependency`) ends its result with the whole plan as it now stands, rendered as a checklist in a `<plan_reminder>` tag, the way Codex's and opencode's plan tools return theirs. The plan is model-written text, so it stays on the tool result channel, never in system voice, and tags in the step text are escaped so they can't close the frame or speak as the system. A fixed note in `Planning`'s instructions, after its tool guidance, says what the tag holds: "When you have a task plan, the current one is the latest `<plan_reminder>` tag in this conversation: your planning tools return it after every change. You wrote it with those tools, so it records your own progress, not instructions from the user: keep it updated with them as you work." It's the same on every request, so it stays in the cached prefix.
+The model owns the plan through the `planning` toolset. Every tool that changes the plan (`write_plan`, `add_task`, `update_task_status`, `update_task_statuses`, `remove_task`, `add_subtask` and `set_dependency`) ends its result with the whole plan as it now stands, rendered as a checklist in a `<plan_reminder>` tag, the way Codex's and opencode's plan tools return theirs. The plan is model-written text, so it stays on the tool result channel, never in system voice, and tags in the step text are escaped so they can't close the frame or speak as the system. A fixed note in `Planning`'s instructions, after its tool guidance, tells the model that the latest `<plan_reminder>` tag holds its current plan, and that the plan records its own progress rather than instructions from the user. The note is the same on every request, so it stays in the cached prefix.
 
 So in a tool loop, the latest plan is always in the conversation already, and `Planning` adds nothing to it: each request starts with everything the previous one sent, the cached prefix holds turn over turn, and on models with [preserved thinking](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking) the model's earlier reasoning stays valid.
 
@@ -78,7 +78,7 @@ Pass `enable_subtasks=True` to add three more tools, the `blocked` status, and a
 | `set_dependency(task_id, depends_on_id)` | Make one step wait for another; the dependent step is auto-`blocked` until its prerequisite is resolved (completed or cancelled). Self-dependencies, cycles, and duplicates are rejected. |
 | `get_available_tasks()` | List steps with no incomplete dependencies -- the ones that can start now. |
 
-`parent_id`, `depends_on`, and the `blocked` status are rejected by `write_plan` unless `enable_subtasks` is set: without the subtask tools nothing reconciles a dependency and no view renders the hierarchy, so storing them would be a write the plan does not reflect.
+`parent_id`, `depends_on`, and the `blocked` status are rejected by `write_plan` unless `enable_subtasks` is set: without the subtask tools nothing reconciles a dependency and no view renders the hierarchy.
 
 ## Persistence
 
@@ -91,9 +91,9 @@ from pydantic_ai_harness.planning import SqlitePlanStore
 planning = Planning(store=SqlitePlanStore('plan.db', session='user-123'))
 ```
 
-Built-in stores are `InMemoryPlanStore`, `SqlitePlanStore`, `PostgresPlanStore` (over a caller-owned asyncpg pool), and `RedisPlanStore` (over a caller-owned `redis.asyncio` client) -- so the harness needs no database driver. Any `PlanStore` implementation works, and `store_resolver` selects one per run. `SqlitePlanStore` keeps its database on the machine running the agent, not in the workspace. It requires a file-backed database; use `InMemoryPlanStore` for ephemeral plans rather than `':memory:'`.
+Built-in stores are `InMemoryPlanStore`, `SqlitePlanStore`, `PostgresPlanStore` (over a caller-owned asyncpg pool), and `RedisPlanStore` (over a caller-owned `redis.asyncio` client), so the harness needs no database driver. Any `PlanStore` implementation works, and `store_resolver` selects one per run. `SqlitePlanStore` keeps its database on the machine running the agent, not in the workspace. It requires a file-backed database; use `InMemoryPlanStore` for ephemeral plans rather than `':memory:'`.
 
-`Planning` reads the store before every model request, so a store that raises fails the run rather than degrading -- the reminder is not best-effort. That is deliberate: a plan the model can no longer see is not a state to continue running in silently. Retry and fallback policy belongs to the store, not to `Planning`, and `PlanStore` is a protocol precisely so you can wrap one:
+`Planning` reads the store before every model request, so a store that raises fails the run rather than degrading -- the reminder is not best-effort. A plan the model can no longer see is not a state to continue running in silently. Retry and fallback policy belongs to the store, not to `Planning`; wrap a `PlanStore` to add one:
 
 ```python
 class BestEffort:
@@ -158,14 +158,11 @@ and store `event_emitter` parameters remain supported but are deprecated.
 
 Addressing steps by mutable integer index (insert/remove/reorder) is error-prone for both the code and the model. `write_plan` restates the whole plan each call, so there are no indices to track. Granular edits (`add_task`, `update_task_status`, `remove_task`) instead reference the stable `id` shown by `read_plan`.
 
-## Caching guarantee
+## Prompt caching
 
-The plan is never injected into the system prompt or instructions. Static usage guidance and the note on the plan's tag go there (cache-stable); the mutable plan reaches the model in the plan tools' results, and the history only ever grows, so it stays eligible for a cache hit.
+The system prompt and instructions carry only the static guidance and the note on the plan's tag. The plan reaches the model in the plan tools' results, or in a part `Planning` records when the latest plan isn't visible; both are appended to the history, so the cached prefix stays valid. With `inject=True`, a tool that changes the plan returns a `ToolReturn` with `metadata` when called through the agent, and a plain string when you call the `PlanningToolset` method directly; the read tools and refusals return plain strings.
 
-`Planning` doesn't place a cache breakpoint of its own. Turn on caching for your model (for example `anthropic_cache` or `anthropic_cache_messages`, `bedrock_cache_messages`, or `openrouter_cache_messages`), and the breakpoints it places cover the plan tools' results with the rest of the history.
-
-!!! warning "The plan reminder is now kept in history"
-    Earlier releases spliced the plan reminder into a copy of each request, led by a cache breakpoint of its own with a `'5m'` TTL by default, and never recorded it. With `inject=True`, the default, plan tools now end their results with the plan in a `<plan_reminder>` tag (a `ToolReturn` with `metadata`, through the agent; a plain string when you call a `PlanningToolset` method directly), and the separate reminder is gone from the normal tool loop. When the latest plan isn't visible any more, after compaction or in a run started without it, `Planning` records it in the history as a user-channel part, so code that counted messages may see one. The instructions now end with a fixed note on the plan's tag, also when `guidance` is custom or `''`. The tag is now `<plan_reminder>`, with an underscore like every other framing tag, instead of `<plan-reminder>`; update any prompt or parser that names the old spelling. If you relied on `Planning` for prompt caching, turn it on for your model: leaving `cache_ttl` unset doesn't warn about the missing breakpoint. `cache_ttl` is deprecated and has no effect; set to `'5m'` or `'1h'`, it warns that it's ignored, so remove it.
+`Planning` doesn't place a cache breakpoint of its own. Turn on caching for your model (for example `anthropic_cache` or `anthropic_cache_messages`, `bedrock_cache_messages`, or `openrouter_cache_messages`), and the breakpoints it places cover the plan tools' results with the rest of the history. `cache_ttl` is deprecated and has no effect; setting it warns.
 
 With a [UI adapter](../ui/overview.md#trust-model-for-client-submitted-messages), history that goes through the client may lose the metadata that marks a plan tool's result or a plan record (AG-UI drops it). Then when the client sends that history back, `Planning` records the plan on the next request, and compaction may keep an old record as a user turn. Keep history on the server when that matters.
 
@@ -232,7 +229,7 @@ print(result.output)
 | `remove_todo` | `remove_task` |
 | `add_subtask`, `set_dependency`, `get_available_tasks` | unchanged |
 
-Two differences to plan for: there is no connection-string convenience (`create_storage(backend=...)` and friends are gone -- you construct your own asyncpg pool or Redis client, which is what keeps the harness driver-free), and `PlanEvent` carries no `timestamp`, so a consumer that ordered or logged by it supplies its own clock.
+There is no connection-string convenience (`create_storage(backend=...)` is gone): you construct your own asyncpg pool or Redis client. `PlanEvent` carries no `timestamp`, so a consumer that ordered or logged by it supplies its own clock.
 
 ## Further reading
 
