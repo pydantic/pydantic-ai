@@ -6,8 +6,8 @@ exceptions. Only the server is fake. Its answers copy traffic recorded from `ope
 
 - A create answers 202 with the sandbox; its endpoints point at execd, which answers `/ping` and streams
   `/command` as JSON events separated by blank lines: `init`, `ping`, `stdout` and `stderr` events carrying the
-  output as it is written, newlines kept, then `execution_complete` for exit 0 or an `error` event carrying the exit code. A signal death
-  reports `-1`. A missing `cwd` is refused with 400 before the command starts.
+  output as it is written, newlines kept, then `execution_complete` for exit 0 or an `error` event carrying the
+  exit code. A signal death reports `-1`. A missing `cwd` is refused with 400 before the command starts.
 - Errors are JSON bodies with a runtime-prefixed `code` and the HTTP status the server uses.
 
 Commands run on the host, through `bash -c` like execd's, each leading a process group of its own; the backend's
