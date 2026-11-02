@@ -524,7 +524,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
     See `DynamicWorkflow.inherit_model` for when to use this."""
 
     sub_agent_usage_limits: UsageLimits | None = None
-    """`UsageLimits` applied to every sub-agent run, replacing the parent run's limits or pydantic-ai's default.
+    """`UsageLimits` applied to every sub-agent run, replacing the parent run's limits or Pydantic AI's default.
     See `DynamicWorkflow.sub_agent_usage_limits` for the budgeting semantics."""
 
     resource_limits: WorkflowResourceLimits | Literal['unlimited'] | None = None

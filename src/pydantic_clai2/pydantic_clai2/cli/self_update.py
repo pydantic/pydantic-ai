@@ -317,6 +317,10 @@ def _write_overrides(text: str) -> Path:
     return Path(name)
 
 
+CHECK_MAX_AGE = 3600.0
+"""Seconds before the footer checks for a newer CLAI again."""
+
+
 @dataclass(frozen=True, kw_only=True)
 class UpdateCheck:
     """What a check of `channel` found: a newer CLAI in `update`, none, or the `error` that kept it from telling."""
@@ -335,6 +339,8 @@ class Updates:
     fetch: Callable[[UpdateChannel], str] = latest
     spawn: Callable[[Callable[[], None]], None] = _in_thread
     """Runs the background check; tests run it inline."""
+    clock: Callable[[], float] = time.monotonic
+    """Times the check's answers, to check again once they are old."""
     run: Callable[[Sequence[str], Output | None], Awaitable[int]] = _run_uv
     """Runs uv, handing its lines to the output when there is one."""
     report: Callable[[], Callable[[InstallProgress], Awaitable[None]] | None] = lambda: None
@@ -361,9 +367,10 @@ class Updates:
     _result: UpdateCheck | None = field(default=None, init=False)
     _done: threading.Event = field(default_factory=threading.Event, init=False)
     _started: float = field(default=0.0, init=False)
+    _answered: float = field(default=0.0, init=False)
 
     def segment(self) -> str:
-        """A status-row hint once a background check finds an update; checks again when the channel changes.
+        """A status-row hint once a background check finds an update; checks again on a channel change or after an hour.
 
         Only `uv tool` installs check, so a source checkout never contacts PyPI or GitHub on its own.
         """
@@ -372,20 +379,27 @@ class Updates:
         found = self.check()
         return f'update {found.update.label}: /update' if found is not None and found.update is not None else ''
 
-    def check(self, *, wait: float = 0.0) -> UpdateCheck | None:
-        """The check of the current channel, started in the background unless one ran for it; `None` while it runs.
+    def check(self, *, wait: float = 0.0, max_age: float = CHECK_MAX_AGE) -> UpdateCheck | None:
+        """The check of the current channel, started in the background unless one ran for it within `max_age` seconds.
 
-        Waits for the answer until `wait` seconds after the check started, so a menu opened at once can show it.
+        `None` while the channel's first check runs; an older answer stays until a newer one lands. Waits for the
+        answer until `wait` seconds after the check started, so a menu opened at once can show it.
         """
         channel = self.channel()
-        if channel != self._checked:
+        if channel != self._checked or (self._done.is_set() and self.age() > max_age):
+            if channel != self._checked:
+                self._result = None
             done = threading.Event()
-            self._checked, self._result, self._done, self._started = channel, None, done, time.monotonic()
+            self._checked, self._done, self._started = channel, done, time.monotonic()
             self.spawn(lambda: self._check(channel, done))
         if (left := self._started + wait - time.monotonic()) > 0:
             self._done.wait(left)
         found = self._result
         return found if found is not None and found.channel == channel else None
+
+    def age(self) -> float:
+        """Seconds since the last check's answer landed."""
+        return self.clock() - self._answered
 
     def _check(self, channel: UpdateChannel, done: threading.Event) -> None:
         import httpx
@@ -396,7 +410,7 @@ class Updates:
             # Offline or rate-limited: no footer notice. The menu says why, and `/update now` reports it too.
             found = UpdateCheck(channel=channel, error=str(exc).partition('\n')[0] or type(exc).__name__)
         if channel == self._checked:  # Not a check of a channel the settings have since left.
-            self._result = found
+            self._answered, self._result = self.clock(), found
         done.set()
 
     async def command(self, args: list[str]) -> str:

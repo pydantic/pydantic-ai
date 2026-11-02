@@ -5,8 +5,11 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any
 
-from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability
+from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability, ValidatedToolArgs
+from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavior
+from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai_harness._warn import warn_argument_ignored
@@ -72,6 +75,33 @@ class _SetToolStrict(AbstractCapability[AgentDepsT]):
         ]
 
 
+@dataclass
+class _ReportExhaustedRetries(AbstractCapability[AgentDepsT]):
+    """Returns a tool's last error to the model once its retry budget is spent, instead of ending the run.
+
+    A tool that keeps asking for a retry (a stale `edit_file` match, a denied path) would otherwise
+    raise `UnexpectedModelBehavior` and discard the whole run. The model gets the error as a failed
+    tool result and can change approach; run-level usage limits still bound a model that never does.
+    """
+
+    async def on_tool_execute_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        error: Exception,
+    ) -> Any:
+        cause = error.__cause__
+        if not isinstance(error, UnexpectedModelBehavior) or not isinstance(cause, ModelRetry):
+            raise error
+        raise ToolFailed(
+            f'{cause.message}\n\n`{call.tool_name}` has failed several times in a row. Do not repeat the same '
+            'call: check the current state and try a different approach.'
+        ) from error
+
+
 MAX_READ_CHARS = 50_000
 """Characters of complete lines per `read_file`, below the output cap."""
 
@@ -79,7 +109,7 @@ MAX_OUTPUT_CHARS = 64000
 """Characters kept from any tool result."""
 
 MAX_FILE_TOOL_RETRIES = 5
-"""Consecutive retries each file tool allows before the run fails.
+"""Consecutive retries each file tool allows before its execution errors come back as plain failures.
 
 A denied path or a stale edit is corrected from the error message. With the agent's default
 budget of one, a second consecutive mistake with the same tool ends a long autonomous run
@@ -204,6 +234,7 @@ class Coder(CombinedCapability[AgentDepsT]):
                 bands=[Band(over=MAX_OUTPUT_CHARS, action=Truncate(max_chars=MAX_OUTPUT_CHARS))],
             ),
             RepairToolArguments[AgentDepsT](),
+            _ReportExhaustedRetries[AgentDepsT](),
         ]
         if caching:
             capabilities.append(_DefaultCaching[AgentDepsT]())

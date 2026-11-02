@@ -18,7 +18,7 @@ from pydantic import BaseModel, JsonValue, ValidationError
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai_harness.browser_use._model import RunChatModel, resolve_chat_model
+from pydantic_ai_harness.browser_use._model import RunChatModel, host_budget, host_budget_exhausted, resolve_chat_model
 from pydantic_ai_harness.browser_use._settings import BrowserAgentSettings
 
 try:
@@ -131,7 +131,7 @@ def _normalize_allowed_domain(domain: str) -> list[str]:
     return _restrict_to_http_schemes(domain)
 
 
-def _normalize_allowed_domains(allowed_domains: list[str] | set[str]) -> list[str]:
+def normalize_allowed_domains(allowed_domains: list[str] | set[str]) -> list[str]:
     """Normalize an allowlist into the pattern list browser-use matches entry by entry.
 
     browser-use matches a set, and any list of `DOMAIN_OPTIMIZATION_THRESHOLD` or more
@@ -196,7 +196,7 @@ def _exclude_localhost_allowlist_entries(allowed_domains: list[str]) -> list[str
     return filtered
 
 
-def _session_prohibited_domains(
+def session_prohibited_domains(
     prohibited_domains: list[str] | set[str] | None,
     *,
     block_ip_addresses: bool,
@@ -298,16 +298,14 @@ async def _kill(session: BrowserSession) -> bool:
     dispatches a stop event, and drains the event bus, so it suspends several
     times over CDP. Unshielded, the first of those awaits inside a cancelled
     scope raises and leaves a live Chromium behind -- holding a lock on
-    `user_data_dir` if the profile has one. The same shape as `ModalSandbox`'s
-    teardown, for the same reason.
+    `user_data_dir` if the profile has one.
 
-    Its failures are swallowed for that same reason. `kill()` can raise -- it awaits a
+    Its failures are swallowed. `kill()` can raise -- it awaits a
     storage-state save, a forced stop and an event-bus drain, none of which are wrapped
     upstream -- and it runs in a `finally`, where a raise replaces whatever was unwinding
     through it: a completed browse becomes a `TimeoutError` to the caller, a real error
-    becomes a teardown error, and a cancellation stops propagating. The browser is left to
-    the caller retains the session for another attempt, so nothing is gained by
-    letting it through.
+    becomes a teardown error, and a cancellation stops propagating. The caller retains the
+    session for another attempt, so nothing is gained by letting it through.
     """
     succeeded = True
     with anyio.CancelScope(shield=True):
@@ -554,6 +552,25 @@ def default_browser_agent(request: BrowserTask) -> BrowserAgent:
     )
 
 
+async def _never_stop() -> bool:
+    return False
+
+
+def _stop_on_exhausted_budget(agent: BrowserAgent) -> None:
+    """Make a browser-use agent stop once the host's usage limit is hit, keeping any stop callback it has.
+
+    browser-use counts a refused model call as one more failed step and keeps driving the browser
+    until `max_failures`; its stop callback ends the run cleanly at the next step instead.
+    """
+    if isinstance(agent, _BrowserUseAgent):
+        previous = agent.register_should_stop_callback or _never_stop
+
+        async def should_stop() -> bool:
+            return host_budget_exhausted() or await previous()
+
+        agent.register_should_stop_callback = should_stop
+
+
 def _disable_browser_use_telemetry(agent: BrowserAgent) -> None:
     """Replace a browser-use agent's telemetry client with a no-op; other agents are left alone."""
     if isinstance(agent, _BrowserUseAgent):
@@ -653,12 +670,12 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
             self._allowed_domains if self._allowed_domains is not None else browser_profile.allowed_domains
         )
         if allowed_domains is not None:
-            allowed_domains = _normalize_allowed_domains(allowed_domains)
+            allowed_domains = normalize_allowed_domains(allowed_domains)
             if self._block_ip_addresses:
                 allowed_domains = _exclude_localhost_allowlist_entries(allowed_domains)
         update: dict[str, object] = {
             'block_ip_addresses': self._block_ip_addresses,
-            'prohibited_domains': _session_prohibited_domains(
+            'prohibited_domains': session_prohibited_domains(
                 browser_profile.prohibited_domains,
                 block_ip_addresses=self._block_ip_addresses,
                 allowed_domains=allowed_domains,
@@ -695,6 +712,7 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
             # Applied here rather than in `default_browser_agent`, so a custom factory
             # that builds a real browser-use agent gets the same policy.
             _disable_browser_use_telemetry(agent)
+        _stop_on_exhausted_budget(agent)
         return await agent.run(max_steps=self._max_steps)
 
     def _render_result(self, history: BrowserAgentHistory) -> str:
@@ -762,11 +780,15 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         # Resolved per call rather than cached: the run's model can differ between runs
         # (`agent.run(model=...)`, `agent.override(model=...)`) while the toolset is shared.
         llm = self._llm if self._llm is not None else RunChatModel(ctx)
-        if self._session_scope == 'call':
-            history = await self._run_in_fresh_session(task, llm)
-        else:
-            await self._retry_pending_cleanup()
-            history = await self._run_in_shared_session(task, llm)
+        with host_budget(ctx) as budget:
+            if self._session_scope == 'call':
+                history = await self._run_in_fresh_session(task, llm)
+            else:
+                await self._retry_pending_cleanup()
+                history = await self._run_in_shared_session(task, llm)
+        if budget.exceeded is not None:
+            # browser-use swallows the error and carries on to a result; the host run must stop instead.
+            raise budget.exceeded
         return self._render_result(history)
 
     def _redact_json(self, value: JsonValue) -> JsonValue:
@@ -855,7 +877,7 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
                 return await self._run_agent(task, llm, self._shared_session)
             except BaseException:
                 # A failed or cancelled run can leave the shared browser in an
-                # unknown state; kill it so the next call starts fresh. Dropping
+                # unknown state; kill it so the next call starts fresh.
                 session, self._shared_session = self._shared_session, None
                 await self._close_session(session)
                 raise
