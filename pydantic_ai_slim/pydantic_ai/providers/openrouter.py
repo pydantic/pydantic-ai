@@ -152,6 +152,19 @@ be disabled", including for models that can turn reasoning off on their own API,
 them always-on and `thinking=False` asks for the lowest effort instead. Taken from `reasoning.mandatory` in
 [OpenRouter's model list](https://openrouter.ai/api/v1/models), for the providers that have a model profile here.
 """
+_FORCED_TOOL_CHOICE_UNSUPPORTED_MODEL_PREFIXES: dict[str, tuple[str, ...]] = {
+    # The whole `qwen/*` family: upstream behavior has flapped between routes, so the family-level
+    # fallback beats a provider 400 on a route that flipped.
+    'qwen': ('qwen',),
+    # Muse Spark is Meta's model family on OpenRouter.
+    'meta': ('muse-',),
+}
+"""Model-name prefixes, per upstream provider, of the OpenRouter routes that reject a forced `tool_choice` outright.
+
+Qwen returns 400 whether or not `reasoning` is sent — including for the `required` Pydantic AI resolves itself for an
+output tool — and Muse Spark errors the same way, so their profiles set `supports_forced_tool_choice=False`: a forcing
+Pydantic AI resolved itself falls back to an unforced choice, and an explicit one raises `UserError`.
+"""
 
 
 _MID_CONVERSATION_EFFORT_MODEL_PREFIXES: dict[str, tuple[str, ...]] = {
@@ -254,6 +267,10 @@ class OpenRouterProvider(_OpenAISDKProvider):
 
         if model_name.lower().startswith(_MANDATORY_REASONING_MODEL_PREFIXES.get(provider, ())):
             profile = merge_profile(profile, ModelProfile(thinking_always_enabled=True))
+        if model_name.lower().startswith(_FORCED_TOOL_CHOICE_UNSUPPORTED_MODEL_PREFIXES.get(provider, ())):
+            # Routed-model fact, like thinking-always-enabled above: these routes 400 on any forced
+            # `tool_choice`, with or without `reasoning`.
+            profile = merge_profile(profile, ModelProfile(supports_forced_tool_choice=False))
         # OpenRouter rejects the change on every pro variant, such as `openai/gpt-6-astra-pro`.
         supports_mid_conversation_effort = model_name.lower().startswith(
             _MID_CONVERSATION_EFFORT_MODEL_PREFIXES.get(provider, ())
@@ -314,6 +331,8 @@ class OpenRouterProvider(_OpenAISDKProvider):
                 # Anthropic errors on a forced `tool_choice` with thinking enabled; OpenRouter instead
                 # drops `reasoning` from the request and returns a response with no reasoning at all.
                 # https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use
+                # Qwen and Muse routes 400 instead, with or without `reasoning`; the plain flag set from
+                # `_FORCED_TOOL_CHOICE_UNSUPPORTED_MODEL_PREFIXES` above marks them, so this never applies.
                 supports_forced_tool_choice_with_thinking=provider != 'anthropic',
                 # OpenRouter documents cache TTLs for the providers whose cache control it passes through:
                 # Anthropic's 5-minute default (1-hour opt-in via `CachePoint`) and Gemini's 5-minute cache

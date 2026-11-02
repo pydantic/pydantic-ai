@@ -1924,6 +1924,13 @@ _TOOL_FORCING_REQUEST_PARAMETERS = ModelRequestParameters(
             ['get_weather', 'final_result'],
             id='google-thinking-explicit-required',
         ),
+        # Qwen and Muse routes 400 on a forced `tool_choice` even with `reasoning` omitted, so the plain
+        # `supports_forced_tool_choice` flag binds regardless of these settings.
+        pytest.param('qwen/qwen3.8-flash', {}, 'auto', ['get_weather', 'final_result'], id='qwen-unthinking'),
+        pytest.param(
+            'qwen/qwen3.8-flash', {'thinking': 'low'}, 'auto', ['get_weather', 'final_result'], id='qwen-thinking'
+        ),
+        pytest.param('meta/muse-spark', {}, 'auto', ['get_weather', 'final_result'], id='muse-unthinking'),
     ],
 )
 async def test_openrouter_forced_tool_choice_with_thinking(
