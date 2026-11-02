@@ -7,7 +7,7 @@ from typing import Any
 
 import anyio
 import pytest
-from daytona import DaytonaInternalServerError
+from daytona import DaytonaInternalServerError, DaytonaTimeoutError
 
 from pydantic_ai import Agent, RunContext, UserError
 from pydantic_ai.models.test import TestModel
@@ -27,6 +27,7 @@ from pydantic_ai.workspaces import (
     Workspace,
     WorkspaceError,
     WorkspaceRef,
+    WorkspaceTimeoutError,
     WorkspaceUnavailableError,
     WorkspaceUnsupportedActionError,
 )
@@ -254,6 +255,38 @@ async def test_an_action_after_the_sandbox_restarted_starts_the_desktop_before_a
     assert sandbox.desktop_calls[-2:] == ['start', 'click 1 1 left clicks=1 modifiers=[]']
 
 
+async def test_actions_in_a_row_check_once_that_the_desktop_runs(
+    fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend, sandbox = await _started(fake_daytona)
+    checks = 0
+    get_status = sandbox.computer_use.get_status
+
+    async def counted(request_timeout: float | None = None) -> SimpleNamespace:
+        nonlocal checks
+        checks += 1
+        return await get_status(request_timeout=request_timeout)
+
+    monkeypatch.setattr(sandbox.computer_use, 'get_status', counted)
+    await Workspace(backend).act(Click(x=1, y=1))
+    await Workspace(backend).act(Click(x=2, y=2))
+
+    assert checks == 1
+
+
+async def test_a_desktop_that_does_not_answer_in_time_is_a_timeout(
+    fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend, sandbox = await _started(fake_daytona)
+
+    async def slow(request_timeout: float | None = None) -> SimpleNamespace:
+        raise DaytonaTimeoutError('request timeout')
+
+    monkeypatch.setattr(sandbox.computer_use, 'take_full_screen', slow)
+    with pytest.raises(WorkspaceTimeoutError, match='The Daytona desktop did not answer in time'):
+        await Workspace(backend).screenshot()
+
+
 async def test_a_desktop_that_stopped_answering_ends_the_run(fake_daytona: FakeDaytona) -> None:
     backend, sandbox = await _started(fake_daytona)
     sandbox.computer_use.broken = True
@@ -301,6 +334,8 @@ async def test_a_sandbox_without_a_desktop_has_no_display(fake_daytona: FakeDayt
     assert Workspace(backend).has_display is False
     with pytest.raises(UserError, match='has no display'):
         await Workspace(backend).screenshot()
+    with pytest.raises(UserError, match='has no display: create it with `desktop=True`'):
+        await backend.live_view_url()
     assert fake_daytona.sandboxes == []
 
 

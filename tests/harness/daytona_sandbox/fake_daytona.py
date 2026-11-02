@@ -34,7 +34,6 @@ from daytona import (
     DaytonaBadRequestError,
     DaytonaConnectionError,
     DaytonaError,
-    DaytonaInternalServerError,
     DaytonaNotFoundError,
     DaytonaServiceUnavailableError,
     DaytonaTimeoutError,
@@ -386,8 +385,7 @@ class FakeComputerUse:
         self.owner = owner
         self.mouse = self.keyboard = self.screenshot = self.display = self
         self.started = False
-        # After `stop_with_sandbox`, input before `start` breaks the desktop for good, as Daytona's does.
-        self.stopped_with_sandbox = False
+        # Input before `start` breaks Daytona's desktop for good, so `_call` asserts it never happens.
         self.broken = False
         self.png = b'\x89PNG\r\n\x1a\nfake'
         self.position = SimpleNamespace(x=7, y=8)
@@ -396,7 +394,6 @@ class FakeComputerUse:
     def stop_with_sandbox(self) -> None:
         """The sandbox stopped and started again, as someone else may do: the desktop is down until `start`."""
         self.started = False
-        self.stopped_with_sandbox = True
 
     def _check_broken(self) -> None:
         if self.broken:
@@ -406,9 +403,6 @@ class FakeComputerUse:
         await anyio.lowlevel.checkpoint()
         self.owner.check_alive()
         self._check_broken()
-        if not self.started and self.stopped_with_sandbox:
-            self.broken = True
-            raise DaytonaInternalServerError('unexpected EOF', status_code=500)
         assert self.started, f'{line} before the desktop started'
         self.owner.desktop_calls.append(line)
 
