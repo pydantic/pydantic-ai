@@ -24,9 +24,11 @@ function body) because griffe's section parsing is indentation-sensitive.
 
 from __future__ import annotations as _annotations
 
+import inspect
+
 import pytest
 
-from pydantic_ai._griffe import _infer_docstring_style, doc_descriptions
+from pydantic_ai._griffe import _infer_docstring_style, doc_descriptions  # pyright: ignore[reportPrivateUsage]
 
 
 def test_doc_descriptions_no_docstring():
@@ -48,7 +50,7 @@ def test_infer_docstring_style_sphinx_marker():
         """
         return str(x)
 
-    assert _infer_docstring_style(fn.__doc__) == 'sphinx'
+    assert _infer_docstring_style(fn.__doc__ or '') == 'sphinx'
 
 
 def test_infer_docstring_style_numpy_marker():
@@ -63,7 +65,7 @@ def test_infer_docstring_style_numpy_marker():
         """
         return str(x)
 
-    assert _infer_docstring_style(fn.__doc__) == 'numpy'
+    assert _infer_docstring_style(fn.__doc__ or '') == 'numpy'
 
 
 def test_infer_docstring_style_google_marker():
@@ -76,7 +78,7 @@ def test_infer_docstring_style_google_marker():
         """
         return str(x)
 
-    assert _infer_docstring_style(fn.__doc__) == 'google'
+    assert _infer_docstring_style(fn.__doc__ or '') == 'google'
 
 
 def test_infer_docstring_style_no_marker_falls_back_to_google():
@@ -86,7 +88,7 @@ def test_infer_docstring_style_no_marker_falls_back_to_google():
         """
         pass
 
-    assert _infer_docstring_style(fn.__doc__) == 'google'
+    assert _infer_docstring_style(fn.__doc__ or '') == 'google'
 
 
 def test_doc_descriptions_auto_infers_sphinx():
@@ -100,8 +102,10 @@ def test_doc_descriptions_auto_infers_sphinx():
 
     desc, params = doc_descriptions(fn, docstring_format='auto')
     assert params == {'x': 'The input value.'}
-    # sphinx `:returns:` carries no type annotation, so no <type> tag is emitted
-    assert desc == '<summary>Do the thing.</summary>\n<returns>\n<description>The output value.</description>\n</returns>'
+    # a sphinx returns field carries no type annotation, so no <type> tag is emitted
+    assert (
+        desc == '<summary>Do the thing.</summary>\n<returns>\n<description>The output value.</description>\n</returns>'
+    )
 
 
 def test_doc_descriptions_auto_infers_numpy():
@@ -167,7 +171,7 @@ def test_doc_descriptions_other_parameters_section_params_included():
         """
         return str(x)
 
-    desc, params = doc_descriptions(fn, docstring_format='auto')
+    _, params = doc_descriptions(fn, docstring_format='auto')
     assert params == {'x': 'The input value.', 'timeout': 'Maximum wait time.'}
 
 
@@ -211,7 +215,10 @@ def test_doc_descriptions_returns_without_annotation_omits_type_tag():
         return ''
 
     desc, params = doc_descriptions(fn, docstring_format='auto')
-    assert desc == '<summary>Do the thing.</summary>\n<returns>\n<description>Whatever the tool produced.</description>\n</returns>'
+    assert (
+        desc
+        == '<summary>Do the thing.</summary>\n<returns>\n<description>Whatever the tool produced.</description>\n</returns>'
+    )
     assert params == {}
 
 
@@ -242,10 +249,12 @@ def test_doc_descriptions_explicit_format_overrides_inference():
     # test_infer_docstring_style_numpy_marker); an explicit format must take
     # precedence. Parsing it as google yields no recognizable sections, hence
     # no params and a plain-text description.
-    assert _infer_docstring_style(fn.__doc__) == 'numpy'
+    assert _infer_docstring_style(fn.__doc__ or '') == 'numpy'
     desc, params = doc_descriptions(fn, docstring_format='google')
     assert params == {}
-    assert desc == fn.__doc__.strip()
+    # griffe dedents the docstring before parsing, so compare against the dedented form
+    # (`inspect.cleandoc` normalizes the indentation that only CPython <3.13 keeps in `__doc__`)
+    assert desc == inspect.cleandoc(fn.__doc__ or '')
 
 
 @pytest.mark.parametrize(
