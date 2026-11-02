@@ -168,10 +168,6 @@ def _shape(messages: Sequence[ModelMessage]) -> list[str]:
 
     def describe(part: object) -> str:
         match part:
-            case LoadCapabilityCallPart():
-                return f'load_capability({part.capability_id})'
-            case LoadCapabilityReturnPart():
-                return 'load_capability return'
             case CapabilityLoadDeltaPart():
                 return f'load {part.loaded}'
             case ToolAvailabilityDeltaPart():
