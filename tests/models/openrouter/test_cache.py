@@ -36,8 +36,8 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..._inline_snapshot import snapshot
-from ...cassette_utils import request_json, single_request_body
-from ...conftest import IsDatetime, IsStr, try_import
+from ...cassette_utils import single_request_body
+from ...conftest import IsDatetime, IsStr, RequestCapture, try_import
 from ..mock_openai import MockOpenAI, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
@@ -908,15 +908,19 @@ async def test_openrouter_cache_instructions_gemini_real_api(
 
 
 async def test_openrouter_cache_gemini_does_not_double_prompt_tokens(
-    allow_model_requests: None, openrouter_model: OpenRouterModelFactory, vcr: Cassette
+    allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture
 ) -> None:
     """Unified `cache=True` on a Gemini route caches the conversation without billing the prompt twice.
 
     With a `cache_control` on the final content part of the request, OpenRouter's Google Vertex endpoint bills the
     cached prefix and then the same prefix again, doubling `prompt_tokens`. So the message breakpoint goes on the
     closest earlier user or assistant message: none on the first request, the first answer on the second.
+    The placement is read off the wire, so it is the request the code builds rather than the one recorded.
     """
-    model = openrouter_model('google/gemini-3.5-flash-lite')
+    model = OpenRouterModel(
+        'google/gemini-3.5-flash-lite',
+        provider=OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client),
+    )
     instructions = (
         'You are a specialized assistant that helps with distributed systems operations. '
         'You have deep expertise in consensus protocols, CAP theorem, and eventual consistency. '
@@ -943,8 +947,12 @@ async def test_openrouter_cache_gemini_does_not_double_prompt_tokens(
 
     # The role of each message carrying a breakpoint, per request.
     breakpoint_roles = [
-        [message['role'] for message in request_json(request)['messages'] if 'cache_control' in json.dumps(message)]
-        for request in vcr.requests
+        [
+            message['role']
+            for message in cast(list[dict[str, Any]], body['messages'])
+            if 'cache_control' in json.dumps(message)
+        ]
+        for body in request_capture.bodies('/chat/completions')
     ]
     assert breakpoint_roles == snapshot([['system'], ['system', 'assistant']])
 
@@ -1174,6 +1182,9 @@ async def test_openrouter_gemini_moves_the_message_breakpoint_off_the_request_en
 
     A breakpoint on the final content part of the request makes OpenRouter's Google Vertex endpoint bill the prompt
     twice, and one on a tool result isn't used. OpenRouter uses only the last one, so earlier ones are dropped.
+    This calls `_map_messages` rather than recording: the tool-result, multi-part and `CachePoint` placements are a
+    pure request-shape property across several histories, and recording each would add a real Gemini round trip that
+    shows nothing beyond `test_openrouter_cache_gemini_does_not_double_prompt_tokens`.
     """
     model = OpenRouterModel('google/gemini-3.8-flash', provider=OpenRouterProvider(api_key='test-key'))
     settings = OpenRouterModelSettings(openrouter_cache_messages=True)

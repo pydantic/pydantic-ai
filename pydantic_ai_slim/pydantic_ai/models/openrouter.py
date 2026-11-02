@@ -421,7 +421,7 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     openrouter_cache_messages: OpenRouterCacheTTL
     """Convenience setting to enable caching for the last message in the conversation.
 
-    When enabled, this automatically adds `cache_control` to the last content block
+    On Anthropic routes, this adds `cache_control` to the last content block
     in the final message (regardless of role), which is useful for Anthropic's prefix-based
     caching in multi-turn conversations. In tool-use flows, this may target a tool result
     message rather than a user message, which is correct for prefix caching.
@@ -429,8 +429,8 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
     TTL is only included for Anthropic models; Gemini does not support explicit TTL.
 
-    Note: OpenRouter uses only the last breakpoint across normal message content for
-    Gemini caching, and on Gemini routes it goes on the closest user or assistant message
+    On Gemini routes, OpenRouter uses only the last breakpoint across normal message
+    content, and it goes on the closest user or assistant message
     before the final one: a breakpoint at the very end of the request makes OpenRouter's
     Google Vertex endpoint bill the prompt twice, and one on a tool result isn't used.
 
