@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import json
 import re
 
-import httpx2
 import pytest
+from inline_snapshot import snapshot
+from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
@@ -12,11 +12,12 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
-from ..conftest import TestEnv, try_import
+from ..conftest import RequestCapture, TestEnv, try_import
 
 with try_import() as imports_successful:
     import openai
 
+    from pydantic_ai.embeddings import Embedder
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.nvidia import NvidiaProvider
 
@@ -138,29 +139,66 @@ def test_nvidia_model_profile_by_publisher(model_name: str, expected: dict[str, 
     assert {key: profile.get(key) for key in expected} == expected
 
 
-_COMPLETION: dict[str, object] = {
-    'id': 'chatcmpl-1',
-    'object': 'chat.completion',
-    'created': 0,
-    'model': 'nvidia/nemotron-3.5-super-vl-120b-a12b',
-    'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': '4'}, 'finish_reason': 'stop'}],
-    'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2},
-}
+@pytest.mark.vcr
+async def test_nvidia_chat(allow_model_requests: None, nvidia_api_key: str, request_capture: RequestCapture):
+    provider = NvidiaProvider(api_key=nvidia_api_key, http_client=request_capture.client)
+    agent = Agent(OpenAIChatModel('nvidia/nemotron-3.5-super-vl-120b-a12b', provider=provider))
+    result = await agent.run('What is the capital of France? Answer in one word.')
+    assert result.output == snapshot()
+    assert request_capture.paths == ['/v1/chat/completions']
 
 
-async def test_nvidia_request(allow_model_requests: None):
-    """Mocked transport, not VCR: there's no NVIDIA API key at hand to record with."""
-    requests: list[tuple[str, dict[str, object]]] = []
+@pytest.mark.vcr
+@pytest.mark.parametrize(
+    'model_name',
+    ['deepseek-ai/deepseek-v4.1-flash', 'moonshotai/kimi-k2.6', 'z-ai/glm-5.3-flash'],
+    ids=['deepseek', 'moonshotai', 'zai'],
+)
+async def test_nvidia_reasoning_round_trip(
+    model_name: str, allow_model_requests: None, nvidia_api_key: str, request_capture: RequestCapture
+):
+    """Pins where NIM returns reasoning and what a tool-call turn sends back with the default profile fields.
 
-    def handler(request: httpx2.Request) -> httpx2.Response:
-        requests.append((str(request.url), json.loads(request.content)))
-        return httpx2.Response(200, json=_COMPLETION)
+    The direct DeepSeek, Moonshot AI and Z.AI providers set `openai_chat_thinking_field='reasoning_content'`;
+    `NvidiaProvider` leaves it to the default parsing of `reasoning` and `reasoning_content`.
+    """
+    provider = NvidiaProvider(api_key=nvidia_api_key, http_client=request_capture.client)
+    agent = Agent(OpenAIChatModel(model_name, provider=provider))
 
-    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
-        provider = NvidiaProvider(api_key='api-key', http_client=http_client)
-        agent = Agent(OpenAIChatModel('nvidia/nemotron-3.5-super-vl-120b-a12b', provider=provider))
-        result = await agent.run('What is 2+2?')
-    assert result.output == '4'
-    [(url, body)] = requests
-    assert url == 'https://integrate.api.nvidia.com/v1/chat/completions'
-    assert body['model'] == 'nvidia/nemotron-3.5-super-vl-120b-a12b'
+    @agent.tool_plain
+    def get_temperature(city: str) -> str:
+        return f'21 degrees Celsius in {city}'
+
+    result = await agent.run('What is the temperature in Paris? Use the tool.')
+    assert result.all_messages() == snapshot()
+    _, tool_result_request = request_capture.bodies('/chat/completions')
+    assert tool_result_request['messages'] == snapshot()
+
+
+class CityLocation(BaseModel):
+    city: str
+    country: str
+
+
+@pytest.mark.vcr
+async def test_nvidia_nemotron_forced_tool_choice(
+    allow_model_requests: None, nvidia_api_key: str, request_capture: RequestCapture
+):
+    """Tool output sends `tool_choice: 'required'`, which some Nemotron servings answer with the call as text."""
+    provider = NvidiaProvider(api_key=nvidia_api_key, http_client=request_capture.client)
+    agent = Agent(
+        OpenAIChatModel('nvidia/nemotron-3.5-super-vl-120b-a12b', provider=provider), output_type=CityLocation
+    )
+    result = await agent.run('The largest city in Japan.')
+    assert result.output == snapshot()
+    assert request_capture.body('/chat/completions')['tool_choice'] == 'required'
+
+
+@pytest.mark.vcr
+async def test_nvidia_embeddings(allow_model_requests: None, nvidia_api_key: str, env: TestEnv):
+    """`nvidia:` embedding models route through `OpenAIEmbeddingModel` to NIM's `/v1/embeddings`."""
+    env.set('NVIDIA_API_KEY', nvidia_api_key)
+    env.remove('NVIDIA_BASE_URL')
+    embedder = Embedder('nvidia:nvidia/nemotron-3.5-embed-1b')
+    result = await embedder.embed_query('Hello, world!')
+    assert result == snapshot()
