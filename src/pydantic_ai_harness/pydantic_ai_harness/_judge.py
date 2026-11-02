@@ -99,9 +99,9 @@ def _neutralize_tags(text: str) -> str:
     return _BLOCK_TAG_OPENER.sub('&lt;', neutralize_tags(text))
 
 
-# Same transcript renderer and window clamp as `pydantic_ai_harness.trajectory_judge`. Not shared
-# with it because that renderer also tags the run id and splits the transcript; fold them together
-# if a shared transcript helper lands.
+# Same transcript renderer as `pydantic_ai_harness.trajectory_judge`. Not shared with it because
+# that renderer also tags the run id and splits the transcript; fold them together if a shared
+# transcript helper lands.
 def _render_transcript(messages: Sequence[ModelMessage]) -> str:
     """Render the conversation as model-readable lines.
 
