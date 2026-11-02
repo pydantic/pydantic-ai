@@ -11,7 +11,7 @@ const SCOPES: { scope: ChangeScope; label: string; empty: string }[] = [
   {
     scope: 'uncommitted',
     label: 'Uncommitted',
-    empty: 'No file differs from the last commit, tracked or untracked.',
+    empty: 'No file differs from the last commit. Ignored files are not shown.',
   },
   {
     scope: 'branch',

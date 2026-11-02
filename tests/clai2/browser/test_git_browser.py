@@ -1,4 +1,4 @@
-"""The header's git chip and its dialog in a real browser: commit, push, and open a pull request."""
+"""Git in a real browser: the header's chip and dialog (commit, push, pull request) and the Changes panel's Git scopes."""
 
 import re
 import sys
@@ -167,11 +167,14 @@ async def test_unchecking_a_file_marks_the_drafted_message_stale(page: Page, git
     await expect(dialog.get_by_text('This message was drafted for')).to_have_count(0)
 
 
-async def test_changes_panel_empty_uncommitted_scope_counts_untracked_files(
+async def test_changes_panel_git_scopes_say_which_files_they_leave_out(
     page: Page, make_fleet: MakeFleet, serve: Serve, repo: Path
 ) -> None:
     fleet = make_fleet(agents(Drafter(), 'repo'))
     conversation = fleet.new('repo')
+    (repo / '.git' / 'info' / 'exclude').write_text('*.log\n')
+    (repo / 'debug.log').write_text('ignored\n')
+    # Saved, so it can be renamed, as the sidebar lists it.
     fleet.portal.call(fleet.runtimes['repo'].session.commit_messages, list[ModelMessage]())
     assert fleet.post(f'/api/sessions/{conversation}/rename', {'title': 'Clean Repo'}).status_code == 204
     with serve(fleet) as url:
@@ -186,7 +189,7 @@ async def test_changes_panel_empty_uncommitted_scope_counts_untracked_files(
         )
         await panel.get_by_role('tab', name='Uncommitted').click()
         await expect(panel.locator('.changes-empty')).to_have_text(
-            'No file differs from the last commit, tracked or untracked.'
+            'No file differs from the last commit. Ignored files are not shown.'
         )
 
         (repo / 'new.txt').write_text('hi\n')
