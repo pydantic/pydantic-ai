@@ -245,6 +245,7 @@ def test_anthropic_claude_sonnet_4_6():
             'anthropic_supports_max_effort': True,
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_disables_thinking_with_between_tools': False,
+            'anthropic_distrusts_system_after_tool_result': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_supports_effort': True,
             'anthropic_default_code_execution_tool_version': '20260120',
@@ -285,6 +286,7 @@ def test_anthropic_claude_opus_4_7():
             'anthropic_supports_xhigh_effort': True,
             'anthropic_disallows_budget_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
+            'anthropic_distrusts_system_after_tool_result': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_disallows_sampling_settings': True,
             'anthropic_default_code_execution_tool_version': '20260120',
@@ -317,6 +319,7 @@ def test_anthropic_claude_haiku_4_5():
             'anthropic_supports_max_effort': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
+            'anthropic_distrusts_system_after_tool_result': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_binds_thinking_blocks': False,
             'anthropic_max_output_tokens': 64000,
@@ -348,6 +351,7 @@ def test_anthropic_claude_3_5_sonnet_legacy():
             'anthropic_supports_max_effort': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
+            'anthropic_distrusts_system_after_tool_result': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_binds_thinking_blocks': False,
             'anthropic_max_output_tokens': None,
@@ -389,6 +393,7 @@ def test_openai_gpt_5_4():
             'tool_addition_mode': 'with_definitions',
             'tool_deferral_mode': 'with_tool_search',
             'supports_cache': False,
+            'supports_audio_file_input': False,
             'supported_cache_retentions': (),
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
@@ -449,6 +454,7 @@ def test_openai_gpt_5_6():
             'openai_supports_minimal_reasoning_effort': False,
             'default_cache_retention': timedelta(seconds=1800),
             'supports_cache': True,
+            'supports_audio_file_input': False,
             'supported_cache_retentions': ('30m',),
             'openai_responses_supports_prompt_cache_diagnostics': True,
             'openai_chat_supports_allowed_tools': True,
@@ -496,6 +502,7 @@ def test_openai_gpt_6_astra():
             'openai_supports_minimal_reasoning_effort': False,
             'default_cache_retention': timedelta(seconds=1800),
             'supports_cache': True,
+            'supports_audio_file_input': False,
             'supported_cache_retentions': ('30m',),
             'openai_responses_supports_prompt_cache_diagnostics': True,
             'openai_chat_supports_allowed_tools': True,
@@ -649,6 +656,7 @@ def test_openai_gpt_4o():
             'tool_addition_mode': 'with_definitions',
             'tool_deferral_mode': 'with_tool_search',
             'supports_cache': False,
+            'supports_audio_file_input': False,
             'supported_cache_retentions': (),
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
@@ -681,6 +689,7 @@ def test_openai_o3_mini():
             'tool_addition_mode': 'with_definitions',
             'tool_deferral_mode': 'with_tool_search',
             'supports_cache': False,
+            'supports_audio_file_input': False,
             'supported_cache_retentions': (),
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
@@ -719,6 +728,7 @@ def test_openai_codex_gpt_5_6():
             'tool_addition_mode': 'with_definitions',
             'openai_unsupported_model_settings': ('max_tokens', 'temperature', 'top_p'),
             'default_cache_retention': timedelta(seconds=1800),
+            'supports_audio_file_input': False,
             'supports_cache': False,
             'supported_cache_retentions': (),
             'openai_chat_supports_allowed_tools': True,
@@ -961,6 +971,7 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'anthropic_supports_max_effort': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
+            'anthropic_distrusts_system_after_tool_result': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'bedrock_supports_tool_caching': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
@@ -970,6 +981,7 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'bedrock_thinking_variant': 'anthropic',
             'tool_deferral_mode': 'standalone',
             'json_schema_transformer': _BedrockAnthropicJsonSchemaTransformer,
+            'supports_video_input': False,
             'anthropic_enforces_strict_schema_limits': True,
             'bedrock_supports_strict_tool_definition': True,
         }
@@ -1041,6 +1053,7 @@ def test_bedrock_anthropic_with_geo_prefix():
             'anthropic_supports_max_effort': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
+            'anthropic_distrusts_system_after_tool_result': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_binds_thinking_blocks': False,
             'anthropic_max_output_tokens': 64000,
@@ -1048,6 +1061,7 @@ def test_bedrock_anthropic_with_geo_prefix():
             'bedrock_thinking_variant': 'anthropic',
             'tool_deferral_mode': 'standalone',
             'json_schema_transformer': _BedrockAnthropicJsonSchemaTransformer,
+            'supports_video_input': False,
             'anthropic_enforces_strict_schema_limits': True,
             'bedrock_supports_strict_tool_definition': True,
         }
@@ -1083,12 +1097,14 @@ def test_bedrock_anthropic_legacy_claude_3():
             'anthropic_supports_max_effort': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
+            'anthropic_distrusts_system_after_tool_result': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_binds_thinking_blocks': False,
             'anthropic_max_output_tokens': None,
             'anthropic_rejects_max_tokens_beyond_context_window': True,
             'bedrock_thinking_variant': 'anthropic',
             'json_schema_transformer': BedrockJsonSchemaTransformer,
+            'supports_video_input': False,
             'anthropic_enforces_strict_schema_limits': True,
             'bedrock_supports_strict_tool_definition': False,
         }
@@ -1107,6 +1123,7 @@ def test_bedrock_mistral_large():
             'bedrock_supports_strict_tool_definition': False,
             'bedrock_tool_result_colocatable_content': frozenset(),
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document'}),
+            'supports_video_input': False,
         }
     )
 
@@ -1180,7 +1197,7 @@ def test_bedrock_amazon_titan():
 @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
 def test_bedrock_cohere_command():
     profile = BedrockProvider.model_profile('cohere.command-r-plus-v1:0')
-    assert _normalize(profile) == snapshot({'supported_native_tools': frozenset()})
+    assert _normalize(profile) == snapshot({'supported_native_tools': frozenset(), 'supports_video_input': False})
 
 
 @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
@@ -1192,6 +1209,7 @@ def test_bedrock_meta_llama3():
             'supported_native_tools': frozenset(),
             'bedrock_tool_result_colocatable_content': frozenset(),
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'image', 'document'}),
+            'supports_video_input': False,
         }
     )
 
@@ -1207,6 +1225,7 @@ def test_bedrock_deepseek_r1():
             'ignore_streamed_leading_whitespace': True,
             'supported_native_tools': frozenset(),
             'bedrock_send_back_thinking_parts': True,
+            'supports_video_input': False,
         }
     )
 
@@ -1216,7 +1235,12 @@ def test_bedrock_openai():
     """Bedrock-hosted OpenAI — only has the `openai` thinking variant, no upstream profile."""
     profile = BedrockProvider.model_profile('openai.gpt-oss-120b-1:0')
     assert _normalize(profile) == snapshot(
-        {'supports_thinking': True, 'bedrock_thinking_variant': 'openai', 'thinking_always_enabled': True}
+        {
+            'supports_thinking': True,
+            'bedrock_thinking_variant': 'openai',
+            'thinking_always_enabled': True,
+            'supports_video_input': False,
+        }
     )
 
 
@@ -1233,6 +1257,7 @@ def test_bedrock_qwen_qwq():
             'bedrock_thinking_variant': 'qwen',
             'bedrock_supports_strict_tool_definition': False,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset(),
+            'supports_video_input': False,
         }
     )
 
@@ -1251,6 +1276,7 @@ def test_bedrock_zai_glm():
             'json_schema_transformer': _BedrockJsonSchemaTransformerWithoutContains,
             'supports_json_schema_output': True,
             'bedrock_supports_strict_tool_definition': True,
+            'supports_video_input': False,
         }
     )
 
@@ -1270,6 +1296,7 @@ def test_bedrock_moonshotai_kimi():
             'supports_json_schema_output': True,
             'bedrock_supports_strict_tool_definition': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset(),
+            'supports_video_input': False,
         }
     )
 
@@ -1284,6 +1311,7 @@ def test_bedrock_writer_palmyra():
             'json_schema_transformer': BedrockJsonSchemaTransformer,
             'bedrock_tool_result_colocatable_content': frozenset(),
             'bedrock_supports_tool_result_status': False,
+            'supports_video_input': False,
         }
     )
 
@@ -1311,6 +1339,7 @@ def test_bedrock_xai_grok(region: str):
                 'bedrock_supports_tool_choice': True,
                 'bedrock_thinking_variant': 'xai',
                 'bedrock_disallows_sampling_settings': True,
+                'supports_video_input': False,
             },
             '4.7': {
                 'supports_thinking': True,
@@ -1322,6 +1351,7 @@ def test_bedrock_xai_grok(region: str):
                 'bedrock_supports_tool_choice': True,
                 'bedrock_thinking_variant': 'xai',
                 'bedrock_disallows_sampling_settings': True,
+                'supports_video_input': False,
             },
         }
     )
@@ -1358,6 +1388,7 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
             'anthropic_supports_max_effort': True,
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_disables_thinking_with_between_tools': False,
+            'anthropic_distrusts_system_after_tool_result': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
@@ -1600,6 +1631,7 @@ def test_github_copilot_anthropic_claude_haiku_4_5():
             'anthropic_supports_max_effort': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_disables_thinking_with_between_tools': False,
+            'anthropic_distrusts_system_after_tool_result': False,
             'anthropic_binds_thinking_blocks': False,
             'anthropic_max_output_tokens': 64000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
@@ -1876,6 +1908,7 @@ def test_azure_openai_gpt_5():
             'computer_use_screenshot_limit': (2560, 3686400),
             'openai_supports_computer_tool': True,
             'openai_chat_supports_document_input': False,
+            'openai_responses_supports_websocket': False,
         }
     )
 
@@ -1888,6 +1921,7 @@ def test_azure_mistral_prefix():
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'tool_call_id_length': 9,
             'openai_chat_supports_document_input': False,
+            'openai_responses_supports_websocket': False,
             'openai_chat_supports_max_completion_tokens': False,
         }
     )
@@ -1902,6 +1936,7 @@ def test_azure_mistral_small_latest():
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'tool_call_id_length': 9,
             'openai_chat_supports_document_input': False,
+            'openai_responses_supports_websocket': False,
             'openai_chat_supports_max_completion_tokens': False,
         }
     )
@@ -1916,6 +1951,7 @@ def test_azure_ministral_3b():
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'tool_call_id_length': 9,
             'openai_chat_supports_document_input': False,
+            'openai_responses_supports_websocket': False,
             'openai_chat_supports_max_completion_tokens': False,
         }
     )
@@ -1932,6 +1968,7 @@ def test_azure_magistral_small_latest():
             'openai_chat_supports_document_input': False,
             'openai_chat_supports_max_completion_tokens': False,
             'supports_thinking': True,
+            'openai_responses_supports_websocket': False,
             'thinking_always_enabled': True,
         }
     )
@@ -1944,6 +1981,7 @@ def test_azure_cohere_prefix():
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'openai_chat_supports_document_input': False,
+            'openai_responses_supports_websocket': False,
         }
     )
 
@@ -1958,6 +1996,7 @@ def test_azure_grok_prefix():
             'json_schema_transformer': _AzureGrokJsonSchemaTransformer,
             'grok_supports_builtin_tools': True,
             'openai_chat_supports_document_input': False,
+            'openai_responses_supports_websocket': False,
         }
     )
 
@@ -2392,6 +2431,7 @@ def test_anthropic_unknown_model_returns_some_profile():
             'anthropic_supports_max_effort': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
+            'anthropic_distrusts_system_after_tool_result': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_binds_thinking_blocks': False,
             'anthropic_max_output_tokens': None,
@@ -2546,6 +2586,7 @@ def test_vercel_anthropic_claude_sonnet():
             'anthropic_supports_max_effort': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_disables_thinking_with_between_tools': False,
+            'anthropic_distrusts_system_after_tool_result': False,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_binds_thinking_blocks': False,
@@ -2671,6 +2712,7 @@ def test_heroku_returns_openai_transformer():
             'anthropic_supports_max_effort': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_disables_thinking_with_between_tools': False,
+            'anthropic_distrusts_system_after_tool_result': False,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_binds_thinking_blocks': False,

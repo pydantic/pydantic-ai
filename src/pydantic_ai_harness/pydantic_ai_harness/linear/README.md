@@ -4,6 +4,8 @@ Let an agent read and change Linear issues, projects, teams, and comments throug
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+![Inside your agent, the Linear capability connects to Linear's hosted MCP server with a bearer token, and the model sees the server's tools under the linear_ prefix, such as linear_list_issues. Your auth function returns the token for each run from its deps. With read_only=True the capability connects to the read-only endpoint, mcp.linear.app/mcp/readonly, instead of mcp.linear.app/mcp.](https://pydantic.dev/docs/ai/img/harness/linear.svg)
+
 ## Install and connect
 
 uv:

@@ -241,6 +241,8 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
         guidance: str | None = None,
         native: bool = False,
         id: str | None = 'exa_search',
+        description: str | None = None,
+        defer_loading: bool = False,
     ) -> ExaSearch[AgentDepsT]:
         """Construct the capability from serializable spec options.
 
@@ -257,4 +259,6 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
             guidance=guidance,
             native=native,
             id=id,
+            description=description,
+            defer_loading=defer_loading,
         )

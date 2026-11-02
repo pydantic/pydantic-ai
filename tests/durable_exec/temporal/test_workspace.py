@@ -273,6 +273,11 @@ def test_an_at_most_once_step_raises_a_shorter_configured_timeout_and_keeps_a_lo
     assert applied.get('start_to_close_timeout') == timedelta(seconds=expected)
 
 
+def test_a_repeatable_step_without_a_timeout_keeps_its_config() -> None:
+    config = ActivityConfig(start_to_close_timeout=timedelta(seconds=60))
+    assert _apply_policy(config, StepPolicy()) == config
+
+
 async def test_workspace_runs_draw_their_run_id_without_the_stable_id_patch(client: Client) -> None:
     """Workspace agents drew a default `run_id` before every durable run did, so they draw without the patch.
 

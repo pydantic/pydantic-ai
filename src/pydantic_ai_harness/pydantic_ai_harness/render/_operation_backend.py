@@ -118,12 +118,10 @@ class RenderBoundOperation(
         operation: DurableOperation[ParamsT, WireT, ResultT],
         *,
         registered: _RegisteredTask,
-        policy_tasks: dict[str, _RegisteredTask],
         runtime: RenderWorkflows[RuntimeDepsT],
     ) -> None:
         self._operation = operation
         self._registered = registered
-        self._policy_tasks = policy_tasks
         self._runtime = runtime
 
     @property
@@ -139,8 +137,6 @@ class RenderBoundOperation(
 
         registered = self._registered
         self._check_static_config(config, registered.options)
-        if config is None and self._operation.policy_key is not None:
-            registered = self._policy_tasks.get(self._operation.policy_key(params), registered)
         wire_params = dump_operation_params(self._operation, params)
         request = make_request(registered.name, wire_params)
         result = await context.run(registered.task, request)
@@ -189,13 +185,12 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
         self._validate_tool_options(operation, config=config)
         bound = RenderBoundOperation(
             operation,
-            registered=self._prepare_task(operation, name=name, config=config),
-            # Task options are fixed at registration, so each kind of invocation with its own policy gets a task.
-            policy_tasks={
-                key: self._prepare_task(operation, name=f'{name}.{key}', config=_policy_options(config, policy))
-                for key, policy in operation.policies.items()
-                if policy != StepPolicy()
-            },
+            # Task options are fixed at registration, so the operation's step policy goes into them.
+            registered=self._prepare_task(
+                operation,
+                name=name,
+                config=config if operation.policy is None else _policy_options(config, operation.policy),
+            ),
             runtime=self._runtime,
         )
         # RenderWorkflows.for_agent registers the queued SDK definitions after core binding.

@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="722" viewBox="0 0 880 722" role="img" aria-labelledby="t d">
+<title id="t">gh-aw: your Pydantic AI agent as a GitHub Agentic Workflow</title>
+<desc id="d">A new issue triggers the compiled gh-aw workflow. Its agent job runs the pydantic-ai engine in a container behind an egress firewall: the engine starts clai2 with your agent, named by PAI_AGENT, plus the workflow model and prompt. Model requests go through gh-aw&#x27;s api-proxy, which holds the provider key, and the agent&#x27;s GitHub and safe-output tools, such as github_issue_read and safeoutputs_add_comment, come from gh-aw&#x27;s MCP gateway. After a threat-detection job checks the output, a separate add-comment job posts the comment with its own token.</desc>
+<defs><marker id="ai" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#092224"/></marker><marker id="am" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#55726A"/></marker><marker id="al" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#B417B7"/></marker><marker id="al2" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E520E9"/></marker><marker id="ap" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#7B57E8"/></marker><marker id="aa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0E9C86"/></marker><marker id="ac" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E5533D"/></marker><marker id="af" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8FA8A3"/></marker><marker id="ao" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#97998B"/></marker></defs>
+<rect x="0.5" y="0.5" width="879" height="721" rx="16" fill="#FFFFFF" stroke="#E6EAEA"/>
+<text x="32" y="50" font-size="21" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">gh-aw: your Pydantic AI agent as a GitHub Agentic Workflow</text>
+<text x="32" y="78" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">gh-aw runs the agent headless on a GitHub event, in a firewalled container. The agent never holds the model key or a</text>
+<text x="32" y="98" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">token that can write to the repository.</text>
+<rect x="32" y="130" width="178.5" height="44" rx="10" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.4"/>
+<text x="121.2" y="156" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">issue opened</text>
+<rect x="244.5" y="130" width="178.5" height="44" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="333.8" y="156" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">agent job</text>
+<line x1="213.5" y1="152" x2="241.5" y2="152" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="457" y="130" width="178.5" height="44" rx="10" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.4"/>
+<text x="546.2" y="156" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">threat detection</text>
+<line x1="426" y1="152" x2="454" y2="152" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="669.5" y="130" width="178.5" height="44" rx="10" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.4"/>
+<text x="758.8" y="156" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">add-comment job</text>
+<line x1="638.5" y1="152" x2="666.5" y2="152" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="32" y="238" width="540" height="214" rx="14" fill="none" stroke="#B417B7" stroke-width="1.3" stroke-dasharray="4 4"/>
+<rect x="46" y="230" width="294.9" height="16" rx="4" fill="#FFFFFF"/>
+<text letter-spacing="1.3" x="53" y="242" font-size="11" fill="#B417B7" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">AGENT CONTAINER, EGRESS FIREWALL</text>
+<line x1="333.8" y1="174" x2="333.8" y2="229" stroke="#8FA8A3" stroke-width="1.2" stroke-dasharray="3 3"/>
+<rect x="48" y="260" width="508" height="58" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="62" y="282" font-size="13.5" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">pydantic-ai engine</text>
+<text x="62" y="304" font-size="12" fill="#092224" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">clai2 -a &lt;target&gt; -m &lt;provider:model&gt; -p &lt;prompt&gt;</text>
+<rect x="48" y="334" width="508" height="100" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="62" y="356" font-size="13.5" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">your Agent</text>
+<text x="146" y="356" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">PAI_AGENT: my_agent:agent</text>
+<text letter-spacing="1.3" x="62" y="380" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">THE MODEL SEES</text>
+<rect x="62" y="390" width="109.2" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="116.6" y="406.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">label_catalog</text>
+<rect x="179.2" y="390" width="137.3" height="24" rx="6" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.2"/>
+<text x="247.8" y="406.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">github_issue_read</text>
+<rect x="324.4" y="390" width="179.3" height="24" rx="6" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.2"/>
+<text x="414.1" y="406.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">safeoutputs_add_comment</text>
+<line x1="88" y1="320" x2="88" y2="332" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<text x="96" y="330" font-size="11.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">imports and runs</text>
+<rect x="688" y="226" width="84" height="36" rx="18" fill="#092224"/>
+<text x="730" y="249" font-size="13.5" fill="#FBFFEA" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<rect x="612" y="274" width="236" height="64" rx="10" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.4"/>
+<text x="626" y="295" font-size="13.5" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">api-proxy</text>
+<text x="626" y="313" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">holds the provider key; the agent</text>
+<text x="626" y="330" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">sends a placeholder</text>
+<line x1="730" y1="272" x2="730" y2="264" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="560" y1="296" x2="608" y2="296" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="612" y="358" width="236" height="72" rx="10" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.4"/>
+<text x="626" y="380" font-size="13.5" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">MCP gateway</text>
+<text x="626" y="400" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">GitHub tools and safe outputs, from a</text>
+<text x="626" y="417" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">read-only config</text>
+<line x1="560" y1="388" x2="608" y2="388" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="608" y1="408" x2="560" y2="408" stroke="#55726A" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#am)"/>
+<rect x="32" y="482" width="330" height="174" rx="10" fill="#092224"/>
+<text x="46" y="506" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#F07CF3">on</tspan><tspan fill="#FBFFEA">:</tspan></text>
+<text x="46" y="525" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">  issues: {types: [opened]}</tspan></text>
+<text x="46" y="544" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#F07CF3">engine</tspan><tspan fill="#FBFFEA">:</tspan></text>
+<text x="46" y="563" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">  id: pydantic-ai</tspan></text>
+<text x="46" y="582" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">  model: </tspan><tspan fill="#FFD4E5">openai/gpt-5</tspan></text>
+<text x="46" y="601" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">  env: {PAI_AGENT: </tspan><tspan fill="#FFD4E5">my_agent:agent</tspan><tspan fill="#FBFFEA">}</tspan></text>
+<text x="46" y="620" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#F07CF3">safe-outputs</tspan><tspan fill="#FBFFEA">:</tspan></text>
+<text x="46" y="639" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">  add-comment:</tspan></text>
+<text x="388" y="498" font-size="12.5" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">safe output</text>
+<text x="480" y="498" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">safeoutputs_add_comment records the comment. The</text>
+<text x="480" y="515.8" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">add-comment job posts it after the agent and threat detection</text>
+<text x="480" y="533.5" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">finish.</text>
+<text x="388" y="557.5" font-size="12.5" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">no key</text>
+<text x="480" y="557.5" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Secrets in engine.env are stripped from the agent; the provider</text>
+<text x="480" y="575.2" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">key stays in the api-proxy.</text>
+<text x="388" y="599.2" font-size="12.5" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">your agent</text>
+<text x="480" y="599.2" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">No model of its own: the engine passes -m from engine.model.</text>
+<rect x="32" y="675" width="14" height="14" rx="7" fill="#092224" stroke="#092224" stroke-width="1.2"/>
+<text x="52" y="686" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<rect x="107.4" y="675" width="14" height="14" rx="4" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="127.4" y="686" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">added by the pydantic-ai engine</text>
+<rect x="324.3" y="675" width="14" height="14" rx="4" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="344.3" y="686" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">your agent and tools</text>
+<rect x="478.6" y="675" width="14" height="14" rx="4" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.2"/>
+<text x="498.6" y="686" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">GitHub and gh-aw services</text>
+</svg>

@@ -1,0 +1,527 @@
+"""Bound excessive Claude Code backoff without replacing the SDK retry machinery.
+
+MockTransport supplies chosen Retry-After values: a 429 with the required delay
+cannot be recorded on demand. SDK sleep interception keeps these tests instant.
+"""
+
+import io
+import json
+from collections.abc import AsyncGenerator, AsyncIterable
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Literal
+
+import httpx2
+import pytest
+from anthropic import AsyncAnthropic, AsyncAnthropicBedrock, RateLimitError
+from pydantic import JsonValue
+from rich.console import Console
+
+from pydantic_ai import Agent, AgentStreamEvent, RunContext
+from pydantic_ai.exceptions import ModelHTTPError, ModelRateLimitError
+from pydantic_ai.models import Model, override_allow_model_requests
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
+from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_clai2 import chat
+from pydantic_clai2.cli.headless import run_headless
+from pydantic_clai2.config import Settings
+from pydantic_clai2.config.project_settings import ProjectSettings
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.errors import error_message
+from pydantic_clai2.models.resolver import ModelResolver
+from pydantic_clai2.plugins import ModelProvider
+from tests.clai2.test_app_edges import inputs
+
+
+class SubscriptionAuth(httpx2.Auth):
+    """Keep the plugin's bearer auth and its separate one-time 401 refresh across SDK retries."""
+
+    async def async_auth_flow(self, request: httpx2.Request) -> AsyncGenerator[httpx2.Request, httpx2.Response]:
+        request.headers.pop('x-api-key', None)
+        request.headers['Authorization'] = 'Bearer subscription'
+        response = yield request
+        if response.status_code == 401:
+            await response.aread()
+            await response.aclose()
+            request.headers['Authorization'] = 'Bearer refreshed'
+            yield request
+
+
+def claude_model(client: httpx2.AsyncClient) -> AnthropicModel:
+    return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='unused', http_client=client))
+
+
+def plugin_resolver(*, model: Model, store: SettingsStore | None = None, prefix: str = 'claude-code') -> ModelResolver:
+    plugin = ModelProvider(prefix=prefix, resolve=lambda name: model, resolve_profile=lambda name, profile: model)
+    backup = ModelProvider(prefix='backup', resolve=lambda name: TestModel(call_tools=[], custom_output_text='backup'))
+    return ModelResolver(
+        console=Console(file=io.StringIO()), plugins=lambda: {prefix: plugin, 'backup': backup}, store=store
+    )
+
+
+def success(*, stream: bool = False) -> httpx2.Response:
+    content: list[JsonValue] = [{'type': 'text', 'text': 'ok'}]
+    message: dict[str, JsonValue] = {
+        'id': 'msg_1',
+        'type': 'message',
+        'role': 'assistant',
+        'model': 'claude-sonnet-4-5',
+        'content': content,
+        'stop_reason': 'end_turn',
+        'stop_sequence': None,
+        'usage': {'input_tokens': 1, 'output_tokens': 2},
+    }
+    if not stream:
+        return httpx2.Response(200, json=message)
+    events: list[dict[str, JsonValue]] = [
+        {'type': 'message_start', 'message': {**message, 'content': [], 'stop_reason': None}},
+        {'type': 'content_block_start', 'index': 0, 'content_block': content[0]},
+        {'type': 'content_block_stop', 'index': 0},
+        {'type': 'message_delta', 'delta': {'stop_reason': message['stop_reason']}, 'usage': {'output_tokens': 2}},
+        {'type': 'message_stop'},
+    ]
+    body = ''.join(f'event: {event["type"]}\ndata: {json.dumps(event)}\n\n' for event in events)
+    return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, text=body)
+
+
+def rejection(*, status: int = 429, headers: dict[str, str] | None = None) -> httpx2.Response:
+    return httpx2.Response(
+        status,
+        headers=headers,
+        json={'type': 'error', 'error': {'type': 'rate_limit_error', 'message': 'subscription exhausted'}},
+    )
+
+
+async def consume(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+    async for _ in events:
+        pass
+
+
+@pytest.fixture
+def sdk_sleeps(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    waits: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        waits.append(delay)
+
+    # Replace only the SDK's module reference, not anyio.sleep process-wide.
+    monkeypatch.setattr('anthropic._base_client.anyio', SimpleNamespace(sleep=sleep))
+    monkeypatch.setattr(
+        'pydantic_clai2.models._retry_after.time.time', lambda: datetime(2026, 10, 23, tzinfo=UTC).timestamp()
+    )
+    return waits
+
+
+@dataclass(frozen=True, kw_only=True)
+class Case:
+    id: str
+    headers: dict[str, str]
+    vetoed: bool
+    sdk_sleep: float | Literal['backoff'] | None
+    estimate: str | None = None
+
+
+CASES = [
+    Case(
+        id='long-quota',
+        headers={
+            'retry-after': '10511',
+            'x-should-retry': 'true',
+            'request-id': 'kept',
+            'anthropic-ratelimit-unified-7d-status': 'rejected',
+            'anthropic-ratelimit-unified-7d-reset': '1793059200',
+        },
+        vetoed=True,
+        sdk_sleep=None,
+        estimate='2h 55m',
+    ),
+    Case(id='exactly-sixty-seconds', headers={'retry-after': '60'}, vetoed=False, sdk_sleep=60.0),
+    Case(id='fractional-seconds', headers={'retry-after': '60.1'}, vetoed=True, sdk_sleep=None, estimate='1m 1s'),
+    Case(id='day-scale', headers={'retry-after': '172801'}, vetoed=True, sdk_sleep=None, estimate='2d 0h'),
+    Case(
+        id='milliseconds-over-limit', headers={'retry-after-ms': '60001'}, vetoed=True, sdk_sleep=None, estimate='1m 1s'
+    ),
+    Case(
+        id='milliseconds-precedence',
+        headers={'retry-after-ms': '1000', 'retry-after': '10511'},
+        vetoed=False,
+        sdk_sleep=1.0,
+    ),
+    Case(
+        id='invalid-milliseconds-fallthrough',
+        headers={'retry-after-ms': 'bad', 'retry-after': '10511'},
+        vetoed=True,
+        sdk_sleep=None,
+        estimate='2h 55m',
+    ),
+    Case(
+        id='future-http-date',
+        headers={'retry-after': 'Fri, 23 Oct 2026 00:02:00 GMT'},
+        vetoed=True,
+        sdk_sleep=None,
+        estimate='2m',
+    ),
+    Case(
+        id='past-http-date', headers={'retry-after': 'Thu, 22 Oct 2026 00:00:00 GMT'}, vetoed=False, sdk_sleep='backoff'
+    ),
+    Case(id='malformed-seconds', headers={'retry-after': 'bad'}, vetoed=False, sdk_sleep='backoff'),
+    Case(id='missing-delay', headers={}, vetoed=False, sdk_sleep='backoff'),
+    Case(id='negative-seconds', headers={'retry-after': '-1'}, vetoed=False, sdk_sleep='backoff'),
+    Case(id='zero-seconds', headers={'retry-after': '0'}, vetoed=False, sdk_sleep='backoff'),
+    Case(id='nan-seconds', headers={'retry-after': 'nan'}, vetoed=False, sdk_sleep='backoff'),
+    Case(id='infinite-delay-no-estimate', headers={'retry-after': 'inf'}, vetoed=True, sdk_sleep=None),
+    Case(
+        id='nan-milliseconds-no-fallthrough',
+        headers={'retry-after-ms': 'nan', 'retry-after': '10511'},
+        vetoed=False,
+        sdk_sleep='backoff',
+    ),
+    Case(
+        id='negative-milliseconds-no-fallthrough',
+        headers={'retry-after-ms': '-1', 'retry-after': '10511'},
+        vetoed=False,
+        sdk_sleep='backoff',
+    ),
+]
+
+
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in CASES])
+async def test_claude_code_retry_budget(case: Case, stream: bool, sdk_sleeps: list[float]) -> None:
+    calls: list[str | None] = []
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        calls.append(request.headers.get('authorization'))
+        response = rejection(headers=case.headers) if len(calls) == 1 else success(stream=stream)
+        return response
+
+    observed: list[int] = []
+
+    async def existing_hook(response: httpx2.Response) -> None:
+        observed.append(response.status_code)
+
+    auth = SubscriptionAuth()
+    async with httpx2.AsyncClient(
+        transport=httpx2.MockTransport(respond), auth=auth, event_hooks={'response': [existing_hook]}
+    ) as client:
+        model = claude_model(client)
+        resolver = plugin_resolver(model=model)
+        resolved = await resolver.resolve('claude-code:claude-sonnet-4-5')
+        assert resolved is model
+        assert await resolver.resolve('claude-code@other:claude-sonnet-4-5') is model
+        assert len(client.event_hooks['response']) == 2
+        assert client.event_hooks['response'][0] is existing_hook
+        assert client.auth is auth
+        assert model.client.max_retries == 2
+        with override_allow_model_requests(True):
+            if case.vetoed:
+                with pytest.raises(ModelRateLimitError) as caught:
+                    await Agent(model).run(
+                        'go',
+                        model_settings={'max_tokens': 20, 'max_retries': 2},
+                        event_stream_handler=consume if stream else None,
+                    )
+                error = caught.value
+                assert isinstance(error, ModelHTTPError)
+                assert error.status_code == 429
+                assert error.body == {
+                    'type': 'error',
+                    'error': {'type': 'rate_limit_error', 'message': 'subscription exhausted'},
+                }
+                assert error.provider_error_type == 'rate_limit_error'
+                assert error.headers is not None
+                assert all(
+                    error.headers[key] == value for key, value in case.headers.items() if key != 'x-should-retry'
+                )
+                assert error.headers['x-should-retry'] == 'false'
+                message = error_message(error)
+                assert 'Claude Code rate limit (HTTP 429)' in message
+                assert '/model' in message
+                if case.estimate is not None:
+                    assert f'Retry after about {case.estimate}.' in message
+                else:
+                    assert 'Retry after' not in message
+                assert sdk_sleeps == []
+            else:
+                result = await Agent(model).run(
+                    'go',
+                    model_settings={'max_tokens': 20, 'max_retries': 2},
+                    event_stream_handler=consume if stream else None,
+                )
+                assert result.output == 'ok'
+                assert len(sdk_sleeps) == 1
+                if case.sdk_sleep != 'backoff':
+                    assert sdk_sleeps == [case.sdk_sleep]
+                else:
+                    assert 0 < sdk_sleeps[0] <= 0.5
+        assert calls == ['Bearer subscription'] * (1 if case.vetoed else 2)
+        assert observed == ([429] if case.vetoed else [429, 200])
+        assert not client.is_closed
+
+
+@pytest.mark.parametrize('status', [401, 408, 409, 500, 503])
+async def test_claude_code_preserves_other_retries(status: int, sdk_sleeps: list[float]) -> None:
+    authorizations: list[str | None] = []
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        authorizations.append(request.headers.get('authorization'))
+        return rejection(status=status) if len(authorizations) == 1 else success()
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(respond), auth=SubscriptionAuth()) as client:
+        model = await plugin_resolver(model=claude_model(client)).resolve('claude-code:claude-sonnet-4-5')
+        with override_allow_model_requests(True):
+            assert (await Agent(model).run('go', model_settings={'max_tokens': 20})).output == 'ok'
+    assert authorizations == ['Bearer subscription', 'Bearer refreshed' if status == 401 else 'Bearer subscription']
+    assert len(sdk_sleeps) == (0 if status == 401 else 1)
+
+
+async def test_claude_code_preserves_connection_retries(sdk_sleeps: list[float]) -> None:
+    calls = 0
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise httpx2.ConnectError('disconnected')
+        return success()
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(respond), auth=SubscriptionAuth()) as client:
+        model = await plugin_resolver(model=claude_model(client)).resolve('claude-code:claude-sonnet-4-5')
+        with override_allow_model_requests(True):
+            assert (await Agent(model).run('go', model_settings={'max_tokens': 20})).output == 'ok'
+    assert calls == 2
+    assert len(sdk_sleeps) == 1
+
+
+@pytest.mark.parametrize('retries', [0, 2, 4])
+async def test_short_rejection_keeps_sdk_retry_count(retries: int, sdk_sleeps: list[float]) -> None:
+    calls = 0
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        return rejection(headers={'retry-after': '1'})
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(respond)) as client:
+        model = await plugin_resolver(model=claude_model(client)).resolve('claude-code:claude-sonnet-4-5')
+        with override_allow_model_requests(True), pytest.raises(ModelRateLimitError):
+            await Agent(model).run('go', model_settings={'max_tokens': 20, 'max_retries': retries})
+    assert calls == retries + 1
+    assert sdk_sleeps == [1.0] * retries
+
+
+@pytest.mark.parametrize('prefix', ['claude-code', 'other-plugin'])
+async def test_server_retry_veto_is_unchanged(prefix: str, sdk_sleeps: list[float]) -> None:
+    async with httpx2.AsyncClient(
+        transport=httpx2.MockTransport(
+            lambda request: rejection(headers={'retry-after': '10511', 'x-should-retry': 'false'})
+        )
+    ) as client:
+        model = await plugin_resolver(model=claude_model(client), prefix=prefix).resolve(f'{prefix}:claude-sonnet-4-5')
+        with override_allow_model_requests(True), pytest.raises(ModelRateLimitError) as caught:
+            await Agent(model).run('go', model_settings={'max_tokens': 20})
+    assert sdk_sleeps == []
+    assert 'CLAI skipped' not in error_message(caught.value)
+
+
+async def test_other_models_keep_their_retry_policy(sdk_sleeps: list[float]) -> None:
+    calls = 0
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        return rejection(headers={'retry-after': '10511'}) if calls == 1 else success()
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(respond)) as client:
+        model = await plugin_resolver(model=claude_model(client), prefix='other-plugin').resolve(
+            'other-plugin:claude-sonnet-4-5'
+        )
+        with override_allow_model_requests(True):
+            assert (await Agent(model).run('go', model_settings={'max_tokens': 20})).output == 'ok'
+        assert client.event_hooks['response'] == []
+    assert sdk_sleeps == [10511.0]
+    ordinary = TestModel()
+    assert await plugin_resolver(model=ordinary).resolve('claude-code:any') is ordinary
+
+
+@pytest.mark.parametrize(
+    ('method', 'path'),
+    [('GET', '/api/oauth/usage'), ('POST', '/api/oauth/usage'), ('GET', '/v1/messages'), ('POST', '/v1/models')],
+)
+async def test_shared_client_non_model_requests_are_unchanged(method: str, path: str, sdk_sleeps: list[float]) -> None:
+    calls = 0
+    responses: list[httpx2.Response] = []
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        response = (
+            rejection(headers={'retry-after': '10511', 'x-should-retry': 'true'})
+            if calls == 1
+            else httpx2.Response(200, json={'ok': True})
+        )
+        responses.append(response)
+        return response
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(respond)) as client:
+        model = claude_model(client)
+        await plugin_resolver(model=model).resolve('claude-code:claude-sonnet-4-5')
+        assert isinstance(model.client, AsyncAnthropic)
+        request = model.client.get if method == 'GET' else model.client.post
+        assert await request(path, cast_to=object) == {'ok': True}
+        assert responses[0].headers['x-should-retry'] == 'true'
+        assert 'clai2.rejected_retry_after' not in responses[0].extensions
+    assert calls == 2
+    assert sdk_sleeps == [10511.0]
+
+
+@pytest.mark.parametrize('guarded', [False, True])
+async def test_token_count_rejections_share_the_model_retry_budget(guarded: bool, sdk_sleeps: list[float]) -> None:
+    calls = 0
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        assert request.method == 'POST' and request.url.path == '/v1/messages/count_tokens'
+        return (
+            rejection(headers={'retry-after': '10511'})
+            if calls == 1
+            else httpx2.Response(200, json={'input_tokens': 1})
+        )
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(respond)) as client:
+        model = claude_model(client)
+        if guarded:
+            await plugin_resolver(model=model).resolve('claude-code:claude-sonnet-4-5')
+        assert isinstance(model.client, AsyncAnthropic)
+        if guarded:
+            with pytest.raises(RateLimitError) as caught:
+                await model.client.beta.messages.count_tokens(
+                    model='claude-sonnet-4-5', messages=[{'role': 'user', 'content': 'go'}]
+                )
+            assert caught.value.response.headers['x-should-retry'] == 'false'
+        else:
+            result = await model.client.beta.messages.count_tokens(
+                model='claude-sonnet-4-5', messages=[{'role': 'user', 'content': 'go'}]
+            )
+            assert result.input_tokens == 1
+    assert calls == (1 if guarded else 2)
+    assert sdk_sleeps == ([] if guarded else [10511.0])
+
+
+async def test_nonstandard_anthropic_client_is_not_decorated() -> None:
+    async with httpx2.AsyncClient() as client:
+        sdk = AsyncAnthropicBedrock(
+            aws_access_key='test', aws_secret_key='test', aws_region='us-east-1', http_client=client
+        )
+        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=sdk))
+        assert await plugin_resolver(model=model).resolve('claude-code:claude-sonnet-4-5') is model
+        assert client.event_hooks['response'] == []
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_configured_chain_advances_after_long_rejection(
+    tmp_path: Path, stream: bool, sdk_sleeps: list[float]
+) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    store.save_chain(name='chosen', models=['claude-code:claude-sonnet-4-5', 'backup:test'])
+    calls = 0
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        return rejection(headers={'retry-after': '10511'})
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(respond)) as client:
+        model = await plugin_resolver(model=claude_model(client), store=store).resolve('chain:chosen')
+        with override_allow_model_requests(True):
+            result = await Agent(model).run('go', event_stream_handler=consume if stream else None)
+    assert result.output == 'backup'
+    assert calls == 1
+    assert sdk_sleeps == []
+
+
+@pytest.mark.parametrize('mode', ['interactive', 'headless'])
+async def test_long_retry_is_visible_and_history_retained(
+    tmp_path: Path,
+    mode: str,
+    sdk_sleeps: list[float],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    async with httpx2.AsyncClient(
+        transport=httpx2.MockTransport(lambda request: rejection(headers={'retry-after': '10511'}))
+    ) as client:
+        model = await plugin_resolver(model=claude_model(client)).resolve('claude-code:claude-sonnet-4-5')
+        agent = Agent(model)
+        store = SettingsStore(tmp_path / 'config.db')
+        settings = Settings(model=None, code_mode=False, session_namer=False)
+        with override_allow_model_requests(True):
+            if mode == 'headless':
+                assert (
+                    await run_headless(
+                        text='keep this prompt', agent=agent, settings=settings, store=store, project=ProjectSettings()
+                    )
+                    == 1
+                )
+                captured = capsys.readouterr()
+                assert captured.out == ''
+                output = captured.err
+            else:
+                inputs(monkeypatch, ['keep this prompt', '/exit'])
+                console = io.StringIO()
+                await chat(
+                    agent,
+                    deps=None,
+                    settings=settings,
+                    store=store,
+                    load_plugins=False,
+                    console=Console(file=console, width=200),
+                )
+                output = console.getvalue()
+        output = ' '.join(output.split())
+        assert 'Claude Code rate limit (HTTP 429)' in output
+        assert 'Retry after about 2h 55m' in output
+        assert 'CLAI skipped a wait over 60s' in output
+        assert '/model' in output
+        summaries = await SqliteConversationStore(database=tmp_path / 'sessions.db').listing()
+        assert len(summaries) == 1 and summaries[0].outcome == 'failed'
+    assert sdk_sleeps == []
+
+
+@pytest.mark.parametrize(
+    ('header', 'failure'),
+    [
+        ('Fri, 23 Oct 10000 00:02:00', ValueError),
+        ('Fri, 23 Oct 999999999999999999999999 00:02:00', OverflowError),
+    ],
+)
+async def test_unrepresentable_retry_date_preserves_sdk_failure(
+    header: str, failure: type[Exception], sdk_sleeps: list[float]
+) -> None:
+    calls = 0
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        return rejection(headers={'retry-after': header})
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(respond)) as client:
+        model = claude_model(client)
+        await plugin_resolver(model=model).resolve('claude-code:claude-sonnet-4-5')
+        with override_allow_model_requests(True), pytest.raises(failure) as caught:
+            await Agent(model).run('go', model_settings={'max_tokens': 20})
+        # The SDK itself cannot convert these dates: preserve its raw error rather than
+        # raising from the HTTP hook and causing SDK connection-error retries instead.
+        assert 'CLAI skipped' not in error_message(caught.value)
+    assert calls == 1
+    assert sdk_sleeps == []
+
+
+def test_unrelated_rate_limit_errors_keep_their_message() -> None:
+    error = ModelRateLimitError(model_name='test', message='another provider rate limit')
+    assert error_message(error) == str(error)

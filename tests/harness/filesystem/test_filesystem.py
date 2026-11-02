@@ -1255,6 +1255,51 @@ class TestContentHashNewlineAgreement:
         assert _reported_hash(result) == _hash('gamma\r\ndelta\r\n')
         assert (fs_root / 'crlf-cc.txt').read_bytes() == b'gamma\r\ndelta\r\n'
 
+    async def test_invalid_utf8_read_edit_round_trip_hashes_agree(
+        self, toolset: FileSystemToolset[None], fs_root: Path, ws: LocalWorkspaceBackend
+    ) -> None:
+        """`edit_file` accepts the hash `read_file` reports for a file that is not valid UTF-8.
+
+        The edit touches valid text only, so the undecodable byte is written back as it was.
+        """
+        raw = 'café\nline two\n'.encode('cp1252')
+        (fs_root / 'legacy.txt').write_bytes(raw)
+        read_hash = _reported_hash(await toolset.read_file('legacy.txt', workspace=ws))
+        assert read_hash == hashlib.sha256(raw).hexdigest()[:12]
+
+        edit_result = await toolset.edit_file(
+            'legacy.txt', 'line two', 'line TWO', expected_hash=read_hash, workspace=ws
+        )
+
+        assert (fs_root / 'legacy.txt').read_bytes() == b'caf\xe9\nline TWO\n'
+        assert _reported_hash(edit_result) == _reported_hash(await toolset.read_file('legacy.txt', workspace=ws))
+
+    async def test_invalid_utf8_edit_checks_the_hash(
+        self, toolset: FileSystemToolset[None], fs_root: Path, ws: LocalWorkspaceBackend
+    ) -> None:
+        (fs_root / 'legacy.txt').write_bytes(b'caf\xe9\n')
+        with pytest.raises(ModelRetry, match='Conflict'):
+            await toolset.edit_file('legacy.txt', 'caf', 'tea', expected_hash='stale_hash_', workspace=ws)
+        assert (fs_root / 'legacy.txt').read_bytes() == b'caf\xe9\n'
+
+    async def test_invalid_utf8_edit_of_a_replacement_character_is_refused(
+        self, toolset: FileSystemToolset[None], fs_root: Path, ws: LocalWorkspaceBackend
+    ) -> None:
+        """`read_file` shows an undecodable byte as U+FFFD, which does not match the byte itself."""
+        (fs_root / 'legacy.txt').write_bytes(b'caf\xe9\n')
+        with pytest.raises(ModelRetry, match='not valid UTF-8'):
+            await toolset.edit_file('legacy.txt', 'caf\ufffd', 'coffee', workspace=ws)
+        assert (fs_root / 'legacy.txt').read_bytes() == b'caf\xe9\n'
+
+    async def test_edit_does_not_write_a_lone_surrogate_as_a_byte(
+        self, toolset: FileSystemToolset[None], fs_root: Path, ws: LocalWorkspaceBackend
+    ) -> None:
+        """Only the file's own undecodable bytes are carried through, never text the model passed."""
+        (fs_root / 'legacy.txt').write_bytes(b'caf\xe9\n')
+        with pytest.raises(ModelRetry, match="can't encode"):
+            await toolset.edit_file('legacy.txt', 'caf', '\udce9', workspace=ws)
+        assert (fs_root / 'legacy.txt').read_bytes() == b'caf\xe9\n'
+
     async def test_lf_write_still_writes_plain_newlines(
         self, toolset: FileSystemToolset[None], fs_root: Path, ws: LocalWorkspaceBackend
     ) -> None:

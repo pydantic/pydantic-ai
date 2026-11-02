@@ -24,7 +24,7 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, StringConstraints
 
-from pydantic_ai import Agent, RequestUsage, RunContext, ToolReturn
+from pydantic_ai import Agent, RequestUsage, RunContext, Tool, ToolReturn
 from pydantic_ai.capabilities import WebSearch
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
@@ -693,6 +693,87 @@ async def test_tool_with_recursive_map_values(gemini_ws_cassette: tuple[Provider
         [{'name': 'oak'}]
     )
     assert [e.part.content for e in events if isinstance(e, FunctionToolResultEvent)] == snapshot(['Saved oak.'])
+
+
+async def test_tool_with_property_names_and_contains_refs(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """A tool with `$ref`s under `propertyNames` and `contains` is declared without them, and the model calls it.
+
+    `Schema` has neither keyword, so both are dropped before the walk, and the `Node` recursion that only
+    `contains` reaches isn't refused. Pydantic never emits `contains`, so the schema is written by hand.
+    """
+    provider, cassette = gemini_ws_cassette
+    model = GoogleRealtimeModel('gemini-3.1-flash-live-preview', provider=provider)
+
+    def tally(nodes: list[str], counts: dict[str, int] | None = None) -> str:
+        return f'Tallied {len(nodes)} nodes.'
+
+    tally_tool = Tool.from_schema(
+        tally,
+        name='tally',
+        description='Tally counts per color across named nodes.',
+        json_schema={
+            '$defs': {
+                'Color': {'type': 'string', 'enum': ['red', 'blue']},
+                'Node': {
+                    'type': 'object',
+                    'properties': {
+                        'name': {'type': 'string'},
+                        'kids': {'type': 'array', 'items': {'type': 'string'}, 'contains': {'$ref': '#/$defs/Node'}},
+                    },
+                },
+            },
+            'type': 'object',
+            'properties': {
+                'counts': {
+                    'type': 'object',
+                    'additionalProperties': {'type': 'integer'},
+                    'propertyNames': {'$ref': '#/$defs/Color'},
+                },
+                'nodes': {'type': 'array', 'items': {'type': 'string'}, 'contains': {'$ref': '#/$defs/Node'}},
+            },
+            'required': ['nodes'],
+        },
+    )
+    agent = Agent(
+        instructions='Use tally when asked to tally, then confirm it in one short sentence.', tools=[tally_tool]
+    )
+
+    events: list[Any] = []
+    async with agent.realtime(model).session() as session:
+        await session.send('Tally the nodes ["oak"].')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    [setup] = sent_frames_containing(cassette, 'Tally counts per color across named nodes.')
+    assert setup['setup']['tools'] == snapshot(
+        [
+            {
+                'functionDeclarations': [
+                    {
+                        'description': 'Tally counts per color across named nodes.',
+                        'name': 'tally',
+                        'parameters': {
+                            'properties': {
+                                'counts': {'type': 'OBJECT'},
+                                'nodes': {'items': {'type': 'STRING'}, 'type': 'ARRAY'},
+                            },
+                            'required': ['nodes'],
+                            'type': 'OBJECT',
+                        },
+                    }
+                ]
+            }
+        ]
+    )
+    assert [e.part.args_as_dict() for e in events if isinstance(e, FunctionToolCallEvent)] == snapshot(
+        [{'nodes': ['oak']}]
+    )
+    assert [e.part.content for e in events if isinstance(e, FunctionToolResultEvent)] == snapshot(['Tallied 1 nodes.'])
 
 
 async def test_asap_enqueue_waits_for_response_boundary(

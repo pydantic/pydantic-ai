@@ -1,0 +1,353 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1039"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: google/gemini-3.6-flash
+        stream: false
+        messages:
+        - role: user
+          content: "Call tally with counts {\"red\": 2} and labels {\"a\": 1}, and pick with numbers [0, 4] and threes [3]. Then reply \"done\"."
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: pick
+            description: Pick numbers.
+            parameters:
+              type: object
+              properties:
+                numbers:
+                  type: array
+                  items:
+                    type: integer
+                  contains:
+                    type: integer
+                    minimum: 1
+                threes:
+                  type: array
+                  items:
+                    type: integer
+                  contains:
+                    const: 3
+              required:
+              - numbers
+              - threes
+            strict: true
+        - type: function
+          function:
+            name: tally
+            description: Tally counts per color and per label.
+            parameters:
+              additionalProperties: false
+              properties:
+                counts:
+                  additionalProperties:
+                    type: integer
+                  propertyNames:
+                    enum:
+                    - red
+                    - blue
+                    type: string
+                  type: object
+                labels:
+                  additionalProperties:
+                    type: integer
+                  propertyNames:
+                    enum:
+                    - a
+                    - b
+                  type: object
+              required:
+              - counts
+              - labels
+              type: object
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1793143152-ZyGR40viLo4q8MPvUSCi
+        object: chat.completion
+        created: 1793143152
+        model: google/gemini-3.6-flash
+        provider: Google
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: tool_calls
+          native_finish_reason: STOP
+          message:
+            role: assistant
+            content: null
+            refusal: null
+            reasoning: |+
+              **Executing Tool Calls**
+
+              I am preparing to execute two tool calls. First, I'll invoke `tally` with specific counts and labels. Following that, I will call the `pick` tool with the provided numbers and threes. Once these actions are complete, I will confirm with "done".
+
+            tool_calls:
+            - type: function
+              index: 0
+              id: call_172647
+              function:
+                name: tally
+                arguments: "{\"labels\":{\"a\":1},\"counts\":{\"red\":2}}"
+            - type: function
+              index: 1
+              id: call_172648
+              function:
+                name: pick
+                arguments: "{\"threes\":[3],\"numbers\":[0,4]}"
+            reasoning_details:
+            - type: reasoning.text
+              text: |+
+                **Executing Tool Calls**
+
+                I am preparing to execute two tool calls. First, I'll invoke `tally` with specific counts and labels. Following that, I will call the `pick` tool with the provided numbers and threes. Once these actions are complete, I will confirm with "done".
+
+              format: google-gemini-v1
+              index: 0
+            - type: reasoning.encrypted
+              data: >-
+                AY89a1/ZpTRl7gtRTisloGhf50ppMAU0KS8LzLAlUFtun47JPDDTfbc5CMSMLEtPDAEcacSZDux5MqOYzeFDF9oEame0wkxXcXuXuwjAUP+AtNsXl0154LNfhm0IFkuZLDqAtvRTo7ey72ocIyg9qoC+pFPoo2N7lZmN9YC62VZ008//2ARkvlZVc02Lwc60g+SwkLtn7MFx+yOD6/KIm4szpTHOzvbZSchQNEwooDNaNZV4YHeo8aEM9xS7+clCRzD9EIcWEX601NWMrZA/ZPue/BW5qz34E4jwDbrSnzozOifRbkN4OEddxRsoamSlM/GvPp9rFVZjYlvSIzr/76AAj8JV1rjM4e1N8Zob5rug7/YiHx8YpI+6w0w11mNP0eoawn6xgR3UKK8SaxuYGGhH8zFRPw2byDaW7f7nJZyUjQ19gauHLuUe2MI6S1diGwHHalAr0lFXwqx2jzoOJzLJjyC0RkXAKt/xdW6uggg2oyuui22ky0swEbzjpKtLISCiRp4/1uYYpExAWdXe1fP0w++BeVp5p2FtOanOA3FnbJNTvvn9yAGI7OfihJhbH1OHKQ0OcgJmwDPuf2/XC/rNsJMq/1yjcfWIk2glx2Bl6qeQe3v7KUZrykKmAjWVpfuff2AOGjBDg0k/R2ZSD+NyZb5FOyQnrqTzqoNEG7avyNf6OEIlYYio3tPgsk+ziN5c6LgImi0Crl46Jov0i+huWW+YUaQGBgIyCYc/rcr3p1V4ASizzlVE+J7wPhCf7LqAgYvCvYDDzbTd8vhw+XWMG1snZMNhed6MmJoI09L6bLUnJ0rthlmK357+34ZT99yufTHiQHkOjdXP5oHGqwVQIhyYSrmGpKfksqHyKELVYAXiPfQL6ktYf7jXDk2ljJ4RApTNPlmTEBOwJzjnNeyT1N3bJl0rMbfcv0x9hqT/xRfX/kUL960iKFawloPt/o1PFnDxC1X/l9yyu6blFYhC2nB1ik4eQgF6jTa3C9drzhl1ppzG8Tjtdq5PbsftuIlOWquwHijVwXUg5j2Mv9v4/ngSMFZ6DsPejKZ3irxlRSkfuECrQ9Z/mI91Pw0iKcKEqEdAqAi52bxzrpjOMVbGgSOttxJPo8hgn0Csp/ua1rdw1vFo
+              format: google-gemini-v1
+              id: call_172647
+              index: 1
+        usage:
+          prompt_tokens: 107
+          completion_tokens: 236
+          total_tokens: 343
+          cost: 0.00096525
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.00096525
+            upstream_inference_prompt_cost: 0.00008025
+            upstream_inference_completions_cost: 0.000885
+          completion_tokens_details:
+            reasoning_tokens: 196
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-27T23:19:14.550623+00:00
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "3134"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: google/gemini-3.6-flash
+        stream: false
+        messages:
+        - role: user
+          content: "Call tally with counts {\"red\": 2} and labels {\"a\": 1}, and pick with numbers [0, 4] and threes [3]. Then reply \"done\"."
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_172647
+            type: function
+            function:
+              name: tally
+              arguments: "{\"labels\":{\"a\":1},\"counts\":{\"red\":2}}"
+          - id: call_172648
+            type: function
+            function:
+              name: pick
+              arguments: "{\"threes\":[3],\"numbers\":[0,4]}"
+          reasoning_details:
+          - id: null
+            format: google-gemini-v1
+            index: 0
+            type: reasoning.text
+            text: |+
+              **Executing Tool Calls**
+
+              I am preparing to execute two tool calls. First, I'll invoke `tally` with specific counts and labels. Following that, I will call the `pick` tool with the provided numbers and threes. Once these actions are complete, I will confirm with "done".
+
+            signature: null
+          - id: call_172647
+            format: google-gemini-v1
+            index: 1
+            type: reasoning.encrypted
+            data: >-
+              AY89a1/ZpTRl7gtRTisloGhf50ppMAU0KS8LzLAlUFtun47JPDDTfbc5CMSMLEtPDAEcacSZDux5MqOYzeFDF9oEame0wkxXcXuXuwjAUP+AtNsXl0154LNfhm0IFkuZLDqAtvRTo7ey72ocIyg9qoC+pFPoo2N7lZmN9YC62VZ008//2ARkvlZVc02Lwc60g+SwkLtn7MFx+yOD6/KIm4szpTHOzvbZSchQNEwooDNaNZV4YHeo8aEM9xS7+clCRzD9EIcWEX601NWMrZA/ZPue/BW5qz34E4jwDbrSnzozOifRbkN4OEddxRsoamSlM/GvPp9rFVZjYlvSIzr/76AAj8JV1rjM4e1N8Zob5rug7/YiHx8YpI+6w0w11mNP0eoawn6xgR3UKK8SaxuYGGhH8zFRPw2byDaW7f7nJZyUjQ19gauHLuUe2MI6S1diGwHHalAr0lFXwqx2jzoOJzLJjyC0RkXAKt/xdW6uggg2oyuui22ky0swEbzjpKtLISCiRp4/1uYYpExAWdXe1fP0w++BeVp5p2FtOanOA3FnbJNTvvn9yAGI7OfihJhbH1OHKQ0OcgJmwDPuf2/XC/rNsJMq/1yjcfWIk2glx2Bl6qeQe3v7KUZrykKmAjWVpfuff2AOGjBDg0k/R2ZSD+NyZb5FOyQnrqTzqoNEG7avyNf6OEIlYYio3tPgsk+ziN5c6LgImi0Crl46Jov0i+huWW+YUaQGBgIyCYc/rcr3p1V4ASizzlVE+J7wPhCf7LqAgYvCvYDDzbTd8vhw+XWMG1snZMNhed6MmJoI09L6bLUnJ0rthlmK357+34ZT99yufTHiQHkOjdXP5oHGqwVQIhyYSrmGpKfksqHyKELVYAXiPfQL6ktYf7jXDk2ljJ4RApTNPlmTEBOwJzjnNeyT1N3bJl0rMbfcv0x9hqT/xRfX/kUL960iKFawloPt/o1PFnDxC1X/l9yyu6blFYhC2nB1ik4eQgF6jTa3C9drzhl1ppzG8Tjtdq5PbsftuIlOWquwHijVwXUg5j2Mv9v4/ngSMFZ6DsPejKZ3irxlRSkfuECrQ9Z/mI91Pw0iKcKEqEdAqAi52bxzrpjOMVbGgSOttxJPo8hgn0Csp/ua1rdw1vFo
+          reasoning: ""
+        - role: tool
+          tool_call_id: call_172647
+          content: Tallied 2 keys.
+        - role: tool
+          tool_call_id: call_172648
+          content: Picked 3 numbers.
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: pick
+            description: Pick numbers.
+            parameters:
+              type: object
+              properties:
+                numbers:
+                  type: array
+                  items:
+                    type: integer
+                  contains:
+                    type: integer
+                    minimum: 1
+                threes:
+                  type: array
+                  items:
+                    type: integer
+                  contains:
+                    const: 3
+              required:
+              - numbers
+              - threes
+            strict: true
+        - type: function
+          function:
+            name: tally
+            description: Tally counts per color and per label.
+            parameters:
+              additionalProperties: false
+              properties:
+                counts:
+                  additionalProperties:
+                    type: integer
+                  propertyNames:
+                    enum:
+                    - red
+                    - blue
+                    type: string
+                  type: object
+                labels:
+                  additionalProperties:
+                    type: integer
+                  propertyNames:
+                    enum:
+                    - a
+                    - b
+                  type: object
+              required:
+              - counts
+              - labels
+              type: object
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1793143154-pwVpnkEvCaVMqbXm6yMz
+        object: chat.completion
+        created: 1793143154
+        model: google/gemini-3.6-flash
+        provider: Google
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: STOP
+          message:
+            role: assistant
+            content: done
+            refusal: null
+            reasoning: null
+            reasoning_details:
+            - type: reasoning.encrypted
+              data: >-
+                AY89a18ruES9PaFN9TIoHGiMICxtkbQa/Eltm52Am9feb44xlEJspCw+Krw5LS+dgxU8IjK60rSYhxU5tqgvhqsVHRZnVOWhexwzQgJiD8p5PDg0ZutRxOyvhcDFIGFo4Sp1humO1NzEx4FoKTsPOMDyxGQwUD80Tlzlf6+ucAW8Nqflvv0tjeTQ2bIGCg78DAaNzQ==
+              format: google-gemini-v1
+              index: 0
+        usage:
+          prompt_tokens: 350
+          completion_tokens: 11
+          total_tokens: 361
+          cost: 0.00030375
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.00030375
+            upstream_inference_prompt_cost: 0.0002625
+            upstream_inference_completions_cost: 0.00004125
+          completion_tokens_details:
+            reasoning_tokens: 10
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-27T23:19:15.537188+00:00

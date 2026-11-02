@@ -33,7 +33,9 @@ def in_durable_unit() -> bool:
 
     In-process engines need it where their own container check stays true inside a unit (Prefect's
     `FlowRunContext` is set inside a task), so a `DurableWorkspace` call or a capability's durable
-    operation called from a tool goes direct.
+    operation called from a tool goes direct. Every engine also sets it around a model unit, so an
+    `OpenAIResponsesModel` uses HTTP unless it can borrow an explicit outer model or agent scope's
+    WebSocket on the same event loop.
     """
     return _IN_DURABLE_UNIT.get()
 
@@ -144,7 +146,7 @@ class CallableOperationBackend(DurableOperationBackend[ConfigT]):
                 if explicit_config is not None
                 else self._config.base(operation.config_role, operation_id=operation.operation_id)
             )
-            if explicit_config is None and (policy := operation.policy(params)) is not None:
+            if explicit_config is None and (policy := operation.policy) is not None:
                 resolved_config = self.apply_policy(resolved_config, policy)
             cache_key = operation.cache_identity.project(params)
 

@@ -6,6 +6,7 @@ import math
 import weakref
 from collections.abc import Iterator, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
+from itertools import accumulate
 from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, cast, runtime_checkable
 
 import anyio
@@ -152,13 +153,11 @@ class _NotRun:
     """`tool` tells the model; `unavailable` ends the run with `WorkspaceUnavailableError`, `config` with `UserError`."""
 
     def error(self) -> Exception:
-        match self.kind:
-            case 'tool':
-                return ToolFailed(self.message)
-            case 'unavailable':
-                return WorkspaceUnavailableError(self.message)
-            case 'config':
-                return UserError(self.message)
+        if self.kind == 'tool':
+            return ToolFailed(self.message)
+        if self.kind == 'unavailable':
+            return WorkspaceUnavailableError(self.message)
+        return UserError(self.message)
 
 
 @runtime_checkable
@@ -770,12 +769,9 @@ def _how_many_to_drop(sizes: list[int], keep: int | None) -> int:
         drop = max(drop, -(-(count - _MAX_SCREENSHOTS) // _DROP_BATCH) * _DROP_BATCH)
     if (total := sum(sizes)) > _MAX_SCREENSHOT_BYTES:
         step = _MAX_SCREENSHOT_BYTES // 2
-        target, dropped = total // step * step - step // 2, 0
-        for index, size in enumerate(sizes):
-            dropped += size
-            if dropped > target:
-                drop = max(drop, index)
-                break
+        target = total // step * step - step // 2
+        # `target` is below `total`, so some screenshot takes the running total past it.
+        drop = max(drop, next(index for index, dropped in enumerate(accumulate(sizes)) if dropped > target))
     return min(drop, count - 1)
 
 

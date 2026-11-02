@@ -148,16 +148,16 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
     def operation(self) -> DurableOperation[ParamsT, WireT, ResultT]:
         return self._operation
 
-    def _policy_config(self, params: ParamsT) -> TemporalOperationConfigValue:
-        """The operation's config, under the invocation's step policy if it has one."""
-        policy = self._operation.policy(params)
+    def _policy_config(self) -> TemporalOperationConfigValue:
+        """The operation's config, under its step policy if it has one."""
+        policy = self._operation.policy
         if policy is None or 'child_workflow' in self._config:
             return self._config
         return _apply_policy(self._config, policy)
 
     async def __call__(self, params: ParamsT, *, config: object | None = None) -> ResultT:
         payload = self._operation.parameter_transport.dump(params)
-        resolved_config = cast(TemporalOperationConfigValue, config or self._policy_config(params))
+        resolved_config = cast(TemporalOperationConfigValue, config or self._policy_config())
         if 'child_workflow' in resolved_config:
             toolset_id = cast(Any, self._operation.operation_id).toolset_id
             # A replay re-issues what the original execution did, which already passed this check, and may run
