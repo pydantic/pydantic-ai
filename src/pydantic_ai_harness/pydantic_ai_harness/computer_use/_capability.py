@@ -16,6 +16,7 @@ from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
     DISPLAY_SIZE,
+    NATIVE_TOOL,
     SAFETY_CHECKS,
     ComputerResult,
     ComputerToolAction,
@@ -515,6 +516,13 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     images or about 15 MB of them, the most every supported provider accepts.
     """
 
+    native: bool = True
+    """Send the tool as the model's own computer use tool where it has one, such as Claude's or OpenAI's.
+
+    `False` sends this tool, with its own actions, to every model. OpenAI's native tool can't zoom, triple-click, hold a
+    key, press or release a mouse button, or read the pointer position; with `False`, GPT can.
+    """
+
     id: str | None = 'computer'
     """Stable capability ID: an agent controls one display."""
 
@@ -533,7 +541,12 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             # It returns a screenshot, which has no schema to describe.
             include_return_schema=False,
             # The tool reads the run's messages and model in workflow code; the display work is one durable unit.
-            metadata={'temporal': False, 'prefect': False, 'render_workflows': False},
+            metadata={
+                'temporal': False,
+                'prefect': False,
+                'render_workflows': False,
+                **({} if self.native else {NATIVE_TOOL: False}),
+            },
             prepare=_with_display_size,
         )
         self._toolset = FunctionToolset([tool], id=self.id)

@@ -554,7 +554,8 @@ class Workspace(WorkspaceBackend):
     def _display(self) -> Display:
         backend = self._backend
         if isinstance(backend, Workspace):
-            # Through the wrapper, so its policy applies and it raises its own reason, such as `WorkspaceUnavailableError`.
+            # Through the wrapper, so its policy applies and it raises its own reason, such as
+            # `WorkspaceUnavailableError`.
             return backend
         if (display := self._backend_display) is not None:
             return display
@@ -630,7 +631,10 @@ class WrapperWorkspace(Workspace):
 
 
 def workspace_layers(workspace: Workspace) -> list[type[object]]:
-    """The policy wrappers around a workspace and its backend type, outermost first; plain `Workspace` layers are skipped."""
+    """The policy wrappers around a workspace and its backend type, outermost first.
+
+    Plain `Workspace` layers are skipped.
+    """
     layers: list[type[object]] = []
     layer: WorkspaceBackend = workspace
     while isinstance(layer, Workspace):

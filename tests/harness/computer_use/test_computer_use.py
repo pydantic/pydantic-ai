@@ -27,7 +27,7 @@ from pydantic_ai import (
     UserError,
 )
 from pydantic_ai.capabilities import AbstractCapability, PrefixTools, ProcessHistory, SelectModel
-from pydantic_ai.computer_use import SAFETY_CHECKS
+from pydantic_ai.computer_use import NATIVE_TOOL, SAFETY_CHECKS
 from pydantic_ai.messages import BinaryContent, BinaryImage
 from pydantic_ai.models import Model, ModelRequestContext, ModelSelectionContext
 from pydantic_ai.models.fallback import FallbackModel
@@ -413,7 +413,10 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         assert len(capped) == 1
         assert 'List should have at most 20 items' in capped[0].model_response_str()
 
-    async def test_the_tool_is_sequential_of_the_computer_kind_and_declares_the_live_display_size(self) -> None:
+    @pytest.mark.parametrize('native', [True, False])
+    async def test_the_tool_is_sequential_of_the_computer_kind_and_declares_the_live_display_size(
+        self, native: bool
+    ) -> None:
         seen: list[ToolDefinition] = []
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -435,12 +438,16 @@ You can see and control a computer screen with the `computer` tool. Each call ru
                 ]
             ),
         ]
-        agent = Agent(FunctionModel(respond), capabilities=[InMemoryProvider().capability(), ComputerUse()])
+        agent = Agent(
+            FunctionModel(respond), capabilities=[InMemoryProvider().capability(), ComputerUse(native=native)]
+        )
         await agent.run('Go on.', message_history=earlier_screen)
         (tool,) = seen
         assert (tool.name, tool.sequential, tool.tool_kind) == ('computer', True, 'computer')
         # For providers whose native tool declares it: the display as it is now, not the last screenshot's size.
         assert (tool.metadata or {}).get('display_size') == (1280, 800)
+        # With `native=False`, model adapters keep it a function tool; otherwise they may send their native one.
+        assert (tool.metadata or {}).get(NATIVE_TOOL, True) is native
 
     @pytest.mark.parametrize(
         'workspace',
