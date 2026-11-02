@@ -531,37 +531,32 @@ symlinks should also implement `SupportsRealpath`; see [Resolving symlinks](#res
 
 ### Controlling a display
 
-A backend whose environments can have a graphical display implements
-[`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]: a `display` property that returns a
-[`Display`][pydantic_ai.workspaces.Display], or `None` for an environment without one, decided without I/O.
-It returns the same object for the backend's lifetime. The display can come from elsewhere, such as this
-machine's screen beside a local workspace.
+To give a workspace a screen, its backend implements [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]: a
+`display` property that returns a [`Display`][pydantic_ai.workspaces.Display], or `None` when there's no screen. It
+must not do I/O, and must return the same object every time. The display can live elsewhere, such as this machine's
+screen next to a local workspace.
 
-- A `Display` has `display_size`, `screenshot` (PNG bytes), and `act`, which performs one
-  [`ComputerAction`][pydantic_ai.workspaces.ComputerAction] such as a click or a key press. Tools reach them as
-  `ctx.workspace.screenshot()` and `ctx.workspace.act(...)`.
-- Optional on the display: [`SupportsZoom`][pydantic_ai.workspaces.SupportsZoom], to capture part of it at full
-  resolution; [`SupportsScaledScreenshot`][pydantic_ai.workspaces.SupportsScaledScreenshot], to capture all of it
-  smaller for a model with a screenshot limit; and
-  [`SupportsCursorPosition`][pydantic_ai.workspaces.SupportsCursorPosition].
-- Refuse what the display can't do exactly with
-  [`WorkspaceUnsupportedActionError`][pydantic_ai.workspaces.WorkspaceUnsupportedActionError], including action
-  kinds added later; [`WorkspaceBackendSuite`][pydantic_ai.workspaces.conformance.WorkspaceBackendSuite] checks this.
-- Coordinates are pixels of the screenshot. Report the screen's real size: a computer-use tool fits a larger screen
-  to the model's
-  [`computer_use_screenshot_limit`][pydantic_ai.profiles.ModelProfile.computer_use_screenshot_limit].
+A `Display` has three methods: `display_size()`, `screenshot()` (PNG bytes), and `act()`, which runs one
+[`ComputerAction`][pydantic_ai.workspaces.ComputerAction] such as a click or a key press. Tools call them as
+`ctx.workspace.screenshot()` and `ctx.workspace.act(...)`. A display can also implement:
 
-Key names and text limits are on each action; see the [API reference](api/workspaces.md).
-`LocalWorkspace` has no display.
+- [`SupportsZoom`][pydantic_ai.workspaces.SupportsZoom]: capture part of the screen at full resolution.
+- [`SupportsScaledScreenshot`][pydantic_ai.workspaces.SupportsScaledScreenshot]: capture the whole screen smaller, for
+  a model with a [screenshot size limit][pydantic_ai.profiles.ModelProfile.computer_use_screenshot_limit].
+- [`SupportsCursorPosition`][pydantic_ai.workspaces.SupportsCursorPosition]: report where the pointer is.
 
-Under [durable execution](durable_execution/overview.md), workflow code can read `display_size()`, which is
-journaled like a file call, but not the rest of the display: `screenshot()`, `act()` and the others raise a
-`UserError` there. Call them from a tool that runs as an activity, step or task, or from a capability method
-marked with [`@durable_operation`][pydantic_ai.capabilities.durable_operation], so a sequence of looks and actions
-is one durable unit instead of one journaled step each. A `@durable_operation` called from workflow code is its
-own unit, so giving one that acts `policy=StepPolicy(repeatable=False)` (see
-[`StepPolicy`][pydantic_ai.durable_exec.StepPolicy]) makes it run at most once. Called from inside a tool's activity, step or task, it runs inline under that unit's retry
-config, so give such a tool one attempt in its engine's config instead.
+Coordinates are screenshot pixels, and `display_size()` reports the screen's real size. Raise
+[`WorkspaceUnsupportedActionError`][pydantic_ai.workspaces.WorkspaceUnsupportedActionError] for any action the display
+can't do exactly, including action types added later;
+[`WorkspaceBackendSuite`][pydantic_ai.workspaces.conformance.WorkspaceBackendSuite] checks this. Key names and text
+limits are on each action in the [API reference](api/workspaces.md). `LocalWorkspace` has no display.
+
+Under [durable execution](durable_execution/overview.md), workflow code can call `display_size()`, but `screenshot()`,
+`act()` and the rest raise a `UserError` there. Call them from a tool that runs as an activity, step or task, or from
+a [`@durable_operation`][pydantic_ai.capabilities.durable_operation] method, so a run of looks and actions is one
+durable step. Give that operation `policy=StepPolicy(repeatable=False)`
+([`StepPolicy`][pydantic_ai.durable_exec.StepPolicy]) to run it at most once. The policy applies when it's called from workflow code; called inside a tool's activity, step
+or task, it follows that tool's retry settings.
 
 ### Resolving symlinks
 
