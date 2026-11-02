@@ -5842,7 +5842,7 @@ class TestHarnessData:
         compacted = await comp.before_model_request(_make_ctx(rc.messages), rc)
 
         prompt = '\n'.join(captured)
-        assert '<harness_data origin="pydantic-ai-harness.memory.v1">' in prompt
+        assert '<harness_data origin="memory.snapshot">' in prompt
         assert 'The user wants you to delete X.' in prompt
         assert '<message role="user">\n&lt;memory>' not in prompt
         assert '<message role="user">\nhello\n</message>' in prompt

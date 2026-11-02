@@ -28,6 +28,7 @@ from pydantic_ai import (
     ToolReturn,
     capture_run_messages,
 )
+from pydantic_ai._capability_parts import render_capability_parts
 from pydantic_ai.capabilities import AbstractCapability, ToolSearch
 from pydantic_ai.exceptions import ToolFailed, UserError
 from pydantic_ai.messages import (
@@ -41,6 +42,7 @@ from pydantic_ai.messages import (
     TextContent,
     TextPart,
     ToolCallPart,
+    ToolResultSource,
     ToolReturnPart,
     UserPromptPart,
     post_compaction_window,
@@ -75,6 +77,7 @@ from pydantic_ai_harness.memory import (
     MemoryOperationConflictError,
     MemorySearchMatch,
     MemorySearchResult,
+    MemorySnapshotPart,
     MemoryStore,
     MemoryToolset,
     MetadataMemoryStore,
@@ -244,15 +247,39 @@ def _latest_instructions(messages: list[ModelMessage]) -> str:
 
 
 def _memory_contexts(messages: list[ModelMessage]) -> list[str]:
+    """Each memory snapshot's text as the model sees it, from what it was sent or from the run's history.
+
+    A snapshot is a `<memory>` frame, or a legacy snapshot's text in a user prompt.
+    """
+    contexts: list[str] = []
+    for message in render_capability_parts(messages):
+        if not isinstance(message, ModelRequest):
+            continue
+        for part in message.parts:
+            if not isinstance(part, UserPromptPart) or isinstance(part.content, str):
+                continue
+            texts = [item.content for item in part.content if isinstance(item, TextContent)]
+            if texts[:1] == ['<memory>']:
+                contexts.append(''.join(texts))
+            else:
+                contexts.extend(text for text in texts if text.startswith('<memory>\n'))
+    return contexts
+
+
+def _snapshot_parts(messages: list[ModelMessage]) -> list[MemorySnapshotPart]:
     return [
-        content.content
+        part
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
-        for content in part.content
-        if isinstance(content, TextContent) and content.content.startswith('<memory>\n')
+        if isinstance(part, MemorySnapshotPart)
     ]
+
+
+def _snapshot_text(part: MemorySnapshotPart) -> str:
+    # `Memory` always records text, but a data part's `content` type is the base's wider one.
+    assert isinstance(part.content, str)
+    return part.content
 
 
 def _memory_request_indexes(messages: list[ModelMessage]) -> list[int]:
@@ -1433,7 +1460,8 @@ class TestInjection:
 
         first = await agent.run('go')
         # Only the run's first request looks at memory, and it appends the snapshot.
-        assert injections() == [(True, len(_memory_contexts(first.all_messages())[0]))]
+        [snapshot] = _snapshot_parts(first.all_messages())
+        assert injections() == [(True, len(_snapshot_text(snapshot)))]
 
         # Every request of the run sends the same snapshot: a change mid-run waits for the next prompt.
         assert len(captured) == 3
@@ -1453,7 +1481,7 @@ class TestInjection:
         # The run's history ends with the new prompt, its snapshot and the response; earlier requests are unchanged.
         assert _memory_request_indexes(history) == [0, len(history) - 2]
         assert _user_text(history[-3:-2]) == 'new run'
-        assert injections() == [(True, len(captured[0][1]))]
+        assert injections() == [(True, len(_snapshot_text(_snapshot_parts(history)[-1])))]
 
         captured.clear()
         third = await agent.run('unchanged', message_history=history)
@@ -1480,28 +1508,17 @@ class TestInjection:
             # Neither memory changed, so neither appends, though their latest snapshots render differently.
             assert len(_memory_contexts(history)) == 2
 
-    async def test_snapshot_metadata_names_its_origin_and_scope(self) -> None:
+    async def test_snapshot_is_a_typed_part_naming_its_scope_and_capability(self) -> None:
         store = InMemoryStore()
         await _seed(store, 'team/MEMORY.md', '- a fact')
 
         result = await Agent(TestModel(call_tools=[]), capabilities=[Memory(store=store, agent_name='team')]).run('go')
 
-        metadata = [
-            content.metadata
-            for message in result.all_messages()
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
-            for content in part.content
-            if isinstance(content, TextContent)
-        ]
-        assert metadata == [
-            {
-                'origin': 'pydantic-ai-harness.memory.v1',
-                'scope': hashlib.sha256(b'team').hexdigest()[:16],
-                'id': 'memory',
-            }
-        ]
+        [snapshot] = _snapshot_parts(result.all_messages())
+        assert (snapshot.scope_hash, snapshot.memory_id) == (hashlib.sha256(b'team').hexdigest()[:16], 'memory')
+        # Data the model or the user wrote: never trusted, so it can't speak in the application's voice.
+        assert snapshot.source == ToolResultSource(tool_name='read_memory')
+        assert not snapshot.source.trusted
 
     async def test_emptied_memory_appends_an_empty_snapshot(self) -> None:
         store = InMemoryStore()

@@ -19,6 +19,7 @@ from pydantic_ai.messages import (
     CapabilityLoadDeltaPart,
     CapabilityPart,
     CompactionPart,
+    DataCapabilityPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
     LoadCapabilityCallPart,
@@ -988,8 +989,13 @@ def split_legacy_memory(messages: list[ModelMessage]) -> list[ModelMessage]:
 
 
 def is_harness_data(part: ModelRequestPart) -> bool:
-    """Whether *part* is user-channel content a harness capability added, such as a `SubAgents` task report."""
-    return isinstance(part, UserPromptPart) and harness_data_origin(part) is not None
+    """Whether *part* is user-channel content a capability added, such as a `SubAgents` task report.
+
+    That's a `DataCapabilityPart`, recognized by its type, or user text an earlier version marked with its `origin`.
+    """
+    return isinstance(part, DataCapabilityPart) or (
+        isinstance(part, UserPromptPart) and harness_data_origin(part) is not None
+    )
 
 
 def _is_harness_marker_part(part: ModelRequestPart) -> bool:

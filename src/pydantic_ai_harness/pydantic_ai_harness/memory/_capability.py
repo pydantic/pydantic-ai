@@ -13,10 +13,12 @@ from pydantic_ai.agent.abstract import AgentInstructions
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    DataCapabilityPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     TextContent,
+    ToolResultSource,
     ToolReturnPart,
     UserPromptPart,
     post_compaction_window,
@@ -34,8 +36,6 @@ from pydantic_ai_harness.memory._sqlite import SqliteMemoryStore
 from pydantic_ai_harness.memory._store import MemoryFile, MemoryStore, encode_metadata, validate_store_path
 from pydantic_ai_harness.memory._toolset import (
     MAIN_FILENAME,
-    MEMORY_DATA_PREFIX,
-    MEMORY_DATA_SUFFIX,
     MEMORY_ORIGIN,
     MemoryDeleteResult,
     MemorySearchResponse,
@@ -69,6 +69,23 @@ _DEFAULT_GUIDANCE = (
 # The slash is inside the optional group so the two `\s*` never compete for one run of spaces.
 _MEMORY_TAG_RE = re.compile(r'<(?=(?:\s*/)?\s*memory\b)', re.IGNORECASE)
 """The `<` of a `<memory>` or `</memory>` tag in stored content, which could otherwise close the block early."""
+
+
+@dataclass(kw_only=True)
+class MemorySnapshotPart(DataCapabilityPart, namespace='memory', name='snapshot', tag='memory'):
+    """A snapshot of stored memory, as `Memory` records it in the conversation at the start of a run.
+
+    Memory is data the model or the user wrote, so it goes on the user channel in a `<memory>` frame, never in the
+    application's voice. The `<` of every framing tag in it, `<memory>` included, is escaped as `&lt;`. Find
+    snapshots in history by this type.
+    """
+
+    scope_hash: str
+    """A hash of the memory scope the snapshot shows. Never sent to the model."""
+
+    memory_id: str
+    """The `id` of the `Memory` capability that recorded it, or `''`. Never sent to the model."""
+
 
 WriteMetadataFunc: TypeAlias = Callable[[RunContext[AgentDepsT]], Mapping[str, str] | None]
 """Resolves the metadata recorded with one `write_memory` write, or `None` to record none."""
@@ -325,7 +342,7 @@ class Memory(AbstractCapability[AgentDepsT]):
             if self._run_snapshot is not None and latest != self._run_snapshot:
                 # Compaction dropped it: what the provider is sent after the boundary is the request being sent,
                 # so it goes there, after any tool results, rather than anywhere the provider would trim.
-                ctx.enqueue(UserPromptPart([TextContent(self._run_snapshot, metadata=metadata)]))
+                ctx.enqueue(_snapshot_part(self._run_snapshot, metadata))
             return request_context
         self._run_started = True
         # Memory waits for the next prompt when the model has already responded in this run (a deferred
@@ -334,7 +351,7 @@ class Memory(AbstractCapability[AgentDepsT]):
         # The snapshot the run started with is kept current, though, if compaction dropped it on this request.
         if self._run_continues or _responded_in_run(ctx):
             if self._run_snapshot is not None and latest != self._run_snapshot:
-                ctx.enqueue(UserPromptPart([TextContent(self._run_snapshot, metadata=metadata)]))
+                ctx.enqueue(_snapshot_part(self._run_snapshot, metadata))
             return request_context
         self._run_snapshot = latest
         with ctx.tracer.start_as_current_span(
@@ -386,7 +403,7 @@ class Memory(AbstractCapability[AgentDepsT]):
             if appended is not None:
                 # When an earlier hook retried the first request, this lands after its retry feedback: still
                 # ahead of any response, so nothing the model has seen changes.
-                ctx.enqueue(UserPromptPart([TextContent(appended, metadata=metadata)]))
+                ctx.enqueue(_snapshot_part(appended, metadata))
                 self._run_snapshot = appended
             if span.is_recording():
                 span.set_attributes(
@@ -438,7 +455,7 @@ class Memory(AbstractCapability[AgentDepsT]):
             empty = empty_snapshot_body(self.heading, None if reader is None else reader[1])
             if len(empty) > content_budget:
                 return None
-            return f'{MEMORY_DATA_PREFIX}{empty}{MEMORY_DATA_SUFFIX}', True
+            return f'\n{empty}\n', True
         rendered = render_memory_prompt(
             main_content,
             subfiles,
@@ -451,7 +468,7 @@ class Memory(AbstractCapability[AgentDepsT]):
             read_main=read_call(reader, MAIN_FILENAME),
             location=None if reader is None else reader[1],
         )[:content_budget]
-        return f'{MEMORY_DATA_PREFIX}{rendered}{MEMORY_DATA_SUFFIX}', False
+        return f'\n{rendered}\n', False
 
     @durable_operation('load_snapshot')
     async def _load_snapshot(
@@ -536,22 +553,43 @@ class Memory(AbstractCapability[AgentDepsT]):
         return 'Memory'
 
 
-def _latest_snapshot(messages: list[ModelMessage], metadata: dict[str, str]) -> str | None:
-    """The text of the latest snapshot for this scope in history, or `None` when there is none.
+def _snapshot_part(content: str, metadata: dict[str, str]) -> MemorySnapshotPart:
+    """A snapshot as `Memory` records it: `content` is the frame's body, its line breaks included."""
+    return MemorySnapshotPart(
+        content=content,
+        # What `read_memory` would return: data the model or the user wrote, never trusted.
+        source=ToolResultSource(tool_name='read_memory'),
+        scope_hash=metadata['scope'],
+        memory_id=metadata['id'],
+    )
 
-    Snapshots are recognized by the metadata `Memory` sets on them, never by their text. Versions before
-    snapshots were kept in history marked them with a plain string, which still identifies them.
+
+def _latest_snapshot(messages: list[ModelMessage], metadata: dict[str, str]) -> str | None:
+    """The content of the latest snapshot for this scope in history, or `None` when there is none.
+
+    Snapshots are `MemorySnapshotPart`s, recognized by their type, scope and capability id, never by their text.
+    Earlier versions recorded them as user text marked with metadata, or before that a plain string, which still
+    identifies them. That text includes the `<memory>` frame, which is left out, so a snapshot that matches the
+    current memory isn't recorded again.
     """
     legacy = (f'{MEMORY_ORIGIN}:{metadata["scope"]}', MEMORY_ORIGIN)
     for message in reversed(messages):
         if not isinstance(message, ModelRequest):
             continue
         for part in reversed(message.parts):
+            if (
+                isinstance(part, MemorySnapshotPart)
+                and part.scope_hash == metadata['scope']
+                and part.memory_id == metadata['id']
+            ):
+                # `Memory` records text, but a data part's `content` has the base's wider type.
+                assert isinstance(part.content, str)
+                return part.content
             if not isinstance(part, UserPromptPart) or isinstance(part.content, str):
                 continue
             for item in reversed(part.content):
                 if isinstance(item, TextContent) and (item.metadata == metadata or item.metadata in legacy):
-                    return item.content
+                    return item.content.removeprefix('<memory>').removesuffix('</memory>')
     return None
 
 
