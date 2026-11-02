@@ -86,7 +86,7 @@ See [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/) for more
 
 ## Give the agent a desktop
 
-Pass `desktop=True` for a sandbox with a graphical display, which [`ComputerUse`](computer-use.md) lets the agent see and control:
+Pass `desktop=True` for a sandbox with a screen, which [`ComputerUse`](computer-use.md) lets the agent see and control:
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -101,11 +101,11 @@ async def main():
     print(result.output)
 ```
 
-Daytona's default snapshot has an XFCE desktop with a terminal, started on first use. The display is 1280x800; pass a size, such as `desktop=(1440, 900)`, for another, at least 1024x768. The size applies to a new sandbox. A custom snapshot needs [Daytona's desktop packages](https://www.daytona.io/docs/en/computer-use/). The agent keeps the sandbox's shell and files too, so `Coder` and `ComputerUse` can work in the same sandbox.
+Daytona's default snapshot has an XFCE desktop and a terminal. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another, at least 1024x768. The size is set when the sandbox is created. A custom snapshot needs [Daytona's desktop packages](https://www.daytona.io/docs/en/computer-use/). The agent also gets the sandbox's shell and files, so `Coder` and `ComputerUse` can share it.
 
-Daytona's desktop can't press F13 to F24, print screen, pause, scroll lock, the menu key or media keys, or the side mouse buttons, or type emoji; the agent is told when it asks for one. On Daytona's Tier 1 and 2, a sandbox reaches only package registries, GitHub and AI APIs, even with `allow_internet_access=True`, so the agent's browser can't open other websites; see [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/).
+Daytona's desktop can't press F13 to F24, print screen, pause, scroll lock, the menu key or media keys, use the side mouse buttons, or type emoji; the agent is told when it asks. On Daytona's Tier 1 and 2, a sandbox can only reach package registries, GitHub and AI APIs, even with `allow_internet_access=True`, so its browser can't open other sites; see [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/).
 
-To watch the agent work, or take over, open the desktop in your browser. Create the backend before the run, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run), and get a link from it:
+To watch the agent, or take over, open the desktop in your browser. Create the backend before the run, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run), and get a link from it:
 
 ```python {test="skip" lint="skip"}
 backend = DaytonaSandboxBackend(desktop=True)
@@ -113,7 +113,7 @@ print(await backend.live_view_url())  # starts the sandbox and its desktop
 result = await agent.run('Open a terminal and find out which Python version is installed.', workspace=backend)
 ```
 
-Anyone with the link can see and use the desktop until it expires, after an hour unless you pass `expires_in` seconds.
+Anyone with the link can see and use the desktop until it expires: after an hour, or after `expires_in` seconds.
 
 ## Reattach later
 
