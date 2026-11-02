@@ -125,20 +125,13 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
 
 try:
-    # Import-time gate (mirrors `pydantic_ai_harness.exa._toolset`): importing the
-    # capability fails fast with an install hint when the optional dep is absent.
-    # `TargetClosedError` is not re-exported from `playwright.async_api`; the
-    # `playwright._impl._errors` module documents its own classes as stable public
-    # API, and a driver-raised instance only carries `.name` (so isinstance is the
-    # reliable discriminator, not the name attribute).
+    # `TargetClosedError` is not re-exported from `playwright.async_api`; see the module docstring.
     from playwright._impl._errors import TargetClosedError as TargetClosedError
     from playwright.async_api import (
-        Error as _PlaywrightError,
+        Error as PlaywrightError,
         TimeoutError as PlaywrightTimeoutError,
         async_playwright as async_playwright,
     )
-
-    PlaywrightError = _PlaywrightError
 except ImportError as _import_error:
     raise ImportError(
         'playwright is required for PlaywrightBrowser. '
@@ -193,8 +186,10 @@ _UNRESOLVED_REASON = 'host that did not resolve, so the private-address block co
 """Why the private-address block refused a URL, shared by the pre-check and the route guard."""
 
 _BLANK_PAGE = 'about:blank'
-_ERROR_PAGE_SCHEME = 'chrome-error://'
 """The blank page a context starts on, and where a disallowed navigation is sent."""
+
+_ERROR_PAGE_SCHEME = 'chrome-error://'
+"""Scheme of Chromium's own error page, where a navigation the browser could not complete lands."""
 
 _MAX_TABS = 8
 """Pages one session keeps open at once.
