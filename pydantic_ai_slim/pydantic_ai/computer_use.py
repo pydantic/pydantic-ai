@@ -29,6 +29,7 @@ from .workspaces.computer import ACTION_CONFIG
 __all__ = (
     'COMPUTER_KIND',
     'DISPLAY_SIZE',
+    'NATIVE_TOOL',
     'SAFETY_CHECKS',
     'ComputerResult',
     'ComputerToolAction',
@@ -130,6 +131,11 @@ DISPLAY_SIZE = 'display_size'
 the model sees, which may be smaller than the display.
 
 A provider whose native tool declares a display size, such as Claude's `computer_20251124`, sends this one.
+"""
+
+NATIVE_TOOL = 'native_tool'
+"""The `ToolDefinition.metadata` key under which the `computer` tool can say `False`: no model adapter sends it as its
+provider's native computer tool, so every model gets it as a function tool, with the tool's own actions.
 """
 
 COMPUTER_KIND = ToolKind._core('computer', args=_ComputerArgs, content=_ComputerContent)  # pyright: ignore[reportPrivateUsage]
