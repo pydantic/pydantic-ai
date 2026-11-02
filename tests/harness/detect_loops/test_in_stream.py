@@ -9,6 +9,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
+import anyio
 import pytest
 from inline_snapshot import snapshot
 from logfire.testing import CaptureLogfire
@@ -775,11 +776,12 @@ class TestLoopJudge:
 
     async def test_a_slow_judge_falls_back_to_the_heuristic(self):
         async def slow(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            await asyncio.sleep(10)
+            # A zero timeout cancels the judge at its first checkpoint, which can come before this runs.
+            await anyio.Event().wait()  # pragma: lax no cover
             raise AssertionError('unreachable')  # pragma: no cover
 
         script = _script([LOOP] * 60)
-        judge = LoopJudge[object](model=FunctionModel(slow), timeout=0.1)
+        judge = LoopJudge[object](model=FunctionModel(slow), timeout=0)
 
         result = await _agent(script, DetectLoops(stream_detector=judge)).run('Explain', event_stream_handler=_drain)
 
