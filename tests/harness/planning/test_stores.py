@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Callable
+from contextlib import closing
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -223,6 +226,31 @@ class TestSqliteSpecifics:
     def test_invalid_table_name_rejected(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match='invalid table name'):
             SqlitePlanStore(str(tmp_path / 'p.db'), table='bad name;drop')
+
+    async def test_connection_closed_when_schema_setup_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        database = tmp_path / 'locked.db'
+        opened: list[sqlite3.Connection] = []
+        orig_connect = sqlite3.connect
+
+        def connect_no_wait(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+            conn = orig_connect(*args, **{**kwargs, 'timeout': 0, 'check_same_thread': False})
+            opened.append(conn)
+            return conn
+
+        with closing(orig_connect(database, isolation_level=None)) as writer:
+            writer.execute('CREATE TABLE unrelated (x)')
+            writer.execute('BEGIN IMMEDIATE')
+            monkeypatch.setattr(sqlite3, 'connect', connect_no_wait)
+            store = SqlitePlanStore(str(database))
+            with pytest.raises(sqlite3.OperationalError, match='database is locked'):
+                await store.get_items()
+
+        assert len(opened) == 1
+        for conn in opened:
+            with pytest.raises(sqlite3.ProgrammingError, match='closed database'):
+                conn.execute('SELECT 1')
 
 
 class TestValidateTableName:
