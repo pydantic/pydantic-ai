@@ -44,7 +44,8 @@ class AgentCoreSandbox(AbstractCapability[AgentDepsT]):
     code_interpreter: str = DEFAULT_CODE_INTERPRETER
     """The AWS-managed `aws.codeinterpreter.v1`, or the id of a code interpreter you created.
 
-    The AWS-managed one has no internet access; create your own with public network mode for that.
+    The AWS-managed one runs in sandbox network mode, which reaches Amazon S3 but not the internet;
+    create your own in public or VPC network mode for more.
     An unknown one raises `WorkspaceUnavailableError` on first use.
     """
 
