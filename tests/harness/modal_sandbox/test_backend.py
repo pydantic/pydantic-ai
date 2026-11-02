@@ -1335,7 +1335,7 @@ class TestErrorMapping:
             assert exc_info.value.__cause__ is error
 
     def test_every_faked_exception_exists_in_the_installed_modal(self, fake_modal: FakeModal) -> None:
-        """The fake offers only exceptions the installed Modal defines.
+        """The fake offers only exceptions the installed `modal.exception` defines or re-exports.
 
         Modal 1.6.0 removed `FilesystemExecutionError` while the fake still defined it, so the
         suite passed while the backend raised `AttributeError` classifying an error. The installed
@@ -1344,7 +1344,12 @@ class TestErrorMapping:
         spec = importlib.machinery.PathFinder.find_spec('modal')
         assert spec is not None and spec.submodule_search_locations is not None
         source = Path(next(iter(spec.submodule_search_locations)), 'exception.py').read_text(encoding='utf-8')
-        defined = {node.name for node in ast.walk(ast.parse(source)) if isinstance(node, ast.ClassDef)}
+        defined: set[str] = set()
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.ClassDef):
+                defined.add(node.name)
+            elif isinstance(node, ast.ImportFrom):  # an exception re-exported from another module
+                defined.update(alias.asname or alias.name for alias in node.names)
         faked: types.SimpleNamespace = fake_modal.module.exception
         # The backend matches `ImageBuildError` by type name: only some Modal releases define it
         # in `modal.exception`.
