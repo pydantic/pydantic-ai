@@ -15,6 +15,8 @@ On OpenAI and Anthropic, core also ships [provider-native compaction](https://py
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![Compaction runs in the before_model_request hook, between the message history and the model. TieredCompaction runs its tiers in order: DeduplicateFileReads and ClearToolResults cost no model call, SummarizingCompaction makes one. After each tier it re-measures the history and stops as soon as it fits target_tokens, so in this example the summary tier never runs. The shortened history persists into the run.](../img/harness/compaction.svg)
+
 ## The problem
 
 An agent that runs for many turns accumulates history: tool outputs, file reads, model reasoning, repeated content. Left unchecked, that history outgrows the model's context window and the next request fails. Compaction keeps the history bounded, and the right strategy depends on where the bloat lives and how much you can afford to spend reclaiming it.
@@ -685,7 +687,7 @@ A pinned part is never summarized away or dropped; if a strategy would have disc
 
 Pins use model-invisible `TextContent.metadata`, so their contents remain ordinary user context while compaction can distinguish them from user turns.
 
-The `Planning` capability does not need pinning: its plan is re-injected ephemerally on every request in `wrap_model_request`, so it already survives compaction by construction. Pinning is for durable task state and scratchpads that live *in* the history.
+The `Planning` capability does not need pinning: when compaction removes or clears the plan tools' results that show the latest plan, the next request records the plan from its store. Pinning is for durable task state and scratchpads that live *in* the history.
 
 ## On-demand capabilities across compaction
 

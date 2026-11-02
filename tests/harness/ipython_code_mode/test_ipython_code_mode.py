@@ -543,6 +543,13 @@ class TestIPythonCodeModeKernelLifecycle:
         _assert_process_gone(first[0])
         _assert_process_gone(second[0])
 
+    async def test_shutdown_closes_the_clients_zmq_context(self) -> None:
+        # Held here, so a client that owns its context can't close it from `__del__` before the assertion.
+        async with IPythonKernel() as kernel:
+            client = kernel._client  # pyright: ignore[reportPrivateUsage]
+            assert client is not None
+        assert client.context.closed
+
     async def test_a_cancelled_run_stops_its_kernel(self) -> None:
         pids: list[int] = []
         started = anyio.Event()

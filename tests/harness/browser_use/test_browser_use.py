@@ -1795,6 +1795,13 @@ class TestAgentSpec:
         assert capability.agent_settings is None
         assert capability.browser_agent is None
 
+    def test_from_spec_sets_the_base_capability_fields(self) -> None:
+        """`id`, `description` and `defer_loading` live on `AbstractCapability`, so a spec must name them too."""
+        definitions = AgentSpec.model_json_schema_with_capabilities([BrowserUse])['$defs']
+        assert {'id', 'description', 'defer_loading'} <= definitions['spec_params_BrowserUse']['properties'].keys()
+        capability = BrowserUse[None].from_spec(id='second', description='The second one.', defer_loading=True)
+        assert (capability.id, capability.description, capability.defer_loading) == ('second', 'The second one.', True)
+
     def test_agent_loads_from_spec_file(self, tmp_path: Path) -> None:
         spec = tmp_path / 'agent.yaml'
         spec.write_text('model: test\ncapabilities:\n  - BrowserUse:\n      max_steps: 5\n')

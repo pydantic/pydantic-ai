@@ -67,7 +67,7 @@ from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
-from ._lifecycle import InputId, LifecycleEvent, RealtimeFrame, ResponseStatus, StaleEvent
+from ._lifecycle import InputId, LifecycleEvent, RealtimeFrame, ResponseEnded, ResponseStatus, StaleEvent
 from ._openai_lifecycle import OpenAILifecycle, frame_response_id
 from ._openai_protocol import (
     ACTIVE_RESPONSE_ERROR_CODE,
@@ -149,6 +149,7 @@ from .codec import (
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeInput,
+    ResponseDone,
     SessionUsage,
     TextContext,
     ToolCall,
@@ -468,6 +469,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     # closed connection doesn't report the wrong vendor.
     _provider_label = 'OpenAI Realtime'
     _supports_tool_result_images = True
+    # Only codecs that omit measurements normalize absent payloads as unmeasured requests.
+    _omits_response_usage: ClassVar[bool] = False
     # `OSError` covers the socket-level failures (reset, broken pipe) that `websockets` lets through.
     transport_errors = (websockets.WebSocketException, OSError)
 
@@ -977,7 +980,17 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             reconnects = not self._session_ended and self._reconnect is not None and self._dial is not None
             if reconnects and await self._try_reconnect():
                 reconnected = RealtimeSessionReconnectEvent(state_restored=self._restores_state_on_reconnect)
-                yield [*self._take_pending_lifecycle(), reconnected]
+                lifecycle = self._take_pending_lifecycle()
+                # A response the old socket was streaming is never continued on the new one (its replay carries
+                # only finalized turns), so its `response.done` never comes. The lifecycle already ended it as
+                # lost; this terminal is the codec stream's alone, so messages queued behind the reply go out
+                # rather than waiting forever for a boundary.
+                orphaned: list[StaleEvent] = (
+                    [StaleEvent(ResponseDone(interrupted=True))]
+                    if any(isinstance(event, ResponseEnded) and event.status == 'lost' for event in lifecycle)
+                    else []
+                )
+                yield [*lifecycle, *orphaned, reconnected]
                 continue
             if reconnects:
                 # Out of attempts: no reconnect is coming any more.
@@ -1356,6 +1369,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # frame (its `response.usage` is empty), so fall back to it.
         frame_usage = done.usage if isinstance(done, ProtocolResponseDoneEvent) else None
         usage = self._map_response_usage(response.usage) or self._map_response_usage(frame_usage)
+        if self._omits_response_usage and response.usage is None and frame_usage is None:
+            usage = RequestUsage(unmeasured_requests=1)
         # The response's `provider_details` ride along too: a response that called a tool is recorded
         # from this usage rather than from its `ResponseDone` (suppressed for a function-call-only
         # response, and arriving after the response is already recorded otherwise), so without them a

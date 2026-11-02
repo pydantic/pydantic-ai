@@ -55,7 +55,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai._utils import is_text_like_media_type as _is_text_like_media_type
-from pydantic_ai.capabilities import AbstractCapability, NativeTool, Thinking, ToolSearch
+from pydantic_ai.capabilities import AbstractCapability, ModelFallback, NativeTool, Thinking, ToolSearch
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import (
@@ -70,6 +70,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.native_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
@@ -225,9 +226,11 @@ async def test_request_simple_success(allow_model_requests: None):
                 parts=[TextPart(content='world')],
                 usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
+                model_id='openai:gpt-4o',
                 timestamp=IsNow(tz=UTC),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'stop',
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
@@ -247,9 +250,11 @@ async def test_request_simple_success(allow_model_requests: None):
                 parts=[TextPart(content='world')],
                 usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
+                model_id='openai:gpt-4o',
                 timestamp=IsNow(tz=UTC),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'stop',
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
@@ -332,9 +337,11 @@ async def test_response_with_created_timestamp_but_no_provider_details(allow_mod
                 parts=[TextPart(content='world')],
                 usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
+                model_id='openai:gpt-4o',
                 timestamp=IsNow(tz=UTC),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                canonical_system='openai',
                 provider_details={
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
@@ -423,9 +430,11 @@ async def test_request_structured_response(allow_model_requests: None):
                 ],
                 usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'stop',
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
@@ -532,9 +541,11 @@ async def test_request_tool_call(allow_model_requests: None):
                     output_tokens=1,
                 ),
                 model_name='gpt-4o-123',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'stop',
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
@@ -574,9 +585,11 @@ async def test_request_tool_call(allow_model_requests: None):
                     output_tokens=2,
                 ),
                 model_name='gpt-4o-123',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'stop',
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
@@ -604,9 +617,11 @@ async def test_request_tool_call(allow_model_requests: None):
                 parts=[TextPart(content='final response')],
                 usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'stop',
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
@@ -654,6 +669,38 @@ async def test_stream_text(allow_model_requests: None):
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
         assert result.usage == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
+
+
+async def test_stream_text_from_list_content(allow_model_requests: None):
+    """Some OpenAI-compatible servers stream `delta.content` as a list of parts; only their text is kept."""
+
+    def list_chunk(content: list[Any]) -> chat.ChatCompletionChunk:
+        return chunk([ChoiceDelta.model_construct(content=content, role='assistant')])
+
+    stream = [
+        list_chunk(['hello ']),
+        list_chunk([{'type': 'text', 'text': 'world'}, {'type': 'reference', 'reference_ids': [1]}]),
+        list_chunk([{'type': 'reference', 'reference_ids': [2]}]),
+        chunk([]),
+    ]
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
+
+    async with agent.run_stream('') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+
+
+async def test_request_list_content(allow_model_requests: None):
+    """Some OpenAI-compatible servers return `message.content` as a list of parts; only their text is kept."""
+    message = ChatCompletionMessage.model_construct(
+        content=[{'type': 'text', 'text': 'hello '}, {'type': 'reference', 'reference_ids': [1]}, 'world'],
+        role='assistant',
+    )
+    mock_client = MockOpenAI.create_mock(completion_message(message))
+    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
+
+    result = await agent.run('hello')
+    assert result.output == 'hello world'
 
 
 def test_service_tier_comes_from_response(allow_model_requests: None) -> None:
@@ -727,9 +774,11 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
                     parts=[TextPart(content='hello world.')],
                     usage=RequestUsage(input_tokens=6, output_tokens=3),
                     model_name='gpt-4o-123',
+                    model_id='openai:gpt-4o',
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1',
+                    canonical_system='openai',
                     provider_details={
                         'finish_reason': 'stop',
                         'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
@@ -762,9 +811,11 @@ async def test_stream_text_no_created_timestamp(allow_model_requests: None):
                 parts=[TextPart(content='hello world.')],
                 usage=RequestUsage(input_tokens=6, output_tokens=3),
                 model_name='gpt-4o-123',
+                model_id='openai:gpt-4o',
                 timestamp=IsNow(tz=UTC),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'stop',
                 },
@@ -1547,9 +1598,11 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                     cost=Decimal('0.000225'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
@@ -1590,9 +1643,11 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                     cost=Decimal('0.0013375'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
@@ -1728,9 +1783,11 @@ async def test_yaml_document_as_binary_content_input(allow_model_requests: None,
                     cost=Decimal('0.0009075'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={'finish_reason': 'stop', 'service_tier': 'default', 'timestamp': IsDatetime()},
                 provider_response_id='chatcmpl-D1Fb52cAhS0I5T514KLWFLTvsJHYv',
                 finish_reason='stop',
@@ -1803,9 +1860,11 @@ Each of these interpretations would depend on the broader context in which this 
                     cost=Decimal('0.0021625'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={'finish_reason': 'stop', 'service_tier': 'default', 'timestamp': IsDatetime()},
                 provider_response_id='chatcmpl-D1Hu5C2mqc2CPw07SQa6U7Ki9PF7X',
                 finish_reason='stop',
@@ -1857,9 +1916,11 @@ async def test_yaml_document_url_input(
                     cost=Decimal('0.00806'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={'finish_reason': 'stop', 'service_tier': 'default', 'timestamp': IsDatetime()},
                 provider_response_id='chatcmpl-D9Y2SGcIahjmc95USEBhPxjrIEW8c',
                 finish_reason='stop',
@@ -2409,9 +2470,11 @@ async def test_message_history_can_start_with_model_response(allow_model_request
                     cost=Decimal('0.0000252'),
                 ),
                 model_name='gpt-4.1-mini-2025-04-14',
+                model_id='openai:gpt-4.1-mini',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
@@ -3899,9 +3962,11 @@ async def test_openai_instructions(allow_model_requests: None, openai_api_key: s
                     cost=Decimal('0.00014'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
@@ -3958,9 +4023,11 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                     cost=Decimal('0.000044'),
                 ),
                 model_name='gpt-4.1-mini-2025-04-14',
+                model_id='openai:gpt-4.1-mini',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
@@ -3997,9 +4064,11 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                     cost=Decimal('0.000054'),
                 ),
                 model_name='gpt-4.1-mini-2025-04-14',
+                model_id='openai:gpt-4.1-mini',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
@@ -4056,9 +4125,11 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                     cost=Decimal('0.0084403'),
                 ),
                 model_name='o3-mini-2025-01-31',
+                model_id='openai:o3-mini',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 10, 22, 21, 57, tzinfo=UTC),
@@ -4105,9 +4176,11 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                     cost=Decimal('0.0108427'),
                 ),
                 model_name='o3-mini-2025-01-31',
+                model_id='openai:o3-mini',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
@@ -4956,9 +5029,11 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                     cost=Decimal('0.00029'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
@@ -5003,9 +5078,11 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                     cost=Decimal('0.0005825'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
@@ -5078,9 +5155,11 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                     cost=Decimal('0.000215'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
@@ -5119,9 +5198,11 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                     cost=Decimal('0.0002575'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
@@ -5184,9 +5265,11 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                     cost=Decimal('0.0002975'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
@@ -5225,9 +5308,11 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                     cost=Decimal('0.00038'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
@@ -5304,9 +5389,11 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                     cost=Decimal('0.00051'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
@@ -5349,9 +5436,11 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                     cost=Decimal('0.0007025'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
@@ -5412,9 +5501,11 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                     cost=Decimal('0.0003825'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
@@ -5453,9 +5544,11 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                     cost=Decimal('0.000435'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
@@ -5520,9 +5613,11 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                     cost=Decimal('0.0007925'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
@@ -5565,9 +5660,11 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                     cost=Decimal('0.000945'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
@@ -5665,9 +5762,11 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
                 parts=[],
                 usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'stop',
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
@@ -5693,9 +5792,11 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
                 parts=[TextPart(content='hello back')],
                 usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'stop',
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
@@ -6795,10 +6896,12 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
                     'cost': '0.000',
                 },
                 'model_name': 'gpt-5-mini',
+                'model_id': 'azure:gpt-5-mini',
                 'timestamp': IsStr(),
                 'kind': 'response',
                 'provider_name': 'azure',
                 'provider_url': None,
+                'canonical_system': None,
                 'provider_details': {
                     'finish_reason': 'content_filter',
                     'content_filter_result': {
@@ -7005,6 +7108,45 @@ async def test_openai_response_filter_with_partial_content(allow_model_requests:
 
     result = await agent.run('hello')
     assert result.output == 'Partial'
+
+
+@pytest.mark.parametrize('model_type', ['chat', 'responses'])
+@pytest.mark.vcr(ignore_hosts=['example.openai.azure.com'])
+async def test_azure_prompt_filter_error_stream(
+    allow_model_requests: None, model_type: Literal['chat', 'responses']
+) -> None:
+    """Azure rejects a filtered prompt with a 400 before a stream opens, which raises `ContentFilterError` as in `run()`."""
+    error = {
+        'code': 'content_filter',
+        'message': 'The content was filtered.',
+        'innererror': {
+            'code': 'ResponsibleAIPolicyViolation',
+            'content_filter_result': {'hate': {'filtered': True, 'severity': 'high'}},
+        },
+    }
+
+    async with AsyncAzureOpenAI(
+        api_version='2024-12-01-preview',
+        azure_endpoint='https://example.openai.azure.com/',
+        api_key='test',
+        http_client=httpx2.AsyncClient(
+            transport=httpx2.MockTransport(lambda request: httpx2.Response(400, json={'error': error}))
+        ),
+    ) as client:
+        model_class = OpenAIChatModel if model_type == 'chat' else OpenAIResponsesModel
+        agent = Agent(model_class('gpt-5-mini', provider=AzureProvider(openai_client=client)))
+
+        with pytest.raises(
+            ContentFilterError, match=r"Content filter triggered. Finish reason: 'content_filter'"
+        ) as exc_info:
+            # The error is raised while the stream is being opened, before an `async with` body would run.
+            await agent.run_stream('bad prompt').__aenter__()
+
+    assert exc_info.value.body is not None
+    assert json.loads(exc_info.value.body)[0]['provider_details'] == {
+        'finish_reason': 'content_filter',
+        'content_filter_result': {'hate': {'filtered': True, 'severity': 'high'}},
+    }
 
 
 def test_azure_400_non_content_filter(allow_model_requests: None) -> None:
@@ -7666,6 +7808,40 @@ async def test_openai_chat_refusal_streaming(allow_model_requests: None):
     assert response_msg['provider_details']['refusal'] == "I'm sorry, I can't help with that."
 
 
+async def test_openai_chat_refusal_falls_back_with_model_fallback(allow_model_requests: None):
+    """`ModelFallback` falls back by default when the model refuses, and records the refused attempt."""
+    c = completion_message(
+        ChatCompletionMessage(content=None, refusal="I'm sorry, I can't help with that.", role='assistant'),
+    )
+    c.model = 'gpt-4o'
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)))
+    backup = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('from backup')]), model_name='backup')
+    agent = Agent(m, capabilities=[ModelFallback(backup)])
+
+    result = await agent.run('harmful prompt')
+
+    assert result.output == 'from backup'
+    assert [(a.model_name, a.outcome) for a in result.response.failed_attempts or []] == [('gpt-4o', 'rejected')]
+
+
+async def test_openai_chat_streamed_refusal_with_model_fallback(allow_model_requests: None):
+    """A streamed refusal is only known once it has been streamed, so it's accepted, without a warning."""
+    stream = [
+        chunk([ChoiceDelta(refusal="I'm sorry, ", role='assistant')]),
+        chunk([ChoiceDelta(refusal="I can't help with that.")]),
+        chunk([ChoiceDelta()], finish_reason='stop'),
+    ]
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)))
+    backup = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('from backup')]), model_name='backup')
+    agent = Agent(m, capabilities=[ModelFallback(backup)])
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        with pytest.raises(ContentFilterError, match='Content filter triggered'):
+            async with agent.run_stream('harmful prompt'):
+                pass
+
+
 async def test_stream_cancel(allow_model_requests: None):
     stream = [text_chunk('hello '), text_chunk('world'), chunk([])]
     mock_client = MockOpenAI.create_mock_stream(stream)
@@ -7691,9 +7867,11 @@ async def test_stream_cancel(allow_model_requests: None):
                 parts=[TextPart(content='hello ')],
                 usage=RequestUsage(input_tokens=2, output_tokens=1),
                 model_name='gpt-4o-123',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                canonical_system='openai',
                 provider_details={'timestamp': IsDatetime()},
                 provider_response_id='123',
                 run_id=IsStr(),

@@ -78,6 +78,8 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
+The function is called for each model request, with the model about to receive it as `ctx.model`, so it can decide by that model's provider or profile. When the [`ModelFallback`](capabilities/model-fallback.md) capability moves a request to another model, the function is called again with that model as `ctx.model`, so each model gets the tool it would get on its own.
+
 !!! note "Returning `None` under a `fallback_subagent_model`"
     Omission is what `None` means everywhere the native tool is the only path. [`XSearch`][pydantic_ai.capabilities.XSearch] and [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] are the exception: once `fallback_subagent_model` is set, their subagent tool is offered to the model whenever the factory returns `None`, and calling it raises [`UserError`][pydantic_ai.exceptions.UserError] instead of running with default settings. See [X Search](capabilities/x-search.md) and [Image Generation](capabilities/image-generation.md).
 
@@ -202,10 +204,12 @@ left out on models that don't support them.
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
 
 !!! note "Anthropic Web Search Tool Versions"
-    Pydantic AI does not expose a `dynamic_filtering` option. For Anthropic, Pydantic AI selects
-    the web search tool version from the model profile and Anthropic client: `web_search_20260209`
-    for models and platforms that support Anthropic's dynamic-filtering web tools, and
-    `web_search_20250305` otherwise.
+    For Anthropic, Pydantic AI selects the web search tool version from the model profile and
+    Anthropic client: `web_search_20260209` for models and platforms that support Anthropic's
+    dynamic-filtering web tools, and `web_search_20250305` otherwise.
+    By default the model can call `web_search_20260209` from a server-side code execution sandbox.
+    To turn that off, for example for Zero Data Retention, see
+    [Web Tool Callers](models/anthropic.md#web-tool-callers).
     Amazon Bedrock does not support Anthropic web search, so Pydantic AI raises a `UserError` if you
     use `WebSearchTool` with `AsyncAnthropicBedrock` or `AsyncAnthropicBedrockMantle`.
     On Vertex AI, `WebSearchTool` always uses `web_search_20250305`, as Anthropic does not offer the
@@ -216,8 +220,6 @@ left out on models that don't support them.
 
     Add [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] only when you want
     Anthropic's standalone code execution tool; it is not needed to use `web_search_20260209`.
-    For Zero Data Retention behavior with `_20260209` web tools, see Anthropic's
-    [server tools docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers).
 
 ## X Search Tool
 
@@ -292,7 +294,7 @@ in a secure environment, making it perfect for computational tasks, data analysi
 |----------|-----------|-------|
 | OpenAI Responses | ✅ | To include code execution output on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] that's available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs] [model setting](agent.md#model-run-settings). If the code execution generated images, like charts, they will be available on [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images] as [`BinaryImage`][pydantic_ai.messages.BinaryImage] objects. The generated image can also be used as [image output](output.md#image-output) for the agent run. |
 | Google | ✅ | See [Google tool combinations](#google-tool-combinations). |
-| Anthropic | ✅ | Available on compatible Anthropic models. Pydantic AI selects a compatible code execution tool version automatically; see [Anthropic code execution tool version](models/anthropic.md#code-execution-tool-version) to override it. |
+| Anthropic | ✅ | Available on compatible Anthropic models. Pydantic AI selects a compatible code execution tool version automatically; see [Anthropic code execution tool version](models/anthropic.md#code-execution-tool-version) to override it. Not available on the [Amazon Bedrock](models/anthropic.md#aws-bedrock) clients (`AsyncAnthropicBedrock` and `AsyncAnthropicBedrockMantle`), where using it raises a [`UserError`][pydantic_ai.exceptions.UserError]. |
 | xAI | ✅ | Full feature support. |
 | Groq | ❌ | |
 | Bedrock | ✅ | Only available for Nova 2.0 models. |
@@ -708,10 +710,12 @@ in its place if one is provided, an `optional=True` tool is left out, and a
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
 
 !!! note "Anthropic Web Fetch Tool Versions"
-    Pydantic AI does not expose a `dynamic_filtering` option. For Anthropic, Pydantic AI selects
-    the web fetch tool version from the model profile and Anthropic client: `web_fetch_20260209`
-    for models and platforms that support Anthropic's dynamic-filtering web tools, and
-    `web_fetch_20250910` otherwise.
+    For Anthropic, Pydantic AI selects the web fetch tool version from the model profile and
+    Anthropic client: `web_fetch_20260209` for models and platforms that support Anthropic's
+    dynamic-filtering web tools, and `web_fetch_20250910` otherwise.
+    By default the model can call `web_fetch_20260209` from a server-side code execution sandbox.
+    To turn that off, for example for Zero Data Retention, see
+    [Web Tool Callers](models/anthropic.md#web-tool-callers).
     `WebFetchTool` is unavailable on the Amazon Bedrock and Vertex AI Anthropic clients, so
     Pydantic AI raises a `UserError` if you use it with `AsyncAnthropicBedrock`,
     `AsyncAnthropicBedrockMantle` or `AsyncAnthropicVertex`.
@@ -722,8 +726,6 @@ in its place if one is provided, an `optional=True` tool is left out, and a
 
     Add [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] only when you want
     Anthropic's standalone code execution tool; it is not needed to use `web_fetch_20260209`.
-    For Zero Data Retention behavior with `_20260209` web tools, see Anthropic's
-    [server tools docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers).
 
 ## Memory Tool
 

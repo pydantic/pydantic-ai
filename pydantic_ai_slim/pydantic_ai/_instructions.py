@@ -441,7 +441,7 @@ def loaded_instruction_id(capability_id: str) -> InstructionId:
 class LoadedInstructionValues:
     """Each loaded capability's instructions as the model last received them, in the order they were loaded.
 
-    A capability's block, `capability:<id>`, comes into scope with its `load_capability` return, and its
+    A capability's block, `capability:<id>`, comes into scope when it loads (see `LoadExchanges`), and its
     statements are recorded as [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s with that id:
     the first one on the request after the load, and one for each change since. A load return from an earlier
     version, which carried the instructions itself, seeds the block with them. Only the parts in the
@@ -481,8 +481,8 @@ class LoadedInstructionValues:
                 loaded.observe(part)
         return loaded
 
-    def observe(self, part: ModelRequestPart | ModelResponsePart) -> str | None:
-        """Fold in `part`, returning the capability it loads if it's a `load_capability` return completing a load.
+    def observe(self, part: ModelRequestPart | ModelResponsePart) -> None:
+        """Fold in `part`, which may load capabilities.
 
         An instruction baseline recording a loaded capability's block as an append-mode block of the prefix, because
         the capability is eager now, ends the load's ownership of the block: its later changes are the prefix's.
@@ -492,13 +492,12 @@ class LoadedInstructionValues:
                 if isinstance(block, InstructionPart) and (capability_id := _loaded_block_capability_id(block.id)):
                     self.values.pop(capability_id, None)
                     self._changed.discard(capability_id)
-        if (capability_id := self._loads.observe(part)) is not None:
-            assert isinstance(part, LoadCapabilityReturnPart)
+        for capability_id in self._loads.loads(part):
             # Moved to the end, so the values stay in load order.
             self.values.pop(capability_id, None)
-            self.values[capability_id] = part.instructions
+            # Only a load return from an earlier version, or in a realtime session, carries the instructions.
+            self.values[capability_id] = part.instructions if isinstance(part, LoadCapabilityReturnPart) else None
             self._changed.discard(capability_id)
-        return capability_id
 
     def tracks(self, part: ModelRequestPart | ModelResponsePart) -> TypeGuard[InstructionDeltaPart]:
         """Whether `part` is a change to a loaded capability's block."""

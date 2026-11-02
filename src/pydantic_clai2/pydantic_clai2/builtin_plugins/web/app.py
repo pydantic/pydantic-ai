@@ -211,6 +211,22 @@ class NewSession(BaseModel):
     workspace: str | None = Field(default=None, max_length=4096)
 
 
+class NewWorktree(BaseModel):
+    """A worktree for New session: a new `branch` from `base` in the repository `repo` is in; empty ones are chosen."""
+
+    repo: str = Field(max_length=4096)
+    branch: str = Field(default='', max_length=255)
+    """Empty for a generated name, as `clai2 --worktree` without NAME."""
+    base: str = Field(default='', max_length=255)
+    """Empty for the checkout's `HEAD`."""
+
+
+class AddedWorktree(BaseModel):
+    """The folder of the worktree `POST /api/worktrees` checked out."""
+
+    root: str
+
+
 class CommitFiles(BaseModel):
     """The changed files to commit, by path; `None` for every one."""
 
@@ -464,7 +480,7 @@ def _prompt(app: FastAPI, service: WebService) -> None:
 
 
 def _queue(app: FastAPI, service: WebService) -> None:
-    """Steer the running turn, and edit, steer, or remove the input queued behind it, as the prompt does.
+    """Steer the running turn, edit, steer, or remove the input queued behind it, or rewind, as the prompt does.
 
     Each route is there twice, as the composer's are: under `/api/sessions/ID/` for the live session
     holding conversation ID, and unprefixed for the default session.
@@ -491,11 +507,15 @@ def _queue(app: FastAPI, service: WebService) -> None:
         channel = session(conversation_id)
         return Steered(steered=_run(lambda: channel.steer_queued(input_id)))
 
+    async def rewind(run_id: str, body: Input, conversation_id: str | None = None) -> None:
+        await _wait(session(conversation_id).rewind(run_id, body.text))
+
     for prefix in ('/api', '/api/sessions/{conversation_id}'):
         app.post(f'{prefix}/steer')(steer)
         app.put(f'{prefix}/queue/{{input_id}}', status_code=204)(edit_queued)
         app.delete(f'{prefix}/queue/{{input_id}}', status_code=204)(remove_queued)
         app.post(f'{prefix}/queue/{{input_id}}/steer')(steer_queued)
+        app.post(f'{prefix}/rewind/{{run_id}}', status_code=204)(rewind)
 
 
 def _images(app: FastAPI, service: WebService) -> None:
@@ -543,7 +563,10 @@ def _answer(answer: Answer) -> AskUserAnswer:
 
 
 def _sessions(app: FastAPI, service: WebService) -> None:
-    """The sidebar: list, read, open, start, rename, fork, archive, and delete saved sessions."""
+    """The sidebar: list, read, open, start, rename, fork, archive, and delete saved sessions.
+
+    Also New session's `POST /api/worktrees`, which checks out a new worktree to start one in.
+    """
 
     @app.get('/api/sessions')
     async def sessions(q: str = '', include_archived: bool = False, include_worktrees: bool = False) -> list[Project]:
@@ -557,6 +580,10 @@ def _sessions(app: FastAPI, service: WebService) -> None:
     @app.post('/api/sessions/new')
     async def new(body: NewSession | None = None) -> Opened:
         return Opened(id=await _wait(service.new(None if body is None else body.workspace)))
+
+    @app.post('/api/worktrees')
+    async def add_worktree(body: NewWorktree) -> AddedWorktree:
+        return AddedWorktree(root=await _wait(service.add_worktree(body.repo, branch=body.branch, base=body.base)))
 
     @app.get('/api/sessions/{conversation_id}')
     async def transcript(conversation_id: str) -> Transcript:

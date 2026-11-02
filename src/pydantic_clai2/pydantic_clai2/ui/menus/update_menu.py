@@ -14,6 +14,8 @@ from pydantic_clai2.ui.menus.set_menu import SettingsSource
 VERSION = 'version'
 CHECK_WAIT = 1.0
 """Seconds the menu waits for the update check before it first shows: it cannot redraw once the answer comes."""
+ABOUT_MAX_AGE = 300.0
+"""Seconds before opening the menu checks again."""
 
 
 class AboutSource:
@@ -33,16 +35,19 @@ class AboutSource:
 
     def status(self) -> str:
         """Whether a newer CLAI is out on the update channel, checking for one in the background first."""
-        found = self._updates.check(wait=CHECK_WAIT)
+        found = self._updates.check(wait=CHECK_WAIT, max_age=ABOUT_MAX_AGE)
         if found is None:
             return 'Checking for a newer CLAI…'
         if found.error is not None:
             return f'Could not check for a newer CLAI: {found.error}'
+        minutes = int((self._updates.clock() - found.checked) // 60)
+        checked = 'just now' if minutes < 1 else f'{minutes} min ago' if minutes < 60 else f'{minutes // 60} h ago'
         if found.update is None:
             return (
-                f'clai2 is already on the latest version {self._updates.current.label} on the {found.channel} channel.'
+                f'clai2 is already on the latest version {self._updates.current.label} '
+                f'on the {found.channel} channel (checked {checked}).'
             )
-        return f'a new version {found.update.label} of clai2 is available on the {found.channel} channel.'
+        return f'a new version {found.update.label} of clai2 is available on the {found.channel} channel (checked {checked}).'
 
     def rows(self) -> list[FieldRow]:
         """The version, whose note says whether a newer one is out and whose action updates, then the channel."""
@@ -85,16 +90,23 @@ def update_menu(
     *,
     run: Callable[[str], None],
     refusal: Callable[[], str | None] = lambda: None,
+    raise_refusal: bool = False,
 ) -> SettingsMenu:
     """The menu, whose version row asks before entering `/update now` with `run`, as typing it would, and closing.
 
     `refusal` says why `/update` would be refused now, for example while other sessions run turns, so the menu
-    says so instead of claiming it runs.
+    says so instead of claiming it runs. With `raise_refusal`, the action raises that reason as `ValueError`
+    instead, so a remote UI such as the web UI's About shows it as an error rather than as a saved row.
     """
 
+    def refused(reason: str) -> Sequence[str]:
+        if raise_refusal:
+            raise ValueError(reason)
+        return [reason]
+
     async def update(dialogs: Dialogs) -> Sequence[str]:
-        if (refused := refusal()) is not None:
-            return [refused]
+        if (reason := refusal()) is not None:
+            return refused(reason)
         channel = context.settings.update_channel
         confirmed = await dialogs.confirm(
             title='Update CLAI?',
@@ -108,8 +120,8 @@ def update_menu(
         if not confirmed:
             return []
         # Another session may have started a turn while the dialog was open.
-        if (refused := refusal()) is not None:
-            return [refused]
+        if (reason := refusal()) is not None:
+            return refused(reason)
         run('/update now')
         return CloseMenu([f'Running /update now on the {channel} channel.'])
 

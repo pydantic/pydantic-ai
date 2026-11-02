@@ -128,7 +128,8 @@ Pydantic AI replays the session's [message history](history.md) into it, so a re
 handled as with local replay (below). Gemini issues no handle while a tool call is running, so a resumed
 session never has a call still running at the drop, and never answers its result. Such a call is
 cancelled with an interrupted return, like a call Gemini cancels itself, the resumed session is told
-the call was interrupted, and `state_restored` is `False`. Gemini 2.5 also withholds handles while it
+the call was interrupted (on the Gemini Developer API, only if the call came with an id, which an answer
+there requires), and `state_restored` is `False`. Gemini 2.5 also withholds handles while it
 works on a turn, so a typed turn not yet followed by a handle after its reply is missing from the
 resumed session too: the turn stays in history, `state_restored` is `False`, and you can send it again.
 When its reply hadn't started and no spoken reply was in progress,

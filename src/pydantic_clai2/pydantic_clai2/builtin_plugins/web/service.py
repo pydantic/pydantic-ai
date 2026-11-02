@@ -18,8 +18,8 @@ from termflow.themes import PALETTES
 
 from pydantic_ai import AgentRunResult, AgentStreamEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
-from pydantic_ai_harness.ask_user import Answerer
 from pydantic_ai_harness.subagents import DelegationTasks
+from pydantic_clai2.builtin_plugins.ask_user_menu import TerminalAnswerer
 from pydantic_clai2.builtin_plugins.web.channel import SessionChannel
 from pydantic_clai2.builtin_plugins.web.dialogs import BrowserDialogs
 from pydantic_clai2.builtin_plugins.web.files import WorkspaceFiles
@@ -54,7 +54,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     dump,
     history_items,
 )
-from pydantic_clai2.builtin_plugins.web.sidebar import session_entry, worktrees
+from pydantic_clai2.builtin_plugins.web.sidebar import project_folder, project_names, session_entry, worktrees
 from pydantic_clai2.builtin_plugins.web.workers import task_entry
 from pydantic_clai2.builtin_plugins.web.workspaces import checkouts
 from pydantic_clai2.cli.self_update import installed
@@ -77,6 +77,7 @@ from pydantic_clai2.plugins import (
 )
 from pydantic_clai2.plugins.loader import PluginError
 from pydantic_clai2.plugins.menus import SettingsMenu
+from pydantic_clai2.runtime.live_runtimes import LiveRuntimes
 from pydantic_clai2.runtime.monty_cells import is_monty_cell
 from pydantic_clai2.runtime.project_identity import (
     MISSING,
@@ -88,6 +89,7 @@ from pydantic_clai2.runtime.project_identity import (
 from pydantic_clai2.runtime.session import busy_elsewhere
 from pydantic_clai2.runtime.session_workspace import workspace_directory
 from pydantic_clai2.runtime.task_prompts import is_task_prompt
+from pydantic_clai2.runtime.worktrees import new_worktree
 
 THEME = 'display.theme'
 PluginAction = Literal['enable', 'disable', 'reload']
@@ -105,13 +107,18 @@ class WebService:
     page opened or started last while it is live, else the newest live one.
     """
 
-    def __init__(self, *, host: PluginHost[None], terminal: Answerer | None = None) -> None:
-        """`terminal` races the browser to answer the model's questions, where CLAI has a terminal."""
+    def __init__(self, *, host: PluginHost[None], terminal: TerminalAnswerer | None = None) -> None:
+        """`terminal` races the browser to answer the model's questions and approvals, where CLAI has a terminal."""
         self.host = host
         self.live: LiveSessions = host.live if host.live is not None else HostSessions(host)
         """The process's live sessions; a host built outside CLAI's loader is its own one."""
         self.hub = Hub(default=self._default_id)
-        self.answerer = BrowserAnswerer(publish=self._question, terminal=terminal, session=self._asking)
+        self.answerer = BrowserAnswerer(
+            publish=self._question,
+            terminal=terminal,
+            session=self._asking,
+            terminal_approval=None if terminal is None else terminal.ask_approval,
+        )
         """Asks the model's questions in the browsers watching the session asking."""
         self.dialogs = BrowserDialogs(publish=self.hub.publish)
         """Where the settings menus opened in this page ask their questions."""
@@ -313,6 +320,15 @@ class WebService:
                 default.session.send_input('/new')
             return default.id
         return self.choose(session)
+
+    async def add_worktree(self, repo: str, *, branch: str, base: str) -> str:
+        """Check out a new `branch` from `base` in the repository `repo` is in, as `clai2 --worktree` does; its folder.
+
+        New session then starts a session there, and lists it among the repository's worktrees from then on.
+        """
+        directory = workspace_directory(repo)
+        worktree = await to_thread.run_sync(lambda: new_worktree(repo=directory, branch=branch, base=base))
+        return str(worktree.path)
 
     def choose(self, session: LiveSession) -> str:
         """Make `session` the default the legacy routes follow, and tell the browsers; its conversation ID."""
@@ -648,7 +664,11 @@ class WebService:
         Without a search, each workspace's checkout is listed under its repository too, before any session runs
         there; with `include_worktrees`, so is every worktree Git lists for a listed repository, for New session.
         """
-        entries = await self.catalog.listing(query=query, archived=None if include_archived else False)
+        # The sidebar orders by creation, so it lists the newest created, not the most recently active: a turn in an
+        # old session would otherwise pull it into the page and push another out, moving every row between.
+        entries = await self.catalog.listing(
+            query=query, archived=None if include_archived else False, order_by='created_at'
+        )
         workspace = str(self.default().session.workspace)
         empty = [] if query else await checkouts(self.host.plugins)
         workspaces = {entry.workspace for entry in entries} | {workspace} | set(empty)
@@ -706,10 +726,12 @@ class WebService:
         for folder in empty:
             if not (identity := places[folder]).missing:
                 grouped.setdefault(identity.key, {}).setdefault(identity.root, (identity, []))
+        names = project_names({key: next(iter(found.values()))[0] for key, found in grouped.items()})
         projects = [
             Project(
                 key=key,
-                name=next(iter(found.values()))[0].name,
+                folder=None if key == MISSING else str(project_folder(key)),
+                name=names[key],
                 current=key == here.key,
                 worktrees=worktrees(found, here=here),
             )
@@ -756,24 +778,39 @@ class WebService:
 
     async def archive(self, conversation_id: str, *, archived: bool) -> None:
         """Archive a session, hiding it from the sidebar, or unarchive it."""
-        catalog = self.catalog
-        await (catalog.archive(conversation_id) if archived else catalog.unarchive(conversation_id))
+        await (self._archive(conversation_id) if archived else self.catalog.unarchive(conversation_id))
         self.hub.publish(SessionsChanged())
 
     async def archive_all(self, ids: Sequence[str]) -> None:
         """Archive several sessions, such as a worktree's; any refused are named once the others are archived."""
-        catalog = self.catalog
         unique = list(dict.fromkeys(ids))
         refused: list[str] = []
         for conversation_id in unique:
             try:
-                await catalog.archive(conversation_id)
+                await self._archive(conversation_id)
             except (LookupError, ValueError) as exc:
                 refused.append(f'{conversation_id!r}: {exc}')
         if len(refused) < len(unique):
             self.hub.publish(SessionsChanged())
         if refused:
             raise ValueError(f'Archived {len(unique) - len(refused)} of {len(unique)} sessions. ' + ' '.join(refused))
+
+    async def _archive(self, conversation_id: str) -> None:
+        """Archive a session; one live here closes first while it is idle and no browser shows it.
+
+        One that is shown or busy, as idle closing judges it, a command, background `/fork`, or delegated task
+        included, stays live, so the catalog refuses it, as it does the current one.
+        """
+        live = self.live
+        holder = live.runtime(conversation_id) if isinstance(live, LiveRuntimes) else None
+        if (
+            holder is not None
+            and conversation_id != self.host.session_id
+            and not holder.live_session.watchers
+            and holder.idle
+        ):
+            await live.close(holder.live_session.id)
+        await self.catalog.archive(conversation_id)
 
 
 def continuable(workspace: str, *, here: str, follows: bool) -> bool:
@@ -840,7 +877,7 @@ class Observer(AbstractCapability[None]):
         channel = self._channel(ctx)
         if channel is None or is_monty_cell(ctx):
             return await handler()
-        channel.run_started(ctx.prompt)
+        channel.run_started(ctx.prompt, run_id=ctx.run_id)
         try:
             result = await handler()
         except get_cancelled_exc_class():

@@ -378,7 +378,7 @@ _Placement: TypeAlias = Literal['native', 'sandboxed', 'hidden']
 """Where `CodeModeToolset.get_tools` puts a wrapped tool: on the wire, inside `run_code`, or nowhere yet."""
 
 
-def _place_hidden_tools(placements: dict[str, _Placement], tools: Mapping[str, ToolsetTool[Any]]) -> None:
+def _place_hidden_tools(placements: dict[str, _Placement], tools: Mapping[str, ToolsetTool[Any]]) -> set[str]:
     """Decide which not-yet-revealed tools `run_code` will take over stay off the wire until they're revealed.
 
     With `dynamic_catalog`, a deferred tool that will be sandboxed once revealed is never declared natively:
@@ -386,22 +386,26 @@ def _place_hidden_tools(placements: dict[str, _Placement], tools: Mapping[str, T
     appears only in the catalog, whose change is appended to history. Declaring it natively first and
     dropping the declaration on reveal would change the request's tools prefix.
 
-    A tool in the native tool search's corpus still has to be declared when that search has to find it:
-    when there's no local `search_tools` (the `'bm25'` and `'regex'` strategies), or when another corpus
-    member stays native, which keeps the native search on the wire and drops `search_tools` with it.
+    Without a local `search_tools` (the `'bm25'` and `'regex'` strategies), only the native tool search can
+    find a corpus member, so a hidden one is declared for it.
+
+    Returns the corpus members that stay native but are searched locally instead: when the selector sandboxes
+    some of the Tool Search corpus and keeps the rest native, the native search would take `search_tools` off
+    the wire and could only find the tools it declares. Taking the native ones out of its corpus drops the
+    native search instead, so `search_tools` finds every corpus member, and a native one is revealed by
+    appending it like any locally found tool. The answer depends only on the selector, not on what's been
+    revealed, so it holds for the whole run.
     """
-    hidden = [name for name, where in placements.items() if where == 'hidden']
-    in_native_corpus = [name for name in hidden if tools[name].tool_def.with_native == _TOOL_SEARCH_NATIVE_ID]
+    corpus = [name for name, tool in tools.items() if tool.tool_def.with_native == _TOOL_SEARCH_NATIVE_ID]
     local_search = any(
         tool.tool_def.tool_kind == 'tool-search' and placements[name] == 'native' for name, tool in tools.items()
     )
-    corpus_stays_native = any(
-        tool.tool_def.with_native == _TOOL_SEARCH_NATIVE_ID and placements[name] == 'native'
-        for name, tool in tools.items()
-    )
-    if in_native_corpus and (not local_search or corpus_stays_native):
-        for name in in_native_corpus:
-            placements[name] = 'native'
+    if not local_search:
+        placements.update({name: 'native' for name in corpus if placements[name] == 'hidden'})
+        return set()
+    native = {name for name in corpus if placements[name] == 'native'}
+    sandboxes_corpus = any(placements[name] != 'native' for name in corpus)
+    return native if sandboxes_corpus else set()
 
 
 _RUN_CODE_ADAPTER = TypeAdapter(_RunCodeArguments)
@@ -976,7 +980,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         """Return the `run_code` tool plus any native (non-sandboxed) tools."""
         wrapped_tools = await self.wrapped.get_tools(ctx)
 
-        # Split tools into sandboxed vs native based on the selector.
         placements: dict[str, _Placement] = {}
         for name, tool in wrapped_tools.items():
             tool_def = tool.tool_def
@@ -993,9 +996,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 placements[name] = 'sandboxed'
             else:
                 placements[name] = 'native'
-        _place_hidden_tools(placements, wrapped_tools)
+        searched_locally = _place_hidden_tools(placements, wrapped_tools) if self.dynamic_catalog else set[str]()
         sandboxed_tools = {name: wrapped_tools[name] for name, where in placements.items() if where == 'sandboxed'}
-        native_tools = {name: wrapped_tools[name] for name, where in placements.items() if where == 'native'}
+        native_tools = {
+            name: replace(tool, tool_def=replace(tool.tool_def, with_native=None)) if name in searched_locally else tool
+            for name, tool in ((name, wrapped_tools[name]) for name, where in placements.items() if where == 'native')
+        }
 
         callable_defs, sanitized_to_original = self._partition_callable_tools(sandboxed_tools)
 
@@ -1156,10 +1162,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             tools=tool.wrapped_tools,
         )
 
-        # Determine execution mode for sandbox tool calls:
-        # - global_sequential: selected through the parallel execution mode context var.
-        # - sequential_tools: per-tool `sequential` flags on ToolDefinition.
-        #   These tools are rendered as `def` (sync) and resolved inline.
+        # Tools flagged `sequential` are rendered as `def` (sync) and resolved inline.
         global_sequential = global_mode_is_sequential(tool_manager.get_parallel_execution_mode)
         sequential_tools = {name for name, td in callable_defs.items() if td.sequential}
 
@@ -1275,15 +1278,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             await run_state.reset()
             raise ModelRetry(f'Type error in code:\n{capture.prepend_to(e.display())}') from e
         except MontyRuntimeError as e:
-            # Exceptions raised inside dispatch_tool_call (e.g. UserError from
-            # ApprovalRequired, or ModelRetry from a wrapped tool) are passed
-            # back into Monty via ExternalException. Monty re-raises them at the
-            # await site; if the sandbox code doesn't catch them, they bubble up
-            # as MontyRuntimeError. The original exception message is preserved
-            # in the display string, so the model sees a useful error. This means
-            # ModelRetry from a wrapped tool gets double-wrapped
-            # (ModelRetry → MontyRuntimeError → ModelRetry), but the retry
-            # semantics are the same -- the model gets another chance.
+            # Tool errors (e.g. a wrapped tool's `ModelRetry`) re-raise in the sandbox and surface
+            # here if uncaught. Re-wrapping a `ModelRetry` is fine: the display keeps its message
+            # and the model still gets a retry.
             message = f'Runtime error:\n{capture.prepend_to(e.display())}'
             duration_spent = _is_duration_exhausted(e)
             if execution.budget_exhausted or _exhausted_sandbox_limit(e) is not None:
@@ -1380,15 +1377,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     def _partition_callable_tools(
         self, wrapped_tools: dict[str, ToolsetTool[AgentDepsT]]
     ) -> tuple[dict[str, ToolDefinition], dict[str, str]]:
-        """Return tool definitions that can be called from inside the sandbox.
-
-        Tool names that are not valid Python identifiers (e.g. MCP tools with
-        hyphens or dots like `get-weather`, `api.call`) are sanitized to
-        underscored forms and mapped back to their original names for dispatch.
-
-        Returns:
-            A tuple of `(callable_defs, sanitized_to_original)`.
-        """
+        """Partition via `partition_callable_tools`, warning once per tool lacking a return schema."""
         callable_defs, sanitized_to_original = partition_callable_tools(
             wrapped_tools, owner='CodeMode', reserved_name=RUN_CODE_TOOL_NAME
         )

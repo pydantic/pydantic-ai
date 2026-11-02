@@ -40,7 +40,7 @@ class _KernelManager(Protocol):
     def shutdown_kernel(self, now: bool = False) -> Awaitable[None]: ...
     def is_alive(self) -> Awaitable[bool]: ...
     def interrupt_kernel(self) -> Awaitable[None]: ...
-    def client(self) -> AsyncKernelClient: ...
+    def client(self, *, context: zmq.asyncio.Context) -> AsyncKernelClient: ...
 
 
 _RESULT_MIME = 'application/vnd.pydantic-ai.result+json'
@@ -327,7 +327,9 @@ class IPythonKernel:
         except BaseException:
             context.destroy(linger=0)
             raise
-        client = manager.client()
+        # Given the same context, as a client left to create its own keeps it open after `stop_channels()`
+        # on jupyter-client before 8.7, until the garbage collector finds it.
+        client = manager.client(context=context)
         client.start_channels()
         self._manager, self._client, self._context = manager, client, context
         self._token = f'\x00pydantic-ai-tool-call:{secrets.token_hex(16)}\x00'

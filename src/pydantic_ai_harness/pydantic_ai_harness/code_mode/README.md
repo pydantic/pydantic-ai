@@ -4,6 +4,8 @@ Replace individual tool calls with a single sandboxed Python execution environme
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/code_mode/)
 
+![Two lanes compare the same task. With tool calling, the model makes three requests: it calls list_items, then get_item ten times, then answers, and every tool result is sent back to the model on each later request. With Code Mode, the model makes two requests: its first writes one run_code program, which runs in the Monty sandbox, calls list_items and then get_item ten times in parallel, filters the items in Python, and returns only the names that match; the second request answers.](https://pydantic.dev/docs/ai/img/harness/code-mode.svg)
+
 ## The problem
 
 Standard tool calling often needs another model turn for each dependent batch of tool calls. An agent
@@ -63,7 +65,7 @@ The [harness Quick start](../../README.md#quick-start) wires `CodeMode` up again
 
 <!-- Trace screenshot removed until it is Tinified: https://github.com/pydantic/pydantic-ai/issues/8824 -->
 
-**[See the full Logfire trace ->](https://logfire-us.pydantic.dev/public-trace/84bcf123-2106-49da-9f6f-5c26395339bb?spanId=7650806a0785b946)** Each `run_code` span fans out into the tool calls the model issued from inside the sandbox -- the easiest way to understand what code mode actually did. See the [Pydantic AI Logfire docs](https://ai.pydantic.dev/logfire/) for setup details.
+**[See the full Logfire trace ->](https://logfire-us.pydantic.dev/public-trace/84bcf123-2106-49da-9f6f-5c26395339bb?spanId=7650806a0785b946)** Each `run_code` span fans out into the tool calls the model issued from inside the sandbox. See the [Pydantic AI Logfire docs](https://ai.pydantic.dev/logfire/) for setup details.
 
 ## Code Mode or IPython Code Mode
 
@@ -78,7 +80,7 @@ The [harness Quick start](../../README.md#quick-start) wires `CodeMode` up again
 | State | Per run, plus an optional `repl_store` | A kernel per run, or one `IPythonKernel` kept across runs |
 
 > [!WARNING]
-> **Use Code Mode for anything web-facing.** IPython Code Mode runs model-written code with the permissions of the user running the agent. Do not run it in a webserver, or anywhere it handles untrusted input, without a sandbox around the agent. For production and web-facing agents, Code Mode is strongly recommended.
+> **Use Code Mode for anything web-facing.** IPython Code Mode runs model-written code with the permissions of the user running the agent. Do not run it in a webserver, or anywhere it handles untrusted input, without a sandbox around the agent.
 
 ## Installation
 
@@ -106,7 +108,10 @@ surfaces count as code-execution tools: `Shell`'s `run_command` and `start_comma
 to quote a shell command inside a generated Python string. `CapabilityCreation`'s
 `author_capability` stays native for the same reason: its argument is a complete Python module.
 Their non-command tools (`read_file`, `check_command`, and so on) are folded into `run_code` like
-any other tool. You can control which eligible tools go through the sandbox:
+any other tool. A host that wants a code-execution tool folded anyway sets `FOLD_INTO_CODE_MODE` (`'fold_into_code_mode'`, from
+`pydantic_ai_harness.code_mode`) to `True` in its metadata, for example from `prepare_tools`; the tool keeps
+its `code_arg_name`, so instrumentation and other capabilities still see it as code. You can control which
+eligible tools go through the sandbox:
 
 ```python
 from pydantic_ai_harness import CodeMode
@@ -135,7 +140,9 @@ The cache stays intact only if a callable `tools` selector gives the same answer
 
 The catalog block is keyed through the toolset id `code_mode`, which `CodeModeToolset` takes only with `dynamic_catalog=True`. If the agent has another toolset with the id `code_mode` that contributes instructions, the run raises a `UserError` for the duplicate id. Rename that toolset.
 
-Two setups still declare a deferred tool that `run_code` will take over natively, because only the provider's native tool search can find it there: the `'bm25'` and `'regex'` Tool Search strategies, which have no local `search_tools`, and a `tools` selector that keeps another deferred tool native, which keeps the native search on the wire in place of `search_tools`. In those setups the declaration is dropped when the tool moves into `run_code`, as it is with `dynamic_catalog=False`.
+When a `tools` selector sandboxes some deferred tools and keeps others native, the local `search_tools` searches all of them, and the provider's native tool search isn't sent. Neither kind is declared before it's found: a sandboxed tool joins the catalog, and a native one is added the way any tool found by `search_tools` is, which on Anthropic and OpenAI Responses appends it to the conversation. The cost is that in this setup the native tools are found by local keyword matching (or your `strategy` callable) rather than by the provider's server-side search.
+
+The `'bm25'` and `'regex'` Tool Search strategies have no local `search_tools`, so only the provider's native tool search can find a deferred tool there. With them, a deferred tool that `run_code` will take over is still declared natively, and the declaration is dropped when it moves into `run_code`, as it is with `dynamic_catalog=False`.
 
 Pass `dynamic_catalog=False` to keep the catalog in `run_code`'s description instead, which earlier releases did by default:
 
@@ -252,9 +259,8 @@ denied. Calls that did not finish are included rather than filtered out, since a
 before it stops. That detail is bounded -- arguments and results are previewed, and the list stops
 at a size cap and says how many entries it left out -- so a large payload cannot inflate the
 retry. The reported total stays exact whether or not the list was cut, which is what tells the
-model some calls are missing from what it can see. The list is context for the model, not a guard:
-nothing stops it from calling those tools again, so treat it as informing the next attempt rather
-than preventing a repeat.
+model some calls are missing from what it can see. Nothing stops the model from calling those
+tools again.
 
 Override them with `resource_limits={'max_duration_secs': 10, 'max_memory': 134_217_728, 'max_suspensions': 10_000}` and
 `max_tool_calls=25`. Pass `resource_limits='unlimited'` only when another execution boundary
@@ -783,7 +789,7 @@ CodeMode(os_access=my_os)
 The callback takes keyword arguments and may be `async`. The older positional form, `my_os(name, args, kwargs)`,
 still works but is deprecated and will be removed in the next breaking release.
 
-Your callback's return value decides the call's fate, and the two outcomes are easy to confuse:
+Your callback's return value decides the call's fate:
 
 - **Return any value** -- including `None`, `''`, or `0` -- and that becomes the result the sandbox
   sees. `os.getenv` returning `None` looks exactly like a normal unset variable, so the agent's code
@@ -838,7 +844,7 @@ CodeMode(
     resource_limits=None, # sandbox time and memory caps; 'unlimited' removes them
     eager=False,          # run statements while the run_code call is still streaming
     speculate=None,       # read-only tool names, or 'declared', to start while run_code streams
-    monty_sandbox=None,     # a ws:// or wss:// URL, or a function that returns the pool
+    monty_sandbox=None,   # a ws:// or wss:// URL, or a function that returns the pool
     repl_store=None,      # keep the run_code REPL across runs (CodeModeReplStore)
     dynamic_catalog=True,
 )

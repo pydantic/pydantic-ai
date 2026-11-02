@@ -8,8 +8,10 @@ if TYPE_CHECKING:
     from .absurd import AbsurdDurability
     from .advisor import Advisor
     from .approval_reviewer import ApprovalReviewer
+    from .artifact_scanning import ArtifactScanner
     from .ask_user import AskUser
     from .background_tools import BackgroundTools
+    from .boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
     from .boxlite_sandbox import BoxLiteSandbox, BoxLiteSandboxBackend
     from .browser_use import BrowserUse
     from .bubblewrap_sandbox import BubblewrapSandbox, BubblewrapWorkspace
@@ -57,6 +59,7 @@ if TYPE_CHECKING:
     from .memory import Memory
     from .modal_sandbox import ModalSandbox, ModalSandboxBackend
     from .ordinal import Ordinal
+    from .permissions import Permissions
     from .pgtask import PGTaskDurability
     from .planning import Planning
     from .posthog import PostHog
@@ -87,8 +90,11 @@ __all__ = [
     'AbsurdDurability',
     'Advisor',
     'ApprovalReviewer',
+    'ArtifactScanner',
     'AskUser',
     'BackgroundTools',
+    'BoxdSandbox',
+    'BoxdSandboxBackend',
     'BoxLiteSandbox',
     'BoxLiteSandboxBackend',
     'BrowserUse',
@@ -137,6 +143,7 @@ __all__ = [
     'OutputGuardrail',
     'OutputGuardrailFunc',
     'PGTaskDurability',
+    'Permissions',
     'Planning',
     'PostHog',
     'PromptInjectionDefender',
@@ -182,6 +189,7 @@ _CAPABILITY_EXPORTS = {
     'ApprovalReviewer': 'approval_reviewer',
     'AskUser': 'ask_user',
     'BackgroundTools': 'background_tools',
+    'BoxdSandbox': 'boxd_sandbox',
     'BoxLiteSandbox': 'boxlite_sandbox',
     'BrowserUse': 'browser_use',
     'BubblewrapSandbox': 'bubblewrap_sandbox',
@@ -212,6 +220,7 @@ _CAPABILITY_EXPORTS = {
     'ModalSandbox': 'modal_sandbox',
     'Ordinal': 'ordinal',
     'PGTaskDurability': 'pgtask',
+    'Permissions': 'permissions',
     'Planning': 'planning',
     'PostHog': 'posthog',
     'PromptInjectionDefender': 'prompt_injection_defender',
@@ -247,6 +256,8 @@ _CAPABILITY_EXPORTS = {
 }
 
 _CONSTANT_EXPORTS = {
+    'ArtifactScanner': 'artifact_scanning',
+    'BoxdSandboxBackend': 'boxd_sandbox',
     'BoxLiteSandboxBackend': 'boxlite_sandbox',
     'BubblewrapWorkspace': 'bubblewrap_sandbox',
     'DaytonaSandboxBackend': 'daytona_sandbox',

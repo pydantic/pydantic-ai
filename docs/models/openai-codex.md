@@ -103,7 +103,7 @@ If `save()` raises, the refreshed credentials stay live in memory and a [`Creden
 
 ## Tracing without exposing credentials
 
-[Logfire instrumentation](../logfire.md) can trace agent runs without capturing OAuth credentials. Leave HTTP body capture disabled unless you need it: `logfire.instrument_httpx(capture_all=True)` captures authorization codes and token responses, which require additional scrubbing patterns.
+[Logfire instrumentation](../logfire.md#using-logfire) can trace agent runs without capturing OAuth credentials. Leave HTTP body capture disabled unless you need it: `logfire.instrument_httpx(capture_all=True)` captures authorization codes and token responses, which require additional scrubbing patterns.
 
 If you enable full HTTP capture, configure scrubbing before starting the OAuth flow:
 
@@ -135,6 +135,10 @@ The additional patterns redact the OAuth credentials and account identifiers; Lo
 To mirror the official Codex client's prompt-cache affinity, [`OpenAICodexModel`][pydantic_ai.models.openai_codex.OpenAICodexModel] sends the `session-id`, `thread-id`, and `x-client-request-id` headers and the `prompt_cache_key` request field. All four are derived from the [`conversation_id`](../message-history.md) of the message history, so runs continuing the same conversation reuse a stable identity. An explicit `openai_prompt_cache_key` model setting or explicitly supplied `extra_headers` always win over the derived values. This does not guarantee a cache hit.
 
 The Codex backend caches prompts implicitly and rejects the explicit prompt caching fields of the OpenAI API, so the unified [`cache`][pydantic_ai.settings.ModelSettings.cache] setting, [`CachePoint`][pydantic_ai.messages.CachePoint]s, and `openai_cache_instructions` have no effect.
+
+## Continuing on the OpenAI API
+
+The Codex backend and the OpenAI API accept each other's encrypted reasoning and compaction items, so a conversation can move between [`OpenAICodexModel`][pydantic_ai.models.openai_codex.OpenAICodexModel] and an [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] on the OpenAI API, in either direction, without losing them: both have the `openai` [canonical system](../message-history.md#sending-history-to-another-provider). After a compaction, the other model continues from the compaction item rather than from the full earlier history. Response and item IDs stay with the provider that issued them. The OpenAI API ignores reasoning encrypted for another organization, which a ChatGPT plan's usually is, without failing the request.
 
 ## Limitations
 

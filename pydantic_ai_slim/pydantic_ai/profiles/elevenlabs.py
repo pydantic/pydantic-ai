@@ -58,6 +58,8 @@ def elevenlabs_agents_realtime_model_profile(model_name: str) -> RealtimeModelPr
         'context_window': None,
         # `vad_score` events exist but there is no speech start/stop pair.
         'emits_input_speech_events': False,
+        # Every audio chunk times each of its characters (`audio_event.alignment`), which the adapter groups into words.
+        'output_speech_timestamp_granularity': 'word',
         # ElevenLabs' defaults: `asr.user_input_audio_format` defaults to `pcm_16000`, and the
         # matching output default. Both are fixed per agent (not per conversation); the connect
         # handshake echoes the actual formats and the adapter raises when they disagree with the

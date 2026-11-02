@@ -53,7 +53,6 @@ from pydantic_ai_harness.planning import (
 )
 from pydantic_ai_harness.shell import Shell
 from tests.conftest import detach_dbos_logging
-from tests.function_model_prefix import REQUEST_SCOPED_PROMPT_DROPPED
 
 # Module scope builds the agents and registers their DBOS workflows, which DBOS requires before launch.
 try:
@@ -556,7 +555,6 @@ _PLAN_EVENT_WORKFLOWS = {key: _workflow(agent) for key, (agent, _) in _PLAN_EVEN
 
 
 @pytest.mark.parametrize('scenario', sorted(_PLAN_EVENT_AGENTS))
-@pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
 async def test_dbos_recovery_replays_plan_tool_events_in_recorded_order(
     scenario: str, dbos: DBOS, monkeypatch: pytest.MonkeyPatch
 ) -> None:

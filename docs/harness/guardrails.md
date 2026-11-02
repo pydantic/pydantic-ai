@@ -9,6 +9,8 @@ Guardrails run a callable you supply at three points of a run: the user prompt b
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![Guardrails run your guard functions at the edges of a run. InputGuardrail checks the prompt in wrap_model_request before the model sees it. ToolGuardrail checks tool arguments in before_tool_execute and tool results in after_tool_execute. OutputGuardrail checks the final output in after_output_process before the caller gets it. A table shows what allow, block, replace, retry and approve do at each point.](../img/harness/guardrails.svg)
+
 ## How it works
 
 Three capabilities -- `InputGuardrail`, `OutputGuardrail`, and `ToolGuardrail` -- each wrap a `guard` callable you supply. The guard inspects a value and returns one of five outcomes. For the run's two edges:
@@ -55,7 +57,7 @@ A guard returns a bare `bool` (`True` = allow, `False` = block) for the simple c
 
 `OutputGuardrail` receives the output unchanged -- no automatic stringification. For a string output the guard reads it directly; for a typed (Pydantic model) output the guard gets the model instance, so pick the serialization that fits the check (read a field, or call `output.model_dump_json()` for JSON text). This avoids the trap of `str(MyModel(...))` producing a `MyModel(field=...)` repr that hides field contents from regex-based checks.
 
-`InputGuardrail` checks the run's prompt. A run without a prompt of its own, such as `agent.run(None)` continuing a conversation, checks the latest user prompt in its history instead, and skips the background-task reports `SubAgents` delivers there, which it recognizes by their metadata. History passed in `message_history` is trusted as the caller's own, metadata included. Load history from an untrusted client with a [UI adapter](../ui/overview.md), which never puts client metadata on message content. [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] will be a safe path too once [#10943](https://github.com/pydantic/pydantic-ai/pull/10943) lands, which makes it drop `TextContent.metadata` from user prompts; until then it keeps that metadata, so don't rely on it alone for this.
+`InputGuardrail` checks the run's prompt. A run without a prompt of its own, such as `agent.run(None)` continuing a conversation, checks the latest user prompt in its history instead, and skips the background-task reports `SubAgents` delivers there, which it recognizes by their metadata. History passed in `message_history` is trusted as the caller's own, metadata included. Load history from an untrusted client with a [UI adapter](../ui/overview.md), which never puts client metadata on message content. [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] is a safe path too: it resets `TextContent.metadata` on user prompts.
 
 ## Several guards at once
 
@@ -113,9 +115,9 @@ detectors.redact_personal_data  # rewrites emails, card numbers, IBANs, US SSNs
 detectors.blocked_keywords(['internal-only'])  # refuses text containing any of them
 ```
 
-The two redactors rewrite rather than refuse, which is the useful default:
-an agent that quoted a key back has still done the work, and blocking the answer
-loses it while leaving the key in the message history either way.
+The two redactors rewrite rather than refuse: an agent that quoted a key back has
+still done the work, and blocking the answer would lose it while leaving the key in
+the message history.
 
 Each is `secret_data()` and `personal_data()` called with the defaults. Use those factories directly when you need to narrow or extend them:
 
@@ -194,7 +196,7 @@ A private key matches with real newlines or the escaped `\n` of a JSON or `.env`
 **What these do not do.** A regex finds a credential because credentials have a
 shape. It does not find a prompt injection, which is ordinary language, and it
 does not understand context, so a redactor will sometimes take a string that
-only looks like a key. They are one cheap layer, not the answer.
+only looks like a key. Use them as one layer among other controls.
 
 ## `GuardrailResult`
 
@@ -380,7 +382,7 @@ def fetch_page(url: str) -> str:
     return httpx.get(url).text
 ```
 
-The outcomes map onto Pydantic AI control flow rather than a parallel mechanism:
+The outcomes map onto Pydantic AI control flow:
 
 | Outcome | `guard` (arguments) | `result_guard` (result) |
 |---|---|---|
@@ -396,7 +398,7 @@ Both guards receive `args` as a read-only `MappingProxyType` over a deep copy ma
 
 ### Human in the loop
 
-Pydantic AI already owns the approval round trip: a call raising `ApprovalRequired` is held back, the run finishes with a `DeferredToolRequests` output, and you resume it with the human's answers. `ToolGuardrail` plugs into that rather than inventing a second mechanism, which means approvals a guard asks for and tools marked `requires_approval=True` arrive in the same place.
+Pydantic AI already owns the approval round trip: a call raising `ApprovalRequired` is held back, the run finishes with a `DeferredToolRequests` output, and you resume it with the human's answers. `ToolGuardrail` uses the same round trip, so approvals a guard asks for and tools marked `requires_approval=True` arrive in the same place.
 
 ```python
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, ToolDenied
@@ -524,13 +526,17 @@ A `ToolGuardrail` is a control over tools this run executes. For the ones it doe
 
 Tool spans add a `guardrail.tool` attribute naming the tool. `approve` records `guardrail deferred tool args`, which always carries `guardrail.tool_call_id` so the span can be correlated with the `DeferredToolRequests` the application answers, and carries `guardrail.arguments` under the same `trace_include_content` rule as the other content attributes. A deferred call never executes, so there is no `execute_tool` span recording what was asked for.
 
-`OutputGuardrail` declares `position='outermost', wrapped_by=[Instrumentation]`, so an enclosing `Instrumentation` span captures its block and redact spans whatever order the capabilities are listed in. `InputGuardrail` declares `position='innermost'`, so any capability that rewrites the user prompt (a prompt rewriter, a history processor) runs first and the guard sees the rewritten text. A `UserPromptPart` another capability adds to the request only, such as a `SystemReminders` reminder or a `Planning` plan, is not the user's prompt: the guard neither screens nor rewrites it. When an outer capability sends the model a copy of the prompt part, a redaction also reaches the original in the run's message history, which later steps replay. Every copy with the same text gets the same replacement. For a copy with changed text the guard is called again on the original's own text, so a guard with side effects or a per-call cost runs twice for that request; only a redaction from that call is written to the history, `allow` leaves the original as it was, and `block` blocks the run before anything is rewritten. A request rebuilt with a new prompt part is not tied to the history, so only the part sent to the model is rewritten. `ToolGuardrail` is also `position='innermost'`, which puts it last among argument hooks (it sees the arguments every other capability has finished modifying) and first among result hooks (it sees the raw tool result, before a capability such as [`ToolOutputLimits`](tool-output-limits.md) truncates or offloads it).
+`OutputGuardrail` declares `position='outermost', wrapped_by=[Instrumentation]`, so an enclosing `Instrumentation` span captures its block and redact spans whatever order the capabilities are listed in.
+
+## Capability ordering
+
+`InputGuardrail` declares `position='innermost'`, so any capability that rewrites the user prompt (a prompt rewriter, a history processor) runs first and the guard sees the rewritten text. A `UserPromptPart` another capability adds to the request only, such as a `SystemReminders` reminder or a `Planning` plan, is not the user's prompt: the guard neither screens nor rewrites it. When an outer capability sends the model a copy of the prompt part, a redaction also reaches the original in the run's message history, which later steps replay. Every copy with the same text gets the same replacement. For a copy with changed text the guard is called again on the original's own text, so a guard with side effects or a per-call cost runs twice for that request; only a redaction from that call is written to the history, `allow` leaves the original as it was, and `block` blocks the run before anything is rewritten. A request rebuilt with a new prompt part is not tied to the history, so only the part sent to the model is rewritten. `ToolGuardrail` is also `position='innermost'`, which puts it last among argument hooks (it sees the arguments every other capability has finished modifying) and first among result hooks (it sees the raw tool result, before a capability such as [`ToolOutputLimits`](tool-output-limits.md) truncates or offloads it).
 
 ## Relationship to `pydantic-ai-shields`
 
 [`pydantic-ai-shields`](https://github.com/vstorm-co/pydantic-ai-shields), a community package by [Vstorm](https://vstorm.co/), ships each detector as its own capability. The equivalents here are functions instead, which is what lets several run as one chain, share a redaction, and sit beside a guard you wrote.
 
-Two things it has that this deliberately does not. Its `PromptInjection` matches phrases like "ignore previous instructions": injection is ordinary language, so a pattern list catches the examples and misses the attack while flagging a pasted log, and a check that reads as protection without being it is worse than none. Its `NoRefusals` blocks the model from declining, which is a decision about what an agent may say rather than a guardrail on data, and not one to make a default.
+Two of its capabilities have no equivalent here. Its `PromptInjection` matches phrases like "ignore previous instructions". A phrase list misses paraphrased or translated instructions and can flag text that quotes an attack; for checks on untrusted content, see [Prompt Injection Defender](prompt-injection-defender.md) for tool results and [Artifact Scanning](artifact-scanning.md) for persisted memory and skills. Its `NoRefusals` blocks the model from declining, which is a policy on what an agent may say rather than a check on data.
 
 ## API
 

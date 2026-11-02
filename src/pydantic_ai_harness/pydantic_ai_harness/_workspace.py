@@ -1,6 +1,9 @@
 """Private helpers for capabilities adopting the run sandbox."""
 
+import errno
+import hashlib
 import posixpath
+import shlex
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -90,6 +93,7 @@ _PROVIDER_CAPABILITIES = {
     'e2b': 'E2BSandbox()',
     'sprites': 'SpritesSandbox()',
     'daytona': 'DaytonaSandbox()',
+    'boxd': 'BoxdSandbox()',
 }
 """The capability that provides each first-party provider's workspaces, to name in an error."""
 
@@ -177,7 +181,7 @@ METADATA_DIR = '.pydantic-ai-harness'
 """The directory, below a workspace's working directory, that holds files harness capabilities keep for themselves."""
 
 
-async def metadata_dir(workspace: Workspace, name: str) -> str:
+async def metadata_dir(workspace: Workspace, name: str, *, temp_fallback: bool = False) -> str:
     """Return `<working_dir>/.pydantic-ai-harness/<name>`, creating it.
 
     `.pydantic-ai-harness` gets a `.gitignore` holding `*` whenever it has none, including a
@@ -185,6 +189,11 @@ async def metadata_dir(workspace: Workspace, name: str) -> str:
     cannot run commands works too. A path in the way raises `WorkspaceError`: it is no tool
     argument's fault, so a retry cannot fix it. So does a symlink in place of either directory, or a
     dangling `.gitignore`: it could lead outside the working directory.
+
+    With `temp_fallback`, a working directory the workspace user cannot write to (a root-owned `/app`
+    in a container that runs as `nobody`, or a read-only mount) gets the directory from
+    `_temp_metadata_dir` instead. That runs a command, so only callers that already need commands
+    pass it; the directory is outside the working directory, so `FileSystem` tools cannot read it.
     """
     working_dir = await workspace.working_dir()
     root = posixpath.join(working_dir, METADATA_DIR)
@@ -203,5 +212,33 @@ async def metadata_dir(workspace: Workspace, name: str) -> str:
     except WorkspaceError:
         raise
     except OSError as error:
+        if temp_fallback and (isinstance(error, PermissionError) or error.errno == errno.EROFS):
+            return await _temp_metadata_dir(workspace, real_root, name, error)
         raise WorkspaceError(f'Cannot create `{METADATA_DIR}/{name}` in the workspace: {error.strerror}') from error
     return directory
+
+
+_TEMP_METADATA_DIR_SCRIPT = """umask 077
+dir="${{TMPDIR:-/tmp}}/{prefix}-$(id -u)-{tag}"
+sub="$dir"/{name}
+mkdir -p "$dir" && [ ! -L "$dir" ] && [ -O "$dir" ] && mkdir -p "$sub" && [ ! -L "$sub" ] && [ -O "$sub" ] && printf '%s' "$sub"
+"""
+
+
+async def _temp_metadata_dir(workspace: Workspace, real_root: str, name: str, error: OSError) -> str:
+    """Create `<name>` in a directory under the workspace user's temp directory, private to that user.
+
+    The directory is named after the user ID and the working directory, so each run in the same
+    workspace finds the same files. Another user on a shared `/tmp` could create that name first, so
+    each directory is checked to be no symlink and owned by the workspace user before anything is
+    created inside it; `umask 077` keeps a directory created here private.
+    """
+    tag = hashlib.sha256(real_root.encode()).hexdigest()[:12]
+    script = _TEMP_METADATA_DIR_SCRIPT.format(prefix=METADATA_DIR, tag=tag, name=shlex.quote(name))
+    result = await workspace.run(script, shell=True)
+    if result.exit_code != 0:
+        raise WorkspaceError(
+            f'Cannot create `{METADATA_DIR}/{name}` in the workspace ({error.strerror}) '
+            'or a private directory for it in the temp directory.'
+        ) from error
+    return result.stdout

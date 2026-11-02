@@ -46,7 +46,7 @@ from pydantic_clai2.commands import (
     is_silent,
     set_completions,
 )
-from pydantic_clai2.config import PluginSettings, Settings
+from pydantic_clai2.config import PERMISSION_MODES, PERMISSIONS_SETTING as PERMISSIONS, PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.errors import error_message
@@ -75,6 +75,7 @@ from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
 from pydantic_clai2.runtime.forks import Forks
 from pydantic_clai2.runtime.git_actions import git_commands
 from pydantic_clai2.runtime.imported_sessions import IMPORT_SOURCES
+from pydantic_clai2.runtime.permissions import permissions_command, session_permissions
 from pydantic_clai2.runtime.process import ClaiProcess
 from pydantic_clai2.runtime.session import (
     Session,
@@ -109,10 +110,9 @@ from pydantic_clai2.ui.prompt.screen import Screen
 from pydantic_clai2.ui.prompt.terminal import Terminal
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.history import render_history
-from pydantic_clai2.ui.rendering.rendering import StreamRenderer
+from pydantic_clai2.ui.rendering.rendering import StreamRenderer, print_prompt
 from pydantic_clai2.ui.rendering.spinners import Spinner, Spinners
 from pydantic_clai2.ui.rendering.status import Status, StatusLine
-from pydantic_clai2.ui.rendering.tool_output import terminal_text
 from pydantic_clai2.ui.rendering.usage_report import cost_line, session_usage
 from pydantic_clai2.ui.rendering.welcome import print_welcome
 
@@ -333,6 +333,17 @@ def create_shell(
     )
     commands.register(
         Command(
+            name='permissions',
+            description='Choose what runs without asking: /permissions [full|auto|read-only]',
+            handler=lambda args: permissions_command(context, args),
+            complete=lambda args: PERMISSION_MODES if len(args) <= 1 else (),
+            during_turn=True,
+            args_during_turn=True,
+            menu=lambda: settings_menu(context, keys=(PERMISSIONS,), title='Permissions'),
+        )
+    )
+    commands.register(
+        Command(
             name='system_prompt',
             description='View the system prompt and edit your own instructions, sent after the built-in ones',
             handler=lambda args: system_prompt_command(context, args, history=lambda: session.messages),
@@ -430,7 +441,12 @@ def create_shell(
             handler=lambda args: shell.update(args),
             complete=lambda args: ('now',) if len(args) <= 1 else (),
             menu=lambda: update_menu(
-                context, updates, run=lambda text: shell.send_input(text), refusal=lambda: shell.restart_refusal()
+                context,
+                updates,
+                run=lambda text: shell.send_input(text),
+                refusal=lambda: shell.restart_refusal(),
+                # Every `host.command_menu('update')` caller is a remote UI; the terminal builds its own menu.
+                raise_refusal=True,
             ),
         )
     )
@@ -672,6 +688,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     """The terminal's editor, while the terminal shows this session and its console is a terminal."""
     forks: Forks[DepsT, OutputT] = field(init=False)
     tasks: Tasks = field(init=False)
+    permissions: tuple[AgentCapability[DepsT], ...] = field(init=False)
+    """`Permissions` for `run.permissions`, read on each tool call, and its denial of last resort; kept across runs."""
     _mid_turn_commands: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _steering: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _identity_pending: bool = field(default=False, init=False)
@@ -735,6 +753,11 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         else:
             self._inbox.remove(entry)
             self.live_session.changed()
+
+    @property
+    def handling(self) -> bool:
+        """Whether the prompt handles an input now: a turn, a command, or a rewind."""
+        return self._handling
 
     @property
     def idle(self) -> bool:
@@ -845,6 +868,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         )
         self.sessions.quiet = self.forks.quiet
         self.session.on_setup_error = self.capability_failed
+        self.permissions = session_permissions(lambda: self.context.settings.permissions)
 
     def run_plugins(self) -> tuple[AgentCapability[DepsT], ...]:
         """Capabilities bound to the next run: supplied, plugin-registered (guarded), then speculation.
@@ -852,8 +876,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         Speculation sees the others unguarded, and the agent's own capabilities too, so its sandbox
         mount stays within every `FileSystem` and `ToolGuardrail` the run has.
         """
-        granted = (*self.plugins, *self.loader.capabilities())
-        bound = (*self.plugins, *self.loader.run_capabilities())
+        granted = (*self.plugins, *self.loader.capabilities(), *self.permissions)
+        bound = (*self.plugins, *self.loader.run_capabilities(), *self.permissions)
         if self.session.delegations is not None:
             granted = (*granted, self.tasks.presentation)
             bound = (*bound, self.tasks.presentation)
@@ -1141,8 +1165,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             self._steering.send_nowait(text)
         else:
             # Direct session users have no active stream renderer to serialize against.
-            self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
-            self.console.print()
+            print_prompt(self.console, text)
         return True
 
     def _released(self) -> AbstractAsyncContextManager[None]:
@@ -1187,8 +1210,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     async def _run_mid_turn(self, text: str) -> None:
         async with self.screen.overlay():
-            self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
-            self.console.print()
+            print_prompt(self.console, text)
             if await self._refused(text):
                 return
             with self._without_terminal(text):
@@ -1230,13 +1252,14 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     async def _rewind(self) -> None:
         assert self.editor is not None
-        async with self.forks.busy(), self._released():
-            try:
-                notice = await rewind(self.session, self.editor)
-            except Exception as exc:  # noqa: BLE001 -- a failed save must not end the shell.
-                self.console.print(f'Rewind failed: {exc}', style=theme.color(theme.WARNING), markup=False)
-            else:
-                self.console.print(notice, markup=False)
+        with self._handling_input():
+            async with self.forks.busy(), self._released():
+                try:
+                    notice = await rewind(self.session, self.editor)
+                except Exception as exc:  # noqa: BLE001 -- a failed save must not end the shell.
+                    self.console.print(f'Rewind failed: {exc}', style=theme.color(theme.WARNING), markup=False)
+                else:
+                    self.console.print(notice, markup=False)
 
     async def _read_loop(self) -> SessionEndReason:
         while True:
@@ -1271,8 +1294,9 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 continue
             # A line-mode prompt shows the line as it was typed; other input is echoed like the editor's.
             if self.prompt is None:
-                self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
-            self.console.print()
+                print_prompt(self.console, text)
+            else:
+                self.console.print()
             with self._handling_input():
                 if await self._dispatch_input(text):
                     return 'exit'
