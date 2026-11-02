@@ -69,6 +69,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     DialogOpened,
     DialogShown,
     ForkEntry,
+    Item,
     ItemAdded,
     Notice,
     PluginsChanged,
@@ -263,10 +264,15 @@ def test_a_turn_streams_to_the_browser(make_web: 'MakeWeb', monkeypatch: pytest.
         settled, _ = receive_until(socket, SessionsChanged)
         final = [message.status for message in settled if isinstance(message, StatusChanged)][-1]
         assert final.run is None and final.output_tokens == end.usage.output_tokens
-        # A browser connecting now sees the finished turn as history.
+        # A browser connecting now sees the finished turn as history, with its usage line.
         state = web_.get('/api/state').json()
-        assert [item['kind'] for item in state['items']] == ['user', 'tool', 'assistant']
-        assert state['items'][-1]['text'] == 'All **done**.'
+        assert [item['kind'] for item in state['items']] == ['user', 'tool', 'assistant', 'turn']
+        assert state['items'][-2]['text'] == 'All **done**.'
+        assert state['items'][-1]['usage'] == {
+            'input_tokens': end.usage.input_tokens,
+            'output_tokens': end.usage.output_tokens,
+            'requests': 2,
+        }
         assert web_.post('/api/input', {'text': '/cost'}).status_code == 200
         _, notice = receive_until(socket, Notice)
         assert (notice.command, notice.level) == ('/cost', 'info') and notice.text.startswith('Retained history')
@@ -861,7 +867,8 @@ def test_session_actions(make_web: 'MakeWeb', tmp_path: Path) -> None:
         copy = web_.post(f'/api/sessions/{first}/fork').json()['id']
         snapshot = receive_until(socket, Snapshot)[1]
         assert (snapshot.session.id, snapshot.session.title) == (copy, 'Renamed (fork)')
-        assert [item.text for item in snapshot.items] == ['first', 'ok']
+        assert [item.text for item in snapshot.items if isinstance(item, Item)] == ['first', 'ok']
+        assert snapshot.items[-1].kind == 'turn'
 
         other = web_.portal.call(
             lambda: shell.sessions.store.save(

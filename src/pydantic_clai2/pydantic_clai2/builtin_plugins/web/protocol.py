@@ -49,7 +49,7 @@ from pydantic_clai2.runtime.monty_cells import NOTE_PREFIX
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
 from pydantic_clai2.runtime.session import STEERING
 from pydantic_clai2.ui.prompt.prompt_queue import InputKind, input_kind
-from pydantic_clai2.ui.rendering.usage_report import SessionUsage, format_cost
+from pydantic_clai2.ui.rendering.usage_report import SessionUsage, format_cost, starts_turn
 
 MONTY_TOOL = 'run_code'
 """The code mode tool whose cells make up the Monty panel."""
@@ -205,6 +205,19 @@ def usage_info(usage: RunUsage) -> Usage:
 
 
 @dataclass(kw_only=True)
+class TurnSummary:
+    """A saved turn's usage line, which follows it in a reloaded transcript as a live turn's end adds one."""
+
+    id: str
+    kind: Literal['turn'] = 'turn'
+    outcome: Literal['completed'] = 'completed'
+    error: None = None
+    usage: Usage
+    seconds: None = None
+    """A saved turn records no duration."""
+
+
+@dataclass(kw_only=True)
 class StatusInfo:
     """The status row's figures, sent every `STATUS_INTERVAL` while a turn streams."""
 
@@ -350,7 +363,7 @@ class Snapshot:
 
     type: Literal['snapshot'] = 'snapshot'
     session: SessionInfo
-    items: list[Item]
+    items: list[Item | TurnSummary]
     running: bool
     status: StatusInfo
     questions: list[Questions]
@@ -1102,27 +1115,44 @@ def history_images(messages: Sequence[ModelMessage]) -> list[BinaryContent]:
 
 
 def history_items(messages: Sequence[ModelMessage], *, image_ids: ImageIds | None = None) -> list[Item]:
-    """The transcript items of a saved or finished history; tool results join their calls.
+    """The transcript items of a saved or finished history, without `history_entries`' usage lines."""
+    return [entry for entry in history_entries(messages, image_ids=image_ids) if isinstance(entry, Item)]
 
-    A live session passes its `image_ids`, so prompts list their images; see `user_item`.
+
+def history_entries(messages: Sequence[ModelMessage], *, image_ids: ImageIds | None = None) -> list[Item | TurnSummary]:
+    """The transcript of a saved or finished history: its items, each turn followed by its usage line.
+
+    Tool results join their calls; turns are grouped as `/usage` groups them. A live session passes its `image_ids`,
+    so prompts list their images; see `user_item`.
     """
-    items: list[Item] = []
+    entries: list[Item | TurnSummary] = []
     tools: dict[str, Item] = {}
+    usage = RunUsage()
+
+    def end_turn() -> None:
+        if usage.requests:
+            entries.append(TurnSummary(id=f'h{len(entries)}', usage=usage_info(usage)))
+
     for message in messages:
         if isinstance(message, ModelRequest):
+            if starts_turn(message):
+                end_turn()
+                usage = RunUsage()
             for part in message.parts:
                 if isinstance(part, UserPromptPart):
                     if is_typed_prompt(part):
-                        items.append(user_item(part, id=f'h{len(items)}', image_ids=image_ids))
+                        entries.append(user_item(part, id=f'h{len(entries)}', image_ids=image_ids))
                 elif isinstance(part, ToolReturnPart) and (tool := tools.get(part.tool_call_id)):
                     tool.text = tool_result_text(part)
                     tool.state = tool_result_state(part)
             continue
+        usage.incr(message.usage)
+        usage.requests += 1
         for part in message.parts:
             if isinstance(part, TextPart) and part.content:
-                items.append(Item(id=f'h{len(items)}', kind='assistant', text=part.content))
+                entries.append(Item(id=f'h{len(entries)}', kind='assistant', text=part.content))
             elif isinstance(part, ThinkingPart) and part.content:
-                items.append(Item(id=f'h{len(items)}', kind='thinking', text=part.content))
+                entries.append(Item(id=f'h{len(entries)}', kind='thinking', text=part.content))
             elif isinstance(part, ToolCallPart):
                 tool = Item(
                     id=part.tool_call_id,
@@ -1132,8 +1162,9 @@ def history_items(messages: Sequence[ModelMessage], *, image_ids: ImageIds | Non
                     state='interrupted',
                 )
                 tools[part.tool_call_id] = tool
-                items.append(tool)
-    return items
+                entries.append(tool)
+    end_turn()
+    return entries
 
 
 def questions_info(request: AskUserRequest, *, asker: str | None) -> Questions:
