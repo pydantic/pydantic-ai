@@ -658,6 +658,9 @@ class EgressPolicy:
         tool call made before the first navigation. Other hostless URLs (`data:`,
         `blob:`) are refused as navigation and allowed as page content, where they
         are ordinary inline assets.
+
+        When the host needs resolving, this is first asked without
+        `resolved_addresses`, and a refusal then stands without a lookup.
         """
         if request.url == _BLANK_PAGE:
             return None
@@ -1322,7 +1325,12 @@ class PlaywrightBrowserSession:
         directly, so a name that points at a private address is caught wherever it
         is asked about: the route guard, the socket guard, the `navigate`
         pre-check, and the post-action re-check.
+
+        The policy is asked once before the lookup, so a host it refuses by name
+        alone is refused without one, for the same reason wherever it points.
         """
+        if (reason := self.policy.refuse(request)) is not None:
+            return reason
         host = _url_host(request.url)
         if host is not None and self.policy.needs_resolution(request):
             addresses = await _resolve_host(host)

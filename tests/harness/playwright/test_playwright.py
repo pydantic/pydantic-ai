@@ -1462,6 +1462,33 @@ class TestNameResolutionBlocking:
         assert isinstance(result, str) and not result.startswith('Error:')
         assert looked_up == []
 
+    async def test_a_host_outside_the_allowlist_is_not_resolved(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The allowlist answers this by name alone, so no lookup is needed to refuse it.
+        looked_up = self._pointing_at(monkeypatch, '93.184.216.34')
+        page = _FakePage()
+        result = await _toolset(page, allowed_domains=['example.com']).navigate('https://other.example/')
+        assert result == 'Error: domain not in allowed_domains: https://other.example/'
+        assert looked_up == []
+        assert page.goto_calls == []
+
+    async def test_the_route_guard_does_not_resolve_a_blocked_domain(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        looked_up = self._pointing_at(monkeypatch, '93.184.216.34')
+        page = _FakePage()
+        _install_fake_driver(monkeypatch, page)
+        browser = PlaywrightBrowser[object](policy=toolset_module.EgressPolicy(blocked_domains=['ads.example']))
+        await Agent(TestModel(call_tools=['screenshot']), capabilities=[browser]).run('use the browser')
+        host_page = _FakeRequestPage()
+        route = await page.context.dispatch(
+            _FakeRequest(
+                'http://cdn.ads.example/x.png',
+                navigation=False,
+                resource_type='image',
+                frame=host_page.main_frame,
+            )
+        )
+        assert route.aborted is True
+        assert looked_up == []
+
     async def test_an_address_is_not_resolved(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # The literal already answers the question; a lookup would be wasted.
         looked_up = self._pointing_at(monkeypatch, '93.184.216.34')
