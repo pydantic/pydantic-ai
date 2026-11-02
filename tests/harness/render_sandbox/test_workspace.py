@@ -199,7 +199,9 @@ async def test_readiness_polls_until_running(
     assert statuses == []
 
 
-@pytest.mark.parametrize('error', [ClientError('authentication rejected'), SandboxNotFoundError('gone')])
+@pytest.mark.parametrize(
+    'error', [ClientError('authentication rejected'), SandboxNotFoundError('gone')] if imports_successful() else []
+)
 async def test_terminal_errors_do_not_replay_commands(workspace_harness: WorkspaceHarness, error: Exception) -> None:
     backend = workspace_harness.backend()
     await backend.working_dir()
@@ -217,7 +219,9 @@ async def test_terminal_errors_do_not_replay_commands(workspace_harness: Workspa
         (TimeoutError('no response'), WorkspaceUnavailableError),
         (RateLimitError('try later'), RateLimitError),
         (ServerError('unavailable'), ServerError),
-    ],
+    ]
+    if imports_successful()
+    else [],
 )
 async def test_failed_create_lets_a_later_operation_create(
     workspace_harness: WorkspaceHarness, error: Exception, expected: type[Exception]
@@ -249,7 +253,11 @@ async def test_interrupted_stream_on_a_stopped_sandbox_is_unavailable(workspace_
 
 
 @pytest.mark.parametrize(
-    'probe_error', [RateLimitError('try later'), ServerError('status unavailable'), ClientError('denied')], ids=repr
+    'probe_error',
+    [RateLimitError('try later'), ServerError('status unavailable'), ClientError('denied')]
+    if imports_successful()
+    else [],
+    ids=repr,
 )
 async def test_failed_status_probe_reraises_the_stream_error(
     workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch, probe_error: Exception

@@ -255,7 +255,9 @@ async def test_new_cancellation_during_failure_cleanup_takes_priority(boundary: 
         await asyncio.gather(pending, return_exceptions=True)
 
 
-@pytest.mark.parametrize('failure', [ClientError('denied'), SandboxNotFoundError('gone')])
+@pytest.mark.parametrize(
+    'failure', [ClientError('denied'), SandboxNotFoundError('gone')] if imports_successful() else []
+)
 async def test_readiness_provider_error_retains_reference(boundary: ScriptedSDK, failure: Exception) -> None:
     boundary.status_script = [failure]
     backend = boundary.backend()
@@ -284,7 +286,9 @@ async def test_missing_sandbox_in_status_audit_is_unavailable(boundary: Scripted
         ('remote_timeout', WorkspaceTimeoutError),
         ('remote_limit', WorkspaceOutputLimitError),
         ('missing_cwd', WorkspaceUnavailableError),
-    ],
+    ]
+    if imports_successful()
+    else [],
 )
 async def test_supervisor_terminal_result_raises_without_a_stop(
     boundary: ScriptedSDK, scenario: str, error: type[Exception]
@@ -304,8 +308,10 @@ async def test_supervisor_terminal_result_raises_without_a_stop(
         (RateLimitError('429'), RateLimitError, ['run']),
         (ClientError('rejected'), WorkspaceUnavailableError, ['run']),
         (ClientError('lost'), WorkspaceUnavailableError, ['run', 'stop']),
-    ],
-    ids=['rate_limited', 'rejected', 'uncertain'],
+    ]
+    if imports_successful()
+    else [],
+    ids=['rate_limited', 'rejected', 'uncertain'] if imports_successful() else [],
 )
 async def test_stop_follows_an_exec_failure_only_when_the_command_may_have_started(
     boundary: ScriptedSDK, refusal: ClientError, error: type[Exception], operations: list[str]

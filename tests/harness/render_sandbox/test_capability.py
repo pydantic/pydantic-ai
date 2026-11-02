@@ -127,7 +127,9 @@ async def test_destroy_terminates_by_id_and_treats_a_missing_sandbox_as_gone(
         (ClientError('denied'), WorkspaceUnavailableError),
         (RateLimitError('try later'), RateLimitError),
         (ServerError('transient'), ServerError),
-    ],
+    ]
+    if imports_successful()
+    else [],
     ids=repr,
 )
 async def test_destroy_maps_a_rejection_and_propagates_transient_errors(

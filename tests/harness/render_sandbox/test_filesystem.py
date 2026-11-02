@@ -80,7 +80,9 @@ async def test_overwrite_preserves_mode_and_dangling_symlink(
         (SandboxDownloadError('unsafe archive'), WorkspaceError),
         (ServerError('transient'), ServerError),
         (TimeoutError('deadline'), WorkspaceTimeoutError),
-    ],
+    ]
+    if imports_successful()
+    else [],
     ids=repr,
 )
 async def test_sdk_errors_are_not_replayed(
