@@ -8,7 +8,7 @@ import pytest
 
 from pydantic_ai import Agent, ModelMessage, ModelRequest, NativeToolCallPart, NativeToolReturnPart, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool
+from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool, WebSearchTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 
 from ..._inline_snapshot import snapshot
@@ -36,7 +36,7 @@ with try_import() as imports_successful:
     )
     from anthropic.types.beta.beta_raw_message_delta_event import Delta
 
-    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 pytestmark = [
@@ -108,6 +108,38 @@ def _server_tool_stream(
     ]
 
 
+async def _server_tool_calls_kept(
+    stream: bool,
+    server_tool_name: ServerToolName,
+    input: dict[str, object],
+    input_delta: str,
+    native_tools: list[AbstractNativeTool],
+    model_settings: AnthropicModelSettings | None,
+) -> list[NativeToolCallPart]:
+    """The server-tool calls left in a response to a request with `native_tools`, out of one call to `server_tool_name`."""
+    if stream:
+        mock_client = MockAnthropic.create_stream_mock(_server_tool_stream(server_tool_name, input_delta))
+    else:
+        response = completion_message(
+            [_server_tool_call(server_tool_name, input)], BetaUsage(input_tokens=1, output_tokens=1)
+        )
+        mock_client = MockAnthropic.create_mock(response)
+
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='hello')])]
+    request_parameters = ModelRequestParameters(native_tools=native_tools)
+
+    if stream:
+        async with model.request_stream(messages, model_settings, request_parameters) as streamed_response:
+            async for _ in streamed_response:
+                pass
+            model_response = streamed_response.get()
+    else:
+        model_response = await model.request(messages, model_settings, request_parameters)
+
+    return [part for part in model_response.parts if isinstance(part, NativeToolCallPart)]
+
+
 @pytest.mark.parametrize('stream', [False, True])
 @pytest.mark.parametrize(
     ('server_tool_name', 'input', 'input_delta', 'native_tools', 'expected_call'),
@@ -158,32 +190,66 @@ async def test_anthropic_filters_unconfigured_native_tool_calls(
     expected_call: bool,
 ):
     """Unit test because an unconfigured server-tool call cannot be requested reliably from the live API."""
-    if stream:
-        mock_client = MockAnthropic.create_stream_mock(_server_tool_stream(server_tool_name, input_delta))
-    else:
-        response = completion_message(
-            [_server_tool_call(server_tool_name, input)], BetaUsage(input_tokens=1, output_tokens=1)
-        )
-        mock_client = MockAnthropic.create_mock(response)
-
-    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
-    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='hello')])]
-    request_parameters = ModelRequestParameters(native_tools=native_tools)
-
-    if stream:
-        async with model.request_stream(messages, None, request_parameters) as streamed_response:
-            async for _ in streamed_response:
-                pass
-            model_response = streamed_response.get()
-    else:
-        model_response = await model.request(messages, None, request_parameters)
-
-    calls = [part for part in model_response.parts if isinstance(part, NativeToolCallPart)]
+    calls = await _server_tool_calls_kept(stream, server_tool_name, input, input_delta, native_tools, None)
     assert bool(calls) is expected_call
     if expected_call:
         assert calls[0].tool_name == 'code_execution'
         assert calls[0].tool_call_id == _TOOL_CALL_ID
         assert calls[0].args_as_dict() == {'code': 'print(1)'}
+
+
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize(
+    ('native_tools', 'model_settings', 'expected_call'),
+    [
+        pytest.param(
+            [WebFetchTool()],
+            {'anthropic_web_tools_allowed_callers': ['direct']},
+            False,
+            id='setting-direct',
+        ),
+        pytest.param(
+            [WebFetchTool()],
+            {'anthropic_web_tools_allowed_callers': ['code_execution_20260120']},
+            True,
+            id='setting-code-execution',
+        ),
+        pytest.param(
+            [WebSearchTool(), CodeExecutionTool()],
+            {'anthropic_web_tools_allowed_callers': ['direct']},
+            True,
+            id='setting-direct-with-code-execution-tool',
+        ),
+        pytest.param(
+            [WebFetchTool()],
+            {
+                'anthropic_web_tools_allowed_callers': ['direct'],
+                'extra_body': {'tools': [{'type': 'code_execution_20250825', 'name': 'code_execution'}]},
+            },
+            True,
+            id='extra-body-tools-setting-not-applied',
+        ),
+    ],
+)
+async def test_anthropic_web_tool_callers_gate_implicit_code_execution(
+    allow_model_requests: None,
+    stream: bool,
+    native_tools: list[AbstractNativeTool],
+    model_settings: AnthropicModelSettings,
+    expected_call: bool,
+):
+    """`code_execution` is implicitly enabled by the web tools only while one of them allows a code execution caller.
+
+    `extra_body['tools']` replaces the built tools on the wire, so a request that has it keeps the filter it has
+    without the setting.
+
+    Unit test because a sandbox `code_execution` call can't be requested reliably from the live API when the web tools
+    only allow direct calls.
+    """
+    calls = await _server_tool_calls_kept(
+        stream, 'code_execution', {'code': 'print(1)'}, '{"code":"print(1)"}', native_tools, model_settings
+    )
+    assert [call.tool_name for call in calls] == (['code_execution'] if expected_call else [])
 
 
 async def test_anthropic_keeps_server_tool_call_with_matching_result(allow_model_requests: None):
