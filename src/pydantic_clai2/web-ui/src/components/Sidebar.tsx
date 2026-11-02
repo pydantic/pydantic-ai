@@ -505,7 +505,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
           className="project-title"
           onClick={() => toggle(section.key, closed)}
           aria-expanded={!closed}
-          title={removed ? 'Sessions whose folder is gone' : section.key.includes('\0') ? undefined : section.key}
+          title={removed ? 'Sessions whose folder is gone' : (section.folder ?? undefined)}
         >
           {removed ? <ArchiveIcon size={14} /> : <FolderIcon size={14} />}
           <span className="project-name">{section.name}</span>

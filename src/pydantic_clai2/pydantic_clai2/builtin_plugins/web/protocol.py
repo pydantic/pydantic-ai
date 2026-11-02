@@ -927,6 +927,8 @@ class Project:
     """Saved sessions grouped by repository, then by checkout, as the `/resume` browser groups them."""
 
     key: str
+    folder: str | None
+    """Its main checkout's folder; `None` for Removed folders."""
     name: str
     """Its folder's name, or the shortest end of its path no other listed project of that name shares."""
     current: bool

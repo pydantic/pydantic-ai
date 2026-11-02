@@ -374,6 +374,43 @@ async def test_sidebar_search_accessible_name(page: Page, web_ui: WebUI) -> None
     await expect(sidebar.get_by_text('Browser Alpha', exact=True)).to_have_count(0)
 
 
+async def test_project_heading_title_is_its_folder(page: Page, web_ui: WebUI) -> None:
+    """A repository's heading shows its main checkout's folder, not the Git folder that keys it."""
+    session = {
+        'id': 's',
+        'title': 'Scratch work',
+        'workspace': '/x/scratch',
+        'updated_at': '2026-01-01T00:00:00Z',
+        'created_at': '2026-01-01T00:00:00Z',
+        'state': 'ready',
+        'owner_pid': None,
+        'messages': 2,
+        'model': None,
+        'current': False,
+        'archived': False,
+        'openable': True,
+    }
+    worktree = {'root': '/x/scratch', 'label': 'main', 'current': True, 'missing': False, 'sessions': [session]}
+
+    async def sessions(route: Route) -> None:
+        await route.fulfill(
+            json=[
+                {
+                    'key': '/x/scratch/.git',
+                    'folder': '/x/scratch',
+                    'name': 'scratch',
+                    'current': True,
+                    'worktrees': [worktree],
+                }
+            ]
+        )
+
+    await page.route('**/api/sessions?*', sessions)
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    heading = page.locator('.sidebar .project-title').filter(has_text='scratch')
+    await expect(heading).to_have_attribute('title', '/x/scratch')
+
+
 async def test_removed_worktrees_fold_after_live_ones_and_archive_as_a_group(page: Page, web_ui: WebUI) -> None:
     """Sessions of removed worktrees wait, closed, in one group after the live ones; a branch archives at once."""
 
