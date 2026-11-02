@@ -9,10 +9,12 @@ from __future__ import annotations
 from typing import Any, cast
 
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.workspaces import Click, TypeText
 from pydantic_ai_harness.computer_use import ComputerUse
+from tests.models.conftest import content_blocks
 
 from ...conftest import RequestCapture, try_import
 from ...workspace_fakes import InMemoryProvider
@@ -98,16 +100,6 @@ def _tools(body: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def _results(body: dict[str, Any]) -> list[dict[str, Any]]:
-    return [
-        block
-        for message in cast(list[dict[str, Any]], body['messages'])
-        if isinstance(message['content'], list)
-        for block in cast(list[dict[str, Any]], message['content'])
-        if block.get('type') == 'tool_result'
-    ]
-
-
 @needs_anthropic
 @pytest.mark.vcr
 async def test_claude_drives_the_screen_through_the_computer_toolset(
@@ -121,9 +113,15 @@ async def test_claude_drives_the_screen_through_the_computer_toolset(
     first, *_, last = request_capture.bodies('/v1/messages')
     # The capability's `computer` tool went out as Claude's toolset, which has no name or schema of ours.
     assert _tools(first) == [{'type': 'computer_toolset_20260801'}]
-    # Every member call got its own result, in the toolset.
-    results = _results(last)
-    assert results and all(result['toolset_name'] == 'computer' for result in results)
+    # Every member call got its own result, in order and in the toolset: `OK` on each that ran, and the screenshot on
+    # the last of a turn's calls.
+    calls = content_blocks(last, 'tool_use')
+    results = content_blocks(last, 'tool_result')
+    assert [result['tool_use_id'] for result in results] == [call['id'] for call in calls]
+    assert all(result['toolset_name'] == 'computer' for result in results)
+    assert [
+        [cast(dict[str, Any], block)['type'] for block in cast(list[Any], result['content'])] for result in results
+    ] == snapshot([['text'], ['text'], ['text', 'image']])
 
 
 @needs_anthropic
