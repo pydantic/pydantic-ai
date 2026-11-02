@@ -261,7 +261,7 @@ class IPythonKernel:
     _manager: _KernelManager | None = field(default=None, init=False, repr=False)
     _client: AsyncKernelClient | None = field(default=None, init=False, repr=False)
     _context: zmq.asyncio.Context | None = field(default=None, init=False, repr=False)
-    _process_stopped: anyio.Event | None = field(default=None, init=False, repr=False)
+    _process_stopping: anyio.Event | None = field(default=None, init=False, repr=False)
     _token: str = field(default='', init=False, repr=False)
 
     async def __aenter__(self) -> Self:
@@ -314,19 +314,20 @@ class IPythonKernel:
             await self._stop_process(self._manager)
 
     async def _stop_process(self, manager: _KernelManager) -> None:
-        """Kill the kernel process, once.
+        """Kill the kernel process, or wait for the kill already in progress.
 
         `shutdown()` and the run holding the lock can both stop the same process at once, and jupyter-client
-        fails a `shutdown_kernel()` that overlaps another, so the later caller waits for the first instead.
+        fails a `shutdown_kernel()` that overlaps another.
         """
-        if self._process_stopped is not None:
-            await self._process_stopped.wait()
+        if (stopping := self._process_stopping) is not None:
+            await stopping.wait()
             return
-        self._process_stopped = stopped = anyio.Event()
+        self._process_stopping = stopping = anyio.Event()
         try:
             await manager.shutdown_kernel(now=True)
         finally:
-            stopped.set()
+            self._process_stopping = None
+            stopping.set()
 
     @cached_property
     def _lock(self) -> anyio.Lock:
@@ -348,7 +349,6 @@ class IPythonKernel:
         client = manager.client(context=context)
         client.start_channels()
         self._manager, self._client, self._context = manager, client, context
-        self._process_stopped = None
         self._token = f'\x00pydantic-ai-tool-call:{secrets.token_hex(16)}\x00'
         try:
             await client.wait_for_ready(timeout=self.startup_timeout)

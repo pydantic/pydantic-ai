@@ -48,6 +48,9 @@ with try_import() as imports_successful:
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='jupyter-client not installed')
 
+_READY_TIMEOUT = 30
+"""Seconds a test waits for a kernel to reach the step it is ordered on."""
+
 _PNG = base64.b64decode(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
 )
@@ -660,7 +663,8 @@ class TestIPythonCodeModeKernelLifecycle:
 
         async def held_cleanup_resources(manager: AsyncKernelManager, restart: bool = False) -> None:
             # Holds `shutdown()`'s kill open until the run's cell finds the process gone and stops it too.
-            await found_gone.wait()
+            with anyio.fail_after(_READY_TIMEOUT):
+                await found_gone.wait()
             await cleanup_resources(manager, restart=restart)
 
         monkeypatch.setattr(AsyncKernelManager, 'is_alive', watched_is_alive)
