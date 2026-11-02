@@ -384,12 +384,15 @@ class InMemoryProvider:
         self.directories: dict[str, set[str]] = {}
         self.log: list[str] = []
         self.actions: list[ComputerAction] = []
+        # Set to lose the worker just after the next action takes effect, on whichever backend serves it.
+        self.lose_next_action = False
 
     def reset(self) -> None:
         self.environments.clear()
         self.directories.clear()
         self.log.clear()
         self.actions.clear()
+        self.lose_next_action = False
 
     def backend(self, ref: WorkspaceRef | None) -> ProviderBackend:
         return ProviderBackend(self, ref)
@@ -516,6 +519,9 @@ class ProviderBackend(
         if action.type not in {'click', 'move', 'drag', 'mouse_down', 'mouse_up', 'scroll', 'type', 'keypress'}:
             raise WorkspaceUnsupportedActionError(f'the fake display cannot perform {action.type!r}')
         self._provider.actions.append(action)
+        if self._provider.lose_next_action:
+            self._provider.lose_next_action = False
+            raise RuntimeError('the worker was lost')
 
     async def zoom(self, region: Region) -> bytes:
         await self._display_call()
