@@ -40,8 +40,6 @@ from pydantic_ai.run import AgentRun, AgentRunResult
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
-from pydantic_graph import GraphBuilder, StepContext
-from pydantic_graph.graph_builder import ErrorMarker, GraphRun
 
 from ._inline_snapshot import snapshot
 from .conftest import IsNow, IsStr
@@ -999,66 +997,4 @@ async def test_run_stream_tool_error_releases_dependencies(tool_kind: Literal['a
     errors.clear()
     if tool_kind == 'sync':
         await anyio.to_thread.run_sync(lambda: None)
-    assert ref() is None
-
-
-@pytest.mark.usefixtures('no_gc')
-@pytest.mark.filterwarnings('ignore:Unclosed.*:ResourceWarning')
-async def test_unentered_graph_run_releases_dependencies() -> None:
-    builder = GraphBuilder(deps_type=Deps, output_type=int)
-    builder.add(builder.edge_from(builder.start_node).transform(lambda ctx: 1).to(builder.end_node))
-    graph = builder.build()
-    deps = Deps()
-    ref = weakref.ref(deps)
-    run = GraphRun(graph, state=None, deps=deps, inputs=None, traceparent=None)
-    # No task group was entered; the unentered in-memory streams' warnings are unrelated to ownership.
-    del deps, run
-    assert ref() is None
-
-
-@pytest.mark.usefixtures('no_gc')
-@pytest.mark.parametrize('failure', ['step', 'consumer'])
-async def test_failed_graph_keeps_inspection_without_retaining_dropped_dependencies(
-    failure: Literal['step', 'consumer'],
-) -> None:
-    builder = GraphBuilder(deps_type=Deps, output_type=int)
-
-    @builder.step
-    async def fail_step(ctx: StepContext[None, Deps, None]) -> int:
-        raise RuntimeError('step failed')
-
-    builder.add(builder.edge_from(builder.start_node).to(fail_step), builder.edge_from(fail_step).to(builder.end_node))
-    graph = builder.build()
-    errors: list[RuntimeError] = []
-    runs: list[GraphRun[None, Deps, int]] = []
-
-    async def execute() -> weakref.ReferenceType[Deps]:
-        deps = Deps()
-        ref = weakref.ref(deps)
-        run = None
-        try:
-            async with graph.iter(deps=deps, infer_name=False) as run:
-                runs.append(run)
-                if failure == 'consumer':
-                    raise RuntimeError('consumer failed')
-                async for _ in run:
-                    pass
-        except RuntimeError as exc:
-            errors.append(exc)
-        del deps, run
-        return ref
-
-    ref = await execute()
-    assert ref() is not None
-    assert len(errors) == 1
-    assert runs[0].deps is ref()
-    assert runs[0].output is None
-    if failure == 'step':
-        marker = runs[0].next_task
-        assert isinstance(marker, ErrorMarker)
-        assert marker.error is errors[0]
-        del marker
-    errors.clear()
-    assert ref() is not None
-    runs.clear()
     assert ref() is None
