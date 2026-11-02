@@ -18,7 +18,7 @@ from typing import Any
 import httpx2
 import pytest
 
-from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolReturn
+from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, NativeToolReturnPart, TextPart, ToolReturn
 from pydantic_ai.exceptions import ModelHTTPError
 
 from ...conftest import try_import
@@ -323,3 +323,20 @@ async def test_application_metadata_is_not_digested(allow_model_requests: None):
         await agent.run('Thanks', message_history=history)
 
     assert [body['thread']['type'] for body in api.bodies] == ['create', 'continue', 'continue']
+
+
+def test_response_part_metadata_is_not_digested():
+    """Response parts' `metadata` is left out of the digest too, even when it isn't JSON.
+
+    A unit test, as a native tool return with application metadata needs a server tool turn to reach the history.
+    """
+    from pydantic_ai.models.anthropic import _thread_key  # pyright: ignore[reportPrivateUsage]
+
+    part = NativeToolReturnPart(tool_name='web_search', content='ok', provider_name='anthropic')
+    request = ModelRequest.user_text_prompt('Hi')
+    response = ModelResponse(parts=[part], provider_name='anthropic')
+
+    def history(metadata: dict[str, Any] | None) -> list[ModelMessage]:
+        return [request, replace(response, parts=[replace(part, metadata=metadata)])]
+
+    assert _thread_key('f', history({'handle': object()})) == _thread_key('f', history(None))

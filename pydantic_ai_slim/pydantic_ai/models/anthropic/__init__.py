@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from functools import cached_property
 from itertools import chain
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, assert_never, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, TypeVar, assert_never, cast, overload
 
 from typing_extensions import TypedDict
 
@@ -959,7 +959,7 @@ def _thread_key(fingerprint: str, history: Sequence[ModelMessage]) -> str:
     The thread holds that history as it was sent, so if a history processor or the application changed it since,
     the key no longer matches and a new thread is started with the history as it is now.
     ponytail: digests the whole history once per request, fine next to mapping it; edits to the response itself
-    aren't caught, add its parts once a response can be digested as sent (see `history_digest` in `openai.py`).
+    aren't caught (only the history before it is digested), add its parts once a response can be digested as sent (see `history_digest` in `openai.py`).
     """
     hasher = hashlib.sha256(fingerprint.encode())
     hasher.update(ModelMessagesTypeAdapter.dump_json([_as_sent(m) for m in history], exclude_none=True))
@@ -975,10 +975,13 @@ def _as_sent(message: ModelMessage) -> ModelMessage:
     if isinstance(message, ModelRequest):
         parts = [_part_as_sent(part) for part in message.parts]
         return replace(message, parts=parts, metadata=None, instructions=None)
-    return replace(message, metadata=None)
+    return replace(message, parts=[_part_as_sent(part) for part in message.parts], metadata=None)
 
 
-def _part_as_sent(part: ModelRequestPart) -> ModelRequestPart:
+_PartT = TypeVar('_PartT', ModelRequestPart, ModelResponsePart)
+
+
+def _part_as_sent(part: _PartT) -> _PartT:
     if isinstance(part, BaseToolReturnPart):
         return replace(part, metadata=None)
     if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
