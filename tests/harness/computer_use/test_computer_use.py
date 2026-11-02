@@ -52,6 +52,7 @@ from pydantic_ai.workspaces import (
 from pydantic_ai_harness.compaction import ClampOversizedMessages
 from pydantic_ai_harness.computer_use import ComputerUse
 from tests.function_model_prefix import HOOK_REWRITES_REQUEST
+from tests.harness._recording_durability import RecordingDurability
 
 from ...workspace_fakes import (
     FAKE_SCREENSHOT,
@@ -62,6 +63,15 @@ from ...workspace_fakes import (
 )
 
 SCREENSHOT = BinaryImage(data=FAKE_SCREENSHOT, media_type='image/png')
+
+READY_TIMEOUT = 5
+"""How long a test waits for another run to reach a step, so a run that never gets there fails the test."""
+
+
+@pytest.fixture(params=['in-process', 'durable'])
+def durability(request: pytest.FixtureRequest) -> list[AbstractCapability[Any]]:
+    """Nothing, or a durability that runs each `computer` call as one durable unit in this process."""
+    return [RecordingDurability()] if request.param == 'durable' else []
 
 
 def _scripted(
@@ -490,7 +500,9 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         ],
         ids=['act', 'look', 'size'],
     )
-    async def test_an_environment_that_goes_away_mid_run_ends_it(self, actions: list[dict[str, Any]]) -> None:
+    async def test_an_environment_that_goes_away_mid_run_ends_it(
+        self, actions: list[dict[str, Any]], durability: list[AbstractCapability[Any]]
+    ) -> None:
         class Vanishing(ProviderBackend):
             """Gone once the run has started: the first read of the display size works, nothing after it does."""
 
@@ -512,7 +524,11 @@ You can see and control a computer screen with the `computer` tool. Each call ru
             def backend(self, ref: WorkspaceRef | None) -> ProviderBackend:
                 return Vanishing(self, ref)
 
-        agent = Agent(_scripted(actions), capabilities=[Provider().capability(), ComputerUse(settle_seconds=0)])
+        agent = Agent(
+            _scripted(actions),
+            name='computer',
+            capabilities=[Provider().capability(), ComputerUse(settle_seconds=0), *durability],
+        )
         with pytest.raises(WorkspaceUnavailableError, match='the environment is gone'):
             await agent.run('Go.')
 
@@ -588,16 +604,67 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         ],
     )
     async def test_a_position_off_the_screen_fails_the_call_before_anything_runs(
-        self, actions: list[dict[str, Any]], profile: ModelProfile, message: str
+        self,
+        actions: list[dict[str, Any]],
+        profile: ModelProfile,
+        message: str,
+        durability: list[AbstractCapability[Any]],
     ) -> None:
         # The display would otherwise move the pointer to its edge and click there.
         provider = InMemoryProvider()
-        agent = Agent(_scripted(actions, profile=profile), capabilities=[provider.capability(), ComputerUse()])
+        agent = Agent(
+            _scripted(actions, profile=profile),
+            name='computer',
+            capabilities=[provider.capability(), ComputerUse(), *durability],
+        )
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
         assert tool_return.outcome == 'failed'
         assert tool_return.content == message
         assert provider.actions == []
+
+    async def test_a_durable_call_that_did_not_finish_says_some_of_its_actions_may_have_run(self) -> None:
+        # The unit failed, timed out or lost its worker, after any number of its actions.
+        durability = RecordingDurability(fail_operations=frozenset({'computer__capability__computer.call'}))
+        agent = Agent(
+            _scripted([{'type': 'click', 'x': 1, 'y': 1}]),
+            name='computer',
+            capabilities=[InMemoryProvider().capability(), ComputerUse(settle_seconds=0), durability],
+        )
+        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
+
+        assert tool_return.outcome == 'failed'
+        assert tool_return.content == (
+            'The call was interrupted before it finished, so some of its actions may have run. Take a screenshot '
+            'before acting again.'
+        )
+
+    @pytest.mark.parametrize(
+        'where, message',
+        [('the-engine', r'computer\.call failed'), ('the-display', 'the display is misconfigured')],
+    )
+    async def test_a_configuration_error_ends_a_durable_run(self, where: str, message: str) -> None:
+        # Rather than telling the model to look again, which would meet the same error.
+        class Misconfigured(ProviderBackend):
+            async def display_size(self) -> tuple[int, int]:
+                raise UserError('the display is misconfigured')
+
+        class Provider(InMemoryProvider):
+            def backend(self, ref: WorkspaceRef | None) -> ProviderBackend:
+                return Misconfigured(self, ref) if where == 'the-display' else super().backend(ref)
+
+        # As DBOS or Prefect refuse a unit in this process, such as for a model they don't know.
+        durability = RecordingDurability(
+            fail_operations=frozenset({'computer__capability__computer.call'} if where == 'the-engine' else ()),
+            failure=UserError,
+        )
+        agent = Agent(
+            _scripted([{'type': 'click', 'x': 1, 'y': 1}]),
+            name='computer',
+            capabilities=[Provider().capability(), ComputerUse(settle_seconds=0), durability],
+        )
+        with pytest.raises(UserError, match=message):
+            await agent.run('Go.')
 
     def test_keep_screenshots_is_checked(self) -> None:
         with pytest.raises(UserError, match='`keep_screenshots` must be at least 1'):
@@ -767,7 +834,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
                 if action == Click(x=1, y=1):
                     holding.set()
                     # True only if the second run acted while this one held its turn.
-                    waited.append(await anyio.to_thread.run_sync(second_acted.wait, 5))
+                    waited.append(await anyio.to_thread.run_sync(second_acted.wait, READY_TIMEOUT))
                 else:
                     second_acted.set()
 
@@ -786,11 +853,11 @@ You can see and control a computer screen with the `computer` tool. Each call ru
 
         first = threading.Thread(target=run, args=(1,), daemon=True)
         first.start()
-        holding.wait(5)
+        holding.wait(READY_TIMEOUT)
         second = threading.Thread(target=run, args=(2,), daemon=True)
         second.start()
         for thread in (first, second):
-            thread.join(10)
+            thread.join(2 * READY_TIMEOUT)
 
         assert outputs == ['done', 'done']
         assert waited == [True]
@@ -804,7 +871,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
                 await super().act(action)
                 if action == Click(x=1, y=1):
                     first_acting.set()
-                    with anyio.move_on_after(5) as scope:
+                    with anyio.move_on_after(READY_TIMEOUT) as scope:
                         await second_acted.wait()
                     # True only if the second run acted while this one held its own screen.
                     waited.append(not scope.cancelled_caught)
@@ -826,7 +893,8 @@ You can see and control a computer screen with the `computer` tool. Each call ru
 
         async with anyio.create_task_group() as tasks:
             tasks.start_soon(run, 1)
-            await first_acting.wait()
+            with anyio.fail_after(READY_TIMEOUT):
+                await first_acting.wait()
             tasks.start_soon(run, 2)
 
         assert len(provider.environments) == 2
