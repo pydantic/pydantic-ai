@@ -3,8 +3,9 @@
 Inside a durable container, [`RunContext.workspace`][pydantic_ai.tools.RunContext.workspace] is a
 `DurableWorkspace`: every call made in workflow code (capability hooks, output functions,
 `result.workspace`) runs as the durability capability's workspace operation, so it is journaled and
-never repeated on replay. Display calls other than `display_size` raise a `UserError` there instead. Inside a durable unit (a tool, a `@durable_operation`) calls go straight to
-the workspace, rebuilt from the run's `WorkspaceRef`.
+never repeated on replay. Display calls other than `display_size` raise a `UserError` there instead.
+Inside a durable unit (a tool, a `@durable_operation`) calls go straight to the workspace, rebuilt from
+the run's `WorkspaceRef`.
 
 An `ensure` call runs first, once per run: it creates or attaches to the environment and journals its
 ref and working directory, so every later unit, parallel tools included, reattaches to that one
@@ -75,7 +76,8 @@ _JOURNAL_CONFIG = ConfigDict(ser_json_bytes='base64', val_json_bytes='base64', e
 
 # Of the display methods only `display_size` is journaled, for code such as a tool's `prepare` that reads it in
 # workflow code. The rest run inside a durable unit, such as a capability running each tool call that clicks and
-# looks as one `@durable_operation`, so a display fact added later never adds a journaled step that recorded histories lack.
+# looks as one `@durable_operation`, so a display fact added later never adds a journaled step that recorded
+# histories lack.
 WorkspaceMethod: TypeAlias = Literal[
     'ensure',
     'run',
@@ -89,6 +91,7 @@ WorkspaceMethod: TypeAlias = Literal[
     'realpath',
     'display_size',
 ]
+
 
 @pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
 class WorkspaceCallError:
