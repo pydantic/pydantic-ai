@@ -167,6 +167,35 @@ if __name__ == '__main__':
 
 The `finally` removes the container even when setup or the run fails. To keep it instead, store `backend.ref` and pass it as `workspace=` to reattach later. `DockerSandbox`'s settings don't apply to a backend you pass as `workspace=`; give the backend its own.
 
+## Give the agent a desktop
+
+Pass `desktop=True` for a container with a screen, which [`ComputerUse`](../computer_use/) lets the agent see and control:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import ComputerUse
+from pydantic_ai_harness.docker_sandbox import DockerSandbox
+
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[DockerSandbox(desktop=True), ComputerUse()])
+
+
+async def main():
+    result = await agent.run('Open Firefox and find the current Python release on python.org.')
+    print(result.output)
+```
+
+Without an `image`, the first run builds one from `DESKTOP_DOCKERFILE` (Debian, a window manager, Firefox and a terminal), and later runs reuse it. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. An existing container whose screen is already running keeps its size. The agent also gets the container's shell and files, so `Coder` and `ComputerUse` can share it.
+
+A custom `image` needs Xvfb, `xdotool`, `xmodmap`, `scrot` and `setsid`, plus `fluxbox` and `xprop` for a window manager. Start from `DESKTOP_DOCKERFILE`.
+
+There's no live viewer. To watch a run, save each screenshot as it arrives; see [Watching a run](../computer_use/#watching-a-run).
+
+Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), build the image before the first run and pass it as `image`, so the build doesn't count against a step's timeout:
+
+```bash
+python -c "from pydantic_ai_harness.docker_sandbox import DESKTOP_DOCKERFILE; print(DESKTOP_DOCKERFILE)" | docker build --tag my-desktop -
+```
+
 ## Clean up
 
 A run never removes its container. Remove it, with its anonymous volumes, with the ref you stored:
@@ -213,12 +242,13 @@ A container shares your machine's kernel, so it is a weaker boundary than a VM s
 
 | Option | What it does |
 | --- | --- |
-| `image` | Image for a new container, such as `'python:3.13-slim'`. Default: `None`, which only attaches to and removes containers by ref. |
+| `image` | Image for a new container, such as `'python:3.13-slim'`. Default: `None`, which only attaches to and removes containers by ref, or with `desktop=True` builds the desktop image. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against, created on first use if missing. Default: `/workspace`; `None` uses the image's own (`WORKDIR`, or `/`). |
 | `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing from your machine's environment reaches the container except Docker's proxy settings, and `env` is kept out of the capability's `repr`, but the agent's commands can read it. |
 | `allow_internet_access` | Whether a new container gets outbound network access, through Docker's default bridge. Default: `True`; `False` runs it with `--network none`. |
 | `docker_args` | Extra `docker run` arguments for a new container, such as mounts, `--memory` or `--user`; a `--pids-limit` here replaces the default of 2048. Default: `()`. |
 | `executable` | The container CLI to run, such as `'podman'`, looked up on `PATH` when the capability is created. Default: `'docker'`. |
+| `desktop` | Give the container a graphical display for [`ComputerUse`](../computer_use/): `True` for 1280x800, or its `(width, height)`. Without an `image`, builds the desktop image on first use. Default: `False`. |
 
 ## Platforms
 

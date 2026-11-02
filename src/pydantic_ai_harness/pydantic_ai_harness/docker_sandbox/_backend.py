@@ -22,12 +22,15 @@ as is and once with `PYDANTIC_AI_HARNESS_DOCKER_EXECUTABLE=podman`:
 
 from __future__ import annotations as _annotations
 
+import hashlib
 import os
 import posixpath
 import re
 import secrets
 import shutil
+import tempfile
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Literal
 
 import anyio
@@ -36,6 +39,7 @@ from pydantic_ai.workspaces import (
     CommandResult,
     LocalWorkspaceBackend,
     SupportsCommands,
+    SupportsDisplay,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
@@ -44,9 +48,12 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness._display import ManagedDisplay, desktop_size
 from pydantic_ai_harness._workspace_provider import check_timeout, command_argv, stop_shielded
 
-__all__ = ('DockerSandboxBackend', 'remove_container')
+from ._x11 import DISPLAY, RECORD_START, x11_display
+
+__all__ = ('DESKTOP_DOCKERFILE', 'DockerSandboxBackend', 'remove_container')
 
 PROVIDER = 'docker'
 
@@ -205,7 +212,85 @@ async def remove_container(name: str, *, executable: str = 'docker') -> None:
         raise WorkspaceError(f'could not remove container {name}: {result.stderr.strip()}')
 
 
-class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
+DESKTOP_DOCKERFILE = """\
+FROM debian:bookworm-slim
+RUN apt-get update \\
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\
+        xvfb xdotool x11-xserver-utils x11-utils scrot fluxbox tint2 xterm firefox-esr \\
+        fonts-dejavu-core fonts-wqy-microhei fonts-noto-color-emoji ca-certificates \\
+    && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /usr/lib/firefox-esr/distribution /root/.fluxbox /root/.config/tint2 \\
+    && printf '%s\\n' '{"policies": {"OverrideFirstRunPage": "", "OverridePostUpdatePage": "", "DontCheckDefaultBrowser": true, "DisableTelemetry": true, "DisplayBookmarksToolbar": "never", "UserMessaging": {"SkipOnboarding": true, "MoreFromMozilla": false, "FeatureRecommendations": false, "ExtensionRecommendations": false}, "FirefoxHome": {"SponsoredTopSites": false, "SponsoredPocket": false, "Pocket": false, "Highlights": false, "Snippets": false}, "Preferences": {"datareporting.policy.dataSubmissionPolicyBypassNotification": {"Value": true, "Status": "locked"}, "browser.newtabpage.activity-stream.showWeather": {"Value": false, "Status": "locked"}, "browser.sessionstore.resume_from_crash": {"Value": false, "Status": "locked"}}}}' > /usr/lib/firefox-esr/distribution/policies.json \\
+    && printf '%s\\n' 'session.screen0.toolbar.visible: false' > /root/.fluxbox/init \\
+    && printf '%s\\n' '[app] (class=firefox-esr)' '  [Maximized] {yes}' '[end]' \\
+        '[app] (class=XTerm)' '  [Maximized] {yes}' '[end]' > /root/.fluxbox/apps \\
+    && printf '%s\\n' 'rounded = 0' 'border_width = 0' 'background_color = #2b2b2b 100' \\
+        'border_color = #2b2b2b 0' 'panel_items = LT' 'panel_position = bottom left horizontal' \\
+        'panel_size = 100% 40' 'panel_padding = 4 4 6' 'panel_background_id = 1' 'panel_layer = top' \\
+        'strut_policy = follow_size' 'launcher_icon_size = 32' 'launcher_padding = 2 4 8' \\
+        'launcher_item_app = /usr/share/applications/firefox-esr.desktop' \\
+        'launcher_item_app = /usr/share/applications/debian-xterm.desktop' \\
+        'taskbar_padding = 2 2 4' 'task_text = 1' 'task_icon = 1' 'task_font_color = #ffffff 100' \\
+        'task_maximum_size = 220 34' > /root/.config/tint2/tint2rc
+# fluxbox's wallpaper helper finds no wallpaper setter and says so in an `xmessage` window on every start.
+RUN rm -f /usr/bin/xmessage
+ENV LANG=C.UTF-8
+"""
+"""The image `DockerSandbox(desktop=True)` builds on first use: an X server, a window manager, a panel that launches
+Firefox and a terminal, and fonts for most scripts and emoji. Firefox starts without first-run pages, and new
+windows fill the screen."""
+
+_DESKTOP_IMAGE = f'pydantic-ai-desktop:{hashlib.sha256(DESKTOP_DOCKERFILE.encode()).hexdigest()[:12]}'
+
+
+_X_LOCK = f'/tmp/.X{DISPLAY[1:]}-lock'
+_X_SOCKET = f'/tmp/.X11-unix/X{DISPLAY[1:]}'
+
+_START_DESKTOP = (
+    'if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '
+    # A lock left by an X server that's gone, such as after `docker stop`, stops Xvfb starting when its PID now
+    # belongs to another process. A running X server's lock stays, whichever server it is, such as `Xvnc`.
+    f'case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in X*) ;; '
+    f'*) rm -f {_X_LOCK} {_X_SOCKET} ;; esac; '
+    f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp >/dev/null 2>{_PID_DIR}/xvfb.log & xvfb=$!; i=0; '
+    'until xdotool getdisplaygeometry >/dev/null 2>&1; do '
+    'if ! kill -0 $xvfb 2>/dev/null || [ $i -ge 100 ]; then '
+    f"echo 'the X server did not start:' >&2; tail -n 5 {_PID_DIR}/xvfb.log >&2; exit 1; fi; "
+    'sleep 0.1; i=$((i+1)); done; '
+    f'{RECORD_START}setsid tint2 >/dev/null 2>&1 & fi; '
+    'setsid fluxbox >/dev/null 2>&1 & wm=$!; i=0; '
+    'until ! command -v xprop >/dev/null || xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q "window id" '
+    '|| ! kill -0 $wm 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done'
+)
+"""Starts an X display of the size `$1` names, such as `1280x800`, and its panel, unless one is running, and a window
+manager.
+
+It gives up as soon as the X server exits, or after 10 seconds. A second `fluxbox` exits when one is already running,
+so starting it every time recovers one that died or never started. It then waits up to 10 seconds for the window
+manager, as `xprop` sees it, so a first click focuses and raises the window it lands on.
+"""
+
+
+async def _build_desktop_image(runner: LocalWorkspaceBackend, executable: str) -> None:
+    """Build the desktop image from `DESKTOP_DOCKERFILE` unless this machine has it."""
+    if (await runner.run([executable, 'image', 'inspect', '--', _DESKTOP_IMAGE])).exit_code == 0:
+        return
+
+    def build_context() -> str:
+        directory = tempfile.mkdtemp(prefix='pydantic-ai-desktop-')
+        (Path(directory) / 'Dockerfile').write_text(DESKTOP_DOCKERFILE)
+        return directory
+
+    directory = await anyio.to_thread.run_sync(build_context)
+    try:
+        result = await runner.run([executable, 'build', '--tag', _DESKTOP_IMAGE, '--', directory])
+    finally:
+        await anyio.to_thread.run_sync(shutil.rmtree, directory)
+    if result.exit_code != 0:
+        raise WorkspaceUnavailableError(f'could not build the desktop image: {result.stderr.strip()[-2000:]}')
+
+
+class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
     """Run commands in a local Docker container, created on first use, through the `docker` CLI.
 
     The image needs a POSIX `sh` and the usual file utilities; its own entrypoint and command don't run. A
@@ -216,13 +301,18 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
     if it is gone. The backend never removes the container: call
     [`DockerSandbox.destroy`][pydantic_ai_harness.docker_sandbox.DockerSandbox.destroy] with its ref.
 
+    With `desktop` the container has a display, started on first use and driven with `xdotool` and `scrot`, so the
+    image needs Xvfb, `xdotool`, `xmodmap`, `scrot` and `setsid`.
+
     Args:
-        image: The image for a new container. Pass it or `ref`, not both.
+        image: The image for a new container. Pass it or `ref`, not both; with `desktop=True`, leave both out to
+            use an image built from `DESKTOP_DOCKERFILE` on first use.
         ref: A `WorkspaceRef(provider='docker', id=<container name>)` to attach to instead of creating one.
         working_dir: The absolute directory in the container where commands start and relative paths
             resolve; created on first use if the container doesn't have it. `None` uses the image's own
             (`WORKDIR`, or `/`).
-        env: Environment variables for every command, on top of the image's; the per-call `env` goes on top.
+        env: Environment variables for every command, on top of the image's (and `DISPLAY`, with a desktop); the
+            per-call `env` goes on top.
         allow_internet_access: Whether a new container gets outbound network access, including this machine's
             local network; `False` runs it with `--network none`.
         docker_args: Extra `docker run` arguments for a new container, such as `['--memory', '2g']` or
@@ -230,6 +320,8 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
             can't change the container's name, workspace label or entrypoint. A `--pids-limit` here replaces the
             default of 2048.
         executable: The container CLI to run, such as `'podman'`.
+        desktop: Whether the container has a display for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]:
+            `True` for 1280x800, or its `(width, height)`.
     """
 
     def __init__(
@@ -242,7 +334,10 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
         allow_internet_access: bool = True,
         docker_args: Sequence[str] = (),
         executable: str = 'docker',
+        desktop: bool | tuple[int, int] = False,
     ):
+        if desktop and image is None and ref is None:
+            image = _DESKTOP_IMAGE  # built just before its container is first created
         if (image is None) == (ref is None):
             raise ValueError('pass exactly one of `image`, to create a container, or `ref`, to attach to one')
         if ref is not None and ref.provider != PROVIDER:
@@ -255,8 +350,22 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
             raise TypeError('docker_args must be a sequence of arguments, not a string')
         self._image = image
         self._ref = ref
+        self._desktop_size = desktop_size(desktop)
+        self._display = (
+            None
+            if self._desktop_size is None
+            else x11_display(
+                self,
+                self._desktop_size,
+                _START_DESKTOP,
+                lambda: f'Docker workspace {self._name}',
+                screen_key=lambda: self.ref,
+            )
+        )
         self._working_dir = None if working_dir is None else posixpath.normpath(working_dir)
-        self._env = _checked_env(env or {})
+        # Commands see the desktop too, so a program the agent starts from the shell opens on it.
+        display_env = {'DISPLAY': DISPLAY} if self._desktop_size else {}
+        self._env = _checked_env({**display_env, **(env or {})})
         self._allow_internet_access = allow_internet_access
         self._docker_args = tuple(docker_args)
         self._executable = resolve_executable(executable)
@@ -305,6 +414,8 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
 
     async def _create(self) -> None:
         assert self._image is not None
+        if self._image == _DESKTOP_IMAGE:
+            await _build_desktop_image(self._runner, self._executable)
         if self._ref is None:
             # Set before `docker run`: the daemon may create the container even if the client is cancelled,
             # and whoever holds the ref can then remove it.
@@ -432,3 +543,8 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
         # exec stops it. Best effort: a daemon that stalls now has nothing to report.
         argv = [self._executable, 'exec', '--workdir', '/', self._name, 'sh', '-c', _STOP, 'sh', tag]
         await stop_shielded(lambda: self._runner.run(argv), grace=_STOP_TIMEOUT)
+
+    @property
+    def display(self) -> ManagedDisplay | None:
+        """The container's display, when created with `desktop=True`."""
+        return self._display
