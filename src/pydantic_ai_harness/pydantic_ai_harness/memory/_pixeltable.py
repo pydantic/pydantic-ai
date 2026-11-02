@@ -386,8 +386,9 @@ class PixeltableMemoryStore:
                 return receipt
             if last_operation_id == operation.id:
                 # The write landed but its receipt was lost (a concurrent writer dropped it, then this writer
-                # stopped before restoring it). The file row records the operation id with the content.
-                return MemoryMutation(version=current, replayed=True, existed=True)
+                # stopped before restoring it). The file row records the operation id with the content, and a
+                # retry repeats the original `expected_version`, so `existed` is computed as the original was.
+                return MemoryMutation(version=current, replayed=True, existed=expected_version is not None)
         if current != expected_version:
             action = 'deleted' if content is None else 'written'
             raise MemoryConflictError(f'memory path {path!r} changed before it could be {action}')

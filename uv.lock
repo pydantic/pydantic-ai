@@ -7313,7 +7313,6 @@ pgtask = [
 ]
 pixeltable = [
     { name = "pixeltable", marker = "python_full_version < '3.15'" },
-    { name = "sqlalchemy", marker = "python_full_version < '3.15'" },
 ]
 playwright = [
     { name = "idna" },
@@ -7421,7 +7420,6 @@ requires-dist = [
     { name = "ripgrep", marker = "sys_platform != 'android' and extra == 'coder'", specifier = "==14.1.0" },
     { name = "smolmachines", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'smol') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'smol') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'smol')", specifier = ">=1.22.2,<2" },
     { name = "sprites-py", marker = "extra == 'sprites'", specifier = ">=0.7.0,<0.8" },
-    { name = "sqlalchemy", marker = "python_full_version >= '3.11' and python_full_version < '3.15' and extra == 'pixeltable'", specifier = ">=2.0.40" },
     { name = "stackone-defender", marker = "python_full_version >= '3.11' and extra == 'prompt-injection-defender'", specifier = ">=0.7.3,<0.8" },
     { name = "stackone-defender", marker = "python_full_version >= '3.11' and extra == 'prompt-injection-defender-ml'", specifier = ">=0.7.3,<0.8" },
     { name = "stackone-defender", extras = ["onnx"], marker = "python_full_version >= '3.11' and python_full_version < '3.15' and extra == 'prompt-injection-defender-ml'", specifier = ">=0.7.3,<0.8" },

@@ -302,9 +302,9 @@ class TestPixeltableMemoryStoreRecovery:
         first = await store.write('notes/main.md', 'one', expected_version=None, operation=operation)
         table = store.table
         table.delete(where=table.path == f'__op__/{operation.id}')
-        # The file row records the operation id with the content, so the write is not applied again.
-        replay = await store.write('notes/main.md', 'one', expected_version=first.version, operation=operation)
-        assert replay == MemoryMutation(version=first.version, replayed=True, existed=True)
+        # The retry repeats the original call; the file row records the operation id, so it is not applied again.
+        replay = await store.write('notes/main.md', 'one', expected_version=None, operation=operation)
+        assert replay == MemoryMutation(version=first.version, replayed=True, existed=False)
 
     async def test_landed_mutation_is_replayed_after_another_writer(
         self, store: PixeltableMemoryStore, table_name: str, monkeypatch: pytest.MonkeyPatch
