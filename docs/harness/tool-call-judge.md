@@ -14,6 +14,8 @@ Ask a second model whether a tool call may run, and stop it before the tool func
 !!! tip "Approval Reviewer or Tool Call Judge?"
     Both ask a second model one yes/no question about a tool call, but give it opposite powers. Use Tool Call Judge when you want a model to say no: its `yes` blocks a call, whether or not a person is watching. Use [Approval Reviewer](approval-reviewer.md) when you want a model to say yes on a person's behalf: it reviews only calls that already need approval, its `no` approves the call, and everything else still goes to the person. A judge cannot do the second job, because it runs when a call executes, after the person has already approved it.
 
+![ToolCallJudge runs in the before_tool_execute hook, after the arguments are validated and before the tool function runs. A second model is asked one question about the call delete_file(path='./old-report.txt'). A yes blocks the call and the model gets the denial message instead of a result; a no lets the tool run; unsure or a failed judgement follows on_uncertain, which blocks by default.](../img/harness/tool-call-judge.svg)
+
 ## The problem
 
 Some tool calls are fine and some are not, and which is which depends on the arguments rather than the tool. `run_shell` is not dangerous; `run_shell(command='rm -rf /')` is. Allowlists and argument validation catch the shapes you anticipated. [Human approval](../deferred-tools.md) catches everything, but needs a person on the other end, which a scheduled or long-running agent does not have.

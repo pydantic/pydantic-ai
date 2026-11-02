@@ -150,6 +150,8 @@ class FakeExecSocket:
         sprite_transport.exec_closes += 1
         if self.process.poll() is None:
             os.killpg(self.process.pid, signal.SIGKILL)
+        assert self.process.stdin is not None
+        await anyio.to_thread.run_sync(self.process.stdin.close)
         self._frames.put_nowait(None)
 
 

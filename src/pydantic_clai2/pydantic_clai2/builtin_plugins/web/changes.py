@@ -4,16 +4,19 @@
 they work outside Git too: each file's diff runs from its content before the first call in scope to
 its content on disk now, so a file edited three times shows one diff. That earlier content is
 replayed from the calls (see `_before`), with the file's last commit as the starting point the
-calls cannot give. `Uncommitted` and `Branch vs base` run Git in the session's workspace. The
-payloads are mirrored by `web-ui/src/protocol.ts`.
+calls cannot give. `Uncommitted` and `Branch vs base` run Git in the session's workspace;
+`Uncommitted` lists untracked files as added, as `git status` does. The payloads are mirrored by
+`web-ui/src/protocol.ts`.
 """
 
 import difflib
 import os
 import posixpath
+import shutil
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Literal
 
 from anyio import fail_after, run_process, to_thread
@@ -351,19 +354,23 @@ class _GitError(Exception):
     """A Git command failed; its message is what Git printed."""
 
 
-async def _git(workspace: Path, *args: str) -> str:
-    return (await _run_git(workspace, *args)).decode(errors='replace')
+async def _git(workspace: Path, *args: str, index: Path | None = None) -> str:
+    return (await _run_git(workspace, *args, index=index)).decode(errors='replace')
 
 
-async def _run_git(workspace: Path, *args: str, input: bytes | None = None) -> bytes:
-    """What Git printed for `args` in `workspace`; `_GitError` with its message when it fails or takes too long."""
+async def _run_git(workspace: Path, *args: str, input: bytes | None = None, index: Path | None = None) -> bytes:
+    """What Git printed for `args` in `workspace`; `_GitError` with its message when it fails or takes too long.
+
+    With `index`, Git uses that index file instead of the repository's own.
+    """
     command = ['git', '--no-optional-locks', '-c', 'core.quotepath=off', *args]
+    # In English, so a missing repository can be told by its message.
+    env = {**os.environ, 'LC_ALL': 'C'}
+    if index is not None:
+        env['GIT_INDEX_FILE'] = str(index)
     try:
         with fail_after(GIT_TIMEOUT):
-            # In English, so a missing repository can be told by its message.
-            result = await run_process(
-                command, input=input, cwd=workspace, env={**os.environ, 'LC_ALL': 'C'}, check=False
-            )
+            result = await run_process(command, input=input, cwd=workspace, env=env, check=False)
     except TimeoutError:
         raise _GitError(f'git {args[0]} took longer than {GIT_TIMEOUT} seconds') from None
     if result.returncode != 0:
@@ -393,11 +400,30 @@ async def _git_changes(workspace: Path, *, scope: Literal['uncommitted', 'branch
             if base is None:
                 return Changes(scope=scope, note='No base branch found: neither origin/HEAD nor main or master.')
             against = (await _git(workspace, 'merge-base', 'HEAD', base)).strip()
-        listing = await _git(workspace, 'diff', '--raw', '--numstat', '-z', *options, against)
-        patch = await _git(workspace, 'diff', *options, against) if diffs else None
+            listing = await _git(workspace, 'diff', '--raw', '--numstat', '-z', *options, against)
+            patch = await _git(workspace, 'diff', *options, against) if diffs else None
+        else:
+            listing, patch = await _uncommitted(workspace, options, diffs=diffs)
     except _GitError as exc:
         return Changes(scope=scope, base=base, note=f'Git could not compare: {exc}')
     return _listed(Changes(scope=scope, base=base), _git_files(listing, patch))
+
+
+async def _uncommitted(workspace: Path, options: tuple[str, ...], *, diffs: bool) -> tuple[str, str | None]:
+    """`git diff HEAD`'s listing and patch, with each untracked file that is not ignored as added.
+
+    Git diffs those only once the index has them, so a copy of the index marks them to be added
+    (`git add --intent-to-add`), leaving the repository's own index untouched.
+    """
+    own = workspace / (await _git(workspace, 'rev-parse', '--git-path', 'index')).strip()
+    with TemporaryDirectory() as folder:
+        index = Path(folder) / 'index'
+        if own.exists():
+            await to_thread.run_sync(shutil.copyfile, own, index)
+        await _git(workspace, 'add', '--intent-to-add', '--', ':/', index=index)
+        listing = await _git(workspace, 'diff', '--raw', '--numstat', '-z', *options, 'HEAD', index=index)
+        patch = await _git(workspace, 'diff', *options, 'HEAD', index=index) if diffs else None
+    return listing, patch
 
 
 async def _base(workspace: Path) -> str | None:

@@ -26,6 +26,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest
+from pydantic_ai_harness.artifact_scanning import ArtifactScanner
 from pydantic_ai_harness.memory._file import FileStore
 from pydantic_ai_harness.memory._in_memory import InMemoryStore
 from pydantic_ai_harness.memory._render import injection_listing_limit, list_subfiles, render_memory_prompt
@@ -47,6 +48,7 @@ from pydantic_ai_harness.memory._toolset import (
     read_call,
     require_metadata_store,
     run_as_operation,
+    scan_memory,
     snapshot_content_budget,
     snapshot_metadata,
 )
@@ -145,6 +147,15 @@ class Memory(AbstractCapability[AgentDepsT]):
     The application supplies it; it is never a tool argument. It needs a `MetadataMemoryStore`, and
     raises `UserError` when the store, or the one `store_resolver` returns, is not one. When unset,
     the model's writes to such a store record no metadata."""
+
+    scanner: ArtifactScanner | None = None
+    """Scan memory for prompt injection, credential exfiltration, and hidden content, or `None` (the default)
+    to store and load it unscanned.
+
+    `write_memory` refuses flagged text, a flagged `MEMORY.md` is left out of the injected snapshot with a
+    notice in its place, `read_memory` refuses a flagged file, and a flagged `search_memory` snippet is
+    replaced with a notice. Files read with `FileSystem`'s `read_file` instead of `read_memory` are not
+    scanned."""
 
     _resolved_scope: tuple[MemoryStore, str] | None = field(default=None, init=False, repr=False, compare=False)
 
@@ -355,6 +366,7 @@ class Memory(AbstractCapability[AgentDepsT]):
                     span.set_attributes({'memory.outcome': 'error', 'memory.exception_type': error_type})
                 return request_context
 
+            main, withheld = self._withhold_flagged(ctx, main)
             has_memory = bool((main is not None and main.content) or subfiles or files_truncated)
             snapshot = self._render_snapshot(
                 main,
@@ -387,9 +399,21 @@ class Memory(AbstractCapability[AgentDepsT]):
                         'memory.main_truncated': main is not None and main.truncated,
                         'memory.appended': appended is not None,
                         'memory.injected_chars': len(appended or ''),
+                        **({} if self.scanner is None else {'memory.main_withheld': withheld}),
                     }
                 )
         return request_context
+
+    def _withhold_flagged(self, ctx: RunContext[AgentDepsT], main: MemoryFile | None) -> tuple[MemoryFile | None, bool]:
+        """`main` with a notice in place of its content when the `scanner` flags it, and whether it did."""
+        flagged = None if main is None else scan_memory(self, ctx, MAIN_FILENAME, main.content, action='withheld')
+        if main is None or flagged is None:
+            return main, False
+        notice = (
+            f'[{MAIN_FILENAME} withheld: an artifact scan flagged its content ({flagged.summary()}). '
+            'Tell the user it needs review before it is used again.]'
+        )
+        return replace(main, content=notice, truncated=False), True
 
     def _render_snapshot(
         self,
@@ -469,6 +493,9 @@ class Memory(AbstractCapability[AgentDepsT]):
         max_search_files: int = 1_000,
         guidance: str | None = None,
         injection_errors: Literal['ignore', 'raise'] = 'ignore',
+        id: str | None = 'memory',
+        description: str | None = None,
+        defer_loading: bool = False,
     ) -> Memory[AgentDepsT]:
         """Construct a memory capability from serializable options."""
         if backend != 'file' and directory != '.agent-memory':
@@ -498,6 +525,9 @@ class Memory(AbstractCapability[AgentDepsT]):
             max_search_files=max_search_files,
             guidance=guidance,
             injection_errors=injection_errors,
+            id=id,
+            description=description,
+            defer_loading=defer_loading,
         )
 
     @classmethod

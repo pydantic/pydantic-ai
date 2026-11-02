@@ -9,6 +9,8 @@ Give an agent a persistent notebook that it can update, search, and reuse across
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model gets four tools, write_memory, read_memory, delete_memory and search_memory, over a notebook of Markdown files kept in a store such as FileStore, SqliteMemoryStore or PostgresMemoryStore. Your code picks the namespace, such as the user ID from the run dependencies, so the model cannot reach another user's files, and writes are compare-and-swap. On the first request of a run, Memory adds a <memory> block with an excerpt of MEMORY.md and the names of the other files next to the user's prompt, only when memory changed, within max_tokens.](../img/harness/memory.svg)
+
 ## Notebook model
 
 Memory gives each agent a notebook made of Markdown files:
@@ -125,7 +127,7 @@ If a memory path resolves outside its store, the tool asks the model to correct 
 pip/uv-add asyncpg
 ```
 
-```python {typecheck="skip - asyncpg's pooled connections are untyped proxies, see #10853"}
+```python
 import asyncpg
 
 from pydantic_ai_harness import Memory
@@ -299,6 +301,7 @@ Memory(
     injection_errors='ignore',         # or 'raise'
     guidance=None,                     # None uses the default notebook guidance
     write_metadata=None,               # needs a MetadataMemoryStore; see Write metadata
+    scanner=None,                      # an ArtifactScanner; see Scanning memory
 )
 ```
 
@@ -341,6 +344,27 @@ Each model request that uses automatic snapshot loading records one bounded snap
 Memory is model-written, untrusted content that can re-enter future prompts. Keeping it in a delimited user-role part lowers its authority relative to model instructions, but this is not a hard prompt-injection boundary. In stored content, the `<` of a `<memory>` or `</memory>` tag, in any case or spacing, is injected as `&lt;`, so stored text cannot end the block early. Use `inject_memory=False` when less-trusted actors can write to the store, and expose memory only through application-controlled retrieval when stronger isolation is required. Do not store secrets unless the backend, retention policy, and access controls are appropriate. Sanitize content before rendering it into another trust domain.
 
 Memory records do not carry source citations. To record who wrote a file, such as the user in your product or the agent, use [write metadata](#write-metadata) with a `MetadataMemoryStore` rather than a header in the note. Metadata records which writer produced the current version; it does not establish that a remembered claim is true, and neither does optimistic concurrency, which prevents lost updates.
+
+### Scanning memory
+
+Pass an [`ArtifactScanner`](artifact-scanning.md) to check what the model writes, and what later sessions load, for prompt injection, credential exfiltration, HTML comments, and invisible characters:
+
+```python
+from pydantic_ai_harness import ArtifactScanner, Memory
+
+memory = Memory(scanner=ArtifactScanner())
+```
+
+With a scanner set:
+
+- `write_memory` refuses flagged text with a tool failure that names the threats but does not quote the text, and stores nothing. Only the text being written is scanned, so a correction that removes a passage still succeeds.
+- A flagged `MEMORY.md` is left out of the injected snapshot, with a notice in its place, so the model can tell the user. The list of other files is still shown.
+- `read_memory` refuses a flagged file, and `search_memory` replaces a flagged snippet with a notice.
+- Each decision records a zero-duration `artifact_scan flagged` span, and the `memory.inject` span gains `memory.main_withheld`.
+
+The scan runs outside the durable operations `Memory` routes its tools through, so under Temporal, Prefect, or DBOS a refusal fails the tool call rather than an operation the engine would retry.
+
+Files that `FileSystem`'s `read_file` reads in place of `read_memory`, or that other tools open, are not scanned. The scan is pattern matching: it misses paraphrased instructions and can flag a note that quotes an attack, so treat it as one layer next to `inject_memory=False` for less-trusted writers.
 
 ## API reference
 

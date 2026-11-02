@@ -1082,17 +1082,34 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             raw = await scope.workspace.read_bytes(resolved)
             if is_binary(raw):
                 raise ValueError(f'{path} is a binary file; edit_file only edits text files.')
-            # Strict decoding: an edit writes the whole file back, so undecodable bytes are refused
-            # rather than replaced. No newline translation, so CRLF and the hash are preserved.
-            text = raw.decode('utf-8')
             current_hash = bytes_hash(raw)
 
             if expected_hash is not None:
                 check_expected_hash(path, current_hash, expected_hash)
 
-            new_content = apply_replacements(text, replacements, path)
+            # An edit writes the whole file back, so bytes that are not valid UTF-8 are carried
+            # through as they are rather than replaced. No newline translation, so CRLF and the
+            # hash are preserved too.
+            text = raw.decode('utf-8', errors='surrogateescape')
+            shown = raw.decode('utf-8', errors='replace')
+            for replacement in replacements:
+                # Only the file's own undecodable bytes are written back raw, never the model's text.
+                replacement.new_text.encode('utf-8')
+            try:
+                new_content = apply_replacements(text, replacements, path)
+            except ValueError as e:
+                if text != shown and any('\ufffd' in replacement.old_text for replacement in replacements):
+                    raise ValueError(
+                        f'{e} {path} is not valid UTF-8: read_file shows each undecodable byte as U+FFFD, '
+                        'which does not match the byte, so match only the text around it.'
+                    ) from e
+                raise
+            new_raw = new_content.encode('utf-8', errors='surrogateescape')
             change = Change.propose(
-                **self._event_location(scope, resolved), operation='edit', old=text, new=new_content
+                **self._event_location(scope, resolved),
+                operation='edit',
+                old=shown,
+                new=new_raw.decode('utf-8', errors='replace'),
             )
             if (refusal := await self._request(scope, ctx, change, path=path, resolved=resolved)) is not None:
                 return refusal
@@ -1105,8 +1122,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 except FileNotFoundError as e:
                     raise FileNotFoundError(f'File not found: {path}') from e
                 check_expected_hash(path, bytes_hash(now), current_hash)
-            await scope.workspace.write_bytes(resolved, new_content.encode('utf-8'))
-        new_hash = text_hash(new_content)
+            await scope.workspace.write_bytes(resolved, new_raw)
+        new_hash = bytes_hash(new_raw)
         if ctx is not None:
             await ctx.emit(change.edited(content_hash=new_hash))
         return f'Edited {path}.{self._hash_suffix(new_hash)}'
