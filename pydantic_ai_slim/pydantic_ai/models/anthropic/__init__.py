@@ -674,9 +674,9 @@ class AnthropicModelSettings(ModelSettings, total=False):
     By default, if previous messages contain a container_id (from a prior response),
     it will be reused automatically on requests that have code execution: `CodeExecutionTool`,
     or `WebSearchTool` or `WebFetchTool` where code execution may call them: on Anthropic's
-    `20260209` versions by default, unless a request asks for citations on the Anthropic API, where
-    they're called directly, and on any version when `anthropic_web_tools_allowed_callers` names a
-    code execution caller. The Anthropic API rejects a container on any other request, so
+    `20260209` versions by default, unless citations route them to direct calls, which only happens
+    on the Anthropic API, and on any version when `anthropic_web_tools_allowed_callers` names a code
+    execution caller. The Anthropic API rejects a container on any other request, so
     Pydantic AI doesn't send it there. Tools passed in `extra_body['tools']` aren't read, so a
     request that carries them still sends it. An id recovered from history is the only container
     Pydantic AI may replace on its own: if a request carrying both that id and `CodeExecutionTool`
