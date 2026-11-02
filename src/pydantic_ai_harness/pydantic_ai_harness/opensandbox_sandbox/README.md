@@ -170,6 +170,16 @@ A sandbox that is gone, or destroyed mid-command, raises `WorkspaceUnavailableEr
 
 The OpenSandbox SDK runs on asyncio only, so under Trio the capability raises `UserError`.
 
+## Durable execution
+
+Compose `OpenSandbox(image=...)` with [`TemporalDurability`](https://pydantic.dev/docs/ai/durable-execution/temporal/), [`DBOSDurability`](https://pydantic.dev/docs/ai/durable-execution/dbos/) or [`PrefectDurability`](https://pydantic.dev/docs/ai/durable-execution/prefect/). Durable execution records the initial workspace operation's ref so later operations and replays can reach the same sandbox. Configure the same workspace capability and server connection on every worker.
+
+Temporal's activity-local backends close their SDK-owned HTTP transports after each workspace operation. In-process engines can keep the run-owned transport open until the run ends. A transport passed through `ConnectionConfig` remains yours to close.
+
+Sandbox creation is not exactly-once. If a create response is lost, the backend attempts to recover the ref using sandbox metadata; another operation on that same backend can attach to it. A fresh activity attempt or worker restart before the ref is recorded can create another sandbox. To avoid creation during workflow retries, create the sandbox and persist its ref before starting the workflow, then pass that ref as `workspace=`, not a live backend.
+
+Set `sandbox_timeout` above the longest gap between workspace operations, including workflow waits and retries. There is no background renewal while the workflow is idle; without a timeout, clean up sandboxes left without a stored ref as described in [Clean up](#clean-up).
+
 ## Security model
 
 The sandbox's isolation is the server's runtime: a Docker container shares the host's kernel, and a Kubernetes pod shares its node's, unless the server is configured with a secure runtime such as gVisor or Kata Containers. Inside, commands run as the image's user, usually `root`.

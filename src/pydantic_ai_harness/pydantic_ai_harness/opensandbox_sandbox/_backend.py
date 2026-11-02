@@ -344,8 +344,9 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
     async def _find_created(self, tag: str) -> None:
         """Record the ref of a sandbox whose create failed after the server made it, so it can be destroyed.
 
-        The original error still propagates: a durable engine's retry then attaches to the sandbox instead of
-        creating another. A failed lookup leaves that error alone.
+        The original error still propagates: another operation on this backend then attaches instead of creating
+        another sandbox. Recovery here does not journal the ref for a fresh activity or process. A failed lookup
+        leaves the original error alone.
         """
         try:
             manager = await SandboxManager.create(connection_config=self._connection or ConnectionConfig())

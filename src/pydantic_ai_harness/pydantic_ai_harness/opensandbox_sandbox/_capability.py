@@ -46,9 +46,10 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
     agent = Agent('anthropic:claude-opus-5-5', capabilities=[OpenSandbox(image='python:3.13-slim'), Coder()])
     ```
 
-    A run with no reference creates a fresh sandbox on your OpenSandbox server, on whichever runtime it uses
-    (Docker or Kubernetes). Pass a `WorkspaceRef` to attach to a sandbox created earlier. Ending a run does not
-    delete the sandbox: remove it with [`destroy`][pydantic_ai_harness.opensandbox_sandbox.OpenSandbox.destroy],
+    With an `image`, a run with no reference creates a fresh sandbox on your OpenSandbox server, on whichever
+    runtime it uses (Docker or Kubernetes). Pass a `WorkspaceRef` to attach to a sandbox created earlier.
+    Ending a run does not delete the sandbox: remove it with
+    [`destroy`][pydantic_ai_harness.opensandbox_sandbox.OpenSandbox.destroy],
     or set `sandbox_timeout`. Commands run as the image's user. Outbound network access is the
     server's policy.
 
