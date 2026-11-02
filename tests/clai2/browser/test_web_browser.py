@@ -461,14 +461,15 @@ async def test_row_menus_open_from_the_keyboard_and_by_right_click(page: Page, w
     sidebar = page.locator('.sidebar')
     archive_all = sidebar.get_by_role('button', name='Archive all sessions in this worktree')
     await expect(sidebar.get_by_text('main work', exact=True)).to_be_visible()
+    more = sidebar.get_by_role('button', name='Worktree actions').first
+    await expect(more).to_have_css('opacity', '0')
     await sidebar.get_by_role('textbox', name='Search sessions', exact=True).focus()
     for _ in range(20):
         await page.keyboard.press('Tab')
-        if await page.evaluate('document.activeElement.ariaLabel') == 'Worktree actions':
+        if await more.evaluate('button => button === document.activeElement'):
             break
-    more = page.locator(':focus')
-    await expect(more).to_have_accessible_name('Worktree actions')
-    await expect(more).to_be_visible()
+    await expect(more).to_be_focused()
+    await expect(more).to_have_css('opacity', '1')
     await page.keyboard.press('Enter')
     await expect(archive_all).to_be_visible()
     await page.keyboard.press('Escape')

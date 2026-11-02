@@ -239,7 +239,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     return (
       <div
         key={session.id}
-        onContextMenu={contextMenu(session.id)}
+        onContextMenu={renaming === session.id ? undefined : contextMenu(session.id)}
         className={`session ${current ? 'current' : ''} ${viewing === session.id ? 'viewing' : ''} ${opening === session.id ? 'opening' : ''} ${session.archived ? 'archived' : ''}`}
       >
         {renaming === session.id ? (
