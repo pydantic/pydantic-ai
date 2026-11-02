@@ -31,7 +31,7 @@ from pydantic_ai_harness.memory._store import (
 try:
     import pixeltable as pxt
     from pixeltable.exprs.expr import Expr
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'pixeltable is required for `PixeltableMemoryStore`. It needs Python 3.11 to 3.14; install it with: pip install "pydantic-ai-harness[pixeltable]"'
     ) from _import_error
@@ -434,7 +434,7 @@ class PixeltableMemoryStore:
             # A peer running the same operation id dropped our pending receipt before we applied; restore it.
             try:
                 _insert_rows(t, [{**receipt_row, 'content': None}])
-            except MemoryConflictError:  # pragma: no cover - a same-id peer recorded a receipt in between
+            except MemoryConflictError:  # pragma: lax no cover - a same-id peer recorded a receipt in between
                 pass
         return mutation
 
