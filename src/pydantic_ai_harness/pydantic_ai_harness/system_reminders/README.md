@@ -10,7 +10,7 @@
 >
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-Re-inject behavioral guidance mid-run to counter instruction fade -- without invalidating the prompt cache.
+Re-inject behavioral guidance mid-run to counter instruction fade -- without moving the cached prompt prefix.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/system_reminders/)
 
@@ -151,7 +151,7 @@ from pydantic_ai_harness.system_reminders import GoalReanchor, LLMReminder
 SystemReminders(dynamic_reminders=[GoalReanchor(), LLMReminder(model='anthropic:claude-haiku-4-5', interval=5)])
 ```
 
-`LLMReminder` defaults to `interval=10`. Earlier releases generated on every model request, and each generation adds two parts to the history for good, so an agent with an `LLMReminder` and no cadence of its own grew its history by two parts on every step. Leaving `interval` unset warns that the default changed: pass `interval=10` to keep the new cadence without the warning, or `interval=1` to generate on every request as before. A wrapper that gates `LLMReminder` itself should pass `interval=1`, so the wrapper alone decides.
+`LLMReminder` defaults to `interval=10`. Earlier releases generated on every model request, so an agent with an `LLMReminder` and no cadence of its own grew its history by two parts on every step. Leaving `interval` unset warns that the default changed: pass `interval=10` to keep the new cadence without the warning, or `interval=1` to generate on every request as before. A wrapper that gates `LLMReminder` itself should pass `interval=1`, so the wrapper alone decides.
 
 The nested call runs under the parent's `usage_limits` with one request held back for the model request it precedes, so the reminder cannot push a run past its `request_limit`; once the budget is that tight the generation is skipped and `GoalReanchor` text is used instead. Every other generation failure is logged at warning level with its traceback under the `pydantic_ai_harness.system_reminders` logger namespace, once per run, so a misconfigured `model` (bad id, missing key) shows up in the logs once per run rather than on every model request, while the run carries on with the fallback text.
 
@@ -172,7 +172,7 @@ Only a direct entry takes that route. Two shapes do not:
 Without a durability engine, generation runs directly in all three cases, with the same fallback to
 `GoalReanchor` on error.
 
-## Configuration
+## Observing reminders
 
 Subscribe to `ReminderFiredEvent` to observe reminders after they are appended:
 
@@ -194,21 +194,11 @@ async def record(ctx, event):
 Migration: `on_fire` remains supported but is deprecated. Move its callback body to this
 subscription.
 
-```python
-from pydantic_ai_harness import SystemReminders
-from pydantic_ai_harness.system_reminders import Reminder
-
-SystemReminders(
-    reminders=[Reminder('...', interval=5, tag=None)],
-    dynamic_reminders=[],       # callables evaluated every request
-)
-```
-
 Per-run state (the request counter and per-reminder fire counts) is isolated via `for_run`, so concurrent runs on the same agent never share fire state.
 
-## Caching guarantee
+## Caching
 
-Reminders never go into the leading system prompt or instructions, and the history only ever grows by appending, so it stays eligible for a cache hit. Plain reminders, `GoalReanchor` included, are request-scoped system prompts at the tail of the request, and the only added cost is reading each one once. A `Reminder(scope='conversation')` firing stays in the history and is sent again on every later request, so each copy is read from cache when the prefix before it is cached. An `LLMReminder` record is not request-scoped: every firing adds its note and generated text to the history for good, and every later request sends all of them again. Those accumulated records are read from cache when the prefix before them is cached, and paid for in full when it isn't, so keep `LLMReminder`'s `interval` as long as the run allows and turn on caching for your model.
+Reminders never go into the leading system prompt or instructions, and the history only ever grows by appending, so it stays eligible for a cache hit. Plain reminders, `GoalReanchor` included, are request-scoped system prompts at the tail of the request, and the only added cost is reading each one once. A `Reminder(scope='conversation')` firing stays in the history and is sent again on every later request, so each copy is read from cache when the prefix before it is cached. The records an `LLMReminder` adds to the history, which every later request sends again, are read from cache when the prefix before them is cached, and paid for in full when it isn't, so keep `LLMReminder`'s `interval` as long as the run allows and turn on caching for your model.
 
 `SystemReminders` doesn't place a cache breakpoint of its own. Turn on caching for your model (for example `anthropic_cache` or `anthropic_cache_messages`, `bedrock_cache_messages`, or `openrouter_cache_messages`), and the breakpoint it places lands before the reminder.
 
