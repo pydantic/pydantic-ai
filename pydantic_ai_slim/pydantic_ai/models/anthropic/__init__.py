@@ -662,15 +662,16 @@ class AnthropicModelSettings(ModelSettings, total=False):
     By default, if previous messages contain a container_id (from a prior response),
     it will be reused automatically on requests that have code execution: `CodeExecutionTool`,
     or `WebSearchTool` or `WebFetchTool` where code execution may call them: on Anthropic's
-    `20260209` versions by default, and on any version when `anthropic_web_tools_allowed_callers`
-    names a code execution caller. The Anthropic API rejects a container
-    on any other request, so Pydantic AI doesn't send it there. Tools passed in
-    `extra_body['tools']` aren't read, so a request that carries them still sends it. An id
-    recovered from history is the only container Pydantic AI may replace on its own: if a
-    request carrying both that id and `CodeExecutionTool` uploads comes back `500`, the id is
-    dropped and the request is sent once more so the upload lands in a fresh container.
-    Nothing else is replaced — not a container you set here, and not the id used to reconnect
-    a paused turn — so a request pinning a container the API will not accept raises instead.
+    `20260209` versions by default, unless they're called directly for citations, and on any
+    version when `anthropic_web_tools_allowed_callers` names a code execution caller. The
+    Anthropic API rejects a container on any other request, so Pydantic AI doesn't send it
+    there. Tools passed in `extra_body['tools']` aren't read, so a request that carries them
+    still sends it. An id recovered from history is the only container Pydantic AI may replace
+    on its own: if a request carrying both that id and `CodeExecutionTool` uploads comes back
+    `500`, the id is dropped and the request is sent once more so the upload lands in a fresh
+    container. Nothing else is replaced — not a container you set here, and not the id used to
+    reconnect a paused turn — so a request pinning a container the API will not accept raises
+    instead.
 
     Set to `False` to force a fresh container (ignore any `container_id` from history).
     Set to a container id string (e.g. `'container_xxx'`) to explicitly reuse a container,
