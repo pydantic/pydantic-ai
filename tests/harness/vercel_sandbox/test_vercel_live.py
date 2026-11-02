@@ -82,7 +82,8 @@ async def _stop(client: SandboxClient, name: str) -> None:
 async def test_commands_get_their_streams_exit_code_and_a_usable_environment(client: SandboxClient) -> None:
     """Validates the fake-encoded assumptions that `run_process` reports stdout and stderr apart with the real
     exit code, and that the image has what `Coder` needs: `/bin/sh`, git, Python 3, and ripgrep. A per-call
-    `env` adds to the image's environment rather than replacing it."""
+    `env` adds to the image's environment rather than replacing it, and the docs' claim that the
+    sandbox's environment holds no Vercel credentials."""
     async with _owned(client) as backend:
         result = await backend.run('echo out; echo err 1>&2; exit 3', shell=True, timeout=60)
         assert (result.stdout, result.stderr, result.exit_code) == ('out\n', 'err\n', 3)
@@ -96,6 +97,9 @@ async def test_commands_get_their_streams_exit_code_and_a_usable_environment(cli
 
         result = await backend.run('echo "$FOO"; echo "$PATH"', shell=True, env={'FOO': '1'}, timeout=60)
         assert result.stdout.splitlines() == ['1', path]
+
+        result = await backend.run('test -z "$VERCEL_OIDC_TOKEN$VERCEL_TOKEN"', shell=True, timeout=60)
+        assert result.exit_code == 0
 
 
 async def test_large_output_is_exact(client: SandboxClient) -> None:
@@ -149,18 +153,22 @@ async def test_a_stopped_sandbox_that_is_not_persistent_is_unavailable(client: S
 async def test_a_session_stopped_during_a_command_is_unavailable(client: SandboxClient) -> None:
     """Validates the fake-encoded assumption that stopping the session ends a running command with a stream
     failure, after which a lookup reports the sandbox stopped."""
+    marker = f'/tmp/{_unique("started")}'
     async with _owned(client) as backend:
         assert backend.ref is not None
         name = backend.ref.id
 
-        async def stop_soon() -> None:
-            await anyio.sleep(3)
-            await (await client.get_sandbox(name=name)).stop()
+        async def stop_once_started() -> None:
+            sandbox = await client.get_sandbox(name=name)
+            with anyio.fail_after(60):
+                while (await sandbox.run_process('test', ['-e', marker])).returncode != 0:
+                    await anyio.sleep(0.5)
+            await sandbox.stop()
 
         async with anyio.create_task_group() as group:
-            group.start_soon(stop_soon)
+            group.start_soon(stop_once_started)
             with pytest.raises(WorkspaceUnavailableError, match='ended during the command'):
-                await backend.run(['sleep', '60'], timeout=90)
+                await backend.run(['sh', '-c', f'touch {marker}; exec sleep 60'], timeout=90)
 
 
 async def test_coder_tools_run_in_the_sandbox(client: SandboxClient) -> None:
@@ -184,11 +192,12 @@ _DOCS_BLOCKS = python_blocks('docs/harness/vercel-sandbox.md')
 
 @pytest.mark.parametrize('example', [pytest.param(block, id=f'line {block.start_line}') for block in _DOCS_BLOCKS])
 def test_docs_example(example: CodeExample) -> None:
-    """Every example on the docs page runs as written, and its agent's tools do their work in a real sandbox.
+    """Every example on the docs page runs as written, and an example that runs an agent has its tools do
+    their work in a real sandbox.
 
     The fake stands in for Vercel, so only this shows the page's code, its default settings, and its
     cleanup work against the real service. A follow-up run, from the message history or a stored ref,
-    works in the first run's sandbox.
+    works in the first run's sandbox. An example that only defines a function is checked to run, not called.
     """
     _, runs = run_block(example, cleanup=documented_cleanup(_DOCS_BLOCKS, 'destroy_sandbox'))
     assert all(run.used_sandbox for run in runs), runs

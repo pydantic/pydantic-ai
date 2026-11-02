@@ -15,9 +15,11 @@ SDK behavior read from the source of `vercel-sandbox` 0.10.0 on 2026-11-02. Re-c
 - The SDK decodes output as UTF-8 with `errors='replace'`.
 - `SandboxClient.create()` does no I/O; it reads `VERCEL_OIDC_TOKEN`, or `VERCEL_TOKEN` with `VERCEL_TEAM_ID`
   and `VERCEL_PROJECT_ID`, on its first request, raising `SandboxCredentialsError` when neither is set.
-  The API answers refused credentials with a 401 or 403 `SandboxApiError`, a missing sandbox with a 404, and
-  a stopped session with a 410 or the `sandbox_stopped` code. A failure while a process runs is a
-  `SandboxStreamError`.
+  The API answers refused credentials with a 401 or 403 `SandboxApiError` and a missing sandbox with a 404.
+  A failure while a process runs is a `SandboxStreamError`.
+- `get_or_create_sandbox` waits for a sandbox it creates to run, but returns one that already exists as it
+  is, which can still be `pending`.
+- A `Sandbox` handle works through the client that fetched it, and fails once that client is closed.
 
 From Vercel's docs (<https://vercel.com/docs/vercel-sandbox>, read 2026-11-02): a new sandbox boots the
 `vercel/sandbox/universal` image, works in `/vercel/sandbox`, and has a 5 minute session limit unless
@@ -31,7 +33,7 @@ import io
 import logging
 import posixpath
 import uuid
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
@@ -63,7 +65,7 @@ if TYPE_CHECKING:
 
     from pydantic_ai.workspaces import WorkspaceCommand
 
-__all__ = ('DEFAULT_EXECUTION_TIME_LIMIT', 'VercelSandboxBackend')
+__all__ = ('VercelSandboxBackend',)
 
 try:
     from vercel import sandbox as vercel_sandbox
@@ -156,27 +158,28 @@ def _translate(error: Exception, context: str) -> Exception:
     return error
 
 
-async def _probe(client: SandboxClient, name: str) -> WorkspaceUnavailableError | None:
+async def _probe(client: SandboxClient, name: str, *, running: bool) -> WorkspaceUnavailableError | None:
     """`WorkspaceUnavailableError` if the sandbox is gone or its session ended; an inconclusive lookup counts as running."""
     try:
         with anyio.fail_after(_REQUEST_TIMEOUT):
             sandbox = await client.get_sandbox(name=name)
     except Exception as error:
         return WorkspaceUnavailableError(_gone_message(name)) if _status(error) == 404 else None
-    return _refusal(sandbox, running=True)
+    return _refusal(sandbox, running=running)
 
 
 def _refusal(sandbox: Sandbox, *, running: bool) -> WorkspaceUnavailableError | None:
     """Why `sandbox` cannot run commands, or `None` when it can.
 
-    With `running`, a command was in flight, so a stopped persistent sandbox also counts: its session ended
-    under the command, which a later operation resumes from the snapshot.
+    With `running`, a command had started, so a stopped persistent sandbox also counts: its session ended
+    under the command, which a later operation resumes from the snapshot. Before a command starts, the SDK
+    resumes a stopped persistent sandbox itself, so a failure then is the failure to report.
     """
     status = sandbox.status
     if status in _DEAD_STATUSES:
         return WorkspaceUnavailableError(_gone_message(sandbox.name))
     if status in _STOPPED_STATUSES:
-        if not sandbox.persistent:
+        if sandbox.persistent is False:  # `None` when the API leaves it out; Vercel's default is persistent
             return WorkspaceUnavailableError(
                 f'The Vercel sandbox {sandbox.name!r} is not persistent and its session has ended, so it cannot '
                 "be resumed. Pass `workspace='new'` to start a fresh sandbox."
@@ -191,12 +194,17 @@ def _refusal(sandbox: Sandbox, *, running: bool) -> WorkspaceUnavailableError | 
 
 @asynccontextmanager
 async def _mapped_errors(
-    context: str, *, client: SandboxClient | None = None, name: str | None = None
+    context: str,
+    *,
+    client: SandboxClient | None = None,
+    name: str | None = None,
+    started: Sequence[Process] = (),
 ) -> AsyncGenerator[None]:
     """Raise the protocol's typed failure for a Vercel SDK error, and let the backend's own failures through.
 
     A sandbox destroyed or stopped under an operation surfaces as a stream or API failure, so with `name`,
-    a failure that does not already end the run is followed by one lookup of the sandbox.
+    a failure that does not already end the run is followed by one lookup of the sandbox. `started` holds
+    the command's process once Vercel reports it running.
     """
     try:
         yield
@@ -205,7 +213,7 @@ async def _mapped_errors(
     except Exception as error:
         translated = _translate(error, context)
         if client is not None and name is not None and not isinstance(translated, WorkspaceUnavailableError):
-            if (gone := await _probe(client, name)) is not None:
+            if (gone := await _probe(client, name, running=bool(started))) is not None:
                 raise gone from error
         if translated is error:
             raise
@@ -352,7 +360,9 @@ class VercelSandboxBackend(WorkspaceBackend, SupportsCommands):
         """Return the sandbox's current `vercel.sandbox.Sandbox`, creating or attaching to it on first use.
 
         Use it for Vercel features the workspace API does not cover, such as ports, snapshots, and
-        network policies. Attaching by `ref` to a sandbox that no longer exists raises
+        network policies. The handle works through this backend's client, so it stops working once
+        `aclose()` closes that client; outside a run, call `get_sandbox(name=ref.id)` on your own
+        `SandboxClient` instead. Attaching by `ref` to a sandbox that no longer exists raises
         `WorkspaceUnavailableError`; it does not create a replacement.
         """
         async with self._operation():
@@ -387,9 +397,11 @@ class VercelSandboxBackend(WorkspaceBackend, SupportsCommands):
             self._create_name = f'{_NAME_PREFIX}{uuid.uuid4().hex}'
         name = self._create_name
         resources = None if self._vcpus is None else vercel_sandbox.SandboxResources(vcpus=self._vcpus)
+        # Logged before the request, so the name can be found whatever ends the run before it is stored.
+        logger.info('Creating Vercel sandbox %s', name)
         with anyio.fail_after(_LIFECYCLE_TIMEOUT):
             try:
-                sandbox, _ = await client.get_or_create_sandbox(
+                sandbox, created = await client.get_or_create_sandbox(
                     name=name,
                     image=self._image,
                     resources=resources,
@@ -404,10 +416,11 @@ class VercelSandboxBackend(WorkspaceBackend, SupportsCommands):
                     raise
                 # An invalid image or size: no retry can fix it.
                 raise WorkspaceUnavailableError(str(translated)) from error
+        if not created:
+            # A retry found the sandbox an earlier attempt made, which can still be starting.
+            sandbox = await self._attach(client, name)
         self._ref = WorkspaceRef(provider='vercel', id=sandbox.name)
         self._working_dir_pending = self._working_dir is not None
-        # Logged at creation, so the name can be found whatever ends the run before it is stored.
-        logger.info('Created Vercel sandbox %s', sandbox.name)
         return sandbox
 
     async def _attach(self, client: SandboxClient, name: str) -> Sandbox:
@@ -530,7 +543,9 @@ class VercelSandboxBackend(WorkspaceBackend, SupportsCommands):
                 return stdout.getvalue(), stderr.getvalue()
 
             async with command_deadline(timeout, stop=kill, output=output):
-                async with _mapped_errors('Could not run the command', client=client, name=sandbox.name):
+                async with _mapped_errors(
+                    'Could not run the command', client=client, name=sandbox.name, started=started
+                ):
                     try:
                         completed = await sandbox.run_process(
                             '/bin/sh',

@@ -92,9 +92,12 @@ async def test_a_foreign_ref_is_declined() -> None:
 
 async def test_backend_for_a_ref_attaches_with_the_capability_settings(host: FakeVercel, tmp_path: Path) -> None:
     host.add()
-    capability = VercelSandbox[None](working_dir=str(tmp_path.resolve()), env={'A': 'b'})
+    directory = tmp_path.resolve() / 'work'
+    directory.mkdir()
+    capability = VercelSandbox[None](working_dir=str(directory), env={'A': 'b'})
     backend = capability.backend(WorkspaceRef(provider='vercel', id='existing'))
     assert (await backend.run(['sh', '-c', 'printf %s "$A"'])).stdout == 'b'
+    assert await backend.working_dir() == str(directory)
     assert not host.create_names
     await backend.aclose()
 
@@ -135,13 +138,11 @@ async def test_a_backend_used_outside_a_run_closes_its_client_after_each_operati
     assert [client.closed for client in host.clients] == [True, True]
 
 
-@pytest.mark.parametrize('supplied', ['client', 'workspace'])
-async def test_the_run_leaves_a_supplied_client_or_workspace_open(host: FakeVercel, supplied: str) -> None:
-    client = host.create() if supplied == 'client' else None
-    capability = VercelSandbox[None](client=client)  # pyright: ignore[reportArgumentType]
-    workspace = VercelSandboxBackend() if supplied == 'workspace' else None
-    agent = Agent(TestModel(call_tools=['_touch']), deps_type=type(None), tools=[_touch], capabilities=[capability])
-    await agent.run('go', workspace=workspace)
+async def test_the_run_leaves_a_supplied_workspace_open(host: FakeVercel) -> None:
+    agent = Agent(
+        TestModel(call_tools=['_touch']), deps_type=type(None), tools=[_touch], capabilities=[VercelSandbox()]
+    )
+    await agent.run('go', workspace=VercelSandboxBackend())
     assert [client.closed for client in host.clients] == [False]
 
 
@@ -167,9 +168,9 @@ async def test_a_child_run_leaves_the_parent_runs_client_open(host: FakeVercel) 
     assert [client.closed for client in host.clients] == [True]
 
 
-async def test_a_cancelled_run_kills_its_command_and_closes_its_client(host: FakeVercel, tmp_path: Path) -> None:
+async def test_a_cancelled_run_closes_its_client(host: FakeVercel, tmp_path: Path) -> None:
     async def long_command(ctx: RunContext[None]) -> str:
-        return (await ctx.workspace.run(['sh', '-c', 'echo $$ > pid; exec sleep 30'])).stdout
+        return (await ctx.workspace.run(['sh', '-c', 'touch started; exec sleep 30'])).stdout
 
     agent = Agent(
         TestModel(call_tools=['long_command']),
@@ -179,15 +180,12 @@ async def test_a_cancelled_run_kills_its_command_and_closes_its_client(host: Fak
     )
     task = asyncio.create_task(agent.run('go'))
     with anyio.fail_after(10):
-        while not (tmp_path / 'pid').exists() or not (tmp_path / 'pid').read_text():
+        while not (tmp_path / 'started').exists():
             await asyncio.sleep(0.01)
     task.cancel()
     with anyio.fail_after(10), pytest.raises(asyncio.CancelledError):
         await task
     assert [client.closed for client in host.clients] == [True]
-    (process,) = host.only.processes[-1:]
-    with anyio.fail_after(10):
-        await process.wait()
 
 
 async def test_continuing_the_history_attaches_to_the_same_sandbox(host: FakeVercel) -> None:

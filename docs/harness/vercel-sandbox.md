@@ -76,7 +76,7 @@ async def run_python(ctx: RunContext, code: str) -> str:
     return result.stdout + result.stderr
 ```
 
-Commands run under `sh -c` in the sandbox. File operations run as shell commands there too, through [`Workspace`](https://pydantic.dev/docs/ai/core-concepts/workspace/), so they see the same files and permissions as commands, and a large file moves in 64 KiB pieces.
+Commands run under `sh -c` in the sandbox. File operations run as shell commands there too, through [`Workspace`](https://pydantic.dev/docs/ai/core-concepts/workspace/), so they see the same files and permissions as commands, and a large file moves in pieces of at most 64 KiB.
 
 ### What a timeout stops
 
@@ -135,7 +135,7 @@ async def run_in_prepared_sandbox() -> str:
             await VercelSandbox().destroy(ref)
 ```
 
-The run uses the backend as it is, so `VercelSandbox`'s settings don't apply to it, and leaves it open: close it with `aclose()`. To keep the sandbox instead, store `backend.ref` and pass it as `workspace=` to reattach later. For Vercel features the workspace API doesn't cover, such as ports, snapshots, and network policies, `await backend.get_sandbox()` returns the sandbox's `vercel.sandbox.Sandbox`.
+The run uses the backend as it is, so `VercelSandbox`'s settings don't apply to it, and leaves it open: close it with `aclose()`. To keep the sandbox instead, store `backend.ref` and pass it as `workspace=` to reattach later. For Vercel features the workspace API doesn't cover, such as ports, snapshots, and network policies, `await backend.get_sandbox()` returns the sandbox's `vercel.sandbox.Sandbox`. The handle works through the backend's client, so use it before `aclose()`. For a sandbox the run created, such as `result.workspace`, open your own `SandboxClient` and call `get_sandbox(name=ref.id)` with its ref.
 
 ## Clean up
 

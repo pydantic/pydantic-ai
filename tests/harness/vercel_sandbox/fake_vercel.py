@@ -8,6 +8,9 @@ each output chunk is written to the `stdout` and `stderr` objects as it arrives,
 whose `kill()` sends the process group SIGKILL, and the call returns once the command exits, even while a
 background child holds its output open. Cancelling the call does not stop the command. Destroying or
 stopping a sandbox kills its commands, and a command running then fails with `SandboxStreamError`.
+
+Each lookup returns a `FakeHandle` bound to the client that made it, and a handle whose client is closed
+fails, as the SDK's handles do.
 """
 
 from __future__ import annotations
@@ -149,13 +152,26 @@ class FakeSandbox:
                     os.killpg(process.pid, signal.SIGKILL)
 
 
+@dataclass
+class FakeHandle:
+    """A `Sandbox` handle: the sandbox's state, reached through the client that fetched it."""
+
+    sandbox: FakeSandbox
+    client: FakeClient
+
+    def __getattr__(self, name: str) -> Any:
+        if self.client.closed:  # pragma: no cover - only a backend that keeps a stale handle gets here
+            raise RuntimeError('SDK session is closed')
+        return getattr(self.sandbox, name)
+
+
 class FakeClient:
     def __init__(self, owner: FakeVercel) -> None:
         self._owner = owner
         self.closed = False
         self.closes = 0
 
-    async def get_or_create_sandbox(self, *, name: str, **kwargs: Any) -> tuple[FakeSandbox, bool]:
+    async def get_or_create_sandbox(self, *, name: str, **kwargs: Any) -> tuple[FakeHandle, bool]:
         owner = self._owner
         owner.create_names.append(name)
         if owner.create_gate is not None:
@@ -164,15 +180,15 @@ class FakeClient:
         if owner.create_errors:
             raise owner.create_errors.pop(0)
         if name in owner.sandboxes:
-            return owner.sandboxes[name], False
+            return FakeHandle(owner.sandboxes[name], self), False
         sandbox = owner.add(name, persistent=kwargs['persistent'])
         sandbox.create_kwargs = kwargs
         if owner.lost_replies:
             owner.lost_replies -= 1
             raise httpx2.ReadError('the connection closed before the reply arrived')
-        return sandbox, True
+        return FakeHandle(sandbox, self), True
 
-    async def get_sandbox(self, *, name: str) -> FakeSandbox:
+    async def get_sandbox(self, *, name: str) -> FakeHandle:
         owner = self._owner
         owner.check_call()
         if owner.get_errors:
@@ -182,7 +198,7 @@ class FakeClient:
         if sandbox.pending_polls:
             sandbox.pending_polls -= 1
             sandbox.status = SandboxStatus.PENDING if sandbox.pending_polls else SandboxStatus.RUNNING
-        return sandbox
+        return FakeHandle(sandbox, self)
 
     async def aclose(self) -> None:
         self.closed = True

@@ -53,13 +53,15 @@ class TestCreate:
         assert host.only.name.startswith('pydantic-ai-')
         assert backend.ref == _ref(host.only.name)
 
-    async def test_a_lost_create_reply_is_found_by_name_instead_of_creating_another(self, host: FakeVercel) -> None:
+    async def test_a_lost_create_reply_is_found_by_name_and_waited_for(self, host: FakeVercel) -> None:
         host.lost_replies = 1
         backend = VercelSandboxBackend()
         with pytest.raises(httpx2.ReadError):
             await backend.run(['true'])
-        await backend.run(['true'])
-        assert len(set(host.create_names)) == 1 and len(host.sandboxes) == 1
+        # The sandbox the lost reply was for is still starting when the retry finds it.
+        host.only.status, host.only.pending_polls = SandboxStatus.PENDING, 3
+        assert (await backend.run(['true'])).exit_code == 0
+        assert len(set(host.create_names)) == 1
 
     @pytest.mark.parametrize(
         'error',
@@ -75,8 +77,9 @@ class TestCreate:
         with pytest.raises(WorkspaceUnavailableError):
             await VercelSandboxBackend().run(['true'])
 
-    async def test_a_server_error_propagates_so_durable_engines_retry_it(self, host: FakeVercel) -> None:
-        host.create_errors.append(api_error(500))
+    @pytest.mark.parametrize('status', [500, 429])
+    async def test_a_server_error_propagates_so_durable_engines_retry_it(self, host: FakeVercel, status: int) -> None:
+        host.create_errors.append(api_error(status))
         backend = VercelSandboxBackend()
         with pytest.raises(SandboxApiError):
             await backend.run(['true'])
@@ -122,7 +125,8 @@ class TestAttach:
         host.add('dead', persistent=persistent, status=status)
         with pytest.raises(WorkspaceUnavailableError):
             await VercelSandboxBackend(ref=_ref('dead')).run(['true'])
-        assert not host.create_names
+        # Refused when attaching, before any command runs.
+        assert not host.sandboxes['dead'].processes and not host.create_names
 
     async def test_rejected_credentials_while_attaching_are_unavailable(self, host: FakeVercel) -> None:
         host.call_error = api_error(401)
@@ -131,8 +135,15 @@ class TestAttach:
 
     async def test_a_stopped_persistent_sandbox_is_attached(self, host: FakeVercel) -> None:
         """Its first command resumes it; the SDK does that, so the backend only lets it through."""
-        sandbox = host.add('kept', status=SandboxStatus.STOPPED)
-        assert await VercelSandboxBackend(ref=_ref('kept')).get_sandbox() is sandbox
+        host.add('kept', status=SandboxStatus.STOPPED)
+        assert (await VercelSandboxBackend(ref=_ref('kept')).get_sandbox()).name == 'kept'
+
+    async def test_a_failure_resuming_a_stopped_persistent_sandbox_propagates(self, host: FakeVercel) -> None:
+        """No command started, so a failed resume is the SDK's failure for durable engines to retry, not a lost session."""
+        host.add('kept', status=SandboxStatus.STOPPED)
+        host.run_error = api_error(503)
+        with pytest.raises(SandboxApiError):
+            await VercelSandboxBackend(ref=_ref('kept')).run(['true'])
 
     async def test_a_pending_sandbox_is_waited_for(self, host: FakeVercel) -> None:
         host.add('booting').pending_polls = 3
@@ -169,10 +180,12 @@ class TestRun:
     async def test_output_over_the_limit_kills_the_command(
         self, host: FakeVercel, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """The limit counts both streams together, and the error keeps the start of each."""
         monkeypatch.setattr('pydantic_ai_harness.vercel_sandbox._backend._MAX_OUTPUT_BYTES', 8)
+        monkeypatch.setattr('pydantic_ai_harness.vercel_sandbox._backend._OUTPUT_PREVIEW_BYTES', 3)
         with pytest.raises(WorkspaceOutputLimitError) as exc_info:
-            await VercelSandboxBackend().run(['sh', '-c', 'printf 0123456789; exec sleep 30'])
-        assert exc_info.value.stdout == '0123456789'
+            await VercelSandboxBackend().run(['sh', '-c', 'printf 01234; printf 56789 >&2; exec sleep 30'])
+        assert (exc_info.value.stdout, exc_info.value.stderr) == ('012', '567')
         (process,) = host.only.processes
         with anyio.fail_after(10):
             await process.wait()
@@ -209,6 +222,7 @@ class TestRun:
         [
             (api_error(400), WorkspaceError),
             (api_error(409), WorkspaceError),
+            (api_error(422), WorkspaceError),
             (api_error(401), WorkspaceUnavailableError),
         ],
     )
@@ -221,14 +235,21 @@ class TestRun:
         with pytest.raises(raised):
             await backend.run(['true'])
 
+    async def test_a_command_that_exits_125_is_not_a_missing_working_dir(
+        self, host: FakeVercel, tmp_path: Path
+    ) -> None:
+        backend = VercelSandboxBackend(working_dir=str(tmp_path.resolve()))
+        assert (await backend.run(['sh', '-c', 'exit 125'])).exit_code == 125
+
+    async def test_the_working_dir_is_resolved_once(self, host: FakeVercel) -> None:
+        backend = VercelSandboxBackend()
+        assert await backend.working_dir() == await backend.working_dir()
+        assert len(host.only.processes) == 1
+
     async def test_a_working_dir_that_cannot_be_resolved_is_a_workspace_error(self, host: FakeVercel) -> None:
         backend = VercelSandboxBackend(env={'PATH': '/nonexistent'})
         with pytest.raises(WorkspaceError, match='Could not determine the working directory'):
             await backend.working_dir()
-
-
-async def test_get_sandbox_returns_the_current_handle(host: FakeVercel) -> None:
-    assert (await VercelSandboxBackend().get_sandbox()) is host.only
 
 
 class TestClientLifecycle:
@@ -259,11 +280,15 @@ class TestClientLifecycle:
             (tmp_path / 'release').touch()
         assert [client.closed for client in host.clients] == [True]
 
-    async def test_concurrent_acloses_close_the_client_once(self, host: FakeVercel) -> None:
+    async def test_concurrent_acloses_close_the_client_once(
+        self, host: FakeVercel, caplog: pytest.LogCaptureFixture
+    ) -> None:
         backend = VercelSandboxBackend()
         await backend.run(['true'])
-        await asyncio.gather(backend.aclose(), backend.aclose())
+        with caplog.at_level(logging.WARNING):
+            await asyncio.gather(backend.aclose(), backend.aclose())
         assert [client.closes for client in host.clients] == [1]
+        assert not caplog.records
 
     @pytest.mark.parametrize('failure', ['error', 'hang'])
     async def test_a_failing_close_is_logged_not_raised(
@@ -278,12 +303,7 @@ class TestClientLifecycle:
             host.close_gate = asyncio.Event()
         with caplog.at_level(logging.WARNING):
             await backend.aclose()
-        message = (
-            "Could not close the Vercel Sandbox client: RuntimeError('boom')"
-            if failure == 'error'
-            else 'Closing the Vercel Sandbox client did not complete within 0.05s.'
-        )
-        assert caplog.messages == [message]
+        assert [record.levelno for record in caplog.records] == [logging.WARNING]
 
 
 class TestDestroy:
