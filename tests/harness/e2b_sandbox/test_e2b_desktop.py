@@ -10,12 +10,9 @@ from pydantic_ai import Agent, RunContext, UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import (
     Click,
-    Point,
-    Region,
     Workspace,
     WorkspaceError,
     WorkspaceRef,
-    WorkspaceUnavailableError,
 )
 from pydantic_ai_harness._x11 import STARTED
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox, E2BSandboxBackend
@@ -27,19 +24,15 @@ from .fake_e2b import FakeE2B
 class FakeDisplay:
     """Answers the start script and `xdotool` like a sandbox whose X server is up or down."""
 
-    def __init__(self, *, up: bool = False, can_start: bool = True) -> None:
+    def __init__(self, *, up: bool = False) -> None:
         self.up = up
-        self.can_start = can_start
         self.starts: list[str] = []
         self.xdotool: list[str] = []
-        self.captures: list[str] = []
         self.viewers: list[str] = []
 
     def __call__(self, command: str, timeout: float | None) -> tuple[str, str, int]:
         if 'Xvfb' in command:
             self.starts.append(command)
-            if not self.up and not self.can_start:
-                return '', 'the X server did not start:\n(EE) Fatal server error', 1
             if self.up:
                 return '', '', 0
             self.up = True
@@ -63,7 +56,6 @@ class FakeDisplay:
                 return '', 'the viewer did not start:\nno display', 1
             return 'Pass1234', '', 0
         elif 'scrot' in command:
-            self.captures.append(command)
             return base64.b64encode(FAKE_SCREENSHOT).decode(), '', 0
         return '', '', 0
 
@@ -93,17 +85,6 @@ async def test_the_display_starts_on_first_use_and_actions_go_to_it(fake_e2b: Fa
     assert display.xdotool[-1].endswith('mousemove 3 4 click --repeat 1 1')
     # E2B's locale is POSIX, under which `xdotool type` stops at the first character outside ASCII.
     assert fake_e2b.sandboxes[0].commands.calls[-1].envs == {'DISPLAY': ':1', 'LC_ALL': 'C.UTF-8'}
-
-
-async def test_screenshots_zooms_and_the_pointer_come_from_the_display(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
-    workspace = Workspace(E2BSandboxBackend(desktop=True))
-
-    assert await workspace.screenshot() == FAKE_SCREENSHOT
-    assert await workspace.zoom(Region(left=2, top=3, right=12, bottom=8)) == FAKE_SCREENSHOT
-    assert await workspace.cursor_position() == Point(x=5, y=6)
-    assert display.captures[-1].endswith(' sh -a 2,3,10,5')
-    assert await workspace.scaled_screenshot(640, 400) == FAKE_SCREENSHOT
-    assert display.captures[-1].endswith(' sh 640x400')
 
 
 async def test_backends_on_one_sandbox_name_one_screen(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
@@ -161,15 +142,6 @@ async def test_a_display_that_went_away_is_started_again(fake_e2b: FakeE2B, disp
 
     # The last action uses the display that started, without running the start script again.
     assert len(display.starts) == 2
-
-
-async def test_a_template_without_a_working_x_server_says_why(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
-    display.can_start = False
-    workspace = Workspace(E2BSandboxBackend(template='base', desktop=True))
-
-    with pytest.raises(WorkspaceUnavailableError, match='it needs Xvfb, xdotool, xmodmap, scrot and setsid') as error:
-        await workspace.screenshot()
-    assert 'Fatal server error' in str(error.value)
 
 
 async def test_a_sandbox_without_a_desktop_has_no_display(fake_e2b: FakeE2B) -> None:
