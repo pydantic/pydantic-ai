@@ -1,5 +1,6 @@
 """Edit and Retry of an earlier prompt from the browser, which rewind the conversation as the terminal's Esc Esc does."""
 
+import pytest
 from starlette.testclient import WebSocketTestSession
 
 from pydantic_ai import Agent
@@ -12,6 +13,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     TurnStarted,
     image_id,
 )
+from pydantic_clai2.runtime import image_codec
 from pydantic_clai2.runtime.image_codec import decode_images
 from tests.clai2.test_web import TOKEN, MakeWeb, encoded, make_web, png, receive_until
 from tests.clai2.test_web_queue import ORIGIN, waiting_agent
@@ -47,6 +49,7 @@ def test_edit_and_retry_replace_a_prompt_and_every_later_turn(make_web: MakeWeb)
         route = f'/api/sessions/{web_.shell.session.conversation_id}/rewind/{first["run_id"]}'
         for text, status, detail in [
             ('/help', 400, 'Send a prompt in its place, not a /command.'),
+            (' Clear ', 400, 'Send a prompt in its place, not a /command.'),
             ('!ls', 400, 'Shell lines (!) run only in the terminal.'),
         ]:
             refused = web_.post(route, {'text': text})
@@ -56,6 +59,14 @@ def test_edit_and_retry_replace_a_prompt_and_every_later_turn(make_web: MakeWeb)
             404,
             {'detail': 'That prompt can no longer be edited: it left the conversation or predates a compaction.'},
         )
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(image_codec, 'MAX_PENDING_BYTES', 1)
+            refused = web_.post(route, {'text': "A'"})
+            assert (refused.status_code, refused.json()) == (
+                400,
+                {'detail': 'These images exceed the 32 MiB limit; send fewer at a time.'},
+            )
+            assert receive_until(socket, Snapshot)[1].items[-1].text == 'done', 'the browser gets the history back'
         assert prompts() == [('A', [image_id(red)]), ('B', [])], 'a refusal keeps the history'
 
         assert web_.post(route, {'text': " A' "}).status_code == 204

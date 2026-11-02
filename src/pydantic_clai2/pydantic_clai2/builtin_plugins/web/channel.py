@@ -43,7 +43,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     user_item,
 )
 from pydantic_clai2.builtin_plugins.web.workers import Workers, task_entry
-from pydantic_clai2.commands import is_command_input
+from pydantic_clai2.commands import expand_bare_command, is_command_input
 from pydantic_clai2.plugins import CommandEnd, ForkEnd, LiveSession, TurnOutcome
 from pydantic_clai2.ui.menus.rewind import rewind_points
 from pydantic_clai2.ui.prompt.prompt_queue import NOT_QUEUED
@@ -334,11 +334,16 @@ class SessionChannel:
         if point is None:
             raise LookupError('That prompt can no longer be edited: it left the conversation or predates a compaction.')
         text = _entered(text, images=point.images)
-        if is_command_input(text):
+        if is_command_input(expand_bare_command(text)):
             raise ValueError('Send a prompt in its place, not a /command.')
         await conversation.commit_messages(messages[: point.message_index])
-        self.service.hub.publish_session(self.snapshot(), session=self.id)
-        self.session.send_input(text, images=point.images)
+        try:
+            self.session.send_input(text, images=point.images)
+        except (ValueError, RuntimeError):
+            await conversation.commit_messages(messages)
+            raise
+        finally:
+            self.service.hub.publish_session(self.snapshot(), session=self.id)
 
     def switch(self, key: Switch, on: bool) -> None:
         """Flip a run switch as `/set` typed at the prompt does; a running turn keeps the tools it started with."""
