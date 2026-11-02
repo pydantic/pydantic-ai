@@ -47,7 +47,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai.workspaces._telemetry import lifecycle_span, stop_span
+from pydantic_ai.workspaces._telemetry import lifecycle_span
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env_types,
@@ -55,7 +55,7 @@ from pydantic_ai_harness._workspace_provider import (
     command_argv,
     running_on_asyncio,
     safe_credential_reason,
-    stop_shielded,
+    stop_command,
 )
 
 if TYPE_CHECKING:
@@ -703,8 +703,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         except BaseException as error:
             # A child task shields the side-channel stop from repeated task cancellation.
             # Allow the winning launcher to publish its PID before bounding a lost start ACK.
-            with stop_span():
-                await stop_shielded(stop, grace=12)
+            await stop_command(stop, grace=12)
             if isinstance(error, Exception):
                 context = (
                     'Command could not run in the E2B sandbox'

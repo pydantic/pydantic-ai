@@ -6,9 +6,9 @@ import base64
 import posixpath
 import shlex
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
-from typing import cast
+from typing import TypeVar, cast
 
 import anyio
 from opentelemetry.trace import INVALID_SPAN, Span
@@ -16,7 +16,7 @@ from typing_extensions import get_protocol_members
 
 from pydantic_ai.exceptions import UserError
 
-from ._telemetry import Operation, Step, command_span, operation_span, set_command, set_content
+from ._telemetry import Operation, Step, command_span, operation_span, set_content, traced_run
 from .protocol import (
     CommandResult,
     FileEntry,
@@ -67,6 +67,9 @@ _SHELL_CHECK_PARENTS = (
     f'if test -d "$parent"; then test -w "$parent" || exit {_SHELL_EXIT_PERMISSION}; break; fi; '
     'parent=${parent%/*}; [ -n "$parent" ] || parent=/; done; '
 )
+
+
+_T = TypeVar('_T')
 
 
 class _DamagedOutputError(WorkspaceError):
@@ -443,11 +446,19 @@ class Workspace(WorkspaceBackend):
         )
 
     def _operation(self, operation: Operation) -> AbstractContextManager[Span]:
-        """Trace `operation` on the layer that calls the backend; the layers around it delegate to that one."""
-        backend = self._backend
-        if isinstance(backend, (Workspace, UnavailableWorkspace)):
-            return nullcontext(INVALID_SPAN)
-        return operation_span(operation, backend)
+        """Trace `operation`, unless no environment is attached: there is nothing to trace it in."""
+        return operation_span(operation, self) if self.attached else nullcontext(INVALID_SPAN)
+
+    async def _resolve_traced(self, path: str, span: Span) -> str:
+        """Resolve `path`, recording it on `span` when content is captured."""
+        resolved = await self.resolve(path)
+        set_content(span, 'file.path', resolved)
+        return resolved
+
+    async def _on_path(self, operation: Operation, path: str, call: Callable[[str], Awaitable[_T]]) -> _T:
+        """Trace `operation` and `call` it with `path` resolved."""
+        with self._operation(operation) as span:
+            return await call(await self._resolve_traced(path, span))
 
     async def run(
         self,
@@ -469,11 +480,9 @@ class Workspace(WorkspaceBackend):
         backend = self._backend
         if not isinstance(backend, SupportsCommands):
             raise UserError('This workspace does not support command execution.')
-        with self._operation('run') as span:
-            set_command(span, command)
-            result = await backend.run(command, shell=shell, env=env, timeout=timeout)
-            span.set_attribute('process.exit.code', result.exit_code)
-            return result
+        return await traced_run(
+            self._operation('run'), command, lambda: backend.run(command, shell=shell, env=env, timeout=timeout)
+        )
 
     async def working_dir(self) -> str:
         """The default working directory, which relative paths resolve against."""
@@ -494,11 +503,6 @@ class Workspace(WorkspaceBackend):
             return posixpath.normpath(path)
         return posixpath.normpath(posixpath.join(base or await self.working_dir(), path))
 
-    async def _resolve_traced(self, path: str, span: Span) -> str:
-        resolved = await self.resolve(path)
-        set_content(span, 'file.path', resolved)
-        return resolved
-
     async def read_bytes(self, path: str) -> bytes:
         """Read a file's contents as bytes."""
         with self._operation('read_bytes') as span:
@@ -514,28 +518,23 @@ class Workspace(WorkspaceBackend):
 
     async def stat(self, path: str) -> FileEntry:
         """Return metadata for a file or directory."""
-        with self._operation('stat') as span:
-            return await self._filesystem.stat(await self._resolve_traced(path, span))
+        return await self._on_path('stat', path, self._filesystem.stat)
 
     async def list_dir(self, path: str) -> Sequence[FileEntry]:
         """List the entries of a directory (non-recursive)."""
-        with self._operation('list_dir') as span:
-            return await self._filesystem.list_dir(await self._resolve_traced(path, span))
+        return await self._on_path('list_dir', path, self._filesystem.list_dir)
 
     async def make_dir(self, path: str) -> None:
         """Create a directory, including missing parents."""
-        with self._operation('make_dir') as span:
-            await self._filesystem.make_dir(await self._resolve_traced(path, span))
+        await self._on_path('make_dir', path, self._filesystem.make_dir)
 
     async def remove(self, path: str) -> None:
         """Remove a file, or a directory and its contents."""
-        with self._operation('remove') as span:
-            await self._filesystem.remove(await self._resolve_traced(path, span))
+        await self._on_path('remove', path, self._filesystem.remove)
 
     async def exists(self, path: str) -> bool:
         """Whether a file or directory exists at the path."""
-        with self._operation('exists') as span:
-            return await self._filesystem.exists(await self._resolve_traced(path, span))
+        return await self._on_path('exists', path, self._filesystem.exists)
 
     async def realpath(self, path: str) -> str:
         """Follow every symlink in `path` in the environment, like `os.path.realpath(path, strict=False)`.
