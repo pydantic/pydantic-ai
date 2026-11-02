@@ -311,6 +311,12 @@ jobs:
           UV_NO_SYNC: "1"
         run: uv run pytest scripts/test_typecheck_changed.py
 
+      # The `complexity` job runs this script with only the `lint` group installed, so its tests run here.
+      - name: Test the cognitive complexity check
+        env:
+          UV_NO_SYNC: "1"
+        run: uv run pytest scripts/test_check_complexity.py
+
       # `uv run --script` in the smoke test below silently re-locks a stale runner lock, so
       # it can't catch one. A change to the runner's dependencies, `pydantic_ai_slim`'s
       # included, must refresh it.
@@ -388,7 +394,8 @@ jobs:
         with:
           extra_args: --all-files --verbose
         env:
-          SKIP: no-commit-to-branch
+          # `complexity` checks only staged changes, and a checkout stages none; the `complexity` job runs it.
+          SKIP: no-commit-to-branch,complexity
           # pre-commit hooks shell out via `uv run`; without this they would re-sync the venv
           # down to the root package and drop the `--all-packages` install above.
           UV_NO_SYNC: "1"
@@ -461,6 +468,28 @@ jobs:
       - run: uv run python .github/scripts/check_http_dependencies.py
       - run: ls -lh dist/
       - run: uvx twine check --strict dist/*
+
+  # Fails when a change makes a function's cognitive complexity exceed the limit, or grow while above it.
+  complexity:
+    name: cognitive complexity
+    needs: classify
+    if: needs.classify.outputs.content_only != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          # The base is `HEAD^1`: on a pull request, the base branch tip its merge commit was made on;
+          # on a push or a merge group, the commit before it on the branch.
+          fetch-depth: 2
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          enable-cache: true
+          cache-suffix: complexity
+
+      - name: Check cognitive complexity against the base
+        run: uv run --only-group lint scripts/check_complexity.py --base HEAD^1 --format github
 
   # mypy and quality checks are a bit slower than other jobs, so we run them separately
   mypy:
@@ -1948,6 +1977,7 @@ jobs:
     needs:
       - classify
       - quality
+      - complexity
       - mypy
       - docs-assets
       - docs-only
@@ -1990,10 +2020,10 @@ jobs:
             ${{
               needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,latest-versions-canary,coverage,content-checks'
+              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,latest-versions-canary,coverage,content-checks'
               || needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed != 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,latest-versions-canary,coverage,docs-only,docs-assets'
+              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,latest-versions-canary,coverage,docs-only,docs-assets'
               || needs.classify.outputs.clai2_only == 'true'
               && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
               || needs.classify.outputs.harness_only == 'true'
