@@ -370,7 +370,12 @@ async def test_historical_tool_output_preference_is_preserved(tmp_path: Path, va
 
 @pytest.mark.parametrize(
     ('key', 'value_json'),
-    [('future.setting', '{"enabled":true}'), ('future.setting', 'unrecognized encoding')],
+    [
+        ('future.setting', '{"enabled":true}'),
+        ('future.setting', 'unrecognized encoding'),
+        # Saved by a `main` build before `repo_context.walk_up_roots` replaced it; never released.
+        ('repo_context.walk_up_root', '"/offline mount/projects"'),
+    ],
 )
 def test_unknown_saved_settings_survive_edits(tmp_path: Path, key: str, value_json: str) -> None:
     path = tmp_path / 'config.db'
