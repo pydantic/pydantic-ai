@@ -424,10 +424,21 @@ async def test_a_failed_call_sends_a_blank_screenshot_and_says_why(allow_model_r
     assert note == {'role': 'user', 'content': 'Taking the screenshot failed: scrot: not found'}
 
 
-async def test_a_model_without_the_native_tool_gets_a_function(allow_model_requests: None) -> None:
+@pytest.mark.parametrize(
+    'model_name, native',
+    [
+        pytest.param('gpt-5.2', True, id='a-model-without-it'),
+        # As `ComputerUse(native=False)` asks, so the model gets the tool's own actions.
+        pytest.param('gpt-5.5', False, id='a-tool-that-opts-out'),
+    ],
+)
+async def test_a_model_without_the_native_tool_or_a_tool_that_opts_out_gets_a_function(
+    allow_model_requests: None, model_name: str, native: bool
+) -> None:
     client = MockOpenAIResponses.create_mock(_done())
-    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=client))
-    await Agent(model, toolsets=[computer_toolset()], capabilities=[InMemoryProvider().capability()]).run('Go.')
+    model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=client))
+    toolset = computer_toolset(native=native)
+    await Agent(model, toolsets=[toolset], capabilities=[InMemoryProvider().capability()]).run('Go.')
 
     (request,) = get_mock_responses_kwargs(client)
     assert [tool['name'] for tool in request['tools']] == ['computer']
