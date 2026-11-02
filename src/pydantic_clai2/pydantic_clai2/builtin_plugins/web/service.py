@@ -851,7 +851,7 @@ class Observer(AbstractCapability[None]):
         channel = self._channel(ctx)
         if channel is None or is_monty_cell(ctx):
             return await handler()
-        channel.run_started(ctx.prompt)
+        channel.run_started(ctx.prompt, run_id=ctx.run_id)
         try:
             result = await handler()
         except get_cancelled_exc_class():

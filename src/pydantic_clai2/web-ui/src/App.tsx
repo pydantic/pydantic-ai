@@ -5,7 +5,7 @@ import { Composer, type ComposerHandle } from './components/Composer'
 import { QuestionCard } from './components/QuestionCard'
 import { Sidebar, type SidebarHandle } from './components/Sidebar'
 import { Switches } from './components/Switches'
-import { Transcript } from './components/Transcript'
+import { Transcript, type Rewind } from './components/Transcript'
 import { TurnMeter } from './components/TurnMeter'
 import { compact } from './format'
 import { CommandMenu } from './components/CommandMenu'
@@ -46,17 +46,30 @@ const SessionTranscript = memo(function SessionTranscript({
   id,
   chat,
   onWorker,
+  onError,
 }: {
   id: string
   chat: Chat
   onWorker: (id: string) => void
+  onError: (message: string) => void
 }) {
   const session = useMemo(() => sessionApi(id), [id])
+  const rewind = useCallback<Rewind>(
+    (runId, text) =>
+      session.rewind(runId, text).then(
+        () => true,
+        (error: unknown) => {
+          onError(error instanceof Error ? error.message : String(error))
+          return false
+        },
+      ),
+    [session, onError],
+  )
   const links = useMemo(() => ({ tasks: chat.tasks, parent: null, open: onWorker }), [chat.tasks, onWorker])
   return (
     <SessionContext.Provider value={session}>
       <WorkersContext.Provider value={links}>
-        <Transcript entries={chat.entries} running={chat.running} empty={null} />
+        <Transcript entries={chat.entries} running={chat.running} empty={null} rewind={rewind} />
       </WorkersContext.Provider>
     </SessionContext.Provider>
   )
@@ -819,7 +832,7 @@ export function App() {
           .sort()
           .map((id) => (
             <Activity key={id} mode={id === kept ? 'visible' : 'hidden'}>
-              <SessionTranscript id={id} chat={chats[id] as Chat} onWorker={openWorker} />
+              <SessionTranscript id={id} chat={chats[id] as Chat} onWorker={openWorker} onError={showError} />
             </Activity>
           ))}
         {!orchestrating && !workerTask && !fresh && (

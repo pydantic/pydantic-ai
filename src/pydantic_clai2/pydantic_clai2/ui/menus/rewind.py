@@ -34,10 +34,12 @@ class RewindPoint:
     message_index: int
     text: str
     images: tuple[BinaryContent, ...]
+    reason: str = ''
+    """Why it cannot be rewound to; empty when it can."""
 
 
-def build_rewind_menu(messages: Sequence[ModelMessage]) -> Menu:
-    """Offer run-start prompts, never a steering message amid unfinished tool calls."""
+def rewind_points(messages: Sequence[ModelMessage]) -> list[RewindPoint]:
+    """Run-start prompts, oldest first, never a steering message amid unfinished tool calls."""
     # Compaction inserts newer context ahead of older preserved prompts; core may
     # merge them into one request. Those prompts no longer have their original boundary.
     # Harness pins this shape in `tests/harness/compaction/test_summary_provenance.py`.
@@ -61,7 +63,7 @@ def build_rewind_menu(messages: Sequence[ModelMessage]) -> Menu:
         ),
         default=None,
     )
-    items: list[MenuItem] = []
+    points: list[RewindPoint] = []
     seen_runs: set[str] = set()
     for index, message in enumerate(messages):
         if message.run_id is not None:
@@ -85,15 +87,23 @@ def build_rewind_menu(messages: Sequence[ModelMessage]) -> Menu:
             reason = 'predates rewritten context'
         elif not all(isinstance(item, (str, BinaryContent)) for item in content):
             reason = 'unsupported attachment'
-        label = ' '.join(terminal_text(text).split()) or '[attachment]'
-        items.append(
-            MenuItem(
-                f'{len(items) + 1}. {label}' + (f' ({reason})' if reason else ''),
-                value=RewindPoint(message_index=index, text=text, images=images),
-                disabled=bool(reason),
-                description=reason,
-            )
+        points.append(RewindPoint(message_index=index, text=text, images=images, reason=reason))
+    return points
+
+
+def build_rewind_menu(messages: Sequence[ModelMessage]) -> Menu:
+    """Offer the `rewind_points` of `messages`, newest first."""
+    items = [
+        MenuItem(
+            f'{number}. '
+            + (' '.join(terminal_text(point.text).split()) or '[attachment]')
+            + (f' ({point.reason})' if point.reason else ''),
+            value=point,
+            disabled=bool(point.reason),
+            description=point.reason,
         )
+        for number, point in enumerate(rewind_points(messages), start=1)
+    ]
     return (
         MenuBuilder('Rewind conversation')
         .style(markdown_style())

@@ -1263,6 +1263,9 @@ A press that cancels a running turn, closes completions, or leaves history searc
 does not count toward the shortcut. Wait for queued prompts to finish first.
 Typing another key or opening another menu resets the double-Esc sequence.
 
+In the web UI, a prompt's **Edit** and **Retry** buttons rewind to it the same way, between turns,
+and send the edited or unchanged prompt with its images at once.
+
 ### Shell commands with `!`
 
 A line that starts with `!`, after trimming surrounding whitespace, runs in the
