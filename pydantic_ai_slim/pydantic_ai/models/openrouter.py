@@ -812,7 +812,8 @@ class OpenRouterModel(OpenAIChatModel):
     @property
     @override
     def _system_entries_follow_user_turn(self) -> bool:
-        # `_map_messages` moves them there on these routes (`_place_system_messages_before_generation`).
+        # `_map_messages` checks this to move them there (`_place_system_messages_before_generation`), so the
+        # lookalike note's "preceding" wording and the placement share one condition.
         return self._resolved_profile.get('supports_inline_system_prompts', False) and self._resolved_profile.get(
             'openrouter_system_messages_precede_generation', False
         )
@@ -1296,9 +1297,7 @@ class OpenRouterModel(OpenAIChatModel):
         model_settings: ModelSettings | None = None,
     ) -> list[chat.ChatCompletionMessageParam]:
         mapped = await super()._map_messages(messages, model_request_parameters, model_settings=model_settings)
-        if self._resolved_profile.get('supports_inline_system_prompts', False) and self._resolved_profile.get(
-            'openrouter_system_messages_precede_generation', False
-        ):
+        if self._system_entries_follow_user_turn:
             _place_system_messages_before_generation(mapped)
         # A `configuration_update` message has no content to carry a breakpoint, and an empty text block with one is
         # rejected, so breakpoints are placed as if it weren't there and it goes back in its place afterwards.
