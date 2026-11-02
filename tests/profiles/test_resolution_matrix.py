@@ -980,7 +980,7 @@ def test_mistral_zai_glm_5_3_flash_inline_defs():
 def test_gateway_zai_glm_5_3_model_level_profile():
     """A model-level `.profile` picks up the GLM-5.3 schema transformer through its gateway provider."""
     model = OpenAIChatModel('zai-org/GLM-5.3', provider=TogetherProvider(api_key='test'))
-    assert model.profile['json_schema_transformer'] is InlineDefsJsonSchemaTransformer
+    assert model.profile.get('json_schema_transformer') is InlineDefsJsonSchemaTransformer
 
 
 @pytest.mark.skipif(not cohere_imports(), reason='cohere not installed')
