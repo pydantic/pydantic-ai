@@ -79,6 +79,15 @@ async def test_concurrent_first_uses_start_one_display() -> None:
     assert driver.starts == 1
 
 
+async def test_every_call_reaches_the_started_display() -> None:
+    driver = FakeDriver()
+    display = ManagedDisplay(driver.start)
+    assert await display.scaled_screenshot(640, 400) == FAKE_SCREENSHOT
+    assert await display.zoom(Region(left=0, top=0, right=10, bottom=10)) == FAKE_SCREENSHOT
+    assert await display.cursor_position() == Point(x=0, y=0)
+    assert driver.starts == 1
+
+
 async def test_a_failed_look_starts_the_display_again_and_looks_again() -> None:
     driver = FakeDriver()
     display = ManagedDisplay(driver.start)
