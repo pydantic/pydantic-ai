@@ -191,6 +191,22 @@ class ModelProfile(TypedDict, total=False):
     request-scoped part render as a lasting system prompt on every later request.
     """
 
+    mark_superseded_instructions_in_place: bool
+    """Whether to mark an instruction statement that a later change withdraws or replaces where the model already has it. Default: `False`.
+
+    An [`on_change='append'`](../agent.md#appending-instruction-changes) block keeps its first value in the
+    instruction prefix, and each change is appended to the history as an
+    [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]. Some models keep following the earlier
+    statement, most visibly a restriction the change lifts. When `True`, `Model.prepare_messages` and
+    `Model.prepare_request` end each earlier statement of the block, in the prefix or in history, with a note
+    saying a later change in the conversation withdrew or replaced it. The change itself is sent as before.
+
+    A statement is only marked once a later change exists, and is then marked the same way on every request,
+    so a model with this flag rewrites the cached prompt once per change, from the earliest statement it marks
+    onward: from the block in the instruction prefix for a block's first change in an instruction window, and
+    from the previous change for later ones. Requests before the change are unchanged.
+    """
+
     supports_mid_conversation_effort: bool
     """Whether the provider's API can change the thinking effort from a point in the conversation onward. Default: `False`.
 

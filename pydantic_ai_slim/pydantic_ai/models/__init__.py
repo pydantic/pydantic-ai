@@ -102,7 +102,9 @@ from ..messages import (
     FinishReason,
     InstructionBaselinePart,
     InstructionDeltaPart,
+    InstructionId,
     InstructionPart,
+    InstructionSupersession,
     ModelMessage,
     ModelRequest,
     ModelRequestAttempt,
@@ -376,6 +378,19 @@ class ModelRequestParameters:
     before calling the model. A part with no id, or an id with no entry, is `'prefix'`: use
     [`instruction_visibility_of`][pydantic_ai.models.ModelRequestParameters.instruction_visibility_of]
     rather than reading the dict.
+    """
+
+    superseded_instructions: Annotated[
+        dict[str, InstructionSupersession], Field(exclude_if=lambda superseded: not superseded)
+    ] = field(default_factory=dict[str, InstructionSupersession], repr=False)
+    """Maps the ids of the `on_change='append'` parts in [`instruction_parts`][pydantic_ai.models.ModelRequestParameters.instruction_parts] that a later change in history withdraws or replaces to how the first such change does.
+
+    Keyed by the id as a string (`'agent:state'`), and derived by the agent from the outgoing message history
+    before each request, like [`revealed_tool_names`][pydantic_ai.models.ModelRequestParameters.revealed_tool_names].
+    Left out of the serialized parameters while empty.
+    A model whose profile sets
+    [`mark_superseded_instructions_in_place`][pydantic_ai.profiles.ModelProfile.mark_superseded_instructions_in_place]
+    marks these blocks in the prefix it renders; every other model ignores it.
     """
 
     thinking: ThinkingLevel | None = None
@@ -1638,7 +1653,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 prompted_output_template=self.profile.get('prompted_output_template', DEFAULT_PROMPTED_OUTPUT_TEMPLATE),
             )
 
-        params = _render_append_blocks(params)
+        params = _render_append_blocks(
+            params, mark_superseded=self.profile.get('mark_superseded_instructions_in_place', False)
+        )
 
         # Append prompted_output_instructions to instruction_parts so models that use structured
         # instruction parts (for per-part system messages or cache placement) also get them.
@@ -1767,12 +1784,17 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         inline_system = self.profile.get('supports_inline_system_prompts', False)
         messages = _drop_capability_load_deltas(messages)
         if _has_instruction_state(messages):
+            mark_superseded = self.profile.get('mark_superseded_instructions_in_place', False)
             # The same path choice as the prefix statement in `prepare_request`; on the fallback path
             # `_wrap_non_leading_system_prompts` below `<system>`-wraps the update.
             messages = _project_instruction_state(
                 messages,
                 inline_system=inline_system,
                 prefix=model_request_parameters.instruction_parts if model_request_parameters is not None else None,
+                superseded=model_request_parameters.superseded_instructions
+                if mark_superseded and model_request_parameters is not None
+                else None,
+                mark_superseded=mark_superseded,
             )
 
         messages = _render_system_prompt_contexts(
@@ -3944,16 +3966,24 @@ def _note_if_unsupported(item: object, profile: ModelProfile) -> object:
     return item if unsupported is None else unsupported_file_note(item, unsupported)
 
 
-def _render_append_blocks(params: ModelRequestParameters) -> ModelRequestParameters:
-    """Render the prefix's append-mode blocks, which history holds only the content of; see `_render_append_parts`."""
+def _render_append_blocks(params: ModelRequestParameters, *, mark_superseded: bool) -> ModelRequestParameters:
+    """Render the prefix's append-mode blocks, which history holds only the content of; see `_render_append_parts`.
+
+    With `mark_superseded`, each block the request's `superseded_instructions` names ends with a note saying so.
+    """
     if not (parts := params.instruction_parts):
         return params
-    rendered = _render_append_parts(parts)
+    rendered = _render_append_parts(parts, params.superseded_instructions if mark_superseded else None)
     return replace(params, instruction_parts=rendered) if rendered != parts else params
 
 
 def _project_instruction_state(
-    messages: Sequence[ModelMessage], *, inline_system: bool, prefix: list[InstructionPart] | None
+    messages: Sequence[ModelMessage],
+    *,
+    inline_system: bool,
+    prefix: list[InstructionPart] | None,
+    superseded: Mapping[str, InstructionSupersession] | None = None,
+    mark_superseded: bool = False,
 ) -> list[ModelMessage]:
     """Render instruction changes as `SystemPromptPart`s, and the current window's instructions as they're sent.
 
@@ -3971,16 +4001,22 @@ def _project_instruction_state(
     The baseline parts themselves are dropped. Every request in the current window was sent the same prefix,
     `prefix` (the request's instruction parts), so those requests get their `instructions` rendered from it,
     tagged, for the adapters that read a request's instructions from history rather than from the request
-    parameters.
+    parameters. The prefix's blocks named in `superseded` end with a note saying a later change superseded them,
+    as `prepare_request` renders them.
+
+    With `mark_superseded`, every rendered statement that a later rendered statement of the same block replaces
+    or withdraws ends with that note too. Whether a statement is marked depends only on the statements after it
+    in `messages`, so it renders the same on every request from the one that supersedes it.
     """
     current_start = instruction_window_start(messages)
-    rendered_prefix = InstructionPart.join(_render_append_parts(prefix)) if prefix else None
+    rendered_prefix = InstructionPart.join(_render_append_parts(prefix, superseded)) if prefix else None
     window: InstructionBaselinePart | None = None
     values = InstructionValues.at(None)
     loaded = LoadedInstructionValues()
     # Loads are folded over the post-compaction window alone, as everywhere else they're derived from history.
     loads_start = _post_compaction_window_start(messages)
     projected: list[ModelMessage] = []
+    statements: list[_RenderedStatement] = []
     for index, message in enumerate(messages):
         if (next_window := advance_instruction_window(window, message)) is not window:
             window = next_window
@@ -4000,13 +4036,17 @@ def _project_instruction_state(
             if in_loads_window and loaded.tracks(part):
                 # A statement of a loaded capability's block, which no instruction window restates, so it stays in
                 # effect until the compaction that ends the load.
-                text = part.render(inline_system=inline_system, previous=loaded.apply(part))
+                previous = loaded.apply(part)
+                statements.append(_RenderedStatement(len(projected), len(parts), part, previous))
+                text = part.render(inline_system=inline_system, previous=previous)
                 parts.append(SystemPromptPart(content=text, timestamp=message.timestamp or _utils.now_utc()))
             elif isinstance(part, InstructionDeltaPart):
                 # A change a newer version wrote, which this one can't address, is superseded by the window
                 # the next request opens.
                 if index >= current_start and part_index > opened_at and part.id is not None:
-                    text = part.render(inline_system=inline_system, previous=values.apply(part))
+                    previous = values.apply(part)
+                    statements.append(_RenderedStatement(len(projected), len(parts), part, previous))
+                    text = part.render(inline_system=inline_system, previous=previous)
                     parts.append(SystemPromptPart(content=text, timestamp=message.timestamp or _utils.now_utc()))
             else:
                 if in_loads_window:
@@ -4025,7 +4065,47 @@ def _project_instruction_state(
         if parts != list(message.parts) or instructions != message.instructions:
             message = replace(message, parts=parts, instructions=instructions)
         projected.append(message)
+    if mark_superseded:
+        _mark_superseded_statements(projected, statements, inline_system=inline_system)
     return projected
+
+
+@dataclass(frozen=True)
+class _RenderedStatement:
+    """Where `_project_instruction_state` rendered a block's statement, and what it rendered it from."""
+
+    message_index: int
+    part_index: int
+    change: InstructionDeltaPart
+    previous: str | None
+
+
+def _mark_superseded_statements(
+    projected: list[ModelMessage], statements: list[_RenderedStatement], *, inline_system: bool
+) -> None:
+    """End each rendered statement that a later one of the same block withdraws or replaces with a note saying so.
+
+    A withdrawal has no text to mark, so it's left as it is; the statement before it is marked withdrawn.
+    """
+    later: dict[InstructionId, InstructionDeltaPart] = {}
+    for statement in reversed(statements):
+        change = statement.change
+        assert change.id is not None
+        superseding = later.get(change.id)
+        later[change.id] = change
+        if superseding is None or change.content is None:
+            continue
+        text = change.render(
+            inline_system=inline_system,
+            previous=statement.previous,
+            superseded='withdrawn' if superseding.content is None else 'replaced',
+        )
+        message = projected[statement.message_index]
+        parts = list(message.parts)
+        part = parts[statement.part_index]
+        assert isinstance(part, SystemPromptPart)
+        parts[statement.part_index] = replace(part, content=text)
+        projected[statement.message_index] = replace(message, parts=parts)
 
 
 def _drop_capability_load_deltas(messages: list[ModelMessage]) -> list[ModelMessage]:

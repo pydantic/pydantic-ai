@@ -20,6 +20,7 @@ from pydantic_ai.messages import (
     InstructionId,
     InstructionPart,
     InstructionSource,
+    InstructionSupersession,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -390,6 +391,29 @@ def instruction_window_start(messages: Sequence[ModelMessage]) -> int:
     Changes recorded before it belong to an earlier window, which the prefix moved away from.
     """
     return max((index for index, message in enumerate(messages) if _opens_instruction_window(message)), default=0)
+
+
+def superseded_instructions(
+    messages: Sequence[ModelMessage], prefix: Sequence[InstructionPart] | None
+) -> dict[str, InstructionSupersession]:
+    """The append-mode blocks of `prefix` that a change in the current instruction window withdraws or replaces.
+
+    Keyed by id as a string, each mapped to how the block's first change in the window supersedes the text the
+    prefix holds. Only the changes `Model.prepare_messages` renders count: in the request the window opened at,
+    the ones after the part that opened it.
+    """
+    ids = {str(part.id) for part in prefix or () if part.on_change == 'append' and part.id is not None}
+    if not ids:
+        return {}
+    start = instruction_window_start(messages)
+    superseded: dict[str, InstructionSupersession] = {}
+    for index in range(start, len(messages)):
+        message = messages[index]
+        opened_at = window_boundary_index(message) if index == start else -1
+        for part in message.parts[opened_at + 1 :]:
+            if isinstance(part, InstructionDeltaPart) and part.id is not None and (key := str(part.id)) in ids:
+                superseded.setdefault(key, 'withdrawn' if part.content is None else 'replaced')
+    return superseded
 
 
 def window_prefix(baseline: InstructionBaselinePart, current: Sequence[InstructionPart]) -> list[InstructionPart]:

@@ -1772,6 +1772,167 @@ async def test_instruction_updates_fallback_members_render_their_own_path():
         assert seen[inline_system] == [(prefix, []), (prefix, tail[:1])]
 
 
+def test_instruction_updates_render_marks_superseded_text():
+    """A superseded statement ends its element with a note; a withdrawal has no text to mark.
+
+    A unit test because the note's bytes are what a model with `mark_superseded_instructions_in_place` caches.
+    """
+    replacement = InstructionDeltaPart(id=STATE_ID, content='B')
+    assert replacement.render(superseded='replaced') == snapshot(
+        '<context id="agent:state">\nB\n[Replaced later in this conversation by a newer element with the same id.]\n</context>'
+    )
+    assert replacement.render(superseded='withdrawn') == snapshot(
+        '<context id="agent:state">\nB\n[Withdrawn later in this conversation: no longer applies.]\n</context>'
+    )
+    withdrawal = InstructionDeltaPart(id=STATE_ID, content=None)
+    assert withdrawal.render(superseded='replaced') == withdrawal.render()
+    # A change sent as a diff carries the note after the diff, inside its element.
+    edited = MEMORY.replace('Fact 7: value 7.', 'Fact 7: value seven.')
+    diff = InstructionDeltaPart(
+        id=InstructionId(AgentInstructionSource(), name='memory'), content=edited, base_hash=_sha256(MEMORY)
+    )
+    assert diff.render(previous=MEMORY, superseded='withdrawn') == snapshot(
+        """\
+<context_diff id="agent:memory">
+--- before
++++ after
+@@ -5,5 +5,5 @@
+ - Fact 5: value 5.
+ - Fact 6: value 6.
+-- Fact 7: value 7.
++- Fact 7: value seven.
+ - Fact 8: value 8.
+ - Fact 9: value 9.
+[Withdrawn later in this conversation: no longer applies.]
+</context_diff>\
+"""
+    )
+
+
+REPLACED_NOTE = '[Replaced later in this conversation by a newer element with the same id.]'
+WITHDRAWN_NOTE = '[Withdrawn later in this conversation: no longer applies.]'
+SUPERSESSION_SENTENCE = (
+    'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
+)
+
+
+@pytest.mark.parametrize('inline_system', [True, False])
+@pytest.mark.parametrize(
+    'mark',
+    [
+        pytest.param(
+            True,
+            marks=pytest.mark.moves_cache_prefix(
+                reason='marking a superseded statement rewrites the cached prompt once, from that statement on'
+            ),
+        ),
+        False,
+    ],
+)
+async def test_instruction_updates_mark_superseded_statements_in_place(inline_system: bool, mark: bool):
+    """With `mark_superseded_instructions_in_place`, every statement a later change replaces or withdraws is marked.
+
+    Requests before a change are sent exactly as without the flag, and a statement is marked from the request that
+    supersedes it on, identically on every later request. A block added mid-conversation is stated plain until it's
+    superseded itself.
+    """
+    prefixes: list[str | None] = []
+    tails: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        prefixes.append(info.instructions)
+        tails.append(context_statements(messages))
+        return ModelResponse(parts=[TextPart('ok')])
+
+    profile = ModelProfile(supports_inline_system_prompts=inline_system, mark_superseded_instructions_in_place=mark)
+    agent = Agent(FunctionModel(model_fn, profile=profile), deps_type=State, instructions='Stable.')
+
+    @agent.instructions(name='state', on_change='append')
+    def state(ctx: RunContext[State]) -> str | None:
+        return ctx.deps.value
+
+    @agent.instructions(name='added', on_change='append')
+    def added(ctx: RunContext[State]) -> str | None:
+        return 'Added.' if ctx.deps.value in ('C', None) else None
+
+    history: list[ModelMessage] = []
+    for value in ['A', 'B', 'C', None]:
+        result = await agent.run('Continue.', deps=State(value), message_history=history)
+        history = result.all_messages()
+
+    def element(instruction_id: str, text: str, note: str | None = None) -> str:
+        body = f'{text}\n{note}' if mark and note else text
+        rendered = f'<context id="{instruction_id}">\n{body}\n</context>'
+        return rendered if inline_system else f'<system>{rendered}</system>'
+
+    withdrawal = (
+        'This context has been withdrawn.'
+        if inline_system
+        else 'This context has been withdrawn, and the withdrawal stays in effect until replaced again.'
+    )
+    plain_prefix = f'Stable.\n\n<context id="agent:state">\nA\n</context>\n{SUPERSESSION_SENTENCE}'
+    marked_prefix = (
+        f'Stable.\n\n<context id="agent:state">\nA\n{REPLACED_NOTE}\n</context>\n{SUPERSESSION_SENTENCE}'
+        if mark
+        else plain_prefix
+    )
+    # The first request, before any change, gets the plain prefix; every request from the first change on gets
+    # the same marked one.
+    assert prefixes == [plain_prefix, marked_prefix, marked_prefix, marked_prefix]
+    assert tails == [
+        [],
+        [element('agent:state', 'B')],
+        [element('agent:state', 'B', REPLACED_NOTE), element('agent:state', 'C'), element('agent:added', 'Added.')],
+        [
+            element('agent:state', 'B', REPLACED_NOTE),
+            element('agent:state', 'C', WITHDRAWN_NOTE),
+            element('agent:added', 'Added.'),
+            element('agent:state', withdrawal),
+        ],
+    ]
+    # History keeps only the content: the marks are rendered per model.
+    assert not any(
+        WITHDRAWN_NOTE in str(part) or REPLACED_NOTE in str(part)
+        for message in history
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    )
+
+
+@pytest.mark.moves_cache_prefix(reason=INSTRUCTIONS_CHANGE_MID_RUN)
+async def test_instruction_updates_marks_reset_with_a_new_window():
+    """A rewritten block's change opens a new window whose prefix holds the current text, so nothing is marked."""
+    prefixes: list[str | None] = []
+    tails: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        prefixes.append(info.instructions)
+        tails.append(context_statements(messages))
+        return ModelResponse(parts=[TextPart('ok')])
+
+    profile = ModelProfile(supports_inline_system_prompts=True, mark_superseded_instructions_in_place=True)
+    agent = Agent(FunctionModel(model_fn, profile=profile), deps_type=State)
+
+    @agent.instructions(name='state', on_change='append')
+    def state(ctx: RunContext[State]) -> str | None:
+        return ctx.deps.value
+
+    @agent.instructions
+    def rewritten(ctx: RunContext[State]) -> str:
+        return 'Late.' if ctx.deps.value == 'C' else 'Early.'
+
+    history: list[ModelMessage] = []
+    for value in ['A', 'B', 'C']:
+        result = await agent.run('Continue.', deps=State(value), message_history=history)
+        history = result.all_messages()
+
+    assert (
+        prefixes[1] == f'<context id="agent:state">\nA\n{REPLACED_NOTE}\n</context>\n{SUPERSESSION_SENTENCE}\n\nEarly.'
+    )
+    assert prefixes[2] == f'<context id="agent:state">\nC\n</context>\n{SUPERSESSION_SENTENCE}\n\nLate.'
+    assert tails[2] == []
+
+
 async def test_instruction_updates_direct_unaddressable_append_part_renders_as_written():
     """A direct caller's append-mode part without an id has nothing to tag, so it goes out as written.
 

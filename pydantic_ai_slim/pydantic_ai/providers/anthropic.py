@@ -125,6 +125,24 @@ and Microsoft Foundry are documented as supported, but weren't reachable with ou
 """
 
 
+_MARK_SUPERSEDED_INSTRUCTIONS_MODEL_PREFIXES = (
+    'claude-haiku-5-5',
+    'claude-sonnet-4-6',
+    'claude-sonnet-5-5',
+)
+"""Models that keep following an appending instruction block's earlier text after a change lifts it, unless it's marked.
+
+Measured on the Messages API with a rule in the leading instructions ("Always reply in at most 15 words") that a
+later change lifts, 16 trials per model: Haiku 5.5 followed the lift 2 times, Sonnet 4.6 0 times and Sonnet 5.5
+7 times with the change alone, and 16 times each with the earlier statement marked in place. Haiku 4.5 and
+Opus 5.5 followed the change alone 16 times, so they're left out. Marking never lowered compliance where the
+change alone worked.
+
+It's set here, not in `anthropic_model_profile()`, because only the Messages API was measured: Sonnet 5.5 on
+the Bedrock Converse API, which shares that profile function, followed the change alone 15 or 16 times in 16.
+"""
+
+
 class AnthropicProvider(Provider[AsyncAnthropicClient]):
     """Provider for Anthropic API."""
 
@@ -190,6 +208,11 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             else AnthropicModelProfile(),
             AnthropicModelProfile(
                 supports_mid_conversation_effort=model_name.startswith(_MID_CONVERSATION_EFFORT_MODEL_PREFIXES)
+            ),
+            AnthropicModelProfile(
+                mark_superseded_instructions_in_place=model_name.startswith(
+                    _MARK_SUPERSEDED_INSTRUCTIONS_MODEL_PREFIXES
+                )
             ),
             # Verified live on the Messages API and both Bedrock transports; `AnthropicModel` narrows it per client.
             AnthropicModelProfile(anthropic_enforces_strict_schema_limits=True),

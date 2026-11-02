@@ -637,6 +637,22 @@ See [mid-conversation system prompts](../message-history.md#mid-conversation-sys
 
 Claude's `reasoning_extraction` classifier can refuse a conversation that repeats the same user prompt while the model's earlier reasoning is in context, and a refusal is more likely right after an instruction changes, whether the instructions are rewritten or [appended](../agent.md#appending-instruction-changes). Conversations with varied prompts and tool loops were unaffected in testing. The refusal propagates as a [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. If you hit it, configure a [fallback model](overview.md#fallback-model) or strip thinking from history with [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory].
 
+### Marking superseded instructions
+
+When an [appending instruction](../agent.md#appending-instruction-changes) block is withdrawn or replaced, Claude Haiku 5.5, Claude Sonnet 4.6 and Claude Sonnet 5.5 on the Messages API tend to keep following its earlier text: in testing, they followed a change lifting a word limit set in the leading instructions in 2, 0 and 7 of 16 conversations, against 16 of 16 for Claude Haiku 4.5 and Claude Opus 5.5. With the earlier text marked as withdrawn where it appears, all of them followed it in 16 of 16. So for those three models, [`mark_superseded_instructions_in_place`][pydantic_ai.profiles.ModelProfile.mark_superseded_instructions_in_place] is on, on every client `AnthropicModel` supports. It isn't set on the [Bedrock](bedrock.md) Converse API, where Claude Sonnet 5.5 followed the change without a mark, or on OpenAI-compatible gateways that serve Claude.
+
+Marking costs one cache write per change, as described in [appending instruction changes](../agent.md#appending-instruction-changes). To turn it off, or on for another model, set the flag in the model's profile:
+
+```python {title="mark_superseded_instructions.py"}
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.profiles.anthropic import AnthropicModelProfile
+
+model = AnthropicModel(
+    '{{ anthropic:large.name }}',
+    profile=AnthropicModelProfile(mark_superseded_instructions_in_place=True),
+)
+```
+
 ### Turn-scoped system messages
 
 A [request-scoped](../message-history.md#request-scoped-system-prompts) `SystemPromptPart` (`scope='request'`) is sent as a [turn-scoped system message](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#turn-scoped-system-messages): a `{'role': 'system'}` entry with `clear_at: 'next_user_message'`, which the API stops rendering once a later user turn exists, including one that only carries tool results. Pydantic AI sends every one of them with every request, current or not, and adds the `mid-conversation-system-clear-at-2026-08-21` beta header for you.
