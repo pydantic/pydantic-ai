@@ -353,7 +353,8 @@ agent = Agent('test', capabilities=[DockerSandbox(desktop=True), ComputerUse(req
 
 Fields: `requires_approval=False` (`True` defers every call that does more than look, zoom or wait),
 `settle_seconds=0.5` (pause after acting before a zoom or the closing screenshot), `keep_screenshots=None` (send at
-least the newest N images, dropping older ones 25 at a time; history keeps all).
+least the newest N images, dropping older ones 25 at a time; history keeps all), `native=True` (`False` sends this
+tool to every model instead of Claude's or OpenAI's own, for example so GPT can zoom).
 
 Gotchas:
 
@@ -364,8 +365,9 @@ Gotchas:
   pixels; a `FallbackModel` keeps the grid only when every model in it uses the same one.
 - A screen larger than the model takes (profile `computer_use_screenshot_limit`) is sent scaled
   down if the display can scale screenshots; otherwise the run stops with an error. 1280x800 fits every model.
-- Under durable execution an action runs at most once and looks retry: Temporal never repeats an action; DBOS and
-  Prefect can repeat the one running when the process crashed; Absurd and pgtask retry the whole call.
+- Under durable execution each `computer` call is one unit that runs at most once; a lost one tells the model to take
+  a screenshot first. Temporal and Render never repeat a call; DBOS and Prefect can repeat the one running when the
+  process crashed; Absurd, pgtask and AWS Lambda retry it under their own config.
 - Under Temporal, screenshots pass the 2 MB payload limit after a few steps; configure external storage.
 
 ## See also
