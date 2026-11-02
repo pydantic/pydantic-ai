@@ -31,14 +31,14 @@ from pydantic_clai2.ui.menus.spinner_picker import SpinnerPicker, spinner_comman
 from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
-from pydantic_clai2.ui.rendering import theme
+from pydantic_clai2.ui.rendering import spinners as spinners_module, theme
 from pydantic_clai2.ui.rendering.spinners import (
     BUILTIN_SPINNERS,
     DEFAULT_SPINNER,
     STARTER_FILE,
     Spinner,
     Spinners,
-    make_spinner,
+    build_spinner,
     user_spinners_path,
 )
 from tests.clai2.menu_script import Script, make_context, pick
@@ -93,11 +93,11 @@ class TestCatalogue:
         assert len({cell_len(frame) for frame in spinner.frames}) == 1
         assert spinner.description and spinner.source == 'builtin'
 
-    def test_make_spinner_normalizes(self) -> None:
-        spinner = make_spinner(' wide ', ['\U0001f436', 'ab', 'x' * 50], interval=5)
+    def test_build_spinner_normalizes(self) -> None:
+        spinner = build_spinner(' wide ', ['\U0001f436', 'ab', 'x' * 50], interval=5)
         assert spinner.name == 'wide' and spinner.interval == 1.0
         assert spinner.frames[0] == '\U0001f436' + ' ' * 38 and len(spinner.frames[2]) == 40
-        assert make_spinner('fast', ['a'], interval=0.001).interval == 0.02
+        assert build_spinner('fast', ['a'], interval=0.001).interval == 0.02
 
     @pytest.mark.parametrize(
         ('name', 'frames', 'error'),
@@ -109,18 +109,18 @@ class TestCatalogue:
             ('escape', ['\x1b[31m'], 'control character'),
         ],
     )
-    def test_make_spinner_rejects(self, name: str, frames: list[str], error: str) -> None:
+    def test_build_spinner_rejects(self, name: str, frames: list[str], error: str) -> None:
         with pytest.raises(ValueError, match=error):
-            make_spinner(name, frames)
+            build_spinner(name, frames)
 
     @pytest.mark.parametrize('interval', [float('nan'), float('inf'), float('-inf')])
     def test_non_finite_interval_is_rejected_before_it_reaches_a_painter(self, interval: float) -> None:
         with pytest.raises(ValueError, match='finite number of seconds'):
-            make_spinner('broken', ['a'], interval=interval)
+            build_spinner('broken', ['a'], interval=interval)
 
     def test_layers_and_lookup(self, tmp_path: Path) -> None:
-        plugin = make_spinner('dots', ['o', 'O'], source='plugin')
-        spinners = catalogue(tmp_path, selected='DOTSWIDE', registered=(plugin, make_spinner('extra', ['e'])))
+        plugin = build_spinner('dots', ['o', 'O'], source='plugin')
+        spinners = catalogue(tmp_path, selected='DOTSWIDE', registered=(plugin, build_spinner('extra', ['e'])))
         assert list(spinners.catalogue())[:4] == ['aesthetic', 'binary', 'bone', 'bouncingBall']
         assert spinners.catalogue()['dots'] is plugin and 'extra' in spinners.catalogue()
         assert spinners.active().name == 'dotsWide'
@@ -128,7 +128,7 @@ class TestCatalogue:
         assert catalogue(tmp_path, selected='gone').active() is BUILTIN_SPINNERS['working']
 
     def test_user_file_wins_and_reloads_on_change(self, tmp_path: Path) -> None:
-        plugin = make_spinner('shared', ['p'], source='plugin')
+        plugin = build_spinner('shared', ['p'], source='plugin')
         spinners = catalogue(tmp_path, selected='mine', registered=(plugin,))
         write(
             spinners,
@@ -336,12 +336,12 @@ class TestPicker:
 
 PLUGIN = """
 from pydantic_clai2.plugins import Plugin
-from pydantic_clai2.ui.rendering.spinners import make_spinner
+from pydantic_clai2.ui.rendering.spinners import build_spinner
 
 
 class Wave(Plugin):
     def get_spinners(self):
-        return [make_spinner('wave', ['~ ', ' ~'], interval=0.05, description='from a plugin')]
+        return [build_spinner('wave', ['~ ', ' ~'], interval=0.05, description='from a plugin')]
 """
 
 
@@ -349,7 +349,7 @@ class TestRegistration:
     def test_plugin_spinners_are_normalized_and_marked_as_plugin(self) -> None:
         class Waves(Plugin):
             def get_spinners(self) -> Sequence[Spinner]:
-                return (make_spinner('wave', ['~', '~~'], interval=0.001, description='d'),)
+                return (build_spinner('wave', ['~', '~~'], interval=0.001, description='d'),)
 
         loaded = load_plugin(Waves, PluginHost[None](name='p', console=Console(file=io.StringIO()), settings={}))
         assert loaded.spinners == (
@@ -430,3 +430,12 @@ async def test_prompt_title_follows_the_selection(width: int) -> None:
             assert plain.startswith('─ Working') and accent not in title
         async with live.opened():
             pass
+
+
+def test_make_spinner_is_a_deprecated_alias_of_build_spinner() -> None:
+    from pydantic_ai.exceptions import PydanticAIDeprecationWarning
+
+    with pytest.warns(PydanticAIDeprecationWarning, match='`make_spinner` has been renamed to `build_spinner`'):
+        from pydantic_clai2.ui.rendering.spinners import make_spinner
+    assert make_spinner is build_spinner
+    assert not hasattr(spinners_module, 'make_spinners')

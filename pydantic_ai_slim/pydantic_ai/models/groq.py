@@ -11,6 +11,7 @@ from pydantic import BaseModel, ValidationError
 from pydantic_core import from_json
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _model_errors, _utils, usage
+from .._gateway_cost import gateway_reported_cost
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
@@ -127,6 +128,10 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'groq') -> Genera
             ) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
+        if isinstance(cause := e.__cause__, httpx.HTTPStatusError):
+            # A retrying transport raises this for a status it gave up on, and `groq` wraps it as if the connection
+            # had failed, though the provider responded.
+            raise _model_errors.transport_status_error(model_name, cause.response) from e
         raise _model_errors.connection_error(model_name, e.message, e, timeout=isinstance(e, APITimeoutError)) from e
     except APIError as e:
         # The SDK raises the base `APIError` for an error object inside a stream, after the HTTP 200 has already
@@ -932,13 +937,18 @@ def _map_usage(
     completion_tokens_details: dict[str, Any] = usage_data.get('completion_tokens_details') or {}
     details.update({k: v for k, v in completion_tokens_details.items() if isinstance(v, int)})
 
-    return usage.RequestUsage.extract(
+    request_usage = usage.RequestUsage.extract(
         dict(model=model, usage=usage_data),
         provider=provider,
         provider_url=provider_url,
         provider_fallback='groq',
         details=details or None,
     )
+    # The Gateway injects cost into top-level usage; Groq's token counts live in x_groq.usage.
+    if isinstance(completion, chat.ChatCompletionChunk) and completion.usage is not None:
+        if (cost := gateway_reported_cost({'usage': completion.usage.model_dump(exclude_none=True)})) is not None:
+            request_usage.cost = cost
+    return request_usage
 
 
 class _GroqToolUseFailedGeneration(BaseModel):

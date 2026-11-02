@@ -49,6 +49,8 @@ Pass `subagents=[]` to disable delegation, or supply your own `SubAgent` entries
 
 Oversized tool results are stored in the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), under `.pydantic-ai-harness/tool-output/` (git-ignored), so a run without one fails at its start. `LocalWorkspace('.')` keeps them in the current directory and a sandbox capability keeps them in the sandbox. To run without a workspace, pass `Researcher(store=LocalFileStore())`; spills then stay on the machine running the agent, including for its default delegate. A custom delegate needs its own store configured.
 
+![Researcher combines research instructions with four capabilities. WebSearch and WebFetch use the model provider's native search and fetch, or duckduckgo_search and web_fetch where the model has none. SubAgents adds delegate_task, which hands a sub-question to a 'researcher' sub-agent with its own search, fetch and output limits. ToolOutputLimits spills oversized tool results to the run workspace, where read_tool_result reads them.](https://pydantic.dev/docs/ai/img/harness/researcher.svg)
+
 ## Blown-out equivalent
 
 <!-- Keep this in sync with pydantic_ai_harness/researcher; it intentionally shows the complete picture. -->

@@ -53,10 +53,16 @@ tool lifecycle events and review [concurrent tool execution](tools.md#concurrent
 Inspect `RealtimeSessionReconnectEvent.state_restored`. If false, the drop cut off a turn in flight:
 the session closed any cut reply as interrupted and kept the earlier turns, so ask again or resend
 the cut turn rather than starting over. On Gemini, a drop before the first resumption handle starts
-a fresh session instead: the session's history keeps the earlier turns, but the model no longer has
-them, so restate any context the next turn depends on. If true but a current utterance vanished,
-that in-flight media was outside the restored completed-turn history. See
+a fresh session, which gets the earlier turns replayed from the session's history and is asked again
+for the reply to a typed turn the drop caught before its reply started. If true but a current
+utterance vanished, that in-flight media was outside the restored completed-turn history. See
 [state restoration](lifecycle.md#state-restoration).
+
+## GPT-Live ignores the agent's persona, language, or speaking style
+
+GPT-Live sends the agent's instructions and system prompt only to the backend model that does
+delegated work, never to the voice model the caller hears. Put the persona, language, and speaking
+style in `openai_live_instructions`. See [How delegation works](openai.md#how-delegation-works).
 
 ## Gemini reaches its session limit
 

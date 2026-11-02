@@ -65,7 +65,9 @@ Review incoming fields that can select provider state, per-file provider options
 
 Sanitization does not authenticate a client or prove that a submitted tool call or approval came from a genuine paused run. The application must authorize deferred actions and state access.
 
-Canonical guidance: [adapter trust model](docs/ui/overview.md), [deferred tools](docs/deferred-tools.md), [MCP Apps](docs/mcp/client.md#mcp-apps), and the [approval provenance follow-up](https://github.com/pydantic/pydantic-ai/issues/6452).
+With `manage_message_history='server'`, only the client's new turn, the requests after its last response, crosses the adapter boundary and is sanitized; the `message_history` passed with it is application-authored and trusted. The client still chooses, by UI message id, whether its turn resubmits one of its own stored user prompts, which cuts the stored history just before that prompt: a rewind of its own conversation, as edit and regenerate are. It can't cut at any other request, add assistant content, or answer tool calls the stored history isn't waiting on, and system content in its turn is stripped unless the application also sets `manage_system_prompt='client'`. An application that saves the run's full history over the stored one therefore lets the client drop its own later turns from that record; one that needs an append-only record must keep earlier versions itself. The application must still authorize the conversation (`conversation_id` or thread id) it loads the stored history for. The default `'client'` mode is unchanged.
+
+Canonical guidance: [adapter trust model](docs/ui/overview.md), [server-held history](docs/ui/overview.md#keeping-the-history-on-the-server), [deferred tools](docs/deferred-tools.md), [MCP Apps](docs/mcp/client.md#mcp-apps), and the [approval provenance follow-up](https://github.com/pydantic/pydantic-ai/issues/6452).
 
 ### HTTP and browser-origin security
 
@@ -115,9 +117,9 @@ Canonical guidance: [function tools](docs/tools.md), [advanced tools](docs/tools
 
 MCP connections exchange tool arguments and content with a configured server. Local MCP is the default capability path; provider-native MCP is an explicit opt-in. The application chooses trusted server endpoints, credentials, and tools, and authorizes the operations it exposes. Transport authentication does not establish the identity of the application's own caller.
 
-Agent specs can select configured capabilities and providers. YAML/JSON parsing and Pydantic validation establish the configuration's shape. The application must decide who can supply configuration that grants those capabilities or selects endpoints and resources.
+Agent specs can select configured capabilities and providers. Capability arguments include endpoints, such as an `MCP` server URL, which the agent host connects to with its own network access; the library does not restrict them to public addresses. YAML/JSON parsing and Pydantic validation establish the configuration's shape. The application must decide who can supply configuration that grants those capabilities or selects endpoints and resources.
 
-Canonical guidance: [MCP capability](docs/capabilities/mcp.md), [MCP clients](docs/mcp/client.md), and [agent specs](docs/agent-spec.md).
+Canonical guidance: [MCP capability](docs/capabilities/mcp.md), [MCP clients](docs/mcp/client.md), and [agent specs](docs/agent-spec.md#where-specs-come-from).
 
 ### Persistent state and tenant identity
 
@@ -166,7 +168,7 @@ Canonical guidance: [agent usage limits](docs/agent.md), [timeouts](docs/timeout
 
 `LocalWorkspace` does not establish a security isolation boundary. Bypasses of file-tool containment or allow, deny, and read-only patterns that remain within the workspace process's existing OS authority are correctness bugs rather than security vulnerabilities, including when command execution is disabled. Evaluate security reports against documented security boundaries and the configured backend's guarantees. A sandbox protects only its configured boundary; selecting one does not make every file inside it confidential from the agent.
 
-Canonical guidance: [filesystem security model](docs/harness/filesystem.md#security-model), [shell command controls](docs/harness/shell.md), [Code Mode](docs/harness/code-mode.md), [Bubblewrap](docs/harness/bubblewrap-sandbox.md), [SmolSandbox](docs/harness/smol-sandbox.md#security-model), [BoxLiteSandbox](docs/harness/boxlite-sandbox.md#security-model), [SSH](docs/harness/ssh-workspace.md), [E2B](docs/harness/e2b-sandbox.md), [Modal](docs/harness/modal-sandbox.md), [Sprites](docs/harness/sprites-sandbox.md), [Daytona](docs/harness/daytona-sandbox.md), [plugins](src/pydantic_clai2/PLUGINS.md), [CLAI 2 updates](src/pydantic_clai2/README.md#updating), [capability creation](docs/harness/capability-creation.md#trust-boundary), [subagents](docs/harness/subagents.md), and [step persistence](docs/harness/step-persistence.md).
+Canonical guidance: [filesystem security model](docs/harness/filesystem.md#security-model), [shell command controls](docs/harness/shell.md), [Code Mode](docs/harness/code-mode.md), [Bubblewrap](docs/harness/bubblewrap-sandbox.md), [SmolSandbox](docs/harness/smol-sandbox.md#security-model), [BoxLiteSandbox](docs/harness/boxlite-sandbox.md#security-model), [SSH](docs/harness/ssh-workspace.md), [E2B](docs/harness/e2b-sandbox.md), [Modal](docs/harness/modal-sandbox.md), [Sprites](docs/harness/sprites-sandbox.md), [Daytona](docs/harness/daytona-sandbox.md), [boxd](docs/harness/boxd-sandbox.md#security-model), [plugins](src/pydantic_clai2/PLUGINS.md), [CLAI 2 updates](src/pydantic_clai2/README.md#updating), [capability creation](docs/harness/capability-creation.md#trust-boundary), [subagents](docs/harness/subagents.md), and [step persistence](docs/harness/step-persistence.md).
 
 On non-Windows platforms, stock CLAI 2 is a broad local-execution profile: its default Coder has unrestricted file access and uses a local workspace unless configured otherwise. Stock CLAI 2 does not provide an agent workspace on Windows. Launching from a directory does not contain its commands or file access. Stock defaults that matter for review:
 

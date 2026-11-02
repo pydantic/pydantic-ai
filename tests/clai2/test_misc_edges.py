@@ -14,7 +14,7 @@ from opentelemetry.sdk.trace import export
 
 import pydantic_clai2
 import pydantic_clai2.__main__
-import pydantic_clai2.cli._cli
+import pydantic_clai2.cli.cli
 from pydantic_clai2.commands import config_completions
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.ui.rendering.splash import Splash
@@ -30,6 +30,37 @@ def test_public_errors(tmp_path: Path) -> None:
         connection.execute('PRAGMA user_version = 99')
     with pytest.raises(ValueError, match='Unsupported'):
         SettingsStore(path)
+
+
+RENAMED_MODULES = (
+    'app',
+    'builtin_plugins/herdr_client',
+    'cli/cli',
+    'mcp/command',
+    'mcp/form',
+    'mcp/menu',
+    'mcp/runtime',
+    'mcp/settings',
+    'mcp/store',
+    'mcp/tokens',
+    'plugins/factories',
+    'plugins/git',
+    'runtime/processes',
+    'runtime/session',
+    'ui/prompt/completion_adapter',
+    'ui/rendering/branding',
+    'ui/rendering/rendering',
+    'ui/rendering/splash_art',
+)
+"""Modules #11326 moved off a leading underscore, as package paths relative to `pydantic_clai2`."""
+
+
+def test_renamed_modules_are_not_underscore_prefixed() -> None:
+    root = Path(pydantic_clai2.__file__).parent
+    for module in RENAMED_MODULES:
+        path = root / f'{module}.py'
+        assert path.is_file(), module
+        assert not path.with_name(f'_{path.name}').exists(), module
 
 
 def test_splash_broken_stream_and_replaced_output(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -73,7 +104,7 @@ def test_entry_point_quiets_warnings_unless_requested(
     monkeypatch.setenv('PYDANTIC_AI_NO_BANNER', '1')
     monkeypatch.setattr(sys, 'argv', ['clai2', 'config'])
     monkeypatch.setattr(sys, 'warnoptions', warnoptions)
-    monkeypatch.setattr(pydantic_clai2.cli._cli, 'run', run)
+    monkeypatch.setattr(pydantic_clai2.cli.cli, 'run', run)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always')
         filters = list(warnings.filters)
@@ -114,7 +145,7 @@ def test_entry_point_keeps_telemetry_export_logs_off_stderr(monkeypatch: pytest.
     monkeypatch.setattr(sys, 'stderr', stderr)
     # pytest's log capture sits on the root logger; without it, `logging` falls back to stderr as in the CLI.
     monkeypatch.setattr(logging.root, 'handlers', [])
-    monkeypatch.setattr(pydantic_clai2.cli._cli, 'run', run)
+    monkeypatch.setattr(pydantic_clai2.cli.cli, 'run', run)
     loggers = [logging.getLogger(name) for name in pydantic_clai2.__main__.TELEMETRY_LOGGERS]
     before = [list(logger.handlers) for logger in loggers]
     pydantic_clai2.__main__.main()

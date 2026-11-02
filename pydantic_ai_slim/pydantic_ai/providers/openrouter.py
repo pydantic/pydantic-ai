@@ -31,7 +31,7 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 
@@ -119,11 +119,58 @@ def _openrouter_google_model_profile(model_name: str) -> ModelProfile | None:
     return merge_profile(profile, ModelProfile(json_schema_transformer=_OpenRouterGoogleJsonSchemaTransformer))
 
 
-class OpenRouterProvider(_OpenAICompatibleProvider):
+_MANDATORY_REASONING_MODEL_PREFIXES: dict[str, tuple[str, ...]] = {
+    # Claude Sonnet 5.5 turns thinking off with `thinking={'type': 'between_tools'}` on the Anthropic API, which
+    # OpenRouter's `reasoning` field can't express.
+    'anthropic': ('claude-sonnet-5-5',),
+    'google': ('gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.8-flash', 'gemini-4-argon'),
+    'moonshotai': ('kimi-k2.7-code', 'kimi-k2-thinking'),
+    'openai': ('gpt-5.2-codex', 'gpt-oss-'),
+    'qwen': (
+        'qwen3.8-max',
+        'qwen3.8-2.4t',
+        'qwen3-vl-30b-a3b-thinking',
+        'qwen3-next-80b-a3b-thinking',
+        'qwen3-235b-a22b-thinking',
+    ),
+    'x-ai': ('grok-4.20-multi-agent', 'grok-build'),
+    'z-ai': ('glm-5.3',),
+}
+"""Model-name prefixes, per upstream provider, of the OpenRouter routes that make reasoning mandatory.
+
+OpenRouter rejects `reasoning={'effort': 'none'}` on these with "Reasoning is mandatory for this endpoint and cannot
+be disabled", including for models that can turn reasoning off on their own API, so their OpenRouter profile marks
+them always-on and `thinking=False` asks for the lowest effort instead. Taken from `reasoning.mandatory` in
+[OpenRouter's model list](https://openrouter.ai/api/v1/models), for the providers that have a model profile here.
+"""
+
+
+_MID_CONVERSATION_EFFORT_MODEL_PREFIXES: dict[str, tuple[str, ...]] = {
+    'anthropic': ('claude-fable-5-1', 'claude-opus-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'),
+    'openai': ('gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol'),
+}
+"""Model-name prefixes, per upstream provider, of the OpenRouter routes that accept a mid-conversation effort change.
+
+OpenRouter routes a request carrying a `configuration_update` only to endpoints that accept it, and rejects it with a
+400 ("Mid-conversation reasoning effort (configuration_update) is not supported") on every other model, so this lists
+the models a live probe found accepting it (2026-10-26): Claude Fable 5.1, Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5,
+and GPT-6 Astra, Sol and Luna and GPT-6.1 Sol. Claude Fable 5 and Sonnet 5, GPT-6.1 Terra and GPT-5.6 are rejected,
+as is every `-pro` variant, which `OpenRouterProvider.model_profile` excludes.
+https://openrouter.ai/docs/guides/best-practices/reasoning-tokens#changing-effort-mid-conversation
+"""
+
+
+class OpenRouterProvider(_OpenAISDKProvider):
     """Provider for OpenRouter API."""
 
     @property
     def name(self) -> str:
+        return 'openrouter'
+
+    @property
+    def canonical_system(self) -> str:
+        # Fixed, so a subclass that only renames itself keeps sharing reasoning details. Which upstream verifies
+        # them depends on where OpenRouter routed the request, so no other provider is declared compatible.
         return 'openrouter'
 
     @property
@@ -173,6 +220,13 @@ class OpenRouterProvider(_OpenAICompatibleProvider):
             # See https://github.com/pydantic/pydantic-ai/issues/10243.
             profile = ModelProfile(json_schema_transformer=InlineDefsJsonSchemaTransformer)
 
+        if model_name.lower().startswith(_MANDATORY_REASONING_MODEL_PREFIXES.get(provider, ())):
+            profile = merge_profile(profile, ModelProfile(thinking_always_enabled=True))
+        # OpenRouter rejects the change on every pro variant, such as `openai/gpt-6-astra-pro`.
+        supports_mid_conversation_effort = model_name.lower().startswith(
+            _MID_CONVERSATION_EFFORT_MODEL_PREFIXES.get(provider, ())
+        ) and not model_name.lower().endswith('-pro')
+
         # Cache capability flags are set on the gateway layer based on the downstream provider.
         # The TTL / tool-cache / dynamic-instruction flags are kept separate even though they all
         # coincide with `supports_anthropic_cache` today: they model independent OpenRouter cache
@@ -203,6 +257,9 @@ class OpenRouterProvider(_OpenAICompatibleProvider):
                 openai_chat_supports_max_completion_tokens=False,
                 supports_inline_system_prompts=False,
                 supports_thinking=True,
+                # OpenRouter's own Chat Completions extension: a content-less `system` message carrying a
+                # `configuration_update`. Set here because the upstream provider's own channel isn't what's sent.
+                supports_mid_conversation_effort=supports_mid_conversation_effort,
                 # OpenRouter's native tools (web search plugin, advisor) are gateway features that
                 # work with any underlying model, so the upstream profile's vendor-specific tool
                 # gating (e.g. Anthropic's valid-executor list) doesn't apply. Neutralize it here;

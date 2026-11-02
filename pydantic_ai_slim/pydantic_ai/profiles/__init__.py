@@ -156,7 +156,9 @@ class ModelProfile(TypedDict, total=False):
 
     When `False`, non-leading `SystemPromptPart`s are wrapped as `UserPromptPart`s with
     `<system>...</system>` content in `Model.prepare_messages`. Leading ones still hoist to the
-    provider's top-level system parameter.
+    provider's top-level system parameter, and when there are any, or instructions, they're followed
+    by a sentence saying what the tag means. `<system>` tags in user prompts and tool returns are escaped,
+    so that text can't open or close the tag.
 
     APIs that only accept an inline system prompt in certain positions (e.g. Anthropic requires it
     to follow a user turn) still set this to `True`; it's on their model adapters to make the
@@ -187,6 +189,18 @@ class ModelProfile(TypedDict, total=False):
     Only meaningful together with `supports_inline_system_prompts`, and only set it on a model whose adapter
     renders a self-clearing entry, currently `AnthropicModel`. On any other adapter, `True` makes every
     request-scoped part render as a lasting system prompt on every later request.
+    """
+
+    supports_mid_conversation_effort: bool
+    """Whether the provider's API can change the thinking effort from a point in the conversation onward. Default: `False`.
+
+    When `True`, on a model whose adapter renders the change (`OpenAIResponsesModel`'s `configuration_update`
+    item, `AnthropicModel`'s per-message `output_config`, `OpenRouterModel`'s `configuration_update` system
+    message), a
+    [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] is sent in place and the request
+    keeps the conversation's earlier request-level effort, so the prompt cache survives the change. When
+    `False`, `Model.prepare_messages` drops those parts and the current effort goes out as the request-level
+    setting.
     """
 
     default_structured_output_mode: StructuredOutputMode
@@ -324,9 +338,10 @@ class ModelProfile(TypedDict, total=False):
     is that the model reports the reasoning's authorship inaccurately when asked about it, which naming the
     source in the tag would not change.
 
-    This is currently only used by `AnthropicModel` and `BedrockConverseModel`. Claude served through an
-    OpenAI-compatible provider goes through `OpenAIChatModel`, which does not read this key — tracked in
-    https://github.com/pydantic/pydantic-ai/issues/7419.
+    This is used by `AnthropicModel`, `BedrockConverseModel`, `OpenAIChatModel` (and the models built on it)
+    and `OpenAIResponsesModel`, so it also covers Claude served through an OpenAI-compatible provider. An
+    `OpenAIChatModel` profile that sends reasoning back in a field (`openai_chat_send_back_thinking_parts='field'`,
+    as OpenRouter's does) never renders it as text, so there is nothing for this key to move.
 
     Where the carried reasoning goes is each adapter's own decision rather than a shared rewrite ahead of
     them: it has to land in front of whatever that provider renders next out of the same request — an

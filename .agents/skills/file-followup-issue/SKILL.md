@@ -28,6 +28,7 @@ If a gate fails, do the alternative and **stop** — don't file:
    gh issue list --state all --search "<3-5 distinctive keywords>" --limit 20
    ```
    If a clear match exists, link to it instead of creating a duplicate — and skip to step 4 (log) referencing the existing issue.
+   Preserve that issue's ownership and routing labels. Deduplication does not authorize a new route.
 
 2. **Confirm before creating** (outward action). Show the user the drafted title + body and get a yes.
 
@@ -40,18 +41,10 @@ If a gate fails, do the alternative and **stop** — don't file:
    title=$(cat <path to the title file you wrote>)
    gh issue create --title "$title" --body-file <path to the body file you wrote>
    ```
-   Use the ownership shortcut only when the acting account can assign issues and apply repository labels.
-   If a maintainer will tackle the follow-up directly or soon, use
-   `--assignee <maintainer-login> --label pydanty:skip`. This includes an AICA acting for that
-   maintainer. Assign the maintainer who will own the work. The label prevents Pydanty from running
-   triage or `retry-pr` on the issue.
-
-   Do not use the ownership shortcut for an external contributor. External contributors cannot
-   apply repository labels, so leave their follow-up issues in normal triage.
-
-   Add `--label <name>` only for labels you've confirmed exist (`gh label list`); a missing label fails the command.
+   Apply the [maintainer routing mechanics](#maintainer-routing-mechanics) for a maintainer's selected route.
 
 4. **Log the deferral** in `pr-decisions.md` so the current PR's reviewers see *why* this was parked rather than fixed:
+   For a newly created maintainer issue, include the selected route and human owner (or no local owner) in the decision.
    Bind contributor-derived fields with quoted heredocs, as in [adopt-pr](../adopt-pr/SKILL.md#step-5--backfill-pr-decisionsmd-from-resolved-threads).
    This also applies when deduplication skipped issue creation and Step 3 has no bound title.
    Never paste contributor text into double-quoted command arguments.
@@ -78,6 +71,22 @@ EOF
 ```
 
 5. **Report** the issue URL. **Do not expand the current PR** — that's the whole point.
+
+## Maintainer routing mechanics
+
+For issues filed on a maintainer's behalf, honor their chosen route; otherwise ask which route they want.
+Combine this choice with draft approval when both are needed. This routing also applies to non-follow-up issues.
+Confirm labels against the [checked-in catalog](../pushing-commits-to-the-repo/labels.tsv) before using them; a missing label fails the command.
+
+- **General queue:** create without `--assignee` or `pydanty:skip`, then run
+  `gh issue edit <issue-number> --add-label pydanty:triage-issue`.
+  This explicitly requests Pydanty triage, which team-authored issues otherwise skip.
+- **Immediate work:** create with `--assignee <maintainer-login> --label pydanty:skip`.
+  Assign the human maintainer who owns the work. The label suppresses Pydanty triage and `retry-pr` triggers.
+  Carry that ownership onto the PR using the [PR skill](../pushing-commits-to-the-repo/SKILL.md#carry-maintainer-ownership-onto-the-pr).
+
+Do not apply these maintainer routes for an external contributor. External contributors cannot
+apply repository labels, so leave their issues in normal triage.
 
 ## Issue body template
 

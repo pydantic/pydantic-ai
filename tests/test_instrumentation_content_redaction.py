@@ -20,7 +20,10 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any, cast
 
+import httpx
+import httpx2
 import pytest
 from opentelemetry.context import Context
 from pydantic import BaseModel, TypeAdapter
@@ -39,6 +42,7 @@ from pydantic_ai import (
 from pydantic_ai._instrumentation import (
     ContentPolicy,
     MessageJsonCache,
+    current_model_request_span,
     has_stale_message_json,
     include_content_ctx,
     model_request_parameters_attributes,
@@ -70,9 +74,13 @@ with try_import() as otel_sdk_installed:
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 with try_import() as mcp_installed:
-    from fastmcp import FastMCP
+    from fastmcp import Client, FastMCP
+    from fastmcp.client.transports import StreamableHttpTransport
 
+    from pydantic_ai._mcp_compat import is_mcp_sdk_v2
     from pydantic_ai.mcp import MCPToolset
+
+MCP_SDK_V2 = mcp_installed() and is_mcp_sdk_v2()
 
 pytestmark = [
     pytest.mark.skipif(not otel_sdk_installed(), reason='opentelemetry-sdk not installed'),
@@ -383,6 +391,89 @@ async def test_url_derived_mcp_name_is_masked_if_run_fails_before_model_request(
     assert history[1].parts[0].tool_name == tool_name
 
 
+@pytest.fixture
+def guidance_server_app() -> Any:
+    """An MCP server with instructions and one tool, as an HTTP app built outside the event loop."""
+    server = FastMCP('test', instructions='server guidance')
+
+    @server.tool
+    def ping() -> str:
+        return 'pong'  # pragma: no cover
+
+    return server.http_app(stateless_http=True, json_response=True)
+
+
+@pytest.mark.skipif(not mcp_installed(), reason='fastmcp not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_a_url_mcp_toolsets_hostname_derived_id_is_masked(
+    include_content: bool, guidance_server_app: Any
+) -> None:
+    """An `MCPToolset` built from a URL without an `id` takes its hostname, which telemetry masks like other URL-derived ids.
+
+    It reaches spans as the server instructions' id, which is masked; tool definitions don't carry it.
+    """
+    app = guidance_server_app
+    client: httpx.AsyncClient | httpx2.AsyncClient
+    if MCP_SDK_V2:
+        client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app))
+    else:
+        client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app))
+    toolset = MCPToolset('http://testserver/mcp', http_client=client, include_instructions=True)
+    assert toolset.id == 'testserver'
+
+    def respond(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])
+
+    settings, exporter = redacted_setup(include_content)
+    agent = Agent(FunctionModel(respond), toolsets=[toolset], capabilities=[Instrumentation(settings=settings)])
+    try:
+        async with app.router.lifespan_context(app):
+            await agent.run('go')
+    finally:
+        await client.aclose()
+
+    chat = next(
+        span
+        for span in exporter.get_finished_spans()
+        if span.attributes and span.attributes.get('gen_ai.operation.name') == 'chat'
+    )
+    assert chat.attributes is not None
+    serialized = chat.attributes['model_request_parameters']
+    assert isinstance(serialized, str)
+    parameters = json.loads(serialized)
+    # A hostname-derived `id` isn't stamped on tool definitions at all.
+    assert [tool['toolset_id'] for tool in parameters['function_tools']] == [None]
+    assert [part['id'] for part in parameters['instruction_parts']] == ['toolset:[REDACTED]']
+    if not include_content:
+        assert 'testserver' not in serialized
+
+
+@pytest.mark.skipif(not mcp_installed(), reason='fastmcp not installed')
+@pytest.mark.parametrize('local', ['client', 'transport'])
+def test_an_mcp_capability_keeps_its_local_toolsets_own_marker(local: str):
+    """`MCP(local=...)` with no URL or `id` of its own has no marker to give, so the toolset keeps the one its hostname-derived `id` set."""
+    url = 'http://private-tenant.example/mcp'
+    capability = MCP[None](local=Client(url) if local == 'client' else StreamableHttpTransport(url))
+    # `MCP.local` is typed as every input it accepts; this one was wrapped in an `MCPToolset`.
+    local_toolset: Any = capability.local
+    assert isinstance(local_toolset, MCPToolset)
+    toolset = cast('MCPToolset[None]', local_toolset)
+    assert toolset.id == 'private-tenant.example'
+    assert toolset._telemetry_url_derived_id == 'private-tenant.example'  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_hostname_derived_id_is_masked_only_while_its_derived():
+    """Choosing an `id` makes it the caller's label, which isn't masked; clearing it derives and masks the hostname again."""
+    toolset = MCPToolset('https://private-tenant.example/mcp')
+    assert toolset._telemetry_url_derived_id == 'private-tenant.example'  # pyright: ignore[reportPrivateUsage]
+    toolset.id = 'chosen'
+    assert toolset._telemetry_url_derived_id is None  # pyright: ignore[reportPrivateUsage]
+    toolset.id = None
+    assert toolset.id == 'private-tenant.example'
+    assert toolset._telemetry_url_derived_id == 'private-tenant.example'  # pyright: ignore[reportPrivateUsage]
+    assert MCPToolset('https://private-tenant.example/mcp', id='docs')._telemetry_url_derived_id is None  # pyright: ignore[reportPrivateUsage]
+
+
 @pytest.mark.skipif(not mcp_installed(), reason='fastmcp not installed')
 @pytest.mark.parametrize('include_content', [True, False])
 @pytest.mark.parametrize('native', [True, False])
@@ -405,7 +496,10 @@ async def test_only_url_derived_mcp_ids_are_masked(include_content: bool, native
         return ModelResponse(parts=[TextPart('done')])
 
     settings, exporter = redacted_setup(include_content)
-    capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=native, local=server)
+    # This module's in-process servers are passed as a pre-built `Client`, which keeps fastmcp's default of
+    # no handshake deadline. Wrapping the bare server would apply `MCPToolset`'s 5-second `init_timeout`,
+    # and a stalled CI worker can exceed it.
+    capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=native, local=Client(server))
     assert capability.id is not None
     history: list[ModelMessage] = [
         ModelRequest.user_text_prompt('previous'),
@@ -497,7 +591,7 @@ async def test_explicit_mcp_toolset_id_remains_in_request_telemetry() -> None:
         return ModelResponse(parts=[TextPart('done')])
 
     settings, exporter = redacted_setup()
-    toolset = MCPToolset(server, id='github')
+    toolset = MCPToolset(Client(server), id='github')
     await Agent(FunctionModel(respond), toolsets=[toolset], capabilities=[Instrumentation(settings=settings)]).run('go')
     chat = next(
         span
@@ -584,7 +678,7 @@ async def test_combined_mcp_keeps_the_winning_id_provenance(last_explicit: bool)
 @pytest.mark.skipif(not mcp_installed(), reason='fastmcp not installed')
 async def test_local_mcp_instruction_id_is_masked_without_tools() -> None:
     server = FastMCP('test', instructions='server guidance')
-    capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=False, local=server)
+    capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=False, local=Client(server))
     assert capability.id is not None
 
     def respond(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
@@ -653,7 +747,7 @@ async def test_unrelated_toolset_id_matching_local_mcp_id_is_retained() -> None:
     def ping() -> str:
         return 'pong'
 
-    capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=False, local=server)
+    capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=False, local=Client(server))
     assert capability.id is not None
     unrelated = FunctionToolset(id=capability.id)
 
@@ -964,6 +1058,27 @@ def test_a_content_policy_from_another_span_is_not_trusted() -> None:
         # No request open at all.
         include_content_ctx.set(None)
         assert span_include_content(span) is False
+
+
+def test_current_model_request_span_requires_the_owned_span() -> None:
+    """A model records request attributes on the open `chat` span only while it's the current span.
+
+    Not on a span opened inside the request, which is the current span instead, nor on a finished request's span.
+    """
+    settings, _ = redacted_setup(include_content=False)
+    tracer = settings.tracer
+    previous = include_content_ctx.get()
+    try:
+        include_content_ctx.set(None)
+        assert current_model_request_span() is None
+        with tracer.start_as_current_span('chat') as chat_span:
+            include_content_ctx.set(ContentPolicy(chat_span, include_content=False, tracer=tracer))
+            assert current_model_request_span() is chat_span
+            with tracer.start_as_current_span('nested span'):
+                assert current_model_request_span() is None
+        assert current_model_request_span() is None
+    finally:
+        include_content_ctx.set(previous)
 
 
 def test_a_span_inside_a_request_needs_the_request_still_open() -> None:

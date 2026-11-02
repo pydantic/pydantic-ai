@@ -19,11 +19,11 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import Capability
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_clai2._app import create_stock_agent
+from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import TurnStart
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.menus.field_menu import FieldMenu, Runners, save_and_close_item
 from pydantic_clai2.ui.menus.system_prompt_menu import (
@@ -38,6 +38,7 @@ from pydantic_clai2.ui.menus.system_prompt_menu import (
 from pydantic_clai2.ui.menus.text_editor import EditorApp, TextEditor, build_text_area, edit_text
 from tests.clai2.dialog_script import Back, ScriptedDialogs, Type
 from tests.clai2.menu_script import Script, make_context, pick
+from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN
 
 CLOSE = MenuResult(item=save_and_close_item())
 
@@ -70,6 +71,7 @@ def reset(menu: FieldMenu, key: str) -> MenuResult:
 
 
 @pytest.mark.parametrize('stock', [True, False], ids=['stock-agent', 'supplied-agent'])
+@pytest.mark.moves_cache_prefix(reason=INSTRUCTIONS_CHANGE_MID_RUN)
 async def test_saved_instructions_follow_plugin_instructions_and_reach_the_next_request(
     tmp_path: Path, stock: bool
 ) -> None:

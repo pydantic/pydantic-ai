@@ -1,4 +1,4 @@
-"""`host.tasks`, the `TaskCatalog` over `/tasks`, and the `on_task_event` moment."""
+"""`host.tasks`, the `TaskCatalog` over `/tasks`, and the `on_task_progress` moment."""
 
 import asyncio
 import gc
@@ -27,11 +27,11 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.subagents import DelegationEndEvent, DelegationStartEvent, DelegationTask, DelegationTaskEvent
-from pydantic_clai2._app import create_stock_agent
+from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import Plugin, PluginHost, SessionStart, TaskEvent, TaskInfo
+from pydantic_clai2.plugins import Plugin, PluginHost, SessionStart, TaskInfo, TaskProgress
 from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.runtime.task_prompts import TaskPrompt
 from pydantic_clai2.runtime.tasks import Tasks, resume_prompt
@@ -43,13 +43,13 @@ class Watcher(Plugin):
     """Keeps its host, every task event, and what `host.tasks` listed while the child ran."""
 
     hosts: ClassVar[list[PluginHost[None]]] = []
-    events: ClassVar[list[TaskEvent]] = []
+    events: ClassVar[list[TaskProgress]] = []
     listed: ClassVar[list[list[TaskInfo]]] = []
 
     async def on_session_start(self, event: SessionStart) -> None:
         self.hosts.append(self.host)
 
-    async def on_task_event(self, event: TaskEvent) -> None:
+    async def on_task_progress(self, event: TaskProgress) -> None:
         self.events.append(event)
 
 
@@ -126,9 +126,9 @@ async def test_tasks_reach_plugins_while_the_shell_runs(tmp_path: Path) -> None:
 
 async def test_catalog_lists_and_controls_the_current_conversations_tasks() -> None:
     entered: list[str] = []
-    fired: list[TaskEvent] = []
+    fired: list[TaskProgress] = []
 
-    async def fire(event: TaskEvent) -> None:
+    async def fire(event: TaskProgress) -> None:
         fired.append(event)
 
     ui = Tasks(

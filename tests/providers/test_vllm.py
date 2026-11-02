@@ -6,6 +6,7 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelRequest, ThinkingPart, UserPromptPart
+from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import UserError
@@ -216,7 +217,9 @@ async def test_vllm_provider_merges_leading_system_messages(allow_model_requests
     messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
     assert [message['role'] for message in messages] == ['system', 'user']
     system_content = messages[0]['content']
-    assert system_content.startswith('Answer accurately.')
+    # The default profile takes no mid-conversation system messages, so the standing prompt opens by saying what
+    # `<system>` means.
+    assert system_content.startswith(f'{SYSTEM_VOICE_ANNOUNCEMENT}\n\nAnswer accurately.')
     assert '"city"' in system_content
 
 
@@ -313,6 +316,7 @@ async def test_vllm_provider_no_duplicate_thinking_parts(allow_model_requests: N
         ('Qwen/Qwen3-235B-A22B-Thinking-2507', False, None),
         ('Qwen/Qwen3-Coder-480B-A35B-Instruct', 'high', None),
         ('Qwen/Qwen3.8-27B', 'high', None),
+        ('deepseek-flash', 'high', None),
         ('unknown-model', 'high', None),
     ],
 )

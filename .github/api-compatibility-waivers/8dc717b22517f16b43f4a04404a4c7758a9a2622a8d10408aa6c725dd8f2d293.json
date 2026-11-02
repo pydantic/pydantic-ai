@@ -1,0 +1,5 @@
+{
+  "against": "v2.61.0",
+  "reason": "False positive: `REGIONS` holds the same two `Destination`s; Griffe compares the expression text, which now spells the origins out instead of parsing harness's MCP URL constants.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11327"
+}

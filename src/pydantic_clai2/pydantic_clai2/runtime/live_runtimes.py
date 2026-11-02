@@ -20,6 +20,7 @@ from pydantic_ai_harness.step_persistence.conversations import SqliteConversatio
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.plugins import LiveSession, SessionEndReason
 from pydantic_clai2.plugins.process_plugins import JoinedSessions, LiveRuntime, handling
+from pydantic_clai2.runtime.session import continuing_fork
 from pydantic_clai2.runtime.session_workspace import workspace_directory
 
 IDLE_AFTER = 3600.0
@@ -69,8 +70,6 @@ class _Live:
     """Set once it starts closing, so `open` waits for it to close rather than return it."""
     done: Event = field(default_factory=Event)
     """Set once it has closed."""
-    copied: tuple[str, str] | None = None
-    """The conversation `open` asked for and the copy it continues in, when another process was running it."""
 
 
 class LiveRuntimes(JoinedSessions):
@@ -164,17 +163,6 @@ class LiveRuntimes(JoinedSessions):
             None,
         )
 
-    def _copy_of(self, conversation_id: str) -> _Live | None:
-        """The session `open` started for `conversation_id`, still in the copy it made of it."""
-        return next(
-            (
-                live
-                for live in self._live.values()
-                if live.copied == (conversation_id, live.runtime.live_session.conversation.conversation_id)
-            ),
-            None,
-        )
-
     @asynccontextmanager
     async def serving(self) -> AsyncGenerator[None]:
         """Run the sessions `open` and `new` start, and close idle ones; leaving closes them all.
@@ -200,8 +188,12 @@ class LiveRuntimes(JoinedSessions):
             raise  # pragma: no cover -- the block and idle closing never both raise.
 
     async def open(self, conversation_id: str, /) -> LiveSession:
+        """The live session holding `conversation_id`, else a new one resuming it.
+
+        One another process runs continues in the fork of it an earlier open saved, in any CLAI, if there is one.
+        """
         while True:
-            live = self._holder(conversation_id) or self._copy_of(conversation_id)
+            live = self._holder(conversation_id)
             switching = self._switching.get(live.runtime.live_session.id) if live is not None else None
             if live is not None and live.ready and not live.closing and switching is None:
                 return live.runtime.live_session
@@ -216,10 +208,13 @@ class LiveRuntimes(JoinedSessions):
         opened = self._opening[conversation_id] = Event()
         try:
             saved = await self._conversations.get(conversation_id=conversation_id)
-            return await self._start(workspace_directory(saved.summary.workspace), resume=conversation_id)
+            continuing = await continuing_fork(self._conversations, saved.summary)
+            if continuing is None:
+                return await self._start(workspace_directory(saved.summary.workspace), resume=conversation_id)
         finally:
             del self._opening[conversation_id]
             opened.set()
+        return await self.open(continuing.conversation_id)
 
     async def new(self, *, workspace: Path | None = None) -> LiveSession:
         return await self._start(None if workspace is None else workspace_directory(str(workspace)), resume=None)
@@ -298,9 +293,6 @@ class LiveRuntimes(JoinedSessions):
         live = self._live[runtime.live_session.id]
 
         def started() -> None:
-            if resume is not None and (copy := runtime.live_session.conversation.conversation_id) != resume:
-                # Another process runs it, so this session continues in a copy; opening it again returns this one.
-                live.copied = (resume, copy)
             live.ready = True
             task_status.started(runtime.live_session)
             self.changed(runtime.live_session)

@@ -21,6 +21,7 @@ __all__ = (
     'BEDROCK_GEO_PREFIXES',
     'bedrock_claude_cache_retentions',
     'bedrock_claude_supports_automatic_caching',
+    'bedrock_claude_supports_mid_conversation_effort',
     'bedrock_lacks_claude_structured_output',
     'remove_bedrock_geo_prefix',
     'split_bedrock_model_id',
@@ -130,6 +131,26 @@ def bedrock_claude_supports_automatic_caching(model_name: str) -> bool:
     """
     _, name = split_bedrock_model_id(model_name)
     return name.startswith(_AUTOMATIC_CACHING_CLAUDE_MODEL_PREFIXES)
+
+
+# The Claude models that Amazon Bedrock serves per-message effort changes for, under the
+# `mid-conversation-output-config-2026-07-01` beta. The SDK sends the beta in the `anthropic_beta` body field on the
+# legacy InvokeModel API (`AsyncAnthropicBedrock`), and in the `anthropic-beta` header on the Bedrock Messages API
+# (`AsyncAnthropicBedrockMantle`). Bare names, as `split_bedrock_model_id` returns them.
+# https://platform.claude.com/docs/en/build-with-claude/effort#per-message-effort-beta
+_MID_CONVERSATION_EFFORT_CLAUDE_MODEL_PREFIXES = (
+    'claude-fable-5-1',
+    'claude-opus-5-5',
+)
+
+
+def bedrock_claude_supports_mid_conversation_effort(model_name: str) -> bool:
+    """Whether Amazon Bedrock takes a per-message `output_config.effort` for a Claude model, on either Bedrock API.
+
+    Accepts a full Bedrock model ID (e.g. `us.anthropic.claude-opus-5-5`) or a bare model name.
+    """
+    _, name = split_bedrock_model_id(model_name)
+    return name.startswith(_MID_CONVERSATION_EFFORT_CLAUDE_MODEL_PREFIXES)
 
 
 # The Claude models with structured output (JSON schema output and strict tool use) on the direct Anthropic

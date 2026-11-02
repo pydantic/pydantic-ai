@@ -64,7 +64,7 @@ async def test_anthropic_code_execution_files(
     )
 
     try:
-        model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+        model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
         agent = Agent(
             model,
             capabilities=[
@@ -126,7 +126,7 @@ async def test_anthropic_code_execution_files_behind_carried_thinking(
     ]
 
     try:
-        model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+        model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
         agent = Agent(
             model,
             capabilities=[
@@ -179,7 +179,7 @@ async def test_anthropic_code_execution_files_multi_turn(
     )
 
     try:
-        model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+        model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
         agent = Agent(
             model,
             capabilities=[
@@ -256,7 +256,7 @@ async def test_anthropic_code_execution_files_fresh_container_multi_turn(
     )
 
     try:
-        model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+        model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
         agent = Agent(
             model,
             capabilities=[
@@ -310,7 +310,7 @@ async def test_anthropic_code_execution_files_with_function_tool(
     )
 
     try:
-        model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+        model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
         agent = Agent(
             model,
             capabilities=[
@@ -340,7 +340,7 @@ async def test_anthropic_code_execution_files_with_function_tool(
     assert message_shape(bodies[-1]) == snapshot(
         [
             ('user', ['text', 'container_upload']),
-            ('assistant', ['text', 'tool_use', 'server_tool_use']),
+            ('assistant', ['tool_use']),
             ('user', ['tool_result']),
         ]
     )
@@ -382,7 +382,7 @@ async def test_anthropic_code_execution_files_rejected_container_is_dropped_and_
     )
 
     try:
-        model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+        model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
         agent = Agent(
             model,
             capabilities=[

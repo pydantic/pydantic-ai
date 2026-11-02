@@ -1,0 +1,12 @@
+--- expected
++++ actual
+@@ -25,0 +26,4 @@
++    {
++     "text": "Question 0b",
++     "type": "text"
++    },
+@@ -68,0 +73,4 @@
++     "text": "Question 0b",
++     "type": "text"
++    },
++    {

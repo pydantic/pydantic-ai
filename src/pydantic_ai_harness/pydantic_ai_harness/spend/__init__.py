@@ -13,6 +13,7 @@ from pydantic_ai_harness.spend._exceptions import (
     UnpricedModelError,
     UnpricedModelWarning,
 )
+from pydantic_ai_harness.spend._postgres import PostgresSpendStore
 from pydantic_ai_harness.spend._redis import RedisClient, RedisSpendStore
 from pydantic_ai_harness.spend._snapshot import BudgetStatus, SpendSnapshot, Spent
 from pydantic_ai_harness.spend._store import BatchSpendStore, InMemorySpendStore, SpendEntry, SpendStore
@@ -26,6 +27,7 @@ __all__ = [
     'BudgetSpec',
     'BudgetStatus',
     'InMemorySpendStore',
+    'PostgresSpendStore',
     'PriceFunc',
     'RedisClient',
     'RedisSpendStore',

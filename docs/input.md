@@ -4,12 +4,15 @@ description: "Send images, audio, video, PDFs and other documents to a Pydantic 
 
 # Multimodal Input
 
-Alongside text, agents can accept image, audio, video, and document input, as long as the model supports it.
+Alongside text, agents can accept image, audio, video, and document input.
+
+!!! tip "Files the model can't read"
+    You aren't limited to the file types a model reads natively. With the [File Understanding](capabilities/file-understanding.md) capability, a file the agent's model can't take, such as audio on a model without audio input or an image on a text-only model, is described in text by another model first, and the agent's model gets the description in the file's place. Files the model does read are sent as they are.
 
 ## Image Input
 
 !!! info
-    Some models do not support image input. Please check the model's documentation to confirm whether it supports image input.
+    Some models do not support image input. Please check the model's documentation to confirm whether it supports image input. If it doesn't, [File Understanding](capabilities/file-understanding.md) can describe the image with a model that can.
 
 If you have a direct URL for the image, you can use [`ImageUrl`][pydantic_ai.ImageUrl]:
 
@@ -52,21 +55,21 @@ print(result.output)
 ## Audio Input
 
 !!! info
-    Some models do not support audio input. Please check the model's documentation to confirm whether it supports audio input.
+    Some models do not support audio input. Please check the model's documentation to confirm whether it supports audio input. See [OpenAI](models/openai.md#audio-input) for which OpenAI models take audio. If a model doesn't, [File Understanding](capabilities/file-understanding.md) can describe the audio with a model that can.
 
 For audio, use [`AudioUrl`][pydantic_ai.AudioUrl] or [`BinaryContent`][pydantic_ai.BinaryContent].
 
 ## Video Input
 
 !!! info
-    Some models do not support video input. Please check the model's documentation to confirm whether it supports video input.
+    Some models do not support video input. Please check the model's documentation to confirm whether it supports video input. See [Bedrock](models/bedrock.md#video-input) for which Bedrock models take video. If a model doesn't, [File Understanding](capabilities/file-understanding.md) can describe the video with a model that can.
 
 For video, use [`VideoUrl`][pydantic_ai.VideoUrl] or [`BinaryContent`][pydantic_ai.BinaryContent].
 
 ## Document Input
 
 !!! info
-    Some models do not support document input. Please check the model's documentation to confirm whether it supports document input.
+    Some models do not support document input. Please check the model's documentation to confirm whether it supports document input. If it doesn't, [File Understanding](capabilities/file-understanding.md) can describe the document with a model that can.
 
 For documents, use [`DocumentUrl`][pydantic_ai.DocumentUrl] or [`BinaryContent`][pydantic_ai.BinaryContent].
 
@@ -139,6 +142,63 @@ programmatically in your agent logic.
     The `content` field is treated as input to the model, but the `metadata` is **not sent to the model**.
     It is preserved in messages for programmatic access.
 
+## Structured Input {#structured-input}
+
+Use [`StructuredContent`][pydantic_ai.StructuredContent] to pass a structured value as part of the user prompt, such as the state of the app the user is looking at, or the data a [decision model](models/decision.md#structured-input) should judge. The value stays structured in the message history, so a [history processor](message-history.md#processing-message-history) or an evaluator can read it back, while the model is sent it as text:
+
+```py {title="structured_content_input.py" test="skip"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, StructuredContent
+
+
+class UIState(BaseModel):
+    url: str
+    cart_total: float
+
+
+agent = Agent('{{ openai:medium }}')
+ui_state = UIState(url='/products/42', cart_total=949.0)
+result = agent.run_sync([StructuredContent(ui_state, tag='ui_state'), 'Why did the total jump?'])
+```
+
+The model is sent `<ui_state>{"url":"/products/42","cart_total":949.0}</ui_state>`, followed by the question. By default the value is rendered as compact JSON, wrapped in `tag` when one is given, with `<`, `>` and `&` escaped so that a value from an untrusted client, rendered on your server, can't close the tag. Pass `format='xml'` to render it with [`format_as_xml`][pydantic_ai.format_prompt.format_as_xml] instead, or a function that takes the value and returns the text. A `description` is written on the line before the value. A `tag` is lowercase with `_` between words, and can't be one of the tags the framework frames its own text in, such as `system` or `tool_result`, so the value can't read as the framework speaking.
+
+The text is rendered once, when the item is created, and stored in [`content`][pydantic_ai.messages.StructuredContent.content] beside the value. A message history that is stored and loaded again is therefore sent exactly as before, which keeps the prompt cache prefix intact, even when the text came from a function that isn't stored. The text isn't rendered again when the value changes, so to change the value, create a new item, or use `dataclasses.replace(item, value=..., content='')`, passing `format` again if the item was created with one. After loading, [`value`][pydantic_ai.messages.StructuredContent.value] is the JSON-compatible form of the value, such as a dict in place of a Pydantic model.
+
+To render a kind of value the same way wherever it is used, subclass `StructuredContent` and override [`render`][pydantic_ai.messages.StructuredContent.render]:
+
+```py {title="structured_content_subclass.py"}
+from pydantic import BaseModel
+
+from pydantic_ai import StructuredContent, format_as_xml
+
+
+class UIState(BaseModel):
+    url: str
+    cart_total: float
+
+
+class UIStateContent(StructuredContent):
+    value: UIState
+
+    def render(self) -> str:
+        return format_as_xml(self.value, root_tag='ui_state')
+
+
+print(UIStateContent(UIState(url='/products/42', cart_total=949.0)).content)
+"""
+<ui_state>
+  <url>/products/42</url>
+  <cart_total>949.0</cart_total>
+</ui_state>
+"""
+```
+
+`StructuredContent` is a [`TextContent`][pydantic_ai.TextContent], so code that reads the text of a prompt handles it like any other text. A [decision model](models/decision.md#structured-input) is the exception: it is sent the value itself when the prompt is a single `StructuredContent`. Code that rewrites the text of a prompt, such as a redaction step, should therefore replace the item with a plain `TextContent` holding the new text, as the harness's [guardrails](harness/guardrails.md) and [compaction](harness/compaction.md) do.
+
+The [Vercel AI](ui/vercel-ai.md#structured-content) and [AG-UI](ui/ag-ui.md#structured-content) adapters dump the item as ordinary text in the user message, which a frontend shows like any other user text, and carry its value in the metadata of that text part (Vercel AI) or message (AG-UI, from `ag-ui-protocol` 0.1.11), so it loads back whole. The same goes for an item [enqueued mid-run](message-history.md#injecting-messages-mid-run) with `ctx.enqueue`, which accepts it like any other user content. Like `TextContent.metadata`, its `metadata` doesn't make the round-trip.
+
 
 ## User-side download vs. direct file URL
 
@@ -148,14 +208,14 @@ Support for file URLs varies depending on type and provider:
 
 | Model | Send URL directly | Download and send bytes | Unsupported |
 |-------|-------------------|-------------------------|-------------|
-| [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | `ImageUrl` | `AudioUrl`, `DocumentUrl` | `VideoUrl`. `DocumentUrl` [not supported with `AzureProvider`](models/azure.md#using-azure-with-the-responses-api) or [`AlibabaProvider`](models/compatible-apis.md#alibaba-cloud-model-studio-dashscope) |
+| [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | `ImageUrl` | `AudioUrl` (audio models only), `DocumentUrl` | `VideoUrl`. `DocumentUrl` [not supported with `AzureProvider`](models/azure.md#using-azure-with-the-responses-api) or [`AlibabaProvider`](models/compatible-apis.md#alibaba-cloud-model-studio-dashscope) |
 | [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] | `ImageUrl`, `AudioUrl`, `DocumentUrl` | — | `VideoUrl` |
 | [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] | `ImageUrl`, `DocumentUrl` (PDF) | `DocumentUrl` (`text/plain`) | `AudioUrl`, `VideoUrl` |
 | [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Google Cloud) | All URL types | — | — |
 | [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Gemini API) | [YouTube](models/google.md#document-image-audio-and-video-input), [Files API](models/google.md#document-image-audio-and-video-input) | All other URLs | — |
 | [`XaiModel`][pydantic_ai.models.xai.XaiModel] | `ImageUrl` | `DocumentUrl` | `AudioUrl`, `VideoUrl` |
 | [`MistralModel`][pydantic_ai.models.mistral.MistralModel] | `ImageUrl`, `DocumentUrl` (PDF) | `DocumentUrl` (`text/plain`) | `AudioUrl`, `VideoUrl`, `DocumentUrl` (non-PDF, non-text) |
-| [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | S3 URLs (`s3://`) | `ImageUrl`, `DocumentUrl`, `VideoUrl` | `AudioUrl` |
+| [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | S3 URLs (`s3://`) | `ImageUrl`, `DocumentUrl`, `VideoUrl` (Nova only) | `AudioUrl`, and `VideoUrl` outside Nova |
 | [`OpenRouterModel`][pydantic_ai.models.openrouter.OpenRouterModel] | `ImageUrl`, `DocumentUrl`, `VideoUrl` | `AudioUrl` | — |
 
 A model that does not accept a kind of file at all can still be given one through the [File Understanding](capabilities/file-understanding.md) capability, which has another model describe it in text first. Without it, a file in a user prompt that the model can't take fails the request, while one a tool returned is [replaced by a note naming it](tools-advanced.md#tool-return-file-provenance), so the run goes on.
@@ -171,6 +231,14 @@ ImageUrl(url='https://example.com/image.png', force_download=True)
 AudioUrl(url='https://example.com/audio.mp3', force_download=True)
 VideoUrl(url='https://example.com/video.mp4', force_download=True)
 DocumentUrl(url='https://example.com/doc.pdf', force_download=True)
+```
+
+When Pydantic AI downloads a file, it sends the `media_type` you passed if it differs from the one the URL's extension implies. Otherwise it uses the server's `Content-Type`, falling back to the URL's extension when the header is missing or generic (`application/octet-stream` or `binary/octet-stream`). Pass `media_type` explicitly for URLs without an extension, or for servers that report the wrong type:
+
+```py {title="explicit_media_type.py" test="skip" lint="skip"}
+from pydantic_ai import ImageUrl
+
+ImageUrl(url='https://example.com/receipt-123', media_type='image/png', force_download=True)
 ```
 
 !!! warning "Trust model for file URLs"
@@ -203,7 +271,7 @@ Use [`UploadedFile`][pydantic_ai.messages.UploadedFile] to reference files that 
 
 ### Provider Name Requirement
 
-When using [`UploadedFile`][pydantic_ai.messages.UploadedFile] you must set the `provider_name`. Uploaded files are specific to the system they are uploaded to and are not transferable across providers. Trying to use a message that contains an `UploadedFile` with a different provider will result in an error.
+When using [`UploadedFile`][pydantic_ai.messages.UploadedFile] you must set the `provider_name`. Uploaded files are specific to the system they are uploaded to and are not transferable across providers. Trying to use a message that contains an `UploadedFile` with a different provider will result in an error. Within one provider name, Pydantic AI doesn't track which endpoint or account a file was uploaded to: send it to a model whose client can read it.
 
 !!! tip "Getting the provider name"
     Use [`model.system`][pydantic_ai.models.Model.system] to get the correct provider name dynamically. This ensures your code works correctly even if the provider name changes. All examples below demonstrate this pattern.

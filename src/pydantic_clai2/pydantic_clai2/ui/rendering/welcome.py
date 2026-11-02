@@ -6,7 +6,7 @@ from pydantic_clai2.cli.self_update import installed
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.runtime.worktrees import Worktree
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._branding import print_banner
+from pydantic_clai2.ui.rendering.branding import print_banner
 
 
 def print_welcome(project: ProjectSettings, console: Console, *, worktree: Worktree | None = None) -> None:

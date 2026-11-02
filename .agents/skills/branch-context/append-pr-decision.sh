@@ -163,6 +163,15 @@ if [ ! -f "$FILE" ]; then
     exit 1
 fi
 
+# Record the harness session that made the decision, so a later agent can find it. Claude Code
+# exports CLAUDE_CODE_SESSION_ID and Codex exports CODEX_THREAD_ID to shell commands. The field is
+# best-effort: without a usable id the entry is written without it.
+SESSION="${CLAUDE_CODE_SESSION_ID:-${CODEX_THREAD_ID:-}}"
+if [[ -n "$SESSION" && ! "$SESSION" =~ ^[A-Za-z0-9._:-]+$ ]]; then
+    echo "warning: ignoring session id with unexpected characters" >&2
+    SESSION=""
+fi
+
 DATE="$(date -u +%Y-%m-%d)"
 
 ENTRY="
@@ -170,6 +179,10 @@ ENTRY="
 - Decision: $DECISION
 - Why: $WHY
 - Source: $SOURCE"
+if [ -n "$SESSION" ]; then
+    ENTRY="$ENTRY
+- Session: $SESSION"
+fi
 if [ -n "$SUPERSEDES" ]; then
     ENTRY="$ENTRY
 - Supersedes: $SUPERSEDES"

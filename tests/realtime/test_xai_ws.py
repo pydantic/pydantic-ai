@@ -611,6 +611,7 @@ def test_profile_allow_seeding() -> None:
         supports_output_truncation=False,
         supports_text_output=False,  # Grok Voice always speaks
         supports_session_seeding=True,
+        supports_system_messages=False,
         supports_webrtc=False,
         supports_seeding_images=False,
         supports_seeding_audio=False,
@@ -621,6 +622,7 @@ def test_profile_allow_seeding() -> None:
         supports_tool_return_schema=False,
         supported_native_tools=frozenset(),
         emits_input_speech_events=True,
+        output_speech_timestamp_granularity=None,
         synthesizes_turn_boundary=False,
         responses_are_requests=True,
         response_usage_covers_context=False,

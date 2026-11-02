@@ -144,7 +144,7 @@ def shell_text(text: str, decoder: AnsiDecoder) -> Text:
     return decoder.decode_line(safe)
 
 
-class DisplayArguments(BaseModel):
+class DisplayArgs(BaseModel):
     """Optional display fields for file and shell tools."""
 
     path: str | None = None
@@ -215,7 +215,7 @@ class ToolOutput:
         if name not in ('shell', 'write_file', 'edit_file', 'read_file', 'list_files'):
             return False
         try:
-            args = DisplayArguments.model_validate_json(event.part.args_as_json_str())
+            args = DisplayArgs.model_validate_json(event.part.args_as_json_str())
         except ValueError:
             return False
         if name in ('read_file', 'list_files'):
@@ -227,7 +227,7 @@ class ToolOutput:
         self._headers.add((event.part.tool_call_id, name))
         return True
 
-    def _inspection_header(self, name: str, args: DisplayArguments) -> bool:
+    def _inspection_header(self, name: str, args: DisplayArgs) -> bool:
         if name == 'read_file':
             if args.path is None:
                 return False

@@ -32,12 +32,18 @@ def current() -> InstrumentationSettings | bool:
     return Agent._instrument_default  # pyright: ignore[reportPrivateUsage]
 
 
-def tracer() -> Tracer | None:
-    """The tracer those agents trace with, or `None` while instrumentation is off."""
+def settings() -> InstrumentationSettings | None:
+    """The settings those agents trace with, or `None` while instrumentation is off."""
     instrument = current()
     if instrument is False:
         return None
-    return (instrument if isinstance(instrument, InstrumentationSettings) else InstrumentationSettings()).tracer
+    return instrument if isinstance(instrument, InstrumentationSettings) else InstrumentationSettings()
+
+
+def tracer() -> Tracer | None:
+    """The tracer those agents trace with, or `None` while instrumentation is off."""
+    instrumentation = settings()
+    return None if instrumentation is None else instrumentation.tracer
 
 
 def claim(settings: InstrumentationSettings) -> None:

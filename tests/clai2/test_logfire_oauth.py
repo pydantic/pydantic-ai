@@ -13,7 +13,7 @@ import pytest
 from keyring.errors import KeyringError
 from pydantic import JsonValue
 
-import pydantic_clai2.mcp._settings as mcp_settings
+import pydantic_clai2.mcp._client as mcp_client
 from pydantic_clai2 import logfire_oauth
 from pydantic_clai2.config.credential_store import save_codex_credentials
 from pydantic_clai2.logfire_oauth import (
@@ -26,7 +26,7 @@ from pydantic_clai2.logfire_oauth import (
     sign_in,
     status,
 )
-from pydantic_clai2.plugins.sign_in import SignInRequired
+from pydantic_clai2.plugins.sign_in import SignInRequiredError
 
 ORIGIN = 'https://logfire.test'
 RESOURCE = f'{ORIGIN}/mcp'
@@ -418,7 +418,7 @@ class TestDeviceAuth:
 
     async def test_a_connection_without_a_sign_in_never_starts_one(self, opened: list[str]) -> None:
         logfire = Logfire()
-        with pytest.raises(SignInRequired, match=r'Not signed in to Logfire\. Run /logfire login to sign in\.'):
+        with pytest.raises(SignInRequiredError, match=r'Not signed in to Logfire\. Run /logfire login to sign in\.'):
             await self.mcp(logfire)
         assert (opened, logfire.forms, logfire.bearers) == ([], [], [])
 
@@ -460,14 +460,14 @@ class TestDeviceAuth:
                 raise httpx.ReadTimeout('slow', request=request)
 
             logfire.handle = drop_refresh
-        with pytest.raises(SignInRequired):
+        with pytest.raises(SignInRequiredError):
             await self.mcp(logfire)
         assert opened == []
 
     async def test_a_read_only_sign_in_does_not_serve_write_access(self, opened: list[str]) -> None:
         remember(stored())
         logfire = Logfire()
-        with pytest.raises(SignInRequired):
+        with pytest.raises(SignInRequiredError):
             await self.mcp(logfire, read_only=False)
         assert (opened, logfire.forms) == ([], [])
 
@@ -507,7 +507,7 @@ class TestDeviceAuth:
 
     async def test_sign_in_failures_are_reported_under_fastmcp_4(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """The device flow keeps its own client: FastMCP 4's SDK builds `httpx2` ones, whose errors it would miss."""
-        monkeypatch.setattr(mcp_settings, 'create_mcp_http_client', httpx2.AsyncClient)
+        monkeypatch.setattr(mcp_client, 'create_mcp_http_client', httpx2.AsyncClient)
         method = LogfireSignIn(resource='http://127.0.0.1:1/mcp', read_only=True)
         with pytest.raises(SignInError, match='Logfire sign-in failed: ConnectError'):
             await method.sign_in(show=lambda text: None)
@@ -573,7 +573,7 @@ class TestLogfireSignIn:
             )
             assert forget()  # Logout drops the in-memory sign-in too, so the next request needs a new one.
             assert status(resource=RESOURCE, read_only=True) == 'signed out'
-            with pytest.raises(SignInRequired):
+            with pytest.raises(SignInRequiredError):
                 await client.post(RESOURCE)
         assert opened == [LINK]
         assert not forget()
