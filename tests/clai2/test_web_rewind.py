@@ -69,9 +69,9 @@ def test_edit_and_retry_replace_a_prompt_and_every_later_turn(make_web: MakeWeb)
             patch.setattr(image_codec, 'MAX_PENDING_BYTES', 2 * len(red.data) - 1)
             web_.shell.images.attach([red])
             refused = web_.post(route, {'text': "A'"})
-            assert (refused.status_code, refused.json()['detail']) == (
+            assert (refused.status_code, refused.json()) == (
                 400,
-                "Images waiting in this session's prompt leave no room for these (32 MiB limit).",
+                {'detail': "Images waiting in this session's prompt leave no room for these (32 MiB limit)."},
             )
             web_.shell.images.pending.clear()
         restored = receive_until(socket, Snapshot)[1].items
