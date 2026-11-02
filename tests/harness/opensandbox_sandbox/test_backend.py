@@ -49,6 +49,7 @@ def fast_clock(monkeypatch: pytest.MonkeyPatch) -> None:
     """Advance the backend's clock a second on every read, so its two-second wait for a kill to show ends at once."""
     ticks = itertools.count()
     monkeypatch.setattr(f'{_MODULE}.time', types.SimpleNamespace(monotonic=lambda: float(next(ticks))))
+    monkeypatch.setattr(f'{_MODULE}._GONE_POLL_INTERVAL', 0)
 
 
 async def _wait_for(path: Path) -> None:
