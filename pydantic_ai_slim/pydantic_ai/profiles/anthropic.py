@@ -283,8 +283,8 @@ class AnthropicModelProfile(ModelProfile, total=False):
 
     See [Web Tool Callers](../models/anthropic.md#web-tool-callers) for the requests that keep the default callers.
     When the provider's profile doesn't set it, `AnthropicModel` turns it on for the `AsyncAnthropic` client and leaves
-    it off for Claude Platform on AWS (`AsyncAnthropicAWS`) and Microsoft Foundry, which also send those versions but
-    haven't been verified to accept `allowed_callers` with citations.
+    it off for every other client. Of those, Claude Platform on AWS (`AsyncAnthropicAWS`) and Microsoft Foundry also
+    send those versions, but haven't been verified to accept `allowed_callers` with citations.
     """
 
 

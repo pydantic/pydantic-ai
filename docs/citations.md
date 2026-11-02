@@ -154,9 +154,9 @@ If you need citations, use text output.
 Anthropic cites [web search](native-tools.md#web-search-tool) results whenever the model calls the tool directly, so
 with web search the markup can show up in structured output, with or without `Citations()`. The same goes for
 [web fetch](native-tools.md#web-fetch-tool) when you set `enable_citations=True` on the tool, which also has the model
-call it directly on the Anthropic API on models with the `20260209` web tools. Results the model reads in code execution come back
-uncited, and with structured output `Citations()` doesn't change which tools the model calls from code execution; see
-[Web Tool Callers](models/anthropic.md#web-tool-callers).
+call it directly on the Anthropic API on models with the `20260209` web tools. Results the model reads in code
+execution come back uncited, and with structured output `Citations()` doesn't change which tools the model calls from
+code execution; see [Web Tool Callers](models/anthropic.md#web-tool-callers).
 
 On other providers, `Citations()` has no effect on structured output. With `NativeOutput` or `PromptedOutput` the
 output is JSON text, so web search citations can come back on it, with positions in the JSON text rather than in your
