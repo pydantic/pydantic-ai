@@ -17,7 +17,7 @@ with try_import() as imports_successful:
     import pixeltable as pxt
     from PIL import Image
 
-    from pydantic_ai_harness.pixeltable import Pixeltable, PixeltableToolset
+    from pydantic_ai_harness.pixeltable import PixeltableToolset
 
     from .support import DIM, create_table, get_table, insert_rows, tiny_embed, tiny_image_embed
 
@@ -49,13 +49,9 @@ def _tools(tables: list[str], *, max_rows: int = 20, max_chars: int = 8000) -> P
     return PixeltableToolset(tables=tables, max_rows=max_rows, max_chars=max_chars)
 
 
-def _chunks(root: str, *, max_rows: int = 20, max_chars: int = 8000) -> PixeltableToolset[None]:
-    return _tools([f'{root}.chunks'], max_rows=max_rows, max_chars=max_chars)
-
-
 class TestPixeltableToolsetAllowlist:
     def test_allowlist_exact_and_prefix(self, catalog: str) -> None:
-        exact = _chunks(catalog)
+        exact = _tools([f'{catalog}.chunks'])
         assert exact.list_tables()['tables'] == [f'{catalog}.chunks']
         prefix = _tools([catalog])
         assert prefix.list_tables()['tables'] == [f'{catalog}.chunks', f'{catalog}.other']
@@ -110,7 +106,7 @@ class TestPixeltableToolsetAllowlist:
 class TestPixeltableToolsetDescribe:
     def test_describe_table(self, catalog: str) -> None:
         get_table(f'{catalog}.chunks').add_embedding_index('text', string_embed=tiny_embed, idx_name='text_idx')
-        described = _chunks(catalog).describe_table(f'{catalog}.chunks')
+        described = _tools([f'{catalog}.chunks']).describe_table(f'{catalog}.chunks')
         assert described['table'] == f'{catalog}.chunks'
         assert described['kind'] == 'table'
         assert described['comment'] == 'chunk store'
@@ -151,14 +147,14 @@ class TestPixeltableToolsetQuery:
         monkeypatch.setattr(target, boundary, fail)
         expected = ModelRetry if isinstance(error, pxt.RequestError) else pxt.ServiceUnavailableError
         with pytest.raises(expected, match='synthetic failure') as exc_info:
-            _chunks(catalog).query_table(table, where={'pos': 1})
+            _tools([f'{catalog}.chunks']).query_table(table, where={'pos': 1})
         if isinstance(error, pxt.RequestError):
             assert exc_info.value.__cause__ is error
         else:
             assert exc_info.value is error
 
     def test_equality_where_and_default_columns(self, catalog: str) -> None:
-        result = _chunks(catalog).query_table(f'{catalog}.chunks', where={'status': 'open'})
+        result = _tools([f'{catalog}.chunks']).query_table(f'{catalog}.chunks', where={'status': 'open'})
         assert result == {
             'table': f'{catalog}.chunks',
             'rows': [
@@ -169,11 +165,13 @@ class TestPixeltableToolsetQuery:
         }
 
     def test_where_combines_clauses(self, catalog: str) -> None:
-        result = _chunks(catalog).query_table(f'{catalog}.chunks', columns=['pos'], where={'status': 'open', 'pos': 2})
+        result = _tools([f'{catalog}.chunks']).query_table(
+            f'{catalog}.chunks', columns=['pos'], where={'status': 'open', 'pos': 2}
+        )
         assert result['rows'] == [{'pos': 2}]
 
     def test_duplicate_columns_are_deduplicated(self, catalog: str) -> None:
-        result = _chunks(catalog).query_table(f'{catalog}.chunks', columns=['text', 'text'])
+        result = _tools([f'{catalog}.chunks']).query_table(f'{catalog}.chunks', columns=['text', 'text'])
         assert len(result['rows']) == 3
         assert all(set(row) == {'text'} for row in result['rows'])
 
@@ -211,19 +209,19 @@ class TestPixeltableToolsetQuery:
             tools.query_table(f'{catalog}.docs', columns=['doc', 'title'])
 
     def test_row_bound(self, catalog: str) -> None:
-        rows = _chunks(catalog, max_rows=2).query_table(f'{catalog}.chunks', limit=10)
+        rows = _tools([f'{catalog}.chunks'], max_rows=2).query_table(f'{catalog}.chunks', limit=10)
         assert len(rows['rows']) == 2
         assert rows['truncated']
-        assert not _chunks(catalog).query_table(f'{catalog}.chunks', limit=3)['truncated']
-        assert _chunks(catalog).query_table(f'{catalog}.chunks', limit=2)['truncated']
+        assert not _tools([f'{catalog}.chunks']).query_table(f'{catalog}.chunks', limit=3)['truncated']
+        assert _tools([f'{catalog}.chunks']).query_table(f'{catalog}.chunks', limit=2)['truncated']
 
     def test_character_bound(self, catalog: str) -> None:
-        tiny = _chunks(catalog, max_chars=100).query_table(f'{catalog}.chunks', columns=['text'])
+        tiny = _tools([f'{catalog}.chunks'], max_chars=100).query_table(f'{catalog}.chunks', columns=['text'])
         assert tiny['truncated']
         assert len(json.dumps(tiny, ensure_ascii=False)) <= 100
 
         # A cap below the minimal envelope size cannot shrink the payload further.
-        micro = _chunks(catalog, max_chars=1).query_table(f'{catalog}.chunks', columns=['text'])
+        micro = _tools([f'{catalog}.chunks'], max_chars=1).query_table(f'{catalog}.chunks', columns=['text'])
         assert micro['rows'] == []
         assert micro['truncated']
 
@@ -231,7 +229,9 @@ class TestPixeltableToolsetQuery:
         chunks = get_table(f'{catalog}.chunks')
         big = 'x' * 4000
         chunks.update({'text': big}, where=chunks.pos == 0)
-        result = _chunks(catalog, max_chars=500).query_table(f'{catalog}.chunks', columns=['text'], where={'pos': 0})
+        result = _tools([f'{catalog}.chunks'], max_chars=500).query_table(
+            f'{catalog}.chunks', columns=['text'], where={'pos': 0}
+        )
         assert result['truncated']
         text = result['rows'][0]['text']
         assert isinstance(text, str)
@@ -243,7 +243,9 @@ class TestPixeltableToolsetQuery:
         # Quotes double in JSON, so the cut shrinks until the escaped text fits.
         chunks = get_table(f'{catalog}.chunks')
         chunks.update({'text': '"' * 1000}, where=chunks.pos == 0)
-        result = _chunks(catalog, max_chars=200).query_table(f'{catalog}.chunks', columns=['text'], where={'pos': 0})
+        result = _tools([f'{catalog}.chunks'], max_chars=200).query_table(
+            f'{catalog}.chunks', columns=['text'], where={'pos': 0}
+        )
         text = result['rows'][0]['text']
         assert isinstance(text, str)
         assert text.strip('"') == '...'
@@ -295,7 +297,7 @@ class TestPixeltableToolsetQuery:
         assert row['j'] == {'k': [1, {'x': 2}]}
 
     def test_argument_errors_are_retries(self, catalog: str) -> None:
-        tools = _chunks(catalog)
+        tools = _tools([f'{catalog}.chunks'])
         with pytest.raises(ModelRetry, match='Unknown column'):
             tools.query_table(f'{catalog}.chunks', columns=['nope'])
         with pytest.raises(ModelRetry, match='Unknown column'):
@@ -307,7 +309,7 @@ class TestPixeltableToolsetQuery:
 
     def test_where_rejects_wrong_value_type(self, catalog: str) -> None:
         # A mistyped filter must fail loudly; returning [] would tell the model the data is absent.
-        tools = _chunks(catalog)
+        tools = _tools([f'{catalog}.chunks'])
         with pytest.raises(ModelRetry, match='must be Int, got str'):
             tools.query_table(f'{catalog}.chunks', where={'pos': 'open'})
         with pytest.raises(ModelRetry, match='must be Int, got bool'):
@@ -377,7 +379,7 @@ class TestPixeltableToolsetQuery:
         chunks = get_table(f'{catalog}.chunks')
         chunks.add_computed_column(virtual=chunks.pos * 2, stored=False)
         chunks.add_computed_column(materialized=chunks.pos * 3, stored=True)
-        tools = _chunks(catalog)
+        tools = _tools([f'{catalog}.chunks'])
         first = tools.query_table(f'{catalog}.chunks', where={'pos': 1})['rows'][0]
         assert 'virtual' not in first
         assert first['materialized'] == 3
@@ -409,9 +411,21 @@ class TestPixeltableToolsetSimilarity:
         with pytest.raises(ModelRetry, match='local file path'):
             tools.similarity_search(f'{catalog}.images', 'red photo', 'image', columns=['image', 'title'])
 
+    def test_image_similarity_with_no_extra_columns_returns_the_score(self, catalog: str, tmp_path: Path) -> None:
+        images = create_table(f'{catalog}.images', {'image': pxt.Image})
+        image_path = tmp_path / 'photo.png'
+        Image.new('RGB', (2, 2), color='red').save(image_path)
+        insert_rows(images, [{'image': str(image_path)}])
+        images.add_embedding_index('image', image_embed=tiny_image_embed, string_embed=tiny_embed)
+
+        result = _tools([f'{catalog}.images']).similarity_search(f'{catalog}.images', 'red photo', 'image', columns=[])
+        assert [set(row) for row in result['rows']] == [{'score'}]
+
     def test_similarity_ranks_exact_text(self, catalog: str) -> None:
         get_table(f'{catalog}.chunks').add_embedding_index('text', string_embed=tiny_embed)
-        result = _chunks(catalog).similarity_search(f'{catalog}.chunks', 'cats sit on mats', 'text', limit=3)
+        result = _tools([f'{catalog}.chunks']).similarity_search(
+            f'{catalog}.chunks', 'cats sit on mats', 'text', limit=3
+        )
         rows = result['rows']
         assert [row['text'] for row in rows][0] == 'cats sit on mats'
         assert set(rows[0]) == {'text', 'pos', 'status', 'score'}
@@ -423,7 +437,7 @@ class TestPixeltableToolsetSimilarity:
 
     def test_similarity_column_is_added_to_named_columns(self, catalog: str) -> None:
         get_table(f'{catalog}.chunks').add_embedding_index('text', string_embed=tiny_embed)
-        tools = _chunks(catalog, max_rows=1)
+        tools = _tools([f'{catalog}.chunks'], max_rows=1)
         result = tools.similarity_search(f'{catalog}.chunks', 'dogs run in parks', 'text', columns=['pos'], limit=5)
         assert result['truncated']
         assert list(result['rows'][0]) == ['text', 'pos', 'score']
@@ -436,7 +450,7 @@ class TestPixeltableToolsetSimilarity:
         t = get_table(f'{catalog}.chunks')
         t.add_embedding_index('text', string_embed=tiny_embed, idx_name='e_a')
         t.add_embedding_index('text', string_embed=tiny_embed, idx_name='e_b')
-        tools = _chunks(catalog)
+        tools = _tools([f'{catalog}.chunks'])
         with pytest.raises(ModelRetry, match='multiple embedding indices'):
             tools.similarity_search(f'{catalog}.chunks', 'cats sit on mats', 'text')
         result = tools.similarity_search(f'{catalog}.chunks', 'cats sit on mats', 'text', idx='e_a')
@@ -455,19 +469,10 @@ class TestPixeltableToolsetSimilarity:
         assert 'similarity_similarity_score' in row
 
     def test_similarity_errors_are_retries(self, catalog: str) -> None:
-        tools = _chunks(catalog)
+        tools = _tools([f'{catalog}.chunks'])
         with pytest.raises(ModelRetry, match='non-empty'):
             tools.similarity_search(f'{catalog}.chunks', '  ', 'text')
         with pytest.raises(ModelRetry, match='Unknown column'):
             tools.similarity_search(f'{catalog}.chunks', 'x', 'nope')
         with pytest.raises(ModelRetry, match='No embedding index'):
             tools.similarity_search(f'{catalog}.chunks', 'x', 'vec', columns=['text'])
-
-
-class TestPixeltableToolsetCapability:
-    def test_capability_toolset_honors_caps(self, catalog: str) -> None:
-        tools = Pixeltable(tables=[f'{catalog}.chunks'], max_rows=1).get_toolset()
-        assert isinstance(tools, PixeltableToolset)
-        result = tools.query_table(f'{catalog}.chunks')
-        assert len(result['rows']) == 1
-        assert result['truncated']

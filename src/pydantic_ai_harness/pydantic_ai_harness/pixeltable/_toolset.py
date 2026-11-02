@@ -9,18 +9,23 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import date, datetime
 from typing import NoReturn
 
-import pixeltable as pxt
-from pixeltable.exprs.expr import Expr
 from typing_extensions import TypedDict
 
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai_harness.pixeltable._types import column_base
+
+try:
+    import pixeltable as pxt
+    from pixeltable.exprs.expr import Expr
+except ImportError as _import_error:  # pragma: no cover
+    raise ImportError(
+        'pixeltable is required for the Pixeltable integration. It needs Python 3.11 to 3.14; install it with: pip install "pydantic-ai-harness[pixeltable]"'
+    ) from _import_error
 
 _MEDIA = frozenset({'Image', 'Video', 'Audio', 'Document'})
 ALL_TABLES = '*'
@@ -101,14 +106,36 @@ def _norm(path: str) -> str:
     return path.replace('/', '.').lower()
 
 
+def column_base(type_: str) -> str:
+    """Base type name in `Table.get_metadata()`, e.g. `'Array'` for `'Array[(8,), Float] | None'`."""
+    return type_.split(' | ', 1)[0].split('[', 1)[0]
+
+
+def validate_config(tables: Sequence[str], max_rows: int, max_chars: int) -> list[str]:
+    """Check the caps and return the allowlist normalized like Pixeltable's identifiers."""
+    if max_rows < 1:
+        raise ValueError(f'max_rows must be at least 1, got {max_rows}')
+    if max_chars < 1:
+        raise ValueError(f'max_chars must be at least 1, got {max_chars}')
+    if isinstance(tables, str):
+        raise ValueError('tables must be a list of paths, not a string')
+    cleaned = [_norm(entry) for entry in tables if entry]
+    if not cleaned:
+        raise ValueError("tables must be a non-empty allowlist, or ['*'] for the whole catalog")
+    if ALL_TABLES in cleaned and cleaned != [ALL_TABLES]:
+        raise ValueError("tables=['*'] must be the only entry when allowing the whole catalog")
+    for entry in cleaned:
+        if entry != ALL_TABLES and any(not part or any(ch.isspace() for ch in part) for part in entry.split('.')):
+            raise ValueError(f"invalid tables entry {entry!r}: expected dotted paths like 'my_app.doc_chunks'")
+    return cleaned
+
+
 def _allowed(path: str, tables: list[str]) -> bool:
     # A version handle ('tbl:3') reads rows and columns since deleted or dropped; refuse it.
     if ':' in path:
         return False
-    if tables == [ALL_TABLES]:
-        return True
     npath = _norm(path)
-    return any(npath == _norm(entry) or npath.startswith(f'{_norm(entry)}.') for entry in tables)
+    return any(entry in (ALL_TABLES, npath) or npath.startswith(f'{entry}.') for entry in tables)
 
 
 def _is_media_type(type_: str) -> bool:
@@ -190,11 +217,9 @@ def _bounded_payload(table: str, rows: list[dict[str, object]], *, has_more: boo
 class PixeltableToolset(FunctionToolset[AgentDepsT]):
     """List, describe, query, and similarity-search Pixeltable tables."""
 
-    def __init__(self, *, tables: list[str], max_rows: int, max_chars: int, id: str = 'pixeltable') -> None:
+    def __init__(self, *, tables: Sequence[str], max_rows: int, max_chars: int, id: str = 'pixeltable') -> None:
         super().__init__(id=id)
-        if not tables:
-            raise ValueError("tables must be a non-empty allowlist; pass ['*'] to allow the whole catalog")
-        self._tables = tables
+        self._tables = validate_config(tables, max_rows, max_chars)
         self._max_rows = max_rows
         self._max_chars = max_chars
         self.add_function(self.list_tables, name='list_tables')
@@ -351,7 +376,7 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
             names = self._default_columns(metadata)
         else:
             names = list(dict.fromkeys(columns))
-            if not names:
+            if not names and not extra:
                 raise ModelRetry('query_table needs at least one column')
         items: list[Expr] = []
         named: dict[str, Expr] = dict(extra)
@@ -365,13 +390,11 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
             type_ = column_md[name]['type_']
             if _is_skipped_type(type_):
                 raise ModelRetry(f'Column {name!r} has an array or binary type; choose a stored scalar column.')
-            ref = t[name]
             if _is_media_type(type_):
                 raise ModelRetry(
                     f'Media column {name!r} exposes a local file path; use a safe application URL instead.'
                 )
-            else:
-                items.append(ref)
+            items.append(t[name])
         if not items and not named:
             raise ModelRetry('No selectable columns. Name a non-array column, or describe_table.')
         return t.select(*items, **named)

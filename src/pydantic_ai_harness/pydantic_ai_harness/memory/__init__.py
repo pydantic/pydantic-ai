@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from pydantic_ai_harness.memory._capability import Memory, WriteMetadataFunc
 from pydantic_ai_harness.memory._file import FileStore
@@ -60,7 +60,7 @@ if TYPE_CHECKING:
     from pydantic_ai_harness.memory._pixeltable import PixeltableMemoryStore as PixeltableMemoryStore
 
 
-def __getattr__(name: str) -> Any:
+def __getattr__(name: str) -> object:
     if name == 'PixeltableMemoryStore':
         from pydantic_ai_harness.memory._pixeltable import PixeltableMemoryStore
 

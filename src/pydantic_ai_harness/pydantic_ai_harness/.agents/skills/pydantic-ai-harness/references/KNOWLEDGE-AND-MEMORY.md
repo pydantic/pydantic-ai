@@ -93,8 +93,8 @@ Gotchas:
 ### Pixeltable catalog
 
 `Pixeltable(tables=['app.documents'])` gives an agent read-only tools to list and describe allowed
-tables, query rows, and search an embedding index. The `tables` allowlist is required and two
-instances combine by intersecting allowlists. `PixeltableMemoryStore` is a separate store for
+tables, query rows, and search an embedding index. The `tables` allowlist is required, and two
+instances with different allowlists raise instead of merging. `PixeltableMemoryStore` is a separate store for
 `Memory`; neither requires the other. Install `pydantic-ai-harness[pixeltable]` on Python 3.11 to 3.14.
 Projections omit media, array, binary, and unstored computed columns by default and reject them
 when explicitly requested.
@@ -146,8 +146,8 @@ with the model's writes.
   `write_metadata` is unset, leaves none, so `updated_by='ui'` cannot outlive an agent edit.
   Deletes remove it; a replayed tool call returns its receipt and leaves the stored metadata as is.
 - Files live at `{namespace}/{agent_name}/{file}`, so a UI edits `{user_id}/main/MEMORY.md`.
-- `write_metadata` with a store that is not a `MetadataMemoryStore` (`FileStore`, or a custom
-  store implementing only `MemoryStore`) raises `UserError` at construction or run start.
+- `write_metadata` with a store that is not a `MetadataMemoryStore` (`FileStore`,
+  `PixeltableMemoryStore`, or a custom store implementing only `MemoryStore`) raises `UserError` at construction or run start.
 - A custom store opts in by implementing `write_with_metadata` (checked structurally, like
   `search`), writing metadata atomically with the content; its `write` must record none.
 

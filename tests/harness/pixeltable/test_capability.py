@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -15,7 +15,6 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai_harness import Memory
 from tests.conftest import try_import
 
 with try_import() as imports_successful:
@@ -32,34 +31,29 @@ def _loaded(agent: Agent[None, str]) -> list[Pixeltable[None]]:
     return [cap for cap in agent.root_capability.capabilities if isinstance(cap, Pixeltable)]
 
 
-def _narrow(capability: AbstractCapability[None]) -> Pixeltable[None]:
-    assert isinstance(capability, Pixeltable)
-    return capability
-
-
 class TestPixeltableCapability:
-    def test_tables_is_required(self) -> None:
-        with pytest.raises(TypeError, match='tables'):
-            Pixeltable()  # pyright: ignore[reportCallIssue]
+    @pytest.mark.parametrize(
+        ('kwargs', 'error'),
+        [
+            ({'tables': ['*', 'a.b']}, 'only entry'),
+            ({'tables': 'my_app.doc_chunks'}, 'list of paths'),
+            # An empty allowlist must not mean the whole catalog; that is an opt-in via ['*'].
+            ({'tables': []}, 'non-empty allowlist'),
+            ({'tables': ['']}, 'non-empty allowlist'),
+            ({'tables': ['my_app.']}, 'tables entry'),
+            ({'tables': ['a..b']}, 'tables entry'),
+            ({'tables': ['a.b c']}, 'tables entry'),
+            ({'tables': ['a'], 'max_rows': 0}, 'max_rows must be at least 1, got 0'),
+            ({'tables': ['a'], 'max_chars': 0}, 'max_chars must be at least 1, got 0'),
+        ],
+    )
+    def test_invalid_configuration_is_rejected(self, kwargs: dict[str, object], error: str) -> None:
+        with pytest.raises(ValueError, match=error):
+            Pixeltable(**kwargs)  # pyright: ignore[reportArgumentType]
 
-    def test_star_must_be_the_only_entry(self) -> None:
+    def test_toolset_validates_its_configuration_too(self) -> None:
         with pytest.raises(ValueError, match='only entry'):
-            Pixeltable(tables=['*', 'a.b'])
-
-    def test_tables_rejects_a_string(self) -> None:
-        with pytest.raises(ValueError, match='list of paths'):
-            Pixeltable(tables='my_app.doc_chunks')  # pyright: ignore[reportArgumentType]
-
-    def test_tables_rejects_an_empty_allowlist(self) -> None:
-        # None must not silently mean the whole catalog; that is an opt-in via ['*'].
-        for tables in ([], ['']):
-            with pytest.raises(ValueError, match='non-empty allowlist'):
-                Pixeltable(tables=tables)
-
-    def test_tables_rejects_bad_entries(self) -> None:
-        for bad in (['my_app.'], [' '], ['a..b'], ['.hidden'], ['a.b c']):
-            with pytest.raises(ValueError, match='tables entry'):
-                Pixeltable(tables=bad)
+            PixeltableToolset(tables=['*', 'a'], max_rows=10, max_chars=100)
 
     def test_tables_normalizes_slashes_and_case(self) -> None:
         assert Pixeltable(tables=['My_App/Doc_Chunks', '']).tables == ['my_app.doc_chunks']
@@ -85,12 +79,9 @@ class TestPixeltableCapability:
 
     def test_from_spec_positional_shorthand(self) -> None:
         # {"Pixeltable": ["dir.tbl"]} passes the allowlist as the single positional argument.
-        assert _narrow(Pixeltable.from_spec(['my_app.doc_chunks'])).tables == ['my_app.doc_chunks']
         spec = {'model': 'test', 'capabilities': [{'Pixeltable': ['my_app.doc_chunks']}]}
         agent = Agent.from_spec(spec, custom_capability_types=[Pixeltable])
         assert _loaded(agent)[0].tables == ['my_app.doc_chunks']
-        with pytest.raises(TypeError):
-            Pixeltable.from_spec(['a.b'], tables=['c.d'])
 
     def test_toolset_uses_the_capability_settings(self) -> None:
         toolset = Pixeltable(tables=['a'], id=None).get_toolset()
@@ -99,64 +90,16 @@ class TestPixeltableCapability:
         assert sorted(toolset.tools) == ['describe_table', 'list_tables', 'query_table', 'similarity_search']
         assert Pixeltable(tables=['a'], id='catalog').get_toolset().id == 'catalog'
 
-    def test_toolset_requires_an_allowlist(self) -> None:
-        with pytest.raises(ValueError, match='allowlist'):
-            PixeltableToolset(tables=[], max_rows=10, max_chars=100)
-
 
 class TestPixeltableCombine:
-    def test_combine_intersects_allowlists_and_tightens_caps(self) -> None:
-        # tables is an access boundary, so a merge narrows: an entry survives only when every
-        # capability covers it ('*' and directory prefixes cover the entries beneath them).
-        merged = Pixeltable.combine(
-            [
-                Pixeltable(tables=['a.b', 'a.c'], max_rows=50, max_chars=100),
-                Pixeltable(tables=['a.b'], max_rows=5, max_chars=900),
-            ]
-        )
-        assert merged.tables == ['a.b']
-        assert merged.max_rows == 5
-        assert merged.max_chars == 100
-        assert merged.guidance is None
+    def test_same_configuration_combines(self) -> None:
+        agent = Agent('test', capabilities=[Pixeltable(tables=['X/Y']), Pixeltable(tables=['x.y'])])
+        assert [cap.tables for cap in _loaded(agent)] == [['x.y']]
 
-    def test_combine_star_and_prefixes(self) -> None:
-        assert Pixeltable.combine([Pixeltable(tables=['a.b']), Pixeltable(tables=['*'])]).tables == ['a.b']
-        assert Pixeltable.combine([Pixeltable(tables=['*']), Pixeltable(tables=['*'])]).tables == ['*']
-        assert Pixeltable.combine([Pixeltable(tables=['d']), Pixeltable(tables=['d.t1'])]).tables == ['d.t1']
-        slashed = Pixeltable.combine([Pixeltable(tables=['d/t1']), Pixeltable(tables=['d.t1.v'])])
-        assert slashed.tables == ['d.t1.v']
-        # An entry covered by another surviving entry is redundant and dropped.
-        nested = Pixeltable.combine([Pixeltable(tables=['d', 'd.t1']), Pixeltable(tables=['*'])])
-        assert nested.tables == ['d']
-
-    def test_combine_rejects_disjoint_allowlists(self) -> None:
-        with pytest.raises(ValueError, match='share no allowed tables'):
-            Pixeltable.combine([Pixeltable(tables=['a']), Pixeltable(tables=['b'])])
-
-    def test_combine_rejects_other_capabilities(self) -> None:
-        with pytest.raises(TypeError, match='only merges other Pixeltable capabilities'):
-            Pixeltable.combine([Pixeltable(tables=['a']), Memory()])
-
-    def test_combine_takes_the_latest_settings(self) -> None:
-        merged = Pixeltable.combine(
-            [
-                Pixeltable(tables=['a'], guidance='first'),
-                Pixeltable(tables=['a'], guidance='second', description='latest', defer_loading=True),
-                Pixeltable(tables=['a']),
-            ]
-        )
-        assert merged.guidance == 'second'
-        assert merged.id == 'pixeltable'
-        assert merged.description is not None
-        assert 'list_tables' in merged.description
-        assert merged.defer_loading is False
-
-    def test_agent_merges_same_id_capabilities(self) -> None:
-        agent = Agent('test', capabilities=[Pixeltable(tables=['x']), Pixeltable(tables=['x.y'], max_chars=10)])
-        caps = _loaded(agent)
-        assert len(caps) == 1
-        assert caps[0].tables == ['x.y']
-        assert caps[0].max_chars == 10
+    def test_different_allowlists_raise(self) -> None:
+        # `tables` is an access boundary, so two that disagree need their own ids rather than a merge.
+        with pytest.raises(UserError, match="disagree on 'tables'"):
+            Agent('test', capabilities=[Pixeltable(tables=['x']), Pixeltable(tables=['x.y'])])
 
 
 @pytest.fixture

@@ -101,30 +101,31 @@ recalls it in a second run without the first run's chat history.
 `PixeltableMemoryStore(table_name='harness.memory')` implements `MemoryStore` and
 `SearchableMemoryStore`. The table is created on first use.
 
-- Writes use compare-and-set versions and operation receipts, so a retry can recover or replay a
-  mutation without applying it twice. Paths are limited to 255 characters and operation ids to 248;
-  the `__op__` and `__meta__` path roots are reserved.
-- Recovery cannot overwrite a later mutation; conflicting pending writes and deletes raise `MemoryConflictError`.
-  Deleted paths retain a content-free version marker to detect intervening mutations.
+- Writes use compare-and-set versions and operation receipts, so a retried tool call replays its
+  mutation instead of applying it twice. Paths are limited to 255 characters and operation ids to
+  248; the `__op__` path root is reserved.
+- Pixeltable has no multi-statement transaction, so a receipt is recorded as pending before its
+  mutation. After a crash, a pending receipt is replayed if the file holds its version and dropped
+  otherwise, so the retry runs compare-and-set like a fresh call.
+- It does not implement `MetadataMemoryStore`, so `Memory(write_metadata=...)` raises `UserError`.
 - `search_memory` uses the same lexical scoring and prefix isolation as the other stores.
 - `store.table` supports queries, joins, and computed columns; filter to `kind == 'file'` for memory
   rows. Route writes and deletes through the store to preserve versions and receipts.
-- An uninterrupted write with a new operation id creates three table versions (record intent,
-  apply write, clear intent). Receipts are retained for replay; deleting them would not remove
+- An uninterrupted write with a new operation id creates three table versions (pending receipt,
+  apply write, complete receipt). Receipts are retained for replay; deleting them would not remove
   their history, so the table grows with both operations and row versions.
 - Deleted or overwritten memories stay readable through earlier table versions (for example
-  `pxt.get_table('hr.memory:3')`), and a journaled write's content also remains in the history of its
-  receipt row. Pixeltable has no API to prune history, so the only way to purge a memory is to drop
+  `pxt.get_table('hr.memory:3')`). Pixeltable has no API to prune history, so the only way to purge a memory is to drop
   the table. Do not store data in it that must be erasable.
 - Each insert prints a status line such as `Inserted 1 row with 0 errors`; set
   `PIXELTABLE_VERBOSITY=0` to silence it in CLIs and TUIs.
 
 ## Multiple instances
 
-Two `Pixeltable` capabilities on one agent share `id='pixeltable'` and merge by intersecting their
-allowlists, keeping the smaller `max_rows` and `max_chars`; a disjoint merge raises `ValueError`. A
-capability passed to a single run replaces the agent's instead of merging with it, so it can widen
-what that run reaches.
+Two `Pixeltable` capabilities on one agent share `id='pixeltable'`. The same configuration stated
+twice is one; two that differ raise `UserError`, because `tables` is an access boundary. Give each
+its own `id` and wrap them in `PrefixTools` to keep both. A capability passed to a single run
+replaces the agent's instead of merging with it, so it can widen what that run reaches.
 
 ## Telemetry
 

@@ -52,7 +52,6 @@ def test_video_example_reuses_ingestion_and_recalls_memory(monkeypatch: pytest.M
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, spec.name, module)
-    monkeypatch.setenv('PYDANTIC_AI_MODEL', 'test')
     spec.loader.exec_module(module)
 
     monkeypatch.setattr(openai, 'transcriptions', transcribe)
@@ -126,7 +125,6 @@ def test_video_example_reuses_ingestion_and_recalls_memory(monkeypatch: pytest.M
     factory = module.build_agent
 
     def build_agent() -> Agent[None, str]:
-        assert module.DEFAULT_MODEL == 'test'
         return factory(model=FunctionModel(model))
 
     monkeypatch.setattr(module, 'build_agent', build_agent)

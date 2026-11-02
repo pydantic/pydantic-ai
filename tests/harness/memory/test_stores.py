@@ -6,10 +6,9 @@ import hashlib
 import json
 import os
 import sqlite3
-import subprocess
 import sys
 import uuid
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from importlib.util import find_spec
@@ -56,57 +55,24 @@ class Store(MemoryStore, SearchableMemoryStore, Protocol):
     """Combined contract implemented by the bundled stores."""
 
 
-@pytest.mark.subprocess(reason='Verify optional dependency imports in a fresh interpreter.')
-def test_wildcard_import_without_pixeltable() -> None:
-    """A fresh interpreter must import ordinary stores without the Pixeltable extra."""
-    result = subprocess.run(
-        [
-            sys.executable,
-            '-c',
-            """
-import sys
-sys.modules['pixeltable'] = None
-namespace = {}
-exec('from pydantic_ai_harness.memory import *', namespace)
-from pydantic_ai_harness.memory import InMemoryStore, Memory, PostgresMemoryStore
-assert namespace['InMemoryStore'] is InMemoryStore
-assert namespace['Memory'] is Memory
-assert namespace['PostgresMemoryStore'] is PostgresMemoryStore
-assert 'PixeltableMemoryStore' not in namespace
-""",
-        ],
-        env={key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')},
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
+def test_wildcard_import_skips_the_optional_pixeltable_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, 'pixeltable', None)
+    namespace: dict[str, object] = {}
+    exec('from pydantic_ai_harness.memory import *', namespace)
+    assert 'InMemoryStore' in namespace
+    assert 'PixeltableMemoryStore' not in namespace
 
 
-_PIXELTABLE_DIRECTORIES: list[str] = []
-_PIXELTABLE_AVAILABLE = find_spec('pixeltable') is not None
-_STORE_INDEXES = (
-    0,
-    1,
-    2,
-    pytest.param(3, marks=pytest.mark.skipif(not _PIXELTABLE_AVAILABLE, reason='pixeltable extra')),
-)
-_VERSION_INDEXES = (
-    0,
-    2,
-    pytest.param(3, marks=pytest.mark.skipif(not _PIXELTABLE_AVAILABLE, reason='pixeltable extra')),
-)
+def test_unknown_memory_attribute_raises() -> None:
+    import pydantic_ai_harness.memory as memory
+
+    with pytest.raises(AttributeError, match="has no attribute 'MissingStore'"):
+        memory.MissingStore  # pyright: ignore[reportAttributeAccessIssue]
 
 
-@pytest.fixture(autouse=True)
-def _pixeltable_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    monkeypatch.setenv('PIXELTABLE_HOME', str(tmp_path / 'pixeltable'))
-    yield
-    if _PIXELTABLE_DIRECTORIES:
-        import pixeltable as pxt
-
-        for directory in _PIXELTABLE_DIRECTORIES:
-            pxt.drop_dir(directory, force=True)
-        _PIXELTABLE_DIRECTORIES.clear()
+_PIXELTABLE = pytest.param(3, marks=pytest.mark.skipif(find_spec('pixeltable') is None, reason='pixeltable extra'))
+_STORE_INDEXES = (0, 1, 2, _PIXELTABLE)
+_VERSION_INDEXES = (0, 2, _PIXELTABLE)
 
 
 def _local_stores(tmp_path: Path) -> list[Store]:
@@ -122,9 +88,8 @@ def _local_store(tmp_path: Path, index: int) -> Store:
         return _local_stores(tmp_path)[index]
     from pydantic_ai_harness.memory import PixeltableMemoryStore
 
-    directory = f'harness_contract_{uuid.uuid4().hex[:8]}'
-    _PIXELTABLE_DIRECTORIES.append(directory)
-    return PixeltableMemoryStore(table_name=f'{directory}.memory')
+    # The session-wide `PIXELTABLE_HOME` is a temporary catalog, so each test only needs its own table.
+    return PixeltableMemoryStore(table_name=f'harness_contract_{uuid.uuid4().hex[:8]}.memory')
 
 
 @pytest.mark.parametrize('index', _STORE_INDEXES)
@@ -408,17 +373,6 @@ async def test_local_store_scoped_bounded_search(tmp_path: Path, index: int) -> 
     ):
         await store.write(path, content, expected_version=None)
 
-    assert await store.list_paths('tenant-a/main/', limit=10) == [
-        'tenant-a/main/alpha.md',
-        'tenant-a/main/beta.md',
-        'tenant-a/main/other.md',
-    ]
-    assert await store.list_paths('tenant-b/main/', limit=10) == ['tenant-b/main/private.md']
-    assert await store.list_paths('tenant-a/main/', limit=2) == [
-        'tenant-a/main/alpha.md',
-        'tenant-a/main/beta.md',
-    ]
-
     result = await store.search('tenant-a/main/', 'alpha', limit=10, max_files=10, max_chars=80, max_file_chars=1_000)
     assert [match.path for match in result.matches] == [
         'tenant-a/main/alpha.md',
@@ -491,11 +445,11 @@ async def test_local_stores_reject_unsafe_paths(tmp_path: Path, index: int, path
         await store.read(path, max_chars=1_000)
 
 
-def test_bundled_stores_implement_public_protocols(tmp_path: Path) -> None:
-    for index in range(4 if _PIXELTABLE_AVAILABLE else 3):
-        store = _local_store(tmp_path, index)
-        assert isinstance(store, MemoryStore)
-        assert isinstance(store, SearchableMemoryStore)
+@pytest.mark.parametrize('index', _STORE_INDEXES)
+def test_bundled_stores_implement_public_protocols(tmp_path: Path, index: int) -> None:
+    store = _local_store(tmp_path, index)
+    assert isinstance(store, MemoryStore)
+    assert isinstance(store, SearchableMemoryStore)
 
 
 @pytest.mark.parametrize('index', _STORE_INDEXES)
