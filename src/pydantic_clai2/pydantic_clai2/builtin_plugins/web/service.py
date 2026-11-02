@@ -77,6 +77,7 @@ from pydantic_clai2.plugins import (
 )
 from pydantic_clai2.plugins.loader import PluginError
 from pydantic_clai2.plugins.menus import SettingsMenu
+from pydantic_clai2.runtime.live_runtimes import LiveRuntimes
 from pydantic_clai2.runtime.monty_cells import is_monty_cell
 from pydantic_clai2.runtime.project_identity import (
     MISSING,
@@ -787,28 +788,19 @@ class WebService:
     async def _archive(self, conversation_id: str) -> None:
         """Archive a session; one live here closes first while it is idle and no browser shows it.
 
-        One that is shown or busy, a background `/fork` or delegated task included, stays live, so the catalog
-        refuses it, as it does the current one.
+        One that is shown or busy, as idle closing judges it, a command, background `/fork`, or delegated task
+        included, stays live, so the catalog refuses it, as it does the current one.
         """
-        catalog = self.catalog
-        holder = next((channel for channel in self.channels() if channel.id == conversation_id), None)
+        live = self.live
+        holder = live.runtime(conversation_id) if isinstance(live, LiveRuntimes) else None
         if (
             holder is not None
             and conversation_id != self.host.session_id
-            and not holder.session.watchers
-            and self._state(holder) == 'idle'
-            and not _working_in_background(holder.session)
+            and not holder.live_session.watchers
+            and holder.idle
         ):
-            await self.live.close(holder.session.id)
-        await catalog.archive(conversation_id)
-
-
-def _working_in_background(session: LiveSession) -> bool:
-    """Whether a background `/fork` or a delegated task of `session` runs, which closing the session would cancel."""
-    tasks = session.tasks
-    return any(fork.status == 'running' for fork in session.forks) or (
-        tasks is not None and any(task.status == 'running' for task in tasks.listing())
-    )
+            await live.close(holder.live_session.id)
+        await self.catalog.archive(conversation_id)
 
 
 def continuable(workspace: str, *, here: str, follows: bool) -> bool:
