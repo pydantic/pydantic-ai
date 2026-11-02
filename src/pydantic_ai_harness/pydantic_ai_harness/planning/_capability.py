@@ -7,12 +7,13 @@ from copy import copy
 from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Literal
 
-from pydantic_ai._framework_frame import framework_frame_text
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.messages import (
+    DataCapabilityPart,
     ModelMessage,
     ModelRequest,
+    ModelSource,
     TextContent,
     ToolReturnPart,
     UserPromptPart,
@@ -29,7 +30,9 @@ from pydantic_ai_harness.planning._toolset import (
     PlanningToolset,
     PlanStoreOperations,
     available_tool_names,
+    frame_plan_text,
     framed_plan,
+    render_plan,
     resolve_run_store,
     tool_call_store,
 )
@@ -56,6 +59,19 @@ _SUBTASK_GUIDANCE = (
     '(`completed` or `cancelled`). Call `get_available_tasks` to pick the next step that has no '
     'incomplete dependencies.'
 )
+
+
+_PLAN_SOURCE = ModelSource('agent')
+"""Who wrote a recorded plan: the agent's model, whose plan tools stored the steps, so it has no authority."""
+
+
+@dataclass(kw_only=True)
+class PlanReminderPart(DataCapabilityPart[str], namespace='planning', name='plan_reminder', tag='plan_reminder'):
+    """The current plan, as `Planning` records it when the model can no longer see the plan its tools last returned.
+
+    Data on the user channel in a `<plan_reminder>` tag, with a note that the agent wrote it, not the user or the
+    application. Find them in history by this type.
+    """
 
 
 @dataclass
@@ -263,7 +279,7 @@ class Planning(AbstractCapability[AgentDepsT]):
         # A plan emptied outside the plan tools after the model was shown one is recorded too, so it doesn't read as current.
         plan = framed_plan(items)
         if plan != latest:
-            ctx.enqueue(UserPromptPart([framework_frame_text(plan, metadata={'origin': PLAN_ORIGIN})]))
+            ctx.enqueue(PlanReminderPart(content=render_plan(items), source=_PLAN_SOURCE))
         return request_context
 
     # Each plan store call is a durable operation, so recovering a durable run reuses the recorded
@@ -349,9 +365,10 @@ _PLAN_NOTE = (
 
 
 def _latest_plan(messages: Sequence[ModelMessage]) -> str | None:
-    """The latest plan visible in `messages`: one a plan tool returned or `Planning` recorded, found by metadata.
+    """The latest plan visible in `messages`, in its frame: one a plan tool returned or `Planning` recorded.
 
-    A plan tool's return counts only while its content still holds the plan its metadata names.
+    Found by metadata or by type. A plan tool's return counts only while its content still holds the plan its metadata
+    names.
     """
     for message in reversed(messages):
         if not isinstance(message, ModelRequest):
@@ -368,6 +385,8 @@ def _latest_plan(messages: Sequence[ModelMessage]) -> str | None:
                     and plan in part.content
                 ):
                     return plan
+            elif isinstance(part, PlanReminderPart):
+                return frame_plan_text(part.content)
             elif isinstance(part, UserPromptPart) and not isinstance(part.content, str):
                 for item in reversed(part.content):
                     if (

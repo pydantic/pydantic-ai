@@ -137,11 +137,11 @@ def render_plan(items: list[PlanItem]) -> str:
 
 
 PLAN_ORIGIN = 'pydantic-ai-harness.planning.plan_reminder.v1'
-"""The `origin` in the `metadata` of a plan the planning tools returned or `Planning` recorded.
+"""The `origin` in the `metadata` of a plan the planning tools returned.
 
-A plan tool's `ToolReturnPart` carries `{'origin': PLAN_ORIGIN, 'plan': <framed plan>}`, and a plan `Planning`
-records on the user channel is a `TextContent` with `{'origin': PLAN_ORIGIN}`. `Planning` finds the latest plan in
-the conversation by this metadata, never by text.
+A plan tool's `ToolReturnPart` carries `{'origin': PLAN_ORIGIN, 'plan': <framed plan>}`. A plan `Planning` records is a
+`PlanReminderPart`; an earlier version recorded a `TextContent` with `{'origin': PLAN_ORIGIN}` instead. `Planning`
+finds the latest plan in the conversation by this metadata and that type, never by text.
 """
 
 _PLAN_REMINDER_TAG = register_tag('plan_reminder')
@@ -149,12 +149,17 @@ _PLAN_REMINDER_TAG = register_tag('plan_reminder')
 
 
 def framed_plan(items: list[PlanItem]) -> str:
-    """The plan rendered in its `<plan_reminder>` frame.
+    """The plan rendered in its `<plan_reminder>` frame, as a plan tool returns it."""
+    return frame_plan_text(render_plan(items))
+
+
+def frame_plan_text(plan: str) -> str:
+    """A rendered plan in its `<plan_reminder>` frame, as a plan tool returns it.
 
     The steps are written by the model, so the `<` of every opening or closing `plan_reminder` tag and of every other
     framing tag is escaped as `&lt;`.
     """
-    return wrap(_PLAN_REMINDER_TAG, f'\n{render_plan(items)}\n')
+    return wrap(_PLAN_REMINDER_TAG, f'\n{plan}\n')
 
 
 class _PlanReply(str):

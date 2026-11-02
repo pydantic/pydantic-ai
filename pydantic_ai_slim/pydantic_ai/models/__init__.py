@@ -58,7 +58,6 @@ from .._file_input import (
     unsupported_file_input,
     unsupported_file_note,
 )
-from .._framework_frame import framework_frame_body, is_framework_frame
 from .._framing import (
     CONVERSATION_SUMMARY_TAG,
     FRAME_SEAL,
@@ -2110,12 +2109,6 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 or isinstance(part, CompactionPart)
                 # A capability part's frame.
                 or id(part) in capability_bodies
-                # A frame a capability wrote by hand.
-                or (
-                    isinstance(part, UserPromptPart)
-                    and not isinstance(part.content, str)
-                    and any(is_framework_frame(item) for item in part.content)
-                )
             ):
                 framed.append(part)
             # Adapters that send system messages after the turn put the note after its item, and so does one that
@@ -4259,11 +4252,6 @@ def _lookalike_sources(part: ModelRequestPart) -> _LookalikeSources:
             check('user', _text_of(item))
         for item in items:
             check('file', _text_file_content(item))
-        # A frame a capability wrote around someone else's text, such as a background tool's output: the frame's own
-        # tags aren't a lookalike, the body can hold one.
-        for item in items:
-            if is_framework_frame(item) and (body := framework_frame_body(item)) is not None:
-                check(*body)
     elif isinstance(part, ToolReturnPart):
         for item in part.content_items(mode='str', wrap_if_error=False):
             check('tool', _text_of(item) if (text := _text_file_content(item)) is None else text)
@@ -4273,8 +4261,7 @@ def _lookalike_sources(part: ModelRequestPart) -> _LookalikeSources:
 def _text_of(item: object) -> str | None:
     if isinstance(item, str):
         return item
-    # A frame a capability wrote, marked by `framework_frame_text`, is checked for its body's author alone.
-    if isinstance(item, TextContent) and not is_framework_frame(item):
+    if isinstance(item, TextContent):
         return item.content
     return None
 

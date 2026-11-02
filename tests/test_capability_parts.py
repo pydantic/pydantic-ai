@@ -1097,13 +1097,9 @@ def test_enqueue_from_hooks_is_application_code() -> None:
 
 
 def test_enqueue_from_a_capability_does_not_warn_on_plain_text_or_parts() -> None:
-    from pydantic_ai._framework_frame import framework_frame_text
-
     agent = Agent(
         FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('Done.')])),
-        capabilities=[
-            Reporter(['Carry on.', UserPromptPart([framework_frame_text('<plan>x</plan>')]), report(), nudge()])
-        ],
+        capabilities=[Reporter(['Carry on.', UserPromptPart([TextContent('<plan>x</plan>')]), report(), nudge()])],
     )
     agent.run_sync('Run the tests.')
 

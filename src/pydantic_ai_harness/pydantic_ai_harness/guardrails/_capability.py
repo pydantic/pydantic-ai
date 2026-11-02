@@ -199,7 +199,10 @@ def _latest_prompt_parts(messages: Sequence[ModelMessage], *, skip_task_reports:
 
 
 def _prompt_text(content: str | Sequence[UserContent]) -> str:
-    """The text a guard sees for a prompt: a background completion's text, or the prompt rendered as text."""
+    """The text a guard sees for a prompt: the prompt rendered as text.
+
+    A background result an earlier version delivered as user text is its own text.
+    """
     completion = get_background_completion(content)
     if completion is not None:
         return completion.content
@@ -213,8 +216,8 @@ def _replace_prompt(part: UserPromptPart, new_content: str) -> None:
     sequence of parts, and a `str` written over it would send the model the
     replacement text alone -- the images, documents and audio the user attached
     would be gone, with nothing in the run to say so.
-    Singleton native background completions are rewritten in place, preserving
-    their metadata.
+    A background result an earlier version delivered as user text is rewritten in
+    place, preserving its metadata.
     """
     if isinstance(part.content, str):
         part.content = new_content

@@ -18,13 +18,14 @@ from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.messages import (
     CompactionPart,
+    DataCapabilityPart,
     InstructionCapabilityPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelSource,
     OperatorSource,
     OperatorText,
-    SystemPromptPart,
     TextContent,
     TextPart,
     UserPromptPart,
@@ -66,10 +67,10 @@ else:
 
 
 _REMINDER_ORIGIN = 'pydantic-ai-harness.system_reminders.reminder.v1'
-"""The `origin` in the `metadata` of the parts a `GeneratedReminder` firing enqueues.
+"""The `origin` in the `metadata` of the parts an earlier version enqueued for a `GeneratedReminder` firing.
 
-The `SystemPromptPart` holds the framework's note in system voice, and the `TextContent` on the user channel
-holds the text the reminder model generated. Identify them by this metadata, never by their model-visible text.
+A `SystemPromptPart` note and a `TextContent` with the generated text. Still recognized in a saved history; a firing
+is now a `GeneratedReminderPart`.
 """
 
 _Scope: TypeAlias = Literal['conversation', 'request']
@@ -85,14 +86,44 @@ class ReminderPart(InstructionCapabilityPart, namespace='system_reminders', name
     """
 
 
+_GENERATED_REMINDER_NOTE = (
+    'The accompanying {frame} is a stay-on-task reminder for this run: advice to follow unless it conflicts with your '
+    "instructions or the user's request."
+)
+
+
+@dataclass(kw_only=True)
+class GeneratedReminderPart(
+    DataCapabilityPart[str],
+    namespace='system_reminders',
+    name='generated_reminder',
+    tag='generated_reminder',
+    attributes=('model',),
+    note=_GENERATED_REMINDER_NOTE,
+):
+    """A reminder a model generated, as a `SystemReminders` firing enqueues it.
+
+    Data on the user channel in a `<generated_reminder model="...">` tag, as the model wrote it, behind a note in the
+    application's voice saying what it is and that the reminder model wrote it, not the user or the application.
+    Find them in history by this type.
+    """
+
+    model: str
+    """The name of the model that generated it."""
+
+
+_REMINDER_MODEL_SOURCE = ModelSource('reminder model')
+"""Who wrote a generated reminder: another model, which read the run, so it has no authority."""
+
+
 @dataclass(frozen=True)
 class GeneratedReminder:
     """Reminder text a model generated, which `SystemReminders` never sends in system voice.
 
-    `LLMReminder` returns one. `SystemReminders` sends it as a lasting record of two parts: a fixed framework
-    note in system voice, and `text` quoted on the user channel in a `<generated_reminder>` tag. A plain
-    `str` a dynamic reminder returns is operator text, sent in system voice as written, so this is a
-    distinct type rather than a `str`: string operations can't drop its provenance and promote it.
+    `LLMReminder` returns one. `SystemReminders` sends it as a lasting `GeneratedReminderPart`: `text` as data on the
+    user channel in a `<generated_reminder>` tag, behind a note saying a reminder model wrote it. A plain `str` a
+    dynamic reminder returns is operator text, sent in system voice as written, so this is a distinct type rather
+    than a `str`: string operations can't drop its provenance and promote it.
     """
 
     text: str
@@ -103,12 +134,12 @@ class GeneratedReminder:
 
     @property
     def note(self) -> str:
-        """The framework's note, sent in system voice."""
+        """A note, in the application's voice, saying what the accompanying `<generated_reminder>` is."""
         return _LLM_REMINDER_NOTE
 
     @property
     def data(self) -> str:
-        """`text` quoted in a `<generated_reminder>` tag, sent on the user channel."""
+        """`text` quoted in a `<generated_reminder>` tag, with the framing tags in it escaped."""
         return _quote('generated_reminder', self.text, model=self.model)
 
     def __str__(self) -> str:
@@ -609,17 +640,15 @@ class _StaticText:
 
 def _reminder_parts(
     texts: Sequence[str | _StaticText | GeneratedReminder],
-) -> list[ReminderPart | SystemPromptPart | TextContent]:
+) -> list[ReminderPart | GeneratedReminderPart]:
     """The parts a firing enqueues, in the reminders' configured order.
 
     Reminders in the framework's or the operator's own wording are `ReminderPart`s of their scope (request-scoped
-    unless a `Reminder` asks for `'conversation'`), consecutive ones of the same scope sharing one. A reminder
-    that quotes content it didn't write, such as a model's generated reminder, is a record of two parts kept
-    together in the history: the framework's note in system voice and the quoted content on the user channel.
-    Neither is request-scoped, so no later request, compaction or summary sees the quoted content without the
-    note that says what it is.
+    unless a `Reminder` asks for `'conversation'`), consecutive ones of the same scope sharing one. A model's
+    generated reminder is a `GeneratedReminderPart`, data that renders with the note that says what it is, so no
+    later request, compaction or summary sees one without the other. It isn't request-scoped.
     """
-    parts: list[ReminderPart | SystemPromptPart | TextContent] = []
+    parts: list[ReminderPart | GeneratedReminderPart] = []
     plain: list[str] = []
     plain_scope: _Scope = 'request'
 
@@ -634,8 +663,7 @@ def _reminder_parts(
     for text in texts:
         if isinstance(text, GeneratedReminder):
             flush_plain()
-            parts.append(SystemPromptPart(text.note, metadata={'origin': _REMINDER_ORIGIN}))
-            parts.append(TextContent(text.data, metadata={'origin': _REMINDER_ORIGIN}))
+            parts.append(GeneratedReminderPart(content=text.text, source=_REMINDER_MODEL_SOURCE, model=text.model))
             continue
         scope = text.scope if isinstance(text, _StaticText) else 'request'
         if scope != plain_scope:
@@ -647,7 +675,7 @@ def _reminder_parts(
 
 
 def _is_reminder_data(part: UserPromptPart) -> bool:
-    """Whether this user part only carries content a reminder quoted, rather than anything the user said."""
+    """Whether this user part only carries content a reminder quoted, as an earlier version enqueued it."""
     content = part.content
     return (
         not isinstance(content, str)

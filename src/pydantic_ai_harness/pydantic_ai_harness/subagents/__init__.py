@@ -10,7 +10,7 @@ from __future__ import annotations
 import warnings
 from typing import TYPE_CHECKING
 
-from pydantic_ai_harness._task_report import is_task_report
+from pydantic_ai_harness._task_report import TaskOutputPart, TaskQuestionPart, is_task_report
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.subagents._capability import SubAgents, ToolResolver
 from pydantic_ai_harness.subagents._control import (
@@ -117,8 +117,10 @@ __all__ = [
     'TaskFollowUpEvent',
     'TaskForceCancelEvent',
     'TaskMessageEvent',
+    'TaskOutputPart',
     'TaskProgressEvent',
     'TaskQuestionEvent',
+    'TaskQuestionPart',
     'TaskRequestEvent',
     'TaskRetryEvent',
     'TaskSettledEvent',
