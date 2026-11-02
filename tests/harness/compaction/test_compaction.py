@@ -84,6 +84,7 @@ from pydantic_ai_harness.compaction import (
     ClearToolResults,
     DeduplicateFileReads,
     FallbackCompaction,
+    LimitWarningPart,
     SlidingWindowCompaction,
     SummarizingCompaction,
     TieredCompaction,
@@ -220,9 +221,9 @@ def _legacy_warning() -> ModelRequest:
 
 
 def _enqueued_warning(ctx: Any) -> str:
-    """The text of the one warning `WarnNearLimits` enqueued, checking it's a request-scoped system prompt."""
+    """The text of the one warning `WarnNearLimits` enqueued, checking it's a request-scoped `LimitWarningPart`."""
     [part] = ctx.enqueued
-    assert isinstance(part, SystemPromptPart)
+    assert isinstance(part, LimitWarningPart)
     assert part.scope == 'request'
     return part.content
 
@@ -1035,7 +1036,7 @@ Complete the current task immediately and avoid unnecessary tool calls.</system>
             for message in result.all_messages()
             if isinstance(message, ModelRequest)
             for part in message.parts
-            if isinstance(part, SystemPromptPart) and part.scope == 'request'
+            if isinstance(part, LimitWarningPart)
         ]
         # The first request is under the threshold.
         assert [warning.splitlines()[1] for warning in warnings] == [
