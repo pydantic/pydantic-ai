@@ -83,7 +83,7 @@ AgentCore runs a command on a pseudo-terminal, which merges stdout and stderr. S
 
 File operations run as short Python programs in the session's code kernel, which runs one at a time. They follow symlinks, and reading a FIFO or another file that is not a regular file raises `OSError` instead of waiting. AgentCore returns large output slowly, so a file is read 1 MiB per request: writing an 8 MiB file and reading it back takes about a minute.
 
-See [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/) for more.
+See [Workspaces](../workspace.md) for more.
 
 ## Reattach later
 
