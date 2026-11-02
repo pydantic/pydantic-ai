@@ -167,6 +167,32 @@ async def test_env_is_layered(cluster: FakeCluster) -> None:
 
 
 @asyncio_only
+@pytest.mark.parametrize('working_dir', [None, '/tmp'])
+async def test_each_argument_keeps_its_own_size_limit(cluster: FakeCluster, working_dir: str | None) -> None:
+    """Two 100 KB arguments with quotes in them run as given.
+
+    Linux limits each `execve` string to 128 KiB. Quoted into one `/bin/sh -c` script, these two
+    would pass that limit together, and each `'` would take five characters.
+    """
+    backend = KubernetesSandboxBackend(warm_pool='pool', working_dir=working_dir)
+    first, second = "'a" * 50_000, '"b' * 50_000
+    result = await backend.run(['sh', '-c', 'printf %s "$1" "$2"', 'sh', first, second])
+    assert result.exit_code == 0 and result.stdout == first + second
+    # One argument past the limit fails, as it would in an argv.
+    with pytest.raises(RuntimeError, match='argument list too long'):
+        await backend.run(['printf', '%s', 'x' * 200_000])
+    await backend.aclose()
+
+
+@asyncio_only
+async def test_the_argument_variables_do_not_reach_the_command(cluster: FakeCluster) -> None:
+    backend = KubernetesSandboxBackend(warm_pool='pool')
+    result = await backend.run(['sh', '-c', 'env | grep -c PYDANTIC_AI_HARNESS_ARG_ || true'])
+    assert result.stdout == '0\n'
+    await backend.aclose()
+
+
+@asyncio_only
 async def test_aclose_in_a_cancelled_scope_still_closes(cluster: FakeCluster) -> None:
     backend = KubernetesSandboxBackend(warm_pool='pool')
     await backend.run(['true'])

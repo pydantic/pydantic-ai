@@ -32,6 +32,9 @@ from k8s_agent_sandbox.commands.async_command_executor import AsyncCommandExecut
 _GRACE = 0.3
 """How long output pipes may stay open after the command exits (sandboxd waits about 5 seconds)."""
 
+_MAX_ARG_STRLEN = 32 * 4096
+"""Linux's limit on one `execve` argument or environment string, with its NUL; macOS has none."""
+
 
 def _messages() -> dict[str, Any]:
     F = descriptor_pb2.FieldDescriptorProto
@@ -128,8 +131,13 @@ class FakeSandboxd:
         Response = MESSAGES['StartResponse']
         if self.start_error is not None:
             await context.abort(self.start_error, 'failed')
-        env = {**os.environ, **dict(request.config.env_vars)}
-        process = _Process.spawn(list(request.config.command), cwd=self.root, env=env)
+        command = list(request.config.command)
+        call_env = dict(request.config.env_vars)
+        strings = [*command, *(f'{key}={value}' for key, value in call_env.items())]
+        if any(len(string.encode()) >= _MAX_ARG_STRLEN for string in strings):
+            # As on Linux, whatever the host: `execve` fails with E2BIG, which sandboxd reports as INTERNAL.
+            await context.abort(grpc.StatusCode.INTERNAL, 'start process: fork/exec /bin/sh: argument list too long')
+        process = _Process.spawn(command, cwd=self.root, env={**os.environ, **call_env})
         self._next_id += 1
         process_id = self._next_id
         self._processes[process_id] = process

@@ -29,7 +29,6 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import logging
-import shlex
 import sys
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
@@ -135,6 +134,9 @@ def _client(connection: Connection) -> AsyncSandboxClient[AsyncSandbox]:
     # SDK's exit hook that stops `kubectl port-forward` processes, so `aclose()` is what stops them.
     return AsyncSandboxClient(connection_config=config, cleanup=False)
 
+
+_ARGUMENT_PREFIX = 'PYDANTIC_AI_HARNESS_ARG_'
+"""Names the environment variables that carry a command's arguments into its script; unset before it runs."""
 
 # Output is collected in this process, so `yes` or a large `cat` stops at the cap instead of growing
 # it. sandboxd has no limit of its own yet (https://github.com/kubernetes-sigs/agent-sandbox/issues/1918).
@@ -311,22 +313,28 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
         check_env_types(env)
         argv = command_argv(command, shell)
         _require_asyncio()
-        # `commands.start()` runs a string under sandboxd's `/bin/sh -c`, so the argv goes in as the
-        # script's positional parameters. Workaround: sandboxd's `Start` leaves stdin open, where the
-        # protocol wants it at EOF, so the exec script redirects it. sandboxd also moves a `cwd`
-        # outside its root under the root instead of refusing it, so another directory is entered
-        # from the shell. Not tracked upstream yet.
+        # `commands.start()` runs one string under sandboxd's `/bin/sh -c`. Each argument goes in its
+        # own environment variable, which the script moves into its positional parameters and unsets,
+        # so each is still one `execve` string under Linux's 128 KiB limit per string, as it would
+        # be in an argv; quoted into the script, they would share that limit. Workaround: sandboxd's
+        # `Start` leaves stdin open, where the protocol wants it at EOF, so the exec script redirects
+        # it. sandboxd also moves a `cwd` outside its root under the root instead of refusing it, so
+        # another directory is entered from the shell. Not tracked upstream yet.
         if self._working_dir is None:
-            script = f'set -- {shlex.join(argv)}\n{EXEC_SCRIPT}'
+            arguments, enter = argv, ''
         else:
             # A missing `working_dir` exits 125 with only the marker on stderr, before the command runs.
-            enter = f'cd -- "$1" 2>/dev/null || {{ printf %s {self._missing_cwd_marker} >&2; exit 125; }}'
-            script = f'set -- {shlex.join([self._working_dir, *argv])}\n{enter}\nshift\n{EXEC_SCRIPT}'
+            arguments = [self._working_dir, *argv]
+            enter = f'cd -- "$1" 2>/dev/null || {{ printf %s {self._missing_cwd_marker} >&2; exit 125; }}\nshift\n'
+        names = [f'{_ARGUMENT_PREFIX}{index}' for index in range(len(arguments))]
+        references = ' '.join(f'"${name}"' for name in names)
+        script = f'set -- {references}\nunset {" ".join(names)}\n{enter}{EXEC_SCRIPT}'
+        command_env = {**self._env, **(env or {}), **dict(zip(names, arguments))}
         async with self._operation():
             async with self._lock:
                 sandbox = await self._acquire()
             try:
-                result = await _run_on_sandbox(sandbox, script, env={**self._env, **(env or {})}, timeout=timeout)
+                result = await _run_on_sandbox(sandbox, script, env=command_env, timeout=timeout)
             except (WorkspaceTimeoutError, WorkspaceOutputLimitError):
                 raise
             except Exception as error:
