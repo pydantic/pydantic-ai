@@ -8,6 +8,7 @@ commit, raises `GitError` with what the command printed, so the user sees why.
 import os
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import suppress
 from dataclasses import dataclass, replace
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -377,12 +378,15 @@ async def commit(workspace: Path, *, message: str, files: Sequence[str] | None =
     merging = await _try_git(root, 'rev-parse', '--quiet', '--verify', 'MERGE_HEAD') is not None
     if merging and len(chosen) < len(status.files):
         raise ValueError('A merge is in progress: commit every changed file to finish it.')
-    # A failed commit leaves the index as it was, not with what was staged for it.
-    index = (await _git(root, 'write-tree')).strip()
+    # A failed commit leaves the index as it was, not with what was staged for it; an index with
+    # unmerged entries, as while a rebase stops on a conflict, cannot be saved.
+    index = await _try_git(root, 'write-tree')
     try:
         await _stage_and_commit(root, chosen, message=message, merging=merging)
     except GitError:
-        await _git(root, 'read-tree', index)
+        if index is not None:
+            with suppress(GitError):  # Why the commit failed matters more.
+                await _git(root, 'read-tree', index)
         raise
     return f'Committed {(await _git(root, "log", "-1", "--no-color", "--format=%h %s")).strip()}'
 
