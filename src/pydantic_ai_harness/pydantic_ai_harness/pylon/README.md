@@ -16,7 +16,7 @@ You need a Pylon Member or Admin seat with the `MCP Access` role; Viewer and
 Integration users cannot sign in. Pylon MCP takes an OAuth access token. Pylon
 REST API tokens do not work with it.
 
-Pylon issues these tokens only through OAuth. Your application gets one by
+Your application gets one by
 running the standard MCP authorization flow: the server names its authorization
 server and supports dynamic client registration, so any MCP OAuth client
 library can sign the user in. Store the token it returns and pass it as `auth`
@@ -174,11 +174,10 @@ Limits](https://pydantic.dev/docs/ai/harness/tool-output-limits/).
 
 ## Connection customization
 
-Use `auth` in almost every case. Pass `client` only when you need control of the
+Pass `client` when you need control of the
 connection itself: your own FastMCP client or transport, for example one with a
 proxy or MCP handlers. The client then owns the URL and authentication, so
-passing `client` together with `auth` raises an error.
-`read_only` and `include_instructions` still apply.
+passing `client` together with `auth` raises an error. `read_only` still applies.
 `include_instructions=False` stops the server's own instructions from reaching
 the agent.
 
@@ -189,8 +188,7 @@ credentials](#per-user-credentials) to connect each user separately.
 
 `Pylon` emits no spans of its own. Core's
 [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/)
-already records each Pylon tool call as a tool span, and connecting makes no
-decision worth a span of its own.
+already records each Pylon tool call as a tool span.
 
 ## Define the agent in YAML or JSON
 
@@ -221,5 +219,3 @@ from pydantic_ai_harness import Pylon
 
 agent = Agent.from_file('agent.yaml', custom_capability_types=[Pylon])
 ```
-
-Pass `custom_capability_types` so the loader can create `Pylon` from the file.

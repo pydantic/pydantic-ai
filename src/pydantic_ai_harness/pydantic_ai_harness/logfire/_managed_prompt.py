@@ -91,15 +91,8 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
     result = agent.run_sync('My order never arrived.')
     ```
 
-    The prompt is resolved once per run, in the run's
-    [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run] hook. The
-    [`ResolvedVariable`][logfire.variables.ResolvedVariable] stays open as a context manager for
-    the whole run, so the selected label (and the version, on Logfire 4.34 and later) is attached as
-    baggage to every span of the run.
-
-    The resolved value lands in the system instructions, so a new value starts new conversations on
-    their own cached prompt prefix; a conversation already under way gets the change appended
-    instead. See the docs' "Prompt-cache trade-off" section.
+    The prompt is resolved once per run, and the selected label (and the version, on Logfire 4.34
+    and later) is attached as baggage to every span of the run.
 
     Each `ManagedPrompt` constructs its own unregistered variable, so several agents can use the
     same prompt name. Within one agent, the capability's `id` is derived from the prompt name
@@ -139,7 +132,7 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
     filled from `deps`. Anyone who can edit the prompt in Logfire can then place any `deps` value
     in the system prompt. A remote prompt that fails to compile falls back to the code default
     with a `RuntimeWarning` and a Logfire warning log, and the run is then reported as the code
-    default. Defaults to `False`, so the resolved prompt is used verbatim."""
+    default."""
 
     logfire_instance: Logfire | None = None
     """Logfire instance to resolve the variable on. When `None`, the global default instance
@@ -260,7 +253,6 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
         def instructions(ctx: RunContext[AgentDepsT]) -> str | None:
             active = self._active.get()
             if active is None:
-                # No active run -- contribute no instructions.
                 return None
             if active.template is not None:
                 return active.template.render(ctx.deps)
