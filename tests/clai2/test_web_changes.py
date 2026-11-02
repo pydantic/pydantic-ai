@@ -279,6 +279,7 @@ async def test_files_changed_outside_the_file_tools_are_listed_in_their_scope(re
     (repo / 'new.txt').write_text('x\n')
     (repo / 'a.py').write_text('def a():\n    return 1\ny\n')
     (repo / 'c.py').write_text(C1)
+    # A file the shell deleted is not seen here; it shows only in Uncommitted.
     (repo / 'b.py').unlink()
 
     turn = await session_changes(history.messages, repo, scope='turn')
