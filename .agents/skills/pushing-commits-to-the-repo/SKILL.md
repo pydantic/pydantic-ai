@@ -584,9 +584,10 @@ Any author-selected additional review must also have settled.
 ## After handback — watch until merge or close
 
 Keep watching the PR after you hand it back, until it merges or closes.
+Poll the PR's state, timeline, comments and reviews every 30 minutes.
 The merge queue can remove the PR after handback, and new reviews can still land.
 Handle a merge-queue removal as the [Merge bar](#merge-bar) section requires, then keep watching.
-Triage each new comment or review through step 4 of "After you push — the loop".
+Triage each new comment or review through step 4 of [After you push — the loop](#after-you-push--the-loop).
 A push changes the head, so restart that loop on the new head.
 
 This section exempts a non-interactive run that exits when it hands back.
