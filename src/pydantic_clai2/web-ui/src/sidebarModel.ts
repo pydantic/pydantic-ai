@@ -188,12 +188,12 @@ const hasStrings = (value: Record<string, unknown>, keys: readonly string[]): bo
   keys.every((key) => typeof value[key] === 'string')
 
 const isSession = (value: unknown): boolean =>
-  isObject(value) && hasStrings(value, ['id', 'title', 'created_at', 'updated_at'])
+  isObject(value) && hasStrings(value, ['id', 'title'])
 
 const isWorktree = (value: unknown): boolean =>
   isObject(value) && hasStrings(value, ['label']) && Array.isArray(value.sessions) && value.sessions.every(isSession)
 
-/** Projects down to the fields the sidebar reads before the list is fetched again, so a stale cache cannot crash it. */
+/** Projects typed where a wrong type would throw while the cached list renders, before it is fetched again. */
 export const isList = (value: unknown): value is Project[] =>
   Array.isArray(value) &&
   value.every(

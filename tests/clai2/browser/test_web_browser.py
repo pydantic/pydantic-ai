@@ -1423,7 +1423,7 @@ async def test_sidebar_keyboard(page: Page, web_ui: WebUI) -> None:
     [
         pytest.param('{"projects": []}', id='object'),
         pytest.param('[{}]', id='project'),
-        pytest.param('[{"key": "k", "name": "n", "worktrees": [{"label": "b", "sessions": [{}]}]}]', id='session'),
+        pytest.param('[{"key": "k", "name": "n", "worktrees": [{"label": "b", "sessions": [{}, {}]}]}]', id='sessions'),
     ],
 )
 async def test_sidebar_ignores_saved_state_of_another_shape(page: Page, web_ui: WebUI, cache: str) -> None:
