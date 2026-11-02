@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
+import pydantic_core
 from anthropic import AsyncStream
 from anthropic.types.beta import (
     BetaAdvisorToolResultBlock,
@@ -47,6 +48,7 @@ from ...messages import CompactionPart, ModelResponseStreamEvent, NativeToolCall
 from .. import StreamedResponse
 from .._decode_errors import MapStreamDecodeErrors
 from ._citations import citations_provider_details, fetched_page, map_citations
+from ._computer import NativeComputer
 from ._errors import map_api_errors
 from ._native_tools import (
     finalize_streamed_tool_search_call_part,
@@ -90,11 +92,18 @@ class AnthropicStreamedResponse(StreamedResponse):
     _enabled_server_tool_names: frozenset[str]
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _history_fetched_pages: Sequence[tuple[str, str]] = ()
+    _native_computer: NativeComputer | None = None
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with map_api_errors(self._model_name, self._model_id_namespace):
             current_block: BetaContentBlock | None = None
             ignored_server_tool_use_indices: set[int] = set()
+            # A response's computer toolset calls are one batch: they become one `computer` call where the first of
+            # them was, kept up to date as each completes and started once, when the response ends, since the batch
+            # runs only then.
+            native_computer = self._native_computer
+            computer_blocks: list[dict[str, Any]] = []
+            computer_input: list[str] = []
             pending_citations: dict[int, list[BetaTextCitation]] = {}
             # Web Fetch citations name their page only by its text, so the fetched pages are kept to find their URLs.
             fetched_pages: list[tuple[str, str]] = list(self._history_fetched_pages)
@@ -127,6 +136,9 @@ class AnthropicStreamedResponse(StreamedResponse):
 
                 elif isinstance(event, BetaRawContentBlockStartEvent):
                     current_block = event.content_block
+                    if native_computer and native_computer.answers(current_block):
+                        computer_input = []
+                        continue
                     if isinstance(current_block, BetaTextBlock) and current_block.text:
                         for event_ in self._parts_manager.handle_text_delta(
                             vendor_part_id=event.index, content=current_block.text
@@ -278,6 +290,12 @@ class AnthropicStreamedResponse(StreamedResponse):
                             provider_name=self.provider_name,
                         ):
                             yield event_
+                    elif (
+                        isinstance(event.delta, BetaInputJSONDelta)
+                        and native_computer
+                        and native_computer.answers(current_block)
+                    ):
+                        computer_input.append(event.delta.partial_json)
                     elif isinstance(event.delta, BetaInputJSONDelta):
                         maybe_event = self._parts_manager.handle_tool_call_delta(
                             vendor_part_id=event.index,
@@ -342,7 +360,25 @@ class AnthropicStreamedResponse(StreamedResponse):
                             citations=citations,
                         ):
                             yield event_
-                    if event.index in ignored_server_tool_use_indices:
+                    if native_computer and native_computer.answers(current_block):
+                        # A call cut off mid-input (`max_tokens`) keeps what parsed; validation refuses what's missing.
+                        computer_input_json = ''.join(computer_input) or '{}'
+                        block = {
+                            'id': current_block.id,
+                            'name': current_block.name,
+                            'input': pydantic_core.from_json(computer_input_json, allow_partial=True),
+                        }
+                        if native_computer.is_toolset:
+                            computer_blocks.append(block)
+                            self._parts_manager.handle_part(
+                                vendor_part_id=computer_blocks[0]['id'],
+                                part=native_computer.call_part(list(computer_blocks), self.provider_name),
+                            )
+                        else:
+                            yield self._parts_manager.handle_part(
+                                vendor_part_id=block['id'], part=native_computer.call_part([block], self.provider_name)
+                            )
+                    elif event.index in ignored_server_tool_use_indices:
                         ignored_server_tool_use_indices.remove(event.index)
                     elif isinstance(current_block, BetaMCPToolUseBlock):
                         maybe_event = self._parts_manager.handle_tool_call_delta(
@@ -369,6 +405,11 @@ class AnthropicStreamedResponse(StreamedResponse):
                     current_block = None
                 elif isinstance(event, BetaRawMessageStopEvent):  # pragma: no branch
                     current_block = None
+            if native_computer and computer_blocks:
+                yield self._parts_manager.handle_part(
+                    vendor_part_id=computer_blocks[0]['id'],
+                    part=native_computer.call_part(computer_blocks, self.provider_name),
+                )
 
     async def close_stream(self) -> None:
         await self._response.source.close()

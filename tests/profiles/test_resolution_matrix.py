@@ -238,6 +238,7 @@ def test_anthropic_claude_sonnet_4_6():
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
             'forced_tool_choice_disables_thinking': True,
+            'anthropic_computer_tool_version': 'computer_20251124',
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
@@ -253,6 +254,7 @@ def test_anthropic_claude_sonnet_4_6():
             'anthropic_max_output_tokens': 128000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
+            'computer_use_screenshot_limit': (1568, 1150000),
             'tool_deferral_mode': 'standalone',
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
@@ -276,6 +278,7 @@ def test_anthropic_claude_opus_4_7():
             'anthropic_supports_fast_speed': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
             'forced_tool_choice_disables_thinking': True,
+            'anthropic_computer_tool_version': 'computer_20251124',
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
@@ -295,6 +298,7 @@ def test_anthropic_claude_opus_4_7():
             'anthropic_max_output_tokens': 128000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'anthropic_supports_task_budgets': True,
+            'computer_use_screenshot_limit': (2576, 3600000),
             'tool_deferral_mode': 'standalone',
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
@@ -316,6 +320,7 @@ def test_anthropic_claude_haiku_4_5():
             'default_cache_retention': timedelta(seconds=300),
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'anthropic_computer_tool_version': 'computer_20250124',
             'anthropic_supports_max_effort': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
@@ -327,6 +332,7 @@ def test_anthropic_claude_haiku_4_5():
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
+            'computer_use_screenshot_limit': (1568, 1150000),
             'tool_deferral_mode': 'standalone',
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
@@ -348,6 +354,7 @@ def test_anthropic_claude_3_5_sonnet_legacy():
             'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'anthropic_computer_tool_version': None,
             'anthropic_supports_max_effort': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
@@ -968,6 +975,7 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'default_cache_retention': timedelta(seconds=300),
             'supports_json_schema_output': True,
             'bedrock_supports_prompt_caching': True,
+            'anthropic_computer_tool_version': 'computer_20250124',
             'anthropic_supports_max_effort': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
@@ -979,6 +987,7 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'anthropic_max_output_tokens': 64000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'bedrock_thinking_variant': 'anthropic',
+            'computer_use_screenshot_limit': (1568, 1150000),
             'tool_deferral_mode': 'standalone',
             'json_schema_transformer': _BedrockAnthropicJsonSchemaTransformer,
             'supports_video_input': False,
@@ -1050,6 +1059,7 @@ def test_bedrock_anthropic_with_geo_prefix():
             'default_cache_retention': timedelta(seconds=300),
             'supports_json_schema_output': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
+            'anthropic_computer_tool_version': 'computer_20250124',
             'anthropic_supports_max_effort': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
@@ -1059,6 +1069,7 @@ def test_bedrock_anthropic_with_geo_prefix():
             'anthropic_max_output_tokens': 64000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'bedrock_thinking_variant': 'anthropic',
+            'computer_use_screenshot_limit': (1568, 1150000),
             'tool_deferral_mode': 'standalone',
             'json_schema_transformer': _BedrockAnthropicJsonSchemaTransformer,
             'supports_video_input': False,
@@ -1094,6 +1105,7 @@ def test_bedrock_anthropic_legacy_claude_3():
             'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
+            'anthropic_computer_tool_version': None,
             'anthropic_supports_max_effort': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
@@ -1383,6 +1395,7 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
             'forced_tool_choice_disables_thinking': True,
+            'anthropic_computer_tool_version': 'computer_20251124',
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_effort': True,
             'anthropic_supports_max_effort': True,
@@ -1395,6 +1408,7 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
             'anthropic_binds_thinking_blocks': False,
             'anthropic_max_output_tokens': 128000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
+            'computer_use_screenshot_limit': (1568, 1150000),
             'tool_deferral_mode': 'standalone',
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
@@ -1628,6 +1642,7 @@ def test_github_copilot_anthropic_claude_haiku_4_5():
             'supports_json_schema_output': True,
             'supports_thinking': True,
             'forced_tool_choice_disables_thinking': True,
+            'anthropic_computer_tool_version': 'computer_20250124',
             'anthropic_supports_max_effort': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_disables_thinking_with_between_tools': False,
@@ -1639,6 +1654,7 @@ def test_github_copilot_anthropic_claude_haiku_4_5():
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
             'tool_deferral_mode': 'standalone',
+            'computer_use_screenshot_limit': (1568, 1150000),
             'openai_chat_supports_max_completion_tokens': True,
             'openai_chat_thinking_field': 'reasoning_text',
         }
@@ -2428,6 +2444,7 @@ def test_anthropic_unknown_model_returns_some_profile():
             'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'anthropic_computer_tool_version': None,
             'anthropic_supports_max_effort': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
@@ -2581,6 +2598,7 @@ def test_vercel_anthropic_claude_sonnet():
             'thinking_tags': ('<thinking>', '</thinking>'),
             'forced_tool_choice_disables_thinking': True,
             'anthropic_supports_adaptive_thinking': True,
+            'anthropic_computer_tool_version': 'computer_20251124',
             'anthropic_supports_effort': True,
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_supports_max_effort': True,
@@ -2596,6 +2614,7 @@ def test_vercel_anthropic_claude_sonnet():
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
             'tool_deferral_mode': 'standalone',
+            'computer_use_screenshot_limit': (1568, 1150000),
         }
     )
 
@@ -2707,6 +2726,7 @@ def test_heroku_returns_openai_transformer():
             'supports_thinking': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_supports_adaptive_thinking': True,
+            'anthropic_computer_tool_version': 'computer_20251124',
             'anthropic_supports_effort': True,
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_supports_max_effort': True,
@@ -2722,6 +2742,7 @@ def test_heroku_returns_openai_transformer():
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
             'tool_deferral_mode': 'standalone',
+            'computer_use_screenshot_limit': (1568, 1150000),
         }
     )
 

@@ -44,6 +44,7 @@ On a [read-only](../workspace.md#read-only-access) workspace the agent can take 
 
 The model must accept images.
 
+- Claude 4 and later get Anthropic's own computer use tool; see [Anthropic](../models/anthropic.md#computer-use).
 - GPT-5.4 and later, except GPT-5.4 nano, get OpenAI's on the Responses API; see
   [OpenAI](../models/openai.md#native-tools).
 - Every other model gets `computer` as a regular function tool.
@@ -77,6 +78,8 @@ handler such as [`HandleDeferredToolCalls`](../deferred-tools.md); without one, 
 
 Some models only take screenshots up to a size, set by `computer_use_screenshot_limit` in their profile:
 
+- Claude Opus 4.7, Opus 4.8 and the Claude 5 models: 2576 pixels on the longer side.
+- Earlier Claude models: 1568 pixels and about 1.15 megapixels.
 - GPT: 2560x1440. It clicks less accurately on a larger screen.
 
 A 1280x800 screen fits every model. On a larger screen, `ComputerUse` sends a scaled-down screenshot and scales the

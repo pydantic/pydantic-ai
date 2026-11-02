@@ -893,6 +893,23 @@ agent = Agent(
 
 The response's usage, and so its cost, stays the sum of the passes either way.
 
+## Computer use
+
+Computer use is provided by the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability. Its
+`computer` tool is sent as the computer use tool each Claude model was trained on:
+
+| Models | Claude API and Google Cloud | Bedrock and Foundry |
+|---|---|---|
+| Claude Opus 4.8 and Claude 5 | `computer_toolset_20260801` | `computer_20251124` (on Foundry, not the 5.5 models) |
+| Claude Opus 4.7, 4.6 and 4.5, Sonnet 4.6 | `computer_20251124` | `computer_20251124` |
+| Claude Sonnet 4.5, Haiku 4.5, Opus 4.1, Opus 4, Sonnet 4 | `computer_20250124` | `computer_20250124` |
+
+Other models get a function tool, and so does every model with `ComputerUse(native=False)`.
+
+Claude Opus 4.7, Opus 4.8 and the Claude 5 models take screenshots up to 2576 pixels on the longer side, and earlier
+models up to 1568 pixels and about 1.15 megapixels; on a larger screen, `ComputerUse` sends them a scaled-down
+screenshot (see [Screen size](../harness/computer-use.md#screen-size)).
+
 ## Web Tool Callers
 
 On models that support dynamic filtering, [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] and [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] are sent as Anthropic's `20260209` versions. By default, Anthropic lets the model call these from a server-side code execution sandbox, where it can filter results before they reach the context window. The sandbox is provided even when [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] isn't enabled, so an agent that also has its own shell or code tool has two places to run code, and the sandbox has none of the agent's files, credentials, or environment. Results the model reads in the sandbox aren't added to its context, so they come back without [citations](../citations.md).
