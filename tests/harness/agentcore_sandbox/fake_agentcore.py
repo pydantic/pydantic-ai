@@ -253,6 +253,8 @@ class FakeAgentCore:
     def close(self) -> None:
         # Also the ones a test reached but never released, so no worker thread stays blocked.
         for hold in self._issued_holds:
+            # Waking `reached` too frees a test thread still waiting for a call that never came.
+            hold.reached.set()
             hold.release.set()
         for session in self.sessions.values():
             session.kill()

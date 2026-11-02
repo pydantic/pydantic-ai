@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import re
 from collections.abc import Awaitable, Callable
@@ -231,15 +232,21 @@ async def test_a_timeout_returns_the_partial_output_and_stops_the_task(fake_agen
         await anyio.to_thread.run_sync(ready.read_text, abandon_on_cancel=True)
         hold.release.set()
 
-    async with anyio.create_task_group() as group:
-        group.start_soon(release_once_written)
-        # The deadline passes while the start's answer is held, so no test time is spent waiting on it.
-        with pytest.raises(WorkspaceTimeoutError) as caught:
-            await backend.run(
-                ['sh', '-c', 'printf started; printf warn >&2; echo > "$1"; exec sleep 30', 'sh', str(ready)],
-                timeout=0.001,
-            )
-        assert (caught.value.stdout, caught.value.stderr) == ('started', 'warn')
+    try:
+        async with anyio.create_task_group() as group:
+            group.start_soon(release_once_written)
+            # The deadline passes while the start's answer is held, so no test time is spent waiting on it.
+            with pytest.raises(WorkspaceTimeoutError) as caught:
+                await backend.run(
+                    ['sh', '-c', 'printf started; printf warn >&2; echo > "$1"; exec sleep 30', 'sh', str(ready)],
+                    timeout=0.001,
+                )
+            assert (caught.value.stdout, caught.value.stderr) == ('started', 'warn')
+    finally:
+        # A reader still waiting because the test failed gets end of file instead of blocking its thread.
+        # Opening fails with ENXIO when no reader is waiting, the usual case.
+        with contextlib.suppress(OSError):
+            os.close(os.open(ready, os.O_WRONLY | os.O_NONBLOCK))
     assert 'stopTask' in fake_agentcore.calls
     [session] = fake_agentcore.sessions.values()
     assert all(task.poll() is not None for task in session.tasks.values())
@@ -335,6 +342,8 @@ async def test_a_native_cancel_during_a_slow_start_still_stops_the_command(fake_
     [session] = fake_agentcore.sessions.values()
     hold = fake_agentcore.hold('startCommandExecution')
     running = asyncio.create_task(backend.run(['sleep', '30']))
+    # If the run fails before its start is held, wake the wait below instead of blocking its thread.
+    running.add_done_callback(lambda _: hold.reached.set())
     await anyio.to_thread.run_sync(hold.reached.wait)
     running.cancel()
     # Let the cancellation reach the task before the start answers.
@@ -365,6 +374,8 @@ async def test_stopping_a_task_that_already_ended_still_cleans_up(fake_agentcore
     backend = AgentCoreSandboxBackend()
     await backend.working_dir()
     [session] = fake_agentcore.sessions.values()
+    # The first poll must not see the command finished, or nothing would be cancelled; a queued reply is held too.
+    fake_agentcore.queue_task('getTask', taskStatus='working')
     hold = fake_agentcore.hold('getTask')
 
     async def wait_for_exit() -> None:
@@ -394,5 +405,9 @@ async def _cancel_when_reached(
                 hold.release.set()
 
             group.start_soon(cancel)
-            await call()
+            try:
+                await call()
+            finally:
+                # A `call` that fails before reaching the hold must not leave the waiter's thread blocked.
+                hold.reached.set()
     assert scope.cancelled_caught
