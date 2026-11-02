@@ -470,7 +470,7 @@ class TestCommands:
         backend = await started()
         sandbox = fake_daytona.sandboxes[0]
         sandbox.state = state
-        with pytest.raises(WorkspaceUnavailableError, match='was stopped while idle'):
+        with pytest.raises(WorkspaceUnavailableError, match=f'is {state.value}; a later run that attaches'):
             await backend.run(['true'])
         assert sandbox.start_calls == []
         assert (await DaytonaSandboxBackend(ref=backend.ref).run(['true'])).exit_code == 0

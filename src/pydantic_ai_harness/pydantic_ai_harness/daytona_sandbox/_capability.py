@@ -73,6 +73,11 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
     """Environment variables every command gets, also on an attached sandbox; a command's `env` is
     layered on top. Nothing is read from the host."""
 
+    desktop: bool | tuple[int, int] = False
+    """Give the sandbox a graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True`
+    for 1280x800, or its `(width, height)`, at least 1024x768. The size applies to a new sandbox; an attached one keeps
+    its own."""
+
     def __post_init__(self) -> None:
         if self.defer_loading:
             # Core picks the run's workspace from the always-on capabilities only.
@@ -86,7 +91,9 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
 
     def backend(self, ref: WorkspaceRef) -> DaytonaSandboxBackend:
         """Construct a lazy backend for an existing sandbox."""
-        return DaytonaSandboxBackend(client=self.client, ref=ref, working_dir=self.working_dir, env=self.env)
+        return DaytonaSandboxBackend(
+            client=self.client, ref=ref, working_dir=self.working_dir, env=self.env, desktop=self.desktop
+        )
 
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Delete a sandbox by ID without starting it, including one Daytona has stopped.
@@ -110,6 +117,7 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
             allow_internet_access=self.allow_internet_access,
             working_dir=self.working_dir,
             env=self.env,
+            desktop=self.desktop,
         )
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:

@@ -46,6 +46,7 @@ in an `on_run_error` hook, as shown for [E2B](../e2b_sandbox/#clean-up).
 | Capability | Screen |
 |---|---|
 | `DockerSandbox(desktop=True)` | A container on your machine |
+| [`DaytonaSandbox(desktop=True)`](../daytona_sandbox/#give-the-agent-a-desktop) | A Daytona cloud sandbox |
 
 To give your own sandbox a screen, implement [`SupportsDisplay`](https://pydantic.dev/docs/ai/api/pydantic-ai/workspaces/#pydantic_ai.workspaces.SupportsDisplay); see
 [Controlling a display](https://pydantic.dev/docs/ai/core-concepts/workspace/#controlling-a-display).
