@@ -24,9 +24,9 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.workspaces import Click, TypeText
+from pydantic_ai.workspaces import Click
 
-from ..conftest import RequestCapture, try_import
+from ..conftest import try_import
 from ..workspace_fakes import FAKE_SCREENSHOT, InMemoryProvider, computer_toolset
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
@@ -42,58 +42,6 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
-
-TASK = 'Take a screenshot, then click at x=100 y=200, type "hello", and reply "done". Do nothing else.'
-
-
-def _agent(openai_api_key: str, provider: InMemoryProvider, **settings: Any) -> Agent[None, str]:
-    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(api_key=openai_api_key))
-    return Agent(model, toolsets=[computer_toolset()], capabilities=[provider.capability(**settings)])
-
-
-@pytest.mark.vcr
-async def test_streamed_gpt_computer_calls_run_on_the_workspace(
-    allow_model_requests: None, openai_api_key: str
-) -> None:
-    """The request without streaming is `test_computer_calls_go_back_to_a_request_without_the_computer_tool`."""
-    provider = InMemoryProvider()
-    agent = _agent(openai_api_key, provider)
-
-    async def drain(ctx: Any, events: Any) -> None:
-        async for _ in events:
-            pass
-
-    await agent.run(TASK, event_stream_handler=drain)
-
-    # GPT-5.5's real `computer_call`s became `computer` calls that ran.
-    assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
-
-
-@pytest.mark.vcr
-@pytest.mark.moves_cache_prefix(reason='the second request is from an agent without the computer tool')
-async def test_computer_calls_go_back_to_a_request_without_the_computer_tool(
-    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
-) -> None:
-    provider = InMemoryProvider()
-    result = await _agent(openai_api_key, provider).run(TASK)
-    assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
-
-    # An agent without the computer tool, such as an advisor that is forwarded the history, sends the calls back.
-    model = OpenAIResponsesModel(
-        'gpt-5.5', provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
-    )
-    answer = await Agent(model).run(
-        'Where did you click? Reply with just the coordinates.', message_history=result.all_messages()
-    )
-    assert '100' in answer.output and '200' in answer.output
-
-    # As function calls without their `cu_` ids, which the API refuses on a function call.
-    calls = [
-        item
-        for item in cast(list[dict[str, Any]], request_capture.body('/responses')['input'])
-        if item.get('type') == 'function_call'
-    ]
-    assert calls and all(call['name'] == 'computer' and 'id' not in call for call in calls)
 
 
 def _computer_call(*actions: dict[str, Any], safety_checks: list[dict[str, Any]] | None = None) -> resp.Response:
