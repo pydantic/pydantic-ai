@@ -25,9 +25,9 @@ pip install "pydantic-ai-harness[anthropic]"
 sudo apt install xvfb fluxbox x11-utils xdotool x11-xserver-utils scrot util-linux
 ```
 
-Swap `anthropic` for your model provider's extra. The `apt` packages are the screen (Xvfb), its window manager
-(fluxbox), and the tools that take screenshots and press keys; other distributions name them similarly. Your own
-screen needs only `x11-utils xdotool x11-xserver-utils scrot`.
+Use your model provider's extra instead of `anthropic`. The `apt` packages are the screen (Xvfb), a window manager
+(fluxbox), and the tools for screenshots and keys; other distributions use similar names. Using your own screen
+needs only `x11-utils xdotool x11-xserver-utils scrot`.
 
 ## Usage
 
@@ -44,34 +44,31 @@ async def main():
     print(result.output)
 ```
 
-`LocalDesktop` is a [`LocalWorkspace`](https://pydantic.dev/docs/ai/core-concepts/workspace/) with a screen: commands and files are on this machine, in
-this directory, and apps the agent starts with a command, through [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) here, open on the screen.
+`LocalDesktop` is a [`LocalWorkspace`](https://pydantic.dev/docs/ai/core-concepts/workspace/) with a screen. Commands and files are on this machine, in this
+directory, and apps the agent starts, here through [`Coder`](https://pydantic.dev/docs/ai/harness/coder/), open on the screen.
 
-The screen is private to the agent: the `computer` tool never sees your windows or moves your mouse, and other users
-of the machine can't connect to it. It starts on the first run, at
-1280x800 (`LocalDesktop('.', size=(1920, 1080))` for another size), and every later run of the agent uses the same
-one, with the windows earlier runs left open. Runs at the same time share it too, so give each concurrent user a
-`LocalDesktop` of their own. It stops when your program exits; if only its window manager exits, such as from its
-menu, that starts again and the windows stay. A `LocalDesktopBackend` you build yourself for `workspace=` shares one
-private 1280x800 screen with every other backend in the process given none; pass `screen=VirtualScreen(size)` for
-one of its own, and `await screen.stop()` to stop it.
+The screen is private: the agent never sees your windows or moves your mouse, and other users can't connect to it.
+
+- It starts on the first run at 1280x800; pass `size=(1920, 1080)` for another size.
+- Later runs, and runs at the same time, use the same screen, with the windows earlier runs left open. Give each
+  concurrent user their own `LocalDesktop`.
+- It stops when your program exits. If only the window manager exits, it starts again and the windows stay.
+- A `LocalDesktopBackend` you build for `workspace=` shares one private screen with the other backends in the
+  process. Pass `screen=VirtualScreen(size)` for its own, and `await screen.stop()` to stop it.
 
 ## Your own screen
 
-`LocalDesktop('.', real_screen=True)` drives the screen you're logged in to: the agent sees your windows, moves your
+`LocalDesktop('.', real_screen=True)` uses the screen you're logged in to: the agent sees your windows, moves your
 mouse and types into whatever has focus.
 
-- Pair it with `ComputerUse(requires_approval=True)` to approve each call first.
-- Typing a character outside ASCII, such as `é`, borrows the code of a rarely used key, such as Wi-Fi, Bluetooth or a
-  brightness key (with many characters, also Suspend or Play/Pause). That key then types the character until the
-  keyboard layout is next set, such as by `setxkbmap`.
-- What you type during a run mixes with what the agent types, and a modifier either of you holds applies to both: X11
-  has one keyboard for everyone. Agents in one process that use your screen, in any working directory, take turns at
-  it a whole `computer` call at a time.
+- Use `ComputerUse(requires_approval=True)` to approve each call first.
+- To type a character outside ASCII, such as `é`, it borrows a rarely used key, such as Wi-Fi or a brightness key.
+  That key types the character until the keyboard layout is reset, for example with `setxkbmap`.
+- Your typing mixes with the agent's, and a held modifier applies to both: X11 has one keyboard. Agents in one
+  process take turns on your screen, a whole call at a time.
 
-It works in an X11 (Xorg) session. In a Wayland session, the default on recent Ubuntu and Fedora, a desktop can
-neither see nor control the screen, so the run fails at its first request (commands still run); use the private
-screen there.
+It needs an X11 (Xorg) session. On Wayland, the default on recent Ubuntu and Fedora, the run fails at its first
+request; use the private screen there.
 
 ## Limitations
 
