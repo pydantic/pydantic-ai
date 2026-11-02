@@ -1,12 +1,13 @@
 """Capture the events each streamed model response emits, per test node, to prove a refactor keeps them.
 
 Copy this file out of the tree first, so the base commit, which may not have it, can load it too. Then run the
-capture once on the base commit and once on the branch, into separate new directories, over the same test files:
-those that reach the changed stream code, such as every file naming the changed model classes. Then compare:
+capture once on the base commit and once on the branch, into separate new directories, over the same test nodes:
+one or two that stream through each changed line, so every change is exercised without running whole test files.
+Then compare:
 
     mkdir /tmp/plugin && cp scripts/stream_event_capture.py /tmp/plugin/
-    STREAM_EVENT_CAPTURE_DIR=/tmp/base PYTHONPATH=/tmp/plugin uv run pytest -p stream_event_capture <test files>
-    STREAM_EVENT_CAPTURE_DIR=/tmp/head PYTHONPATH=/tmp/plugin uv run pytest -p stream_event_capture <test files>
+    STREAM_EVENT_CAPTURE_DIR=/tmp/base PYTHONPATH=/tmp/plugin uv run pytest -p stream_event_capture <test nodes>
+    STREAM_EVENT_CAPTURE_DIR=/tmp/head PYTHONPATH=/tmp/plugin uv run pytest -p stream_event_capture <test nodes>
     uv run /tmp/plugin/stream_event_capture.py /tmp/base /tmp/head
 
 As a pytest plugin, it records every event a `StreamedResponse`'s `_get_event_iterator` yields, then the response
