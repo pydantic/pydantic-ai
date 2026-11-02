@@ -424,7 +424,7 @@ async def test_openrouter_explicit_forced_tool_choice_raises_user_error_on_qwen_
 ) -> None:
     """Explicit forcing on those routes raises `UserError` instead of sending the 400ing request.
 
-    A static ``tool_choice='required'`` is caught by the agent-level guard before the model, so the forcing is
+    A static `tool_choice='required'` is caught by the agent-level guard before the model, so the forcing is
     expressed as a list naming the output tool, which is what reaches the model-level check.
     """
     mock_client = MockOpenAI.create_mock(_qwen_muse_tool_call_completion())

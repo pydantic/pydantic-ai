@@ -1763,6 +1763,7 @@ def test_openrouter_qwen():
             'openai_chat_supports_max_completion_tokens': False,
             'openrouter_system_messages_precede_generation': False,
             'supports_thinking': True,
+            'supports_forced_tool_choice': False,
             'supports_cache': False,
             'supported_cache_retentions': (),
             'openrouter_supports_cache_control': False,
