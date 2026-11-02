@@ -77,6 +77,20 @@ def is_expired_container_error(error: APIStatusError) -> bool:
     )
 
 
+_THREAD_REPLAY_ERROR_CODES = frozenset({'thread_not_found', 'thread_already_continued', 'thread_continue_in_flight'})
+
+
+def is_thread_replay_error(error: APIStatusError) -> bool:
+    """Whether a thread continue request failed in a way that sending the full conversation in a new thread recovers.
+
+    See https://platform.claude.com/docs/en/build-with-claude/message-threads#errors. A 404 for a model that
+    doesn't exist has no thread `error_code`, so it isn't replayed.
+    """
+    error_body = reported_error_body(error.body)
+    details = error_body.get('details') if _utils.is_str_dict(error_body) else None
+    return _utils.is_str_dict(details) and details.get('error_code') in _THREAD_REPLAY_ERROR_CODES
+
+
 @contextmanager
 def map_api_errors(model_name: str, model_id_namespace: str = 'anthropic') -> Generator[None]:
     try:

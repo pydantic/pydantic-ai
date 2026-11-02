@@ -1,8 +1,10 @@
 from __future__ import annotations as _annotations
 
 import base64
+import hashlib
+import json
 import warnings
-from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from functools import cached_property
@@ -290,7 +292,7 @@ try:
         without_unanswered_tool_calls,
     )
     from ._containers import is_tool_result_only
-    from ._errors import is_expired_container_error, map_api_errors
+    from ._errors import is_expired_container_error, is_thread_replay_error, map_api_errors
     from ._message_passes import (
         anchor_system_messages,
         drop_unpaired_native_tool_calls,
@@ -636,6 +638,20 @@ class AnthropicModelSettings(ModelSettings, total=False):
     Bedrock, Google Cloud Vertex AI and Microsoft Foundry. Defaults to `False`.
     """
 
+    anthropic_thread: bool
+    """Continue the conversation in an Anthropic [message thread](https://platform.claude.com/docs/en/build-with-claude/message-threads), sending only the new messages.
+
+    Each request creates a thread, or continues the one the most recent response in the message history was
+    stored in. A continue request leaves out the messages before that response, and `system` and `tools`, which
+    the thread keeps. The thread state lives in the message history: a response records a fingerprint of the
+    fields a thread keeps fixed under `'thread_fingerprint'` in
+    [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], and a request
+    continues from it only when its own fingerprint matches, so changing the instructions, tools or another fixed
+    field starts a new thread. So does a response from another model, a refusal, or an expired thread, which
+    Anthropic reports when the continue request fails, and the full conversation is then sent again.
+    Defaults to `False`.
+    """
+
     anthropic_effort: AnthropicEffort | None
     """The effort level for the model to use when generating a response.
 
@@ -887,6 +903,97 @@ class _PreparedMessagesCreate:
     initial_betas: set[str]
     initial_thinking_override: dict[str, object] | None
     initial_effective_thinking: dict[str, object] | Omit
+
+
+MESSAGE_THREADS_BETA = 'message-threads-2026-08-12'
+
+# The fields a thread keeps from its create request (`system`, `tools`) or requires unchanged on every request.
+# ponytail: `container.skills` and `fallbacks` are fixed too, add them once threads are used with either.
+_THREAD_FIXED_PARAMS = (
+    'system',
+    'tools',
+    'model',
+    'tool_choice',
+    'thinking',
+    'mcp_servers',
+    'context_management',
+    'output_config',
+    'cache_control',
+)
+
+
+def _thread_fingerprint(params: _MessageCreateParams, betas: set[str]) -> str:
+    """A digest of the fields a request must share with the thread's create request to continue it.
+
+    MCP authorization tokens may change between requests of a thread, so they're left out.
+    """
+    fixed: dict[str, object] = {name: params[name] for name in _THREAD_FIXED_PARAMS}
+    fixed['mcp_servers'] = [
+        {key: value for key, value in server.items() if key != 'authorization_token'}
+        for server in params['mcp_servers'] or ()
+    ]
+    if _is_str_mapping(extra_body := params['extra_body']) and 'thinking' in extra_body:
+        fixed['thinking'] = extra_body['thinking']
+    fixed['betas'] = sorted(betas)
+    serialized = json.dumps(fixed, sort_keys=True, default=lambda _omit: None)
+    return hashlib.sha256(serialized.encode()).hexdigest()
+
+
+@dataclass(kw_only=True)
+class _Thread:
+    """The `thread` of one request: a create request, or a continue request with only the new messages."""
+
+    previous_message_id: str | None = None
+    messages: list[BetaMessageParam] | None = None
+
+    def apply(self, params: _MessageCreateParams) -> _MessageCreateParams:
+        extra_body = params['extra_body']
+        thread: dict[str, str] = {'type': 'create'}
+        params = {**params}
+        if self.previous_message_id is not None and self.messages is not None:
+            thread = {'type': 'continue', 'previous_message_id': self.previous_message_id}
+            # The thread keeps `system` and `tools`; sending either, even as `null`, is a 400.
+            params.update(messages=self.messages, system=OMIT, tools=OMIT)
+        params['extra_body'] = {**(extra_body if _is_str_mapping(extra_body) else {}), 'thread': thread}
+        return params
+
+
+@dataclass
+class _ThreadRecord:
+    """Set by `_messages_create` to the fingerprint of the thread its request was sent in, if any."""
+
+    fingerprint: str | None = None
+
+
+_THREAD_FINGERPRINT_KEY = 'thread_fingerprint'
+
+
+def _thread_continuation(
+    model: AnthropicModel, messages: list[ModelMessage], fingerprint: str
+) -> tuple[str, list[ModelMessage]] | None:
+    """The response ID to continue a thread from, and the messages after it, if the latest response allows it.
+
+    Only the most recent response counts, as each response ID can be continued once: a later response from
+    another model (say, through `FallbackModel`) wasn't stored in the thread. A refusal isn't continued, and
+    neither is a paused turn, which pydantic-ai resumes by sending it back.
+    """
+    for index in range(len(messages) - 1, -1, -1):
+        response = messages[index]
+        if not isinstance(response, ModelResponse):
+            continue
+        details = response.provider_details or {}
+        new_messages = messages[index + 1 :]
+        if (
+            model.accepts_server_state(response)
+            and response.provider_response_id
+            and details.get(_THREAD_FINGERPRINT_KEY) == fingerprint
+            and response.finish_reason != 'content_filter'
+            and response.state == 'complete'
+            and new_messages
+        ):
+            return response.provider_response_id, new_messages
+        return None
+    return None
 
 
 def _default_max_tokens(thinking: dict[str, object] | Omit, profile: AnthropicModelProfile) -> int:
@@ -1214,8 +1321,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_request_parameters,
         )
         model_settings = cast(AnthropicModelSettings, model_settings or {})
-        response = await self._messages_create(messages, False, model_settings, model_request_parameters)
+        thread_record = _ThreadRecord()
+        response = await self._messages_create(
+            messages, False, model_settings, model_request_parameters, thread_record=thread_record
+        )
         model_response = await self._finish_response(response, messages, model_settings, model_request_parameters)
+        if thread_record.fingerprint is not None:
+            model_response.provider_details = {
+                **(model_response.provider_details or {}),
+                _THREAD_FINGERPRINT_KEY: thread_record.fingerprint,
+            }
         mark_continuation_context_input_tokens(messages, model_response)
         return model_response
 
@@ -1344,11 +1459,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_request_parameters,
         )
         model_settings = cast(AnthropicModelSettings, model_settings or {})
-        response = await self._messages_create(messages, True, model_settings, model_request_parameters)
+        thread_record = _ThreadRecord()
+        response = await self._messages_create(
+            messages, True, model_settings, model_request_parameters, thread_record=thread_record
+        )
         async with response.source:
             streamed_response = await self._process_streamed_response(
                 response, model_request_parameters, model_settings, fetched_pages_from_history(messages)
             )
+            if thread_record.fingerprint is not None:
+                # The stream only adds keys to `provider_details`, so this survives it.
+                streamed_response.provider_details = {_THREAD_FINGERPRINT_KEY: thread_record.fingerprint}
             yield streamed_response
             mark_continuation_context_input_tokens(messages, streamed_response)
 
@@ -1510,6 +1631,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_request_parameters: ModelRequestParameters,
         *,
         compaction: BetaCompactionConfigParam | None = None,
+        thread_record: _ThreadRecord | None = None,
     ) -> AnthropicEventStream:
         pass
 
@@ -1522,6 +1644,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_request_parameters: ModelRequestParameters,
         *,
         compaction: BetaCompactionConfigParam | None = None,
+        thread_record: _ThreadRecord | None = None,
     ) -> BetaMessage | AnthropicEventStream:
         pass
 
@@ -1533,6 +1656,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_request_parameters: ModelRequestParameters,
         *,
         compaction: BetaCompactionConfigParam | None = None,
+        thread_record: _ThreadRecord | None = None,
     ) -> BetaMessage | AnthropicEventStream:
         """Calls the Anthropic API to create a message.
 
@@ -1545,6 +1669,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         With `compaction`, this is a compaction request, which samples no reply: the parameters Anthropic rejects
         on one are settled here, on the request as it would otherwise be sent, so the rest of the request (and the
         prompt cache it reads) stays the same.
+
+        With `thread_record`, the request uses a message thread when `anthropic_thread` is set (see
+        `_thread_attempt`), and the record gets the fingerprint to stamp on the response when it did.
         """
         prepared = await self._prepare_messages_create(
             messages, model_settings, model_request_parameters, compaction=compaction
@@ -1557,14 +1684,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             thinking: BetaThinkingConfigParam | Omit,
             betas: set[str],
             thinking_override: dict[str, object] | None,
+            thread: _Thread | None = None,
         ) -> BetaMessage | AnthropicEventStream:
             max_tokens = prepared.max_tokens
+            params = self._messages_create_params(
+                messages, model_settings, prepared, container_param, thinking, thinking_override
+            )
+            if thread is not None:
+                params = thread.apply(params)
+                betas = betas | {MESSAGE_THREADS_BETA}
 
             async def send(stream: bool) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
                 return await client.beta.messages.create(
-                    **self._messages_create_params(
-                        messages, model_settings, prepared, container_param, thinking, thinking_override
-                    ),
+                    **params,
                     betas=sorted(betas) or OMIT,
                     stream=stream,
                     timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
@@ -1608,6 +1740,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         retry_container = prepared.container
         with map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
+                if thread_record is not None and model_settings.get('anthropic_thread') and compaction is None:
+                    return await self._thread_attempt(
+                        messages, model_settings, model_request_parameters, prepared, create, thread_record
+                    )
                 return await create(prepared.container, initial_thinking, initial_betas, initial_thinking_override)
             except APIStatusError as error:
                 if (
@@ -1638,6 +1774,50 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
             warn_stale_thinking_block_recovery(self.model_name)
             return result
+
+    async def _thread_attempt(
+        self,
+        messages: list[ModelMessage],
+        model_settings: AnthropicModelSettings,
+        model_request_parameters: ModelRequestParameters,
+        prepared: _PreparedMessagesCreate,
+        create: Callable[..., Awaitable[BetaMessage | AnthropicEventStream]],
+        thread_record: _ThreadRecord,
+    ) -> BetaMessage | AnthropicEventStream:
+        """Send the first attempt of a request in a message thread: a continue request when possible, else a create.
+
+        A continue request needs the most recent response in the history to have been stored in a thread whose
+        fixed fields match this request's. A continue request that the API can't serve is replayed as a create
+        request with the full conversation. The recovery retries in `_messages_create` send no thread, as they
+        change fixed fields, so a response is only stamped with the fingerprint of a thread request that succeeded.
+        """
+        initial = (
+            prepared.container,
+            prepared.initial_thinking,
+            prepared.initial_betas,
+            prepared.initial_thinking_override,
+        )
+        params = self._messages_create_params(messages, model_settings, prepared, *initial[:2], initial[3])
+        fingerprint = _thread_fingerprint(params, prepared.initial_betas | {MESSAGE_THREADS_BETA})
+        if continuation := _thread_continuation(self, messages, fingerprint):
+            previous_message_id, new_messages = continuation
+            # ponytail: maps the new messages a second time, a slice of `prepared.anthropic_messages` would avoid it
+            # once the mapping can say where each history message starts.
+            new_prepared = await self._prepare_messages_create(new_messages, model_settings, model_request_parameters)
+            try:
+                response = await create(
+                    *initial,
+                    _Thread(previous_message_id=previous_message_id, messages=new_prepared.anthropic_messages),
+                )
+            except APIStatusError as error:
+                if not is_thread_replay_error(error):
+                    raise
+            else:
+                thread_record.fingerprint = fingerprint
+                return response
+        response = await create(*initial, _Thread())
+        thread_record.fingerprint = fingerprint
+        return response
 
     def _messages_create_params(
         self,
