@@ -179,6 +179,7 @@ Pass `custom_capability_types` so the spec loader knows how to instantiate
 
 ## Further reading
 
+- [The agent writes faster than you can review](https://pydantic.dev/articles/harness-macroscope) (Pydantic): from a ten-line self-critic to Macroscope's review
 - [Macroscope CLI documentation](https://docs.macroscope.com/cli)
 - [Pydantic AI capabilities](../capabilities/overview.md)
 - [Toolsets](../toolsets.md)

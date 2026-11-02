@@ -834,6 +834,7 @@ capabilities:
 
 ## Further reading
 
+- [Code mode: make your agents 2x faster and 2x cheaper on long tasks](https://pydantic.dev/articles/why-code-mode-is-the-future) (Pydantic)
 - [Tool use via code](https://www.anthropic.com/engineering/code-execution-with-mcp) (Anthropic)
 - [Code mode in production](https://blog.cloudflare.com/code-mode/) (Cloudflare)
 - [Pydantic AI capabilities](../capabilities/overview.md)
