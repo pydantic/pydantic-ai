@@ -384,16 +384,12 @@ class InMemoryProvider:
         self.directories: dict[str, set[str]] = {}
         self.log: list[str] = []
         self.actions: list[ComputerAction] = []
-        # Faults the next display calls meet, on whichever backend serves them.
-        self.fail_next_screenshot = False
-        self.lose_next_action = False
 
     def reset(self) -> None:
         self.environments.clear()
         self.directories.clear()
         self.log.clear()
         self.actions.clear()
-        self.fail_next_screenshot = self.lose_next_action = False
 
     def backend(self, ref: WorkspaceRef | None) -> ProviderBackend:
         return ProviderBackend(self, ref)
@@ -511,9 +507,6 @@ class ProviderBackend(
         return FAKE_DISPLAY_SIZE
 
     async def screenshot(self) -> bytes:
-        if self._provider.fail_next_screenshot:
-            self._provider.fail_next_screenshot = False
-            raise RuntimeError('the screenshot failed')
         await self._display_call()
         return FAKE_SCREENSHOT
 
@@ -523,10 +516,6 @@ class ProviderBackend(
         if action.type not in {'click', 'move', 'drag', 'mouse_down', 'mouse_up', 'scroll', 'type', 'keypress'}:
             raise WorkspaceUnsupportedActionError(f'the fake display cannot perform {action.type!r}')
         self._provider.actions.append(action)
-        if self._provider.lose_next_action:
-            # The action took effect, and then its worker was lost.
-            self._provider.lose_next_action = False
-            raise RuntimeError('the worker was lost')
 
     async def zoom(self, region: Region) -> bytes:
         await self._display_call()
