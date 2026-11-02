@@ -891,6 +891,70 @@ def test_handle_slash_command_usage_not_a_flag():
     assert io.getvalue() == snapshot('Unknown command `/usagejson`\n')
 
 
+def test_handle_slash_command_unknown_markup_like():
+    # A prompt that looks like Rich markup is printed literally instead of raising MarkupError. See #12123.
+    io = StringIO()
+    assert handle_slash_command('/foo[/bar]', [], False, Console(file=io), 'default') == (None, False)
+    assert io.getvalue() == snapshot('Unknown command `/foo[/bar]`\n')
+
+
+def test_handle_slash_command_usage_unknown_option_markup_like():
+    io = StringIO()
+    assert handle_slash_command(
+        '/usage---foo[/bar]', [], False, Console(file=io), 'default', usage=RunUsage(), turns=0
+    ) == (
+        None,
+        False,
+    )
+    assert io.getvalue() == snapshot('Unknown `/usage` option `/usage---foo[/bar]`\n')
+
+
+async def test_chat_error_message_with_markup_is_escaped(mocker: MockerFixture, env: TestEnv, tmp_path: Path):
+    """An exception message that looks like Rich markup prints literally and the REPL keeps running. See #12123."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('boom[/bar]') from ValueError('cause[/bar]')
+
+    with create_pipe_input() as inp:
+        inp.send_text('fail\n')
+        inp.send_text('/exit\n')
+        session = PromptSession[Any](input=inp, output=DummyOutput())
+        mocker.patch('pydantic_ai._cli.PromptSession', return_value=session)
+
+        output = StringIO()
+        console = Console(file=output, force_terminal=False, width=80)
+        agent = Agent(FunctionModel(function=respond))
+        assert await run_chat(False, agent, console, 'monokai', 'clai', config_dir=tmp_path) == 0
+
+    rendered = output.getvalue()
+    assert 'RuntimeError: boom[/bar]' in rendered
+    assert 'Caused by: cause[/bar]' in rendered
+    # The REPL survived the failed turn and kept reading input.
+    assert 'Exiting…' in rendered
+
+
+async def test_chat_unknown_slash_command_with_markup_keeps_session_alive(
+    mocker: MockerFixture, env: TestEnv, tmp_path: Path
+):
+    """An unknown slash command that looks like Rich markup does not end the session. See #12123."""
+
+    with create_pipe_input() as inp:
+        inp.send_text('/foo[/bar]\n')
+        inp.send_text('hello\n')
+        inp.send_text('/exit\n')
+        session = PromptSession[Any](input=inp, output=DummyOutput())
+        mocker.patch('pydantic_ai._cli.PromptSession', return_value=session)
+
+        output = StringIO()
+        console = Console(file=output, force_terminal=False, width=80)
+        agent = Agent(TestModel(custom_output_text='goodbye'))
+        assert await run_chat(False, agent, console, 'monokai', 'clai', config_dir=tmp_path) == 0
+
+    rendered = output.getvalue()
+    assert 'Unknown command `/foo[/bar]`' in rendered
+    assert 'goodbye' in rendered
+
+
 async def test_ask_agent_accumulates_usage(env: TestEnv):
     # `ask_agent` increments the shared session usage on both the streaming and non-streaming paths,
     # including tool calls, and threading a turn's history into the next must not re-count prior usage.
