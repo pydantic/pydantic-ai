@@ -167,6 +167,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_supports_encrypted_reasoning_content': False,
     'openai_supports_reasoning': False,
     'openai_supports_reasoning_effort_none': False,
+    'openai_chat_function_tools_require_reasoning_off': False,
     'openai_supports_minimal_reasoning_effort': True,
     'openai_responses_supports_reasoning_mode': False,
     'openai_responses_supports_reasoning_context': False,
@@ -499,6 +500,7 @@ def test_openai_gpt_6_astra():
             'openai_chat_supports_allowed_tools': True,
             'supports_mid_conversation_effort': True,
             'openai_supports_batch_api': True,
+            'openai_chat_function_tools_require_reasoning_off': True,
         }
     )
 
@@ -516,8 +518,11 @@ def test_openai_gpt_6_sol_luna(model_name: str):
 
     profile = OpenAIProvider.model_profile(model_name)
     gpt_5_6 = _normalize(OpenAIProvider.model_profile('gpt-5.6-sol'))
-    assert gpt_5_6 is not None
-    assert _normalize(profile) == {**gpt_5_6, 'supports_mid_conversation_effort': True}
+    assert _normalize(profile) == {
+        **gpt_5_6,
+        'supports_mid_conversation_effort': True,
+        'openai_chat_function_tools_require_reasoning_off': True,
+    }
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')

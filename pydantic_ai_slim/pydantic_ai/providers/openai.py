@@ -158,6 +158,12 @@ class OpenAIProvider(_OpenAISDKProvider):
                 # OpenAI-compatible Responses endpoints that share it don't necessarily implement the item.
                 # https://developers.openai.com/api/docs/guides/reasoning
                 supports_mid_conversation_effort=model_name.startswith(_GPT_6_MODEL_PREFIXES),
+                # GPT-6 rejects function tools on Chat Completions while reasoning is on, asking for
+                # `/v1/responses` or `reasoning_effort='none'` (verified live on gpt-6-luna, gpt-6-sol,
+                # gpt-6.1-terra, gpt-6-astra and gpt-6.1-sol, 2026-11). `OpenAIChatModel` raises a
+                # `UserError` before sending. Set here rather than in `openai_model_profile` because the
+                # restriction is unverified on the OpenAI-compatible endpoints that share it.
+                openai_chat_function_tools_require_reasoning_off=model_name.startswith(_GPT_6_MODEL_PREFIXES),
                 # The Batch API is OpenAI's own: set here rather than in `openai_model_profile`, which OpenAI-compatible
                 # providers share without necessarily serving `/v1/batches`. `OpenAIResponsesModel` turns it off for an
                 # Azure OpenAI client.
