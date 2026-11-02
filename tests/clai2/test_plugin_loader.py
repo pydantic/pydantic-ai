@@ -2,13 +2,14 @@
 
 import asyncio
 import io
+import json
 import sys
 from pathlib import Path
 from types import ModuleType
 
 import anyio
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue
 from rich.console import Console
 
 from pydantic_ai import Agent
@@ -16,10 +17,21 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_clai2 import DEFAULT_PLUGINS
+from pydantic_clai2.builtin_plugins.repo_context import RepoContextPlugin
 from pydantic_clai2.commands import Command, Commands
-from pydantic_clai2.config import PluginSettings
+from pydantic_clai2.config import SETTING_FIELDS, PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import LiveSession, NoSettings, Plugin, SessionEnd, SessionStart, TurnEnd, TurnStart
+from pydantic_clai2.plugins import (
+    LiveSession,
+    NoSettings,
+    Plugin,
+    PluginHost,
+    SessionEnd,
+    SessionStart,
+    TurnEnd,
+    TurnStart,
+    load_plugin,
+)
 from pydantic_clai2.plugins.loader import TURN_NOTICE, PluginError, PluginLoader, PluginSettingsError
 from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.plugins.process_plugins import ProcessPlugins, handling
@@ -199,7 +211,7 @@ async def test_add_saves_settings_only_once_activation_accepts_them(
     package = tmp_path / 'site' / 'clai_strict'
     package.mkdir(parents=True)
     (package / '__init__.py').write_text(
-        'from pydantic import BaseModel, ConfigDict\n'
+        'from pydantic import BaseModel, JsonValue, ConfigDict\n'
         'from pydantic_clai2.plugins import Plugin, SessionStart\n'
         'class Settings(BaseModel):\n'
         "    model_config = ConfigDict(extra='forbid')\n"
@@ -227,7 +239,7 @@ async def test_add_keeps_settings_the_plugin_saves_while_activating(
     package = tmp_path / 'site' / 'clai_migrating'
     package.mkdir(parents=True)
     (package / '__init__.py').write_text(
-        'from pydantic import BaseModel\n'
+        'from pydantic import BaseModel, JsonValue\n'
         'from pydantic_clai2.plugins import Plugin\n'
         'class Settings(BaseModel):\n'
         '    version: int = 1\n'
@@ -360,7 +372,7 @@ async def test_failed_load_leaves_nothing_registered(tmp_path: Path) -> None:
 async def test_saved_settings_persist_and_a_failed_start_after_saving_can_load_again(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
     (harness.store.plugins_dir / 'tuned.py').write_text(
-        'from pydantic import BaseModel\n'
+        'from pydantic import BaseModel, JsonValue\n'
         'from pydantic_clai2.plugins import Plugin, SessionStart\n'
         'class Tuned(BaseModel):\n'
         '    level: int = 1\n'
@@ -469,7 +481,7 @@ async def test_save_settings_keeps_a_declaration_saved_after_load(tmp_path: Path
 TUNED = """
 \"\"\"Takes a level.\"\"\"
 
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue
 
 from pydantic_clai2.plugins import Plugin
 
@@ -520,7 +532,7 @@ async def test_plugins_catalog_saves_only_a_loaded_plugins_own_settings(tmp_path
 DECLARED = """
 \"\"\"Declares its settings menu.\"\"\"
 
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue
 
 from pydantic_clai2.plugins import Plugin
 from pydantic_clai2.plugins.menus import FieldRow, SettingsMenu
@@ -1409,3 +1421,189 @@ async def test_a_session_opened_later_joins_the_running_process_plugins(tmp_path
     assert a.text.count('shared stopped exit') == 1
     assert [entry.loaded for harness in (a, b, later) for entry in harness.loader.entries()] == [None] * 3
     assert 'shared' not in later.commands
+
+
+@pytest.mark.parametrize(
+    ('location', 'walk_up', 'root', 'allow_target', 'parent_loaded'),
+    [
+        ('outside', True, 'default', False, False),
+        ('outside', True, 'ancestor', False, True),
+        ('home', True, 'default', False, True),
+        ('home', False, 'ancestor', False, False),
+        ('outside', True, 'nonancestor', False, False),
+        ('symlink', True, 'ancestor', False, False),
+        ('symlink', True, 'ancestor', True, True),
+        ('symlink', False, 'ancestor', True, False),
+    ],
+)
+async def test_repo_context_user_boundaries_reach_the_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    location: str,
+    walk_up: bool,
+    root: str,
+    allow_target: bool,
+    parent_loaded: bool,
+) -> None:
+    home = tmp_path / 'home'
+    home.mkdir()
+    monkeypatch.setenv('HOME', str(home))
+    parent = home if location == 'home' else tmp_path / 'outside'
+    parent.mkdir(exist_ok=True)
+    workspace = parent / 'workspace'
+    workspace.mkdir()
+    tooling = tmp_path / 'shared tooling'
+    tooling.mkdir()
+    (tooling / 'shared.md').write_text('Parent policy sentinel.')
+    if location == 'symlink':
+        (parent / 'AGENTS.md').symlink_to(tooling / 'shared.md')
+    else:
+        (parent / 'AGENTS.md').write_text('Parent policy sentinel.')
+    (workspace / 'AGENTS.md').write_text('Workspace policy sentinel.')
+    monkeypatch.chdir(workspace)
+    values: dict[str, JsonValue] = {
+        'repo_context.walk_up_root': {'default': '~', 'ancestor': str(parent), 'nonancestor': str(home)}[root],
+        'repo_context.autoload_symlink_roots': [str(tooling)] if allow_target else [],
+    }
+    host = PluginHost[None](
+        name='repo_context',
+        console=Console(file=io.StringIO()),
+        settings={'walk_up': walk_up},
+        setting=values.__getitem__,
+    )
+    loaded = load_plugin(RepoContextPlugin, host)
+    model = TestModel(call_tools=[])
+    await Agent(model, deps_type=type(None), capabilities=loaded.capabilities).run(
+        'boundary probe', workspace=LocalWorkspaceBackend(working_dir=workspace)
+    )
+    assert model.last_model_request_parameters is not None
+    text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
+    assert 'Workspace policy sentinel.' in text
+    assert ('Parent policy sentinel.' in text) is parent_loaded
+    if location == 'symlink' and parent_loaded:
+        assert '../AGENTS.md' in text
+        assert 'shared.md' not in text, 'external instructions retain the scanned entry label'
+
+
+@pytest.mark.moves_cache_prefix(reason='User instruction boundaries deliberately change between independent runs.')
+async def test_repo_context_uses_live_user_settings_on_the_next_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / 'home'
+    home.mkdir()
+    monkeypatch.setenv('HOME', str(home))
+    parent = tmp_path / 'outside'
+    workspace = parent / 'workspace'
+    workspace.mkdir(parents=True)
+    tooling = tmp_path / 'tooling'
+    tooling.mkdir()
+    (tooling / 'policy.md').write_text('Live parent sentinel.')
+    (parent / 'AGENTS.md').symlink_to(tooling / 'policy.md')
+    monkeypatch.chdir(workspace)
+    store = SettingsStore(tmp_path / 'config.db')
+    host = PluginHost[None](
+        name='repo_context',
+        console=Console(file=io.StringIO()),
+        settings={'walk_up': True},
+        setting=lambda key: store.load().model_dump()[SETTING_FIELDS[key]],
+    )
+    loaded = load_plugin(RepoContextPlugin, host)
+    model = TestModel(call_tools=[])
+    agent = Agent(model, deps_type=type(None), capabilities=loaded.capabilities)
+    for step, expected in enumerate([False, False, True, False, True, False]):
+        if step == 1:
+            store.set('repo_context.walk_up_root', str(parent))
+        elif step == 2:
+            store.set('repo_context.autoload_symlink_roots', [str(tooling)])
+        elif step == 3:
+            store.reset('repo_context.autoload_symlink_roots')
+        elif step == 4:
+            store.set('repo_context.autoload_symlink_roots', [str(tooling)])
+        elif step == 5:
+            store.reset('repo_context.walk_up_root')
+        await agent.run(f'live boundary probe {step}', workspace=LocalWorkspaceBackend(working_dir=workspace))
+        assert model.last_model_request_parameters is not None
+        text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
+        assert ('Live parent sentinel.' in text) is expected
+
+
+@pytest.mark.parametrize('walk_up', [False, True])
+async def test_repo_context_without_clai_settings_keeps_home_defaults(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, walk_up: bool
+) -> None:
+    home = tmp_path / 'home'
+    workspace = home / 'workspace'
+    workspace.mkdir(parents=True)
+    (home / 'AGENTS.md').write_text('Home fallback sentinel.')
+    tooling = tmp_path / 'tooling'
+    tooling.mkdir()
+    (tooling / 'policy.md').write_text('Unauthorized fallback sentinel.')
+    (workspace / 'AGENTS.md').symlink_to(tooling / 'policy.md')
+    monkeypatch.setenv('HOME', str(home))
+    monkeypatch.chdir(workspace)
+    loaded = load_plugin(
+        RepoContextPlugin,
+        PluginHost[None](
+            name='repo_context',
+            console=Console(file=io.StringIO()),
+            settings={'walk_up': walk_up},
+        ),
+    )
+    model = TestModel(call_tools=[])
+    await Agent(model, deps_type=type(None), capabilities=loaded.capabilities).run(
+        'no settings probe', workspace=LocalWorkspaceBackend(working_dir=workspace)
+    )
+    assert model.last_model_request_parameters is not None
+    text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
+    assert ('Home fallback sentinel.' in text) is walk_up
+    assert 'Unauthorized fallback sentinel.' not in text
+
+
+@pytest.mark.parametrize('field', ['walk_up_root', 'autoload_symlink_roots'])
+async def test_repo_context_plugin_cannot_supply_user_boundaries(tmp_path: Path, field: str) -> None:
+    harness = Harness(tmp_path)
+    with pytest.raises(PluginError, match='extra_forbidden'):
+        await harness.loader.command(
+            [
+                'add',
+                'repo_context',
+                'pydantic_clai2.builtin_plugins.repo_context',
+                json.dumps({field: '/' if field == 'walk_up_root' else ['/']}),
+            ]
+        )
+
+
+@pytest.mark.parametrize('walk_up', [False, True])
+async def test_repo_context_authorizes_workspace_links_independently_of_walk_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, walk_up: bool
+) -> None:
+    home = tmp_path / 'home'
+    tooling = home / 'shared tooling'
+    tooling.mkdir(parents=True)
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    (tooling / 'policy.md').write_text('Authorized workspace link sentinel.')
+    (workspace / 'AGENTS.md').symlink_to(tooling / 'policy.md')
+    monkeypatch.setenv('HOME', str(home))
+    monkeypatch.chdir(workspace)
+    values: dict[str, JsonValue] = {
+        'repo_context.walk_up_root': '~',
+        'repo_context.autoload_symlink_roots': ['~/shared tooling'],
+    }
+    loaded = load_plugin(
+        RepoContextPlugin,
+        PluginHost[None](
+            name='repo_context',
+            console=Console(file=io.StringIO()),
+            settings={'walk_up': walk_up},
+            setting=values.__getitem__,
+        ),
+    )
+    model = TestModel(call_tools=[])
+    await Agent(model, deps_type=type(None), capabilities=loaded.capabilities).run(
+        f'workspace link probe {walk_up}', workspace=LocalWorkspaceBackend(working_dir=workspace)
+    )
+    assert model.last_model_request_parameters is not None
+    text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
+    assert 'Authorized workspace link sentinel.' in text
+    assert 'AGENTS.md' in text

@@ -56,16 +56,10 @@ __all__ = (
     'stamp_continuation_pin',
     'continuation_pin',
     'FALLBACK_MODEL_PIN_KEY',
-    'FALLBACK_CAPABILITY_PIN_KEY',
 )
 
 FALLBACK_MODEL_PIN_KEY = 'fallback_model_id'
 """Where `FallbackModel` pins a suspended response to the inner model that started it."""
-FALLBACK_CAPABILITY_PIN_KEY = 'fallback_candidate'
-"""Where the `ModelFallback` capability pins a suspended response to the candidate that served it.
-
-Separate from `FALLBACK_MODEL_PIN_KEY` so a `FallbackModel` candidate keeps its own inner pin.
-"""
 
 
 def stamp_continuation_pin(response: ModelResponse | StreamedResponse, model_id: str, *, key: str) -> None:
@@ -331,8 +325,8 @@ async def request_stream_until_first_event(
     error as the first stream event. Waiting for the first event means such an error is raised here,
     while the request can still fall back to another model. The event is replayed to the consumer,
     so the stream it gets is unchanged. A stream that ends without any event is handed over as is. The stream
-    is opened under the `request_timeout` `deadline`, if any, so waiting for the first event counts towards it
-    like every event after it.
+    is opened under `deadline`, if any, so waiting for the first event counts towards `request_timeout` like every
+    event after it, and is what `first_event_timeout` bounds.
 
     Shared by `FallbackModel` for each candidate and by the agent's primed stream, which the `ModelFallback`
     capability relies on.

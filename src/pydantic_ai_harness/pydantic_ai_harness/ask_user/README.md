@@ -109,6 +109,50 @@ calls. With `answerer=None`, no answerer is called: deferred hosts supply contex
 state. Durable execution can restrict access to context fields; see
 [Temporal's run-context rules](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#agent-run-context-and-dependencies).
 
+## Adding notes to an answer
+
+Set `AskUserAnswer.note` to a tuple of `UserContent` items to accompany selected labels or a
+custom answer. Text and images keep their order; notes do not replace the required answer.
+
+```python
+from pydantic_ai.messages import ImageUrl
+from pydantic_ai_harness.ask_user import AskUserAnswer
+
+answer = AskUserAnswer(
+    header='Database',
+    selected=('Postgres',),
+    note=('Keep version 16. Match this layout:', ImageUrl('https://example.com/schema.png')),
+)
+```
+
+Text, including `TextContent`, follows the custom-answer character rules. A nonempty note must
+contain nonblank text or an attachment, not only whitespace or cache markers. Run
+`check_response(request, response)` before submitting client input. The harness sets no note size
+limit; the answerer should bound text and attachments from clients.
+
+File URLs must use HTTP(S) and `force_download=False`. Notes reject other URL schemes, forced
+download modes (including `True` and `'allow-local'`), Google Files API URLs and `UploadedFile`
+provider references, even when a server-side answerer constructed them. To attach a file instead, have the application
+authorize access and supply its bytes as `BinaryContent`.
+
+Only the rendered text of `TextContent` and `StructuredContent` is forwarded; user-supplied text
+metadata is dropped so notes cannot claim framework provenance. The answered event still carries
+the original response before validation, so observers must treat its note metadata as user input.
+
+With notes, `ask_user_result` returns a `ToolReturn`: `return_value` is the unchanged answer
+dictionary, and `content` sends the notes as `UserPromptPart` content rather than tool data.
+Each note is framed by `<answer_note header="...">` and `</answer_note>` text items. Headers and
+framing tags inside text are escaped; images remain multimodal items between those boundaries.
+The boundary items are `TextContent` with `metadata` containing
+`origin='user.pydantic-ai-harness.ask_user.answer_note.v1'`, `request_id` and `header`, so applications
+can identify the record without matching visible text.
+The user-content origin keeps notes classified as user turns during compaction.
+Without notes, the result is the answer dictionary or decline text.
+
+Annotate results with `AskUserResult` from `pydantic_ai_harness.ask_user`. To inspect wrapped
+answers, narrow with `isinstance(result, ToolReturn)` and read `result.return_value`.
+Deferred hosts can pass the result directly to `DeferredToolResults.calls`.
+
 ## Bounding the wait
 
 The run waits inside the tool call for the answerer to return. Set `timeout`, in seconds, to
@@ -259,7 +303,9 @@ started. Two identical ones now become one, and two that differ fail when the ag
 
 `AskUser` emits no spans. Core's tool-call span already covers the wait, and the two events
 above carry what was asked and answered. That span records the tool's arguments and result,
-which here are the questions and the user's answers, custom text included. Set
+which here are the questions and the user's answers, custom text included. Notes and attachments
+appear in the following model request's user content; inline answers also record them in the tool
+span's serialized `ToolReturn`. The `include_content` setting applies to notes as well. Set
 [`include_content=False`](https://pydantic.dev/docs/ai/integrations/logfire/#excluding-prompts-and-completions) to leave them out.
 
 ## Specs

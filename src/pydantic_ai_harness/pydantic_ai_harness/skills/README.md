@@ -373,6 +373,25 @@ refunds = Capability(
 `Skills` loads portable Agent Skill packages. It does not replace the core API
 for code-defined capabilities.
 
+## Scan skills before loading them
+
+Skills an agent wrote, or that came from a third party, can carry instructions that take effect in a later session. Pass an [`ArtifactScanner`](../artifact_scanning/) to check each skill's description and body for prompt injection, credential exfiltration, HTML comments, and invisible characters before it is offered:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai_harness import ArtifactScanner, Skills
+
+agent = Agent(
+    capabilities=[
+        LocalWorkspace('.'),
+        Skills('.agents/skills', scanner=ArtifactScanner()),
+    ],
+)
+```
+
+A flagged skill is left out of the catalog with a `UserWarning`, and a zero-duration `artifact_scan flagged` span. `Skills.load()` reports it as a `SkippedSkill` with `reason='flagged'` and the findings in `scan`. Bundled files are not scanned, since `Skills` does not load them. The scanner belongs to the `Skills` it is passed to, so when two combine, a vetted library can go unscanned while an agent-written one is scanned.
+
 ## Configuration
 
 ```python {test="skip"}
@@ -385,6 +404,7 @@ Skills(
     duplicate_names: Literal['error', 'keep_first'] = 'error',
     unknown_names: Literal['error', 'skip'] = 'error',
     workspace: WorkspaceBackend | None = None,
+    scanner: ArtifactScanner | None = None,
 )
 ```
 
@@ -395,6 +415,7 @@ Skills(
 - `duplicate_names='keep_first'` keeps the first of two skills with one name, with a warning.
 - `unknown_names='skip'` ignores `include` and `exclude` names that no library has.
 - `workspace` reads the libraries from this backend instead of the run's workspace.
+- `scanner` checks each skill's description and body with an [`ArtifactScanner`](../artifact_scanning/) and leaves flagged skills out of the catalog; see [Scan skills before loading them](#scan-skills-before-loading-them).
 
 Pass at least one library directory, not the path of an individual skill
 package. Malformed frontmatter, invalid UTF-8, and invalid or mismatched names warn and skip that skill. Unknown selections fail at run start, and so do duplicate selected names, missing libraries, and library paths that are files or skill packages, unless `duplicate_names`, `missing_directories`, or `unknown_names` say otherwise.

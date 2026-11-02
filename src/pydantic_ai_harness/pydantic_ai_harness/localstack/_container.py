@@ -14,7 +14,7 @@ import anyio.to_thread
 import httpx
 
 _EDGE_PORT = 4566
-_HEALTH_PATH = '/_localstack/health'
+HEALTH_PATH = '/_localstack/health'
 _AUTH_TOKEN_ENV = 'LOCALSTACK_AUTH_TOKEN'
 _LEGACY_API_KEY_ENV = 'LOCALSTACK_API_KEY'
 _DOCKER_SOCKET = '/var/run/docker.sock'
@@ -128,7 +128,7 @@ class LocalStackContainer:
 
     @property
     def _readiness_url(self) -> str:
-        return f'http://{_connect_host(self._host_address)}:{self._host_port}{_HEALTH_PATH}'
+        return f'http://{_connect_host(self._host_address)}:{self._host_port}{HEALTH_PATH}'
 
     @property
     def container_id(self) -> str | None:
@@ -152,9 +152,8 @@ class LocalStackContainer:
         """Stop and remove the container."""
         await self._stop()
 
-    def _run_argv(self, environment: Mapping[str, str] | None = None) -> list[str]:
+    def _run_argv(self, container_environment: Mapping[str, str]) -> list[str]:
         """Build the `docker run` argument vector."""
-        container_environment = self._effective_environment() if environment is None else environment
         host = _url_host(self._host_address)
         argv = [
             self._docker_path,

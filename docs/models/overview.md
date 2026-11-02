@@ -1,10 +1,12 @@
 ---
-description: "Find supported model developers, cloud platforms, inference services, gateways and local servers, with setup guides, model selection and fallback configuration."
+description: "Pydantic AI is model-agnostic: switch between OpenAI, Anthropic, Gemini, Amazon Bedrock, Google Vertex AI, Azure OpenAI and local models by changing one string. Find each provider's setup guide, model selection and fallback configuration."
 ---
 
 # Models and Providers
 
 Pydantic AI supports model developers, cloud platforms, inference services, gateways, and local model servers. Find your service below and follow its setup guide for installation, authentication, and supported features.
+
+Pydantic AI is model-agnostic: switch an agent between OpenAI, Anthropic, Gemini, Amazon Bedrock, Google Vertex AI, Azure OpenAI and local models by changing one string, without rewriting the agent. It runs on [Azure OpenAI](azure.md), [Amazon Bedrock](bedrock.md) and [Google Vertex AI](google-cloud.md) with your cloud's own credentials.
 
 To keep an agent running when a provider fails, give it other models to fall back to with the [`ModelFallback`](../capabilities/model-fallback.md) capability: see [Fallback Model](#fallback-model).
 
@@ -443,7 +445,7 @@ from pydantic_ai.capabilities import ModelFallback
 agent = Agent('{{ openai:medium }}', capabilities=[ModelFallback('{{ anthropic:medium }}')])
 ```
 
-`ModelFallback` makes each attempt within the agent's own request loop, so capabilities see the model that will serve each attempt and prepare the request for it, each attempt is [batched](../batch.md) on its own model, and under [durable execution](../durable_execution/overview.md) each attempt is a durable model operation of its own. See [Model Fallback](../capabilities/model-fallback.md) for how it works, and [Migrating from `FallbackModel`](../capabilities/model-fallback.md#migrating-from-fallbackmodel) to move an agent over.
+`ModelFallback` makes each attempt within the agent's own request loop, so capabilities see the model that will serve each attempt and prepare the request for it, each attempt is [batched](../batch.md) on its own model, and under [durable execution](../durable_execution/overview.md) each attempt is a durable model operation of its own. See [Model Fallback](../capabilities/model-fallback.md) for how it works, and [Migrating from `FallbackModel`](../capabilities/model-fallback.md#migrating-from-fallbackmodel) to move an agent over. [Recovery scopes compared](../retries.md#recovery-scopes) sets fallback beside retrying the same model and the other ways a request is attempted again.
 
 The rest of this section covers [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], which remains the way to fall back with [direct model requests](../direct.md) or a standalone model, outside an agent. Its `fallback_on` policies, failed attempts and telemetry work the same way under `ModelFallback`, so the handler examples below apply to both.
 
@@ -470,7 +472,7 @@ exception handlers, and response handlers — all of which can be sync or async.
 
     When using `FallbackModel`, it's recommended to disable provider SDK retries to ensure immediate fallback, by setting [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to `0` on the agent, or on each candidate model but the last. Bedrock and xAI ignore it and warn with [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning], so with one of those as a candidate, set it on the other candidates. See [The layers](../retries.md#the-layers) in the retries guide for the full retry map.
 
-    To bound how long the fallback can be delayed instead, set [`request_timeout`](../timeouts.md#model-request-deadlines) in the model settings: each model gets that long across all of its attempts, and when it runs out the resulting [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] triggers the fallback to the next model, which gets a fresh deadline.
+    To bound how long the fallback can be delayed instead, set [`request_timeout`](../timeouts.md#model-request-deadlines) in the model settings: each model gets that long across all of its attempts, and when it runs out the resulting [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] triggers the fallback to the next model, which gets a fresh deadline. On a streamed request, [`first_event_timeout`](../timeouts.md#waiting-for-the-first-event) does the same for the wait until a model starts producing output, without cutting off a long response once it has.
 
 In the following example, the agent first makes a request to the OpenAI model (which fails due to an invalid API key),
 and then falls back to the Anthropic model.
@@ -508,6 +510,7 @@ print(response.all_messages())
         parts=[TextPart(content='The capital of France is Paris.')],
         usage=RequestUsage(cost=Decimal('0.000182'), input_tokens=56, output_tokens=7),
         model_name='{{ anthropic:medium.name }}',
+        model_id='fallback:{{ openai:medium }},{{ anthropic:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',

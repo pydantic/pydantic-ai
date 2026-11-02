@@ -7,13 +7,13 @@ import inspect
 import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Literal, Self
+from typing import Any, Literal, Self
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, ModelSelection, NativeOrLocalTool
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ModelResponse
-from pydantic_ai.models import ModelRequestContext, parse_model_id
+from pydantic_ai.models import KnownModelName, ModelRequestContext, parse_model_id
 from pydantic_ai.native_tools import AdvisorTool
 from pydantic_ai.output import OutputSpec
 from pydantic_ai.settings import ModelSettings
@@ -159,6 +159,34 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
             raise ValueError("Advisor.max_uses is not supported by OpenRouter in mode='native'")
 
         self._build_tools()
+
+    @classmethod
+    def from_spec(
+        cls,
+        model: KnownModelName | str,
+        *,
+        mode: Literal['auto', 'native', 'local'] = 'auto',
+        max_uses: int | None = None,
+        max_tokens: int | None = None,
+        caching: Literal['5m', '1h'] | None = None,
+        forward_history: bool = False,
+        **kwargs: Any,
+    ) -> Advisor[Any]:
+        """Build from an agent spec, covering the fields a spec can express.
+
+        Every JSON-expressible parameter is named because that signature is what core reads to
+        generate the spec's JSON schema. A spec names the model by string. `output_type` has no
+        JSON form, so it is passed through `**kwargs`, which the schema omits.
+        """
+        return cls(
+            model,
+            mode=mode,
+            max_uses=max_uses,
+            max_tokens=max_tokens,
+            caching=caching,
+            forward_history=forward_history,
+            **kwargs,
+        )
 
     def _build_tools(self) -> None:
         """Build the native factory and local tool from the fields, and initialise the base capability."""

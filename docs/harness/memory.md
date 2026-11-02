@@ -46,7 +46,7 @@ The namespace is resolved by application code, not supplied to the tools. The mo
 
 ### Reading memory with `FileSystem`
 
-When the store is a `FileStore` that keeps its files in the run's workspace (no `workspace=` of its own, and a relative `directory` inside the working directory) and `FileSystem` is on the agent, `read_memory` steps aside for `FileSystem`'s `read_file`. The tool is marked with [`unless_tool_kind`][pydantic_ai.tools.ToolDefinition.unless_tool_kind] set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind. Keep `FileSystem` under its own names for now: a renamed `FileSystem` tool can't be called yet ([#10927](https://github.com/pydantic/pydantic-ai/issues/10927)). With a `store_resolver`, the store it returns for the run decides. The guidance in the instructions doesn't name a reader, so it is the same in every run and stays in the cached prefix. An instruction block of its own, named `directory`, says where this scope's files are, for example "Memory files are in `.agent-memory/main/` in the workspace; read them with the file-reading tool.", so the model knows even in a run that records no snapshot. The block is there from the first request, empty while no file reader is on the run, and appended to the history when one joins. Its text counts against `max_tokens` with the guidance and the snapshot: when it doesn't fit, `read_memory` stays and the block says nothing; the injected `<memory>` block says so too, and the notices that pointed at `read_memory` (lines left out of the injected notebook, an `old_text` that was not found) name a `read_file` call on the file's path instead.
+When the store is a `FileStore` that keeps its files in the run's workspace (no `workspace=` of its own, and a relative `directory` inside the working directory) and `FileSystem` is on the agent, `read_memory` steps aside for `FileSystem`'s `read_file`. The tool is marked with [`unless_tool_kind`][pydantic_ai.tools.ToolDefinition.unless_tool_kind] set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind. With a `store_resolver`, the store it returns for the run decides. The guidance in the instructions doesn't name a reader, so it is the same in every run and stays in the cached prefix. An instruction block of its own, named `directory`, says where this scope's files are, for example "Memory files are in `.agent-memory/main/` in the workspace; read them with the file-reading tool.", so the model knows even in a run that records no snapshot. The block is there from the first request, empty while no file reader is on the run, and appended to the history when one joins. Its text counts against `max_tokens` with the guidance and the snapshot: when it doesn't fit, `read_memory` stays and the block says nothing; the injected `<memory>` block says so too, and the notices that pointed at `read_memory` (lines left out of the injected notebook, an `old_text` that was not found) name a `read_file` call on the file's path instead.
 
 `InMemoryStore`, `SqliteMemoryStore`, `PostgresMemoryStore` and a `FileStore` with a `workspace=` of its own keep their files where `FileSystem` cannot see them, so with those `read_memory` stays. With `inject_memory=False`, or when the guidance alone fills `max_tokens` so no snapshot fits, `read_memory` stays too: the injected `<memory>` block is where the model learns the files' directory.
 
@@ -127,7 +127,7 @@ If a memory path resolves outside its store, the tool asks the model to correct 
 pip/uv-add asyncpg
 ```
 
-```python {typecheck="skip - asyncpg's pooled connections are untyped proxies, see #10853"}
+```python
 import asyncpg
 
 from pydantic_ai_harness import Memory
@@ -301,6 +301,7 @@ Memory(
     injection_errors='ignore',         # or 'raise'
     guidance=None,                     # None uses the default notebook guidance
     write_metadata=None,               # needs a MetadataMemoryStore; see Write metadata
+    scanner=None,                      # an ArtifactScanner; see Scanning memory
 )
 ```
 
@@ -343,6 +344,27 @@ Each model request that uses automatic snapshot loading records one bounded snap
 Memory is model-written, untrusted content that can re-enter future prompts. Keeping it in a delimited user-role part lowers its authority relative to model instructions, but this is not a hard prompt-injection boundary. In stored content, the `<` of a `<memory>` or `</memory>` tag, in any case or spacing, is injected as `&lt;`, so stored text cannot end the block early. Use `inject_memory=False` when less-trusted actors can write to the store, and expose memory only through application-controlled retrieval when stronger isolation is required. Do not store secrets unless the backend, retention policy, and access controls are appropriate. Sanitize content before rendering it into another trust domain.
 
 Memory records do not carry source citations. To record who wrote a file, such as the user in your product or the agent, use [write metadata](#write-metadata) with a `MetadataMemoryStore` rather than a header in the note. Metadata records which writer produced the current version; it does not establish that a remembered claim is true, and neither does optimistic concurrency, which prevents lost updates.
+
+### Scanning memory
+
+Pass an [`ArtifactScanner`](artifact-scanning.md) to check what the model writes, and what later sessions load, for prompt injection, credential exfiltration, HTML comments, and invisible characters:
+
+```python
+from pydantic_ai_harness import ArtifactScanner, Memory
+
+memory = Memory(scanner=ArtifactScanner())
+```
+
+With a scanner set:
+
+- `write_memory` refuses flagged text with a tool failure that names the threats but does not quote the text, and stores nothing. Only the text being written is scanned, so a correction that removes a passage still succeeds.
+- A flagged `MEMORY.md` is left out of the injected snapshot, with a notice in its place, so the model can tell the user. The list of other files is still shown.
+- `read_memory` refuses a flagged file, and `search_memory` replaces a flagged snippet with a notice.
+- Each decision records a zero-duration `artifact_scan flagged` span, and the `memory.inject` span gains `memory.main_withheld`.
+
+The scan runs outside the durable operations `Memory` routes its tools through, so under Temporal, Prefect, or DBOS a refusal fails the tool call rather than an operation the engine would retry.
+
+Files that `FileSystem`'s `read_file` reads in place of `read_memory`, or that other tools open, are not scanned. The scan is pattern matching: it misses paraphrased instructions and can flag a note that quotes an attack, so treat it as one layer next to `inject_memory=False` for less-trusted writers.
 
 ## API reference
 

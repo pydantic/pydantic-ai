@@ -2,7 +2,10 @@
 
 from __future__ import annotations as _annotations
 
-from typing import cast
+from collections.abc import Mapping
+from typing import Protocol, cast
+
+import pydantic_core
 
 from ._utils import is_str_dict
 from .exceptions import (
@@ -125,6 +128,21 @@ def openai_compatible_category(
     if code == 'invalid_api_key':
         return ModelAuthenticationError
     return http_status_category(status_code, message) if status_code is not None else None
+
+
+_ZAI_QUOTA_CODES = frozenset(
+    {'1113', '1308', '1309', '1310', '1311', '1313', '1314', '1315', '1316', '1317', '1318', '1319', '1320', '1321'}
+)
+"""Z.ai error codes for an exhausted balance or plan limit, see https://docs.z.ai/api-reference/api-code."""
+
+
+def zai_code_category(code: str | None) -> HTTPErrorCategory | None:
+    """The error category for a Z.ai error code, where it differs from the HTTP status's.
+
+    Z.ai sends an exhausted balance or plan limit with a 429, like its transient `1302` rate limit and `1305` overload,
+    so only the code tells them apart.
+    """
+    return ModelQuotaExceededError if code in _ZAI_QUOTA_CODES else None
 
 
 _GOOGLE_CONTEXT_WINDOW_MESSAGES = ('input token count', 'number of tokens allowed')
@@ -295,3 +313,43 @@ def connection_error(model_name: str, message: str, error: BaseException, *, tim
     """A `ModelConnectionError` (or `ModelTimeoutError`) for a transport `error`, with its phase if known."""
     error_class = ModelTimeoutError if timeout else ModelConnectionError
     return error_class(model_name=model_name, message=message, phase=transport_phase(error))
+
+
+class HTTPStatusResponse(Protocol):
+    """The parts of an `httpx` or `httpx2` response that `transport_status_error` reads."""
+
+    @property
+    def status_code(self) -> int: ...
+
+    @property
+    def headers(self) -> Mapping[str, str]: ...
+
+    @property
+    def content(self) -> bytes: ...
+
+
+def transport_status_error(model_name: str, response: HTTPStatusResponse) -> ModelHTTPError:
+    """The `ModelHTTPError` for an error status the HTTP transport raised before the provider SDK saw the response.
+
+    A retrying transport's `validate_response` raises `HTTPStatusError` for a status it retries, and re-raises it
+    once it runs out of attempts. Most SDKs let that exception through unchanged, and `anthropic` and `groq` wrap it
+    in their connection error, though the provider did respond.
+    """
+    try:
+        content = response.content
+    except RuntimeError:  # `ResponseNotRead`: the transport closed the response without reading its body.
+        content = b''
+    text = content.decode(errors='replace')
+    body: object = None
+    if content:
+        try:
+            body = pydantic_core.from_json(content)
+        except ValueError:
+            body = text
+    return ModelHTTPError.for_category(
+        http_status_category(response.status_code, text),
+        status_code=response.status_code,
+        model_name=model_name,
+        body=body,
+        headers=dict(response.headers),
+    )
