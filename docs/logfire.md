@@ -539,7 +539,7 @@ Whether a call is traced, and whether its paths and commands are recorded, follo
 
 | Attribute | Value |
 |-----------|-------|
-| `pydantic_ai.workspace.provider`, `pydantic_ai.workspace.id` | On operation spans and on `workspace create`, `attach` and `destroy`: the workspace the call reached, once it exists, as on the agent run span. A `workspace stop` or a shell step's `workspace run` takes them from its parent span |
+| `pydantic_ai.workspace.provider`, `pydantic_ai.workspace.id` | On operation spans and on `workspace create`, `attach` and `destroy`: the workspace the call reached, once it exists, as on the agent run span. A `workspace stop` or a shell step's `workspace run` takes them from the spans above it |
 | `process.exit.code` | On `workspace run`: the command's exit code. A non-zero exit is a result, not an error, so the span's status stays unset |
 | `process.command_args` or `process.command_line` | On `workspace run`: the command as an argument list, or as the shell string it was given. Only with `include_content=True`; the command's `env` is never recorded |
 | `pydantic_ai.workspace.command.step` | On a shell-filesystem `workspace run`: what the command does, such as `stat`, `read_chunk` or `write_chunk`. These commands can carry file contents, so their text is never recorded |

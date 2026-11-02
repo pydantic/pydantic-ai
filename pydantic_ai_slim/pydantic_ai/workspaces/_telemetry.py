@@ -48,8 +48,8 @@ Operation: TypeAlias = Literal[
     'exists',
     'realpath',
 ]
-Lifecycle: TypeAlias = Literal['create', 'attach', 'stop', 'destroy']
-"""What a backend does to its environment or a running command, apart from the facade's operations."""
+Lifecycle: TypeAlias = Literal['create', 'attach', 'destroy']
+"""What a backend does to its environment, apart from the facade's operations."""
 Step: TypeAlias = Literal[
     'probe',
     'read_chunk',
@@ -158,9 +158,7 @@ def stop_span() -> AbstractContextManager[Span]:
     return _span('stop')
 
 
-def lifecycle_span(
-    operation: Literal['create', 'attach', 'destroy'], workspace: WorkspaceBackend | WorkspaceRef
-) -> AbstractContextManager[Span]:
+def lifecycle_span(operation: Lifecycle, workspace: WorkspaceBackend | WorkspaceRef) -> AbstractContextManager[Span]:
     """Open a `workspace create`, `attach` or `destroy` span around a sandbox lifecycle call.
 
     It opens even inside a workspace operation's span, as the first operation on a lazy backend is
@@ -171,7 +169,7 @@ def lifecycle_span(
 
 @contextmanager
 def _span(
-    operation: Operation | Lifecycle, workspace: WorkspaceBackend | WorkspaceRef | None = None
+    operation: Operation | Lifecycle | Literal['stop'], workspace: WorkspaceBackend | WorkspaceRef | None = None
 ) -> Generator[Span]:
     telemetry = _telemetry.get()
     if telemetry is None:
