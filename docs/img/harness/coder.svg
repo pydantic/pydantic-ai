@@ -65,9 +65,9 @@
 <rect x="694" y="368" width="154" height="166" rx="10" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.4"/>
 <text x="771" y="419" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">A cloud sandbox</text>
 <text x="771" y="438.6" font-size="12.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Modal, E2B, Sprites,</text>
-<text x="771" y="455.8" font-size="12.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Daytona or boxd. Swap</text>
-<text x="771" y="473.1" font-size="12.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">it in; Coder stays the</text>
-<text x="771" y="490.3" font-size="12.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">same.</text>
+<text x="771" y="455.8" font-size="12.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Daytona, boxd, Vercel.</text>
+<text x="771" y="473.1" font-size="12.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Swap it in; Coder stays</text>
+<text x="771" y="490.3" font-size="12.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">the same.</text>
 <line x1="658" y1="245" x2="690" y2="245" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
 <line x1="658" y1="451" x2="690" y2="451" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
 <rect x="32" y="557" width="14" height="14" rx="7" fill="#092224" stroke="#092224" stroke-width="1.2"/>

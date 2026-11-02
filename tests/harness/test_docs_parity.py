@@ -165,6 +165,7 @@ _CAPABILITY_PAGE_META = {
     'sprites-sandbox.md': ('sprites_sandbox', 'Sprites Sandbox'),
     'daytona-sandbox.md': ('daytona_sandbox', 'Daytona Sandbox'),
     'boxd-sandbox.md': ('boxd_sandbox', 'boxd Sandbox'),
+    'vercel-sandbox.md': ('vercel_sandbox', 'Vercel Sandbox'),
     'smol-sandbox.md': ('smol_sandbox', 'Smol Sandbox'),
     'boxlite-sandbox.md': ('boxlite_sandbox', 'BoxLite Sandbox'),
     'ssh-workspace.md': ('ssh_workspace', 'SSH Workspace'),
