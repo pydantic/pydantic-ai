@@ -504,6 +504,8 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     # thinking off, and accepts it live on the Anthropic API and Bedrock.
     disables_thinking_with_between_tools = model_name.startswith('claude-sonnet-5-5')
     distrusts_system_after_tool_result = model_name.startswith('claude-haiku-5-5')
+    # Measured on the Anthropic API, where Sonnet 4.6 has no mid-conversation system role: see the field's docstring.
+    needs_sealed_system_blocks = model_name.startswith('claude-sonnet-4-6')
 
     # The 5.1 generation, Opus 5.5, and Sonnet 5.5 reject a forced `tool_choice` (`any`/`tool`) outright, unlike
     # other Anthropic models which only reject forcing alongside extended thinking. Anthropic's
@@ -612,6 +614,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_disallows_top_effort_when_thinking_disabled=disallows_top_effort_when_thinking_disabled,
         anthropic_disables_thinking_with_between_tools=disables_thinking_with_between_tools,
         anthropic_distrusts_system_after_tool_result=distrusts_system_after_tool_result,
+        needs_sealed_system_blocks=needs_sealed_system_blocks,
         anthropic_default_code_execution_tool_version=default_code_execution_tool_version,
         anthropic_supported_code_execution_tool_versions=supported_code_execution_tool_versions,
         anthropic_supports_task_budgets=supports_task_budgets,

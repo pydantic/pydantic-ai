@@ -1444,7 +1444,7 @@ async def test_a_system_prompt_ahead_of_tool_returns_follows_them(
 
     Anthropic rejects a turn whose text comes before the results of the previous turn's tool calls ("tool_use ids
     were found without tool_result blocks immediately after"). On Claude Sonnet 4.6, which takes no mid-conversation
-    system messages, the prompt becomes `<system>` text in that turn, so it goes after the results.
+    system messages, the prompt becomes sealed `<system>` text in that turn, so it goes after the results.
     """
     agent = Agent(AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key)))
 
@@ -1468,4 +1468,4 @@ async def test_a_system_prompt_ahead_of_tool_returns_follows_them(
     assert result.output
     body = single_request_body(vcr)
     assert [block['type'] for block in body['messages'][-1]['content']] == ['tool_result', 'text']
-    assert body['messages'][-1]['content'][-1]['text'] == '<system>Answer in French.</system>'
+    assert body['messages'][-1]['content'][-1]['text'] == '<system seal="pydantic-ai">Answer in French.</system>'
