@@ -118,7 +118,7 @@ print(await backend.live_view_url())  # starts the sandbox and its desktop
 result = await agent.run('Open a terminal and find out which Python version is installed.', workspace=backend)
 ```
 
-Anyone with the link can see and use the desktop until it expires: after an hour, or after `expires_in` seconds.
+Anyone with the link can see and use the desktop until it expires, after an hour by default or after `expires_in` seconds if you pass it.
 
 ## Reattach later
 
