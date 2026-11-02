@@ -64,14 +64,17 @@ def test_edit_and_retry_replace_a_prompt_and_every_later_turn(make_web: MakeWeb)
             404,
             {'detail': 'That prompt can no longer be edited: it left the conversation or predates a compaction.'},
         )
+        # Images a terminal draft holds leave no room for the prompt's: the edit is refused, and the history restored.
         with pytest.MonkeyPatch.context() as patch:
-            patch.setattr(image_codec, 'MAX_PENDING_BYTES', 1)
+            patch.setattr(image_codec, 'MAX_PENDING_BYTES', 2 * len(red.data) - 1)
+            web_.shell.images.attach([red])
             refused = web_.post(route, {'text': "A'"})
-            assert (refused.status_code, refused.json()) == (
+            assert (refused.status_code, refused.json()['detail']) == (
                 400,
-                {'detail': 'These images exceed the 32 MiB limit; send fewer at a time.'},
+                "Images waiting in this session's prompt leave no room for these (32 MiB limit).",
             )
-            assert receive_until(socket, Snapshot)[1].items[-1].text == 'done', 'the browser gets the history back'
+            web_.shell.images.pending.clear()
+        assert receive_until(socket, Snapshot)[1].items[-1].text == 'done', 'the browser gets the history back'
         assert prompts() == [('A', [image_id(red)]), ('B', [])], 'a refusal keeps the history'
 
         assert web_.post(route, {'text': " A' "}).status_code == 204
