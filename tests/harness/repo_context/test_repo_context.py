@@ -49,6 +49,8 @@ from pydantic_ai_harness.repo_context._loader import (
     render_context_files,
 )
 
+from ...workspace_fakes import FakeWorkspace, FilesystemOnlyWorkspaceBackend
+
 
 @pytest.fixture
 def workspace(tmp_path: Path) -> Workspace:
@@ -194,6 +196,146 @@ class TestDiscoverInstructionFiles:
         files = await discover_instruction_files(workspace, tmp_path, None, ('CLAUDE.md',))
         assert len(files) == 1
         assert 'instructions' in files[0].content
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='symlinks need privileges on Windows')
+class TestRepoContextSymlinkRoots:
+    @pytest.mark.parametrize('authorized', [False, True])
+    async def test_autoload_external_target_keeps_entry_scope(self, tmp_path: Path, authorized: bool) -> None:
+        project = tmp_path / 'project'
+        working_dir = project / 'package'
+        _write(working_dir / 'AGENTS.md', 'package rules')
+        target = _write(tmp_path / 'tooling' / 'shared.md', 'shared rules')
+        _write(target.parent / 'AGENTS.md', 'do not scan the target directory')
+        (project / 'CLAUDE.md').symlink_to(target)
+        # The root itself may be a symlink and may use a workspace-relative spelling.
+        (tmp_path / 'authorized').symlink_to(target.parent, target_is_directory=True)
+        _write(tmp_path / 'AGENTS.md', 'above stop')
+        captured: list[str | None] = []
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            request = messages[0]
+            assert isinstance(request, ModelRequest)
+            captured.append(request.instructions)
+            yield 'done'
+
+        await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                RepoContext(home_dir='..', autoload_symlink_roots=['../../authorized'] if authorized else ())
+            ],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir))
+
+        if authorized:
+            assert captured == snapshot(
+                [
+                    """\
+<context id="capability:repo_context">
+<context-file path="../CLAUDE.md">
+shared rules
+</context-file>
+
+<context-file path="AGENTS.md">
+package rules
+</context-file>
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+"""
+                ]
+            )
+        else:
+            assert captured == snapshot(
+                [
+                    """\
+<context id="capability:repo_context">
+<context-file path="AGENTS.md">
+package rules
+</context-file>
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+"""
+                ]
+            )
+
+    @pytest.mark.parametrize('target_kind', ['sibling', 'prefix', 'chained', 'broken', 'directory'])
+    async def test_denies_targets_outside_authorized_root(self, tmp_path: Path, target_kind: str) -> None:
+        project = tmp_path / 'project'
+        project.mkdir()
+        root = tmp_path / 'tooling'
+        root.mkdir()
+        target = _write(tmp_path / ('tooling-extra' if target_kind == 'prefix' else 'other') / 'rules.md', 'denied')
+        if target_kind == 'chained':
+            (root / 'escape').symlink_to(target.parent, target_is_directory=True)
+            target = root / 'escape' / target.name
+        elif target_kind == 'broken':
+            target = root / 'missing.md'
+        elif target_kind == 'directory':
+            target = root
+        (project / 'AGENTS.md').symlink_to(target)
+        cap = RepoContext[object](autoload_symlink_roots=[root])
+        ctx = _run_context(Workspace(LocalWorkspaceBackend(project)))
+        await cap.before_run(ctx)
+        assert _render_capability_instructions(cap, ctx) is None
+
+    async def test_deduplicates_targets_and_content_without_changing_same_directory_labels(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        project = tmp_path / 'project'
+        leaf = project / 'package'
+        leaf.mkdir(parents=True)
+        target = _write(tmp_path / 'tooling' / 'shared.md', 'shared')
+        (project / 'CLAUDE.md').symlink_to(target)
+        (project / 'AGENTS.md').symlink_to(target)
+        (leaf / 'CLAUDE.md').symlink_to(_write(target.parent / 'copy.md', 'shared'))
+        _write(leaf / 'rules.md', 'local')
+        (leaf / 'AGENTS.md').symlink_to('rules.md')
+        cap = RepoContext[object](home_dir=project, autoload_symlink_roots=[target.parent])
+        workspace = Workspace(LocalWorkspaceBackend(leaf))
+        read = AsyncMock(wraps=workspace.read_bytes)
+        monkeypatch.setattr(workspace, 'read_bytes', read)
+        ctx = _run_context(workspace)
+        await cap.before_run(ctx)
+        assert read.await_count == 3
+        assert _render_capability_instructions(cap, ctx) == (
+            '<context-file path="../CLAUDE.md">\nshared\n</context-file>\n\n'
+            '<context-file path="rules.md">\nlocal\n</context-file>'
+        )
+
+    async def test_authorization_does_not_enable_nested_external_links(self, tmp_path: Path) -> None:
+        target = _write(tmp_path / 'tooling' / 'shared.md', 'not nested')
+        project = tmp_path / 'project'
+        (project / 'sub').mkdir(parents=True)
+        (project / 'sub' / 'AGENTS.md').symlink_to(target)
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                yield {0: DeltaToolCall(name='list_directory', json_args='{"path":"sub"}', tool_call_id='list')}
+            else:
+                assert _repo_notes(messages) == []
+                yield 'done'
+
+        await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[FileSystem(), RepoContext(nested_traversal=True, autoload_symlink_roots=[target.parent])],
+        ).run('go', workspace=LocalWorkspaceBackend(project))
+
+    @pytest.mark.parametrize(
+        ('autoload', 'authorized', 'fails_closed'),
+        [(False, False, False), (False, True, False), (True, False, False), (True, True, True)],
+    )
+    async def test_filesystem_without_realpath_fails_closed_only_for_autoload_opt_in(
+        self, autoload: bool, authorized: bool, fails_closed: bool
+    ) -> None:
+        backend = FilesystemOnlyWorkspaceBackend(FakeWorkspace('no-realpath'))
+        cap = RepoContext[object](
+            autoload_instructions=autoload, autoload_symlink_roots=['/tooling'] if authorized else ()
+        )
+        agent = Agent(TestModel(), capabilities=[cap])
+        if fails_closed:
+            with pytest.raises(UserError, match='`SupportsRealpath` or `SupportsCommands`'):
+                await agent.run('go', workspace=backend)
+        else:
+            await agent.run('go', workspace=backend)
 
 
 class TestFindDirContextFile:

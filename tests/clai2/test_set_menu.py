@@ -191,3 +191,31 @@ def test_editor_opens_holding_a_printable_value(value: str, initial: str) -> Non
     menu = FieldMenu(_Stored(value))
     editor = menu.build_editor(menu.rows[0])
     assert (editor.text, editor._placeholder) == (initial, 'empty resets to (empty)')  # pyright: ignore[reportPrivateUsage]
+
+
+def test_repo_context_settings_edit_paths_and_json_lists(tmp_path: Path) -> None:
+    context, applied = make_context(tmp_path)
+    source = SettingsSource(context)
+    menu = FieldMenu(source)
+    rows = {row.key: row for row in menu.rows}
+    root = rows['repo_context.walk_up_root']
+    targets = rows['repo_context.autoload_symlink_roots']
+    assert root.default == '~'
+    assert targets.default == '[]'
+    assert source.current(root) == '~'
+    assert source.current(targets) == '[]'
+    assert source.problem(root, 'relative') is not None
+    assert source.problem(targets, '/not-json') is not None
+    assert source.problem(targets, '["relative"]') is not None
+    assert source.apply(root, '~/my projects') == 'Saved repo_context.walk_up_root. Applied.'
+    raw = '["~/shared tooling", "/offline instructions"]'
+    assert source.apply(targets, raw) == 'Saved repo_context.autoload_symlink_roots. Applied.'
+    assert source.current(root) == '~/my projects'
+    assert source.current(targets) == raw
+    assert menu.initial(targets) == raw, 'lists must roundtrip as JSON, not Python repr'
+    assert context.store.load().repo_context_autoload_symlink_roots == ['~/shared tooling', '/offline instructions']
+    source.reset(root)
+    source.reset(targets)
+    assert context.settings.repo_context_walk_up_root == '~'
+    assert context.settings.repo_context_autoload_symlink_roots == []
+    assert applied == [root.key, targets.key, root.key, targets.key]

@@ -168,7 +168,7 @@ jobs:
       - name: Classify PR with Claude Code
         if: steps.check-label.outputs.has_label == 'false'
         id: classify
-        uses: anthropics/claude-code-action@aa8a7738e48bf30a40ee499ce818bef081c5ab5e # v1.0.257
+        uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ github.token }}
@@ -432,7 +432,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
 
       - id: review
-        uses: anthropics/claude-code-action@aa8a7738e48bf30a40ee499ce818bef081c5ab5e # v1.0.257
+        uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
         env:
           # Native tracing exports from Claude itself, retaining subprocess credential scrubbing.
           # https://code.claude.com/docs/en/monitoring-usage#traces-beta
