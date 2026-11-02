@@ -1828,6 +1828,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         messages = _replace_unsupported_tool_return_files(messages, self.profile)
         authored, messages = _tool_results_first(authored, messages)
         # The passes above replace or reorder parts one for one, so `authored` still lines up with `messages`.
+        tool_call_id_length = self.profile.get('tool_call_id_length')
+        if tool_call_id_length is not None:
+            # Fitted ahead of the notes too, one part for one, so a tool result's note names the call by the ID the
+            # wire carries. The pass below fits the parts rendered after this.
+            messages = _fit_tool_call_ids(messages, tool_call_id_length)
         messages = self._note_lookalike_frames(authored, messages)
 
         clears_request_scoped_prompts = self.profile.get('supports_request_scoped_system_prompts', False)
@@ -1916,7 +1921,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         messages = _order_tool_results_by_call(messages)
 
-        if (tool_call_id_length := self.profile.get('tool_call_id_length')) is not None:
+        if tool_call_id_length is not None:
             messages = _fit_tool_call_ids(messages, tool_call_id_length)
 
         return messages
@@ -2030,7 +2035,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         the first request's standing system prompt. `None` when the request has no note or frame.
 
         A tool or file note names the application's own mid-conversation system message when the request carries one
-        (`genuine_change` in `lookalike_frame_note`), unless the user's text in it has a lookalike too.
+        (`genuine_change` in `lookalike_frame_note`), unless the user's text in it has a lookalike too. On a profile
+        with `needs_sealed_system_blocks`, a user note names it too, and the request's own system messages go after
+        the user's words.
         """
         inline_system = self.profile.get('supports_inline_system_prompts', False)
         # With a system role, a tool's note goes right after the tool results even where the API takes it ahead of
@@ -2044,9 +2051,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             if first_request
             else 0
         )
-        genuine_change = any(isinstance(part, SystemPromptPart) for part in request.parts[leading:]) and not any(
-            source == 'user' for sources in all_sources for source, _ in sources
-        )
+        has_genuine = any(isinstance(part, SystemPromptPart) for part in request.parts[leading:])
+        user_lookalike = any(source == 'user' for sources in all_sources for source, _ in sources)
+        genuine_change = has_genuine and not user_lookalike
+        sealed = not inline_system and self.profile.get('needs_sealed_system_blocks', False)
         parts: list[ModelRequestPart] = []
         framed: list[ModelRequestPart] = []
         tool_notes: list[SystemPromptPart] = []
@@ -2098,7 +2106,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                         preceding=after,
                         tags=tags,
                         system_role=inline_system,
-                        genuine_change=genuine_change,
+                        genuine_change=has_genuine if source == 'user' else genuine_change,
+                        sealed=sealed,
                     ),
                     timestamp=request.timestamp or _utils.now_utc(),
                 )
@@ -2114,13 +2123,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         if not inline_system:
             # Without a system role, the request's own mid-conversation system prompts become `<system>` blocks in the
             # same user turn as a note and the text it describes. Ahead of both, they still read as the application's:
-            # after them, Claude Sonnet 5.5 on Bedrock followed a genuine change 0/8 times, ahead of them 7/8.
-            # A tool's note that names them is the exception where it follows the tool results: there the note goes
-            # first, then the application's block, then the user's words. Claude Sonnet 4.6 followed the genuine
-            # change 16/16 times that way and 0/16 the other way round, with no loss on the other models measured.
+            # after them, Claude Sonnet 5.5 on Bedrock followed a genuine change 0/8 times, ahead of them 7/8. That holds
+            # for a tool's note that names them too: Kimi K2.5 followed the genuine change 28/32 times with it ahead of
+            # the note, 15/32 with the note first.
             note_ids = {id(n) for n in [*tool_notes, *(p for p in framed if isinstance(p, SystemPromptPart))]}
-            if genuine_change and not precede_tool_results:
-                note_ids -= {id(n) for n in tool_notes}
             first_note = next((i for i, p in enumerate(parts) if id(p) in note_ids), None)
             if first_note is not None:
                 rest = parts[first_note:]
@@ -2128,6 +2134,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 if genuine:
                     genuine_ids = {id(p) for p in genuine}
                     parts = [*parts[:first_note], *genuine, *(p for p in rest if id(p) not in genuine_ids)]
+            if sealed:
+                parts = _system_prompts_after_user_words(parts, leading=leading)
         framed_ids = {id(part) for part in framed}
         frame_at = next((i for i, part in enumerate(parts) if id(part) in framed_ids), None)
         if frame_at is None:
@@ -2391,6 +2399,30 @@ class _FrameworkInstructionPart(InstructionPart, _FrameworkAdded):
 def _is_framework_added(part: object) -> bool:
     """Whether `part` is a lookalike note or the announcement that Pydantic AI added to a request it's preparing."""
     return isinstance(part, _FrameworkAdded)
+
+
+def _system_prompts_after_user_words(parts: list[ModelRequestPart], *, leading: int) -> list[ModelRequestPart]:
+    """Move a request's own mid-conversation system prompts to right after its last user prompt, notes left in place.
+
+    For a profile with `needs_sealed_system_blocks`: Claude Sonnet 4.6 followed a sealed block after the user's words
+    16/16 times where it ignored one ahead of them (steering after a tool result, and a user lookalike next to a
+    genuine change); the sealed announcement says such a block applies to the reply to those words. `leading` is the
+    standing prompt's length in the first request, which stays where it is.
+    """
+    last_user = max(
+        (i for i, part in enumerate(parts) if i >= leading and isinstance(part, UserPromptPart)), default=None
+    )
+    if last_user is None:
+        return parts
+    moved = [
+        part
+        for i, part in enumerate(parts[:last_user])
+        if i >= leading and isinstance(part, SystemPromptPart) and not isinstance(part, _FrameworkNote)
+    ]
+    if not moved:
+        return parts
+    kept = [part for part in parts[: last_user + 1] if not any(part is m for m in moved)]
+    return [*kept, *moved, *parts[last_user + 1 :]]
 
 
 def _wrapped_system_prompt(part: SystemPromptPart, *, sealed: bool) -> UserPromptPart:
