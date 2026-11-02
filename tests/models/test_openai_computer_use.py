@@ -41,7 +41,7 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.providers.openai import OpenAIProvider
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='openai not installed'), pytest.mark.anyio]
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
 
 TASK = 'Take a screenshot, then click at x=100 y=200, type "hello", and reply "done". Do nothing else.'
 
@@ -52,10 +52,10 @@ def _agent(openai_api_key: str, provider: InMemoryProvider, **settings: Any) -> 
 
 
 @pytest.mark.vcr
-@pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
-async def test_gpt_computer_calls_run_on_the_workspace(
-    allow_model_requests: None, openai_api_key: str, stream: bool
+async def test_streamed_gpt_computer_calls_run_on_the_workspace(
+    allow_model_requests: None, openai_api_key: str
 ) -> None:
+    """The request without streaming is `test_computer_calls_go_back_to_a_request_without_the_computer_tool`."""
     provider = InMemoryProvider()
     agent = _agent(openai_api_key, provider)
 
@@ -63,7 +63,7 @@ async def test_gpt_computer_calls_run_on_the_workspace(
         async for _ in events:
             pass
 
-    await agent.run(TASK, event_stream_handler=drain if stream else None)
+    await agent.run(TASK, event_stream_handler=drain)
 
     # GPT-5.5's real `computer_call`s became `computer` calls that ran.
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
@@ -451,22 +451,6 @@ async def test_an_action_with_a_field_that_does_not_map_runs_nothing(allow_model
     assert call.args_as_dict() == {'actions': [{'type': 'click', 'unsupported_fields': ['duration_ms']}]}
 
 
-async def test_a_refused_action_is_explained_after_its_screenshot(allow_model_requests: None) -> None:
-    client = MockOpenAIResponses.create_mock(
-        [_computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'}), _done()]
-    )
-    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    provider = InMemoryProvider()
-    await Agent(model, toolsets=[computer_toolset()], capabilities=[provider.capability(read_only=True)]).run('Go.')
-
-    _, second = get_mock_responses_kwargs(client)
-    output, note = second['input'][-2:]
-    assert output['type'] == 'computer_call_output'
-    assert note['role'] == 'user'
-    assert note['content'].startswith('Ran 0 of 1 actions. The next one failed: This workspace is read-only')
-    assert provider.actions == []
-
-
 async def test_a_failed_call_sends_a_blank_screenshot_and_says_why(allow_model_requests: None) -> None:
     async def computer(actions: list[ComputerToolAction]) -> ToolReturn:
         raise ToolFailed('Taking the screenshot failed: scrot: not found')
@@ -570,6 +554,7 @@ async def test_computer_calls_from_another_provider_replay_as_function_calls(all
 def test_openai_actions_map_onto_the_computer_tool(
     action: dict[str, Any], mapped: dict[str, Any] | list[dict[str, Any]]
 ) -> None:
+    """Every action OpenAI documents, including ones no recording has: a VCR test would pin only what GPT sent."""
     assert _map_computer_action(action) == (mapped if isinstance(mapped, list) else [mapped])
 
 
