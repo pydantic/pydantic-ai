@@ -562,8 +562,8 @@ warning on whichever are configured; narrow that with `warn_on`.
 ## Cost: why summarization is the last resort
 
 Summarization turns input tokens into output tokens, which are billed at a premium and generated
-serially. The zero-LLM strategies touch only the cheaper input side. `TieredCompaction` clears and
-dedupes first and summarizes only when that is not enough:
+serially. The zero-LLM strategies touch only the cheaper input side, so clear and dedupe first and
+summarize only when that is not enough -- `TieredCompaction` encodes that escalation:
 
 ```python
 from pydantic_ai import Agent
