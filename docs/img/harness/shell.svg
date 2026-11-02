@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="640" viewBox="0 0 880 640" role="img" aria-labelledby="t d">
+<title id="t">Shell: run commands in the workspace, with guardrails</title>
+<desc id="d">The model calls Shell tools: run_command, start_command, check_command and stop_command, or the opt-in shell tool. Before a command runs, its executable is checked against allowed_commands or denied_commands, its shell operators against denied_operators, and interactive commands are blocked; then it runs as a process in the workspace&#x27;s working directory with only the workspace&#x27;s environment plus Shell(env=). Four example calls show pytest running and returning labelled output, rm rejected by the default denylist, a dev server started in the background with an ID, and that ID used to check on or stop it.</desc>
+<defs><marker id="ai" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#092224"/></marker><marker id="am" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#55726A"/></marker><marker id="al" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#B417B7"/></marker><marker id="al2" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E520E9"/></marker><marker id="ap" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#7B57E8"/></marker><marker id="aa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0E9C86"/></marker><marker id="ac" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E5533D"/></marker><marker id="af" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8FA8A3"/></marker><marker id="ao" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#97998B"/></marker></defs>
+<rect x="0.5" y="0.5" width="879" height="639" rx="16" fill="#FFFFFF" stroke="#E6EAEA"/>
+<text x="32" y="50" font-size="21" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Shell: run commands in the workspace, with guardrails</text>
+<text x="32" y="78" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">The model runs commands and manages background processes. Each command is checked against your allow and deny</text>
+<text x="32" y="98" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">lists before it starts in the workspace.</text>
+<rect x="152" y="134" width="296" height="222" rx="12" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.3"/>
+<text letter-spacing="1.3" x="166" y="156" font-size="11" fill="#B417B7" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">SHELL TOOLS</text>
+<rect x="166" y="168" width="95.2" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="213.6" y="184.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">run_command</text>
+<rect x="269.2" y="168" width="109.2" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="323.8" y="184.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">start_command</text>
+<rect x="166" y="200" width="109.2" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="220.6" y="216.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">check_command</text>
+<rect x="283.2" y="200" width="102.2" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="334.3" y="216.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">stop_command</text>
+<text x="166" y="244" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">opt-in instead: one persistent tool</text>
+<rect x="166" y="254" width="53.1" height="24" rx="6" fill="#FFFFFF" stroke="#8FA8A3" stroke-width="1.2"/>
+<text x="192.5" y="270.1" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">shell</text>
+<text x="166" y="298" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Foreground waits up to 270 s, then returns the</text>
+<text x="166" y="315" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">PID, log path and status path.</text>
+<rect x="34" y="227" width="88" height="36" rx="18" fill="#092224"/>
+<text x="78" y="250" font-size="13.5" fill="#FBFFEA" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<line x1="124" y1="236" x2="148" y2="236" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="148" y1="254" x2="124" y2="254" stroke="#55726A" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#am)"/>
+<text letter-spacing="1.3" x="486" y="146" font-size="11" fill="#B417B7" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">BEFORE IT RUNS</text>
+<rect x="486" y="160" width="176" height="58.7" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="574" y="175.3" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">first token</text>
+<text x="574" y="194.4" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">allowed_commands or</text>
+<text x="574" y="210.9" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">denied_commands</text>
+<rect x="486" y="228.7" width="176" height="58.7" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="574" y="252.2" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">shell operators</text>
+<text x="574" y="271.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">denied_operators, e.g. &gt; |</text>
+<line x1="574" y1="218.7" x2="574" y2="226.7" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="486" y="297.3" width="176" height="58.7" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="574" y="320.9" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">interactive?</text>
+<text x="574" y="340" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">vi, sudo, ssh blocked</text>
+<line x1="574" y1="287.3" x2="574" y2="295.3" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="452" y1="245" x2="482" y2="245" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="700" y="142" width="148" height="214" rx="14" fill="none" stroke="#0E9C86" stroke-width="1.3" stroke-dasharray="4 4"/>
+<rect x="714" y="134" width="102.4" height="16" rx="4" fill="#FFFFFF"/>
+<text letter-spacing="1.3" x="721" y="146" font-size="11" fill="#0E9C86" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">WORKSPACE</text>
+<text x="714" y="174" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">working directory</text>
+<rect x="714" y="186" width="95.2" height="24" rx="6" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.2"/>
+<text x="761.6" y="202.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">$ pytest -q</text>
+<rect x="714" y="220" width="95.2" height="24" rx="6" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.2"/>
+<text x="761.6" y="236.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">$ npm start</text>
+<text x="714" y="268" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">environment</text>
+<text x="714" y="286" font-size="12" fill="#092224" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">PATH, HOME, LANG,</text>
+<text x="714" y="303" font-size="12" fill="#092224" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">LC_* plus Shell(env=)</text>
+<line x1="666" y1="245" x2="696" y2="245" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="32" y1="386" x2="848" y2="386" stroke="#E6EAEA" stroke-width="1"/>
+<text letter-spacing="1.3" x="32" y="412" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">WHAT HAPPENS TO A CALL</text>
+<rect x="40" y="430" width="179" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="129.5" y="446" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">run_command(&#x27;pytest -q&#x27;)</text>
+<line x1="129.5" y1="457" x2="129.5" y2="479" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="32" y="482" width="195" height="88" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="129.5" y="512" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Runs and returns</text>
+<text x="129.5" y="531" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">[stdout], [stderr] and exit code.</text>
+<text x="129.5" y="547.6" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Long output keeps its tail.</text>
+<rect x="240.3" y="430" width="192.5" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="336.5" y="446" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">run_command(&#x27;rm -rf dist&#x27;)</text>
+<line x1="336.5" y1="457" x2="336.5" y2="479" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="239" y="482" width="195" height="88" rx="10" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.4"/>
+<text x="336.5" y="503.7" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Rejected: denylist</text>
+<text x="336.5" y="522.7" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">rm is in the default</text>
+<text x="336.5" y="539.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">denied_commands. The model</text>
+<text x="336.5" y="555.9" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">gets a retry.</text>
+<rect x="447.3" y="430" width="192.5" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="543.5" y="446" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">start_command(&#x27;npm start&#x27;)</text>
+<line x1="543.5" y1="457" x2="543.5" y2="479" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="446" y="482" width="195" height="88" rx="10" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.4"/>
+<text x="543.5" y="503.7" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Runs in the background</text>
+<text x="543.5" y="522.7" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Returns a command_id. Output</text>
+<text x="543.5" y="539.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">is logged under</text>
+<text x="543.5" y="555.9" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">.pydantic-ai-harness/shell/.</text>
+<rect x="661" y="430" width="179" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="750.5" y="446" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">stop_command(command_id)</text>
+<line x1="750.5" y1="457" x2="750.5" y2="479" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="653" y="482" width="195" height="88" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="750.5" y="503.7" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Stopped</text>
+<text x="750.5" y="522.7" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">SIGTERM to the process group,</text>
+<text x="750.5" y="539.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">then SIGKILL; final output</text>
+<text x="750.5" y="555.9" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">comes back.</text>
+<rect x="32" y="593" width="14" height="14" rx="7" fill="#092224" stroke="#092224" stroke-width="1.2"/>
+<text x="52" y="604" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<rect x="107.4" y="593" width="14" height="14" rx="4" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="127.4" y="604" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">added by Shell</text>
+<rect x="229.8" y="593" width="14" height="14" rx="4" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.2"/>
+<text x="249.8" y="604" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">process in the workspace</text>
+<rect x="416.7" y="593" width="14" height="14" rx="4" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.2"/>
+<text x="436.7" y="604" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">rejected</text>
+</svg>

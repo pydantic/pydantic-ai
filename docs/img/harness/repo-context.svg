@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="576" viewBox="0 0 880 576" role="img" aria-labelledby="t d">
+<title id="t">Repo Context: load the instruction files a repo already has</title>
+<desc id="d">RepoContext has three strategies. On by default, the walk-up loads AGENTS.md and CLAUDE.md from the working directory and each ancestor up to home_dir into the instructions, broadest first, once per run. Off by default, the inventory_agent_context tool reports where the .claude, .agents, .codex and .grok roots keep skills, agents and hooks. Off by default, nested traversal reacts to FileSystem reading or listing a directory, such as src/api, and queues a pointer to that directory&#x27;s AGENTS.md before the next model request.</desc>
+<defs><marker id="ai" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#092224"/></marker><marker id="am" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#55726A"/></marker><marker id="al" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#B417B7"/></marker><marker id="al2" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E520E9"/></marker><marker id="ap" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#7B57E8"/></marker><marker id="aa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0E9C86"/></marker><marker id="ac" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E5533D"/></marker><marker id="af" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8FA8A3"/></marker><marker id="ao" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#97998B"/></marker></defs>
+<rect x="0.5" y="0.5" width="879" height="575" rx="16" fill="#FFFFFF" stroke="#E6EAEA"/>
+<text x="32" y="50" font-size="21" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Repo Context: load the instruction files a repo already has</text>
+<text x="32" y="78" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">RepoContext finds a repo&#x27;s AGENTS.md and CLAUDE.md files and its .claude or .agents setup, and gives them to the</text>
+<text x="32" y="98" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model in the place that keeps the prompt cache intact.</text>
+<text letter-spacing="1.3" x="32" y="132" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">WHAT THE MODEL GETS</text>
+<text letter-spacing="1.3" x="296" y="132" font-size="11" fill="#B417B7" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">REPOCONTEXT</text>
+<rect x="594" y="150" width="254" height="296" rx="14" fill="none" stroke="#7B57E8" stroke-width="1.3" stroke-dasharray="4 4"/>
+<rect x="608" y="142" width="102.4" height="16" rx="4" fill="#FFFFFF"/>
+<text letter-spacing="1.3" x="615" y="154" font-size="11" fill="#7B57E8" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">WORKSPACE</text>
+<text x="608" y="184" font-size="11.5" fill="#092224" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">/home/me/</text>
+<rect x="682" y="168" width="78.4" height="24" rx="6" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="721.2" y="184" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">AGENTS.md</text>
+<text x="766.4" y="184" font-size="11.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">home_dir</text>
+<text x="622" y="220" font-size="11.5" fill="#092224" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">repo/</text>
+<rect x="682" y="204" width="78.4" height="24" rx="6" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="721.2" y="220" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">CLAUDE.md</text>
+<text x="766.4" y="220" font-size="11.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">working dir</text>
+<text x="622" y="404" font-size="11.5" fill="#092224" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">src/api/</text>
+<rect x="682" y="388" width="78.4" height="24" rx="6" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="721.2" y="404" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">AGENTS.md</text>
+<text x="622" y="278" font-size="11.5" fill="#092224" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">.claude/</text>
+<rect x="622" y="290" width="65" height="24" rx="6" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="654.5" y="306" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">skills/</text>
+<rect x="695" y="290" width="65" height="24" rx="6" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="727.5" y="306" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">agents/</text>
+<rect x="622" y="322" width="105.2" height="24" rx="6" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="674.6" y="338" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">settings.json</text>
+<rect x="296" y="154" width="260" height="84" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<circle cx="318" cy="176" r="11" fill="#B417B7"/>
+<text x="318" y="180.5" font-size="12.5" fill="#FFFFFF" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">1</text>
+<text x="336" y="181" font-size="13" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Walk-up autoload</text>
+<text x="310" y="204" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">On by default. Files from the working</text>
+<text x="310" y="221" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">directory up to home_dir, broadest first.</text>
+<rect x="32" y="154" width="236" height="84" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="150" y="182" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">instructions</text>
+<text x="150" y="201" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Read once at run start, so the cached</text>
+<text x="150" y="217.6" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">prefix stays the same.</text>
+<line x1="292" y1="196" x2="272" y2="196" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="590" y1="196" x2="560" y2="196" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="296" y="256" width="260" height="84" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<circle cx="318" cy="278" r="11" fill="#B417B7"/>
+<text x="318" y="282.5" font-size="12.5" fill="#FFFFFF" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">2</text>
+<text x="336" y="283" font-size="12.5" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">inventory_agent_context()</text>
+<text x="310" y="306" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Opt-in tool. Reports where skills,</text>
+<text x="310" y="323" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">sub-agents and hooks live.</text>
+<rect x="32" y="256" width="236" height="84" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="150" y="284" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">a tool result</text>
+<text x="150" y="303" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">An AgentContextInventory: roots and</text>
+<text x="150" y="319.6" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">what they hold.</text>
+<line x1="292" y1="298" x2="272" y2="298" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="590" y1="298" x2="560" y2="298" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="296" y="358" width="260" height="84" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<circle cx="318" cy="380" r="11" fill="#B417B7"/>
+<text x="318" y="384.5" font-size="12.5" fill="#FFFFFF" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">3</text>
+<text x="336" y="385" font-size="12.5" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">nested_traversal</text>
+<text x="310" y="408" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Opt-in. On FileReadEvent or</text>
+<text x="310" y="425" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">DirectoryListedEvent, surfaces that</text>
+<text x="310" y="442.1" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">directory&#x27;s file.</text>
+<rect x="32" y="358" width="236" height="84" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="150" y="386" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">the message tail</text>
+<text x="150" y="405" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">A pointer to src/api/AGENTS.md,</text>
+<text x="150" y="421.6" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">queued before the next request.</text>
+<line x1="292" y1="400" x2="272" y2="400" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="590" y1="400" x2="560" y2="400" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="106" y="470" width="88" height="36" rx="18" fill="#092224"/>
+<text x="150" y="493" font-size="13.5" fill="#FBFFEA" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<line x1="150" y1="446" x2="150" y2="468" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<text x="296" y="484" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Walk-up files carry the weight of your own instructions. Nested files reach the model as user</text>
+<text x="296" y="501.8" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">content, wrapped in &lt;context-file&gt; tags.</text>
+<rect x="32" y="529" width="14" height="14" rx="7" fill="#092224" stroke="#092224" stroke-width="1.2"/>
+<text x="52" y="540" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<rect x="107.4" y="529" width="14" height="14" rx="4" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="127.4" y="540" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">added by RepoContext</text>
+<rect x="269.8" y="529" width="14" height="14" rx="4" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="289.8" y="540" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">parts of the request</text>
+<rect x="421.3" y="529" width="14" height="14" rx="4" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="441.3" y="540" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">repo files</text>
+</svg>

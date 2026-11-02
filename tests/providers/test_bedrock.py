@@ -2,7 +2,7 @@ from copy import deepcopy
 from typing import Annotated, Literal, cast, get_args
 
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from pytest_mock import MockerFixture
 
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchema, JsonSchemaTransformer
@@ -784,6 +784,63 @@ def test_strict_true_strips_array_max_items():
     )
 
 
+def test_strict_true_strips_unsupported_regex_patterns():
+    """With strict=True, patterns using lookaround or backreferences are stripped and noted in description."""
+
+    class Codes(BaseModel):
+        # `python-re`, since Pydantic's default Rust regex engine rejects lookaround and backreferences.
+        model_config = ConfigDict(regex_engine='python-re')
+
+        lookahead: Annotated[str, Field(pattern=r'\d+(?=USD)')]
+        negative_lookahead: Annotated[str, Field(pattern=r'\d+(?!USD)')]
+        lookbehind: Annotated[str, Field(pattern=r'(?<=USD)\d+')]
+        negative_lookbehind: Annotated[str, Field(pattern=r'(?<!USD)\d+')]
+        backreference: Annotated[str, Field(pattern=r'^(a)\1$')]
+        named_backreference: Annotated[str, Field(pattern=r'^(?P<x>a)(?P=x)$')]
+        octal: Annotated[str, Field(pattern=r'^\123+$')]
+        escaped_zero: Annotated[str, Field(pattern=r'^a\0?$')]
+        escaped: Annotated[str, Field(pattern=r'^\(?=\\1$')]
+        character_class: Annotated[str, Field(pattern=r'^[A-Za-z(?=]+$')]
+        plain: Annotated[str, Field(pattern=r'^[A-Z]{3}$')]
+
+    transformer = BedrockJsonSchemaTransformer(Codes.model_json_schema(), strict=True)
+    transformed = transformer.walk()
+
+    assert transformer.is_strict_compatible is True
+    assert transformed == snapshot(
+        {
+            'properties': {
+                'lookahead': {'type': 'string', 'description': 'pattern=\\d+(?=USD)'},
+                'negative_lookahead': {'type': 'string', 'description': 'pattern=\\d+(?!USD)'},
+                'lookbehind': {'type': 'string', 'description': 'pattern=(?<=USD)\\d+'},
+                'negative_lookbehind': {'type': 'string', 'description': 'pattern=(?<!USD)\\d+'},
+                'backreference': {'type': 'string', 'description': 'pattern=^(a)\\1$'},
+                'named_backreference': {'type': 'string', 'description': 'pattern=^(?P<x>a)(?P=x)$'},
+                'octal': {'type': 'string', 'description': 'pattern=^\\123+$'},
+                'escaped_zero': {'type': 'string', 'description': 'pattern=^a\\0?$'},
+                'escaped': {'pattern': '^\\(?=\\\\1$', 'type': 'string'},
+                'character_class': {'pattern': '^[A-Za-z(?=]+$', 'type': 'string'},
+                'plain': {'pattern': '^[A-Z]{3}$', 'type': 'string'},
+            },
+            'required': [
+                'lookahead',
+                'negative_lookahead',
+                'lookbehind',
+                'negative_lookbehind',
+                'backreference',
+                'named_backreference',
+                'octal',
+                'escaped_zero',
+                'escaped',
+                'character_class',
+                'plain',
+            ],
+            'type': 'object',
+            'additionalProperties': False,
+        }
+    )
+
+
 @pytest.mark.parametrize(
     'model_name',
     [
@@ -1117,3 +1174,29 @@ def test_bedrock_boolean_defs_preserved(definition: bool):
     original = deepcopy(schema)
     assert BedrockJsonSchemaTransformer(schema).walk() == original
     assert schema == original
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'video'),
+    [
+        ('us.anthropic.claude-sonnet-4-5-20250929-v1:0', False),
+        ('meta.llama4-maverick-17b-instruct-v1:0', False),
+        ('us.mistral.pixtral-large-2502-v1:0', False),
+        ('google.gemma-3-27b-it', False),
+        ('openai.gpt-oss-120b-1:0', False),
+        ('arn:aws:bedrock:us-east-1:123456789012:inference-profile/eu.meta.llama4-scout-17b-instruct-v1:0', False),
+        ('us.amazon.nova-pro-v1:0', True),
+        ('global.amazon.nova-2-lite-v1:0', True),
+        ('amazon.nova-micro-v1:0', False),
+    ],
+)
+def test_only_nova_takes_video(model_name: str, video: bool):
+    """Converse takes the `video` content block only on Amazon Nova, so every other family reports no video.
+
+    Not a VCR test: this pins the provider-level profile resolution, including ARN and geo-prefix forms, against
+    drift, while the multimodal tool-return matrix cassettes cover the wire behavior. Nova Micro is text-only, so
+    it is the expected `False` among the Nova models.
+    """
+    profile = BedrockProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('supports_video_input') is video

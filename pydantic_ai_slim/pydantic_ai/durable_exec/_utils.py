@@ -22,6 +22,7 @@ from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
 from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models._request_timeout import RequestDeadline
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
@@ -246,6 +247,11 @@ class DurableModel(WrapperModel):
 
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         await self._cancel_suspended_response_segment(response)
+
+    def _start_request_deadline(self, model_settings: ModelSettings | None, *, stream: bool) -> RequestDeadline | None:
+        # This side only gets a streamed segment once the durable unit has consumed it, so the unit enforces the
+        # `first_event_timeout` deadline, and this side just `request_timeout`'s.
+        return super()._start_request_deadline(model_settings, stream=False)
 
     def _with_serving_wrapper(self, wrap: Callable[[Model], Model]) -> Model:
         # The requests are sent from the durable unit, which wraps the model it rebuilds there, so this side only

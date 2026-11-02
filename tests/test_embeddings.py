@@ -24,6 +24,7 @@ from opentelemetry.trace import StatusCode
 from pytest_mock import MockerFixture
 
 from pydantic_ai._utils import BaseExceptionGroup
+from pydantic_ai._warnings import CostCalculationFailedWarning
 from pydantic_ai.embeddings import (
     Embedder,
     EmbeddingModel,
@@ -84,6 +85,9 @@ with try_import() as bedrock_imports_successful:
     from pydantic_ai.providers.bedrock import BedrockProvider
 
 with try_import() as google_imports_successful:
+    from google.genai.types import ContentEmbedding, ContentEmbeddingStatistics, EmbedContentResponse
+
+    from pydantic_ai.embeddings import google as google_embeddings
     from pydantic_ai.embeddings.google import (
         GoogleEmbeddingModel,
         GoogleEmbeddingSettings,
@@ -1794,6 +1798,19 @@ async def test_google_task_prefix_vertex(
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')
+@pytest.mark.parametrize('provider', ['google', 'google-cloud'])
+@pytest.mark.parametrize('token_count', [None, 0, 5])
+def test_google_embedding_usage_presence(provider: str, token_count: int | None):
+    """Pin the SDK statistics mapping, including reported zero which current Gemini recordings omit."""
+    statistics = None if token_count is None else ContentEmbeddingStatistics(token_count=token_count)
+    response = EmbedContentResponse(embeddings=[ContentEmbedding(values=[1.0], statistics=statistics)])
+    usage = google_embeddings._map_usage(response, provider, 'unused', 'unused')  # pyright: ignore[reportPrivateUsage]
+
+    assert usage.input_tokens == (token_count or 0)
+    assert usage.unmeasured_requests == int(provider == 'google' and token_count is None)
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')
 @pytest.mark.vcr
 class TestGoogle:
     @pytest.fixture
@@ -1838,7 +1855,7 @@ class TestGoogle:
                 embeddings=IsList(IsList(IsFloat(), length=3072), length=1),
                 inputs=['Hello, world!'],
                 input_type='query',
-                usage=RequestUsage(),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gemini-embedding-2-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
@@ -1852,7 +1869,7 @@ class TestGoogle:
                 embeddings=IsList(IsList(IsFloat(), length=3072), length=2),
                 inputs=['hello', 'world'],
                 input_type='document',
-                usage=RequestUsage(),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gemini-embedding-2-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
@@ -1866,7 +1883,7 @@ class TestGoogle:
                 embeddings=IsList(IsList(IsFloat(), length=768), length=1),
                 inputs=['Hello, world!'],
                 input_type='query',
-                usage=RequestUsage(),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gemini-embedding-2-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
@@ -2010,7 +2027,7 @@ class TestGoogle:
                 embeddings=IsList(IsList(IsFloat(), length=3072), length=1),
                 inputs=['Hello, world!'],
                 input_type='query',
-                usage=RequestUsage(),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gemini-embedding-2-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
@@ -2426,6 +2443,58 @@ async def test_instrumented_embedding_reported_cost_wins(capfire: CaptureLogfire
 
     [cost_metric] = [m for m in capfire.get_collected_metrics() if m['name'] == 'operation.cost']
     assert cost_metric['data']['data_points'][0]['sum'] == 0.125
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+@pytest.mark.parametrize(
+    'usage, expected_cost',
+    [
+        pytest.param(RequestUsage(unmeasured_requests=1), None, id='omitted'),
+        pytest.param(RequestUsage(), 0.0, id='measured-zero'),
+        pytest.param(RequestUsage(input_tokens=10), 'positive', id='measured-positive'),
+        pytest.param(RequestUsage(unmeasured_requests=1, cost=Decimal(0)), 0.0, id='reported-zero'),
+        pytest.param(RequestUsage(unmeasured_requests=1, cost=Decimal('0.125')), 0.125, id='reported-positive'),
+        pytest.param(RequestUsage(input_tokens=10, unmeasured_requests=1), 'positive', id='known-subtotal'),
+    ],
+)
+async def test_instrumented_embedding_usage_cost(
+    usage: RequestUsage, expected_cost: float | Literal['positive'] | None, capfire: CaptureLogfire
+):
+    """Exercise automatic pricing independently of recordings' fixed token counts and reported costs."""
+
+    class UsageEmbeddingModel(TestEmbeddingModel):
+        async def embed(
+            self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+        ) -> EmbeddingResult:
+            result = await super().embed(inputs, input_type=input_type, settings=settings)
+            result.usage = deepcopy(usage)
+            return result
+
+    model = InstrumentedEmbeddingModel(
+        UsageEmbeddingModel('text-embedding-3-small', provider_name='openai'), InstrumentationSettings()
+    )
+    result = await model.embed('Hello, world!', input_type='query')
+
+    [span] = capfire.exporter.exported_spans_as_dict()
+    automatic_cost = span['attributes'].get('operation.cost')
+    if expected_cost == 'positive':
+        assert automatic_cost > 0
+        assert result.cost().total_price > 0
+    else:
+        assert automatic_cost == expected_cost
+        # Explicit pricing retains its existing calculation even when automatic pricing is unknown.
+        assert result.cost().total_price == 0
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_instrumented_embedding_invalid_usage_warns(capfire: CaptureLogfire, mocker: MockerFixture):
+    """An unpriceable usage calculation is not a provider response that a cassette can reproduce."""
+    mocker.patch.object(EmbeddingResult, 'cost', side_effect=ValueError('unpriceable usage'))
+    model = InstrumentedEmbeddingModel(TestEmbeddingModel(), InstrumentationSettings())
+    with pytest.warns(CostCalculationFailedWarning, match='ValueError: unpriceable usage'):
+        await model.embed('Hello, world!', input_type='query')
+    [span] = capfire.exporter.exported_spans_as_dict()
+    assert 'operation.cost' not in span['attributes']
 
 
 def test_override():

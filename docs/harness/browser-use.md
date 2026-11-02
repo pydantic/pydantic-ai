@@ -24,6 +24,8 @@ self-healing), and the tool returns a text result.
     each capability runs its own browser, so a session opened by one is not
     visible to the other.
 
+![The host model calls browse_web with one natural-language goal. BrowserUse hands it to a browser-use sub-agent, which by default runs on the host run's model. The sub-agent reads the page as indexed DOM elements and a screenshot, picks an action, and repeats for up to 50 steps in its own Chromium session, behind a domain allowlist. A judge call checks the result, and browse_web returns the final text or validated JSON to the host model, with any secrets replaced by placeholders.](../img/harness/browser-use.svg)
+
 ## The problem
 
 Low-level browser tools (goto, click a selector, extract text) work well when

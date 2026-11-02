@@ -8,6 +8,8 @@ Let an agent search and change content in a Notion workspace. `Notion` gives the
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![Inside your agent, the Notion capability connects to Notion's hosted MCP server at mcp.notion.com/mcp with a Notion OAuth access token. The model sees the server's tool names unchanged, such as notion-search, because they already start with the service. Your auth function returns the token for each run; a Notion integration token is not accepted. read_only=True drops tools the server does not mark read-only.](../img/harness/notion.svg)
+
 ## Install and connect
 
 ```bash

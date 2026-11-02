@@ -25,6 +25,7 @@ pytestmark = pytest.mark.skipif(
 class GitUI:
     url: str
     conversation: str
+    drafter: Drafter
 
 
 @pytest.fixture
@@ -40,7 +41,7 @@ def git_ui(make_fleet: MakeFleet, serve: Serve, repo: Path, gh_state: Path) -> I
     for name in ('notes.txt', 'second.txt', 'third.txt'):
         (repo / name).write_text('edited by the agent\n')
     with serve(fleet) as url:
-        yield GitUI(url=url, conversation=conversation)
+        yield GitUI(url=url, conversation=conversation, drafter=drafter)
 
 
 async def test_commit_push_and_open_a_pull_request_from_the_header(
@@ -101,7 +102,8 @@ async def test_commit_push_and_open_a_pull_request_from_the_header(
     await dialog.get_by_role('button', name='Open pull request').click()
     link = dialog.get_by_role('link', name=PR_URL)
     await expect(link).to_have_attribute('href', PR_URL)
-    assert calls(gh_state)[-1] == 'pr create --head=feature --title=Edit three files --body-file=-'
+    # The chip asks `gh` again once the pull request is open, so its call may come after.
+    assert 'pr create --head=feature --title=Edit three files --body-file=-' in calls(gh_state)
 
     # Esc closes the dialog, not the page's turn.
     await page.keyboard.press('Escape')
@@ -130,3 +132,35 @@ async def test_commit_push_and_open_a_pull_request_from_the_header(
     await chip.click()
     await expect(dialog.get_by_role('button', name='Create pull request…')).to_be_disabled()
     await expect(dialog.get_by_text('The GitHub CLI is not signed in to github.com')).to_be_visible()
+
+
+async def test_unchecking_a_file_marks_the_drafted_message_stale(page: Page, git_ui: GitUI) -> None:
+    await page.goto(f'{git_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Git Repo', exact=True).click()
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    await page.locator('.topbar .git-chip').click()
+    dialog = page.get_by_role('dialog', name='Git')
+    message = dialog.get_by_role('textbox', name='Commit message')
+    await expect(message).to_have_value('Edit the notes\n\nAnd add one.')
+    stale = dialog.get_by_text('This message was drafted for 3 files; 2 are selected.')
+    await expect(stale).to_have_count(0)
+
+    await dialog.get_by_role('checkbox', name='third.txt').uncheck()
+    await expect(stale).to_be_visible()
+    # Checking it again makes the draft match the selection.
+    await dialog.get_by_role('checkbox', name='third.txt').check()
+    await expect(stale).to_have_count(0)
+
+    await dialog.get_by_role('checkbox', name='third.txt').uncheck()
+    redraft = dialog.locator('.git-message-label button')
+    await redraft.click()
+    # Once drafted, the message matches the selection again.
+    await expect(redraft).to_have_text('Draft again')
+    await expect(stale).to_have_count(0)
+    assert 'third.txt' not in git_ui.drafter.prompts[-1]
+    await expect(dialog.get_by_role('button', name='Commit 2 of 3')).to_be_enabled()
+
+    # A message the user typed is theirs: no warning about it.
+    await message.fill('Edit two files')
+    await dialog.get_by_role('checkbox', name='second.txt').uncheck()
+    await expect(dialog.get_by_text('This message was drafted for')).to_have_count(0)
