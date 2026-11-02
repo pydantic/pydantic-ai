@@ -1,0 +1,5 @@
+{
+  "against": "v2.63.0",
+  "reason": "Adds `OutputSpeechTimestamps` to the `RealtimeCodecEvent` union a connection yields, for the speech timestamps Azure AI Voice Live reports; every existing member is unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11685"
+}

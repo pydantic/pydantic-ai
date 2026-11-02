@@ -445,7 +445,7 @@ Load only the most relevant reference first. Read additional references only if 
 
 | I want to... | Reference |
 |---|---|
-| Create/configure agents, choose output types, validate output, use deps, define specs, or pick run methods | [Agents Core](./references/AGENTS-CORE.md) |
+| Create/configure agents, choose output types, validate output, use deps, define specs, reuse an OpenAI Responses WebSocket, or pick run methods | [Agents Core](./references/AGENTS-CORE.md) |
 | Bundle reusable behavior or intercept lifecycle events | [Capabilities and Hooks](./references/CAPABILITIES-AND-HOOKS.md) |
 | Decide what should load eagerly vs on demand, apply progressive disclosure, defer capability loading, or explain `load_capability` | [Capabilities on Demand](./references/ON-DEMAND-CAPABILITIES.md) |
 | Add function tools, toolsets, MCP servers, or explicit search tools | [Tools Core](./references/TOOLS-CORE.md) |
@@ -505,7 +505,7 @@ Load exactly one of these unless the task clearly spans multiple families:
 
 | Task family | Reference |
 |---|---|
-| Core agent setup, output and output validators, deps, specs, models, run methods | [Agents Core](./references/AGENTS-CORE.md) |
+| Core agent setup, output and output validators, deps, specs, models, OpenAI Responses WebSockets, run methods | [Agents Core](./references/AGENTS-CORE.md) |
 | Capabilities, hooks, and reusable behavior | [Capabilities and Hooks](./references/CAPABILITIES-AND-HOOKS.md) |
 | Progressive disclosure, deferred capabilities, capabilities on demand, and `load_capability` semantics | [Capabilities on Demand](./references/ON-DEMAND-CAPABILITIES.md) |
 | Function tools, toolsets, MCP, explicit search tools | [Tools Core](./references/TOOLS-CORE.md) |

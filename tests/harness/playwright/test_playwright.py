@@ -16,6 +16,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from typing import Protocol, get_args
 
+import anyio
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -571,6 +572,30 @@ class _HangingEvaluatePage(_FakePage):
     async def evaluate(self, expression: str) -> object:
         await asyncio.Event().wait()
         return None  # pragma: no cover -- unreachable; the wait is cancelled
+
+
+class _UnansweredDialog(_FakeDialog):
+    """A dialog whose dismissal the driver has not yet confirmed."""
+
+    def __init__(self) -> None:
+        super().__init__(type='alert', message='hi')
+        self.dismiss_started = asyncio.Event()
+
+    async def dismiss(self) -> None:
+        self.dismiss_started.set()
+        await asyncio.Event().wait()
+
+
+class _AlertingEvaluatePage(_HangingEvaluatePage):
+    """A page whose script opens a dialog and, like `alert()`, does not return until it is answered."""
+
+    def __init__(self, dialog: _FakeDialog) -> None:
+        super().__init__()
+        self._dialog = dialog
+
+    async def evaluate(self, expression: str) -> object:
+        self.emit('dialog', self._dialog)
+        return await super().evaluate(expression)
 
 
 class _FakeInstallerProcess:
@@ -2638,6 +2663,24 @@ class TestPlaywrightBrowserLifecycle:
         await agent.run('screenshot the page')
         assert pending.cancelled()
         assert browser._session._event_tasks == set()  # pyright: ignore[reportPrivateUsage]
+
+    async def test_anyio_cancel_closes_the_browser_while_a_dialog_is_being_answered(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # An `anyio` cancel is level-triggered: every unshielded await in teardown raises
+        # again, so waiting out the in-flight dialog answer would skip both closes and
+        # leave Chromium and the driver running.
+        dialog = _UnansweredDialog()
+        cm = _install_fake_driver(monkeypatch, _AlertingEvaluatePage(dialog))
+        agent = Agent(TestModel(call_tools=['execute_js']), capabilities=[PlaywrightBrowser()])
+        with anyio.CancelScope() as scope:
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(agent.run, 'run a script')
+                await dialog.dismiss_started.wait()
+                scope.cancel()
+        chromium = cm._driver.chromium  # pyright: ignore[reportPrivateUsage]
+        assert chromium.browser is not None and chromium.browser.closed is True
+        assert cm.exited is True
 
 
 # --- Package surface --------------------------------------------------------

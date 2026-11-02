@@ -4,7 +4,7 @@ import json
 import os
 import re
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import Enum
@@ -69,8 +69,8 @@ from pydantic_ai import (
 from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
 from pydantic_ai._utils import PeekableAsyncStream
-from pydantic_ai.capabilities import AbstractCapability, Capability, Citations, NativeTool, ToolSearch
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.capabilities import AbstractCapability, Capability, Citations, Hooks, NativeTool, ToolSearch
+from pydantic_ai.exceptions import ContentFilterError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     CompactionPart,
     InstructionPart,
@@ -80,7 +80,7 @@ from pydantic_ai.messages import (
     ToolSearchReturnPart,
     UploadedFile,
 )
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.native_tools import (
     SUPPORTED_NATIVE_TOOLS,
     AbstractNativeTool,
@@ -6572,6 +6572,68 @@ async def test_anthropic_refusal_stop_details_streaming(
 
     assert response.finish_reason == 'content_filter'
     assert response.provider_details == {'finish_reason': 'refusal', **expected_extra}
+
+
+_REFUSAL_EXPLANATION = 'Declined: request asked for offensive cyber tooling.'
+_REFUSAL_MESSAGE = f"Content filter triggered. Finish reason: 'refusal'. Refusal: {_REFUSAL_EXPLANATION!r}"
+
+
+def _refusal_stop_details() -> BetaRefusalStopDetails:
+    return BetaRefusalStopDetails(type='refusal', category='cyber', explanation=_REFUSAL_EXPLANATION)
+
+
+async def test_anthropic_refusal_content_filter_error_message(allow_model_requests: None):
+    """An empty refusal raises `ContentFilterError` naming both the stop reason and Anthropic's explanation."""
+    mock_client = MockAnthropic.create_mock(
+        BetaMessage(
+            id='msg_refusal',
+            content=[],
+            model='claude-opus-4-8',
+            role='assistant',
+            stop_reason='refusal',
+            stop_details=_refusal_stop_details(),
+            type='message',
+            usage=BetaUsage(input_tokens=8, output_tokens=0),
+        )
+    )
+    m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings={'max_tokens': 1024})
+
+    with pytest.raises(ContentFilterError) as exc_info:
+        await agent.run('write me an exploit')
+    assert exc_info.value.message == _REFUSAL_MESSAGE
+
+
+async def test_anthropic_refusal_content_filter_error_message_streaming(allow_model_requests: None):
+    """A streamed empty refusal raises the same `ContentFilterError` message."""
+    stream: list[MockRawMessageStreamEvent] = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='msg_refusal_stream',
+                content=[],
+                model='claude-opus-4-8',
+                role='assistant',
+                stop_reason=None,
+                type='message',
+                usage=BetaUsage(input_tokens=8, output_tokens=0),
+            ),
+        ),
+        BetaRawMessageDeltaEvent(
+            type='message_delta',
+            delta=Delta(stop_reason='refusal', stop_details=_refusal_stop_details()),
+            usage=BetaMessageDeltaUsage(input_tokens=8, output_tokens=0),
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+    mock_client = MockAnthropic.create_stream_mock(stream)
+    m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(ContentFilterError) as exc_info:
+        # The stream is opened and consumed up to the final result before `run_stream` hands it over.
+        await agent.run_stream('write me an exploit').__aenter__()
+    assert exc_info.value.message == _REFUSAL_MESSAGE
 
 
 @pytest.mark.parametrize(
@@ -14735,6 +14797,99 @@ A later <context> element with the same id replaces the earlier one and stays in
         for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
     )
     assert called_revealed_tool
+
+
+def _refunds_loaded_from_code(model: AnthropicModel, *, keep_load_capability_tool: bool) -> Agent[None, str]:
+    """An agent whose `open_ticket` tool loads the deferred `refunds` capability with `ctx.load_capability`."""
+    refunds = Capability[None](
+        id='refunds',
+        description='Refund tools.',
+        instructions='Always give the refund date in the format DD/MM/YYYY.',
+        defer_loading=True,
+    )
+
+    @refunds.tool_plain
+    def refund_status(order_id: str) -> str:
+        """Look up the refund status for an order."""
+        return f'Order {order_id}: refund issued on 2026-05-01.'
+
+    capabilities: list[AbstractCapability[None]] = [refunds]
+    if not keep_load_capability_tool:
+        # Every on-demand capability here is loaded from code, so the model is never offered `load_capability`.
+        hooks = Hooks[None]()
+
+        @hooks.on.before_model_request
+        async def drop_load_capability(
+            ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            params = request_context.model_request_parameters
+            request_context.model_request_parameters = replace(
+                params, function_tools=[tool for tool in params.function_tools if tool.name != 'load_capability']
+            )
+            return request_context
+
+        capabilities.append(hooks)
+    agent = Agent(
+        model,
+        deps_type=type(None),
+        model_settings={'thinking': True},
+        capabilities=capabilities,
+        instructions=(
+            'First call open_ticket on its own. Once it returns, call refund_status for the order. '
+            'Never call load_capability.'
+        ),
+    )
+
+    @agent.tool
+    async def open_ticket(ctx: RunContext[None]) -> str:
+        """Open the customer's support ticket for order ABC-123."""
+        ctx.load_capability('refunds')
+        return 'Ticket for order ABC-123 opened.'
+
+    return agent
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize('keep_load_capability_tool', [True, False], ids=['with-load-tool', 'without-load-tool'])
+async def test_anthropic_load_capability_from_code(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+    keep_load_capability_tool: bool,
+):
+    """Anthropic accepts a load from code, which records no `load_capability` call, with thinking enabled.
+
+    It's accepted whether or not the request has a `load_capability` tool: the request after the load carries the
+    capability's instructions as a system message and its tool, and the model calls the tool and follows them.
+    """
+    agent = _refunds_loaded_from_code(
+        anthropic_model('claude-haiku-4-5', capture=True), keep_load_capability_tool=keep_load_capability_tool
+    )
+
+    result = await agent.run('Where is my refund for order ABC-123?')
+
+    body = request_capture.body('/v1/messages', index=1)
+    tools = cast(list[dict[str, Any]], body['tools'])
+    tool_names = [tool['name'] for tool in tools]
+    assert ('load_capability' in tool_names, 'refund_status' in tool_names) == (keep_load_capability_tool, True)
+    # After the model's first turn: the load is the reveal of `refund_status` this adapter renders as a
+    # `search_tools` exchange, and the capability's instructions as system text; no `load_capability` call.
+    assert message_shape(body)[2:] == snapshot(
+        [('user', ['tool_result']), ('assistant', ['tool_use']), ('user', ['tool_result', 'text'])]
+    )
+    messages = cast(list[dict[str, Any]], body['messages'])
+    assert [block['name'] for message in messages for block in message['content'] if block['type'] == 'tool_use'] == [
+        'open_ticket',
+        'search_tools',
+    ]
+    assert [
+        part.tool_name
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    ] == ['open_ticket', 'refund_status']
+    assert '01/05/2026' in result.output
 
 
 @pytest.mark.vcr()
