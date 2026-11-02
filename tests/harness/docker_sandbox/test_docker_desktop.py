@@ -23,8 +23,6 @@ from pydantic_ai_harness.docker_sandbox import DESKTOP_DOCKERFILE, DockerSandbox
 from ...workspace_fakes import FAKE_SCREENSHOT
 from ._fake_docker import FakeDocker, install_fake_docker
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def docker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeDocker:
