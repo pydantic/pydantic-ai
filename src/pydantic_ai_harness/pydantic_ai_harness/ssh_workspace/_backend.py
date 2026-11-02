@@ -86,7 +86,7 @@ def _not_started(timeout: float) -> WorkspaceTimeoutError:
 
 
 def _remaining(timeout: float | None, started: float) -> float | None:
-    """What is left of `timeout` since `started`; raise `_not_started` if nothing is."""
+    """Return what is left of `timeout` since `started`, or raise `WorkspaceTimeoutError` if none is."""
     if timeout is None:
         return None
     remaining = timeout - (anyio.current_time() - started)
