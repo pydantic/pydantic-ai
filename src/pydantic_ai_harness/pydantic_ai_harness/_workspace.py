@@ -14,6 +14,7 @@ from pydantic_ai.exceptions import ToolFailed, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import (
+    FileEntry,
     SupportsCommands,
     UnavailableWorkspace,
     Workspace,
@@ -59,6 +60,14 @@ def raise_tool_failure(error: WorkspaceError) -> NoReturn:
     if isinstance(error, WorkspaceTimeoutError):
         raise ToolFailed(str(error) or 'The workspace operation timed out.') from error
     raise ToolFailed(str(error) or f'The workspace operation failed ({type(error).__name__}).') from error
+
+
+async def stat_or_none(workspace: Workspace, path: str) -> FileEntry | None:
+    """The entry at `path`, or `None` when nothing is there."""
+    try:
+        return await workspace.stat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
 
 
 def supports_commands(workspace: Workspace) -> bool:

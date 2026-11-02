@@ -71,6 +71,7 @@ from pydantic_ai_harness._monty_exec import (
     in_temporal_workflow,
     is_sandbox_panic,
 )
+from pydantic_ai_harness._typeguards import is_mapping
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_renamed
 from pydantic_ai_harness.code_mode._parts import RUN_CODE_KIND, RUN_CODE_TOOL_NAME, RunCodeArgs
 from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore, PersistentRepl
@@ -1480,7 +1481,7 @@ def _model_safe_result(value: object) -> object:
         return repr(value)
     if isinstance(value, _MODEL_NATIVE_SCALARS) or is_multi_modal_content(value):
         return value
-    if _is_mapping(value):
+    if is_mapping(value):
         rendered = {
             key if _serializes({key: None}) else repr(key): _model_safe_result(item) for key, item in value.items()
         }
@@ -1491,10 +1492,6 @@ def _model_safe_result(value: object) -> object:
         items = [_model_safe_result(item) for item in value]
         return tuple(items) if isinstance(value, tuple) else items
     return value if _serializes(value) else repr(value)
-
-
-def _is_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
-    return isinstance(value, Mapping)
 
 
 def _is_list_or_tuple(value: object) -> TypeGuard[list[object] | tuple[object, ...]]:

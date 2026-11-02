@@ -123,6 +123,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, ToolReturn
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai_harness._message_text import CHARS_PER_TOKEN
 
 try:
     # Import-time gate (mirrors `pydantic_ai_harness.exa._toolset`): importing the
@@ -184,9 +185,6 @@ One budget for the whole sweep rather than one per frame: a page can carry many
 frames, and an unresponsive one must not consume the action's deadline. Whatever
 was collected before the budget runs out is kept.
 """
-
-_CHARS_PER_TOKEN = 4
-"""Characters-per-token estimate used to turn a token budget into a character cap."""
 
 _PRIVATE_ADDRESS_REASON = 'blocked private or link-local address'
 _UNRESOLVED_REASON = 'host that did not resolve, so the private-address block could not clear it'
@@ -1692,7 +1690,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
 
     def _truncate_output(self, text: str) -> str:
         """Apply the configured token budget to a model-facing textual result."""
-        return _truncate(text, self._max_content_tokens * _CHARS_PER_TOKEN)
+        return _truncate(text, self._max_content_tokens * CHARS_PER_TOKEN)
 
     def _error(self, message: str) -> str:
         """Bound an error result and record the failure on the operation's span.
@@ -1714,7 +1712,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         result should do. A note too large for the budget on its own wins the
         whole budget: it carries why the result is missing.
         """
-        budget = self._max_content_tokens * _CHARS_PER_TOKEN
+        budget = self._max_content_tokens * CHARS_PER_TOKEN
         separator = '\n\n'
         room = budget - len(note) - len(separator)
         if room <= 0:
@@ -2619,7 +2617,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         if not events:
             return self._truncate_output(f'No {label} recorded.')
         lines = [event.describe() for event in events]
-        budget = self._max_content_tokens * _CHARS_PER_TOKEN
+        budget = self._max_content_tokens * CHARS_PER_TOKEN
         kept: list[str] = []
         used = 0
         for line in reversed(lines):

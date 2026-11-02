@@ -1,4 +1,4 @@
-"""Shared handling of sub-agent run outputs that only the run's own caller can act on."""
+"""Shared handling of nested agent runs: the model they run on, and outputs only the run's own caller can act on."""
 
 from __future__ import annotations
 
@@ -6,6 +6,8 @@ from collections.abc import Sequence
 from contextlib import suppress
 from types import UnionType
 from typing import Any, ClassVar, Union, cast, get_args, get_origin
+
+from typing_extensions import TypeIs
 
 from pydantic_ai import DeferredToolRequests, ModelResponse, PendingModelResponse, RunContext
 from pydantic_ai.capabilities import AbstractCapability
@@ -19,6 +21,11 @@ _RESUMABLE_OUTPUT_REASONS: dict[type, str] = {
     DeferredToolRequests: 'it needs tool approval or deferred tool results',
     PendingModelResponse: 'it needs the result of a model request the provider is still processing',
 }
+
+
+def is_request_response_model(model: object) -> TypeIs[Model[Any]]:
+    """Whether `model` is a request-response `Model` a nested agent can run on, keeping its client type."""
+    return isinstance(model, Model)
 
 
 def _is_resumable_output_type(output_type: object) -> bool:

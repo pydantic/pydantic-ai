@@ -16,6 +16,7 @@ from pydantic_core import PydanticSerializationError, to_json
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
 from pydantic_ai_harness._output import truncate_tail
+from pydantic_ai_harness._typeguards import is_mapping
 from pydantic_ai_harness.compaction._shared import estimate_token_count
 
 
@@ -133,18 +134,14 @@ def measure(text: str, *, over_tokens: bool, tokenizer: Callable[[str], int] | N
 def json_sketch(value: object) -> str:
     """Build a one-line shape hint for a structured value, or '' for anything else.
 
-    The `_is_*` guards are `TypeGuard`s, so a `Mapping`/`Sequence` value narrows to a known
+    The guards are `TypeGuard`s, so a `Mapping`/`Sequence` value narrows to a known
     element type (`object`) the strict type checker accepts -- no `Any` and no `Unknown`.
     """
-    if _is_mapping(value):
+    if is_mapping(value):
         return _sketch_mapping(value)
     if _is_text_sequence(value):
         return _sketch_sequence(value)
     return ''
-
-
-def _is_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
-    return isinstance(value, Mapping)
 
 
 def _is_text_sequence(value: object) -> TypeGuard[Sequence[object]]:

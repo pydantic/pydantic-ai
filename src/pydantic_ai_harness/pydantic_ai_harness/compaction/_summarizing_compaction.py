@@ -39,7 +39,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.output import TextOutput
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai_harness._message_text import tool_return_text, user_prompt_texts, with_text
+from pydantic_ai_harness._message_text import tool_return_text, user_prompt_text, with_text
 from pydantic_ai_harness._provenance import harness_origin
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
@@ -371,11 +371,6 @@ def _harness_data_element(origin: str, content: str, max_chars: int | None) -> s
     if max_chars is not None:
         body = _truncate_with_marker(body, max_chars)
     return f'<harness_data origin="{html.escape(origin)}">\n{body}\n</harness_data>'
-
-
-def user_prompt_text(part: UserPromptPart) -> str:
-    """Extract text content from a user prompt part."""
-    return ' '.join(user_prompt_texts(part))
 
 
 def _extract_system_prompts(messages: list[ModelMessage]) -> list[SystemPromptPart]:

@@ -13,7 +13,6 @@ from collections.abc import Sequence
 from typing import TypeAlias, TypeVar, overload
 
 from pydantic import BaseModel
-from typing_extensions import TypeIs
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, Instrumentation, WrapperCapability
@@ -30,9 +29,10 @@ from pydantic_ai.messages import (
     UserContent,
     UserPromptPart,
 )
-from pydantic_ai.models import AbstractModel, KnownModelName, Model, infer_model
+from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.usage import RunUsage
+from pydantic_ai_harness._sub_agent_output import is_request_response_model
 
 try:
     from browser_use.llm.base import BaseChatModel
@@ -192,17 +192,12 @@ class PydanticAIChatModel(BaseChatModel):
         return ChatInvokeCompletion(completion=result.output, usage=_map_usage(result.usage))
 
 
-def _is_request_response_model(model: AbstractModel) -> TypeIs[Model]:
-    """Narrow a run's model without losing its provider client type."""
-    return isinstance(model, Model)
-
-
 class RunChatModel(PydanticAIChatModel):
     """Adapt the host run's model and instrumentation for a capability without an `llm`."""
 
     def __init__(self, ctx: RunContext[AgentDepsT]) -> None:
         model = ctx.model
-        if not _is_request_response_model(model):
+        if not is_request_response_model(model):
             raise UserError(
                 "BrowserUse without an `llm` runs the browser agent on the host run's model, but "
                 f'{model.model_id!r} is not a request-response model. Pass `llm` to BrowserUse.'
