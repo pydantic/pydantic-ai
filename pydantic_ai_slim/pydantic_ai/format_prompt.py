@@ -23,6 +23,14 @@ _NAME_START_CHARS = (
 )
 # An XML 1.0 `NCName`: a `Name` without colons, which would otherwise be read as a namespace prefix.
 _XML_NAME = re.compile(f'[{_NAME_START_CHARS}][{_NAME_START_CHARS}\\-.0-9\xb7\u0300-\u036f\u203f\u2040]*')
+# Characters that XML 1.0 forbids anywhere in a document, even as character references (i.e. all code points
+# outside of the `Char` production).
+_ILLEGAL_XML_CHARACTERS = re.compile('[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]')
+
+
+def _sanitize_xml_characters(text: str) -> str:
+    """Remove characters XML 1.0 forbids even as character references."""
+    return _ILLEGAL_XML_CHARACTERS.sub('', text)
 
 
 def format_as_xml(
@@ -45,6 +53,9 @@ def format_as_xml(
     `name` or `first_name`). Any other key, like `'my key'`, `'1abc'` or an `int`, is instead written to the `key`
     attribute of an element named after `item_tag`, e.g. `<item key="my key">1</item>`, so it is escaped like
     any other attribute value and can't inject tags or break the element structure.
+    Characters that XML 1.0 forbids anywhere in a document, even escaped as character references (e.g. most ASCII
+    control characters), are removed from element text and attribute values. Caller-supplied `root_tag` and
+    `item_tag` values are used as given and are not checked for such characters.
 
     Args:
         obj: Python Object to serialize to XML.
@@ -149,23 +160,24 @@ class _ToXml:
     def _set_scalar_text(self, element: ElementTree.Element, value: Any) -> bool:
         """Set element.text for scalar types. Return True if handled, False otherwise."""
         if value is None:
-            element.text = self.none_str
+            text = self.none_str
         elif isinstance(value, str):
-            element.text = value.value if isinstance(value, Enum) else value
+            text = value.value if isinstance(value, Enum) else value
         elif isinstance(value, bytes | bytearray):
-            element.text = value.decode(errors='ignore')
+            text = value.decode(errors='ignore')
         elif isinstance(value, bool | int | float | Enum):
-            element.text = str(value)
+            text = str(value)
         elif isinstance(value, date | time):
-            element.text = value.isoformat()
+            text = value.isoformat()
         elif isinstance(value, timedelta):
-            element.text = str(value)
+            text = str(value)
         elif isinstance(value, Decimal):
-            element.text = str(value)
+            text = str(value)
         elif isinstance(value, UUID):
-            element.text = str(value)
+            text = str(value)
         else:
             return False
+        element.text = _sanitize_xml_characters(text)
         return True
 
     def _create_element(self, tag: str, path: str) -> ElementTree.Element:
@@ -175,7 +187,7 @@ class _ToXml:
             if self.include_field_info and self.include_field_info != 'once' or field_repr not in self._included_fields:
                 field_attributes = self._extract_attributes(field_info)
                 for k, v in field_attributes.items():
-                    element.set(k, v)
+                    element.set(k, _sanitize_xml_characters(v))
                 self._included_fields.add(field_repr)
         return element
 
@@ -200,7 +212,7 @@ class _ToXml:
             is_name = _XML_NAME.fullmatch(key) is not None
             child = self._to_xml(value=value, path=child_path, tag=key if is_name else self.item_tag)
             if not is_name:
-                child.set('key', key)
+                child.set('key', _sanitize_xml_characters(key))
             element.append(child)
 
     def _parse_data_structures(
