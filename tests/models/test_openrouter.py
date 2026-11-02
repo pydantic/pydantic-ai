@@ -31,6 +31,7 @@ from pydantic_ai import (
     SystemPromptPart,
     TextPart,
     ThinkingPart,
+    Tool,
     ToolCallPart,
     ToolDefinition,
     UnexpectedModelBehavior,
@@ -1023,6 +1024,110 @@ async def test_openrouter_google_nested_schema(allow_model_requests: None, openr
 
     assert result.output.level_type == LevelType.ground
     assert result.output.space_count == 3
+
+
+async def test_openrouter_google_inlines_property_names_and_contains_refs(
+    allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture
+) -> None:
+    """Gemini over OpenRouter accepts tools whose `propertyNames` and `contains` held a `$ref`.
+
+    The transformer drops `$defs`, so both `$ref`s go out inlined. The `Literal` key and the ref-free
+    `contains` go out as written. Pydantic never emits `contains`, so `pick` takes a hand-written schema.
+    """
+    from enum import Enum
+
+    class Color(str, Enum):  # noqa: UP042
+        red = 'red'
+        blue = 'blue'
+
+    def pick(numbers: list[int], threes: list[int]) -> str:
+        return f'Picked {len(numbers) + len(threes)} numbers.'
+
+    pick_tool = Tool.from_schema(
+        pick,
+        name='pick',
+        description='Pick numbers.',
+        json_schema={
+            '$defs': {'Positive': {'type': 'integer', 'minimum': 1}},
+            'type': 'object',
+            'properties': {
+                'numbers': {'type': 'array', 'items': {'type': 'integer'}, 'contains': {'$ref': '#/$defs/Positive'}},
+                'threes': {'type': 'array', 'items': {'type': 'integer'}, 'contains': {'const': 3}},
+            },
+            'required': ['numbers', 'threes'],
+        },
+    )
+    provider = OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client)
+    model = OpenRouterModel('google/gemini-3.6-flash', provider=provider)
+    agent = Agent(model, tools=[pick_tool])
+
+    @agent.tool_plain
+    def tally(counts: dict[Color, int], labels: dict[Literal['a', 'b'], int]) -> str:
+        """Tally counts per color and per label."""
+        return f'Tallied {len(counts) + len(labels)} keys.'
+
+    result = await agent.run(
+        'Call tally with counts {"red": 2} and labels {"a": 1}, and pick with numbers [0, 4] and threes [3]. '
+        'Then reply "done".'
+    )
+
+    assert request_capture.body()['tools'] == snapshot(
+        [
+            {
+                'type': 'function',
+                'function': {
+                    'name': 'pick',
+                    'description': 'Pick numbers.',
+                    'parameters': {
+                        'type': 'object',
+                        'properties': {
+                            'numbers': {
+                                'type': 'array',
+                                'items': {'type': 'integer'},
+                                'contains': {'type': 'integer', 'minimum': 1},
+                            },
+                            'threes': {'type': 'array', 'items': {'type': 'integer'}, 'contains': {'const': 3}},
+                        },
+                        'required': ['numbers', 'threes'],
+                    },
+                    'strict': True,
+                },
+            },
+            {
+                'type': 'function',
+                'function': {
+                    'name': 'tally',
+                    'description': 'Tally counts per color and per label.',
+                    'parameters': {
+                        'additionalProperties': False,
+                        'properties': {
+                            'counts': {
+                                'additionalProperties': {'type': 'integer'},
+                                'propertyNames': {'enum': ['red', 'blue'], 'type': 'string'},
+                                'type': 'object',
+                            },
+                            'labels': {
+                                'additionalProperties': {'type': 'integer'},
+                                'propertyNames': {'enum': ['a', 'b']},
+                                'type': 'object',
+                            },
+                        },
+                        'required': ['counts', 'labels'],
+                        'type': 'object',
+                    },
+                    'strict': True,
+                },
+            },
+        ]
+    )
+    assert [
+        (part.tool_name, part.args_as_dict())
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    ] == snapshot([('tally', {'labels': {'a': 1}, 'counts': {'red': 2}}), ('pick', {'threes': [3], 'numbers': [0, 4]})])
+    assert result.output == snapshot('done')
 
 
 async def test_openrouter_file_annotation(

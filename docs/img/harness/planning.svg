@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="686" viewBox="0 0 880 686" role="img" aria-labelledby="t d">
+<title id="t">Planning: a task list the model keeps up to date</title>
+<desc id="d">The model keeps a task plan with the Planning tools: write_plan, read_plan, add_task, update_task_status, update_task_statuses and remove_task, plus add_subtask, set_dependency and get_available_tasks with enable_subtasks. The plan lives in a PlanStore, in memory by default or in SQLite, Postgres or Redis. Every tool that changes the plan ends its result with the whole plan as a checklist in a &lt;plan_reminder&gt; tag, so the plan stays in the conversation and never in the system prompt. Before each model request Planning reads the store and records the plan itself only when the model cannot see the current one.</desc>
+<defs><marker id="ai" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#092224"/></marker><marker id="am" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#55726A"/></marker><marker id="al" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#B417B7"/></marker><marker id="al2" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E520E9"/></marker><marker id="ap" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#7B57E8"/></marker><marker id="aa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0E9C86"/></marker><marker id="ac" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E5533D"/></marker><marker id="af" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8FA8A3"/></marker><marker id="ao" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#97998B"/></marker></defs>
+<rect x="0.5" y="0.5" width="879" height="685" rx="16" fill="#FFFFFF" stroke="#E6EAEA"/>
+<text x="32" y="50" font-size="21" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Planning: a task list the model keeps up to date</text>
+<text x="32" y="78" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">The model writes and updates its own plan with tools. The current plan rides in the tool results, never in the system</text>
+<text x="32" y="98" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">prompt, so the prompt cache keeps working.</text>
+<rect x="152" y="134" width="296" height="222" rx="12" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.3"/>
+<text letter-spacing="1.3" x="166" y="156" font-size="11" fill="#B417B7" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">PLANNING TOOLS</text>
+<rect x="166" y="168" width="88.1" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="210.1" y="184.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">write_plan</text>
+<rect x="262.1" y="168" width="81.1" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="302.7" y="184.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">read_plan</text>
+<rect x="351.3" y="168" width="74.1" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="388.3" y="184.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">add_task</text>
+<rect x="166" y="200" width="144.3" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="238.1" y="216.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">update_task_status</text>
+<rect x="166" y="232" width="158.3" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="245.1" y="248.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">update_task_statuses</text>
+<rect x="332.3" y="232" width="95.2" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="379.9" y="248.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">remove_task</text>
+<text x="166" y="276" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">with enable_subtasks=True</text>
+<rect x="166" y="286" width="95.2" height="24" rx="6" fill="#FFFFFF" stroke="#8FA8A3" stroke-width="1.2"/>
+<text x="213.6" y="302.1" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">add_subtask</text>
+<rect x="269.2" y="286" width="116.2" height="24" rx="6" fill="#FFFFFF" stroke="#8FA8A3" stroke-width="1.2"/>
+<text x="327.3" y="302.1" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">set_dependency</text>
+<rect x="166" y="318" width="151.3" height="24" rx="6" fill="#FFFFFF" stroke="#8FA8A3" stroke-width="1.2"/>
+<text x="241.6" y="334.1" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">get_available_tasks</text>
+<rect x="34" y="227" width="88" height="36" rx="18" fill="#092224"/>
+<text x="78" y="250" font-size="13.5" fill="#FBFFEA" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<line x1="124" y1="236" x2="148" y2="236" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="148" y1="254" x2="124" y2="254" stroke="#55726A" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#am)"/>
+<text letter-spacing="1.3" x="486" y="146" font-size="11" fill="#B417B7" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">ADDED BY PLANNING</text>
+<rect x="486" y="160" width="176" height="93" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="574" y="184.2" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">after each change</text>
+<text x="574" y="203.2" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">The result ends with the</text>
+<text x="574" y="219.8" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">whole plan in</text>
+<text x="574" y="236.4" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">&lt;plan_reminder&gt;.</text>
+<rect x="486" y="263" width="176" height="93" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="574" y="287.2" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">before each request</text>
+<text x="574" y="306.2" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Reads the store. Records</text>
+<text x="574" y="322.8" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">the plan only if the model</text>
+<text x="574" y="339.4" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">can&#x27;t see the current one.</text>
+<line x1="452" y1="245" x2="482" y2="245" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="700" y="142" width="148" height="214" rx="14" fill="none" stroke="#7B57E8" stroke-width="1.3" stroke-dasharray="4 4"/>
+<rect x="714" y="134" width="99.6" height="16" rx="4" fill="#FFFFFF"/>
+<text letter-spacing="1.3" x="721" y="146" font-size="11" fill="#7B57E8" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">PLANSTORE</text>
+<rect x="714" y="164" width="137.3" height="24" rx="6" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="782.6" y="180.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">InMemoryPlanStore</text>
+<rect x="714" y="200.5" width="123.2" height="24" rx="6" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="775.6" y="216.6" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">SqlitePlanStore</text>
+<rect x="714" y="237" width="137.3" height="24" rx="6" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="782.6" y="253.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">PostgresPlanStore</text>
+<rect x="714" y="273.5" width="116.2" height="24" rx="6" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="772.1" y="289.6" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">RedisPlanStore</text>
+<text x="714" y="326" font-size="11.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Default: a fresh plan in</text>
+<text x="714" y="342.3" font-size="11.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">memory per run.</text>
+<line x1="666" y1="245" x2="696" y2="245" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="32" y1="386" x2="848" y2="386" stroke="#E6EAEA" stroke-width="1"/>
+<text letter-spacing="1.3" x="32" y="412" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">WHAT THE MODEL SEES AFTER A CHANGE</text>
+<rect x="32" y="432" width="298.6" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="181.3" y="448.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">update_task_status(task_id, &#x27;completed&#x27;)</text>
+<line x1="62" y1="460" x2="62" y2="482" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="32" y="486" width="298.6" height="130" rx="10" fill="#092224"/>
+<text x="46" y="510" font-size="11.5" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#F07CF3">&lt;plan_reminder&gt;</tspan></text>
+<text x="46" y="528" font-size="11.5" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">1. [x] Read the auth module</tspan></text>
+<text x="46" y="546" font-size="11.5" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">2. [~] Refactor token refresh</tspan></text>
+<text x="46" y="564" font-size="11.5" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">3. [ ] Add tests</tspan></text>
+<text x="46" y="582" font-size="11.5" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#8FA8A3">(1/3 completed)</tspan></text>
+<text x="46" y="600" font-size="11.5" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#F07CF3">&lt;/plan_reminder&gt;</tspan></text>
+<text x="370.6" y="444" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">request n</text>
+<rect x="370.6" y="450" width="104" height="22" rx="4" fill="#97998B"/>
+<text x="422.6" y="465" font-size="11" fill="#FFFFFF" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">instructions</text>
+<rect x="477.6" y="450" width="130" height="22" rx="4" fill="#C8CCB9"/>
+<text x="542.6" y="465" font-size="11" fill="#092224" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">earlier messages</text>
+<rect x="610.6" y="450" width="100" height="22" rx="4" fill="#FDEAFD" stroke="#B417B7" stroke-width="1"/>
+<text x="660.6" y="465" font-size="11" fill="#092224" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">plan result</text>
+<text x="370.6" y="496" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">request n + 1</text>
+<rect x="370.6" y="502" width="104" height="22" rx="4" fill="#97998B"/>
+<text x="422.6" y="517" font-size="11" fill="#FFFFFF" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">instructions</text>
+<rect x="477.6" y="502" width="130" height="22" rx="4" fill="#C8CCB9"/>
+<text x="542.6" y="517" font-size="11" fill="#092224" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">earlier messages</text>
+<rect x="610.6" y="502" width="100" height="22" rx="4" fill="#FDEAFD" stroke="#B417B7" stroke-width="1"/>
+<text x="660.6" y="517" font-size="11" fill="#092224" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">plan result</text>
+<rect x="713.6" y="502" width="100" height="22" rx="4" fill="#FDEAFD" stroke="#B417B7" stroke-width="1"/>
+<text x="763.6" y="517" font-size="11" fill="#092224" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">plan result</text>
+<line x1="370.6" y1="534" x2="710.6" y2="534" stroke="#55726A" stroke-width="1"/>
+<line x1="370.6" y1="529" x2="370.6" y2="534" stroke="#55726A" stroke-width="1"/>
+<line x1="710.6" y1="529" x2="710.6" y2="534" stroke="#55726A" stroke-width="1"/>
+<text x="370.6" y="552" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Same prefix every time, so the cache hits.</text>
+<rect x="370.6" y="568" width="477.4" height="48" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="609.3" y="578" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">After compaction</text>
+<text x="609.3" y="597" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">If the plan results were dropped, Planning records the plan from the store, in the</text>
+<text x="609.3" y="613.6" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">same tag.</text>
+<rect x="32" y="639" width="14" height="14" rx="7" fill="#092224" stroke="#092224" stroke-width="1.2"/>
+<text x="52" y="650" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<rect x="107.4" y="639" width="14" height="14" rx="4" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="127.4" y="650" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">added by Planning</text>
+<rect x="249.2" y="639" width="14" height="14" rx="4" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="269.2" y="650" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">where the plan is kept</text>
+<rect x="414.6" y="639" width="14" height="14" rx="4" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="434.6" y="650" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">a tool call and its result</text>
+</svg>

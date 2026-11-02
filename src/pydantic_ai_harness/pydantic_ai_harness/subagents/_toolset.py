@@ -452,11 +452,12 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         # Run-scoped delegation counts, keyed by run_id then sub-agent name.
         # Shared with the capability, which clears each run's entry in wrap_run.
         self._call_counts = call_counts
-        # A delegation to the running agent alone, on its own model, runs the child on the same
-        # durable agent, so under Temporal it runs in the workflow, where the child's model requests
-        # and tools become activities; an activity cannot run an agent (`ctx.model` is unavailable there).
-        # Any other delegate would make its model requests in workflow code, so it stays an activity.
-        self_only = include_self and not self._agents and not self._models
+        # A delegation to the running agent alone, on its own model or a menu option, runs the child on
+        # the same durable agent, so under Temporal it runs in the workflow, where the child's model
+        # requests and tools become activities; an activity cannot run it on the parent run's model
+        # (`ctx.model` is unavailable there). Any other delegate would make its model requests in
+        # workflow code, so it stays an activity.
+        self_only = include_self and not self._agents
         self.add_function(
             self.delegate_task,
             name=tool_name,
@@ -1140,30 +1141,10 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         else:
             own_budget = False
             child_usage = None if self._forward_usage else RunUsage()
-            usage_limits = ctx.usage_limits if owner is not None else None
+            # Shared usage is checked against the parent's limits, so they bound the whole tree.
+            usage_limits = ctx.usage_limits if owner is not None or self._forward_usage else None
 
-        # A selected menu option decides the model and how it runs. Without one, a
-        # sub-agent with no model of its own (e.g. one loaded from disk) inherits the
-        # parent run's model, and one that brought its own keeps it. The running agent runs on
-        # the parent run's model, which may be a run-level override of the agent's own.
-        run_model: Model | KnownModelName | str | None
-        settings: ModelSettings | None
-        if key is not None:
-            option = self._models[key]
-            run_model = option.model
-            settings = option.settings
-        else:
-            # `ctx.model` is an `AbstractModel`; only a request-response `Model` can drive a
-            # sub-agent run. When the parent run uses something else (a realtime model), fall
-            # back to `None` so the sub-agent uses its own default rather than being handed a
-            # model it cannot run with.
-            ctx_model = ctx.model
-            run_model = (
-                ctx_model
-                if (is_self or sub_agent.agent.model is None) and _is_request_response_model(ctx_model)
-                else None
-            )
-            settings = None
+        run_model, settings = self._run_model(ctx, sub_agent, key=key, is_self=is_self)
         run = sub_agent.agent.run(
             task,
             deps=ctx.deps,
@@ -1224,6 +1205,29 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if ended.cause is not None:
             raise ModelRetry(ended.output) from ended.cause
         return ended.output
+
+    def _run_model(
+        self, ctx: RunContext[AgentDepsT], sub_agent: SubAgent[AgentDepsT], *, key: str | None, is_self: bool
+    ) -> tuple[Model | KnownModelName | str | None, ModelSettings | None]:
+        """The model and settings one delegation runs on.
+
+        A selected menu option decides the model and how it runs. Without one, a
+        sub-agent with no model of its own (e.g. one loaded from disk) inherits the
+        parent run's model, and one that brought its own keeps it. The running agent runs on
+        the parent run's model, which may be a run-level override of the agent's own.
+        """
+        if key is not None:
+            option = self._models[key]
+            return option.model, option.settings
+        # Read only when inherited: a durable activity's context has no `model`.
+        if not (is_self or sub_agent.agent.model is None):
+            return None, None
+        # `ctx.model` is an `AbstractModel`; only a request-response `Model` can drive a
+        # sub-agent run. When the parent run uses something else (a realtime model), fall
+        # back to `None` so the sub-agent uses its own default rather than being handed a
+        # model it cannot run with.
+        ctx_model = ctx.model
+        return (ctx_model if _is_request_response_model(ctx_model) else None), None
 
     async def _stream_child(
         self,
