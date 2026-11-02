@@ -541,6 +541,24 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('os.stat', 'mcp/server/lowlevel/server.py', 'pkg_version'),
     ('os.listdir', 'mcp/server/lowlevel/server.py', 'pkg_version'),
     ('io.TextIOWrapper.read', 'mcp/server/lowlevel/server.py', 'pkg_version'),
+    # jupyter-client starts and shuts down an IPython kernel with synchronous file I/O: it locates the
+    # kernelspec, reads config, and writes and removes the connection file, once per kernel.
+    *(
+        (func, 'jupyter_client/manager.py', ('_async_start_kernel', '_async_shutdown_kernel'))
+        for func in (
+            'os.stat',
+            'os.access',
+            'os.listdir',
+            'os.getcwd',
+            'os.path.abspath',
+            'os.read',
+            'os.remove',
+            'os.unlink',
+            'io.TextIOWrapper.read',
+            'io.TextIOWrapper.write',
+            'io.BufferedWriter.write',
+        )
+    ),
     # The test blocks the agent loop on purpose, to check a run that never starts.
     ('threading.Lock.acquire', 'tests/harness/aws_lambda/test_aws_lambda.py', 'block_loop'),
 ]
@@ -567,7 +585,6 @@ def _function_names(path: str) -> tuple[str, ...]:
 def _configure_blockbuster(
     exemptions: Sequence[tuple[str, str, str | tuple[str, ...]]] = BLOCKBUSTER_EXEMPTIONS,
     excluded_modules: tuple[str, ...] = (),
-    test_doubles: Sequence[str] = BLOCKBUSTER_TEST_DOUBLES,
 ) -> BlockBuster:
     # BlockBuster imports ForbiddenFruit, which mutates builtins during import. Disabled CI lanes
     # must remain unaffected by that instrumentation.
@@ -581,7 +598,7 @@ def _configure_blockbuster(
     )
     for func, filename, functions in exemptions:
         bb.functions[func].can_block_in(filename, functions)
-    for path in test_doubles:
+    for path in BLOCKBUSTER_TEST_DOUBLES:
         functions = _function_names(path)
         for function in bb.functions.values():
             function.can_block_in(path, functions)
