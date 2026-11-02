@@ -13,8 +13,9 @@ As a pytest plugin, it records every event a `StreamedResponse`'s `_get_event_it
 `get()` builds once that iterator is exhausted, or the error the iterator raised. It hooks in through
 `StreamedResponse.__aiter__`, so a subclass that overrides `__aiter__` without calling it, like the continuation
 composite in `models/_continuation.py`, is recorded only through the streams it iterates. Each stream is one JSON
-line, written per `pytest-xdist` worker when its test ends. Generated tool call ids, UUIDs, object addresses and
-timestamps within a day of the capture are normalized, so two runs of the same code compare equal.
+line, written per `pytest-xdist` worker when its test ends. Generated tool call ids, UUIDs, object addresses,
+timestamps within a day of the capture, history digests (which hash those timestamps), attempt durations and local
+server ports are normalized, so two runs of the same code compare equal.
 
 The comparison lists the test nodes whose streams differ or that only one capture has, and exits non-zero if
 there are any. It also counts the nodes whose streams reach each module that defines a `StreamedResponse`
@@ -43,6 +44,9 @@ GENERATED_VALUES = [
     (re.compile(r' at 0x[0-9a-f]+'), ' at 0x?'),
     (re.compile(r'pyd_ai_[0-9a-f]{32}'), 'pyd_ai_ID'),
     (re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'), 'UUID'),
+    (re.compile(r'"history_digest":"[0-9a-f]{64}"'), '"history_digest":"DIGEST"'),
+    (re.compile(r'"duration":"P[0-9DTHMS.]+"'), '"duration":"DURATION"'),
+    (re.compile(r'(127\.0\.0\.1|localhost):\d+'), r'\1:PORT'),
 ]
 ISO_DATETIME = re.compile(r'"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)"')
 
