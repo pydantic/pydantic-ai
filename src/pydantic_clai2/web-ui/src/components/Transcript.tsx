@@ -45,7 +45,7 @@ function Thumbnail({ id }: { id: string }) {
   )
 }
 
-/** Rewind the conversation to the prompt `runId` started and send `text` in its place; `false` when it failed. */
+/** Rewind to the prompt `runId` started and send `text` in its place, or the prompt as saved for `null`; `false` when it failed. */
 export type Rewind = (runId: string, text: string | null) => Promise<boolean>
 
 const REWIND_NOTE = 'Later messages are removed; files are not restored.'
