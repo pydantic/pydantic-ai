@@ -576,6 +576,26 @@ print(f'Cache read tokens: {usage.cache_read_tokens}')
 - Excess `CachePoint` markers in messages are removed from oldest to newest when the limit is exceeded
 - This ensures critical caching (instructions/tools) is maintained while still benefiting from message-level caching
 
+## Message threads (Beta)
+
+In a long conversation, every request normally sends the whole history again. With Anthropic's [message threads](https://platform.claude.com/docs/en/build-with-claude/message-threads), Anthropic keeps the conversation and each request sends only what's new, which keeps time to first token low as the conversation grows. Set [`AnthropicModelSettings.anthropic_thread`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_thread] to `True` to use them:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+agent = Agent(
+    '{{ anthropic:medium }}',
+    instructions='Instructions...',
+    model_settings=AnthropicModelSettings(anthropic_thread=True),
+)
+
+result1 = agent.run_sync('Your question')  # creates a thread
+result2 = agent.run_sync('Follow-up question', message_history=result1.all_messages())  # sends only the new prompt
+```
+
+The thread is found from the message history, so nothing else needs to be kept: a request continues the thread of the most recent response, and leaves out the messages before it and the instructions and tools, which the thread keeps. A thread can't change its instructions, tools, thinking or other request-level settings, so a request where any of these changed starts a new thread with the full history instead. So does a request after a response from another model or a refusal. Threads expire 5 minutes after their last use; when Anthropic can no longer continue one, the full history is sent again in a new thread.
+
 ## Carried-over thinking
 
 A [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] from history that can't ride Anthropic's native reasoning channel — most often because its signature didn't survive your storage round trip — is sent as text in a `user` message of its own ahead of the assistant turn it came from, wrapped in an `<assistant_thinking>` tag. That is why a request can carry a `user` turn you never wrote. See [the thinking page](../capabilities/thinking.md#carried-over-thinking) for why the assistant turn is the wrong place for it, and for the opt-out.
