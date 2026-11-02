@@ -1037,8 +1037,8 @@ _MAX_LINE_PAIRS = 65_536
 def _edit_diffs(part: EditFileCallPart) -> list[Diff]:
     """A successful edit's replacements as line diffs, so a reloaded card counts about what the live diff did.
 
-    Each is one unnumbered hunk, as the saved call does not say where in the file it was; an edit too
-    large to diff gets none, and the browser rebuilds it from the arguments.
+    Each is one unnumbered hunk, as the saved call does not say where in the file it was. An edit too
+    large to diff, or that only adds or drops a final line feed, gets none: the browser shows its arguments.
     """
     if (edit := part.typed_args) is None:
         return []
@@ -1053,8 +1053,10 @@ def _edit_diffs(part: EditFileCallPart) -> list[Diff]:
         old, new = _lines(pair['old_text']), _lines(pair['new_text'])
         if len(old) * len(new) > _MAX_LINE_PAIRS:
             return []
-        hunk = difflib.unified_diff(old, new, lineterm='', n=max(len(old), len(new)))
-        diffs.append(Diff(path=edit['path'], diff='\n'.join(list(hunk)[3:])))
+        hunk = list(difflib.unified_diff(old, new, lineterm='', n=max(len(old), len(new))))[3:]
+        if not hunk and pair['old_text'] != pair['new_text']:
+            return []
+        diffs.append(Diff(path=edit['path'], diff='\n'.join(hunk)))
     return diffs
 
 

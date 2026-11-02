@@ -373,13 +373,14 @@ async def test_a_reloaded_edit_shows_the_lines_the_live_one_did(tmp_path: Path, 
 
 
 def test_a_reloaded_edit_without_a_diff() -> None:
-    """Edits that changed nothing, or are too large to diff, leave the browser to show their arguments."""
+    """Edits that failed, or that a line diff cannot show, leave the browser to show their arguments."""
     huge = 'x\n' * 300
     calls = {
         'failed': {'path': 'a', 'old_text': 'a', 'new_text': 'b'},
         'malformed': {'path': 1, 'old_text': 'a', 'new_text': 'b'},
         'incomplete': {'path': 'a', 'new_text': 'b'},
         'huge': {'path': 'a', 'old_text': huge, 'new_text': huge + 'y'},
+        'line feed': {'path': 'a', 'old_text': 'a\n', 'new_text': 'a'},
     }
     messages = [
         ModelResponse(parts=[EditFileCallPart('edit_file', args, tool_call_id=id) for id, args in calls.items()]),
@@ -390,7 +391,7 @@ def test_a_reloaded_edit_without_a_diff() -> None:
             ]
         ),
     ]
-    assert [item.diffs for item in history_items(messages)] == [[], [], [], []]
+    assert [item.diffs for item in history_items(messages)] == [[], [], [], [], []]
 
 
 def test_item_log_follows_what_browsers_were_sent() -> None:
