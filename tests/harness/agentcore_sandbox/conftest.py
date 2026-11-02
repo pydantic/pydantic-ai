@@ -12,7 +12,11 @@ from typing import TYPE_CHECKING
 import pytest
 
 _HAS_BOTO3 = importlib.util.find_spec('boto3') is not None
-collect_ignore = [] if _HAS_BOTO3 else ['test_agentcore_sandbox.py', 'test_backend.py', 'test_conformance.py']
+collect_ignore = (
+    []
+    if _HAS_BOTO3
+    else ['test_agentcore_live.py', 'test_agentcore_sandbox.py', 'test_backend.py', 'test_conformance.py']
+)
 
 # AWS region of the live tier; the session it starts lives there.
 LIVE_REGION = os.getenv('AWS_REGION', 'us-east-1')

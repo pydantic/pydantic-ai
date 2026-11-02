@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 
 import anyio
+import anyio.to_thread
+import botocore.session
 import pytest
 from botocore.exceptions import ClientError, NoCredentialsError, ReadTimeoutError
 
@@ -48,11 +51,45 @@ def test_an_arn_ref_keeps_the_whole_code_interpreter() -> None:
     assert AgentCoreSandboxBackend(ref=ref).ref == ref
 
 
-async def test_the_client_never_retries(fake_agentcore: FakeAgentCore) -> None:
-    await AgentCoreSandboxBackend(region_name='us-west-2').working_dir()
-    [settings] = fake_agentcore.clients
-    assert settings['region_name'] == 'us-west-2'
-    assert settings['config'].retries == {'max_attempts': 1}
+async def test_calls_a_second_attempt_would_change_make_only_one(fake_agentcore: FakeAgentCore) -> None:
+    backend = AgentCoreSandboxBackend(region_name='us-west-2')
+    path = str(fake_agentcore.home / 'file')
+    await backend.write_bytes(path, b'data')
+    assert await backend.read_bytes(path) == b'data'
+    await backend.remove(path)
+    with pytest.raises(WorkspaceTimeoutError):
+        await backend.run(['sleep', '30'], timeout=0.5)
+    await backend.run(['true'])
+    assert fake_agentcore.single_attempt_calls == {
+        'startCommandExecution',
+        'stopTask',
+        'executeCode:write',
+        'executeCode:remove',
+        'executeCode:finished',
+    }
+    assert {
+        'getTask',
+        'executeCode:read',
+        'executeCode:working_dir',
+        'executeCode:tail',
+    } <= fake_agentcore.retrying_calls
+    assert not fake_agentcore.single_attempt_calls & fake_agentcore.retrying_calls
+
+    # botocore's own reading of each client's settings: `max_attempts` would count retries, not attempts.
+    def attempts() -> list[tuple[str | None, int]]:
+        session = botocore.session.get_session()
+        built = [
+            session.create_client(
+                'bedrock-agentcore', aws_access_key_id='id', aws_secret_access_key='secret', **settings
+            )
+            for settings in fake_agentcore.clients
+        ]
+        # `Config` sets its options as instance attributes, which botocore's type stubs do not declare.
+        return [
+            (client.meta.region_name, vars(client.meta.config)['retries']['total_max_attempts']) for client in built
+        ]
+
+    assert sorted(await anyio.to_thread.run_sync(attempts)) == [('us-west-2', 1), ('us-west-2', 3)]
 
 
 @pytest.mark.parametrize('anyio_backend', ['trio'])
@@ -203,7 +240,7 @@ async def test_unexpected_service_replies_are_workspace_errors(fake_agentcore: F
     backend = AgentCoreSandboxBackend()
     await backend.working_dir()
 
-    fake_agentcore.queue_task('startCommandExecution', taskStatus='running')
+    fake_agentcore.queue_task('startCommandExecution', taskStatus='submitted')
     with pytest.raises(WorkspaceError, match='startCommandExecution returned no task id'):
         await backend.run(['true'])
 
@@ -261,3 +298,40 @@ async def test_small_output_comes_back_with_the_exit_code(fake_agentcore: FakeAg
     assert (await backend.run(['sh', '-c', 'printf out; printf err >&2; exit 4'])).exit_code == 4
     # Start, at least one poll, then one program that reads both streams and cleans up.
     assert fake_agentcore.calls.count('executeCode') == 1
+
+
+async def test_a_timeout_during_a_slow_start_still_stops_the_command(fake_agentcore: FakeAgentCore) -> None:
+    """The deadline passes while AgentCore has started the command but not yet answered with its task id."""
+    backend = AgentCoreSandboxBackend()
+    await backend.working_dir()
+    fake_agentcore.start_acknowledged.clear()
+
+    async def acknowledge_late() -> None:
+        await anyio.sleep(0.3)
+        fake_agentcore.start_acknowledged.set()
+
+    async with anyio.create_task_group() as group:
+        group.start_soon(acknowledge_late)
+        with pytest.raises(WorkspaceTimeoutError):
+            await backend.run(['sleep', '30'], timeout=0.05)
+    assert 'stopTask' in fake_agentcore.calls
+    [session] = fake_agentcore.sessions.values()
+    assert all(task.poll() is not None for task in session.tasks.values())
+
+
+async def test_a_native_cancel_during_a_slow_start_still_stops_the_command(fake_agentcore: FakeAgentCore) -> None:
+    """`Task.cancel()` passes AnyIO shields, so the start runs to its end in a task of its own."""
+    backend = AgentCoreSandboxBackend()
+    await backend.working_dir()
+    [session] = fake_agentcore.sessions.values()
+    fake_agentcore.start_acknowledged.clear()
+    running = asyncio.create_task(backend.run(['sleep', '30']))
+    with anyio.fail_after(10):
+        while not session.tasks:
+            await anyio.sleep(0.01)
+    running.cancel()
+    asyncio.get_running_loop().call_later(0.2, fake_agentcore.start_acknowledged.set)
+    with pytest.raises(asyncio.CancelledError):
+        await running
+    assert 'stopTask' in fake_agentcore.calls
+    assert all(task.poll() is not None for task in session.tasks.values())

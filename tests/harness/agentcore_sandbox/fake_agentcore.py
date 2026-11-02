@@ -16,6 +16,7 @@ from __future__ import annotations
 import builtins
 import itertools
 import os
+import re
 import signal
 import subprocess
 import threading
@@ -86,8 +87,9 @@ def _result(stdout: str = '', *, error: bool = False, **structured: Any) -> list
 
 
 class FakeClient:
-    def __init__(self, owner: FakeAgentCore) -> None:
+    def __init__(self, owner: FakeAgentCore, *, single_attempt: bool) -> None:
         self._owner = owner
+        self._single_attempt = single_attempt
 
     def start_code_interpreter_session(
         self, *, codeInterpreterIdentifier: str, sessionTimeoutSeconds: int
@@ -123,6 +125,9 @@ class FakeClient:
     ) -> dict[str, Any]:
         owner = self._owner
         owner.calls.append(name)
+        operation = re.search(r'"operation": "(\w+)"', arguments.get('code', ''))
+        label = f'{name}:{operation[1]}' if operation else name
+        (owner.single_attempt_calls if self._single_attempt else owner.retrying_calls).add(label)
         session = owner.sessions.get(sessionId)
         if session is None or not session.active:
             raise client_error('ValidationException', f'Code interpreter session {sessionId} is not active')
@@ -143,13 +148,15 @@ class FakeClient:
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
             )
-            return _result(taskId=task_id, taskStatus='running')
+            # The process runs from here on; a held acknowledgment is a slow or lost start response.
+            self._owner.start_acknowledged.wait()
+            return _result(taskId=task_id, taskStatus='submitted')
         process = session.tasks[arguments['taskId']]
         if name == 'stopTask':
             _kill(process)
             return _result(taskId=arguments['taskId'], taskStatus='canceled')
         assert name == 'getTask', name
-        return _result(taskStatus='running' if process.poll() is None else 'completed')
+        return _result(taskStatus='working' if process.poll() is None else 'completed')
 
     def _execute_code(self, code: str) -> list[dict[str, Any]]:
         printed: list[str] = []
@@ -174,10 +181,16 @@ class FakeAgentCore:
 
     def __init__(self, home: Path) -> None:
         self.home = home
+        self.start_acknowledged = threading.Event()
+        """Cleared to hold `startCommandExecution`'s response after its process has started."""
+        self.start_acknowledged.set()
         self.code_interpreters = {'aws.codeinterpreter.v1'}
         self.sessions: dict[str, FakeSession] = {}
         self.ids = itertools.count(1)
         self.calls: list[str] = []
+        self.single_attempt_calls: set[str] = set()
+        """Each call made through the client limited to one attempt, as `executeCode:<operation>` for a program."""
+        self.retrying_calls: set[str] = set()
         self.clients: list[dict[str, Any]] = []
         self._queued: dict[str, list[Outcome]] = {}
         self._lock = threading.Lock()
@@ -186,7 +199,7 @@ class FakeAgentCore:
     def client(self, service_name: str, **kwargs: Any) -> FakeClient:
         assert service_name == 'bedrock-agentcore'
         self.clients.append(kwargs)
-        return FakeClient(self)
+        return FakeClient(self, single_attempt=kwargs['config'].retries == {'total_max_attempts': 1})
 
     def queue(self, name: str, outcome: Outcome) -> None:
         """Replace the next `name` call with `outcome`: an exception to raise, or stream events to return."""
@@ -213,6 +226,7 @@ class FakeAgentCore:
         return (session for session in self.sessions.values() if session.active)
 
     def close(self) -> None:
+        self.start_acknowledged.set()
         for session in self.sessions.values():
             session.kill()
 

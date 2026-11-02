@@ -14,11 +14,18 @@ with boto3 1.42.63:
   `isError` result with a traceback, so the program catches `OSError` itself and reports the
   exception's class name, which is mapped back to the builtin error here: errno numbers differ
   between Linux and macOS.
+- `sessionTimeoutSeconds` is an absolute lifetime, not the idle timeout the botocore model
+  describes: a 60-second session called every 15 seconds was refused as not active at 61 seconds.
+  The service also accepted 30 seconds, below the model's stated minimum of 60.
 - A request payload over 24 MiB is refused, and `executeCode` returns large output slowly (4 MiB of
   stdout took 57 seconds, close to botocore's 60-second read timeout), so file contents travel in
   chunks.
-- botocore retries a request that timed out, which would start a command a second time, so the
-  client this backend builds never retries.
+- botocore retries a request that timed out or lost its connection, and its `max_attempts` counts
+  retries after the first request. Sending `startCommandExecution`, a chunk `write`, `remove`,
+  `finished` (which deletes the command's output) or `stopTask` twice changes the outcome, so those
+  go through a client limited to one attempt (`total_max_attempts=1`). Every other call is
+  idempotent and retries with botocore's standard mode; `StartCodeInterpreterSession` carries a
+  `clientToken` botocore fills in, so retrying it cannot start a second session.
 """
 
 from __future__ import annotations
@@ -28,7 +35,7 @@ import json
 import logging
 import shlex
 import uuid
-from collections.abc import Generator, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, NotRequired, TypeVar
 
@@ -94,7 +101,10 @@ _PARTIAL_OUTPUT_BYTES = 4096
 _READ_CHUNK_BYTES = 1024 * 1024
 _WRITE_CHUNK_BYTES = 4 * 1024 * 1024
 _CLEAN_UP_GRACE = 10
-_CLIENT_CONFIG = Config(retries={'max_attempts': 1}, read_timeout=60, connect_timeout=10)
+_RETRYING_CONFIG = Config(retries={'mode': 'standard', 'total_max_attempts': 3}, read_timeout=60, connect_timeout=10)
+_SINGLE_ATTEMPT_CONFIG = Config(retries={'total_max_attempts': 1}, read_timeout=60, connect_timeout=10)
+# `_PROGRAM` operations that change state in a way a second attempt would see; see the module docstring.
+_SINGLE_ATTEMPT_OPERATIONS = frozenset({'write', 'remove', 'finished'})
 _FINISHED = frozenset({'completed', 'failed', 'canceled'})
 _CREDENTIAL_ERRORS = frozenset(
     {'AccessDeniedException', 'UnrecognizedClientException', 'ExpiredTokenException', 'InvalidSignatureException'}
@@ -253,11 +263,24 @@ _NONE = TypeAdapter(None)
 _TAIL = TypeAdapter(tuple[str, str])
 
 
-def new_client(region_name: str | None) -> BedrockAgentCoreClient:
-    """A `bedrock-agentcore` client that never retries a request. Building one reads files: do it off the event loop."""
+def new_client(region_name: str | None, *, retry: bool) -> BedrockAgentCoreClient:
+    """A `bedrock-agentcore` client, retrying idempotent calls or making one attempt only.
+
+    Building one reads files: do it off the event loop.
+    """
+    config = _RETRYING_CONFIG if retry else _SINGLE_ATTEMPT_CONFIG
     # boto3-stubs types `client` as one overload per AWS service, and those whose stubs are not
     # installed return an unknown type, which leaves the overloaded member partly unknown.
-    return boto3.client('bedrock-agentcore', region_name=region_name, config=_CLIENT_CONFIG)  # pyright: ignore[reportUnknownMemberType]
+    return boto3.client('bedrock-agentcore', region_name=region_name, config=config)  # pyright: ignore[reportUnknownMemberType]
+
+
+async def _complete(call: Callable[[], Awaitable[None]]) -> None:
+    """Await `call` to its end even if the caller is cancelled meanwhile, so what it records is not lost."""
+    if running_on_asyncio():
+        await run_to_completion(call)
+    else:
+        with anyio.CancelScope(shield=True):
+            await call()
 
 
 def split_ref(ref: WorkspaceRef) -> tuple[str, str]:
@@ -324,7 +347,8 @@ def translated(session_id: str | None) -> Generator[None]:
 async def stop_session(ref: WorkspaceRef, *, region_name: str | None) -> None:
     """Stop the session `ref` names; one that has already ended returns quietly."""
     code_interpreter, session_id = split_ref(ref)
-    client = await anyio.to_thread.run_sync(new_client, region_name)
+    # Stopping twice is harmless: the second attempt finds the session terminated.
+    client = await anyio.to_thread.run_sync(lambda: new_client(region_name, retry=True))
 
     def stop() -> None:
         try:
@@ -397,7 +421,8 @@ class AgentCoreSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesy
         self._create_working_dir = ref is None
         self._resolved_working_dir: str | None = None
         self._env = dict(env or {})
-        self._client: BedrockAgentCoreClient | None = None
+        # Built on first use: one that retries idempotent calls, and one that makes a single attempt.
+        self._clients: tuple[BedrockAgentCoreClient, BedrockAgentCoreClient] | None = None
         self._lock = anyio.Lock()
 
     @property
@@ -405,11 +430,15 @@ class AgentCoreSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesy
         """Identity of the session, or `None` before one has been started."""
         return self._ref
 
-    async def _session(self) -> tuple[BedrockAgentCoreClient, str]:
+    async def _session(self) -> tuple[tuple[BedrockAgentCoreClient, BedrockAgentCoreClient], str]:
         async with self._lock:
-            if self._client is None:
-                self._client = await anyio.to_thread.run_sync(new_client, self._region_name)
-            client = self._client
+            if self._clients is None:
+                region_name = self._region_name
+                self._clients = await anyio.to_thread.run_sync(
+                    lambda: (new_client(region_name, retry=True), new_client(region_name, retry=False))
+                )
+            clients = self._clients
+            client = clients[0]
             if self._session_id is None:
 
                 async def start() -> None:
@@ -426,17 +455,16 @@ class AgentCoreSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesy
                     self._ref = WorkspaceRef(provider=PROVIDER, id=f'{self._code_interpreter}/{session_id}')
                     logger.info('Started AgentCore Code Interpreter session %s', session_id)
 
-                if running_on_asyncio():
-                    await run_to_completion(start)
-                else:
-                    with anyio.CancelScope(shield=True):
-                        await start()
+                await _complete(start)
             assert self._session_id is not None
-            return client, self._session_id
+            return clients, self._session_id
 
-    async def _invoke(self, name: ToolNameType, arguments: ToolArgumentsTypeDef) -> CodeInterpreterResultTypeDef:
-        """Call one Code Interpreter tool and return its result."""
-        client, session_id = await self._session()
+    async def _invoke(
+        self, name: ToolNameType, arguments: ToolArgumentsTypeDef, *, retry: bool
+    ) -> CodeInterpreterResultTypeDef:
+        """Call one Code Interpreter tool and return its result; `retry` only when a second attempt is harmless."""
+        (retrying, single_attempt), session_id = await self._session()
+        client = retrying if retry else single_attempt
 
         def call() -> CodeInterpreterResultTypeDef | None:
             response = client.invoke_code_interpreter(
@@ -462,7 +490,9 @@ class AgentCoreSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesy
         """Run one operation of `_PROGRAM` in the session's code kernel and return its validated result."""
         request = json.dumps({'operation': operation, **arguments})
         code = f'{_PROGRAM}\n_pydantic_ai_workspace({request!r})\n'
-        result = await self._invoke('executeCode', {'code': code, 'language': 'python'})
+        result = await self._invoke(
+            'executeCode', {'code': code, 'language': 'python'}, retry=operation not in _SINGLE_ATTEMPT_OPERATIONS
+        )
         stdout = result.get('structuredContent', {}).get('stdout', '')
         try:
             reply = _REPLY.validate_json(stdout)
@@ -561,22 +591,30 @@ class AgentCoreSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesy
         async def stop() -> None:
             nonlocal partial
             if task_id is not None:
-                await self._invoke('stopTask', {'taskId': task_id})
+                await self._invoke('stopTask', {'taskId': task_id}, retry=False)
             out, err = await self._code(_TAIL, 'tail', directory=directory, limit=_PARTIAL_OUTPUT_BYTES)
             partial = (_decode(out), _decode(err))
             await self._code(_NONE, 'clean_up', directory=directory)
 
         # The deadline covers the command only; `stop` makes three calls, so it gets more than the default grace.
         async with command_deadline(timeout, stop=stop, output=lambda: partial, grace=_CLEAN_UP_GRACE):
-            started = await self._invoke(
-                'startCommandExecution', {'command': shlex.join(['sh', '-c', script, 'sh', *argv])}
-            )
-            started_id = started.get('structuredContent', {}).get('taskId')
-            if started_id is None:
-                raise WorkspaceError('AgentCore startCommandExecution returned no task id')
-            task_id = started_id
+
+            async def start() -> None:
+                nonlocal task_id
+                started = await self._invoke(
+                    'startCommandExecution', {'command': shlex.join(['sh', '-c', script, 'sh', *argv])}, retry=False
+                )
+                task_id = started.get('structuredContent', {}).get('taskId')
+                if task_id is None:
+                    raise WorkspaceError('AgentCore startCommandExecution returned no task id')
+
+            # Run to its end even if the caller is cancelled meanwhile: a task started remotely
+            # whose id is lost could not be stopped.
+            await _complete(start)
+            assert task_id is not None
+            started_id = task_id
             while True:
-                task = await self._invoke('getTask', {'taskId': started_id})
+                task = await self._invoke('getTask', {'taskId': started_id}, retry=True)
                 if task.get('structuredContent', {}).get('taskStatus') in _FINISHED:
                     break
                 await anyio.sleep(_POLL_INTERVAL)
