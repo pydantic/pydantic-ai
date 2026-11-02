@@ -2533,6 +2533,44 @@ async def test_user_id(allow_model_requests: None, openai_api_key: str):
     await agent.run('hello')
 
 
+async def test_openai_safety_identifier(allow_model_requests: None):
+    """`openai_safety_identifier` is sent as `safety_identifier` alongside `openai_user`."""
+    c = completion_message(ChatCompletionMessage(content='hello', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run(
+        'test',
+        model_settings=OpenAIChatModelSettings(
+            openai_safety_identifier='user-123',
+            openai_user='user_id',
+            extra_body={'safety_identifier': 'caller-key'},
+        ),
+    )
+    assert result.output == 'hello'
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs.get('safety_identifier') == 'user-123'
+    assert kwargs.get('user') == 'user_id'
+    # The caller's `extra_body` entry keeps precedence over the typed setting in the SDK's merge.
+    assert kwargs['extra_body']['safety_identifier'] == 'caller-key'
+
+
+async def test_openai_safety_identifier_not_sent_by_default(allow_model_requests: None):
+    """`safety_identifier` is not sent when `openai_safety_identifier` is not set."""
+    c = completion_message(ChatCompletionMessage(content='hello', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('test')
+    assert result.output == 'hello'
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert 'safety_identifier' not in kwargs
+
+
 async def test_openai_moderation(allow_model_requests: None, openai_api_key: str):
     """Moderation results requested via `openai_moderation` are surfaced in `provider_details['moderation']`."""
     model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))

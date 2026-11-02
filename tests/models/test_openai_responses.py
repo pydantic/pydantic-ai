@@ -1255,6 +1255,60 @@ async def test_responses_tool_choice_kept_when_only_builtin_tools(allow_model_re
     assert kwargs.get('tools')
 
 
+async def test_openai_safety_identifier(allow_model_requests: None) -> None:
+    """`openai_safety_identifier` is sent as `safety_identifier` alongside `openai_user`."""
+    response = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(response)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    await Agent(
+        model=model,
+        model_settings=OpenAIResponsesModelSettings(
+            openai_safety_identifier='user-123',
+            openai_user='user_id',
+            extra_body={'safety_identifier': 'caller-key'},
+        ),
+    ).run('hello')
+
+    kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert kwargs.get('safety_identifier') == 'user-123'
+    assert kwargs.get('user') == 'user_id'
+    # The caller's `extra_body` entry keeps precedence over the typed setting in the SDK's merge.
+    assert kwargs['extra_body']['safety_identifier'] == 'caller-key'
+
+
+async def test_openai_safety_identifier_not_sent_by_default(allow_model_requests: None) -> None:
+    """`safety_identifier` is not sent when `openai_safety_identifier` is not set."""
+    response = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(response)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    await Agent(model=model).run('hello')
+
+    kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert 'safety_identifier' not in kwargs
+
+
 @pytest.mark.parametrize(
     ('aspect_ratio', 'explicit_size', 'expected_size'),
     [
