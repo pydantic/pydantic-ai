@@ -44,7 +44,7 @@ from pydantic_ai._utils import (
 from pydantic_ai.models.test import TestModel
 
 from ._inline_snapshot import snapshot
-from .conftest import undrivable_event_loop
+from .conftest import no_leaked_tasks, undrivable_event_loop
 from .models.mock_async_stream import MockAsyncStream
 
 READINESS_WAIT_TIMEOUT = 5
@@ -347,7 +347,6 @@ def test_run_until_complete_cleans_up_own_task_on_interrupt():
         await asyncio.Event().wait()
 
     bystander_task = loop.create_task(bystander())
-    tasks_before = asyncio.all_tasks(loop)
 
     real_run_until_complete = loop.run_until_complete
     calls = 0
@@ -363,14 +362,13 @@ def test_run_until_complete_cleans_up_own_task_on_interrupt():
             raise KeyboardInterrupt
         return real_run_until_complete(future)
 
-    with pytest.MonkeyPatch.context() as mp:
+    with no_leaked_tasks(loop), pytest.MonkeyPatch.context() as mp:
         mp.setattr(loop, 'run_until_complete', interrupt_once)
         with pytest.raises(KeyboardInterrupt):
             utils_module.run_until_complete(coro())
 
     assert cleaned == ['cleaned']  # our coroutine's cleanup ran
     assert not bystander_task.cancelled()  # the unrelated task was left alone
-    assert asyncio.all_tasks(loop) == tasks_before  # our task didn't leak, nothing else was touched
 
     bystander_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):

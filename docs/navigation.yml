@@ -356,6 +356,7 @@ navigation:
       - page: "Building Custom Capabilities"
         path: "capabilities/custom.md"
         slug: "capabilities/custom"
+      # harness/clai2.md is intentionally unpublished; see UNPUBLISHED_PAGES in tests/test_docs_navigation.py.
       - page: "Pydantic AI Harness"
         path: "harness/index.md"
         slug: "harness"
@@ -610,6 +611,9 @@ navigation:
           - page: "Approval Reviewer"
             path: "harness/approval-reviewer.md"
             slug: "harness/approval-reviewer"
+          - page: "Permissions"
+            path: "harness/permissions.md"
+            slug: "harness/permissions"
       - section: "Self-Extension"
         slug: ""
         contents:
@@ -1100,6 +1104,13 @@ navigation:
           - "comparisons/google-adk"
           - "pydantic-ai-vs-google-adk"
           - "google-adk-vs-pydantic-ai"
+      - page: "vs Microsoft Agent Framework"
+        path: "comparisons/vs-microsoft-agent-framework.md"
+        slug: "comparisons/vs-microsoft-agent-framework"
+        aliases:
+          - "comparisons/microsoft-agent-framework"
+          - "pydantic-ai-vs-microsoft-agent-framework"
+          - "microsoft-agent-framework-vs-pydantic-ai"
       - page: "vs Mastra"
         path: "comparisons/vs-mastra.md"
         slug: "comparisons/vs-mastra"

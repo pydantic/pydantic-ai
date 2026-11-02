@@ -60,7 +60,10 @@ _LOOP_START_TIMEOUT_SECONDS = 5.0
 """How long to wait for a scheduled agent run to start before failing the invocation."""
 
 _RETIRED_LOOP_GRACE_SECONDS = 5.0
-"""Maximum extra time a retired loop gets to finish cancellation cleanup before it is stopped."""
+"""Maximum extra time a retired loop gets to finish cancellation cleanup.
+
+See `_AgentLoop.retire` for what happens at the deadline.
+"""
 
 _LOOP_LIVENESS_POLL_SECONDS = 5.0
 """How often the handler thread re-checks that the agent loop is still alive while blocked.
@@ -149,9 +152,13 @@ class _AgentLoop:
     def retire(self, loop: asyncio.AbstractEventLoop, task: asyncio.Task[Any] | None) -> None:
         """Stop handing `loop` to later invocations, then stop and close it.
 
-        The retired loop gets a bounded grace period for the abandoned task's cleanup. It stops as
-        soon as cleanup finishes, or at the grace deadline if cleanup refuses to finish. The loop's
-        own thread closes it after `run_forever()` exits.
+        The retired loop gets a bounded grace period for the abandoned task's cleanup, and stops as
+        soon as cleanup finishes. At the grace deadline, whatever is still running is cancelled and
+        the loop stops a few iterations later (on Python 3.11, once jobs already submitted to its
+        default executor finish); a cleanup that suppresses the cancellation, or is still awaiting
+        something by then, is left unfinished. If user code cancels this method's own cleanup, as
+        one that cancels every task on the loop does, the loop just stops at the deadline. The
+        loop's own thread closes it after `run_forever()` exits.
         """
         with self._lock:
             if self._loop is not loop:
@@ -162,7 +169,6 @@ class _AgentLoop:
 
         def arrange_shutdown() -> None:
             deadline = loop.time() + _RETIRED_LOOP_GRACE_SECONDS
-            loop.call_at(deadline, loop.stop)
 
             async def clean_up() -> None:
                 async def wait_within_budget(awaitable: Awaitable[object]) -> None:
@@ -187,9 +193,15 @@ class _AgentLoop:
 
                 await wait_within_budget(loop.shutdown_asyncgens())
                 await wait_within_budget(loop.shutdown_default_executor())
-                loop.stop()
+                # Stop on the next iteration, which delivers the cancellations queued above.
+                loop.call_soon(loop.stop)
 
-            loop.create_task(clean_up())
+            cleaning = loop.create_task(clean_up())
+            # Stopping at the deadline itself would end the loop before `clean_up` wakes from its
+            # timed-out waits to cancel them, leaving it and the abandoned task pending on a closed
+            # loop. Instead, at the deadline, stop once `clean_up` has finished, or right then if user
+            # code already cancelled it along with every other task on the loop.
+            loop.call_at(deadline, lambda: cleaning.add_done_callback(lambda _: loop.stop()))
 
         try:
             loop.call_soon_threadsafe(arrange_shutdown)

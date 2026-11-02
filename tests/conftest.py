@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import ast
 import asyncio
 import dataclasses
 import gc
@@ -481,7 +482,104 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('io.TextIOWrapper.write', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
     ('io.BufferedReader.read', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
     ('io.BufferedWriter.write', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
+    # Prefect's async `LocalFileSystem.aread_path`/`awrite_path` still touch the disk synchronously; the
+    # durable capability operations persist their results through them.
+    ('os.stat', 'prefect/filesystems.py', ('aread_path', 'awrite_path')),
+    ('os.mkdir', 'prefect/filesystems.py', 'awrite_path'),
+    # `posixpath.relpath` calls `abspath`, which BlockBuster flags although it only reads the current directory
+    # for a relative path. The harness relativizes absolute workspace paths with it.
+    ('os.path.abspath', '<frozen posixpath>', 'relpath'),
+    ('os.path.abspath', 'posixpath.py', 'relpath'),
+    # Spawning a Monty worker pool locates the worker binary, once per pool.
+    ('os.stat', 'pydantic_monty/_binary.py', 'find_monty_binary'),
+    # Inside a Temporal workflow, Code Mode reaches Monty through a blocking portal, the only way to reach it
+    # there, so starting and stopping the portal and each call through it wait on the portal thread.
+    (
+        'threading.Lock.acquire',
+        'pydantic_ai_harness/_monty_exec.py',
+        ('get_session', 'call_monty', '_enter_monty', '_release_monty'),
+    ),
+    # Capabilities resolve their executables, and clients their package versions, once when they're built.
+    *(
+        (func, f'pydantic_ai_harness/docker_sandbox/{module}', constructor)
+        for func in ('os.stat', 'os.access', 'os.path.abspath')
+        for module, constructor in (('_capability.py', '__post_init__'), ('_backend.py', '__init__'))
+    ),
+    *(
+        (func, 'exa_py/utils.py', '_get_package_version')
+        for func in ('os.stat', 'os.listdir', 'os.path.abspath', 'io.TextIOWrapper.read')
+    ),
+    ('os.stat', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
+    ('os.listdir', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
+    ('io.TextIOWrapper.read', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
+    # Each `browse_web` call builds browser-use's `Agent`, which imports its LLM adapters, reads its prompt
+    # templates, and sets up a scratch file system and screenshot directory. The build stays on the event loop
+    # because it goes through `BrowserAgentFactory`, which users can replace and which may need the running loop.
+    *(
+        (func, 'browser_use/agent/service.py', '__init__')
+        for func in (
+            'os.stat',
+            'os.mkdir',
+            'os.listdir',
+            'os.unlink',
+            'os.rmdir',
+            'io.TextIOWrapper.read',
+            'io.TextIOWrapper.write',
+            'io.BufferedReader.read',
+        )
+    ),
+    # browser-use creates its config directories the first time it reads one, and its PostHog telemetry client
+    # resolves the current directory when it's built; both happen once per process.
+    ('os.stat', 'browser_use/config.py', '_ensure_dirs'),
+    ('os.mkdir', 'browser_use/config.py', '_ensure_dirs'),
+    ('os.getcwd', 'posthog/client.py', '__init__'),
+    # Starting a LocalStack container checks that the Docker socket it mounts exists, once per container.
+    ('os.stat', 'pydantic_ai_harness/localstack/_container.py', '_run_argv'),
+    # MCP clients' `pydantic-settings` read `.env` files when they're constructed, once per connection.
+    ('os.stat', 'pydantic_settings/sources/providers/dotenv.py', '_read_env_files'),
+    # An in-process MCP server reads its package version when a session initializes.
+    ('os.stat', 'mcp/server/lowlevel/server.py', 'pkg_version'),
+    ('os.listdir', 'mcp/server/lowlevel/server.py', 'pkg_version'),
+    ('io.TextIOWrapper.read', 'mcp/server/lowlevel/server.py', 'pkg_version'),
+    # jupyter-client starts and shuts down an IPython kernel with synchronous file I/O: it locates the
+    # kernelspec, reads config, and writes and removes the connection file, once per kernel.
+    *(
+        (func, 'jupyter_client/manager.py', ('_async_start_kernel', '_async_shutdown_kernel'))
+        for func in (
+            'os.stat',
+            'os.access',
+            'os.listdir',
+            'os.getcwd',
+            'os.path.abspath',
+            'os.read',
+            'os.remove',
+            'os.unlink',
+            'io.TextIOWrapper.read',
+            'io.TextIOWrapper.write',
+            'io.BufferedWriter.write',
+        )
+    ),
+    # The test blocks the agent loop on purpose, to check a run that never starts.
+    ('threading.Lock.acquire', 'tests/harness/aws_lambda/test_aws_lambda.py', 'block_loop'),
 ]
+
+
+# Test doubles that serve a remote service from local files, processes or SQLite, synchronously. Any blocking call
+# made in one of their functions is the stand-in's own work; the harness code calling them stays checked.
+BLOCKBUSTER_TEST_DOUBLES: tuple[str, ...] = (
+    'tests/harness/_postgres_sqlite.py',
+    'tests/harness/boxd_sandbox/fake_boxd.py',
+    'tests/harness/boxlite_sandbox/fake_boxlite.py',
+    'tests/harness/daytona_sandbox/fake_daytona.py',
+    'tests/harness/e2b_sandbox/fake_e2b.py',
+)
+
+
+def _function_names(path: str) -> tuple[str, ...]:
+    """Every function name a frame running code in `path` can have."""
+    tree = ast.parse((Path(__file__).parent.parent / path).read_text(encoding='utf-8'))
+    defined = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)}
+    return tuple(sorted(defined | {'<lambda>', '<genexpr>'}))
 
 
 def _configure_blockbuster(
@@ -500,6 +598,10 @@ def _configure_blockbuster(
     )
     for func, filename, functions in exemptions:
         bb.functions[func].can_block_in(filename, functions)
+    for path in BLOCKBUSTER_TEST_DOUBLES:
+        functions = _function_names(path)
+        for function in bb.functions.values():
+            function.can_block_in(path, functions)
     return bb
 
 
@@ -700,16 +802,37 @@ def missing_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
 
 @pytest.fixture
 def young_gc() -> Iterator[None]:
-    """Limit the test's `gc.collect()` calls to the objects it creates.
+    """Limit the test's garbage collections to the objects it creates.
 
     A full collection walks every object the worker has accumulated, which takes seconds per call
-    late in a CI run. Freezing everything that exists before the test keeps it out of the collector's
-    reach until teardown, so collections stay cheap, and garbage leaked by an earlier test can't be
-    finalized (and raise an unraisable exception or `ResourceWarning`) in the middle of this one.
+    late in a CI run, whether the test calls `gc.collect()` or allocates enough to trigger one.
+    Freezing everything that exists before the test keeps it out of the collector's reach until
+    teardown, so collections stay cheap, and garbage leaked by an earlier test can't be finalized
+    (and raise an unraisable exception or `ResourceWarning`) in the middle of this one.
     """
     gc.freeze()
     try:
         yield
+    finally:
+        gc.unfreeze()
+
+
+@contextmanager
+def no_leaked_tasks(loop: asyncio.AbstractEventLoop | None = None) -> Generator[None]:
+    """Fail if a task started inside the block is still running at its end.
+
+    Freezes every existing object out of the cyclic collector's reach for the block, as `young_gc` does, so an
+    earlier test's garbage can't be finalized here and queue tasks on the running loop. Tasks already running at
+    entry are ignored. Pass `loop` when the test drives that loop itself instead of running on it.
+
+    Don't use it in a test that requests `young_gc`: `gc.unfreeze()` thaws every frozen object, so leaving the
+    block would undo the fixture's freeze for the rest of the test.
+    """
+    gc.freeze()
+    try:
+        before = asyncio.all_tasks(loop)
+        yield
+        assert asyncio.all_tasks(loop) - before == set()
     finally:
         gc.unfreeze()
 
