@@ -652,7 +652,7 @@ cannot read data back out of the project.
 `OTEL_EXPORTER_OTLP_ENDPOINT` is gh-aw's signal that observability is configured, and it is
 what the engine keys on. When it is set, and only then:
 
-- **`logfire` is installed**, so workflows without observability do not install it.
+- **`logfire` is installed.**
 - **The launcher configures and instruments** before importing your agent, so an agent
   that starts work at import time is already traced. `send_to_logfire` is
   `'if-token-present'` and the console exporter is off. Spans go to the configured
