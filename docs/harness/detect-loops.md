@@ -1,6 +1,6 @@
 ---
 title: Detect Loops
-description: "Stop a Pydantic AI agent that repeats the same tool calls or responses without making progress: nudge it to change approach, raise an error, or call your own handler."
+description: "Stop a Pydantic AI agent that repeats the same tool calls or responses, or repeats itself within a streaming response, without making progress: nudge it to change approach, raise an error, or call your own handler."
 ---
 
 # Detect Loops
@@ -24,7 +24,7 @@ from pydantic_ai_harness import DetectLoops
 agent = Agent('{{ anthropic:large }}', capabilities=[DetectLoops()])
 ```
 
-`DetectLoops` records each model response's tool calls and text as it arrives, and each call's result from the request that follows it. Before each model request, it checks what the run has done so far. When it finds a loop, it adds a system prompt to that request telling the model which loop it is in and asking it to change its approach. The capability adds no tools or instructions, so a run without a loop sends the same requests it would without it.
+`DetectLoops` records each model response's tool calls and text as it arrives, and each call's result from the request that follows it. Before each model request, it checks what the run has done so far. When it finds a loop, it adds a system prompt to that request telling the model which loop it is in and asking it to change its approach. It also checks each response on its own as it streams, for thinking, text or tool call arguments that keep repeating the same passage, and stops the stream when they do ([loops within a response](#loops-within-a-response)). The capability adds no tools or instructions, so a run without a loop sends the same requests it would without it.
 
 ## What counts as a loop
 
@@ -54,6 +54,81 @@ Only the current run's responses are recorded. A run that continues an earlier c
 
 A tool polled until a job finishes, with arguments that don't change, is a `repeated_call` loop after 5 polls within 10 calls, and a `repeated_result` loop after 3 polls in a row that return the same status. If your agent polls on purpose, raise those thresholds or turn the checks off, or have the tool return something that changes between polls, such as the elapsed time.
 
+## Loops within a response
+
+A model can also loop inside one response: going over the same reasoning in its thinking, repeating a paragraph until it runs out of output tokens, or writing the same block again and again into one tool call's arguments, such as the body of a `write_file` call. `DetectLoops` checks each response for this as it streams, so it can stop the stream instead of waiting for the rest of it.
+
+| Pattern | Reported when | Setting (default) |
+|---|---|---|
+| `repeated_thinking` | A thinking part keeps repeating the same passage. | `stream_detector` (`RepetitionDetector()`) |
+| `repeated_stream_text` | A text part keeps repeating the same passage. | `stream_detector` |
+| `repeated_tool_args` | One tool call's arguments keep repeating the same passage. | `stream_detector` |
+| `repeated_parallel_call` | The same tool call (same tool, same arguments) is made this many times in one response. It's reported before any of the calls run. | `repeated_parallel_call_threshold` (`5`) |
+
+`stream_channels` (default `('thinking', 'text', 'tool_args')`) picks which of a response's parts `stream_detector` checks, and `stream_detector=None` turns those checks off. Each part is checked every `stream_check_every` (default `256`) characters as it streams, and once more when it ends. Only [function tool](../tools.md) and output tool calls are checked, not [native tool](../native-tools.md) calls.
+
+A response that isn't streamed, such as one from `agent.run()` without an `event_stream_handler`, gets the same checks once it has arrived, at the same offsets, so it reaches the same decisions. `DetectLoops` doesn't make a run stream.
+
+### The default heuristic
+
+`RepetitionDetector` looks at the end of each part and reports a passage repeated back to back:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `min_period` | `20` | The shortest passage that counts, in characters. A run of a shorter unit, such as a divider line or a row of zeros, isn't reported, even when a longer passage made of it repeats. |
+| `max_period` | `2000` | The longest passage that counts. |
+| `min_repeats` | `4` | How many times in a row the passage has to repeat. |
+| `min_chars` | `400` | How many characters the repeats have to cover together. |
+
+It compares characters exactly over the part's last `min_repeats * max_period` characters, which takes microseconds per check and gives the same answer every time. It doesn't catch a loop that changes a little on each pass, such as a counter in every sentence: a model judge can.
+
+### A model judge
+
+`LoopJudge` asks a model whether a part is looping. Use a "System 1" model for it: a small, fast, cheap model suited to a quick, intuitive read of the text, not a large reasoning model. The stream waits for each answer, and the question doesn't need reasoning.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import DetectLoops
+from pydantic_ai_harness.detect_loops import LoopJudge
+
+agent = Agent(
+    '{{ anthropic:large }}',
+    capabilities=[DetectLoops(stream_detector=LoopJudge(model='{{ anthropic:small }}', every=4_000))],
+)
+```
+
+The judge is asked sparingly. Each check runs `heuristic` (a `RepetitionDetector()` by default) first, and the judge is asked when the heuristic suspects a loop, to confirm or overrule it, and, with `every` set, each time a part passes another `every` characters, to find loops the heuristic misses. Without `every`, it's only asked on suspicion. It's shown the part's last `max_chars` (default `4000`) characters, framed in a `<streamed_output>` tag.
+
+If the judge raises, or doesn't answer within `timeout` (default `5.0`) seconds, the heuristic's answer is used and a `loop judge failed` span records the error's type, so a judge failure doesn't break the run. Pass `agent=` instead of `model=` to use your own judge agent, with its own instructions, settings or fallback models; it's run with the judge's instructions added and its own output type, so it can't have output validators. The judge's usage is its own and isn't added to the run's usage.
+
+### Your own detector
+
+Subclass `LoopDetector` to use another methodology. `detect` is given a `StreamSample`: the `channel`, the part's latest `text` (its last `sample_chars` characters, `8000` unless you override the property), how many characters it has had in total and since the last check, and the `tool_name` for tool call arguments. Return a `Repetition` with the passage that repeats and how many times, or `None`:
+
+```python
+from dataclasses import dataclass
+
+from pydantic_ai import RunContext
+from pydantic_ai_harness import DetectLoops
+from pydantic_ai_harness.detect_loops import LoopDetector, Repetition, StreamSample
+
+
+@dataclass
+class RepeatedLines(LoopDetector[object]):
+    """Report the same non-empty line written `count` times in a row."""
+
+    count: int = 10
+
+    async def detect(self, ctx: RunContext[object], sample: StreamSample) -> Repetition | None:
+        lines = sample.text.splitlines()[-self.count :]
+        if len(lines) == self.count and lines[0].strip() and len(set(lines)) == 1:
+            return Repetition(text=lines[0], count=self.count)
+        return None
+
+
+detect_loops = DetectLoops(stream_detector=RepeatedLines())
+```
+
 ## Actions
 
 `action` decides what happens when a loop is detected.
@@ -74,11 +149,15 @@ The text names tools using only letters, digits, and `_`; any other character be
 
 Find nudges in history by that `origin`, not by their text ([identifying system prompts](../message-history.md#identifying-system-prompts)). On a model without inline system prompts, Pydantic AI sends the part as `<system>` user text, as it does any [mid-conversation system prompt](../message-history.md#mid-conversation-system-prompts).
 
+For a [loop within a response](#loops-within-a-response), the stream is also stopped and the request made again, with the nudge. The capability raises `ModelRetry`, so the model also sees `Your previous response was rejected because it kept repeating itself.` as retry feedback, and each such retry counts against the agent's [output retries](../agent.md#how-output-retries-are-enforced): a model that keeps looping ends the run with `UnexpectedModelBehavior` once they run out. A streamed response that was stopped isn't kept in history, and the tokens it used aren't added to the run's usage. A response that arrived whole stays in history ahead of the retry, as any rejected response does.
+
+`run_stream()` can't make a request again once its output has started streaming, so there a loop in the text that is the run's output ends the run with `UnexpectedModelBehavior`, after the text streamed so far. Loops in thinking or tool call arguments are retried as usual. Use `agent.run()` with an `event_stream_handler`, or `agent.iter()`, to have output text retried too.
+
 A nudge doesn't stop a model that ignores it. Combine it with [`UsageLimits`](../agent.md#usage-limits) for a hard stop.
 
 ### `'error'`
 
-The capability raises `LoopDetectedError`, a subclass of [`AgentRunError`][pydantic_ai.exceptions.AgentRunError], which ends the run. The detected loop is on its `loop` attribute:
+The capability raises `LoopDetectedError`, stopping the stream first for a loop within a response. It's a subclass of [`AgentRunError`][pydantic_ai.exceptions.AgentRunError], which ends the run. The detected loop is on its `loop` attribute:
 
 ```python
 from pydantic_ai import Agent
@@ -109,7 +188,7 @@ except LoopDetectedError as error:
 
 ### A handler
 
-Pass a sync or async function to decide yourself. It's called with the run context and a `DetectedLoop`: raise from it to stop the run, or call `ctx.enqueue(...)` to steer the model your own way.
+Pass a sync or async function to decide yourself. It's called with the run context and a `DetectedLoop`: raise from it to stop the run, or call `ctx.enqueue(...)` to steer the model your own way. For a loop within a response, the response keeps streaming when the handler returns; raise `ModelRetry` from it to stop the stream and make the request again, rejecting the response as a nudge does.
 
 ```python
 import logging
@@ -132,16 +211,19 @@ agent = Agent('{{ anthropic:large }}', capabilities=[DetectLoops(action=on_loop)
 
 A `DetectedLoop` has:
 
-- `pattern`: which of the four patterns it is.
-- `tool_names`: the tools involved, one or two (none for `repeated_text`).
-- `count`: how many calls, cycles, or responses repeated.
-- `window`: how many recent tool calls (responses, for `repeated_text`) the check looked at.
-- `fingerprints`: short stable hashes of the repeated calls (tool name and canonical arguments) or text. The same call has the same fingerprint in every run. They don't contain the arguments in the clear, but a short argument, such as a user id, can be recovered by hashing candidate values.
+- `pattern`: which of the eight patterns it is.
+- `tool_names`: the tools involved, one or two (none for `repeated_text`, `repeated_thinking` and `repeated_stream_text`).
+- `count`: how many calls, cycles, or responses repeated, or how many times the passage repeated within a response.
+- `window`: how many recent tool calls (responses, for `repeated_text`) the check looked at; for a loop within a response, how many of the part's characters, or for `repeated_parallel_call` how many of the response's tool calls.
+- `fingerprints`: short stable hashes of the repeated calls (tool name and canonical arguments), text, or passage. The same call has the same fingerprint in every run. They don't contain the arguments in the clear, but a short argument, such as a user id, can be recovered by hashing candidate values.
 - `message`: the text the nudge would send.
+- `repeated_text`: the passage that repeated within a response, as it appears at the end of the part, or `None` for the other patterns. It's the model's own text.
 
 ## Durable execution
 
 What a run recorded lives in memory, in the instance `for_run` creates for that run. Under [durable execution](../durable_execution/overview.md) the recording and detection hooks (`after_model_request` and `before_model_request`) run in workflow code, so when Temporal, DBOS, or Prefect replays a run, they run again in the same order over the journaled responses and reach the same decisions. A handler runs there too, so keep it deterministic and free of I/O: log through the engine's workflow logger, or move I/O into a [durable capability operation](../capabilities/custom.md#durable-capability-operations). `LoopDetectedError` is an `AgentRunError`, so under Temporal it fails the workflow rather than the workflow task.
+
+A response streams inside the durable model request unit (activity, step or task), and the workflow only sees it whole, so the checks within a response run on the whole response, in workflow code, and the stream isn't stopped early. `LoopJudge` never asks its model in workflow code, where that model call wouldn't be checkpointed and could be repeated on replay: only its heuristic runs there, which is deterministic.
 
 ## Telemetry
 
@@ -155,13 +237,16 @@ Each detection emits a zero-duration `loop detected` span through `ctx.tracer`, 
 | `detect_loops.window` | `DetectedLoop.window` |
 | `detect_loops.tool_names` | The tools involved |
 | `detect_loops.fingerprints` | The hashes of the repeated calls or text, only when `trace_include_content` is enabled |
+| `detect_loops.repeated_text` | The passage that repeated within a response, only when `trace_include_content` is enabled |
 
-The span contains no arguments, results, or response text. The fingerprints are left out unless `trace_include_content` is enabled, because a short argument can be recovered from its hash. Checks that find nothing emit nothing.
+Without `trace_include_content`, the span contains no arguments, results, or response text. The fingerprints are left out too, because a short argument can be recovered from its hash. Checks that find nothing emit nothing.
+
+When a `LoopJudge` fails or times out, a zero-duration `loop judge failed` span records it, with the exception's class name in `detect_loops.error_type`. The judge's own requests are traced as its agent's runs, when that agent is instrumented.
 
 ## Composition
 
 - Several `DetectLoops` on one agent run independently. Each reports the loops its own settings describe, so you can, for example, nudge at the defaults and add a second one with higher thresholds and `action='error'` to stop a run that ignores the nudge.
-- [System Reminders](system-reminders.md) re-inject guidance on a cadence or condition, and [Trajectory Judge](trajectory-judge.md) asks a second model whether the run is on track. `DetectLoops` needs no second model and only acts on exact repetition.
+- [System Reminders](system-reminders.md) re-inject guidance on a cadence or condition, and [Trajectory Judge](trajectory-judge.md) asks a second model whether the run is on track. By default `DetectLoops` needs no second model and only acts on exact repetition; a [`LoopJudge`](#a-model-judge) adds a small model for loops within a response that aren't exact.
 
 `DetectLoops` does not detect a run that keeps exceeding the model's context window, and it doesn't truncate, restart, or roll back the run: compaction and your own handler cover those.
 
@@ -178,3 +263,15 @@ See the [source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_
 ::: pydantic_ai_harness.detect_loops.LoopHandler
 
 ::: pydantic_ai_harness.detect_loops.LoopPattern
+
+::: pydantic_ai_harness.detect_loops.LoopDetector
+
+::: pydantic_ai_harness.detect_loops.RepetitionDetector
+
+::: pydantic_ai_harness.detect_loops.LoopJudge
+
+::: pydantic_ai_harness.detect_loops.StreamSample
+
+::: pydantic_ai_harness.detect_loops.Repetition
+
+::: pydantic_ai_harness.detect_loops.StreamChannel
