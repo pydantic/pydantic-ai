@@ -59,6 +59,7 @@ Size S remains a manual judgment; review enforcement skips merge groups after ad
 
 A merge-queue removal posts no comment and leaves the PR open. Detect it as a new `removed_from_merge_queue` event in `gh api --paginate repos/pydantic/pydantic-ai/issues/<number>/timeline` while the PR is still open; a merge logs the same event.
 Diagnose the failed jobs of the PR's newest `merge_group` run (`head_branch` `gh-readonly-queue/main/pr-<number>-<sha>`) as step 2 of "After you push — the loop" requires. Never re-enqueue the PR; a maintainer does.
+After diagnosing, post a PR comment that names each failed job and its cause, with evidence: your fix commit, a known flake, or a failure already on `main`. When the current head meets the merge bar again, comment that the PR is ready to re-enqueue.
 
 ## When you open the PR
 
