@@ -76,7 +76,7 @@ from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
 from pydantic_ai._run_context import RunContext, get_current_run_context
 from pydantic_ai.agent import Agent, AgentRunResult
 from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTools
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolFailed, UserError
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UserError
 from pydantic_ai.messages import (
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
@@ -7003,6 +7003,8 @@ async def test_stream_failed_builtin_tool_return_outcome_roundtrip(
                 outcome='failed',
             )
         }
+        # Text output ends the run, rather than a retry streaming the search again as a separate response.
+        yield 'The search is unavailable.'
 
     agent = Agent(model=FunctionModel(stream_function=stream_function))
     events = await run_and_collect_events(
@@ -11869,3 +11871,142 @@ async def test_dispatch_request_forwards_manage_message_history():
     await response.stream_response(send)
 
     assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
+
+
+async def test_rejected_response_is_named_by_a_custom_event_and_the_retry_gets_a_new_message():
+    """The rejected response's assistant message is named by a `pydantic_ai_model_response_rejected` custom event.
+
+    The retried response streams as a message of its own, so a frontend can set the rejected text apart.
+    """
+
+    async def stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
+        yield 'The store opens at 9 am.' if len(messages) > 1 else "I'll look that up."
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    @agent.output_validator
+    def reject_announcements(ctx: RunContext, output: str) -> str:
+        if output.startswith("I'll look"):
+            raise ModelRetry('Answer the question.')
+        return output
+
+    events = await run_and_collect_events(agent, create_input(UserMessage(id='msg-1', content='When?')))
+
+    assert [event for event in events if event['type'] not in ('RUN_STARTED', 'RUN_FINISHED')] == snapshot(
+        [
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (rejected_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
+                'messageId': rejected_id,
+                'delta': "I'll look that up.",
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': rejected_id},
+            {
+                'type': 'CUSTOM',
+                'timestamp': IsInt(),
+                'name': 'pydantic_ai_model_response_rejected',
+                'value': {
+                    'message_id': rejected_id,
+                    'run_step': 1,
+                    'attempt': 1,
+                    'outcome': 'retried',
+                    'cause': 'model_retry',
+                },
+            },
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (answer_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
+                'messageId': answer_id,
+                'delta': 'The store opens at 9 am.',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': answer_id},
+        ]
+    )
+    assert len({event['messageId'] for event in events if event['type'] == 'TEXT_MESSAGE_START'}) == 2
+
+
+async def test_rejected_response_without_a_message_is_not_named():
+    """A rejected response that streamed only thinking announced no assistant message, so the event names none.
+
+    Naming the current message ID would reference a message the stream never announced, or an earlier response's.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaThinkingCalls | str]:
+        if len(messages) > 1:
+            yield 'The store opens at 9 am.'
+        else:
+            yield {0: DeltaThinkingPart(content='Thinking it over')}
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+    events = await run_and_collect_events(agent, create_input(UserMessage(id='msg-1', content='When?')))
+
+    rejected = [event for event in events if event['type'] == 'CUSTOM']
+    assert rejected == snapshot(
+        [
+            {
+                'type': 'CUSTOM',
+                'timestamp': IsInt(),
+                'name': 'pydantic_ai_model_response_rejected',
+                'value': {'run_step': 1, 'attempt': 1, 'outcome': 'retried', 'cause': 'no_output'},
+            }
+        ]
+    )
+
+
+async def test_second_rejected_response_without_a_message_does_not_name_the_first():
+    """After a rejection the response turn ends, so a later rejected response that announced no message names none.
+
+    The first rejected response's message is still the current `message_id` then; naming it would point the second
+    rejection at a message it doesn't own.
+    """
+    calls = 0
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaThinkingCalls | str]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            yield "I'll look that up."
+        elif calls == 2:
+            yield {0: DeltaThinkingPart(content='Thinking it over')}
+        else:
+            yield 'The store opens at 9 am.'
+
+    agent = Agent(FunctionModel(stream_function=stream_function), retries={'output': 2})
+
+    @agent.output_validator
+    def reject_announcements(ctx: RunContext, output: str) -> str:
+        if output.startswith("I'll look"):
+            raise ModelRetry('Answer the question.')
+        return output
+
+    events = await run_and_collect_events(agent, create_input(UserMessage(id='msg-1', content='When?')))
+
+    first_message_id = next(event['messageId'] for event in events if event['type'] == 'TEXT_MESSAGE_START')
+    assert [event['value'] for event in events if event['type'] == 'CUSTOM'] == snapshot(
+        [
+            {
+                'message_id': first_message_id,
+                'run_step': 1,
+                'attempt': 1,
+                'outcome': 'retried',
+                'cause': 'model_retry',
+            },
+            {'run_step': 2, 'attempt': 1, 'outcome': 'retried', 'cause': 'no_output'},
+        ]
+    )

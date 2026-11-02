@@ -16,7 +16,7 @@ from pydantic_ai import Agent, RunContext, _utils
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, ReinjectSystemPrompt
-from pydantic_ai.exceptions import RunCancelled, UserError
+from pydantic_ai.exceptions import ModelRetry, RunCancelled, UserError
 from pydantic_ai.messages import (
     BinaryImage,
     CompactionPart,
@@ -33,6 +33,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseRejectedEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     OutputToolCallEvent,
@@ -221,6 +222,9 @@ class DummyUIEventStream(UIEventStream[DummyUIRunInput, str, AgentDepsT, OutputD
     async def handle_run_result(self, event: AgentRunResultEvent) -> AsyncIterator[str]:
         yield f'<run-result>{event.result.output}</run-result>'
 
+    async def handle_model_response_rejected(self, event: ModelResponseRejectedEvent) -> AsyncIterator[str]:
+        yield f'<rejected run_step={event.run_step} attempt={event.attempt} />'
+
     async def before_stream(self) -> AsyncIterator[str]:
         yield '<stream>'
 
@@ -280,6 +284,44 @@ async def test_run_stream_text_and_thinking():
             '</thinking followed_by_thinking=False>',
             '</response>',
             '<run-result>Half of some text</run-result>',
+            '</stream>',
+        ]
+    )
+
+
+async def test_run_stream_rejected_response_ends_its_turn():
+    """A rejected response's turn ends after the rejection, so the response replacing it starts a turn of its own."""
+
+    async def stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
+        yield 'The answer.' if len(messages) > 1 else 'An announcement.'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    @agent.output_validator
+    def reject_announcements(ctx: RunContext, output: str) -> str:
+        if output == 'An announcement.':
+            raise ModelRetry('Answer the question.')
+        return output
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('When?')])
+    adapter = DummyUIAdapter(agent, request)
+    events = [event async for event in adapter.run_stream()]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            '<text follows_text=False>An announcement.',
+            '<final-result tool_name=None />',
+            '</text followed_by_text=False>',
+            '<rejected run_step=1 attempt=1 />',
+            '</response>',
+            '<response>',
+            '<text follows_text=False>The answer.',
+            '<final-result tool_name=None />',
+            '</text followed_by_text=False>',
+            '</response>',
+            '<run-result>The answer.</run-result>',
             '</stream>',
         ]
     )

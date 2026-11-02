@@ -942,6 +942,10 @@ class Hooks(AbstractCapability[AgentDepsT]):
         )
 
     @property
+    def _has_after_model_request(self) -> bool:
+        return type(self).after_model_request is not Hooks.after_model_request or bool(self._get('after_model_request'))
+
+    @property
     def has_wrap_run_event_stream(self) -> bool:
         return (
             bool(self._get('wrap_run_event_stream'))

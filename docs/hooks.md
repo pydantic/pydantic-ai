@@ -508,6 +508,7 @@ Hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the mod
 - `wrap_model_request`: the response is preserved only if the handler was called
 - Retries count against the output side of the agent's retry budget
 - [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] can't retry a response it has already streamed as final output, so a `ModelRetry` rejecting it raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] when the `async with` block exits. [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] and [`iter()`][pydantic_ai.agent.Agent.iter] retry it
+- On a streamed request, `after_model_request` runs once the model stream ends, before the stream the consumer reads ends, so a [`ModelResponseRejectedEvent`][pydantic_ai.messages.ModelResponseRejectedEvent] reporting its `ModelRetry` comes [right after the rejected response's events](agent.md#rejected-responses). The run counts the response's usage at that point too, rather than when the consumer leaves the stream, as it does without such a hook
 
 **Tool hooks** (`before/after_tool_validate`, `wrap_tool_validate`, `on_tool_validate_error`, `before/after_tool_execute`, `wrap_tool_execute`, `on_tool_execute_error`):
 
