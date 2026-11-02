@@ -171,11 +171,13 @@ not just the file you originally linked.
 Nested files are different: the model chooses which directories to read, and
 those can include vendored code or a checkout someone else wrote. Their contents
 and paths are data read from the workspace, so they reach the model as a user
-message, not as instructions. A `'pointer'` note sends the file's path in a
-`<context_file_path>` tag, with a note in the application's voice asking the
-model to read the file if it's relevant (a system message where the model
-supports one mid-conversation, and `<system>`-tagged user text otherwise). The
-note goes out only for a workspace the operator controls.
+message, not as instructions. A `'pointer'` note is a `ContextFilePathPart`
+that sends the file's path in a `<context_file_path>` tag, with a note in the
+application's voice asking the model to read the file if it's relevant (a system
+message where the model supports one mid-conversation, and `<system>`-tagged
+user text otherwise). Both kinds of note carry a `WorkspaceSource`: for a
+workspace the operator doesn't control, it has no authority, and the note also
+says the file was written by its author, not by the user or the application.
 
 Walk-up files are wrapped in `<context-file path="...">` tags in the
 instructions. The `<` of every opening or closing `<context-file>` tag inside a
@@ -183,11 +185,12 @@ file, and of every framing tag Pydantic AI writes (`<system>`, `<context>`,
 `<tool_result>` and the rest), is escaped as `&lt;`, and the path is HTML-
 escaped, so a file stays inside its own block.
 
-A `'contents'` note sends the file in a `<context_file path="...">` tag. The `<`
-of every opening or closing `<context_file>` tag inside the file is escaped as
-`&lt;` and the path is HTML-escaped, so a file stays inside its own block. Text
-in it that looks like one of Pydantic AI's frames, such as a `<system>` tag,
-gets a note saying the file wrote it.
+A `'contents'` note is a `ContextFilePart` that sends the file in a
+`<context_file path="...">` tag, with the path HTML-escaped. The file goes out
+as written: an opening or closing `<context_file>` tag in it, or text that looks
+like one of Pydantic AI's frames, such as a `<system>` tag, gets a note saying
+the file's author wrote it, so a file stays inside its own block. Find either
+kind of note in history by its type.
 
 ## Cache cost
 

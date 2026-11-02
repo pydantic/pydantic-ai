@@ -20,9 +20,9 @@ Over a long run, an agent can lose track of its instructions, build on unsupport
 The judge delivers exactly one verdict per evaluation, as its output type:
 
 - `AllGood` -- the run is on track; nothing happens.
-- `Steer(message=...)` -- the run needs correction; the steering is enqueued into the running conversation ([`RunContext.enqueue`](https://pydantic.dev/docs/ai/core-concepts/message-history/#injecting-messages-mid-run), `'asap'` priority) and delivered on the next model request, attributed to the judge. It arrives as a system prompt note from the framework plus the judge's message as user-channel data in a `<judge_feedback>` element, tied together by a random `ref` (see [How steering is framed](#how-steering-is-framed)).
+- `Steer(message=...)` -- the run needs correction; the steering is enqueued into the running conversation ([`RunContext.enqueue`](https://pydantic.dev/docs/ai/core-concepts/message-history/#injecting-messages-mid-run), `'asap'` priority) and delivered on the next model request, attributed to the judge. It arrives as a `JudgeSteeringPart`, a note in the application's voice, plus a `JudgeFeedbackPart` with the judge's message as user-channel data in a `<judge_feedback>` element, tied together by a random `ref` (see [How steering is framed](#how-steering-is-framed)).
 
-    The steering stays in the conversation (the default `scope='conversation'`), so the correction keeps applying on later requests. To observe steering, use `on_verdict` (see [Observability](#observability)): it receives each `Steer(message=...)` as it is enqueued. Later evaluations recognize earlier steering by metadata the judge attaches to it, which survives merged requests and continued conversations, and show it to the judge as steering, so it can tell whether the agent followed it. Two limits apply. The metadata doesn't survive a round trip through the UI adapters ([identifying system prompts](https://pydantic.dev/docs/ai/core-concepts/message-history/#identifying-system-prompts)), so in history that comes back from a frontend the judge sees the message as an ordinary `user:` line. And on a model without inline system prompts, the judge reads the request as prepared for that model, where the framework note has become `<system>` user text with no metadata, so the note shows in the judge's transcript as a `user:` line; the message itself is still shown as steering.
+    The steering stays in the conversation (the default `scope='conversation'`), so the correction keeps applying on later requests. To observe steering, use `on_verdict` (see [Observability](#observability)): it receives each `Steer(message=...)` as it is enqueued. Later evaluations recognize earlier steering in the run's stored history by its type, `JudgeFeedbackPart`, which survives merged requests and continued conversations, and show it to the judge as steering, so it can tell whether the agent followed it. The UI adapters leave capability parts out, so history that comes back from a frontend has no steering for the judge to see.
 
 Steering is the judge's output, not a tool it calls, so each evaluation ends in exactly one verdict. `TrajectoryJudge` is exported from `pydantic_ai_harness`; the verdict types `AllGood` and `Steer` are imported from `pydantic_ai_harness.trajectory_judge`.
 
@@ -47,7 +47,7 @@ print(result.output)
 
 ## How steering is framed
 
-The judge's message is user-channel data, not a system prompt, because a model wrote it after reading the run's tool results. Any `judge_feedback` tag in it, and any framing tag Pydantic AI writes (`<system>`, `<tool_result>` and the rest), opening or closing, is escaped, so it can't end the element early or imitate the `<system>` text that framework notes become on models without inline system prompts.
+The judge's message is user-channel data, not a system prompt, because a model wrote it after reading the run's tool results. It goes out as the judge wrote it, with a note saying the trajectory judge wrote it, not the user or the application. Text in it that looks like a `judge_feedback` tag or a framing tag Pydantic AI writes (`<system>`, `<tool_result>` and the rest), opening or closing, gets a further note naming the judge as its author, so it can't end the element early or imitate the `<system>` text that framework notes become on models without inline system prompts.
 
 The note names its element by a random `ref`, made once when the steer is built and stored with it, so later requests resend both parts unchanged. A `<judge_feedback>` element forged earlier in the run, for example in a tool result, has no ref or a different one, and the note disowns any element whose ref no trajectory judge's note names. Only the first element with a named ref counts, so a later copy by content that saw the ref is disowned too. Naming the element by ref rather than by position works whatever order a provider sends the two parts in (Anthropic sends a request's user content before its system entry).
 
@@ -63,6 +63,12 @@ The user-channel message:
 <judge_feedback judge="hallucination-check" ref="9c2e41b07fd3a568">
 ...
 </judge_feedback>
+```
+
+The note naming its author, in the application's voice:
+
+```text
+The accompanying <judge_feedback judge="hallucination-check" ref="9c2e41b07fd3a568"> was written by the trajectory judge, not by the user or the application.
 ```
 
 ## Cadence and window

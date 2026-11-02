@@ -338,9 +338,9 @@ it with `isinstance`) in `result.all_messages()`, whose `content` is the reminde
 when `Reminder(tag=...)` is set); inside a `FunctionModel` script the model sees only the current one, as
 `<system>`-tagged user text at the end of the last request. A `Reminder(scope='conversation')` firing is a
 `ReminderPart` with `scope='conversation'` instead, which every later request sends again. An
-`LLMReminder` firing is instead a lasting record: a `SystemPromptPart` note (no `scope='request'`) and
-the generated text as user-channel `TextContent` in `<generated_reminder model="...">`, both re-sent on
-every later request. `interval` counts model requests from 1; `LLMReminder` fires only every
+`LLMReminder` firing is instead a lasting `GeneratedReminderPart` (a `DataCapabilityPart`): the generated
+text, rendered in `<generated_reminder model="...">` on the user channel with a note in the application's
+voice, re-sent on every later request. `interval` counts model requests from 1; `LLMReminder` fires only every
 `interval` requests (10 by default), so a short scripted run needs `LLMReminder(..., interval=1)`.
 
 **Looks like it never fires.** Context-window-driven capabilities (the compaction family) cannot

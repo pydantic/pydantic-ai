@@ -418,22 +418,33 @@ The accompanying <review_feedback> is feedback from an automated reviewer about 
 <review_feedback reviewer="loop_check">The second search repeats the first one.</review_feedback>
 ```
 
-The note is a mid-conversation system message, or a `<system>` block on a model without one. The content goes between the tags exactly as written: nothing is escaped, a file goes in as a file, and text in it that looks like a framework frame gets a [note](../message-history.md#framework-frames-and-content-fidelity), like such text from a user.
+The note is a mid-conversation system message, or a `<system>` block on a model without one. The content goes between the tags exactly as written: nothing is escaped, a file goes in as a file, and content of more than one line starts and ends on lines of its own. Text in it that looks like a framework frame, or that opens or closes the part's own tag, gets a [note](../message-history.md#framework-frames-and-content-fidelity) naming who wrote it, like such text from a user.
+
+A data kind takes text, [structured content][pydantic_ai.messages.StructuredContent] or a sequence of user content such as files. Subclass `DataCapabilityPart[str]` to narrow it to text, so a type checker knows `content` is a `str` and loading history validates it.
 
 ### Where the content came from
 
-Every part has a [`source`][pydantic_ai.messages.CapabilityPart.source], which decides how far its content is trusted:
+Every part has a [`source`][pydantic_ai.messages.CapabilityPart.source], which says who wrote its content and so how much [authority][pydantic_ai.messages.Authority] it carries:
 
-| Source | Trusted |
+| Source | Authority |
 |---|---|
-| [`OperatorSource()`][pydantic_ai.messages.OperatorSource]: your code or your configuration wrote it | Yes |
-| [`WorkspaceSource.from_workspace(workspace, path)`][pydantic_ai.messages.WorkspaceSource.from_workspace]: read from a file in a workspace, which it asks whether the operator controls its files; there's no other way to build one | When the operator controls the workspace's files, which the workspace reports (#11836); until then, every workspace counts as trusted |
-| [`ToolResultSource(tool_name=...)`][pydantic_ai.messages.ToolResultSource]: a tool's output | No |
-| [`UserSource()`][pydantic_ai.messages.UserSource]: the user wrote it | No |
+| [`OperatorSource()`][pydantic_ai.messages.OperatorSource]: your code or your configuration wrote it | `'operator'` |
+| [`WorkspaceSource.from_workspace(workspace, path)`][pydantic_ai.messages.WorkspaceSource.from_workspace]: read from a file in a workspace, which it asks whether the operator controls its files; there's no other way to build one | `'operator'` when the operator controls the workspace's files, which the workspace reports (#11836), and `'none'` otherwise; until workspaces report it, every workspace counts as the operator's |
+| [`UserSource()`][pydantic_ai.messages.UserSource]: the user wrote it, such as a prompt they saved earlier | `'user'` |
+| [`ToolResultSource(tool_name=...)`][pydantic_ai.messages.ToolResultSource]: a tool's output | `'none'` |
+| [`ModelSource(author)`][pydantic_ai.messages.ModelSource]: a model wrote it, such as a judge or a sub-agent, which `author` names | `'none'` |
 
-An instruction part speaks with the operator's authority, so it needs a trusted source, and its content is a string literal in your code or an [`OperatorText`][pydantic_ai.messages.OperatorText]: text your code builds from its own values, your configuration, or a file read with [`OperatorText.from_workspace`][pydantic_ai.messages.OperatorText.from_workspace], which will refuse a workspace whose files the operator doesn't control once workspaces report that (#11836). A type checker rejects any other string, and creating one from an untrusted source raises a [`UserError`][pydantic_ai.exceptions.UserError]. From a source that isn't trusted, a data part goes out without its note, which would vouch for the content.
+A part reaches the model with the lower of its source's authority and the authority its kind asks for: an instruction kind asks for `'operator'`, a data kind for `'none'`. A source with less authority than the kind asks for downgrades the part rather than being refused:
 
-Text in a data part that looks like a framework frame (such as a `<system>` tag) gets a note in the application's voice naming who wrote it: the tool, the file's author or the user, by the part's source. Text from an `OperatorSource` is the application's own and gets none.
+- `'operator'`: the content is a system message in the application's voice. Only an instruction part from an operator-level source gets there.
+- `'user'`: the content goes in a tag on the user channel, with a note in the application's voice saying the application attached it on the user's behalf.
+- `'none'`: the content goes in a tag on the user channel, with a note that names who wrote it, such as "the `fetch` tool" or "the trajectory judge", and says it isn't the user's or the application's. An instruction part's tag is its kind's name, which is why that name must work as a tag.
+
+A note qualifies the content and never vouches for it: a data kind's own `note` is followed by who wrote the content whenever that isn't the operator.
+
+An instruction part's content is a string literal in your code or an [`OperatorText`][pydantic_ai.messages.OperatorText]: text your code builds from its own values, your configuration, or a file read with [`OperatorText.from_workspace`][pydantic_ai.messages.OperatorText.from_workspace]. A type checker rejects any other string. Text read from a workspace the operator doesn't control carries that workspace's source, so a part built from it is downgraded whatever source you give it. Enqueueing a part that would put something that looks like a framework frame (such as a `<system>` tag) in the application's voice raises a [`UserError`][pydantic_ai.exceptions.UserError]; a capability with fixed text in the application's voice checks it when it's set up.
+
+Text in a part's content that looks like a framework frame, or like the part's own tag, gets a note in the application's voice naming who wrote it: the tool, the model, the file's author or the user, by the part's source. Text from an `OperatorSource` is the application's own and gets none.
 
 ### Stored with the history
 

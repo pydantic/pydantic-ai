@@ -497,7 +497,7 @@ class LLMReminder(Generic[AgentDepsT]):
     failed generation never blocks the run. Add it to `SystemReminders.dynamic_reminders`.
 
     It generates every `interval` model requests (the 10th, 20th, ... by default), and each
-    firing adds a lasting record of two parts to the message history, so `interval` bounds both
+    firing adds a lasting record of one part to the message history, so `interval` bounds both
     the extra model calls and how fast the history grows. Its usage is threaded onto the parent
     run (`ctx.usage`) and it runs under the parent's `usage_limits` minus one reserved request, so
     the reminder cannot push a run past its `request_limit`. Once the budget is that tight the
@@ -514,7 +514,7 @@ class LLMReminder(Generic[AgentDepsT]):
     """Generate every N model requests within a run: the default `10` fires on the 10th, 20th, 30th, ... request.
 
     Each firing makes one extra model call and adds a framework note and the generated text to the message
-    history for good, so a run of R requests gains `2 * (R // interval)` parts. `interval=1` generates on every
+    history for good, so a run of R requests gains `R // interval` parts. `interval=1` generates on every
     request, the behavior before the default changed. Leaving it unset behaves exactly like `interval=10`, but
     warns that the default used to be `1`; pass `interval=10` to silence it.
     """

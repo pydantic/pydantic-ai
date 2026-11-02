@@ -4548,6 +4548,8 @@ class ModelSource:
     author: str
     """The model's role, as the notes about its text name it, such as `'trajectory judge'`: "the trajectory judge"."""
 
+    _: KW_ONLY
+
     source_kind: Literal['model'] = 'model'
     """Source type identifier, used as a discriminator."""
 
