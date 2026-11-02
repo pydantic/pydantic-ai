@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 __all__ = (
     'COMPUTER_KIND',
     'DISPLAY_SIZE',
+    'NATIVE_TOOL',
     'SAFETY_CHECKS',
     'ComputerResult',
     'ComputerToolAction',
@@ -136,6 +137,11 @@ the model sees, which may be smaller than the display.
 A provider whose native tool declares a display size, such as Claude's `computer_20251124`, sends this one.
 """
 
+NATIVE_TOOL = 'native_tool'
+"""The `ToolDefinition.metadata` key under which the `computer` tool can say `False`: no model adapter sends it as its
+provider's native computer tool, so every model gets it as a function tool, with the tool's own actions.
+"""
+
 COMPUTER_KIND = ToolKind._core('computer', args=_ComputerArgs, content=_ComputerContent)  # pyright: ignore[reportPrivateUsage]
 """The kind of the `computer` tool, which model adapters send as their provider's native computer tool."""
 
@@ -143,9 +149,14 @@ COMPUTER_KIND = ToolKind._core('computer', args=_ComputerArgs, content=_Computer
 def computer_tool_name(model_request_parameters: ModelRequestParameters) -> str | None:
     """The name of the request's `computer` tool, which a model adapter may send as its provider's native tool.
 
-    `None` unless the tool is fully visible in this request: a deferred or withheld one stays a function tool.
+    `None` unless the tool is fully visible in this request and allows it: a deferred or withheld one, or one whose
+    metadata sets [`NATIVE_TOOL`][pydantic_ai.computer_use.NATIVE_TOOL] to `False`, stays a function tool.
     """
     tool = next((t for t in model_request_parameters.function_tools if t.tool_kind == COMPUTER_KIND.id), None)
-    if tool is None or model_request_parameters.visibility_of(tool.name) != 'visible':
+    if (
+        tool is None
+        or model_request_parameters.visibility_of(tool.name) != 'visible'
+        or (tool.metadata or {}).get(NATIVE_TOOL) is False
+    ):
         return None
     return tool.name

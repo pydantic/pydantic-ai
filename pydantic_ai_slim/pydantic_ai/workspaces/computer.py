@@ -358,7 +358,10 @@ class Scroll:
     y: _Coordinate | None = None
     """From the top edge of the screenshot."""
     modifiers: _Modifiers = ()
-    """Modifier keys held while scrolling: `ctrl`, `shift`, `alt` or `super`; `shift` scrolls sideways in some applications."""
+    """Modifier keys held while scrolling: `ctrl`, `shift`, `alt` or `super`.
+
+    `shift` scrolls sideways in some applications.
+    """
 
     def __post_init__(self) -> None:
         _check_position(self.x, self.y)

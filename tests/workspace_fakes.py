@@ -13,6 +13,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
     DISPLAY_SIZE,
+    NATIVE_TOOL,
     ComputerResult,
     ComputerToolAction,
     CursorPosition,
@@ -565,7 +566,7 @@ class ProviderWorkspaces(AbstractCapability[Any]):
 
 
 def computer_toolset(
-    *, requires_approval: bool = False, display_size: tuple[int, int] | None = None
+    *, requires_approval: bool = False, display_size: tuple[int, int] | None = None, native: bool = True
 ) -> FunctionToolset[Any]:
     """A `computer` tool that keeps the tool's contract and nothing more, for testing model adapters.
 
@@ -600,6 +601,10 @@ def computer_toolset(
         name='computer',
         tool_kind=COMPUTER_KIND,
         requires_approval=requires_approval,
-        metadata={DISPLAY_SIZE: display_size} if display_size else None,
+        metadata={
+            **({DISPLAY_SIZE: display_size} if display_size else {}),
+            **({} if native else {NATIVE_TOOL: False}),
+        }
+        or None,
     )
     return FunctionToolset([tool])

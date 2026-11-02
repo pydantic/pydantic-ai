@@ -25,6 +25,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import Click, PressKeys
 
 from ...conftest import try_import
@@ -285,10 +286,20 @@ async def test_a_deferred_computer_tool_stays_a_deferred_function(allow_model_re
     ]
 
 
-async def test_an_earlier_tool_without_the_display_size_stays_a_function(allow_model_requests: None) -> None:
+@pytest.mark.parametrize(
+    'model_name, toolset',
+    [
+        pytest.param('claude-sonnet-4-6', computer_toolset(), id='an-earlier-tool-without-the-display-size'),
+        # As `ComputerUse(native=False)` asks, so Claude gets the tool's own actions.
+        pytest.param('claude-sonnet-5-5', computer_toolset(native=False), id='a-tool-that-opts-out'),
+    ],
+)
+async def test_the_computer_tool_stays_a_function_without_the_display_size_or_when_it_opts_out(
+    allow_model_requests: None, model_name: str, toolset: FunctionToolset[Any]
+) -> None:
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='done', type='text')))
-    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
-    await _agent(model, InMemoryProvider()).run('Go.')
+    model = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client))
+    await Agent(model, toolsets=[toolset], capabilities=[InMemoryProvider().capability()]).run('Go.')
 
     (request,) = get_mock_chat_completion_kwargs(client)
     assert [(tool['name'], 'input_schema' in tool) for tool in request['tools']] == [('computer', True)]
