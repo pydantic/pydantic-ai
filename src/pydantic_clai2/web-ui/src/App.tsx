@@ -4,6 +4,7 @@ import type { Attachment } from './attachments'
 import { Composer, type ComposerHandle } from './components/Composer'
 import { QuestionCard } from './components/QuestionCard'
 import { Sidebar, type SidebarHandle } from './components/Sidebar'
+import { PermissionsChip } from './components/PermissionsChip'
 import { Switches } from './components/Switches'
 import { Transcript } from './components/Transcript'
 import { TurnMeter } from './components/TurnMeter'
@@ -417,6 +418,10 @@ export function App() {
     setSidebar(true)
     window.setTimeout(() => sidebarRef.current?.focusSearch())
   }, [])
+  const toggleAttention = useCallback(() => {
+    setSidebar(true)
+    window.setTimeout(() => sidebarRef.current?.toggleAttention())
+  }, [])
   const focusWorkers = useCallback(() => {
     setSidebar(true)
     window.setTimeout(() => sidebarRef.current?.focusWorkers() || showNotice('This session has no delegated tasks yet.'))
@@ -579,6 +584,9 @@ export function App() {
       } else if (mod && event.key === ',') {
         event.preventDefault()
         openSettings()
+      } else if (mod && event.altKey && event.code === 'KeyU') {
+        event.preventDefault()
+        toggleAttention()
       } else if (mod && event.key === 'b') {
         event.preventDefault()
         setSidebar((open) => !open)
@@ -600,7 +608,7 @@ export function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [running, stop, orchestrating, workerTask, preview, showError, togglePanel, toggleChanges, toggleMonty, openSettings, newSession, focusSessions])
+  }, [running, stop, orchestrating, workerTask, preview, showError, togglePanel, toggleChanges, toggleMonty, openSettings, newSession, focusSessions, toggleAttention])
 
   const status = chat.status
   // A session still opening is named from its sidebar row, never as a new session while its snapshot comes.
@@ -623,7 +631,12 @@ export function App() {
       ref={composer}
       running={chat.running}
       meter={<TurnMeter status={status} startedAt={chat.turnStartedAt} />}
-      controls={<Switches status={status} running={chat.running} onError={showError} />}
+      controls={
+        <>
+          <PermissionsChip status={status} onError={showError} />
+          <Switches status={status} running={chat.running} onError={showError} />
+        </>
+      }
       model={status?.model ?? '…'}
       disabled={connection !== 'open'}
       placeholder={chat.running ? `Queue a follow-up, or steer with ${STEER_KEY}…` : fresh ? 'Describe a task or ask a question' : 'Ask for follow-up changes'}

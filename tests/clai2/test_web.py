@@ -17,6 +17,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator, S
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import AbstractContextManager, asynccontextmanager
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from pathlib import Path
 from typing import TypeVar
 from urllib.parse import quote, urlparse
@@ -892,6 +893,11 @@ def test_running_sessions_in_the_sidebar(make_web: 'MakeWeb') -> None:
         'Mine': 'cancelled',
         'Dead': 'cancelled',
     }, "this process's own turn is never busy elsewhere: no live session here holds it, so it ended unsaved"
+    assert {entry['title']: entry['owner_pid'] for entry in removed['sessions']} == {
+        'Live': os.getppid(),
+        'Mine': None,
+        'Dead': None,
+    }, 'the sidebar names the process another turn runs in'
     web_.shell.turning = True
     web_.portal.call(web_.shell.session.commit_messages, list[ModelMessage]())
     current = web_.get('/api/sessions').json()[0]['worktrees'][0]['sessions'][0]
@@ -1329,6 +1335,33 @@ def test_archived_sessions_leave_the_sidebar_until_it_lists_them(make_web: 'Make
         assert web_.post(f'/api/sessions/{old.id}/unarchive').status_code == 204
         receive_until(socket, SessionsChanged)
     assert listed('/api/sessions') == {'New session': False, 'Stale': False}
+
+
+def test_sessions_carry_their_creation_time(make_web: 'MakeWeb') -> None:
+    """Each row carries its creation time, which later saves keep, so the sidebar's order never changes."""
+    web_ = make_web(Agent(TestModel()))
+    store = web_.shell.sessions.store
+    first = web_.portal.call(
+        lambda: store.save(summary=ConversationSummary(workspace='/x', title='First'), messages=[])
+    )
+    second = web_.portal.call(
+        lambda: store.save(summary=ConversationSummary(workspace='/x', title='Second'), messages=[])
+    )
+    later = web_.portal.call(lambda: store.save(summary=first, messages=[]))
+
+    def entries() -> dict[str, tuple[str, str]]:
+        return {
+            entry['title']: (entry['created_at'], entry['updated_at'])
+            for project in web_.get('/api/sessions').json()
+            for worktree in project['worktrees']
+            for entry in worktree['sessions']
+        }
+
+    listed = entries()
+    assert TypeAdapter(datetime).validate_python(listed['First'][0]) == first.created_at
+    assert TypeAdapter(datetime).validate_python(listed['First'][1]) == later.updated_at
+    assert TypeAdapter(datetime).validate_python(listed['Second'][0]) == second.created_at
+    assert first.created_at is not None and second.created_at is not None and first.created_at < second.created_at
 
 
 def test_a_shell_without_saved_sessions(make_web: 'MakeWeb') -> None:
