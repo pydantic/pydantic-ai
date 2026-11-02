@@ -16,6 +16,10 @@ def test_import():
     assert isinstance(pydantic_ai_harness.__all__, list)
 
 
+# This import smoke test can run after unrelated tests have already rendered framing tags.
+@pytest.mark.filterwarnings(
+    r"ignore:Framing tag 'peer_message' was registered after.*:UserWarning:pydantic_ai_harness\.peers\._message"
+)
 @pytest.mark.parametrize(
     'optional_dependency_error',
     [

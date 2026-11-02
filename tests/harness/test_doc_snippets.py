@@ -152,7 +152,10 @@ def _snippet_problem(source: str) -> str | None:
             continue  # missing optional extra in this environment; the harness module exists
         if name is not None:
             try:
-                exists = hasattr(imported, name)
+                with warnings.catch_warnings():
+                    # A lazy re-export imports its module here, not in import_module above.
+                    warnings.simplefilter('ignore')
+                    exists = hasattr(imported, name)
             except ImportError:
                 # a lazy top-level export whose optional extra isn't installed in this environment;
                 # the name resolving far enough to demand the extra proves it exists
@@ -309,6 +312,21 @@ def test_missing_harness_module_classification() -> None:
     assert _is_missing_harness_module('pydantic_ai_harness.experimental.nope') is True
     assert _is_missing_harness_module('acp') is False  # a missing extra, not a harness module
     assert _is_missing_harness_module(None) is False
+
+
+def test_lazy_export_warnings_do_not_break_static_import_checks(monkeypatch: pytest.MonkeyPatch) -> None:
+    class LazyModule:
+        def __getattr__(self, name: str) -> object:
+            warnings.warn('A lazy export registered a framing tag.', UserWarning, stacklevel=2)
+            return object()
+
+    def lazy_module(name: str) -> object:
+        return LazyModule()
+
+    monkeypatch.setattr(importlib, 'import_module', lazy_module)
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        assert _snippet_problem('from pydantic_ai_harness import Peers') is None
 
 
 def test_missing_optional_extra_is_not_a_failure(monkeypatch: pytest.MonkeyPatch) -> None:
