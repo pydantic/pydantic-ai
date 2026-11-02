@@ -32,8 +32,6 @@ from pydantic_ai.workspaces import (
 
 from .workspace_fakes import FAKE_SCREENSHOT, DisplayOnlyBackend, FakeWorkspace, InMemoryProvider
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.mark.parametrize(
     'given, expected',

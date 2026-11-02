@@ -34,8 +34,6 @@ from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBa
 
 from .fake_daytona import FakeDaytona, FakeSandbox
 
-pytestmark = pytest.mark.anyio(backends=['asyncio'])
-
 
 async def _started(fake_daytona: FakeDaytona) -> tuple[DaytonaSandboxBackend, FakeSandbox]:
     backend = DaytonaSandboxBackend(desktop=True)

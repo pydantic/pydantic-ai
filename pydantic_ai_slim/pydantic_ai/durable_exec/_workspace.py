@@ -73,9 +73,9 @@ _BYTES_CONFIG = ConfigDict(ser_json_bytes='base64', val_json_bytes='base64')
 # would get their own field, not `data`), since engines that pickle results skip the check.
 _JOURNAL_CONFIG = ConfigDict(ser_json_bytes='base64', val_json_bytes='base64', extra='forbid')
 
-# A `computer` call is one journaled step per method below, so a display fact added later, such as which screen a
-# screenshot came from, rides on an existing call's result as a field left out at its default: a new method would
-# add a step that histories recorded before it don't have, and replaying them would fail.
+# Of the display methods only `display_size` is journaled, for code such as a tool's `prepare` that reads it in
+# workflow code. The rest run inside a durable operation, such as the harness `ComputerUse` running each `computer`
+# call as one, so a display fact added later never adds a journaled step that recorded histories lack.
 WorkspaceMethod: TypeAlias = Literal[
     'ensure',
     'run',
@@ -88,23 +88,10 @@ WorkspaceMethod: TypeAlias = Literal[
     'exists',
     'realpath',
     'display_size',
-    'screenshot',
-    'act',
-    'zoom',
-    'scaled_screenshot',
-    'cursor_position',
 ]
 
-WORKSPACE_CALL_POLICIES: Mapping[str, StepPolicy] = {
-    'display_size': StepPolicy(),
-    'screenshot': StepPolicy(),
-    'zoom': StepPolicy(),
-    'scaled_screenshot': StepPolicy(),
-    'cursor_position': StepPolicy(),
-    'act': StepPolicy(repeatable=False, timeout=180),
-}
-"""How an engine may repeat each kind of workspace call: a look at the display may run again, an action runs at most
-once, for up to 180 seconds (above the 150 the X11 displays allow one).
+WORKSPACE_CALL_POLICIES: Mapping[str, StepPolicy] = {'display_size': StepPolicy()}
+"""How an engine may repeat each kind of workspace call: reading the display size may run again.
 
 A method not listed runs under the engine's config for capability operations unchanged, and a failure the engine
 gives up on reaches the caller as the engine raised it. Commands and file methods aren't listed: whether one may run
@@ -144,7 +131,6 @@ class WorkspaceCallResult:
     entries: list[FileEntry] = field(default_factory=list[FileEntry])
     command: CommandResult | None = None
     size: tuple[int, int] | None = None
-    point: Point | None = None
     ref: WorkspaceRef | None = None
     error: WorkspaceCallError | None = None
 
@@ -160,11 +146,8 @@ class WorkspaceCall:
     shell: bool = False
     env: dict[str, str] | None = None
     timeout: float | None = None
-    action: ComputerAction | None = None
-    region: Region | None = None
-    size: tuple[int, int] | None = None
 
-    async def execute(self, workspace: Workspace) -> WorkspaceCallResult:  # noqa: C901
+    async def execute(self, workspace: Workspace) -> WorkspaceCallResult:
         match self.method:
             case 'ensure':
                 # `working_dir()` is the one operation every backend has, and it creates or attaches;
@@ -202,20 +185,6 @@ class WorkspaceCall:
                 return WorkspaceCallResult(text=await workspace.realpath(self.path))
             case 'display_size':
                 return WorkspaceCallResult(size=await workspace.display_size())
-            case 'screenshot':
-                return WorkspaceCallResult(data=await workspace.screenshot())
-            case 'act':
-                assert self.action is not None
-                await workspace.act(self.action)
-                return WorkspaceCallResult()
-            case 'zoom':
-                assert self.region is not None
-                return WorkspaceCallResult(data=await workspace.zoom(self.region))
-            case 'scaled_screenshot':
-                assert self.size is not None
-                return WorkspaceCallResult(data=await workspace.scaled_screenshot(*self.size))
-            case 'cursor_position':
-                return WorkspaceCallResult(point=await workspace.cursor_position())
         assert_never(self.method)
 
 
@@ -445,29 +414,27 @@ class DurableWorkspace(WrapperWorkspace):
     async def screenshot(self) -> bytes:
         if not self._in_container():
             return await self.wrapped.screenshot()
-        return (await self._call(WorkspaceCall(method='screenshot'))).data
+        raise _display_in_workflow('screenshot')
 
     async def act(self, action: ComputerAction) -> None:
         if not self._in_container():
             return await self.wrapped.act(action)
-        await self._call(WorkspaceCall(method='act', action=action))
+        raise _display_in_workflow('act')
 
     async def zoom(self, region: Region) -> bytes:
         if not self._in_container():
             return await self.wrapped.zoom(region)
-        return (await self._call(WorkspaceCall(method='zoom', region=region))).data
+        raise _display_in_workflow('zoom')
 
     async def scaled_screenshot(self, width: int, height: int) -> bytes:
         if not self._in_container():
             return await self.wrapped.scaled_screenshot(width, height)
-        return (await self._call(WorkspaceCall(method='scaled_screenshot', size=(width, height)))).data
+        raise _display_in_workflow('scaled_screenshot')
 
     async def cursor_position(self) -> Point:
         if not self._in_container():
             return await self.wrapped.cursor_position()
-        point = (await self._call(WorkspaceCall(method='cursor_position'))).point
-        assert point is not None
-        return point
+        raise _display_in_workflow('cursor_position')
 
     async def _call(self, call: WorkspaceCall) -> WorkspaceCallResult:
         await self._ensure()
@@ -567,3 +534,11 @@ class RejectWorkspaceInContainer(AbstractCapability[AgentDepsT]):
             f'wrapper agent. Use `Agent(..., capabilities=[{self._capability}()])`, which runs every workspace '
             f'operation as a durable unit, and attach the workspace through a capability such as `LocalWorkspace`.'
         )
+
+
+def _display_in_workflow(method: str) -> UserError:
+    # Journaling each display call would freeze the order a caller makes them in into every recorded history.
+    return UserError(
+        f"`{method}` reaches the display, which durable workflow code can't: call it from a tool that runs as an "
+        'activity, step or task, or from a capability method marked with `@durable_operation`.'
+    )

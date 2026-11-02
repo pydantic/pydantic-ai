@@ -96,7 +96,8 @@ result says which action failed and why, ends with a screenshot as usual, and ha
 When the environment is gone, the run ends with [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError].
 
 Agents in one process on one screen, such as parallel sub-agents, take turns at it a whole call at a time, so one's
-clicks and typing never land between another's. Agents in separate processes, or in separate durable workflows, don't.
+clicks and typing never land between another's. Agents in separate processes don't, nor do agents whose durable
+units run on separate event loops.
 
 ## Watching a run
 
@@ -134,11 +135,11 @@ async def main():
   long tasks.
 - Under durable execution, use `TemporalDurability`, `PrefectDurability` or `DBOSDurability`: the deprecated
   `TemporalAgent`, `PrefectAgent` and `DBOSAgent` refuse a workspace, so they can't run `ComputerUse`.
-- Under [durable execution](../durable_execution/overview.md), the `computer` tool runs in workflow code and each display
-  call is its own durable step: screenshots and other looks retry, and an action runs at most once. When one fails,
-  times out or loses its worker, the result tells the model it may or may not have taken effect. Temporal never
-  repeats an action; DBOS, and Prefect when a flow is run again, can repeat the one running when the process crashed;
-  Absurd and pgtask retry the whole call.
+- Under [durable execution](../durable_execution/overview.md), each `computer` call is one durable unit, its activity, step or
+  task, named `computer.call`, and it runs at most once with up to 15 minutes. When it fails, times out or loses its
+  worker, the model is told some of its actions may have run and to take a screenshot before acting again. Temporal
+  never repeats a call; DBOS, and Prefect when a flow is run again, can repeat the one running when the process
+  crashed; Absurd, pgtask and AWS Lambda retry it under their own config.
 - When the display restarts, such as after its sandbox was stopped, the model isn't told: its next screenshot shows
   the new screen.
 - Every screenshot rides in each model request, so under Temporal a run passes the 2 MB payload limit after a few
