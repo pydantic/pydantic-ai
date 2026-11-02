@@ -505,8 +505,10 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
         for func in ('os.stat', 'os.access', 'os.path.abspath')
         for module, constructor in (('_capability.py', '__post_init__'), ('_backend.py', '__init__'))
     ),
-    ('os.stat', 'exa_py/utils.py', '_get_package_version'),
-    ('os.path.abspath', 'exa_py/utils.py', '_get_package_version'),
+    *(
+        (func, 'exa_py/utils.py', '_get_package_version')
+        for func in ('os.stat', 'os.listdir', 'os.path.abspath', 'io.TextIOWrapper.read')
+    ),
     ('os.stat', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
     ('os.listdir', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
     ('io.TextIOWrapper.read', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
