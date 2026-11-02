@@ -150,7 +150,7 @@ Addressing steps by mutable integer index (insert/remove/reorder) is error-prone
 
 ## Prompt caching
 
-The system prompt and instructions carry only the static guidance and the note on the plan's tag. The plan reaches the model in the plan tools' results, or in a part `Planning` records when the latest plan isn't visible; both are appended to the history, so the cached prefix stays valid.
+The system prompt and instructions carry only the static guidance and the note on the plan's tag. The plan reaches the model in the plan tools' results, or in a part `Planning` records when the latest plan isn't visible; both are appended to the history, so the cached prefix stays valid. A plan tool called through the agent returns a `ToolReturn` with `metadata`; a `PlanningToolset` method called directly returns a plain string.
 
 `Planning` doesn't place a cache breakpoint of its own. Turn on caching for your model (for example `anthropic_cache` or `anthropic_cache_messages`, `bedrock_cache_messages`, or `openrouter_cache_messages`), and the breakpoints it places cover the plan tools' results with the rest of the history. `cache_ttl` is deprecated and has no effect; setting it warns.
 

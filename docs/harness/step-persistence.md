@@ -412,7 +412,7 @@ A database written by an earlier release keeps working: its rows hold the histor
 
 Text externalization applies to every store with a media store, not only Mongo; the only opt-out is `media_store=None`.
 
-The marker format is versioned, and compatibility is upgrade-only. A current reader restores snapshots written by earlier releases, but an earlier release can misread or fail to validate markers a newer one wrote, so keep a current reader for persisted snapshots. A marker or literal wrapper stamped with a format version this reader does not know is rejected: `restore_media` raises `ValueError`, which `latest_snapshot` surfaces for the file, sqlite, mongo, and postgres stores, while `list_snapshots` skips that snapshot and logs the error.
+The marker format is versioned, and compatibility is upgrade-only. A current reader restores snapshots written by earlier releases, but an earlier release can misread or fail to validate markers a newer one wrote, so keep a current reader for persisted snapshots. An escaped-keys marker or a literal wrapper stamped with a format version this reader does not know is rejected: `restore_media` raises `ValueError`, which `latest_snapshot` surfaces for the file, sqlite, mongo, and postgres stores, while `list_snapshots` skips that snapshot and logs the error.
 
 | StepStore           | Default `media_store`                  | Where blobs live                      |
 | ------------------- | --------------------------------------- | ------------------------------------- |
@@ -594,7 +594,9 @@ There is no automatic conversation TTL or media garbage collection.
 failure policy are CLAI's resume-browser policy rather than a Harness primitive,
 so CLAI now owns its own copy. Copy the helpers you use into your application;
 the module will be removed in a future release. The conversation store above is
-unaffected.
+unaffected. Until then, applications using its `SessionNamer` must join the worker
+before closing its model clients or storage, and failed or timed-out naming
+requests may still incur provider usage.
 
 ## Earlier checkpoints and notifications
 
