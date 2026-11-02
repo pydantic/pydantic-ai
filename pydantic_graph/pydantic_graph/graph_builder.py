@@ -1152,6 +1152,9 @@ def _unwrap_exception_groups():
             yield
         except BaseExceptionGroup as e:
             exception = e.exceptions[0]
+            # On Python 3.12 this finished generator's frame keeps contextlib's `__exit__` frame, which holds the group:
+            # the group's traceback would close a cycle back to this frame and retain the run until cyclic GC.
+            e.__traceback__ = None
             if exception.__cause__ is None:
                 # bizarrely, this prevents recursion errors when formatting the exception for logfire
                 exception.__cause__ = None
