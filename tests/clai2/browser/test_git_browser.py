@@ -3,7 +3,6 @@
 import json
 import re
 import sys
-import threading
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -174,7 +173,7 @@ async def test_unchecking_a_file_marks_the_drafted_message_stale(page: Page, git
     await expect(dialog.get_by_text('This message was drafted for')).to_have_count(0)
 
 
-def mid_turn_editor(repo: Path, released: threading.Event) -> Agent[None, str]:
+def mid_turn_editor(repo: Path, released: anyio.Event) -> Agent[None, str]:
     """An agent whose turn writes `old.txt` in `repo`, then runs until `released` is set."""
 
     async def turn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
@@ -182,8 +181,7 @@ def mid_turn_editor(repo: Path, released: threading.Event) -> Agent[None, str]:
             arguments = json.dumps({'path': 'old.txt', 'content': 'edited mid-turn\n'})
             yield {0: DeltaToolCall(name='write_file', json_args=arguments, tool_call_id='edit')}
         else:
-            while not released.is_set():
-                await anyio.sleep(0.01)
+            await released.wait()
             yield 'Done'
 
     agent = Agent(FunctionModel(stream_function=turn))
@@ -199,10 +197,11 @@ def mid_turn_editor(repo: Path, released: threading.Event) -> Agent[None, str]:
 async def test_a_running_turns_edits_show_before_it_ends(
     page: Page, make_fleet: MakeFleet, serve: Serve, repo: Path
 ) -> None:
-    released = threading.Event()
+    released: list[anyio.Event] = []
 
-    def editors(_portal: BlockingPortal) -> dict[str, Agent[None, str]]:
-        return {'repo': mid_turn_editor(repo, released)}
+    def editors(portal: BlockingPortal) -> dict[str, Agent[None, str]]:
+        released.append(portal.call(anyio.Event))
+        return {'repo': mid_turn_editor(repo, released[0])}
 
     fleet = make_fleet(editors)
     conversation = fleet.new('repo')
@@ -233,5 +232,5 @@ async def test_a_running_turns_edits_show_before_it_ends(
             await expect(page.get_by_role('button', name='Changes: 1 file changed')).to_be_visible(timeout=2_000)
             await expect(activity).not_to_have_text('ready')
         finally:
-            released.set()
+            fleet.portal.call(released[0].set)
         await expect(activity).to_have_text('ready')

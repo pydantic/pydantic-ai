@@ -82,14 +82,16 @@ changed, with the number of files it changed so far on the button. Pick a scope:
 outside Git too, and show each file once, as one diff from before the first change to what is on
 disk now. A file the session wrote whole counts as created, unless the last commit has it with
 content the session did not write, which it is then compared with. These scopes read the
-conversation, so after `/compact` they start from the compacted summary. **Uncommitted** is
+conversation, so after `/compact` they start from the compacted summary; while a turn runs,
+**Last turn** is the running one. **Uncommitted** is
 `git diff HEAD` in the session's directory, with untracked files that are not ignored listed as
 added, as `git status` and the git chip count them, and **Branch
 vs base** compares the files, uncommitted changes included, with where the branch left its base:
 `origin/HEAD`, else `main` or `master`. Each file shows its status (A, M, or D) and added and
 removed lines; click it to jump to its diff. Files with many changed lines start collapsed. The
-panel asks again when a turn ends, and **Refresh** asks at once. It shares one column with Monty
-and the plugin side panels, so opening one closes the others.
+panel, the button's count, and the git chip ask again as a running turn's tool calls finish, at
+most once a second, and when it ends; **Refresh** asks at once, during a turn too. It shares one
+column with Monty and the plugin side panels, so opening one closes the others.
 
 <!-- From #10442 -->
 The **Settings** window (the gear in the sidebar's footer, or Cmd/Ctrl+,) has a section per area
