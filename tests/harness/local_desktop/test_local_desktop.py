@@ -260,6 +260,11 @@ async def test_backends_given_no_screen_share_one_private_screen(fake_x: Path, t
     assert len(_lines(fake_x, 'Xvfb')) == 1
 
 
+def test_the_real_screen_and_a_private_one_are_one_or_the_other(tmp_path: Path):
+    with pytest.raises(ValueError, match='not both'):
+        LocalDesktopBackend(tmp_path, real_screen=True, screen=VirtualScreen((1280, 800)))
+
+
 @linux_only
 async def test_the_real_screen_is_the_session_this_process_runs_in(
     fake_x: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
