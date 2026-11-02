@@ -1346,7 +1346,9 @@ class TestErrorMapping:
         source = Path(next(iter(spec.submodule_search_locations)), 'exception.py').read_text(encoding='utf-8')
         defined = {node.name for node in ast.walk(ast.parse(source)) if isinstance(node, ast.ClassDef)}
         faked: types.SimpleNamespace = getattr(fake_modal.module, 'exception')
-        assert set(vars(faked)) - defined == set()
+        # The backend matches `ImageBuildError` by type name: only some Modal releases define it
+        # in `modal.exception`.
+        assert set(vars(faked)) - defined - {'ImageBuildError'} == set()
 
 
 @pytest.mark.parametrize('anyio_backend', ['trio'])
