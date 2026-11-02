@@ -71,9 +71,12 @@ class Settings(BaseModel):
             '/system_prompt edits them.'
         ),
     )
-    repo_context_walk_up_root: _UserPath = Field(
-        default='~',
-        description='User-only inclusive stop for repo_context walk_up. Defaults to home; requires walk_up enabled.',
+    repo_context_walk_up_roots: list[_UserPath] = Field(
+        default=['~'],
+        description=(
+            'User-only JSON list of inclusive stops for repo_context walk_up; the nearest one containing the '
+            'workspace wins, and none scans only the workspace. Requires walk_up enabled.'
+        ),
     )
     repo_context_autoload_symlink_roots: list[_UserPath] = Field(
         default=[],
@@ -205,7 +208,7 @@ SETTING_FIELDS = {
     'sessions.naming': 'session_namer',
     'sessions.naming_model': 'session_namer_model',
     'updates.channel': 'update_channel',
-    'repo_context.walk_up_root': 'repo_context_walk_up_root',
+    'repo_context.walk_up_roots': 'repo_context_walk_up_roots',
     'repo_context.autoload_symlink_roots': 'repo_context_autoload_symlink_roots',
     'worktrees.remove_commands': 'worktree_remove_commands',
 }
@@ -218,7 +221,6 @@ STRING_SETTINGS = frozenset(
         'display.spinner',
         'display.tool_calls',
         'updates.channel',
-        'repo_context.walk_up_root',
     }
 )
 """Keys whose typed value is taken as text rather than parsed as JSON."""

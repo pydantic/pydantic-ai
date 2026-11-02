@@ -3,11 +3,13 @@
 The built-in `repo_context` plugin: the workspace's instruction files, through harness `RepoContext`.
 """
 
+import os
 from collections.abc import Sequence
 from contextlib import suppress
 from pathlib import Path
 from typing import Literal
 
+import anyio
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from pydantic_ai.capabilities import AgentCapability
@@ -16,8 +18,7 @@ from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_clai2.plugins import DepsT, Plugin
 from pydantic_clai2.runtime.session import WorkspacelessCapability, supports_local_workspace
 
-_WALK_UP_ROOT = TypeAdapter(str)
-_SYMLINK_ROOTS = TypeAdapter(list[str])
+_PATHS = TypeAdapter(list[str])
 
 
 class RepoContextSettings(BaseModel):
@@ -26,7 +27,9 @@ class RepoContextSettings(BaseModel):
     model_config = ConfigDict(extra='forbid', frozen=True, strict=True)
     walk_up: bool = Field(
         default=False,
-        description='Also load ancestor instructions up to `repo_context.walk_up_root` (home by default).',
+        description=(
+            'Also load ancestor instructions up to the nearest `repo_context.walk_up_roots` entry (home by default).'
+        ),
     )
     inventory_tool: bool = Field(
         default=False, description="Expose `inventory_agent_context`, which maps the repo's coding-assistant assets."
@@ -51,19 +54,29 @@ class RepoContextPlugin(Plugin[RepoContextSettings, DepsT]):
             return ()
         return (WorkspacelessCapability(self._for_run),)
 
-    def _for_run(self, _ctx: RunContext[DepsT]) -> RepoContext[DepsT]:
+    async def _for_run(self, _ctx: RunContext[DepsT]) -> RepoContext[DepsT]:
         # Read once per run: settings edits apply to the next run, not its cached instructions.
-        walk_up_root = '~'
+        walk_up_roots = ['~']
         symlink_roots: list[str] = []
         # The store validates path policy; narrow the host's JSON values without depending on unrelated settings.
         with suppress(KeyError):
-            walk_up_root = _WALK_UP_ROOT.validate_python(self.host.setting('repo_context.walk_up_root'), strict=True)
+            walk_up_roots = _PATHS.validate_python(self.host.setting('repo_context.walk_up_roots'), strict=True)
         with suppress(KeyError):
-            symlink_roots = _SYMLINK_ROOTS.validate_python(
+            symlink_roots = _PATHS.validate_python(
                 self.host.setting('repo_context.autoload_symlink_roots'), strict=True
             )
+        home_dir = None
+        if self.settings.walk_up:
+            # As `RepoContext` compares `home_dir`: the normalized root against the resolved working directory.
+            working_dir = Path(await anyio.Path(self.host.workspace).resolve())
+            roots = [Path(os.path.normpath(Path(root).expanduser())) for root in walk_up_roots]
+            home_dir = max(
+                (root for root in roots if working_dir.is_relative_to(root)),
+                key=lambda root: len(root.parts),
+                default=None,
+            )
         return RepoContext[DepsT](
-            home_dir=Path(walk_up_root).expanduser() if self.settings.walk_up else None,
+            home_dir=home_dir,
             autoload_symlink_roots=[Path(root).expanduser() for root in symlink_roots],
             expose_inventory_tool=self.settings.inventory_tool,
             nested_traversal=self.settings.nested_traversal,
