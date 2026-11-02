@@ -825,11 +825,6 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     reject text before a `toolResult`, Chat Completions needs `tool` messages straight after the assistant turn), so
     the note follows them and says "preceding". Set where the API takes content ahead of them.
     """
-    _system_entries_follow_user_turn: ClassVar[bool] = False
-    """Whether this adapter sends a request's mid-conversation system messages after the request's user content.
-
-    `AnthropicModel` does, so a lookalike note for a user prompt goes after it there and says "preceding".
-    """
     unsupported_settings: ClassVar[frozenset[ModelSettingName]] = frozenset()
     """The [`ModelSettings`][pydantic_ai.settings.ModelSettings] fields this model class ignores.
 
@@ -1164,6 +1159,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     def _max_cache_retention(
         *cache_settings: CacheSetting | None,
     ) -> timedelta | None:
+        if '12h' in cache_settings:
+            return timedelta(hours=12)
         if '1h' in cache_settings:
             return timedelta(hours=1)
         if '30m' in cache_settings:
@@ -1942,6 +1939,15 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             return messages
 
         return _replace_tool_search_exchanges_with_deltas(messages, translated_call_ids)
+
+    @property
+    def _system_entries_follow_user_turn(self) -> bool:
+        """Whether this adapter sends a request's mid-conversation system messages after the request's user content.
+
+        `AnthropicModel` does, and so does `OpenRouterModel` on Anthropic routes, so a lookalike note for a user prompt
+        goes after it there and says "preceding".
+        """
+        return False
 
     def _note_lookalike_frames(self, authored: list[ModelMessage], messages: list[ModelMessage]) -> list[ModelMessage]:
         """Note each user, tool or file item whose text resembles a framework frame, and announce the notes where needed.

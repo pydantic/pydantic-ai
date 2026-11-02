@@ -368,8 +368,8 @@ print(should_retry(ModelHTTPError.for_category(ModelRateLimitError, status_code=
 [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError],
 [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError] and
 [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] are all a
-`ModelRequestRejectedError`, so `should_retry` skips them too. Under [Temporal](../durable_execution/temporal.md#activity-retries), list the same classes in
-`non_retryable_model_errors` to stop the activity from retrying them.
+`ModelRequestRejectedError`, so `should_retry` skips them too. Under [Temporal](../durable_execution/temporal.md#activity-retries), the activity
+doesn't retry them either, as they're in `non_retryable_model_errors` by default.
 
 ### HTTP errors {#handling-http-errors}
 

@@ -938,8 +938,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     supported_tool_deferral_modes = frozenset({'standalone'})
     supported_tool_addition_modes = frozenset({'by_reference'})
     _renders_effort_deltas = True
-    # A request's mid-conversation system messages go in a `system` entry after its user turn.
-    _system_entries_follow_user_turn = True
     # The API ignores (and doesn't bill) blocks before a compaction block, so the trim only saves
     # request size here — but it also keeps a `tool_result` whose `tool_use` was trimmed away from
     # 400ing, since validation runs even on ignored content.
@@ -1065,6 +1063,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def system(self) -> str:
         """The model provider."""
         return self._provider.name
+
+    @property
+    def _system_entries_follow_user_turn(self) -> bool:
+        # A request's mid-conversation system messages go in a `system` entry after its user turn.
+        return True
 
     @cached_property
     def profile(self) -> AnthropicModelProfile:
