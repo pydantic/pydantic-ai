@@ -81,7 +81,9 @@ changed, with the number of files it changed so far on the button. Pick a scope:
 **This session** come from the session's own `write_file` and `edit_file` calls, so they work
 outside Git too, and show each file once, as one diff from before the first change to what is on
 disk now. A file the session wrote whole counts as created, unless the last commit has it with
-content the session did not write, which it is then compared with. These scopes read the
+content the session did not write, which it is then compared with. In Git, they also list files
+changed otherwise since the scope began, such as by a shell command, without a diff, as
+**Uncommitted** has it. These scopes read the
 conversation, so after `/compact` they start from the compacted summary. **Uncommitted** is
 `git diff HEAD` in the session's directory, with untracked files that are not ignored listed as
 added, as `git status` and the git chip count them, and **Branch
