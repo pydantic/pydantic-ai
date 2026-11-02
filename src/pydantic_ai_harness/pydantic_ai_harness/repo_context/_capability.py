@@ -68,7 +68,7 @@ surfaced `directory`; still recognized in a saved history, so a note in it isn't
 
 @dataclass(kw_only=True)
 class ContextFilePart(
-    DataCapabilityPart, namespace='repo_context', name='context_file', tag='context_file', attributes=('path',)
+    DataCapabilityPart[str], namespace='repo_context', name='context_file', tag='context_file', attributes=('path',)
 ):
     """A nested instruction file's contents, as `RepoContext(nested_inject='contents')` surfaces them.
 
@@ -84,7 +84,7 @@ class ContextFilePart(
 
 @dataclass(kw_only=True)
 class ContextFilePathPart(
-    DataCapabilityPart,
+    DataCapabilityPart[str],
     namespace='repo_context',
     name='context_file_path',
     tag='context_file_path',

@@ -30,6 +30,11 @@ class NotePart(DataCapabilityPart, namespace='typed', tag='note'):
 
 
 @dataclass(kw_only=True)
+class TextNotePart(DataCapabilityPart[str], namespace='typed', tag='text_note'):
+    pass
+
+
+@dataclass(kw_only=True)
 class ReminderPart(InstructionCapabilityPart, namespace='typed'):
     pass
 
@@ -48,6 +53,10 @@ def framed_content(fetched: str, items: list[UserContent]) -> None:
     # Data takes any user content.
     NotePart(content=fetched, source=OperatorSource())
     NotePart(content=items, source=OperatorSource())
+    # Unless the kind narrows it.
+    note = TextNotePart(content=fetched, source=OperatorSource())
+    assert_type(note.content, str)
+    TextNotePart(content=items, source=OperatorSource())  # pyright: ignore[reportArgumentType]
 
 
 def workspace_sources(workspace: Workspace) -> None:
@@ -69,4 +78,7 @@ def reading_parts(part: CapabilityPart) -> None:
     part.content  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
     assert_type(part.model_content(), str | StructuredContent | Sequence[UserContent])
     if isinstance(part, DataCapabilityPart):
-        assert_type(part.content, str | StructuredContent | Sequence[UserContent])
+        # Narrowed to the generic base, `content`'s type argument is unknown: `model_content()` reads it typed.
+        assert_type(part.model_content(), str | StructuredContent | Sequence[UserContent])
+    if isinstance(part, TextNotePart):
+        assert_type(part.content, str)

@@ -67,7 +67,7 @@ _DEFAULT_GUIDANCE = (
 
 # The slash is inside the optional group so the two `\s*` never compete for one run of spaces.
 @dataclass(kw_only=True)
-class MemorySnapshotPart(DataCapabilityPart, namespace='memory', name='snapshot', tag='memory'):
+class MemorySnapshotPart(DataCapabilityPart[str], namespace='memory', name='snapshot', tag='memory'):
     """A snapshot of stored memory, as `Memory` records it in the conversation at the start of a run.
 
     Memory is data the agent wrote in earlier runs, so it goes on the user channel in a `<memory>` frame, never in the
@@ -450,7 +450,7 @@ class Memory(AbstractCapability[AgentDepsT]):
             empty = empty_snapshot_body(self.heading, None if reader is None else reader[1])
             if len(empty) > content_budget:
                 return None
-            return f'\n{empty}\n', True
+            return empty, True
         rendered = render_memory_prompt(
             main_content,
             subfiles,
@@ -463,7 +463,7 @@ class Memory(AbstractCapability[AgentDepsT]):
             read_main=read_call(reader, MAIN_FILENAME),
             location=None if reader is None else reader[1],
         )[:content_budget]
-        return f'\n{rendered}\n', False
+        return rendered, False
 
     @durable_operation('load_snapshot')
     async def _load_snapshot(
@@ -581,14 +581,13 @@ def _latest_snapshot(messages: list[ModelMessage], metadata: dict[str, str]) -> 
                 and part.scope_hash == metadata['scope']
                 and part.memory_id == metadata['id']
             ):
-                # `Memory` records text, but a data part's `content` has the base's wider type.
-                assert isinstance(part.content, str)
                 return part.content
             if not isinstance(part, UserPromptPart) or isinstance(part.content, str):
                 continue
             for item in reversed(part.content):
                 if isinstance(item, TextContent) and (item.metadata == metadata or item.metadata in legacy):
-                    return item.content.removeprefix('<memory>').removesuffix('</memory>')
+                    # A legacy snapshot's body sits on lines of its own, between the tags.
+                    return item.content.removeprefix('<memory>\n').removesuffix('\n</memory>')
     return None
 
 

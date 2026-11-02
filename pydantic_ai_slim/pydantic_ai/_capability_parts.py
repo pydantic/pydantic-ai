@@ -140,6 +140,13 @@ def render_capability_part(part: CapabilityPart) -> RenderedCapabilityPart:
     # framework-inserted read and its result, rebuilding #11837.
     open_tag, close_tag = capability_frame_tags(tag, attrs=attrs)
     items: list[UserContent] = [content] if isinstance(content, str | StructuredContent) else list(content)
+    if any(
+        '\n' in (item if isinstance(item, str) else item.content)
+        for item in items
+        if isinstance(item, str | TextContent)
+    ):
+        # A multi-line body starts and ends on lines of its own, as a block in a document would.
+        open_tag, close_tag = f'{open_tag}\n', f'\n{close_tag}'
     # Text goes out as `TextContent`, as in any user prompt with more than one item.
     body = UserPromptPart(
         [

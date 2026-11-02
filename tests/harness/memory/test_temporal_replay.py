@@ -67,7 +67,7 @@ def _snapshots(messages: list[ModelMessage]) -> list[str]:
         if isinstance(part, UserPromptPart)
         and not isinstance(part.content, str)
         and isinstance(first := part.content[0], TextContent)
-        and first.content == '<memory>'
+        and first.content.startswith('<memory>')
     ]
 
 
