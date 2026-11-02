@@ -253,7 +253,7 @@ _CACHE_SETTINGS_KEYS = (
 def _move_trailing_cache_control(openai_messages: list[chat.ChatCompletionMessageParam]) -> None:
     """Keep only the last conversation breakpoint, and move it off the end of the request and off tool results.
 
-    For profiles without `openrouter_supports_trailing_cache_control` (Gemini routes), where OpenRouter uses only the
+    Runs for profiles without `openrouter_supports_trailing_cache_control` (Gemini routes), where OpenRouter uses only the
     last breakpoint across message content. A breakpoint on the final content part of the request makes OpenRouter's
     Google Vertex endpoint bill the prompt twice, and one on a tool message isn't used, so the breakpoint goes on the
     last part of the closest earlier user or assistant message. A breakpoint inside the final user message, with
