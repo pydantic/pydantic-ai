@@ -160,7 +160,8 @@ class FakeHandle:
     client: FakeClient
 
     def __getattr__(self, name: str) -> Any:
-        if self.client.closed:  # pragma: no cover - only a backend that keeps a stale handle gets here
+        # Only a backend that keeps a stale handle gets here.
+        if self.client.closed:  # pragma: no cover
             raise RuntimeError('SDK session is closed')
         return getattr(self.sandbox, name)
 

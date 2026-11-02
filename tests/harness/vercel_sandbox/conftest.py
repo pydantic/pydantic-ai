@@ -20,7 +20,8 @@ collect_ignore = (
 # `finally` can run, so each one also gets a short session: one left behind that way stops within minutes.
 LIVE_EXECUTION_TIME_LIMIT = 600
 
-if TYPE_CHECKING or _HAS_VERCEL:  # pragma: no branch - the SDK-installed and slim jobs take opposite branches
+# The SDK-installed and slim jobs take opposite branches.
+if TYPE_CHECKING or _HAS_VERCEL:  # pragma: no branch
     from vercel import sandbox as vercel_sandbox
 
     from .fake_vercel import FakeVercel
@@ -42,13 +43,15 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
     """
     if item.get_closest_marker('vercel_live') is None:
         return
-    if _has_credentials() and os.getenv('PYDANTIC_AI_HARNESS_VERCEL_LIVE') == '1':  # pragma: no cover - live job
+    # Only the live job sets this.
+    if _has_credentials() and os.getenv('PYDANTIC_AI_HARNESS_VERCEL_LIVE') == '1':  # pragma: no cover
         return
     reason = (
         'requires PYDANTIC_AI_HARNESS_VERCEL_LIVE=1 and VERCEL_OIDC_TOKEN, '
         'or VERCEL_TOKEN with VERCEL_TEAM_ID and VERCEL_PROJECT_ID'
     )
-    if os.getenv('VERCEL_REQUIRE_LIVE') == '1':  # pragma: no cover - live job
+    # Only the live job sets this.
+    if os.getenv('VERCEL_REQUIRE_LIVE') == '1':  # pragma: no cover
         pytest.fail(f'VERCEL_REQUIRE_LIVE=1 but the live tier cannot run: it {reason}.')
     pytest.skip(reason)
 
@@ -61,7 +64,8 @@ class _PoisonedSandboxModule(types.ModuleType):
     real billed sandboxes.
     """
 
-    def __getattr__(self, name: str) -> object:  # pragma: no cover - tripwire, hit only by a misbehaving test
+    # Tripwire, hit only by a misbehaving test.
+    def __getattr__(self, name: str) -> object:  # pragma: no cover
         raise AssertionError(
             'A vercel_sandbox unit test touched the real `vercel.sandbox` package. '
             'Use the `fake_vercel` fixture, or mark the test `vercel_live`.'
@@ -71,7 +75,8 @@ class _PoisonedSandboxModule(types.ModuleType):
 @pytest.fixture(autouse=True)
 def _no_real_vercel(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Poison `vercel.sandbox` for every test here except the opt-in live tier."""
-    if 'vercel_live' in request.keywords:  # pragma: no cover - live tier runs without coverage
+    # The live tier runs without coverage.
+    if 'vercel_live' in request.keywords:  # pragma: no cover
         yield
         return
     monkeypatch.setattr(
@@ -80,7 +85,8 @@ def _no_real_vercel(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPa
     yield
 
 
-if _HAS_VERCEL:  # pragma: no branch - the fixture cannot be defined without its SDK-backed fake
+# The fixture cannot be defined without its SDK-backed fake.
+if _HAS_VERCEL:  # pragma: no branch
 
     @pytest.fixture
     async def fake_vercel(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[FakeVercel]:

@@ -179,7 +179,7 @@ async def destroy_failed_run_sandbox(ctx: RunContext[None], *, error: BaseExcept
 agent = Agent('anthropic:claude-opus-5-5', capabilities=[VercelSandbox(), Coder(), hooks])
 ```
 
-A run that ends before its ref is stored, such as a crash, Ctrl-C, or a killed worker right after creation, leaves the sandbox behind. Sandboxes the backend creates are named `pydantic-ai-<hex>` and logged at `INFO` (`Created Vercel sandbox <name>`); find leftovers in your project's Sandboxes dashboard and destroy one with `await VercelSandbox().destroy(WorkspaceRef(provider='vercel', id=...))`.
+A run that ends before its ref is stored, such as a crash, Ctrl-C, or a killed worker right after creation, leaves the sandbox behind. Sandboxes the backend creates are named `pydantic-ai-<hex>` and logged at `INFO` (`Creating Vercel sandbox <name>`); find leftovers in your project's Sandboxes dashboard and destroy one with `await VercelSandbox().destroy(WorkspaceRef(provider='vercel', id=...))`.
 
 ## Security model
 
@@ -256,7 +256,7 @@ Removing a capability while workflows using it are still running changes their r
 
 ## Telemetry
 
-`VercelSandbox` emits no spans of its own. Core's [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) records the sandbox on the agent run span as `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id`, and each command or file operation a tool makes runs inside that tool call's span; operations at run start, such as `RepoContext` loading repo instructions, run in the agent run span. Creating a sandbox logs its name at `INFO` (`Created Vercel sandbox <name>`) on the `pydantic_ai_harness.vercel_sandbox._backend` logger.
+`VercelSandbox` emits no spans of its own. Core's [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) records the sandbox on the agent run span as `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id`, and each command or file operation a tool makes runs inside that tool call's span; operations at run start, such as `RepoContext` loading repo instructions, run in the agent run span. Creating a sandbox logs its name at `INFO` (`Creating Vercel sandbox <name>`) on the `pydantic_ai_harness.vercel_sandbox._backend` logger.
 
 ## API reference
 

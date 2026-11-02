@@ -33,7 +33,7 @@ import pytest
 from pytest_examples import CodeExample
 from vercel.sandbox import SandboxClient
 
-from pydantic_ai.workspaces import WorkspaceTimeoutError, WorkspaceUnavailableError
+from pydantic_ai.workspaces import WorkspaceOutputLimitError, WorkspaceTimeoutError, WorkspaceUnavailableError
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.vercel_sandbox import VercelSandbox, VercelSandboxBackend
 
@@ -107,6 +107,15 @@ async def test_large_output_is_exact(client: SandboxClient) -> None:
     async with _owned(client) as backend:
         result = await backend.run(['seq', '1', '200000'], timeout=120)
         assert result.stdout == ''.join(f'{i}\n' for i in range(1, 200001))
+
+
+async def test_output_over_the_limit_raises_with_its_preview(client: SandboxClient) -> None:
+    """Validates the fake-encoded assumption that an error the `stdout` object raises while `run_process` writes
+    to it leaves the call unwrapped, so the backend's output limit surfaces as `WorkspaceOutputLimitError`."""
+    async with _owned(client) as backend:
+        with pytest.raises(WorkspaceOutputLimitError) as exc_info:
+            await backend.run('head -c 11000000 /dev/zero | tr "\\0" a', shell=True, timeout=120)
+        assert exc_info.value.stdout == 'a' * 64 * 1024
 
 
 async def test_timeout_raises_with_the_partial_output_and_kills_the_command(client: SandboxClient) -> None:
