@@ -34,7 +34,6 @@ from pydantic_ai.workspaces import (
 from pydantic_ai_harness.opensandbox_sandbox import OpenSandbox, OpenSandboxBackend
 
 from ...conftest import no_leaked_tasks
-
 from . import fake_opensandbox
 from .fake_opensandbox import DOMAIN, FakeOpenSandbox, wait_until_gone
 
