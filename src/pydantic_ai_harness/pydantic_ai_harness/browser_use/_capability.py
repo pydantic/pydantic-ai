@@ -14,9 +14,9 @@ from pydantic_ai_harness.browser_use._settings import BrowserAgentSettings
 from pydantic_ai_harness.browser_use._toolset import (
     BrowserAgentFactory,
     BrowserUseToolset,
-    _normalize_allowed_domains,  # pyright: ignore[reportPrivateUsage]
-    _session_prohibited_domains,  # pyright: ignore[reportPrivateUsage]
     default_browser_agent,
+    normalize_allowed_domains,
+    session_prohibited_domains,
 )
 
 try:
@@ -68,7 +68,7 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
     Adds one tool, `browse_web`, which hands a self-contained natural-language
     goal to a browser-use `Agent`. That agent drives a real Chromium over CDP
     with its own perception-action loop (indexed DOM, screenshots, planning,
-    self-healing) and returns a text result; the browser session is killed when
+    recovery from failed actions) and returns a text result; the browser session is killed when
     the run ends, on success or failure.
 
     ```python
@@ -157,7 +157,7 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
     use_vision: bool | Literal['auto'] = True
     """Send page screenshots to the sub-agent's model.
 
-    Vision makes the agent markedly better on visual layouts but adds image
+    Vision makes the agent better on visual layouts but adds image
     tokens on every step; turn it off for text-heavy tasks on a budget, or use
     `'auto'` to follow the model's declared vision support.
     """
@@ -267,7 +267,7 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
         """
         self._validate_sensitive_data()
         if self.browser_profile is not None:
-            _session_prohibited_domains(
+            session_prohibited_domains(
                 self.browser_profile.prohibited_domains,
                 block_ip_addresses=self.block_ip_addresses,
                 allowed_domains=self.allowed_domains
@@ -278,12 +278,12 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
     def _validate_sensitive_data(self) -> None:
         """Validate the mutable secret configuration before creating its toolset."""
         if self.allowed_domains is not None:
-            self.allowed_domains = _normalize_allowed_domains(self.allowed_domains)
+            self.allowed_domains = normalize_allowed_domains(self.allowed_domains)
         elif self.browser_profile is not None and self.browser_profile.allowed_domains is not None:
             # Only when `allowed_domains` is absent: `BrowserSession` lets a non-`None`
             # one replace the profile's list, so validating an overridden profile
             # allowlist would reject a configuration whose effective allowlist is safe.
-            normalized_allowed_domains = _normalize_allowed_domains(self.browser_profile.allowed_domains)
+            normalized_allowed_domains = normalize_allowed_domains(self.browser_profile.allowed_domains)
             if normalized_allowed_domains != self.browser_profile.allowed_domains:
                 self.browser_profile = self.browser_profile.model_copy(
                     update={'allowed_domains': normalized_allowed_domains}

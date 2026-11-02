@@ -186,7 +186,7 @@ Limits](https://pydantic.dev/docs/ai/harness/tool-output-limits/).
 
 ## Connection customization
 
-Use `auth` in almost every case. Pass `client` only when you need control of the
+Pass `client` when you need control of the
 connection itself: your own FastMCP client or transport, for example one
 pointing at a PostHog MCP server you run for a self-hosted instance, a proxy, or
 MCP handlers. The client then owns the URL and authentication, so passing
@@ -206,8 +206,7 @@ credentials](#per-user-credentials) to connect each user separately.
 
 `PostHog` emits no spans of its own. Core's
 [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/)
-already records each PostHog tool call as a tool span, and connecting makes no
-decision worth a span of its own.
+already records each PostHog tool call as a tool span.
 
 ## Define the agent in YAML or JSON
 
@@ -240,5 +239,3 @@ from pydantic_ai_harness import PostHog
 
 agent = Agent.from_file('agent.yaml', custom_capability_types=[PostHog])
 ```
-
-Pass `custom_capability_types` so the loader can create `PostHog` from the file.

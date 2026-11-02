@@ -9,7 +9,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset
-from pydantic_ai_harness._mcp import credential, one_connection, per_run_connection, prefixed_toolset, read_only_toolset
+from pydantic_ai_harness._mcp import credential, hosted_toolset, one_connection, prefixed_toolset, read_only_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
@@ -27,7 +27,7 @@ class Slack(AbstractCapability[AgentDepsT]):
     id: str | None = _ID
     """Stable capability and toolset ID, so `defer_loading=True` needs none.
 
-    One `Slack` is one connection to one account, like `StackOne`'s linked account. Two sharing this `id` are
+    One `Slack` is one connection to one account. Two sharing this `id` are
     one connection stated twice when they agree, and an error when they differ; give each its own `id` to keep both.
     """
     description: str | None = 'Use Slack messages, channels, and canvases.'
@@ -62,15 +62,9 @@ class Slack(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
         """Build the Slack connection and optional read-only selection."""
-        id = self.id or _ID
-        if self.client is not None:
-            toolset: AbstractToolset[AgentDepsT] = MCPToolset(
-                self.client, id=id, include_instructions=self.include_instructions
-            )
-        elif callable(self.auth):
-            toolset = per_run_connection(self.auth, self._connect, id=id)
-        else:
-            toolset = self._connect(self.auth)
+        toolset = hosted_toolset(
+            self.client, self.auth, self._connect, id=self.id or _ID, include_instructions=self.include_instructions
+        )
         if self.read_only:
             toolset = read_only_toolset(toolset)
         return prefixed_toolset(toolset, self.tool_prefix)
@@ -80,6 +74,5 @@ class Slack(AbstractCapability[AgentDepsT]):
             'https://mcp.slack.com/mcp',
             id=self.id or _ID,
             auth=credential(auth, env='SLACK_USER_TOKEN', service='Slack'),
-            headers=None,
             include_instructions=self.include_instructions,
         )
