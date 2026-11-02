@@ -161,6 +161,12 @@ print(asked[0].questions[0].header)
 - Schema violations (fewer than 2 options, duplicate headers, more than 10 questions, control characters) are retries to the model, and the answerer is never called.
 - An answerer response that does not fit its request (unknown header, label not offered, several picks on single-select) fails the whole run with `ValueError`, as `check_response` would; decline with `cancelled=True` instead.
 - `AskUserRequestedEvent`/`AskUserAnsweredEvent` let an observer capability (`@on_event`) assert on the exchange without being the answerer.
+- For `AskUserAnswer(note=...)`, assert that the answer dictionary stays in `ToolReturnPart.content`
+  and notes arrive in a separate `UserPromptPart`. Invalid notes raise `ValueError` through `check_response`.
+  See [Adding notes to an answer](https://pydantic.dev/docs/ai/harness/ask-user/#adding-notes-to-an-answer)
+  for supported content, framing and provenance.
+- Annotate `ask_user_result` values with `AskUserResult` from `pydantic_ai_harness.ask_user`.
+  Pass the result directly to `DeferredToolResults.calls` for deferred answers, including notes.
 
 ## Memory with an In-Memory Store
 

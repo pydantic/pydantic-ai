@@ -700,16 +700,37 @@ def missing_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
 
 @pytest.fixture
 def young_gc() -> Iterator[None]:
-    """Limit the test's `gc.collect()` calls to the objects it creates.
+    """Limit the test's garbage collections to the objects it creates.
 
     A full collection walks every object the worker has accumulated, which takes seconds per call
-    late in a CI run. Freezing everything that exists before the test keeps it out of the collector's
-    reach until teardown, so collections stay cheap, and garbage leaked by an earlier test can't be
-    finalized (and raise an unraisable exception or `ResourceWarning`) in the middle of this one.
+    late in a CI run, whether the test calls `gc.collect()` or allocates enough to trigger one.
+    Freezing everything that exists before the test keeps it out of the collector's reach until
+    teardown, so collections stay cheap, and garbage leaked by an earlier test can't be finalized
+    (and raise an unraisable exception or `ResourceWarning`) in the middle of this one.
     """
     gc.freeze()
     try:
         yield
+    finally:
+        gc.unfreeze()
+
+
+@contextmanager
+def no_leaked_tasks(loop: asyncio.AbstractEventLoop | None = None) -> Generator[None]:
+    """Fail if a task started inside the block is still running at its end.
+
+    Freezes every existing object out of the cyclic collector's reach for the block, as `young_gc` does, so an
+    earlier test's garbage can't be finalized here and queue tasks on the running loop. Tasks already running at
+    entry are ignored. Pass `loop` when the test drives that loop itself instead of running on it.
+
+    Don't use it in a test that requests `young_gc`: `gc.unfreeze()` thaws every frozen object, so leaving the
+    block would undo the fixture's freeze for the rest of the test.
+    """
+    gc.freeze()
+    try:
+        before = asyncio.all_tasks(loop)
+        yield
+        assert asyncio.all_tasks(loop) - before == set()
     finally:
         gc.unfreeze()
 

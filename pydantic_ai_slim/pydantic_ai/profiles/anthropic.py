@@ -20,6 +20,35 @@ _ANTHROPIC_BASE_BUILTINS = frozenset({WebSearchTool, CodeExecutionTool, WebFetch
 `AnthropicModel.supported_native_tools()` minus `ToolSearchTool`, which is gated
 per-model in the profile below."""
 
+_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
+    'claude-fable-5',
+    'claude-mythos-5',
+    'claude-opus-4-8',
+    'claude-opus-5',
+    'claude-sonnet-5-5',
+    'claude-haiku-5-5',
+)
+"""Models that honor a `{'role': 'system'}` entry inside the Messages API's `messages` array.
+
+This is the list Anthropic publishes for the feature, and accepting the entry is not the same as
+honoring it. Older models reject it outright (`role 'system' is not supported on this model`), but
+`claude-sonnet-5` returns 200 and then ignores it — the docs say the feature "is not available on
+Claude Sonnet 5; use the top-level `system` field instead", and measuring agrees: asked to lift a
+restriction the top-level prompt set, it refuses every time where Opus 5 complies every time, and on
+a plain formatting instruction the `<system>`-tagged fallback actually lands more often than the
+entry does. So Sonnet 5 is deliberately absent, and a 200 is not evidence for adding a model here.
+
+`claude-sonnet-5-5` is published as supported and stays in although, asked to lift a restriction the
+top-level prompt set, it refuses every time. It refuses the `<system>`-tagged fallback every time too,
+so the entry costs nothing measurable and keeps the instruction's operator authority.
+
+`claude-mythos-5` is published as supported but isn't reachable with our credentials.
+
+It lives here rather than beside `AnthropicProvider` so `OpenRouterProvider` can share it without the `anthropic`
+SDK. It's a fact about Anthropic's API, not the model family, so `anthropic_model_profile()` doesn't apply it: the
+Bedrock Converse API and other OpenAI-compatible gateways share that profile.
+"""
+
 ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
 """The unified sampling settings gated by `anthropic_disallows_sampling_settings`.
 
@@ -475,6 +504,8 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     # thinking off, and accepts it live on the Anthropic API and Bedrock.
     disables_thinking_with_between_tools = model_name.startswith('claude-sonnet-5-5')
     distrusts_system_after_tool_result = model_name.startswith('claude-haiku-5-5')
+    # Measured on the Anthropic API, where Sonnet 4.6 has no mid-conversation system role: see the field's docstring.
+    needs_sealed_system_blocks = model_name.startswith('claude-sonnet-4-6')
 
     # The 5.1 generation, Opus 5.5, and Sonnet 5.5 reject a forced `tool_choice` (`any`/`tool`) outright, unlike
     # other Anthropic models which only reject forcing alongside extended thinking. Anthropic's
@@ -583,6 +614,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_disallows_top_effort_when_thinking_disabled=disallows_top_effort_when_thinking_disabled,
         anthropic_disables_thinking_with_between_tools=disables_thinking_with_between_tools,
         anthropic_distrusts_system_after_tool_result=distrusts_system_after_tool_result,
+        needs_sealed_system_blocks=needs_sealed_system_blocks,
         anthropic_default_code_execution_tool_version=default_code_execution_tool_version,
         anthropic_supported_code_execution_tool_versions=supported_code_execution_tool_versions,
         anthropic_supports_task_budgets=supports_task_budgets,

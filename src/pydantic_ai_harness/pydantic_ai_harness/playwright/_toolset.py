@@ -125,20 +125,13 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
 
 try:
-    # Import-time gate (mirrors `pydantic_ai_harness.exa._toolset`): importing the
-    # capability fails fast with an install hint when the optional dep is absent.
-    # `TargetClosedError` is not re-exported from `playwright.async_api`; the
-    # `playwright._impl._errors` module documents its own classes as stable public
-    # API, and a driver-raised instance only carries `.name` (so isinstance is the
-    # reliable discriminator, not the name attribute).
+    # `TargetClosedError` is not re-exported from `playwright.async_api`; see the module docstring.
     from playwright._impl._errors import TargetClosedError as TargetClosedError
     from playwright.async_api import (
-        Error as _PlaywrightError,
+        Error as PlaywrightError,
         TimeoutError as PlaywrightTimeoutError,
         async_playwright as async_playwright,
     )
-
-    PlaywrightError = _PlaywrightError
 except ImportError as _import_error:
     raise ImportError(
         'playwright is required for PlaywrightBrowser. '
@@ -193,8 +186,10 @@ _UNRESOLVED_REASON = 'host that did not resolve, so the private-address block co
 """Why the private-address block refused a URL, shared by the pre-check and the route guard."""
 
 _BLANK_PAGE = 'about:blank'
-_ERROR_PAGE_SCHEME = 'chrome-error://'
 """The blank page a context starts on, and where a disallowed navigation is sent."""
+
+_ERROR_PAGE_SCHEME = 'chrome-error://'
+"""Scheme of Chromium's own error page, where a navigation the browser could not complete lands."""
 
 _MAX_TABS = 8
 """Pages one session keeps open at once.
@@ -1535,32 +1530,40 @@ class PlaywrightBrowserSession:
         on. A `close()` failure still exits the driver, and when the run is
         already unwinding the teardown error is dropped: the exception the caller
         is carrying is the one worth reporting.
+
+        Teardown is shielded, so a run cancelled by an `anyio` scope still closes
+        Chromium and exits the driver before the cancellation propagates: a
+        cancelled wait for an in-flight page-event task would skip both closes and
+        leave the processes running.
         """
         driver_cm = self._driver_cm
         self._driver_cm = None
         self._driver = None
-        if self._event_tasks:
-            for task in self._event_tasks:
-                task.cancel()
-            await asyncio.gather(*self._event_tasks, return_exceptions=True)
-            self._event_tasks.clear()
-        if driver_cm is None:  # pragma: no cover
-            return
-        try:
-            browser = self._browser
-            if browser is not None:
-                self.page = None
-                self.pages = []
-                self._browser = None
-                try:
-                    await browser.close()
-                finally:
+        # No deadline: the deprecated `TemporalAgent` wrapper runs `wrap_run` in the workflow, where
+        # a deadline becomes a durable timer that breaks replay of earlier histories.
+        with anyio.CancelScope(shield=True):
+            if self._event_tasks:
+                for task in self._event_tasks:
+                    task.cancel()
+                await asyncio.gather(*self._event_tasks, return_exceptions=True)
+                self._event_tasks.clear()
+            if driver_cm is None:  # pragma: no cover
+                return
+            try:
+                browser = self._browser
+                if browser is not None:
+                    self.page = None
+                    self.pages = []
+                    self._browser = None
+                    try:
+                        await browser.close()
+                    finally:
+                        await driver_cm.__aexit__(None, None, None)
+                elif self._driver_entered:
                     await driver_cm.__aexit__(None, None, None)
-            elif self._driver_entered:
-                await driver_cm.__aexit__(None, None, None)
-        except Exception:
-            if exc_type is None:
-                raise
+            except Exception:
+                if exc_type is None:
+                    raise
 
 
 class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
