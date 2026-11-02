@@ -69,7 +69,11 @@ class RepoContextPlugin(Plugin[RepoContextSettings, DepsT]):
             # `RepoContext` compares `home_dir` as given against the resolved working directory, so resolve the
             # roots too: one spelled through a symlink would otherwise never contain the workspace.
             working_dir = Path(await anyio.Path(self.host.workspace).resolve())
-            roots = [Path(await anyio.Path(Path(root).expanduser()).resolve()) for root in walk_up_roots]
+            roots: list[Path] = []
+            for root in walk_up_roots:
+                # Before Python 3.13, resolving a symlink loop raises; such a root cannot contain the workspace.
+                with suppress(RuntimeError):
+                    roots.append(Path(await anyio.Path(Path(root).expanduser()).resolve()))
             home_dir = max(
                 (root for root in roots if working_dir.is_relative_to(root)),
                 key=lambda root: len(root.parts),
