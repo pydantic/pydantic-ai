@@ -1418,6 +1418,27 @@ async def test_sidebar_keyboard(page: Page, web_ui: WebUI) -> None:
     await expect(heading).to_have_attribute('aria-expanded', 'true')
 
 
+@pytest.mark.parametrize(
+    'cache',
+    [
+        pytest.param('{"projects": []}', id='object'),
+        pytest.param('[{}]', id='project'),
+        pytest.param('[{"key": "k", "name": "n", "worktrees": [{"label": "b", "sessions": [{}, {}]}]}]', id='sessions'),
+    ],
+)
+async def test_sidebar_ignores_saved_state_of_another_shape(page: Page, web_ui: WebUI, cache: str) -> None:
+    """A cached list, view, or folding of the wrong shape, as another version might leave, does not break the page."""
+    await page.add_init_script(f"""
+      localStorage.setItem('clai-sidebar-cache', {json.dumps(cache)});
+      localStorage.setItem('clai-sidebar-view', JSON.stringify('nonsense'));
+      localStorage.setItem('clai-sidebar-collapsed', JSON.stringify([1, 2]));
+    """)
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    await expect(sidebar.get_by_role('button', name='Projects', exact=True)).to_have_attribute('aria-pressed', 'true')
+    await expect(sidebar.get_by_text('Browser Alpha', exact=True)).to_be_visible()
+
+
 def git(*args: str) -> str:
     return subprocess.run(['git', *args], check=True, capture_output=True, text=True).stdout.strip()
 

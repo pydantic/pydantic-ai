@@ -262,7 +262,7 @@ def test_a_pid_reused_since_the_save_is_not_busy() -> None:
     ensure_inactive(replace(running, updated_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1)))
     with pytest.raises(ConversationConflict, match='busy'):
         ensure_inactive(replace(running, updated_at=datetime.now(UTC).replace(tzinfo=None)))
-    # A PID no process has has no start time, and is not busy.
+    # A PID no process has, so it has no start time and is not busy.
     ensure_inactive(replace(running, owner_pid=2**22 + 12345))
 
 

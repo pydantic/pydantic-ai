@@ -9,6 +9,9 @@ import {
   WORKING,
   ambiguous,
   flatten,
+  isFlags,
+  isList,
+  isView,
   isUnread,
   loadSeen,
   markSeen,
@@ -156,16 +159,16 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   ref,
 ) {
   const [query, setQuery] = useState('')
-  const [view, setView] = useState<View>(() => stored<View>('clai-sidebar-view', 'projects'))
+  const [view, setView] = useState<View>(() => stored('clai-sidebar-view', 'projects', isView))
   const previous = useRef<View>('projects')
   // The list paints from the last one fetched while it is fetched again.
-  const [projects, setProjects] = useState<Project[]>(() => stored<Project[]>('clai-sidebar-cache', []))
+  const [projects, setProjects] = useState<Project[]>(() => stored('clai-sidebar-cache', [], isList))
   /** The search the listed sessions answer, so Enter never opens a result of an earlier one. */
   const [answered, setAnswered] = useState('')
   /** The search whose first result Enter asked to open before its results arrived. */
   const openFirst = useRef<string | null>(null)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() =>
-    stored<Record<string, boolean>>('clai-sidebar-collapsed', {}),
+    stored('clai-sidebar-collapsed', {}, isFlags),
   )
   const [menu, setMenu] = useState<string | null>(null)
   const [menuUp, setMenuUp] = useState(false)
