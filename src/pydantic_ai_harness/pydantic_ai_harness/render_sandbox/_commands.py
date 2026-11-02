@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import os
 import shlex
 import uuid
@@ -31,7 +32,9 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness._workspace_provider import stop_shielded
+from pydantic_ai_harness._workspace_provider import run_to_completion, stop_shielded
+
+logger = logging.getLogger(__name__)
 
 _CLAIM_ROOT = '/tmp'
 # Linux limits each exec argument, and Render passes the whole launch as one `bash -c` argument.
@@ -43,6 +46,7 @@ _DRAIN_GRACE = 2.0
 _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 _OUTPUT_PREVIEW_BYTES = 64 * 1024
 _STOP_TIMEOUT = 12.0
+_CLOSE_TIMEOUT = 5.0
 
 
 def _launch(source: str, operation: str, config: Mapping[str, object]) -> str:
@@ -116,11 +120,17 @@ async def _consume(client: RenderAsync, sandbox_id: str, launch: str, capture: _
 
 async def _stop(client: RenderAsync | None, sandbox_id: str, command: PreparedCommand) -> None:
     # Its own client when the caller supplied none: the stop can outlive the operation that opened the run's client.
-    async with client_scope(client) as scope:
-        capture = _Capture()
-        await _consume(scope, sandbox_id, command.stop, capture)
-        if capture.terminal != 'stopped':
-            raise WorkspaceError('Command stop did not acknowledge its fence')
+    confirmed = False
+    try:
+        async with client_scope(client) as scope:
+            capture = _Capture()
+            await _consume(scope, sandbox_id, command.stop, capture)
+            if capture.terminal != 'stopped':
+                raise WorkspaceError('Command stop did not acknowledge its fence')
+            confirmed = True
+    finally:
+        if not confirmed:
+            logger.warning('Could not confirm command stop in Render sandbox %s; it may still be running', sandbox_id)
 
 
 _MISSING_CREDENTIALS = 'Set RENDER_API_KEY and RENDER_WORKSPACE_ID in the environment, or pass a configured `client=`.'
@@ -137,7 +147,13 @@ def open_client() -> RenderAsync:
 
 async def close_client(client: RenderAsync) -> None:
     # Render 1.2 exposes no close on `RenderAsync`; its pool lives on the sandbox API client.
-    await client.experimental.sandboxes.client.get_async_httpx_client().aclose()
+    with anyio.move_on_after(_CLOSE_TIMEOUT, shield=True) as deadline:
+        try:
+            await client.experimental.sandboxes.client.get_async_httpx_client().aclose()
+        except Exception:
+            logger.warning('Could not close the Render API client')
+    if deadline.cancelled_caught:
+        logger.warning('Closing the Render API client exceeded its deadline')
 
 
 @asynccontextmanager
@@ -150,8 +166,7 @@ async def client_scope(client: RenderAsync | None) -> AsyncGenerator[RenderAsync
     try:
         yield opened
     finally:
-        with anyio.CancelScope(shield=True):
-            await close_client(opened)
+        await run_to_completion(lambda: close_client(opened))
 
 
 _SOURCE = files('pydantic_ai_harness.render_sandbox').joinpath('_command_runner.py').read_text()

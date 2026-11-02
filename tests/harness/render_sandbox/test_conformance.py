@@ -9,7 +9,7 @@ and the shipped file helper in-process.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 
 import pytest
 
@@ -74,6 +74,20 @@ class TestLiveRenderSandboxBackend(WorkspaceBackendSuite):  # pragma: lax no cov
         yield backend
         if backend.ref is not None:
             asyncio.run(_destroy(backend))
+
+    @pytest.fixture
+    async def fresh_backend(self) -> AsyncIterator[Callable[[], WorkspaceBackend]]:
+        created: list[RenderSandboxBackend] = []
+
+        def create() -> WorkspaceBackend:
+            backend = RenderSandboxBackend(sandbox_timeout=600)
+            created.append(backend)
+            return backend
+
+        yield create
+        for backend in created:
+            if backend.ref is not None:
+                await _destroy(backend)
 
     @pytest.fixture
     def destructive_backend(self) -> Callable[[], WorkspaceBackend]:

@@ -89,9 +89,9 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
     it attaches and never creates a replacement. The backend never terminates the sandbox: whoever holds
     the ref does, with `RenderSandbox.destroy(ref)`.
 
-    Each command runs under a small Python supervisor sent with Render's exec request, which stops the
-    command's process group on a timeout or cancellation. File contents travel through Render's
-    `copy_to`/`copy_from`; metadata operations run as shell commands.
+    Each command runs under a small Python supervisor sent with Render's exec request, which attempts to
+    stop the command's process group on a timeout or cancellation. An unconfirmed stop is logged.
+    File contents travel through Render's `copy_to`/`copy_from`; metadata operations run as shell commands.
 
     Args:
         client: A caller-owned `render.RenderAsync`, never closed here. When `None`, each operation opens
@@ -153,7 +153,9 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
                 )
         except RateLimitError:
             raise
-        except (ClientError, TimeoutError) as error:
+        except ClientError as error:
+            if error.__cause__ is not None:
+                raise
             raise WorkspaceUnavailableError('Could not create a Render sandbox') from error
         self._ref = WorkspaceRef(provider='render', id=sandbox.id)
         self._working_dir_pending = True
@@ -188,9 +190,11 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
             except RateLimitError:
                 raise
             except ClientError as error:
+                if error.__cause__ is not None:
+                    raise
                 raise WorkspaceUnavailableError('Render sandbox is missing or access was rejected') from error
             except TimeoutError as error:
-                raise WorkspaceUnavailableError('Render sandbox readiness exceeded its deadline') from error
+                raise TimeoutError('Render sandbox readiness exceeded its deadline') from error
             cwd = result.stdout.rstrip('\n')
             if result.exit_code != 0 or not cwd.startswith('/') or '\n' in cwd:
                 raise WorkspaceUnavailableError(f'working_dir {self._working_dir!r} is unavailable in the sandbox')

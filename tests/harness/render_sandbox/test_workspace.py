@@ -216,7 +216,7 @@ async def test_terminal_errors_do_not_replay_commands(workspace_harness: Workspa
     ('error', 'expected'),
     [
         (ClientError('auth'), WorkspaceUnavailableError),
-        (TimeoutError('no response'), WorkspaceUnavailableError),
+        (TimeoutError('no response'), TimeoutError),
         (RateLimitError('try later'), RateLimitError),
         (ServerError('unavailable'), ServerError),
     ]

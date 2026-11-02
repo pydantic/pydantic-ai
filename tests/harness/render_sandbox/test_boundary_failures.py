@@ -14,13 +14,16 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+import anyio
+import httpx
 import pytest
 
-from ...conftest import try_import
+from ...conftest import no_leaked_tasks, try_import
 
 with try_import() as imports_successful:
     from render import RenderAsync
     from render.client.errors import ClientError, RateLimitError
+    from render.client.util import handle_httpx_exception
     from render.experimental.sandbox import (
         Sandbox,
         SandboxExecEvent,
@@ -152,6 +155,13 @@ def boundary(monkeypatch: pytest.MonkeyPatch) -> ScriptedSDK:
     return sdk
 
 
+@pytest.fixture
+def owned_boundary(boundary: ScriptedSDK, monkeypatch: pytest.MonkeyPatch) -> ScriptedSDK:
+    monkeypatch.setenv('RENDER_WORKSPACE_ID', 'tea-test')
+    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands.RenderAsync', lambda: boundary.client)
+    return boundary
+
+
 # Before the supervisor's terminal frame the command may still run, so it is stopped; after it, it is over.
 _BEFORE_TERMINAL = ['invalid_json', 'supervisor_error', 'incomplete_frame', 'missing_direct_exit']
 _AFTER_TERMINAL = ['fenced', 'missing_sdk_exit']
@@ -180,7 +190,9 @@ async def test_unusable_command_stream_never_becomes_success_or_replays(
 
 
 @pytest.mark.parametrize('acknowledgement', ['missing_ack', 'wrong_ack'])
-async def test_failed_stop_keeps_the_original_stream_error(boundary: ScriptedSDK, acknowledgement: str) -> None:
+async def test_failed_stop_logs_without_replacing_the_stream_error(
+    boundary: ScriptedSDK, acknowledgement: str, caplog: pytest.LogCaptureFixture
+) -> None:
     # The stop is best effort, as on the other sandboxes: its failure must not replace the stream error.
     backend = boundary.backend()
     await backend.working_dir()
@@ -193,17 +205,18 @@ async def test_failed_stop_keeps_the_original_stream_error(boundary: ScriptedSDK
     assert caught.value is original
     assert boundary.operations == ['run', 'stop']
     assert backend.ref == WorkspaceRef(provider='render', id='sbx-scripted')
+    assert 'Could not confirm command stop in Render sandbox sbx-scripted; it may still be running' in caplog.text
+    assert str(original) not in caplog.text
 
 
 async def test_readiness_deadline_retains_id_and_does_not_create_again(
     boundary: ScriptedSDK, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._backend._READINESS_TIMEOUT', 0.03)
+    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._backend._READINESS_TIMEOUT', 0)
     boundary.status = 'creating'
     backend = boundary.backend()
-    with pytest.raises(WorkspaceUnavailableError) as caught:
+    with pytest.raises(TimeoutError):
         await backend.run(['must-not-start'])
-    assert isinstance(caught.value.__cause__, TimeoutError)
     assert boundary.operations == []
     assert boundary.creates == 1
     assert backend.ref == WorkspaceRef(provider='render', id='sbx-scripted')
@@ -335,3 +348,144 @@ async def test_output_limit_carries_a_preview(boundary: ScriptedSDK) -> None:
     with pytest.raises(WorkspaceOutputLimitError) as caught:
         await backend.run(['side-effect'])
     assert (caught.value.limit, caught.value.stdout) == (10 * 1024 * 1024, 'x' * (64 * 1024))
+
+
+async def test_create_deadline_is_not_a_terminal_workspace_error(
+    boundary: ScriptedSDK, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def stalled_create(**kwargs: object) -> Sandbox:
+        return await asyncio.Future[Sandbox]()
+
+    monkeypatch.setattr(boundary.client.experimental.sandboxes, 'create', stalled_create)
+    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._backend._OPERATION_TIMEOUT', 0)
+    with pytest.raises(TimeoutError):
+        await boundary.backend().working_dir()
+
+
+@pytest.mark.parametrize('phase', ['create', 'readiness'])
+async def test_acquisition_preserves_sdk_transport_errors(
+    boundary: ScriptedSDK, monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    with pytest.raises(ClientError) as translated:
+        handle_httpx_exception(httpx.UnsupportedProtocol('transport failure'))
+    original = translated.value
+
+    async def failing_create(**kwargs: object) -> Sandbox:
+        raise original
+
+    if phase == 'create':
+        monkeypatch.setattr(boundary.client.experimental.sandboxes, 'create', failing_create)
+    else:
+        boundary.status_script = [original]
+    with pytest.raises(ClientError) as caught:
+        await boundary.backend().working_dir()
+    assert caught.value is original
+
+
+@pytest.mark.parametrize('operation_fails', [False, True])
+async def test_client_close_failure_is_logged_without_changing_the_operation_outcome(
+    owned_boundary: ScriptedSDK,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    operation_fails: bool,
+) -> None:
+    pool = owned_boundary.client.experimental.sandboxes.client.get_async_httpx_client()
+    original_close = pool.aclose
+
+    async def failed_close() -> None:
+        await original_close()
+        raise RuntimeError('private transport detail')
+
+    monkeypatch.setattr(pool, 'aclose', failed_close)
+    backend = RenderSandboxBackend()
+    if operation_fails:
+        owned_boundary.status = 'terminated'
+        with pytest.raises(WorkspaceUnavailableError, match='terminated'):
+            await backend.working_dir()
+    else:
+        assert await backend.working_dir() == '/workspace'
+    assert 'Could not close the Render API client' in caplog.text
+    assert 'private transport detail' not in caplog.text
+
+
+async def test_client_close_deadline_is_logged_without_holding_up_the_operation(
+    owned_boundary: ScriptedSDK, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    pool = owned_boundary.client.experimental.sandboxes.client.get_async_httpx_client()
+    original_close = pool.aclose
+
+    async def stalled_close() -> None:
+        await original_close()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(pool, 'aclose', stalled_close)
+    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands._CLOSE_TIMEOUT', 0, raising=False)
+    with no_leaked_tasks():
+        async with asyncio.timeout(1):
+            assert await RenderSandboxBackend().working_dir() == '/workspace'
+    assert 'Closing the Render API client exceeded its deadline' in caplog.text
+
+
+@pytest.mark.parametrize('cancellation', ['native', 'anyio'])
+async def test_client_close_finishes_before_cancellation_propagates(
+    owned_boundary: ScriptedSDK, monkeypatch: pytest.MonkeyPatch, cancellation: str
+) -> None:
+    pool = owned_boundary.client.experimental.sandboxes.client.get_async_httpx_client()
+    original_close = pool.aclose
+    started, finish, closed = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def controlled_close() -> None:
+        started.set()
+        await finish.wait()
+        await original_close()
+        closed.set()
+
+    monkeypatch.setattr(pool, 'aclose', controlled_close)
+    scope = anyio.CancelScope()
+
+    async def operation() -> None:
+        with scope:
+            await RenderSandboxBackend().working_dir()
+            await anyio.lowlevel.checkpoint()
+
+    with no_leaked_tasks():
+        pending = asyncio.create_task(operation())
+        try:
+            async with asyncio.timeout(10):
+                await started.wait()
+            if cancellation == 'native':
+                pending.cancel()
+                await asyncio.sleep(0)
+                pending.cancel()
+            else:
+                scope.cancel()
+            await asyncio.sleep(0)
+            assert not pending.done()
+            finish.set()
+            if cancellation == 'native':
+                with pytest.raises(asyncio.CancelledError):
+                    await pending
+            else:
+                await pending
+                assert scope.cancelled_caught
+            assert closed.is_set()
+        finally:
+            finish.set()
+            await asyncio.gather(pending, return_exceptions=True)
+            await original_close()
+
+
+async def test_stop_deadline_logs_an_unconfirmed_stop_without_replacing_the_stream_error(
+    boundary: ScriptedSDK, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    backend = boundary.backend()
+    await backend.working_dir()
+    original = ConnectionError('private stream detail')
+    boundary.transport_error = original
+    boundary.stop_gate = asyncio.Event()
+    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands._STOP_TIMEOUT', 0)
+    with pytest.raises(ConnectionError) as caught:
+        await backend.run(['side-effect'])
+    assert caught.value is original
+    assert 'Could not confirm command stop in Render sandbox sbx-scripted; it may still be running' in caplog.text
+    assert 'private stream detail' not in caplog.text

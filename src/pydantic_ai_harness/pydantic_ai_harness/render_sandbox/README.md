@@ -51,9 +51,11 @@ The sandbox image needs `python3`. Render's default image has it.
 
 Render allows 100 API requests a minute. A rate-limited request raises the SDK's `RateLimitError`, and is not retried.
 
+Creation and readiness timeouts raise `TimeoutError`, and SDK transport errors propagate for a durable engine to retry. Once creation returns a sandbox ID, readiness retries keep that ref rather than create a replacement. A lost create response can leave a sandbox without a recorded ref.
+
 ### What a timeout stops
 
-On a timeout or cancellation, the command and its child processes are killed, and the sandbox stays usable. A background process that starts its own session keeps running.
+On a timeout or cancellation, the integration attempts to kill the command's process group and leaves the sandbox usable. If stopping cannot be confirmed, it logs a warning with the sandbox ID; the original timeout, cancellation or stream error still propagates. A background process that starts its own session can keep running.
 
 See [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/) for more.
 
@@ -179,6 +181,26 @@ To keep results, read them through `ctx.workspace` in `after_run` before calling
 ## Render Workflows
 
 `RenderSandbox` composes with [`RenderWorkflows`](../render/): model and tool tasks share one sandbox. The `render` extra covers both; set the Render variables on every worker. A retried root task runs the agent again, so terminate the sandbox from the task that runs the agent, as in [Clean up](#clean-up).
+
+## Live tests
+
+Ordinary CI runs the fake-SDK tests and skips the live tier. Render is not yet registered in the repository's dedicated sandbox live-test workflow, so rerunning CI does not exercise a real Render sandbox.
+
+From a repository checkout, install the Render SDK and test tooling:
+
+```bash
+uv sync --locked --package pydantic-ai-harness --group dev --extra render
+```
+
+Set `RENDER_API_KEY` and `RENDER_WORKSPACE_ID` in your environment, then run:
+
+```bash
+PYDANTIC_AI_HARNESS_RENDER_LIVE=1 RENDER_REQUIRE_LIVE=1 uv run --no-sync pytest tests/harness/render_sandbox -m render_live -rs --durations=10
+```
+
+No model API key is needed. The suite exercises real commands, files, deadlines, cancellation, concurrent first use, reattachment and destruction. Inspect the skip reasons; a skipped check is not a passed check. `RENDER_REQUIRE_LIVE=1` makes missing credentials a failure instead of a skip. These checks validate the workspace backend, not model-driven coding quality or load performance.
+
+The tests create billable sandboxes with ten-minute lifetimes and destroy them during fixture teardown. If the test process is killed before teardown, terminate any remaining sandboxes in Render or let their lifetimes expire.
 
 ## Telemetry
 
