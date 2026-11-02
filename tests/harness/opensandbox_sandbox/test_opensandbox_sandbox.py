@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import importlib.util
+import inspect
+import os
+from collections.abc import AsyncIterator
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
 from opensandbox.config import ConnectionConfig
 
-from pydantic_ai import Agent, RunContext
+import pydantic_ai_harness.opensandbox_sandbox as opensandbox_package
+from pydantic_ai import Agent, RunContext, models
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
@@ -18,6 +25,7 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import Workspace, WorkspaceRef
 from pydantic_ai_harness.opensandbox_sandbox import OpenSandbox, OpenSandboxBackend
 
+from .._docs_examples import python_blocks
 from .fake_opensandbox import FakeOpenSandbox
 
 
@@ -120,6 +128,62 @@ class TestConfiguration:
         ref = WorkspaceRef(provider='opensandbox', id='x')
         backend = capability.get_workspace(_ctx(), ref=ref)
         assert isinstance(backend, OpenSandboxBackend) and backend.ref == ref
+
+
+class TestDocs:
+    @pytest.mark.skipif(importlib.util.find_spec('json_repair') is None, reason='coder extra not installed')
+    @pytest.mark.parametrize('failure', [None, 'setup', 'agent'], ids=['success', 'setup-failure', 'agent-failure'])
+    async def test_preparing_a_sandbox_cleans_up_on_success_and_failure(
+        self,
+        server: FakeOpenSandbox,
+        owned_connection: ConnectionConfig,
+        working_dir: str,
+        monkeypatch: pytest.MonkeyPatch,
+        failure: str | None,
+    ) -> None:
+        # A local pip stub keeps the unchanged example's installation step offline.
+        bindir = Path(working_dir, 'bin')
+        bindir.mkdir()
+        pip = bindir / 'pip'
+        pip.write_text(f'#!/bin/sh\nexit {1 if failure == "setup" else 0}\n', encoding='utf-8')
+        pip.chmod(0o755)
+
+        def backend(*, image: str) -> OpenSandboxBackend:
+            return OpenSandboxBackend(
+                image=image,
+                connection=owned_connection,
+                working_dir=working_dir,
+                env={'PATH': f'{bindir}:{os.environ["PATH"]}'},
+            )
+
+        def capability(*, image: str | None = None) -> OpenSandbox[None]:
+            return OpenSandbox(image=image, connection=owned_connection)
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            if failure == 'agent':
+                raise RuntimeError('agent failed')
+            yield 'done'
+
+        def infer_model(*args: object, **kwargs: object) -> FunctionModel:
+            return FunctionModel(stream_function=stream)
+
+        monkeypatch.setattr(opensandbox_package, 'OpenSandboxBackend', backend)
+        monkeypatch.setattr(opensandbox_package, 'OpenSandbox', capability)
+        monkeypatch.setattr(models, 'infer_model', infer_model)
+        [example] = [
+            block for block in python_blocks('docs/harness/opensandbox-sandbox.md') if 'async def main(' in block.source
+        ]
+        namespace: dict[str, object] = {'__name__': 'example'}
+        exec(compile(example.source, str(example.path), 'exec'), namespace)
+        main = namespace['main']
+        assert callable(main)
+        expected = pytest.raises(RuntimeError, match='pip install failed' if failure == 'setup' else 'agent failed')
+        with expected if failure else nullcontext():
+            result = main()
+            assert inspect.isawaitable(result)
+            await result
+        assert server.closed_transports == server.opened_transports > 0
+        assert server.sandboxes == {}
 
 
 class TestRuns:

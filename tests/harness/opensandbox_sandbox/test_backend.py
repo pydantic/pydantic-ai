@@ -399,6 +399,7 @@ class TestSandboxTimeout:
     async def test_none_means_no_expiry_and_no_renewal(self, server: FakeOpenSandbox, working_dir: str) -> None:
         backend = _create(server, working_dir)
         await backend.run(['true'])
+        await backend.run(['true'])
         assert backend.ref is not None
         assert (server.sandboxes[backend.ref.id].expires_at, server.renewals) == (None, [])
 
