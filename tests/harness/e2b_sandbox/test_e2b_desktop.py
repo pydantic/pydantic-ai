@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import base64
-
 import pytest
 
 from pydantic_ai import Agent, RunContext, UserError
@@ -17,7 +15,6 @@ from pydantic_ai.workspaces import (
 from pydantic_ai_harness._x11 import STARTED
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox, E2BSandboxBackend
 
-from ...workspace_fakes import FAKE_SCREENSHOT
 from .fake_e2b import FakeE2B
 
 
@@ -46,17 +43,11 @@ class FakeDisplay:
             self.xdotool.append(command)
             if not self.up:
                 return '', "Error: Can't open display: :1", 1
-            if command == 'xdotool getdisplaygeometry':
-                return '1280 800\n', '', 0
-            if command == 'xdotool getmouselocation --shell':
-                return 'X=5\nY=6\nSCREEN=0\n', '', 0
         elif 'novnc_proxy' in command:
             self.viewers.append(command)
             if not self.up:
                 return '', 'the viewer did not start:\nno display', 1
             return 'Pass1234', '', 0
-        elif 'scrot' in command:
-            return base64.b64encode(FAKE_SCREENSHOT).decode(), '', 0
         return '', '', 0
 
 

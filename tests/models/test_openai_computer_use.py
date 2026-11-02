@@ -323,6 +323,14 @@ _SCREEN = BinaryImage(data=FAKE_SCREENSHOT, media_type='image/png')
             'Before it ran, this call was changed to: [...]. Ran 1 action.',
             id='changed-before-it-ran',
         ),
+        # Otherwise the model would take a refused action to have run.
+        pytest.param(
+            ['Ran 0 of 1 actions. The next one failed: This workspace is read-only.', _SCREEN],
+            {'performed': 0, 'error': 'This workspace is read-only.'},
+            _SCREEN.data_uri,
+            'Ran 0 of 1 actions. The next one failed: This workspace is read-only.',
+            id='refused',
+        ),
     ],
 )
 async def test_a_result_goes_out_as_a_computer_call_output_and_a_note_when_the_screenshot_does_not_tell(
