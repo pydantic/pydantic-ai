@@ -86,6 +86,8 @@ class SessionChannel:
         self._status_sent = 0.0
         self._usage: RunUsage | None = None
         """The running turn's usage, as its run context reports it; `None` between turns."""
+        self._run_messages: list[ModelMessage] | None = None
+        """The running turn's history so far, as its run context holds it; `None` between turns."""
         self._queue_sent: list[QueuedItem] = []
         """The queued input browsers were last sent, so only a change sends it again."""
         self._steered = 0
@@ -100,6 +102,13 @@ class SessionChannel:
 
     def publish(self, message: SessionMessage) -> None:
         self.service.hub.publish_session(message, session=self.id)
+
+    @property
+    def messages(self) -> list[ModelMessage]:
+        """The held conversation's messages, with what the running turn has added so far."""
+        if self.running and self._run_messages is not None:
+            return list(self._run_messages)
+        return self.session.conversation.messages
 
     def _task_history(self, task_id: str) -> list[ModelMessage]:
         tasks = self.session.tasks
@@ -181,10 +190,13 @@ class SessionChannel:
 
     # What happens in the session, from the plugin's moments and capability.
 
-    def observe(self, event: AgentStreamEvent, *, usage: RunUsage, by_user: bool = False) -> None:
+    def observe(
+        self, event: AgentStreamEvent, *, usage: RunUsage, messages: list[ModelMessage], by_user: bool = False
+    ) -> None:
         """Send `event` to watchers; `by_user` marks a `/monty` cell's run, which is not a turn and has no usage to show."""
         if not by_user:
             self._usage = usage
+            self._run_messages = messages
         if isinstance(event, EnqueuedMessagesEvent):
             # Steering, from here or the terminal, shows once the run's model receives it.
             for part in delivered_steering(event):
@@ -211,6 +223,7 @@ class SessionChannel:
         """A run of the held conversation started; a run woken by a finished task has no prompt to show."""
         self.running = True
         self._usage = None
+        self._run_messages = None
         self._turn.clear()
         item = None
         if prompt is not None:
@@ -225,6 +238,7 @@ class SessionChannel:
     ) -> None:
         self.running = False
         self._usage = None
+        self._run_messages = None
         self._turn.clear()
         self.publish(
             TurnEnded(

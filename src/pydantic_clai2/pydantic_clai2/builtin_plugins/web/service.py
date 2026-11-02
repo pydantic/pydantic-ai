@@ -865,4 +865,4 @@ class Observer(AbstractCapability[None]):
 
     async def on_event(self, ctx: RunContext[None], *, event: AgentStreamEvent) -> None:
         if (channel := self._channel(ctx)) is not None:
-            channel.observe(event, usage=ctx.usage, by_user=is_monty_cell(ctx))
+            channel.observe(event, usage=ctx.usage, messages=ctx.messages, by_user=is_monty_cell(ctx))

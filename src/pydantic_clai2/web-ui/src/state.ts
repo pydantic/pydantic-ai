@@ -220,6 +220,17 @@ export function applyItem(entries: Entry[], message: ItemMessage): Entry[] {
   }
 }
 
+/** How many tool calls in `entries` have finished, a `run_code` cell's own calls too: each may have changed files. */
+export function finishedCalls(entries: Entry[]): number {
+  let finished = 0
+  for (const entry of entries) {
+    if (entry.kind !== 'tool') continue
+    if (entry.state !== 'running') finished++
+    for (const call of entry.calls) if (call.state !== 'running') finished++
+  }
+  return finished
+}
+
 /** A task's new row replaces its old one, or joins the list; a finished task's live items go, as its saved history serves. */
 function taskChanged(chat: Chat, task: TaskEntry): Chat {
   const found = chat.tasks.some((entry) => entry.id === task.id)

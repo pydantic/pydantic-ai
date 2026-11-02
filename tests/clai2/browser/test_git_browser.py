@@ -1,14 +1,22 @@
 """The header's git chip and its dialog in a real browser: commit, push, and open a pull request."""
 
+import json
+import re
 import sys
-from collections.abc import Iterator
+import threading
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+import anyio
 import pytest
+from anyio.from_thread import BlockingPortal
 from playwright.async_api import Page, expect
 
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage, UserPromptPart
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai_harness.filesystem import WRITE_FILE_KIND
 from tests.clai2.browser.conftest import Serve
 from tests.clai2.test_git_actions import PR_URL, Drafter, agents, calls, gh_state, git, repo
 from tests.clai2.test_web import TOKEN
@@ -164,3 +172,66 @@ async def test_unchecking_a_file_marks_the_drafted_message_stale(page: Page, git
     await message.fill('Edit two files')
     await dialog.get_by_role('checkbox', name='second.txt').uncheck()
     await expect(dialog.get_by_text('This message was drafted for')).to_have_count(0)
+
+
+def mid_turn_editor(repo: Path, released: threading.Event) -> Agent[None, str]:
+    """An agent whose turn writes `old.txt` in `repo`, then runs until `released` is set."""
+
+    async def turn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if isinstance(messages[-1].parts[-1], UserPromptPart):
+            arguments = json.dumps({'path': 'old.txt', 'content': 'edited mid-turn\n'})
+            yield {0: DeltaToolCall(name='write_file', json_args=arguments, tool_call_id='edit')}
+        else:
+            while not released.is_set():
+                await anyio.sleep(0.01)
+            yield 'Done'
+
+    agent = Agent(FunctionModel(stream_function=turn))
+
+    @agent.tool_plain(tool_kind=WRITE_FILE_KIND)
+    def write_file(path: str, content: str) -> str:
+        (repo / path).write_text(content)
+        return f'Wrote {path}.'
+
+    return agent
+
+
+async def test_a_running_turns_edits_show_before_it_ends(
+    page: Page, make_fleet: MakeFleet, serve: Serve, repo: Path
+) -> None:
+    released = threading.Event()
+
+    def editors(_portal: BlockingPortal) -> dict[str, Agent[None, str]]:
+        return {'repo': mid_turn_editor(repo, released)}
+
+    fleet = make_fleet(editors)
+    conversation = fleet.new('repo')
+    fleet.portal.call(fleet.runtimes['repo'].session.commit_messages, list[ModelMessage]())
+    assert fleet.post(f'/api/sessions/{conversation}/rename', {'title': 'Git Repo'}).status_code == 204
+    (repo / 'notes.txt').write_text('edited by the user\n')
+    with serve(fleet) as url:
+        await page.goto(f'{url}/?token={TOKEN}')
+        await page.locator('.sidebar').get_by_text('Git Repo', exact=True).click()
+        await expect(page.locator('.session.opening')).to_have_count(0)
+        chip = page.locator('.topbar .git-chip')
+        await expect(chip).to_have_text('main1 changed, 0 ahead')
+        await page.get_by_role('button', name=re.compile(r'^Changes')).click()
+        panel = page.get_by_role('complementary', name='Changes')
+        await panel.get_by_role('tab', name='Uncommitted').click()
+        files = panel.get_by_role('list', name='Changed files').get_by_role('listitem')
+        await expect(files).to_have_text(['Mnotes.txt+1 −1'])
+
+        composer = page.get_by_role('combobox', name='Message CLAI')
+        await composer.fill('edit old.txt, then run a long command')
+        await composer.press('Enter')
+        activity = page.locator('.topbar-status .activity')
+        try:
+            await expect(page.locator('.tool').filter(has_text='old.txt')).to_have_count(1)
+            # Each finished tool call asks again, so the chip, the header's count, and the panel follow the turn.
+            await expect(chip).to_have_text('main2 changed, 0 ahead', timeout=2_000)
+            await expect(files).to_have_text(['Mnotes.txt+1 −1', 'Mold.txt+1 −1'], timeout=2_000)
+            await expect(page.get_by_role('button', name='Changes: 1 file changed')).to_be_visible(timeout=2_000)
+            await expect(activity).not_to_have_text('ready')
+        finally:
+            released.set()
+        await expect(activity).to_have_text('ready')
