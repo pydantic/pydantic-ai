@@ -1,12 +1,15 @@
+from __future__ import annotations
+
 import json
 import re
-from typing import Any
 
 import httpx2
 import pytest
 
 from pydantic_ai import Agent
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
 from ..conftest import TestEnv, try_import
@@ -74,14 +77,8 @@ def test_nvidia_provider_env_base_url(base_url: str, env: TestEnv) -> None:
 def test_nvidia_provider_openai_client_and_base_url_are_exclusive() -> None:
     openai_client = openai.AsyncOpenAI(api_key='api-key')
     with pytest.raises(UserError, match='Cannot provide both `openai_client` and `base_url`'):
+        # No overload accepts both arguments; the call checks the runtime guard behind that.
         NvidiaProvider(openai_client=openai_client, base_url='http://localhost:8000/v1')  # type: ignore[call-overload]
-
-
-def test_nvidia_provider_creates_http_client() -> None:
-    """Test NVIDIA provider creates its own HTTP client."""
-    provider = NvidiaProvider(api_key='api-key')
-    assert isinstance(provider.client, openai.AsyncOpenAI)
-    assert provider.client.api_key == 'api-key'
 
 
 def test_nvidia_model_profile():
@@ -91,25 +88,37 @@ def test_nvidia_model_profile():
     assert model.profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
 
-def test_nvidia_model_profile_by_publisher():
+# Ids from the NVIDIA API catalog (https://integrate.api.nvidia.com/v1/models); Qwen has none listed there today.
+# Each expectation is a field the publisher's family profile sets and the OpenAI-compatible fallback doesn't.
+PUBLISHER_PROFILES: dict[str, dict[str, object]] = {
+    'meta/llama-3.2-90b-vision-instruct': {'json_schema_transformer': InlineDefsJsonSchemaTransformer},
+    'deepseek-ai/deepseek-v4.1-flash': {'supports_thinking': False, 'ignore_streamed_leading_whitespace': False},
+    'qwen/qwen3-next-80b-a3b-instruct': {
+        'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+        'ignore_streamed_leading_whitespace': True,
+    },
+    'google/gemma-4-31b-it': {'json_schema_transformer': GoogleJsonSchemaTransformer},
+    'openai/gpt-oss-20b': {'supports_forced_tool_choice': False},
+    'mistralai/mistral-large-4-1t-a52b': {'tool_call_id_length': 9},
+    'moonshotai/kimi-k2.6': {'supports_thinking': True},
+    'z-ai/glm-5.3-flash': {'supports_thinking': True, 'thinking_always_enabled': True},
+    'nvidia/nemotron-3.5-super-vl-120b-a12b': {
+        'json_schema_transformer': OpenAIJsonSchemaTransformer,
+        'supports_thinking': None,
+    },
+}
+
+
+@pytest.mark.parametrize(('model_name', 'expected'), PUBLISHER_PROFILES.items(), ids=list(PUBLISHER_PROFILES))
+def test_nvidia_model_profile_by_publisher(model_name: str, expected: dict[str, object]):
     # Unit (not VCR): this pins which family profile is resolved from the `<publisher>/` prefix at
     # model-build time, which a recorded round-trip doesn't assert.
-    provider = NvidiaProvider(api_key='api-key')
-
-    # NVIDIA's own models have no publisher-family profile, so they get the OpenAI-compatible fallback.
-    profile = provider.model_profile('nvidia/nemotron-3.5-super-vl-120b-a12b')
+    profile = NvidiaProvider.model_profile(model_name)
     assert profile is not None
-    assert profile.get('json_schema_transformer') == OpenAIJsonSchemaTransformer
-    assert profile.get('supports_thinking', False) is False
-
-    # Models from a known publisher get that family's profile.
-    profile = provider.model_profile('moonshotai/kimi-k2.6')
-    assert profile is not None
-    assert profile.get('json_schema_transformer') == OpenAIJsonSchemaTransformer
-    assert profile.get('supports_thinking') is True
+    assert {key: profile.get(key) for key in expected} == expected
 
 
-_COMPLETION = {
+_COMPLETION: dict[str, object] = {
     'id': 'chatcmpl-1',
     'object': 'chat.completion',
     'created': 0,
@@ -121,7 +130,7 @@ _COMPLETION = {
 
 async def test_nvidia_request(allow_model_requests: None):
     """Mocked transport, not VCR: there's no NVIDIA API key at hand to record with."""
-    requests: list[tuple[str, dict[str, Any]]] = []
+    requests: list[tuple[str, dict[str, object]]] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append((str(request.url), json.loads(request.content)))

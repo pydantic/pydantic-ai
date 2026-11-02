@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+from collections.abc import Callable
 from typing import overload
 
 from pydantic_ai import ModelProfile
@@ -49,7 +50,7 @@ class NvidiaProvider(_OpenAISDKProvider):
     def model_profile(model_name: str) -> ModelProfile | None:
         # NVIDIA NIM serves models from many publishers under `<publisher>/<model>` ids,
         # so the publisher's family profile is chosen from the model-name prefix.
-        publisher_to_profile = {
+        publisher_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
             'meta': meta_model_profile,
             'deepseek-ai': deepseek_model_profile,
             'qwen': qwen_model_profile,

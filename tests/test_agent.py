@@ -123,6 +123,7 @@ if TYPE_CHECKING:
     from pydantic_ai.providers.mistral import MistralProvider
     from pydantic_ai.providers.moonshotai import MoonshotAIProvider
     from pydantic_ai.providers.nebius import NebiusProvider
+    from pydantic_ai.providers.nvidia import NvidiaProvider
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
@@ -144,6 +145,7 @@ else:
         from pydantic_ai.providers.meta import MetaProvider
         from pydantic_ai.providers.moonshotai import MoonshotAIProvider
         from pydantic_ai.providers.nebius import NebiusProvider
+        from pydantic_ai.providers.nvidia import NvidiaProvider
         from pydantic_ai.providers.ollama import OllamaProvider
         from pydantic_ai.providers.openai import OpenAIProvider
         from pydantic_ai.providers.openrouter import OpenRouterProvider
@@ -155,7 +157,7 @@ else:
     except ImportError:  # pragma: lax no cover
         AlibabaProvider = AzureProvider = CerebrasProvider = DeepSeekProvider = None
         CrusoeProvider = FireworksProvider = GitHubProvider = HerokuProvider = None
-        MetaProvider = MoonshotAIProvider = NebiusProvider = OllamaProvider = OpenAIProvider = None
+        MetaProvider = MoonshotAIProvider = NebiusProvider = NvidiaProvider = OllamaProvider = OpenAIProvider = None
         OpenRouterProvider = OVHcloudProvider = SambaNovaProvider = None
         TogetherProvider = VercelProvider = VLLMProvider = None
 
@@ -9471,6 +9473,7 @@ async def test_azure_provider_lifecycle_closes_client():
         pytest.param(lambda: MetaProvider(api_key='t'), marks=[requires_openai], id='meta'),
         pytest.param(lambda: MoonshotAIProvider(api_key='t'), marks=[requires_openai], id='moonshotai'),
         pytest.param(lambda: NebiusProvider(api_key='t'), marks=[requires_openai], id='nebius'),
+        pytest.param(lambda: NvidiaProvider(api_key='t'), marks=[requires_openai], id='nvidia'),
         pytest.param(
             lambda: OllamaProvider(base_url='http://localhost:11434/v1'), marks=[requires_openai], id='ollama'
         ),
