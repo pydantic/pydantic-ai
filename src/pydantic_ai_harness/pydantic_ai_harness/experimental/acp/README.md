@@ -165,7 +165,7 @@ def delete_file(path: str) -> str:
     ...
 ```
 
-The lifecycle the client sees is `pending` (awaiting approval) → `in_progress` (granted, running) → `completed`/`failed`, so an unapproved action is never shown as already running. "Always allow"/"always reject" decisions are remembered for the session, scoped by default to the exact call (tool name plus arguments) so approving one call does not approve a different one. Pass `permission_policy` to widen or narrow that scope.
+The lifecycle the client sees is `pending` (awaiting approval) -> `in_progress` (granted, running) -> `completed`/`failed`, so an unapproved action is never shown as already running. "Always allow"/"always reject" decisions are remembered for the session, scoped by default to the exact call (tool name plus arguments) so approving one call does not approve a different one. Pass `permission_policy` to widen or narrow that scope.
 
 ## Rich tool rendering
 

@@ -24,7 +24,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os.path
+from collections.abc import Awaitable
 from datetime import timedelta
+from typing import Protocol
 
 import anyio
 from acp import Client, schema
@@ -35,6 +37,14 @@ from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
 from pydantic_ai_harness.experimental.acp._session import AcpSession
 from pydantic_ai_harness.filesystem import FileSystem, FileSystemToolset
+
+
+class _WorkspaceFileWriter(Protocol):
+    """Something that can write a file for the agent -- structurally satisfied by `_FallbackFileWriter`."""
+
+    def write_file(
+        self, path: str, content: str, *, workspace: Workspace
+    ) -> Awaitable[str]: ...  # pragma: no cover - structural protocol
 
 
 class _FallbackFileWriter:
@@ -78,7 +88,7 @@ class AcpFileSystemToolset(FunctionToolset[AgentDepsT]):
         client: Client,
         session_id: str,
         cwd: str | None = None,
-        local_writer: _FallbackFileWriter | None = None,
+        local_writer: _WorkspaceFileWriter | None = None,
     ) -> None:
         super().__init__()
         self._client = client
