@@ -192,7 +192,7 @@ A new sandbox runs E2B's `desktop` template: Ubuntu with XFCE, a terminal and Go
 
 A custom `template` needs Xvfb, `xdotool`, `xmodmap`, `scrot` and `setsid`, plus `startxfce4` for the XFCE desktop.
 
-`sandbox_timeout` is the sandbox's total lifetime, an hour by default, not an idle timeout. A run still going when it ends fails, so set it longer than your longest task.
+`sandbox_timeout` is the sandbox's total lifetime, an hour by default, not an idle timeout. A run still going when the timeout ends fails, so set it longer than your longest task.
 
 To watch the agent, or take over, open the desktop in your browser. Create the backend before the run, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run), and get a link from it:
 
