@@ -670,7 +670,7 @@ The handle addresses the **persisted run**, not a pristine transcript. Compactio
 
 The receipt's `by` attribution uses the same coarse family heuristic as the bridge prefix, with the same approximations -- see [the note below](#anchored-incremental-summarization-and-the-cross-model-bridge).
 
-Receipts are opt-in (`receipts=False` by default) because the receipt text is prompt content.
+Receipts are opt-in (`receipts=False` by default) because they add a message the model reads to the surviving history.
 
 ## Pinning: content that survives compaction
 

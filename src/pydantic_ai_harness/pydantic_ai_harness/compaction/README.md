@@ -829,7 +829,7 @@ SlidingWindowCompaction(max_messages=80, keep_messages=40, receipts=True)
 - **Observability.** Each receipt is also emitted as a `compaction.receipt` event on the
   `compact_messages` span.
 
-Receipts are opt-in (`receipts=False` by default) because the receipt text is prompt content.
+Receipts are opt-in (`receipts=False` by default) because they add a message the model reads to the surviving history.
 
 ## Pinning: content that survives compaction
 
