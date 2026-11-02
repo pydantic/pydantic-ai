@@ -89,7 +89,7 @@ See [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/) for more
 
 ## Give the agent a desktop
 
-Pass `desktop=True` for a sandbox with a graphical display, which [`ComputerUse`](../computer_use/) lets the agent see and control:
+Pass `desktop=True` for a sandbox with a screen, which [`ComputerUse`](../computer_use/) lets the agent see and control:
 
 ```python {test="skip"}
 from pydantic_ai import Agent
