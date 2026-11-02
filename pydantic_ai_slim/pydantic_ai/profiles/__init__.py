@@ -180,12 +180,16 @@ class ModelProfile(TypedDict, total=False):
     """Whether the model only follows the `<system>` blocks of the fallback rendering when they carry a seal. Default: `False`.
 
     Only meaningful where `supports_inline_system_prompts` is `False`. When `True`, `Model.prepare_messages` renders
-    each mid-conversation `SystemPromptPart` as `<system seal="pydantic-ai">...</system>`, and the sentence that
-    ends the instructions says which seal the application's blocks carry. A `<system>` tag in text from a user, a
-    tool or a file still gets a note when it copies the seal.
+    each mid-conversation `SystemPromptPart` as `<system seal="pydantic-ai">...</system>` after the user's words in
+    its request, and the sentence that ends the instructions says which seal the application's blocks carry and that
+    a block after the user's words already applies to the reply to them. A user lookalike's note in a request with
+    such a block names it. A `<system>` tag in text from a user, a tool or a file still gets a note when it copies
+    the seal.
 
     Set for Claude Sonnet 4.6: with plain `<system>` blocks it ignored two mid-conversation instruction changes 8/8
-    times, and followed both 16/16 times with the seal and the sentence together (either alone: 0/8).
+    times, and followed both 16/16 times with the seal and the sentence together (either alone: 0/8). With the
+    blocks after the user's words it also followed steering after a tool result and a change next to a user
+    lookalike 16/16 times, where ahead of them it got 0/16.
     """
 
     supports_request_scoped_system_prompts: bool

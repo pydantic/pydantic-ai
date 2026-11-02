@@ -13,7 +13,6 @@ import reprlib
 import time
 import uuid
 import warnings
-import weakref
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Generator, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
@@ -1841,6 +1840,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         messages = _replace_unsupported_tool_return_files(messages, self.profile)
         authored, messages = _tool_results_first(authored, messages)
         # The passes above replace or reorder parts one for one, so `authored` still lines up with `messages`.
+        tool_call_id_length = self.profile.get('tool_call_id_length')
+        if tool_call_id_length is not None:
+            # Fitted ahead of the notes too, one part for one, so a tool result's note names the call by the ID the
+            # wire carries. The pass below fits the parts rendered after this.
+            messages = _fit_tool_call_ids(messages, tool_call_id_length)
         messages = self._note_lookalike_frames(authored, messages)
 
         clears_request_scoped_prompts = self.profile.get('supports_request_scoped_system_prompts', False)
@@ -1929,7 +1933,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         messages = _order_tool_results_by_call(messages)
 
-        if (tool_call_id_length := self.profile.get('tool_call_id_length')) is not None:
+        if tool_call_id_length is not None:
             messages = _fit_tool_call_ids(messages, tool_call_id_length)
 
         return messages
@@ -2019,11 +2023,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             if frame_at is not None:
                 if announce and not announced:
                     announced = True
-                    announcement = _framework_note(
-                        SystemPromptPart(
-                            content=lookalike_note_announcement(system_role=True),
-                            timestamp=message.timestamp or _utils.now_utc(),
-                        )
+                    announcement = _FrameworkNote(
+                        content=lookalike_note_announcement(system_role=True),
+                        timestamp=message.timestamp or _utils.now_utc(),
                     )
                     parts.insert(frame_at, announcement)
             if len(parts) != len(message.parts) or any(new is not old for new, old in zip(parts, message.parts)):
@@ -2046,7 +2048,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         the first request's standing system prompt. `None` when the request has no note or frame.
 
         A tool or file note names the application's own mid-conversation system message when the request carries one
-        (`genuine_change` in `lookalike_frame_note`), unless the user's text in it has a lookalike too.
+        (`genuine_change` in `lookalike_frame_note`), unless the user's text in it has a lookalike too. On a profile
+        with `needs_sealed_system_blocks`, a user note names it too, and the request's own system messages go after
+        the user's words.
 
         Each [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] is rendered here, in place: its system parts are
         the application's, its framed body is a frame to announce, and the lookalike notes for its body name the
@@ -2068,9 +2072,12 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         )
         # A capability part's note about its framed content is the application's, but changes no instruction.
         capability_notes = {id(rendering.note) for rendering in capability_bodies.values()}
-        genuine_change = any(
+        has_genuine = any(
             isinstance(part, SystemPromptPart) and id(part) not in capability_notes for _, _, part in expanded[leading:]
-        ) and not any(source == 'user' for _, sources, _ in expanded for source, _ in sources)
+        )
+        user_lookalike = any(source == 'user' for _, sources, _ in expanded for source, _ in sources)
+        genuine_change = has_genuine and not user_lookalike
+        sealed = not inline_system and self.profile.get('needs_sealed_system_blocks', False)
         parts: list[ModelRequestPart] = []
         framed: list[ModelRequestPart] = []
         tool_notes: list[SystemPromptPart] = []
@@ -2078,19 +2085,17 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             if _is_tool_result_part(part):
                 for _, tags in sources:
                     tool_notes.append(
-                        _framework_note(
-                            SystemPromptPart(
-                                content=lookalike_frame_note(
-                                    'tool',
-                                    preceding=not precede_tool_results,
-                                    tags=tags,
-                                    system_role=inline_system,
-                                    genuine_change=genuine_change,
-                                    tool_name=part.tool_name,
-                                    tool_call_id=part.tool_call_id,
-                                ),
-                                timestamp=request.timestamp or _utils.now_utc(),
-                            )
+                        _FrameworkNote(
+                            content=lookalike_frame_note(
+                                'tool',
+                                preceding=not precede_tool_results,
+                                tags=tags,
+                                system_role=inline_system,
+                                genuine_change=genuine_change,
+                                tool_name=part.tool_name,
+                                tool_call_id=part.tool_call_id,
+                            ),
+                            timestamp=request.timestamp or _utils.now_utc(),
                         )
                     )
                 if self._relocates_tool_files and isinstance(part, ToolReturnPart) and part.files:
@@ -2120,22 +2125,17 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 or (first_request and all(isinstance(p, SystemPromptPart) for p in parts))
             )
             notes = [
-                _framework_note(
-                    SystemPromptPart(
-                        content=lookalike_frame_note(
-                            source,
-                            preceding=after,
-                            tags=tags,
-                            system_role=inline_system,
-                            genuine_change=genuine_change,
-                            **(
-                                capability.naming
-                                if (capability := capability_bodies.get(id(part)))
-                                else LookalikeNaming()
-                            ),
-                        ),
-                        timestamp=request.timestamp or _utils.now_utc(),
-                    )
+                _FrameworkNote(
+                    content=lookalike_frame_note(
+                        source,
+                        preceding=after,
+                        tags=tags,
+                        system_role=inline_system,
+                        genuine_change=has_genuine if source == 'user' else genuine_change,
+                        sealed=sealed,
+                        **(capability.naming if (capability := capability_bodies.get(id(part))) else LookalikeNaming()),
+                    ),
+                    timestamp=request.timestamp or _utils.now_utc(),
                 )
                 for source, tags in sources
             ]
@@ -2149,13 +2149,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         if not inline_system:
             # Without a system role, the request's own mid-conversation system prompts become `<system>` blocks in the
             # same user turn as a note and the text it describes. Ahead of both, they still read as the application's:
-            # after them, Claude Sonnet 5.5 on Bedrock followed a genuine change 0/8 times, ahead of them 7/8.
-            # A tool's note that names them is the exception where it follows the tool results: there the note goes
-            # first, then the application's block, then the user's words. Claude Sonnet 4.6 followed the genuine
-            # change 16/16 times that way and 0/16 the other way round, with no loss on the other models measured.
+            # after them, Claude Sonnet 5.5 on Bedrock followed a genuine change 0/8 times, ahead of them 7/8. That holds
+            # for a tool's note that names them too: Kimi K2.5 followed the genuine change 28/32 times with it ahead of
+            # the note, 15/32 with the note first.
             note_ids = {id(n) for n in [*tool_notes, *(p for p in framed if isinstance(p, SystemPromptPart))]}
-            if genuine_change and not precede_tool_results:
-                note_ids -= {id(n) for n in tool_notes}
             first_note = next((i for i, p in enumerate(parts) if id(p) in note_ids), None)
             if first_note is not None:
                 rest = parts[first_note:]
@@ -2163,6 +2160,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 if genuine:
                     genuine_ids = {id(p) for p in genuine}
                     parts = [*parts[:first_note], *genuine, *(p for p in rest if id(p) not in genuine_ids)]
+            if sealed:
+                parts = _system_prompts_after_user_words(parts, leading=leading)
         framed_ids = {id(part) for part in framed}
         frame_at = next((i for i, part in enumerate(parts) if id(part) in framed_ids), None)
         if frame_at is None:
@@ -2393,44 +2392,69 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             announcement = lookalike_note_announcement(
                 system_role=False, sealed=self.profile.get('needs_sealed_system_blocks', False)
             )
-            parts = [*(parts or []), _framework_added(InstructionPart(content=announcement, dynamic=True))]
+            parts = [*(parts or []), _FrameworkInstructionPart(content=announcement, dynamic=True)]
         return parts
 
 
-_FRAMEWORK_NOTE_KEY = 'framework_note'
-"""In a `SystemPromptPart`'s `__pydantic_ai__` metadata: a note or the announcement `prepare_messages` added."""
+class _FrameworkAdded:
+    """Marks a lookalike note or the announcement that Pydantic AI added to a request it's preparing.
+
+    The parts carrying it are private subclasses of the public part types, made fresh from the history on every request
+    and never stored, so the mark can't come from a user's history or metadata and needs nothing on the public types.
+    Each lowers exactly like its base type.
+    """
+
+    __slots__ = ()
 
 
-def _framework_note(part: SystemPromptPart) -> SystemPromptPart:
-    return replace(part, metadata={_PYDANTIC_AI_METADATA_KEY: {_FRAMEWORK_NOTE_KEY: True}})
+@dataclass(repr=False)
+class _FrameworkNote(SystemPromptPart, _FrameworkAdded):
+    """A note or the announcement, as a mid-conversation system message."""
 
 
-_FrameworkAdded = TypeVar('_FrameworkAdded', UserPromptPart, InstructionPart)
-
-_framework_added_parts: weakref.WeakValueDictionary[int, UserPromptPart | InstructionPart] = (
-    weakref.WeakValueDictionary()
-)
-"""The `<system>`-wrapped notes and the instruction-part announcement, by identity: neither part type has a metadata
-field to carry the mark `_framework_note` sets, and text alone can't tell them from the same words a user wrote."""
+@dataclass(repr=False)
+class _FrameworkUserPromptPart(UserPromptPart, _FrameworkAdded):
+    """A note or the announcement, wrapped in a `<system>` block on a model without inline system messages."""
 
 
-def _framework_added(part: _FrameworkAdded) -> _FrameworkAdded:
-    _framework_added_parts[id(part)] = part
-    return part
+@dataclass(repr=False)
+class _FrameworkInstructionPart(InstructionPart, _FrameworkAdded):
+    """The announcement at the end of the instructions, on a model without inline system messages."""
 
 
 def _is_framework_added(part: object) -> bool:
     """Whether `part` is a lookalike note or the announcement that Pydantic AI added to a request it's preparing."""
-    if isinstance(part, SystemPromptPart):
-        namespace = (part.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
-        return _utils.is_str_dict(namespace) and namespace.get(_FRAMEWORK_NOTE_KEY) is True
-    return _framework_added_parts.get(id(part)) is part
+    return isinstance(part, _FrameworkAdded)
+
+
+def _system_prompts_after_user_words(parts: list[ModelRequestPart], *, leading: int) -> list[ModelRequestPart]:
+    """Move a request's own mid-conversation system prompts to right after its last user prompt, notes left in place.
+
+    For a profile with `needs_sealed_system_blocks`: Claude Sonnet 4.6 followed a sealed block after the user's words
+    16/16 times where it ignored one ahead of them (steering after a tool result, and a user lookalike next to a
+    genuine change); the sealed announcement says such a block applies to the reply to those words. `leading` is the
+    standing prompt's length in the first request, which stays where it is.
+    """
+    last_user = max(
+        (i for i, part in enumerate(parts) if i >= leading and isinstance(part, UserPromptPart)), default=None
+    )
+    if last_user is None:
+        return parts
+    moved = [
+        part
+        for i, part in enumerate(parts[:last_user])
+        if i >= leading and isinstance(part, SystemPromptPart) and not isinstance(part, _FrameworkNote)
+    ]
+    if not moved:
+        return parts
+    kept = [part for part in parts[: last_user + 1] if not any(part is m for m in moved)]
+    return [*kept, *moved, *parts[last_user + 1 :]]
 
 
 def _wrapped_system_prompt(part: SystemPromptPart, *, sealed: bool) -> UserPromptPart:
     content = frame(SYSTEM_TAG, part.content, seal=FRAME_SEAL if sealed else None)
-    wrapped = UserPromptPart(content=content, timestamp=part.timestamp)
-    return _framework_added(wrapped) if _is_framework_added(part) else wrapped
+    wrapped_type = _FrameworkUserPromptPart if _is_framework_added(part) else UserPromptPart
+    return wrapped_type(content=content, timestamp=part.timestamp)
 
 
 def _instruction_parts_of(
