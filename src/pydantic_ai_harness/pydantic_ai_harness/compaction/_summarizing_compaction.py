@@ -606,8 +606,8 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     replaced with a structured summary message, preserving recent context and
     tool-call integrity.
 
-    Summarization turns input tokens into output tokens, so it is best used behind
-    cheaper passes (see `TieredCompaction`).
+    Summarization turns input tokens into output tokens, which cost more, so it is best
+    used behind cheaper passes (see `TieredCompaction`).
 
     The summary call's usage is folded into the parent run's usage and counts as a
     request, so request-count limits apply to it.
