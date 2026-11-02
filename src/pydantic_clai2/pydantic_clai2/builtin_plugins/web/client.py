@@ -252,7 +252,7 @@ class SessionView:
             self.questions = {questions.id: questions for questions in message.questions}
             self.dialogs = {dialog.id: dialog for dialog in message.dialogs}
             self._log.clear()
-            self._log.items.update((item.id, item) for item in message.items)
+            self._log.items.update((item.id, item) for item in message.items if isinstance(item, Item))
             self._ready.set()
         elif isinstance(message, TurnStarted):
             self.running = True

@@ -27,7 +27,7 @@ from pydantic_ai.providers import infer_provider_class
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.step_persistence import StepStore
-from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SavedConversation
+from pydantic_ai_harness.step_persistence.conversations import ConversationOrder, ConversationSummary, SavedConversation
 from pydantic_ai_harness.subagents import DelegationOutcome
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
@@ -110,10 +110,17 @@ class SessionCatalog(Protocol):
         ...
 
     async def listing(
-        self, *, query: str = '', limit: int = 200, archived: bool | None = False
+        self,
+        *,
+        query: str = '',
+        limit: int = 200,
+        archived: bool | None = False,
+        order_by: ConversationOrder = 'updated_at',
     ) -> list[ConversationSummary]:
         """Saved conversations from every directory, newest first, matching `query` when it is not empty.
 
+        Newest means most recently active, or with `order_by='created_at'` most recently created, so the
+        conversations listed do not change as older ones are used again.
         Archived ones are left out unless `archived` is `True`, which lists only them, or `None`, which lists both.
         As when `/resume` opens, the newest untitled ones are queued for background naming, which
         calls the naming model, so poll it no more often than a person would look.

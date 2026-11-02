@@ -4,6 +4,7 @@ Pure translation, with no server or plugin in it. Wire payloads are kw-only data
 `dump` with Pydantic; the browser's `web-ui/src/protocol.ts` mirrors these shapes.
 """
 
+import difflib
 import hashlib
 import json
 from collections.abc import Sequence
@@ -38,9 +39,17 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserRequest
-from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
+from pydantic_ai_harness.filesystem import (
+    EditFileCallPart,
+    FileChangeRequestEvent,
+    FileEditedEvent,
+    FileWrittenEvent,
+    ReplacementArgs,
+)
+from pydantic_ai_harness.permissions import PermissionAction
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent
 from pydantic_ai_harness.subagents import DelegationOutcome
+from pydantic_clai2.config import PermissionMode
 from pydantic_clai2.plugins import ForkEnd, ForkInfo, ForkStatus, PanelIcon, PluginOrigin, PluginStatus, QueuedInput
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL
 from pydantic_clai2.runtime.forks import failure_line
@@ -50,7 +59,7 @@ from pydantic_clai2.runtime.rewind import rewind_points
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
 from pydantic_clai2.runtime.session import STEERING
 from pydantic_clai2.ui.prompt.prompt_queue import InputKind, input_kind
-from pydantic_clai2.ui.rendering.usage_report import SessionUsage, format_cost
+from pydantic_clai2.ui.rendering.usage_report import SessionUsage, format_cost, starts_turn
 
 MONTY_TOOL = 'run_code'
 """The code mode tool whose cells make up the Monty panel."""
@@ -131,13 +140,29 @@ class QuestionInfo:
 
 
 @dataclass(kw_only=True)
+class ApprovalInfo:
+    """A tool call `/permissions` holds until the user approves it, which the browser shows as an approval card."""
+
+    tool: str
+    action: PermissionAction
+    subject: str
+    """The command, or the path the call writes."""
+    reason: str
+    """Why the session's permission mode asks."""
+    diff: Diff | None = None
+    """The change a file write would make, from its arguments."""
+
+
+@dataclass(kw_only=True)
 class Questions:
-    """An open `ask_user_question` request the browser can answer."""
+    """An open `ask_user_question` request the browser can answer, or a held tool call to approve."""
 
     id: str
     questions: list[QuestionInfo]
     asker: str | None = None
     """Who asks when it is not the conversation itself, such as a delegated task."""
+    approval: ApprovalInfo | None = None
+    """Set when the question asks to approve a held tool call; its one question's labels approve or deny it."""
 
 
 @dataclass(kw_only=True)
@@ -208,6 +233,19 @@ def usage_info(usage: RunUsage) -> Usage:
 
 
 @dataclass(kw_only=True)
+class TurnSummary:
+    """A saved turn's usage line, which follows it in a reloaded transcript as a live turn's end adds one."""
+
+    id: str
+    kind: Literal['turn'] = 'turn'
+    outcome: Literal['completed'] = 'completed'
+    error: None = None
+    usage: Usage
+    seconds: None = None
+    """A saved turn records no duration."""
+
+
+@dataclass(kw_only=True)
 class StatusInfo:
     """The status row's figures, sent every `STATUS_INTERVAL` while a turn streams."""
 
@@ -227,6 +265,8 @@ class StatusInfo:
     """The `run.code_mode` setting; `None` without CLAI's settings."""
     speculation: bool | None = None
     """The `run.speculative_code_mode` setting, which turns code mode on for its runs too."""
+    permissions: PermissionMode | None = None
+    """The `run.permissions` mode; `None` without CLAI's settings."""
 
 
 @dataclass(kw_only=True)
@@ -353,7 +393,7 @@ class Snapshot:
 
     type: Literal['snapshot'] = 'snapshot'
     session: SessionInfo
-    items: list[Item]
+    items: list[Item | TurnSummary]
     running: bool
     status: StatusInfo
     questions: list[Questions]
@@ -854,8 +894,12 @@ class SessionEntry:
     title: str
     workspace: str
     updated_at: datetime
+    created_at: datetime
+    """When it was first saved, which the sidebar orders by, so activity and renames never move a row."""
     state: SessionState
     """`running`: a turn of a session live in this CLAI; `busy`: a turn another CLAI process is running."""
+    owner_pid: int | None = None
+    """The process running a `busy` session's turn."""
     messages: int
     model: str | None
     current: bool
@@ -1026,6 +1070,41 @@ def tool_result_state(part: ToolReturnPart) -> ToolState:
     return 'error' if part.outcome == 'retried' else 'done'
 
 
+_MAX_LINE_PAIRS = 65_536
+"""The most old-by-new lines of one replacement that is diffed, as `difflib`'s matching is quadratic."""
+
+
+def _edit_diffs(call: EditFileCallPart | None, result: ToolReturnPart) -> list[Diff]:
+    """A successful edit's replacements as line diffs, so a reloaded card counts about what the live diff did.
+
+    Each is one unnumbered hunk, as the saved call does not say where in the file it was. An edit too
+    large to diff, or that only adds or drops a final line feed, gets none: the browser shows its arguments.
+    """
+    if call is None or result.outcome != 'success' or (edit := call.typed_args) is None:
+        return []
+    pairs = edit.get('replacements')
+    if not pairs:
+        old, new = edit.get('old_text'), edit.get('new_text')
+        if old is None or new is None:
+            return []
+        pairs = [ReplacementArgs(old_text=old, new_text=new)]
+    diffs: list[Diff] = []
+    for pair in pairs:
+        old, new = _lines(pair['old_text']), _lines(pair['new_text'])
+        if len(old) * len(new) > _MAX_LINE_PAIRS:
+            return []
+        hunk = list(difflib.unified_diff(old, new, lineterm='', n=max(len(old), len(new))))[3:]
+        if not hunk and pair['old_text'] != pair['new_text']:
+            return []
+        diffs.append(Diff(path=edit['path'], diff='\n'.join(hunk)))
+    return diffs
+
+
+def _lines(text: str) -> list[str]:
+    """`text`'s lines as the harness diffs them: split on line feeds only, with none for an empty text."""
+    return text.removesuffix('\n').split('\n') if text else []
+
+
 def image_id(image: BinaryContent) -> str:
     """An image's ID in the transcript: the SHA-256 of its bytes, so it stays the same after a reload."""
     return hashlib.sha256(image.data).hexdigest()
@@ -1107,30 +1186,49 @@ def history_images(messages: Sequence[ModelMessage]) -> list[BinaryContent]:
 
 
 def history_items(messages: Sequence[ModelMessage], *, image_ids: ImageIds | None = None) -> list[Item]:
-    """The transcript items of a saved or finished history; tool results join their calls.
+    """The transcript items of a saved or finished history, without `history_entries`' usage lines."""
+    return [entry for entry in history_entries(messages, image_ids=image_ids) if isinstance(entry, Item)]
 
-    A live session passes its `image_ids`, so prompts list their images; see `user_item`.
+
+def history_entries(messages: Sequence[ModelMessage], *, image_ids: ImageIds | None = None) -> list[Item | TurnSummary]:
+    """The transcript of a saved or finished history: its items, each turn followed by its usage line.
+
+    Tool results join their calls; turns are grouped as `/usage` groups them. A live session passes its `image_ids`,
+    so prompts list their images; see `user_item`.
     """
-    items: list[Item] = []
+    entries: list[Item | TurnSummary] = []
     tools: dict[str, Item] = {}
+    edits: dict[str, EditFileCallPart] = {}
+    usage = RunUsage()
     rewindable = {point.message_index for point in rewind_points(messages) if not point.reason}
+
+    def end_turn() -> None:
+        if usage.requests:
+            entries.append(TurnSummary(id=f'h{len(entries)}', usage=usage_info(usage)))
+
     for index, message in enumerate(messages):
         if isinstance(message, ModelRequest):
+            if starts_turn(message):
+                end_turn()
+                usage = RunUsage()
             run_id = message.run_id if index in rewindable else None
             for part in message.parts:
                 if isinstance(part, UserPromptPart):
                     if is_typed_prompt(part):
-                        items.append(user_item(part, id=f'h{len(items)}', image_ids=image_ids, run_id=run_id))
+                        entries.append(user_item(part, id=f'h{len(entries)}', image_ids=image_ids, run_id=run_id))
                         run_id = None
                 elif isinstance(part, ToolReturnPart) and (tool := tools.get(part.tool_call_id)):
                     tool.text = tool_result_text(part)
                     tool.state = tool_result_state(part)
+                    tool.diffs = _edit_diffs(edits.get(part.tool_call_id), part)
             continue
+        usage.incr(message.usage)
+        usage.requests += 1
         for part in message.parts:
             if isinstance(part, TextPart) and part.content:
-                items.append(Item(id=f'h{len(items)}', kind='assistant', text=part.content))
+                entries.append(Item(id=f'h{len(entries)}', kind='assistant', text=part.content))
             elif isinstance(part, ThinkingPart) and part.content:
-                items.append(Item(id=f'h{len(items)}', kind='thinking', text=part.content))
+                entries.append(Item(id=f'h{len(entries)}', kind='thinking', text=part.content))
             elif isinstance(part, ToolCallPart):
                 tool = Item(
                     id=part.tool_call_id,
@@ -1140,15 +1238,19 @@ def history_items(messages: Sequence[ModelMessage], *, image_ids: ImageIds | Non
                     state='interrupted',
                 )
                 tools[part.tool_call_id] = tool
-                items.append(tool)
-    return items
+                entries.append(tool)
+                if isinstance(part, EditFileCallPart):
+                    edits[part.tool_call_id] = part
+    end_turn()
+    return entries
 
 
-def questions_info(request: AskUserRequest, *, asker: str | None) -> Questions:
-    """The browser's copy of an `ask_user_question` request."""
+def questions_info(request: AskUserRequest, *, asker: str | None, approval: ApprovalInfo | None = None) -> Questions:
+    """The browser's copy of an `ask_user_question` request, or of the question approving a held call."""
     return Questions(
         id=request.id,
         asker=asker,
+        approval=approval,
         questions=[
             QuestionInfo(
                 header=question.header,
