@@ -194,8 +194,7 @@ def conversation_id_from_run_id(run_id: str) -> str:
 
     Return this from
     [`get_default_conversation_id()`][pydantic_ai.capabilities.AbstractCapability.get_default_conversation_id]
-    inside the durable context when
-    [`get_default_run_id()`][pydantic_ai.capabilities.AbstractCapability.get_default_run_id] is replay-stable:
+    inside the durable context when the supplied `run_id` is replay-stable:
     a replayed or recovered run then gets the same `conversation_id` without drawing randomness. The
     derivation is deterministic, also for a caller-supplied `run_id`, and matches what the Temporal,
     DBOS and Prefect capabilities return.
