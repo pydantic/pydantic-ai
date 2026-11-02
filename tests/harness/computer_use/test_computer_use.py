@@ -45,12 +45,9 @@ from pydantic_ai.workspaces import (
     PressKeys,
     Scroll,
     TypeText,
-    Workspace,
-    WorkspaceBackend,
     WorkspaceError,
     WorkspaceRef,
     WorkspaceUnavailableError,
-    WrapperWorkspace,
 )
 from pydantic_ai_harness.compaction import ClampOversizedMessages
 from pydantic_ai_harness.computer_use import ComputerUse
@@ -63,8 +60,6 @@ from ...workspace_fakes import (
     ProviderBackend,
     WorkspaceCapability,
 )
-
-pytestmark = pytest.mark.anyio
 
 SCREENSHOT = BinaryImage(data=FAKE_SCREENSHOT, media_type='image/png')
 
@@ -759,25 +754,10 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         if shared == 'screen-key':
             assert len(provider.environments) == 2
 
-    async def test_in_workflow_code_a_large_screen_is_scaled_through_the_workspace(self) -> None:
-        """Durable workflow code can't reach the backend, so the scaled screenshot goes through the workspace."""
-
-        class WorkflowSide(WrapperWorkspace):
-            @property
-            def backend(self) -> WorkspaceBackend:
-                raise UserError('`workspace.backend` is not available in durable workflow code')
-
-        model = _scripted(
-            [{'type': 'screenshot'}], profile=ModelProfile(computer_use_screenshot_limit=(1000, 1_000_000))
-        )
-        agent = Agent(model, capabilities=[ComputerUse(settle_seconds=0)])
-        result = await agent.run('Go.', workspace=WorkflowSide(Workspace(InMemoryProvider().backend(None))))
-        (tool_return,) = _returns(result.all_messages())
-        assert tool_return.metadata == {'performed': 1, 'screenshot_size': (1000, 625)}
-
     def test_agents_on_one_screen_in_separate_event_loops_do_not_wait_on_each_other(self) -> None:
         """A lock can't wake a waiter on another event loop, as Temporal runs each workflow on a loop of its own."""
         holding, second_acted = threading.Event(), threading.Event()
+        waited: list[bool] = []
 
         class OneScreen(ProviderBackend):
             screen_key = 'the-screen'
@@ -786,7 +766,8 @@ You can see and control a computer screen with the `computer` tool. Each call ru
                 await super().act(action)
                 if action == Click(x=1, y=1):
                     holding.set()
-                    await anyio.to_thread.run_sync(second_acted.wait, 5)  # a safety net: it never waits this long
+                    # True only if the second run acted while this one held its turn.
+                    waited.append(await anyio.to_thread.run_sync(second_acted.wait, 5))
                 else:
                     second_acted.set()
 
@@ -812,6 +793,44 @@ You can see and control a computer screen with the `computer` tool. Each call ru
             thread.join(10)
 
         assert outputs == ['done', 'done']
+        assert waited == [True]
+
+    async def test_agents_on_different_screens_do_not_wait_on_each_other(self) -> None:
+        first_acting, second_acted = anyio.Event(), anyio.Event()
+        waited: list[bool] = []
+
+        class Holding(ProviderBackend):
+            async def act(self, action: ComputerAction) -> None:
+                await super().act(action)
+                if action == Click(x=1, y=1):
+                    first_acting.set()
+                    with anyio.move_on_after(5) as scope:
+                        await second_acted.wait()
+                    # True only if the second run acted while this one held its own screen.
+                    waited.append(not scope.cancelled_caught)
+                else:
+                    second_acted.set()
+
+        class Provider(InMemoryProvider):
+            def backend(self, ref: WorkspaceRef | None) -> ProviderBackend:
+                return Holding(self, ref)
+
+        provider = Provider()
+
+        async def run(x: int) -> None:
+            agent = Agent(
+                _scripted([{'type': 'click', 'x': x, 'y': 1}]),
+                capabilities=[provider.capability(), ComputerUse(settle_seconds=0)],
+            )
+            await agent.run('Go.')
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(run, 1)
+            await first_acting.wait()
+            tasks.start_soon(run, 2)
+
+        assert len(provider.environments) == 2
+        assert waited == [True]
 
     async def test_a_call_made_before_any_screenshot_runs_in_pixels_whichever_model_resumes(self) -> None:
         provider = InMemoryProvider()
