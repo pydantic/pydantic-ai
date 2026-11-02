@@ -1,11 +1,18 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass
 from pathlib import Path
 
 from pydantic_ai._run_context import AgentDepsT, RunContext
-from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceBackend, WorkspaceRef
+from pydantic_ai.workspaces import (
+    LocalWorkspaceBackend,
+    Mount,
+    ReadOnlyWorkspace,
+    Workspace,
+    WorkspaceBackend,
+    WorkspaceRef,
+)
 
 from .abstract import AbstractCapability
 
@@ -41,6 +48,10 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
     Nothing else from this process's environment reaches commands; don't pass `os.environ` (secrets).
     """
 
+    mounts: Sequence[Mount] | Callable[[RunContext[AgentDepsT]], Sequence[Mount]] = ()
+    """[Filesystems to show as folders](../workspace.md#mounting-filesystems), such as a bucket, or a function of the
+    run that picks them. File tools reach them; commands on the host don't, so `commands=True` is refused."""
+
     id: str | None = 'local_workspace'
     """Fixed, so a later `LocalWorkspace` replaces an earlier one whole; pass distinct ids to keep both."""
 
@@ -48,6 +59,22 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
         # Pin a relative `working_dir` to today's directory, and surface an unusable platform where the
         # capability is written, not on the first run.
         self.working_dir = LocalWorkspaceBackend(self.working_dir).ref.id
+
+    @classmethod
+    def from_spec(
+        cls,
+        working_dir: str | Path,
+        *,
+        read_only: bool = False,
+        env: Mapping[str, str] | None = None,
+        id: str | None = 'local_workspace',
+        description: str | None = None,
+        defer_loading: bool = False,
+    ) -> LocalWorkspace[AgentDepsT]:
+        # Every field but `mounts`, which holds live filesystem objects that an agent spec can't describe.
+        return cls(
+            working_dir, read_only=read_only, env=env, id=id, description=description, defer_loading=defer_loading
+        )
 
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
@@ -60,4 +87,6 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
         if ref is not None and ref != backend.ref:
             # A ref from history never redirects host access away from the configured backend.
             return None
-        return ReadOnlyWorkspace(Workspace(backend)) if self.read_only else backend
+        mounts = self.mounts(ctx) if callable(self.mounts) else self.mounts
+        workspace = Workspace(backend, mounts=mounts) if mounts else backend
+        return ReadOnlyWorkspace(workspace) if self.read_only else workspace

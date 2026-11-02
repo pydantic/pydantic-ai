@@ -7,12 +7,14 @@
             - WrapperWorkspace
             - ReadOnlyWorkspace
             - LocalWorkspaceBackend
+            - Mount
             - UnavailableWorkspace
             - WorkspaceRef
             - WorkspaceBackend
             - SupportsCommands
             - SupportsFilesystem
             - SupportsRealpath
+            - SupportsMounts
             - WorkspaceCommand
             - CommandResult
             - FileEntry
@@ -21,6 +23,7 @@
             - WorkspaceTimeoutError
             - WorkspaceOutputLimitError
             - WorkspaceReadOnlyError
+            - MountError
 
 # `pydantic_ai.workspaces.conformance`
 

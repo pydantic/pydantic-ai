@@ -475,7 +475,7 @@ async def test_backend_with_part_of_the_filesystem_protocol_names_what_it_lacks(
             return None  # pragma: no cover
 
         async def working_dir(self) -> str:
-            return '/workspace'  # pragma: no cover
+            return '/workspace'
 
         async def read_bytes(self, path: str) -> bytes:
             raise NotImplementedError
