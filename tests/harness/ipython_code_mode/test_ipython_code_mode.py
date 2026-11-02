@@ -641,6 +641,55 @@ class TestIPythonCodeModeKernelLifecycle:
             await kernel.shutdown()
         _assert_process_gone(pids[0])
 
+    async def test_shutdown_and_a_run_that_finds_the_kernel_gone_stop_it_together(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from jupyter_client.manager import AsyncKernelManager
+
+        monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel._SHUTDOWN_WAIT_SECS', 0.2)
+        monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel._LIVENESS_POLL_SECS', 0.05)
+        found_gone = anyio.Event()
+        is_alive = AsyncKernelManager._async_is_alive  # pyright: ignore[reportPrivateUsage]
+        cleanup_resources = AsyncKernelManager._async_cleanup_resources  # pyright: ignore[reportPrivateUsage]
+
+        async def watched_is_alive(manager: AsyncKernelManager) -> bool:
+            alive = await is_alive(manager)
+            if not alive:
+                found_gone.set()
+            return alive
+
+        async def held_cleanup_resources(manager: AsyncKernelManager, restart: bool = False) -> None:
+            # Holds `shutdown()`'s kill open until the run's cell finds the process gone and stops it too.
+            await found_gone.wait()
+            await cleanup_resources(manager, restart=restart)
+
+        monkeypatch.setattr(AsyncKernelManager, 'is_alive', watched_is_alive)
+        monkeypatch.setattr(AsyncKernelManager, '_async_cleanup_resources', held_cleanup_resources)
+        pids: list[int] = []
+        started = anyio.Event()
+
+        async def begin(pid: int) -> None:
+            pids.append(pid)
+            started.set()
+
+        kernel = IPythonKernel()
+        agent = Agent(
+            _scripted(
+                'import os, signal\nsignal.signal(signal.SIGINT, signal.SIG_IGN)\nbegin(pid=os.getpid())\n'
+                'while True:\n    pass'
+            ),
+            capabilities=[IPythonCodeMode(kernel=kernel, timeout=None)],
+            tools=[Tool(begin)],
+        )
+        client = None
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(agent.run, 'Run the code')
+            await started.wait()
+            client = kernel._client  # pyright: ignore[reportPrivateUsage]
+            await kernel.shutdown()
+        _assert_process_gone(pids[0])
+        assert client is not None and client.context.closed
+
     async def test_shutdown_returns_while_another_run_waits_on_a_tool(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel._SHUTDOWN_WAIT_SECS', 0.2)
         pids: list[int] = []
