@@ -173,10 +173,7 @@ def _request_part_text(part: ModelRequestPart) -> list[str]:
     elif isinstance(part, CapabilityPart):
         # A capability's record, rendered on the way to the model: its content fills the window. The frame's tags and
         # a kind's note aren't counted.
-        content = part.model_content()
-        return [
-            ''.join(user_prompt_texts(UserPromptPart([content] if isinstance(content, StructuredContent) else content)))
-        ]
+        return [capability_part_text(part)]
     elif isinstance(part, SpeechPart):
         # A realtime turn arrives as spoken audio plus a transcript. Count the transcript -- the
         # words the provider bills against the window -- not the binary audio, which has no
@@ -919,6 +916,12 @@ def find_token_cutoff(
 
 _LEGACY_MEMORY_MARKER = 'pydantic-ai-harness.memory.v1'
 """The plain-string metadata older `Memory` releases put on a snapshot, alone or followed by `:<scope hash>`."""
+
+
+def capability_part_text(part: CapabilityPart) -> str:
+    """The text of a capability part's content, as the model sees it, without a data kind's frame or note."""
+    content = part.model_content()
+    return ''.join(user_prompt_texts(UserPromptPart([content] if isinstance(content, StructuredContent) else content)))
 
 
 def harness_data_origin(part: UserPromptPart) -> str | None:

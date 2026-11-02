@@ -21,6 +21,7 @@ from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
+    CapabilityPart,
     CompactionPart,
     ModelMessage,
     ModelRequest,
@@ -60,6 +61,7 @@ from pydantic_ai_harness.compaction._receipts import (
     record_receipt,
 )
 from pydantic_ai_harness.compaction._shared import (
+    capability_part_text,
     compact_if_smaller,
     compact_with_span,
     context_for_request,
@@ -270,6 +272,8 @@ def format_transcript(
                     continue
                 elif isinstance(part, UserPromptPart):
                     elements.append(_message_element('user', user_prompt_text(part)))
+                elif isinstance(part, CapabilityPart):
+                    elements.extend(_capability_part_elements(part, tool_return_max_chars))
                 elif (
                     isinstance(part, SystemPromptPart)
                     # A request-scoped prompt applied to its own request only, so it's no lasting context.
@@ -305,12 +309,19 @@ def format_transcript(
                 ):
                     elements.append(_message_element('summary', part.content))
         else:
-            for part in msg.parts:
-                if isinstance(part, TextPart):
-                    elements.append(_message_element('assistant', part.content))
-                elif isinstance(part, ToolCallPart) and not is_load_part(part):
-                    elements.append(_message_element('tool_call', f'{part.args}', name=part.tool_name))
+            elements.extend(_response_elements(msg))
     return '\n'.join(elements)
+
+
+def _response_elements(response: ModelResponse) -> list[str]:
+    """A model response's text and tool calls as transcript elements, `load_capability` calls left out."""
+    elements: list[str] = []
+    for part in response.parts:
+        if isinstance(part, TextPart):
+            elements.append(_message_element('assistant', part.content))
+        elif isinstance(part, ToolCallPart) and not is_load_part(part):
+            elements.append(_message_element('tool_call', f'{part.args}', name=part.tool_name))
+    return elements
 
 
 _TranscriptRole: TypeAlias = Literal[
@@ -363,6 +374,19 @@ def _message_element(
     if max_chars is not None:
         body = _truncate_with_marker(body, max_chars)
     return f'<message role="{role}"{attrs}>\n{body}\n</message>'
+
+
+def _capability_part_elements(part: CapabilityPart, max_chars: int | None) -> list[str]:
+    """A capability part, recognized by its type, as the transcript shows it.
+
+    An instruction in the application's voice reads as a system message, except a request-scoped one, which applied
+    to its own request only. Data a capability added is labeled with its kind, never taken for the user's.
+    """
+    if part.rendering.voice == 'data':
+        return [_harness_data_element(part.kind, capability_part_text(part), max_chars)]
+    if part.scope == 'request':
+        return []
+    return [_message_element('system', capability_part_text(part))]
 
 
 def _harness_data_element(origin: str, content: str, max_chars: int | None) -> str:
