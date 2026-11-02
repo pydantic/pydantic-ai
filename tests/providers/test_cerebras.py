@@ -19,7 +19,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models import infer_model
     from pydantic_ai.models.cerebras import CerebrasModel
-    from pydantic_ai.providers.cerebras import CerebrasProvider, zai_model_profile
+    from pydantic_ai.providers.cerebras import CerebrasProvider, zai_glm_5_3_schema_profile
 
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
@@ -59,7 +59,7 @@ def test_cerebras_provider_model_profile(mocker: MockerFixture):
     meta_model_profile_mock = mocker.patch(f'{ns}.meta_model_profile', wraps=meta_model_profile)
     qwen_model_profile_mock = mocker.patch(f'{ns}.qwen_model_profile', wraps=qwen_model_profile)
     harmony_model_profile_mock = mocker.patch(f'{ns}.harmony_model_profile', wraps=harmony_model_profile)
-    zai_model_profile_mock = mocker.patch(f'{ns}.zai_model_profile', wraps=zai_model_profile)
+    zai_glm_5_3_schema_profile_mock = mocker.patch(f'{ns}.zai_glm_5_3_schema_profile', wraps=zai_glm_5_3_schema_profile)
 
     # Test llama model - uses meta profile which has InlineDefsJsonSchemaTransformer
     meta_profile = provider.model_profile('llama-3.3-70b')
@@ -84,9 +84,9 @@ def test_cerebras_provider_model_profile(mocker: MockerFixture):
     # gpt-oss follows Harmony rules: prior reasoning is replayed in the `reasoning` field, not `<think>` tags.
     assert harmony_profile.get('openai_chat_send_back_thinking_parts', None) == 'auto'
 
-    # Test zai model - uses default OpenAI profile (zai_model_profile returns None)
+    # Test zai model - uses default OpenAI profile (only GLM-5.3 gets a schema profile)
     zai_profile = provider.model_profile('zai-glm-4.7')
-    zai_model_profile_mock.assert_called_with('zai-glm-4.7')
+    zai_glm_5_3_schema_profile_mock.assert_called_with('glm-4.7')
     assert zai_profile is not None
     assert isinstance(zai_profile, dict)
     assert zai_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
