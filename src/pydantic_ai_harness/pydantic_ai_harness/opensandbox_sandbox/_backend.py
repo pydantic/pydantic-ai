@@ -29,14 +29,13 @@ import posixpath
 import secrets
 import shlex
 import time
-from collections.abc import AsyncGenerator, Mapping
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, Generator, Mapping
+from contextlib import asynccontextmanager, contextmanager
 from datetime import timedelta
 
 import anyio
 import anyio.lowlevel
 
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     SupportsCommands,
@@ -52,6 +51,7 @@ from pydantic_ai_harness._workspace_provider import (
     check_env,
     check_timeout,
     command_argv,
+    require_asyncio,
     run_to_completion,
     running_on_asyncio,
     stop_shielded,
@@ -131,13 +131,7 @@ _CREATE_TAG = 'pydantic-ai-create'
 
 _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 _OUTPUT_PREVIEW_CHARS = 64 * 1024
-
-
-def _require_asyncio() -> None:
-    if not running_on_asyncio():
-        raise UserError(
-            'OpenSandbox needs the asyncio event loop: the OpenSandbox SDK runs its calls on asyncio tasks.'
-        )
+_ASYNCIO_ONLY = 'OpenSandbox needs the asyncio event loop: the OpenSandbox SDK runs its calls on asyncio tasks.'
 
 
 def _unavailable(sandbox_id: str) -> WorkspaceUnavailableError:
@@ -147,28 +141,34 @@ def _unavailable(sandbox_id: str) -> WorkspaceUnavailableError:
     )
 
 
-def _refusal(error: SandboxApiException, context: str) -> WorkspaceUnavailableError | None:
-    """The protocol's error for a request no retry can fix, or `None` for one that may be transient."""
-    if error.status_code in (401, 403):
-        # The server's message is fixed text, but the code alone keeps any credential out of the error.
-        return WorkspaceUnavailableError(f'{context}: OpenSandbox rejected the API key ({error.error.code}).')
-    if error.status_code in (400, 404, 422):
-        return WorkspaceUnavailableError(f'{context}: {error}')
-    return None
+@contextmanager
+def _api_errors(context: str) -> Generator[None]:
+    """Translate permanent API refusals; leave transient SDK failures unchanged."""
+    try:
+        yield
+    except SandboxApiException as error:
+        if error.status_code in (401, 403):
+            # The code alone keeps any credential out of the error.
+            raise WorkspaceUnavailableError(
+                f'{context}: OpenSandbox rejected the API key ({error.error.code}).'
+            ) from error
+        if error.status_code in (400, 404, 422):
+            raise WorkspaceUnavailableError(f'{context}: {error}') from error
+        raise
 
 
 async def destroy_sandbox(sandbox_id: str, connection: ConnectionConfig | None = None) -> None:
     """Kill a sandbox by ID without connecting to it; one that is already gone returns quietly."""
-    _require_asyncio()
+    require_asyncio(_ASYNCIO_ONLY)
     manager = await SandboxManager.create(connection_config=connection or ConnectionConfig())
     try:
-        await manager.kill_sandbox(sandbox_id)
-    except SandboxApiException as error:
-        if error.status_code == 404:
-            return
-        if (refused := _refusal(error, f'Could not destroy OpenSandbox sandbox {sandbox_id!r}')) is not None:
-            raise refused from error
-        raise
+        with _api_errors(f'Could not destroy OpenSandbox sandbox {sandbox_id!r}'):
+            try:
+                await manager.kill_sandbox(sandbox_id)
+            except SandboxApiException as error:
+                if error.status_code == 404:
+                    return
+                raise
     finally:
         await manager.close()
 
@@ -249,7 +249,7 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
         `aclose()`, and, for a backend `OpenSandbox` built that no run owns, after each operation.
         """
         # Not an operation: a backend that closes after each operation would close the handle it returns.
-        _require_asyncio()
+        require_asyncio(_ASYNCIO_ONLY)
         return await self._acquire()
 
     async def working_dir(self) -> str:
@@ -283,7 +283,7 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
 
     @asynccontextmanager
     async def _operation(self) -> AsyncGenerator[None]:
-        _require_asyncio()
+        require_asyncio(_ASYNCIO_ONLY)
         self._operations += 1
         try:
             yield
@@ -320,20 +320,16 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
             # Recorded here, inside the task a cancelled caller waits for, so the sandbox, or the ref of one whose
             # create failed, is kept even when that caller then raises its cancellation instead of the outcome.
             try:
-                sandbox = await Sandbox.create(
-                    image,
-                    timeout=timeout,
-                    ready_timeout=_CREATE_READY_TIMEOUT,
-                    resource=self._resource,
-                    network_policy=None if self._allow_internet_access else NetworkPolicy(defaultAction='deny'),
-                    metadata={_CREATE_TAG: tag},
-                    connection_config=self._connection,
-                )
-            except SandboxApiException as error:
-                if (refused := _refusal(error, f'Could not create an OpenSandbox sandbox from {image!r}')) is not None:
-                    raise refused from error
-                await self._find_created(tag)
-                raise
+                with _api_errors(f'Could not create an OpenSandbox sandbox from {image!r}'):
+                    sandbox = await Sandbox.create(
+                        image,
+                        timeout=timeout,
+                        ready_timeout=_CREATE_READY_TIMEOUT,
+                        resource=self._resource,
+                        network_policy=None if self._allow_internet_access else NetworkPolicy(defaultAction='deny'),
+                        metadata={_CREATE_TAG: tag},
+                        connection_config=self._connection,
+                    )
             except SandboxException:
                 await self._find_created(tag)
                 raise
@@ -371,15 +367,13 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
             logger.info('Created OpenSandbox sandbox %s, but its create failed: %s', info.id, info.status.state)
 
     async def _attach(self, sandbox_id: str) -> Sandbox:
-        context = f'Could not attach to OpenSandbox sandbox {sandbox_id!r}'
-        try:
-            sandbox = await Sandbox.connect(sandbox_id, connection_config=self._connection)
-        except SandboxApiException as error:
-            if error.status_code == 404:
-                raise _unavailable(sandbox_id) from error
-            if (refused := _refusal(error, context)) is not None:
-                raise refused from error
-            raise
+        with _api_errors(f'Could not attach to OpenSandbox sandbox {sandbox_id!r}'):
+            try:
+                sandbox = await Sandbox.connect(sandbox_id, connection_config=self._connection)
+            except SandboxApiException as error:
+                if error.status_code == 404:
+                    raise _unavailable(sandbox_id) from error
+                raise
         try:
             # A killed sandbox still answers for a few seconds while the runtime deletes it.
             if (await sandbox.get_info()).status.state in _GONE_STATES:
