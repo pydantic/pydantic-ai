@@ -60,6 +60,7 @@ if TYPE_CHECKING:
     from .modal_sandbox import ModalSandbox, ModalSandboxBackend
     from .opensandbox_sandbox import OpenSandbox, OpenSandboxBackend
     from .ordinal import Ordinal
+    from .permissions import Permissions
     from .pgtask import PGTaskDurability
     from .planning import Planning
     from .posthog import PostHog
@@ -145,6 +146,7 @@ __all__ = [
     'OutputGuardrail',
     'OutputGuardrailFunc',
     'PGTaskDurability',
+    'Permissions',
     'Planning',
     'PostHog',
     'PromptInjectionDefender',
@@ -222,6 +224,7 @@ _CAPABILITY_EXPORTS = {
     'OpenSandbox': 'opensandbox_sandbox',
     'Ordinal': 'ordinal',
     'PGTaskDurability': 'pgtask',
+    'Permissions': 'permissions',
     'Planning': 'planning',
     'PostHog': 'posthog',
     'PromptInjectionDefender': 'prompt_injection_defender',

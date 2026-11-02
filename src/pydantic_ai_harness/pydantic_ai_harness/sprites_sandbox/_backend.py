@@ -52,7 +52,6 @@ it runs on asyncio only.
 
 from __future__ import annotations
 
-# Native task cancellation can interrupt an AnyIO shield; the completion task below must stay independent.
 import hashlib
 import logging
 import math
@@ -71,7 +70,6 @@ import anyio.to_thread
 import httpx
 from websockets.exceptions import InvalidHandshake, InvalidMessage
 
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
@@ -88,7 +86,10 @@ from pydantic_ai.workspaces import (
 from pydantic_ai.workspaces.workspace import _ShellFilesystem  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
+    check_env_types,
+    check_provider,
     command_argv,
+    require_asyncio,
     run_to_completion,
     running_on_asyncio,
     safe_credential_reason,
@@ -194,9 +195,7 @@ class _LookupCache:
 _lookups = _LookupCache()
 
 
-def _require_asyncio() -> None:
-    if not running_on_asyncio():
-        raise UserError('Sprites needs the asyncio event loop: the Sprites SDK runs its calls on asyncio tasks.')
+_ASYNCIO_ONLY = 'Sprites needs the asyncio event loop: the Sprites SDK runs its calls on asyncio tasks.'
 
 
 async def _new_client() -> AsyncSpritesClient:
@@ -221,7 +220,7 @@ async def destroy_sprite(client: AsyncSpritesClient | None, name: str) -> None:
     Raises:
         UserError: The event loop is not asyncio.
     """
-    _require_asyncio()
+    require_asyncio(_ASYNCIO_ONLY)
     try:
         if client is not None:
             await client.destroy_sprite(name)
@@ -341,11 +340,14 @@ def _map_error(error: Exception, sprite_name: str | None) -> WorkspaceError | No
         # An unknown runtime or a bad request fails the same way on every retry.
         return WorkspaceUnavailableError(f'Could not start Sprites sandbox: {error}')
     if isinstance(error, NotFoundError) or status == 404:
-        return WorkspaceUnavailableError(
-            f'The Sprite {sprite_name!r} no longer exists: it was deleted. '
-            "Pass `workspace='new'` to start a fresh sandbox."
-        )
+        return WorkspaceUnavailableError(_gone_message(sprite_name))
     return WorkspaceError(f'Sprites refused the request: {error}')
+
+
+def _gone_message(sprite_name: str) -> str:
+    return (
+        f"The Sprite {sprite_name!r} no longer exists: it was deleted. Pass `workspace='new'` to start a fresh sandbox."
+    )
 
 
 async def _check_sprite_deleted(sprite: AsyncSprite, *, deadline: float) -> None:
@@ -359,10 +361,7 @@ async def _check_sprite_deleted(sprite: AsyncSprite, *, deadline: float) -> None
         try:
             await sprite.client.get_sprite(sprite.name)
         except NotFoundError as error:
-            raise WorkspaceUnavailableError(
-                f'The Sprite {sprite.name!r} no longer exists: it was deleted. '
-                "Pass `workspace='new'` to start a fresh sandbox."
-            ) from error
+            raise WorkspaceUnavailableError(_gone_message(sprite.name)) from error
         except Exception:
             pass
 
@@ -391,12 +390,11 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
     ) -> None:
-        if ref is not None and ref.provider != 'sprites':
-            raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'sprites'")
+        if ref is not None:
+            check_provider(ref, 'sprites')
         if sandbox is not None and ref is not None:
             raise ValueError('pass either `sandbox` or `ref`, not both')
-        if env is not None and any(type(key) is not str or type(value) is not str for key, value in env.items()):
-            raise TypeError('env keys and values must be strings')
+        check_env_types(env)
         self._sandbox = sandbox
         self._ref = ref if sandbox is None else WorkspaceRef(provider='sprites', id=sandbox.name)
         self._new_sprite_name = f'pydantic-ai-{uuid.uuid4().hex}'
@@ -452,7 +450,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         command or file call itself, as `WorkspaceUnavailableError`.
         """
         # Every operation acquires the Sprite first, so this one check covers them all.
-        _require_asyncio()
+        require_asyncio(_ASYNCIO_ONLY)
         async with self._lock:
             sandbox = await self._acquire_locked(fetched=fetched)
             if self._working_dir_pending:
