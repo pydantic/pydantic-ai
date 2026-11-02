@@ -6,13 +6,13 @@ import math
 import weakref
 from collections.abc import Iterator, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import TYPE_CHECKING, Annotated, Any, Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, cast, runtime_checkable
 
 import anyio
 import anyio.lowlevel
 from pydantic import Field, TypeAdapter, ValidationError
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
     DISPLAY_SIZE,
@@ -24,6 +24,7 @@ from pydantic_ai.computer_use import (
     Wait,
     Zoom,
 )
+from pydantic_ai.durable_exec import StepPolicy
 from pydantic_ai.exceptions import ApprovalRequired, ToolFailed, UserError
 from pydantic_ai.messages import (
     BinaryContent,
@@ -103,8 +104,8 @@ _OBSERVING_ACTIONS = frozenset({'wait', 'screenshot', 'zoom', 'cursor_position'}
 _DISPLAY_LOCKS: weakref.WeakValueDictionary[object, anyio.Lock] = weakref.WeakValueDictionary()
 """One lock per screen and event loop: agents in one process sharing a screen, such as parallel sub-agents, take turns
 at it a whole call at a time, so one's clicks and typing never land between another's. A lock can't wake a waiter on
-another loop, so durable workflows, each on a loop of its own, don't take turns. A lock goes once no call holds or waits
-for it."""
+another loop, so calls on separate event loops, such as durable units on separate loops, don't take turns. A lock goes
+once no call holds or waits for it."""
 
 _CALL_SPACE = 'pydantic-ai-harness.computer-use.v1'
 """The `ModelResponse.metadata` key that records the coordinates of the response's `computer` calls, so each call is
@@ -113,6 +114,50 @@ pointed on or `None` for pixels, and `screenshot_size`, the latest screenshot it
 response without the record, such as one from before it existed, is read in the running model's space."""
 
 _ACTIONS = TypeAdapter(list[ComputerToolAction])
+
+_CALL_POLICY = StepPolicy(repeatable=False, timeout=900)
+"""A `computer` call acts, so under durable execution it runs at most once, with time for 20 actions that each
+wait or hold for up to 30 seconds."""
+
+_INTERRUPTED = (
+    'The call was interrupted before it finished, so some of its actions may have run. Take a screenshot before '
+    'acting again.'
+)
+
+
+@dataclass
+class _Plan:
+    """What a call takes from the run's messages and model, which a durable unit can't read."""
+
+    grid: int | None
+    """The grid the model pointed on, if any."""
+    seen: tuple[int, int] | None
+    """The size of the screenshot the model pointed on, if it saw one."""
+    changed: list[ComputerToolAction] | None
+    """The actions to run, when they differ from the ones the model asked for."""
+    limit: tuple[int, int] | None
+    """The largest screenshot the model takes."""
+    model_name: str
+    acts: bool
+    """Whether any action changes the screen."""
+
+
+@dataclass
+class _NotRun:
+    """A call the display refused or couldn't finish, crossing a durable unit as data so its error keeps its kind."""
+
+    message: str
+    kind: Literal['tool', 'unavailable', 'config'] = 'tool'
+    """`tool` tells the model; `unavailable` ends the run with `WorkspaceUnavailableError`, `config` with `UserError`."""
+
+    def error(self) -> Exception:
+        match self.kind:
+            case 'tool':
+                return ToolFailed(self.message)
+            case 'unavailable':
+                return WorkspaceUnavailableError(self.message)
+            case 'config':
+                return UserError(self.message)
 
 
 @runtime_checkable
@@ -263,9 +308,9 @@ class _Call:
         )
 
 
-async def _screenshot(ctx: RunContext[Any], limit: tuple[int, int] | None, size: tuple[int, int] | None) -> bytes:
+async def _screenshot(ctx: RunContext[Any], plan: _Plan, size: tuple[int, int] | None) -> bytes:
     """The screen, scaled down by the display to what the model takes; `size` is the display's, when the call read it."""
-    if limit is not None:
+    if (limit := plan.limit) is not None:
         if size is None:
             size = await ctx.workspace.display_size()
         if (fitted := _fit(size, limit)) != size:
@@ -273,7 +318,7 @@ async def _screenshot(ctx: RunContext[Any], limit: tuple[int, int] | None, size:
                 return await ctx.workspace.scaled_screenshot(*fitted)
             except WorkspaceUnsupportedActionError:
                 raise UserError(
-                    f'The screen is {size[0]}x{size[1]}, larger than {ctx.model.model_name!r} can see, and its '
+                    f'The screen is {size[0]}x{size[1]}, larger than {plan.model_name!r} can see, and its '
                     f'display cannot scale screenshots down. Start the display at {fitted[0]}x{fitted[1]} or smaller.'
                 ) from None
     return await ctx.workspace.screenshot()
@@ -371,12 +416,8 @@ def _changed(call: ToolCallPart, actions: list[ComputerToolAction]) -> bool:
 
 
 def _display(ctx: RunContext[Any]) -> object | None:
-    """The workspace's display object, when this side of a durable unit can reach the backend."""
-    try:
-        backend = ctx.workspace.backend
-    except UserError:
-        # Durable workflow code can't reach the backend.
-        return None
+    """The workspace's display object."""
+    backend = ctx.workspace.backend
     return backend.display if isinstance(backend, SupportsDisplay) else None
 
 
@@ -409,7 +450,7 @@ async def _with_display_size(ctx: RunContext[Any], tool_def: ToolDefinition) -> 
 def _display_lock(ctx: RunContext[Any]) -> anyio.Lock:
     # A display names its screen when it can, such as an X `DISPLAY` that several workspaces may show. Otherwise
     # backends attached to one environment share its ref, and backends on one screen share its display, the same
-    # object for each backend's lifetime. In durable workflow code, which can't reach the display, it is the ref.
+    # object for each backend's lifetime.
     display = _display(ctx)
     key: object = display.screen_key if isinstance(display, _HasScreenKey) else None
     if key is None:
@@ -491,7 +532,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             tool_kind=COMPUTER_KIND,
             # It returns a screenshot, which has no schema to describe.
             include_return_schema=False,
-            # Each workspace call is then its own activity or task, with its own timeout and retries.
+            # The tool reads the run's messages and model in workflow code; the display work is one durable unit.
             metadata={'temporal': False, 'prefect': False, 'render_workflows': False},
             prepare=_with_display_size,
         )
@@ -516,33 +557,63 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         # Scaled the way the model meant it, even when another model runs the call, such as after an approval.
         record = _recorded_space(made[0]) if made else None
         grid, seen = record if record is not None else (_grid(ctx.model), None)
-        call = _Call(grid, changed=actions if made and _changed(made[1], actions) else None)
-        limit = _screenshot_limit(ctx.model)
-        if acts or any(_points(action) or action.type == 'cursor_position' for action in actions):
+        plan = _Plan(
+            grid=grid,
+            seen=seen,
+            changed=actions if made and _changed(made[1], actions) else None,
+            limit=_screenshot_limit(ctx.model),
+            model_name=ctx.model.model_name,
+            acts=acts,
+        )
+        try:
+            outcome = await self._on_display(ctx, actions, plan)
+        except Exception as e:
+            # Under durable execution the unit failed, timed out or lost its worker, after any number of actions.
+            if not ctx.in_durable_context:
+                raise
+            raise ToolFailed(_INTERRUPTED) from e
+        if isinstance(outcome, _NotRun):
+            raise outcome.error()
+        return outcome
+
+    @durable_operation('call', policy=_CALL_POLICY)
+    async def _on_display(
+        self, ctx: RunContext[AgentDepsT], actions: list[ComputerToolAction], plan: _Plan
+    ) -> ToolReturn | _NotRun:
+        """Everything a call does on the display, as one durable unit that runs at most once."""
+        try:
+            return await self._run_on_display(ctx, actions, plan)
+        except ToolFailed as e:
+            return _NotRun(e.message)
+        except WorkspaceUnavailableError as e:
+            return _NotRun(str(e), 'unavailable')
+        except UserError as e:
+            return _NotRun(e.message, 'config')
+
+    async def _run_on_display(
+        self, ctx: RunContext[AgentDepsT], actions: list[ComputerToolAction], plan: _Plan
+    ) -> ToolReturn:
+        call = _Call(plan.grid, changed=plan.changed)
+        if plan.acts or any(_points(action) or action.type == 'cursor_position' for action in actions):
             # Also starts a display that stopped, so a restart is known before anything acts.
             call.display = await _display_size(ctx)
             # A screenshot the model saw, or the next one, may be scaled down from the display.
-            call.space = (grid, grid) if grid else seen or _fit(call.display, limit)
+            call.space = (plan.grid, plan.grid) if plan.grid else plan.seen or _fit(call.display, plan.limit)
             # The backend would move a position outside the screen to its edge and act there.
-            if refused := _off_screen(actions, *call.space, 'grid' if grid else 'screen'):
+            if refused := _off_screen(actions, *call.space, 'grid' if plan.grid else 'screen'):
                 raise ToolFailed(refused)
             pixels = (
                 actions if call.space == call.display else [_to_pixels(a, call.display, call.space) for a in actions]
             )
-            if refused := _too_large_zoom(actions, pixels, call.display, call.space, limit):
+            if refused := _too_large_zoom(actions, pixels, call.display, call.space, plan.limit):
                 raise ToolFailed(refused)
             actions = pixels
 
         async with _display_lock(ctx):
-            return await self._run_on_display(ctx, actions, call, limit=limit)
+            return await self._act_and_look(ctx, actions, call, plan)
 
-    async def _run_on_display(
-        self,
-        ctx: RunContext[AgentDepsT],
-        actions: list[ComputerToolAction],
-        call: _Call,
-        *,
-        limit: tuple[int, int] | None,
+    async def _act_and_look(
+        self, ctx: RunContext[AgentDepsT], actions: list[ComputerToolAction], call: _Call, plan: _Plan
     ) -> ToolReturn:
         performed, error, outputs = await _perform(ctx, actions, call, self.settle_seconds)
 
@@ -562,7 +633,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
                 summary.append(f'The {_plural(skipped, "action")} after it did not run.')
 
         try:
-            png = await _screenshot(ctx, limit, call.display)
+            png = await _screenshot(ctx, plan, call.display)
         except WorkspaceUnavailableError:
             raise
         except WorkspaceError as e:

@@ -40,6 +40,7 @@ from pydantic_ai.durable_exec import (
     ModelCompactMessagesId,
     ModelRequestId,
     OperationConfigRole,
+    StepPolicy,
     ToolsetCallToolId,
     ToolsetGetInstructionsId,
     ToolsetGetToolsId,
@@ -553,18 +554,21 @@ def test_render_task_name_matrix_and_assembly_completeness(workspace: bool) -> N
     Agent(TestModel(), name='compat', toolsets=list(_synthetic_toolsets()), capabilities=capabilities)
 
     names = app.registered_task_names
-    # Render task options are fixed per task, so the workspace's at-most-once action has its own task.
-    render_workspace_names = JOURNAL_WORKSPACE_NAMES | {'compat__capability__workspace.call.act'}
-    expected = RENDER_TASK_NAMES | (render_workspace_names if workspace else set[str]())
+    expected = RENDER_TASK_NAMES | (JOURNAL_WORKSPACE_NAMES if workspace else set[str]())
     assert set(names) == expected
     assert len(names) == len(expected)
-    if workspace:
-        act = app.options['compat__capability__workspace.call.act']
-        assert (act.retry and act.retry.max_retries, act.timeout_seconds) == (0, 180)
+
+
+class AtMostOnceCapability(AbstractCapability[Any]):
+    id = 'once'
+
+    @durable_operation('send', policy=StepPolicy(repeatable=False, timeout=180))
+    async def send(self, ctx: RunContext[Any]) -> None:
+        """Declaration used only for task registration."""  # pragma: no cover
 
 
 @pytest.mark.parametrize(('configured', 'expected'), [(60, 180), (600, 600)])
-def test_render_action_raises_a_shorter_configured_timeout_and_keeps_a_longer_one(
+def test_render_at_most_once_operation_raises_a_shorter_configured_timeout_and_keeps_a_longer_one(
     configured: int, expected: int
 ) -> None:
     pytest.importorskip('render')
@@ -577,8 +581,10 @@ def test_render_action_raises_a_shorter_configured_timeout_and_keeps_a_longer_on
 
     app = RecordingWorkflows()
     durability = RenderWorkflows(app, capability_options=Options(timeout_seconds=configured))
-    Agent(TestModel(), name='compat', capabilities=[durability, CompatWorkspaceSupplier()])
-    assert app.options['compat__capability__workspace.call.act'].timeout_seconds == expected
+    Agent(TestModel(), name='compat', capabilities=[durability, AtMostOnceCapability()])
+    # Render task options are fixed per task, so an operation with a step policy has its own task.
+    send = app.options['compat__capability__once.send.send']
+    assert (send.retry and send.retry.max_retries, send.timeout_seconds) == (0, expected)
 
 
 def _synthetic_toolsets() -> tuple[FunctionToolset[Any], DynamicToolset[Any], Any]:
