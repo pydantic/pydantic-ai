@@ -261,7 +261,9 @@ ALLOWED_CALLERS_CASES = [
         model_name='claude-sonnet-5-5',
         native_tools=[WebSearchTool(max_uses=1), WebFetchTool(max_uses=1)],
         citations=True,
-        prompt="Use web search, not web fetch, to find Pydantic AI's documentation and say in one sentence where it is.",
+        prompt=(
+            "Use web search, not web fetch, to find Pydantic AI's documentation and say in one sentence where it is."
+        ),
         expected_tools=snapshot([('web_search_20260209', ['direct']), ('web_fetch_20260209', ['direct'])]),
         expected_web_tool_calls=snapshot([('web_search', None)]),
         expected_cited_domains=snapshot(['github.com']),

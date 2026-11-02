@@ -4447,9 +4447,7 @@ async def test_anthropic_citations_with_forced_tool_without_document_or_web_fetc
 ) -> None:
     """With no document or Web Fetch tool, a forced tool call is allowed.
 
-    That includes web search, which the setting sends with direct calls on models with the `20260209` web tools: in
-    live runs on Claude Haiku 5.5, Sonnet 4.6 and Opus 4.8, the model searched directly and kept the markup out of the
-    forced tool's arguments, unlike with a document.
+    That includes web search, which the setting sends with direct calls on models with the `20260209` web tools.
 
     Unit test: it pins that the run goes ahead, and the callers sent.
     """

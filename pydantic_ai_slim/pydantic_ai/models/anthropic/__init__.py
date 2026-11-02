@@ -706,8 +706,9 @@ class AnthropicModelSettings(ModelSettings, total=False):
     Set `['direct']` to have the model always call the web tools itself with no sandbox, which turns off
     dynamic filtering and makes the tools eligible for Zero Data Retention. A value set here is sent
     on whichever web tool version the model uses, and takes precedence over the citations default. A
-    code execution caller gives the model the sandbox on any version. Anthropic rejects an empty list, `code_execution_20250825`, and a code execution
-    caller on models without programmatic tool calling, such as Claude Haiku 4.5.
+    code execution caller gives the model the sandbox on any version. Anthropic rejects an empty list,
+    `code_execution_20250825`, and a code execution caller on models without programmatic tool calling,
+    such as Claude Haiku 4.5.
     See [the Anthropic docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers).
 
     Tools passed as `extra_body['tools']` replace the ones Pydantic AI builds, so the setting isn't
