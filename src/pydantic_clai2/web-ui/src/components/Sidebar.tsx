@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
-import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
 import { ApiError, api } from '../api'
 import { MOD } from '../platform'
 import { Logo } from './Logo'
@@ -369,6 +369,12 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     setMenu(menu === key ? null : key)
   }
 
+  /** Right-click opens the same menu as the row's `…` button. */
+  const contextMenu = (key: string) => (event: ReactMouseEvent<HTMLElement>) => {
+    event.preventDefault()
+    if (menu !== key) openMenu(key, event.currentTarget)
+  }
+
   const row = (session: Row, section: Section, twins: Set<string>) => {
     const state = states[session.id] ?? null
     const current = session.id === selected
@@ -386,6 +392,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
         className={`session ${current ? 'current' : ''} ${unread.has(session.id) ? 'unread' : ''} ${session.archived ? 'archived' : ''} ${session.missing ? 'missing' : ''}`}
         data-session={session.id}
         aria-busy={session.id === opening || undefined}
+        onContextMenu={renaming === session.id ? undefined : contextMenu(session.id)}
       >
         {renaming === session.id ? (
           <input
@@ -500,7 +507,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     const unreadRows = section.rows.filter((row) => unread.has(row.id))
     const removed = section.key === REMOVED
     return (
-      <div className="project-head">
+      <div className="project-head" onContextMenu={archived ? undefined : contextMenu(key)}>
         <button
           className="project-title"
           onClick={() => toggle(section.key, closed)}
