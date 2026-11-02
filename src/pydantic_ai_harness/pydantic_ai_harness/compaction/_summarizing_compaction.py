@@ -1317,6 +1317,10 @@ def _fit_summary_input(
     That the summarizer saw less than the whole history is recorded on the enclosing
     `compact_messages` span, because a summary of part of the history is a different thing, and a
     difference nobody can see is what makes compaction hard to trust.
+
+    A fixed part that leaves no room for a transcript at all is reported rather than trimmed around:
+    the trim would keep the omission marker and send the oversized instructions anyway, so the
+    history would be replaced by a summary of nothing and the request would still go over budget.
     """
     budget = _summary_input_budget(summarizer, model)
     if budget is None:
@@ -1324,7 +1328,15 @@ def _fit_summary_input(
     tokenizer = summarizer.tokenizer
     overhead = estimate_text_tokens(overhead_prompt, tokenizer)
     overhead += estimate_text_tokens(summarizer.instructions, tokenizer)
-    trimmed = _fit_transcript(entries, (budget - overhead) // _transcript_copies(summarizer.summary_prompt), tokenizer)
+    room = (budget - overhead) // _transcript_copies(summarizer.summary_prompt)
+    if room < 1:
+        raise UserError(
+            f'The summary request cannot be fitted into its {budget}-token budget: the prompt, '
+            f'instructions and previous summary need {overhead} tokens on their own, so no transcript '
+            'fits after them. Raise `summary_request_max_tokens`, shorten `summary_prompt` or '
+            '`instructions`, or summarize with a model whose context window is larger.'
+        )
+    trimmed = _fit_transcript(entries, room, tokenizer)
     if trimmed is None:
         return None
     record_span_attribute('compaction.summary_request_trimmed', True)

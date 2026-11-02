@@ -23,7 +23,7 @@ from pydantic_ai import Agent, Tool, ToolReturn
 from pydantic_ai._context_size import mark_context_input_tokens
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability, ToolSearch
-from pydantic_ai.exceptions import ModelAPIError, ModelRetry, UnexpectedModelBehavior, UsageLimitExceeded
+from pydantic_ai.exceptions import ModelAPIError, ModelRetry, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AgentInstructionSource,
     AgentStreamEvent,
@@ -3658,6 +3658,20 @@ class TestSummarizerContextWindow:
         [request] = seen
         assert len(request) // 4 <= 1_200
         assert 'second question' in request
+
+    async def test_a_fixed_part_that_alone_exceeds_the_budget_is_reported(self):
+        seen: list[str] = []
+        comp = _always_compacting(
+            FunctionModel(_capture_summary_requests(seen), model_name='tiny'), summary_request_max_tokens=20
+        )
+        messages = _oversized_history(text_chars=1_000, tool_chars=1_000)
+
+        # No transcript can make the request fit, so nothing is sent: a summary of the omission
+        # marker alone would replace the history with nothing and still go over the budget.
+        with pytest.raises(UserError, match='cannot be fitted'):
+            await comp.before_model_request(_make_ctx(messages), _make_request_context(messages))
+
+        assert seen == []
 
     def test_the_run_models_context_window_override_is_the_budget(self):
         comp = SummarizingCompaction(max_messages=2, context_window=4_000)
