@@ -1098,8 +1098,9 @@ A later <context> element with the same id replaces the earlier one and stays in
                 include_instructions=include_instructions,
             ),
         ]:
-            assert isinstance(cap.local, MCPToolset)
-            assert cap.local.include_instructions is include_instructions
+            local = cast('MCPToolset[object]', cap.local)
+            assert isinstance(local, MCPToolset)
+            assert local.include_instructions is include_instructions
 
     def test_mcp_tool_prefix_true_uses_explicit_id(self):
         """`tool_prefix=True` prefixes with the explicit `id`, and the local toolset keeps that `id`."""
