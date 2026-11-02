@@ -253,8 +253,9 @@ const LIVE_LINES = 8
 
 /** The last `LIVE_LINES` a running call printed: a shell's own, or those of the calls in a `run_code` cell. */
 function liveTail(item: Item): string {
-  const output = item.name === 'run_code' ? item.calls.map((call) => call.output).join('') : item.output
-  return output.replace(/\n$/, '').split('\n').slice(-LIVE_LINES).join('\n')
+  const outputs = item.name === 'run_code' ? item.calls.map((call) => call.output) : [item.output]
+  const lines = outputs.filter(Boolean).flatMap((output) => output.replace(/\n$/, '').split('\n'))
+  return lines.slice(-LIVE_LINES).join('\n')
 }
 
 /** One tool call as a quiet row; open it for the arguments, output, diff, and result. A file change starts open. */
@@ -320,12 +321,12 @@ export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
         row
       )}
       <WorkerChips item={raw} />
+      {open && <ToolDetails item={{ ...item, diffs: attempted }} args={args} />}
       {live && (
         <div className="tool-body">
           <pre className="terminal">{live}</pre>
         </div>
       )}
-      {open && <ToolDetails item={{ ...item, diffs: attempted }} args={args} />}
     </div>
   )
 })

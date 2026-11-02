@@ -17,8 +17,8 @@ from tests.clai2.browser.conftest import Serve
 from tests.clai2.test_web import TOKEN
 from tests.clai2.test_web_sessions import Fleet
 
-COMMAND = "printf 'tick %s\\n' 1; while [ ! -e released ]; do sleep 0.05; done"
-"""Prints a line, then runs until the test creates `released`."""
+COMMAND = 'for i in $(seq 10); do echo tick $i; done; while [ ! -e released ]; do sleep 0.05; done'
+"""Prints ten lines, then runs until the test creates `released`."""
 
 
 async def shell_cell(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
@@ -62,14 +62,15 @@ async def test_a_running_command_in_a_cell_shows_its_output(page: Page, shell_ui
     await page.goto(f'{shell_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Browser Shell', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Shell')
+    await expect(page.locator('.session.opening')).to_have_count(0)
     composer = page.get_by_role('combobox', name='Message CLAI')
     await expect(composer).to_be_enabled()
     await composer.fill('Run the ticks')
     await composer.press('Enter')
 
-    card = page.locator('.tool').filter(has_text='printf')
-    # The collapsed card shows the output so far while the command runs.
-    await expect(card.locator('pre')).to_contain_text('tick 1')
+    card = page.locator('.tool').filter(has_text='seq 10')
+    # The collapsed card shows the last lines of output so far while the command runs.
+    await expect(card.locator('pre')).to_have_text('\n'.join(f'tick {i}' for i in range(3, 11)))
     await expect(card.locator('.verb')).to_have_text('Running')
     (shell_ui.workspace / 'released').touch()
     await expect(page.locator('.markdown').filter(has_text='Done')).to_be_visible()
