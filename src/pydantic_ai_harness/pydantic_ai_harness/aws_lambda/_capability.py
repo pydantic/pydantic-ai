@@ -33,7 +33,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT
 
 from ._bridge import ENGINE_NAME as _ENGINE_NAME, in_durable_context
-from ._operation_backend import TOOL_CONFIG_KEY, AWSLambdaOperationBackend, AWSLambdaOperationConfig
+from ._operation_backend import TOOL_CONFIG_KEY as _TOOL_CONFIG_KEY, AWSLambdaOperationBackend, AWSLambdaOperationConfig
 
 
 @dataclass(init=False)
@@ -86,7 +86,7 @@ class AWSLambdaDurability(BaseDurabilityCapability[AgentDepsT]):
         serialization_failure=lambda exc: ExecutionError(str(exc)),
         sequential_tools_in_durable_context=True,
         unsupported_runtime_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
-        tool_config_key=TOOL_CONFIG_KEY,
+        tool_config_key=_TOOL_CONFIG_KEY,
     )
 
     def __init__(
