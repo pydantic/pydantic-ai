@@ -601,18 +601,17 @@ def _is_valid_summary_prompt(prompt: str) -> bool:
 
 @dataclass
 class SummarizingCompaction(AbstractCapability[AgentDepsT]):
-    """LLM-powered conversation compaction.
+    """Compact the conversation by summarizing older messages with a model call.
 
     When the conversation exceeds a configurable threshold, older messages are
-    summarized using a dedicated model call and replaced with a compact, structured
-    summary message, preserving recent context and tool-call integrity.
+    replaced with a structured summary message, preserving recent context and
+    tool-call integrity.
 
-    This is the expensive tier -- summarization turns input tokens into (pricier) output
-    tokens -- so it is best used behind cheaper passes (see `TieredCompaction`).
+    Summarization turns input tokens into output tokens, so it is best used behind
+    cheaper passes (see `TieredCompaction`).
 
-    The summary call's usage is folded into the parent run's usage (it counts as a real
-    request), so cost accounting stays honest; note this also increments the run's request
-    count, which a request-count limiter would see.
+    The summary call's usage is folded into the parent run's usage and counts as a
+    request, so request-count limits apply to it.
 
     Example:
         ```python
@@ -742,9 +741,8 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
 
     bridge_prefix: bool = False
     """When `True` and the summarizer's model family differs from the family that produced
-    the history, prepend a neutral one-line note marking the summary as a cross-model handoff
-    (Codex prior art, anti-confabulation).  Only fires on a genuine family mismatch, so it is
-    cheap and off in the common same-model case; the note's wording is flagged pending eval-rig.
+    the history, prepend a neutral one-line note marking the summary as a cross-model handoff.
+    Nothing is added when the families match.
     """
 
     keep_user_messages: bool = False
@@ -777,9 +775,6 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     """When `True`, append a deterministic compaction receipt after the summary noting how
     much history was summarized, that the summary is secondhand, and -- when a
     `TranscriptHandleProvider` capability is attached -- a persisted-run handle.
-
-    Opt-in for now: the receipt text is content, so defaulting it on is deferred to the
-    benchmark eval-rig pass.  The mechanism itself is structural.
     """
 
     # Override the inherited default ID because durable-operation recovery needs a stable identity.
