@@ -321,7 +321,7 @@ export function App() {
   // The files may have changed when a turn ends, so the count, the panel, and the git chip ask again then. While one
   // runs, each asks again as its tool calls finish, at most once a second.
   const changesActive = connection === 'open' && !chat.running
-  const finished = useMemo(() => finishedCalls(chat.entries), [chat.entries])
+  const finished = useMemo(() => (chat.running ? finishedCalls(chat.entries) : 0), [chat.running, chat.entries])
   const edits = useThrottled(finished, 1000)
   // The page hears a turn end before the session keeps its messages, so the count asks again once it saves them.
   const sessionChanges = useChanges(

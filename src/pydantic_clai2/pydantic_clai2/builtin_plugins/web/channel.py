@@ -87,7 +87,8 @@ class SessionChannel:
         self._usage: RunUsage | None = None
         """The running turn's usage, as its run context reports it; `None` between turns."""
         self._run_messages: list[ModelMessage] | None = None
-        """The running turn's history so far, as its run context holds it; `None` between turns."""
+        """The running turn's history, the run's own list rather than a copy, so it holds tool results added after the
+        last event; `None` between turns."""
         self._queue_sent: list[QueuedItem] = []
         """The queued input browsers were last sent, so only a change sends it again."""
         self._steered = 0

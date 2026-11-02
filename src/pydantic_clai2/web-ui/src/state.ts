@@ -220,10 +220,13 @@ export function applyItem(entries: Entry[], message: ItemMessage): Entry[] {
   }
 }
 
-/** How many tool calls in `entries` have finished, a `run_code` cell's own calls too: each may have changed files. */
+/** How many tool calls of the latest turn in `entries` have finished, a `run_code` cell's own too: each may have
+ * changed files. */
 export function finishedCalls(entries: Entry[]): number {
   let finished = 0
-  for (const entry of entries) {
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const entry = entries[index]
+    if (!entry || entry.kind === 'turn') break
     if (entry.kind !== 'tool') continue
     if (entry.state !== 'running') finished++
     for (const call of entry.calls) if (call.state !== 'running') finished++

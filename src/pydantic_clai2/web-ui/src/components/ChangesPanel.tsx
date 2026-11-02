@@ -44,19 +44,21 @@ export function useChanges(
   const [found, setFound] = useState<{
     owner: string
     scope: ChangeScope
-    asked: string
+    version: number
+    edits: number
     changes: Changes | null
     error: string | null
   }>()
   const [version, setVersion] = useState(0)
-  const asked = `${version}:${edits}`
+  // Once the turn ends, `active` asks again instead.
+  const turnEdits = active ? 0 : edits
   const mine = found?.owner === owner && found.scope === scope ? found : undefined
-  const ask = active || mine?.asked !== asked
+  const ask = active || mine === undefined || mine.version !== version || mine.edits !== turnEdits
   useEffect(() => {
     if (!ask) return
     let current = true
     const settle = (changes: Changes | null, error: string | null) =>
-      current && setFound({ owner, scope, asked, changes, error })
+      current && setFound({ owner, scope, version, edits: turnEdits, changes, error })
     session.changes(scope, diffs).then(
       (changes) => settle(changes, null),
       (error: unknown) => settle(null, error instanceof Error ? error.message : String(error)),
@@ -64,7 +66,7 @@ export function useChanges(
     return () => {
       current = false
     }
-  }, [session, scope, owner, active, ask, diffs, asked, saved])
+  }, [session, scope, owner, active, ask, diffs, version, turnEdits, saved])
   const refresh = useCallback(() => setVersion((value) => value + 1), [])
   return { changes: mine?.changes ?? null, error: mine?.error ?? null, refresh }
 }
