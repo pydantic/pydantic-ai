@@ -220,6 +220,31 @@ _ENV = {'DISPLAY': DISPLAY, 'LC_ALL': 'C.UTF-8'}
 POSIX locale, which is what an environment without one set has."""
 
 
+_X_LOCK = f'/tmp/.X{DISPLAY[1:]}-lock'
+_X_SOCKET = f'/tmp/.X11-unix/X{DISPLAY[1:]}'
+
+
+def start_x_server(log: str, *, then: str = '') -> str:
+    """A shell fragment that starts Xvfb on `DISPLAY`, at the size `$1` names such as `1280x800`, unless one answers.
+
+    It gives up as soon as the X server exits, or after 10 seconds, with the end of `log` as the reason, and runs
+    `RECORD_START` once a new X server answers. `then` runs then, such as to start a panel.
+    """
+    return (
+        'if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '
+        # A lock left by an X server that's gone, such as after `docker stop`, stops Xvfb starting when its PID now
+        # belongs to another process. A running X server's lock stays, whichever server it is, such as `Xvnc`.
+        f'case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in X*) ;; '
+        f'*) rm -f {_X_LOCK} {_X_SOCKET} ;; esac; '
+        # `-noreset`: Xvfb otherwise resets when its last client leaves, dropping the keys `xmodmap` mapped for typing.
+        f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp -noreset >/dev/null 2>{log} & xvfb=$!; i=0; '
+        'until xdotool getdisplaygeometry >/dev/null 2>&1; do '
+        'if ! kill -0 $xvfb 2>/dev/null || [ $i -ge 100 ]; then '
+        f"echo 'the X server did not start:' >&2; tail -n 5 {log} >&2; exit 1; fi; "
+        f'sleep 0.1; i=$((i+1)); done; {RECORD_START}{then} fi; '
+    )
+
+
 def x11_display(
     backend: SupportsCommands,
     size: tuple[int, int],

@@ -44,6 +44,7 @@ in an `on_run_error` hook, as shown for [E2B](e2b-sandbox.md#clean-up).
 |---|---|
 | `DockerSandbox(desktop=True)` | A container on your machine |
 | [`DaytonaSandbox(desktop=True)`](daytona-sandbox.md#give-the-agent-a-desktop) | A Daytona cloud sandbox |
+| [`E2BSandbox(desktop=True)`](e2b-sandbox.md#give-the-agent-a-desktop) | An E2B cloud sandbox |
 
 To give your own sandbox a screen, implement [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]; see
 [Controlling a display](../workspace.md#controlling-a-display).
@@ -105,6 +106,9 @@ error naming the largest size that fits.
 - Agents in one process on one screen take turns, a whole call at a time, so their clicks never interleave.
 
 ## Watching a run
+
+A cloud desktop's `live_view_url()` gives a link to watch the run live, or take over; see
+[Daytona](daytona-sandbox.md#give-the-agent-a-desktop) and [E2B](e2b-sandbox.md#give-the-agent-a-desktop).
 
 Each screenshot is in a `FunctionToolResultEvent` for the `computer` tool, so an
 [event stream handler](../agent.md#streaming-all-events) can save or show them as the run goes.
