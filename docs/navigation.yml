@@ -781,6 +781,11 @@ navigation:
     slug: ""
     top-level: true
     contents:
+      - page: "Build Your Own Coding Agent"
+        path: "build-coding-agent.md"
+        slug: "guides/build-your-own-coding-agent"
+        aliases:
+          - "build-your-own-coding-agent"
       - page: "Extensibility"
         path: "extensibility.md"
         slug: "guides/extensibility"
