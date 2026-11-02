@@ -16,7 +16,6 @@ import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from pydantic import ValidationError
 
-from pydantic_ai._framing import neutralize_tags
 from pydantic_ai.capabilities import (
     AbstractCapability,
     AgentNode,
@@ -35,6 +34,7 @@ from pydantic_ai.exceptions import (
     UnexpectedModelBehavior,
     UserError,
 )
+from pydantic_ai.framing import neutralize_tags
 from pydantic_ai.messages import ModelRequest, TextContent, ToolCallPart, ToolReturn, ToolReturnPart, UserContent
 from pydantic_ai.tools import (
     AgentDepsT,
