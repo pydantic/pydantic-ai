@@ -554,15 +554,12 @@ machine's screen beside a local workspace.
 Key names and text limits are on each action; see the [API reference](api/workspaces.md).
 `LocalWorkspace` has no display.
 
-Under [durable execution](durable_execution/overview.md), each display call made in workflow code is its own
-durable step. A look, such as a screenshot, retries under the engine's retry config. An action runs at most once,
-with a timeout of at least 180 seconds: if it fails, times out or loses its worker, the call raises a
-[`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError] saying the action may or may not have taken effect,
-instead of running it again. Some engines go further than this:
-
-- DBOS, and Prefect when a flow is run again, can repeat the action that was running when the process crashed.
-- DBOS steps have no timeout, so a hung action holds the workflow.
-- DBOS can't replay a workflow in which two agents used a display at the same time.
+Under [durable execution](durable_execution/overview.md), workflow code can read `display_size()`, which is
+journaled like a file call, but not the rest of the display: `screenshot()`, `act()` and the others raise a
+`UserError` there. Call them from a tool that runs as an activity, step or task, or from a capability method
+marked with [`@durable_operation`][pydantic_ai.capabilities.durable_operation], so a sequence of looks and actions
+is one durable unit instead of one journaled step each. Give an operation that acts
+`policy=StepPolicy(repeatable=False)` so it runs at most once.
 
 ### Resolving symlinks
 
