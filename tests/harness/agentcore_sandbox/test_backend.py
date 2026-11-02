@@ -25,6 +25,9 @@ from pydantic_ai_harness.agentcore_sandbox import AgentCoreSandboxBackend
 
 from .fake_agentcore import FakeAgentCore, Hold, client_error
 
+# Upper bound on waiting for the fake to reach a held call; only a broken test runs into it.
+READINESS_WAIT_TIMEOUT = 10
+
 
 @pytest.mark.parametrize(
     ('ref', 'message'),
@@ -228,9 +231,12 @@ async def test_a_timeout_returns_the_partial_output_and_stops_the_task(fake_agen
     hold = fake_agentcore.hold('startCommandExecution')
 
     async def release_once_written() -> None:
-        # The command writes its output, then opens the FIFO, which returns once this reads it.
-        await anyio.to_thread.run_sync(ready.read_text, abandon_on_cancel=True)
-        hold.release.set()
+        try:
+            # The command writes its output, then opens the FIFO, which returns once this reads it.
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                await anyio.to_thread.run_sync(ready.read_text, abandon_on_cancel=True)
+        finally:
+            hold.release.set()
 
     try:
         async with anyio.create_task_group() as group:
@@ -247,6 +253,8 @@ async def test_a_timeout_returns_the_partial_output_and_stops_the_task(fake_agen
         # Opening fails with ENXIO when no reader is waiting, the usual case.
         with contextlib.suppress(OSError):
             os.close(os.open(ready, os.O_WRONLY | os.O_NONBLOCK))
+        # A reader thread that arrives after this gets `FileNotFoundError` instead of blocking.
+        ready.unlink()
     assert 'stopTask' in fake_agentcore.calls
     [session] = fake_agentcore.sessions.values()
     assert all(task.poll() is not None for task in session.tasks.values())
@@ -344,7 +352,8 @@ async def test_a_native_cancel_during_a_slow_start_still_stops_the_command(fake_
     running = asyncio.create_task(backend.run(['sleep', '30']))
     # If the run fails before its start is held, wake the wait below instead of blocking its thread.
     running.add_done_callback(lambda _: hold.reached.set())
-    await anyio.to_thread.run_sync(hold.reached.wait)
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        await anyio.to_thread.run_sync(hold.reached.wait, abandon_on_cancel=True)
     running.cancel()
     # Let the cancellation reach the task before the start answers.
     await asyncio.sleep(0)
@@ -398,7 +407,8 @@ async def _cancel_when_reached(
         async with anyio.create_task_group() as group:
 
             async def cancel() -> None:
-                await anyio.to_thread.run_sync(hold.reached.wait, abandon_on_cancel=True)
+                with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                    await anyio.to_thread.run_sync(hold.reached.wait, abandon_on_cancel=True)
                 if before_cancel is not None:
                     await before_cancel()
                 scope.cancel()
