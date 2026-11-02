@@ -344,6 +344,7 @@ async def test_run_stream_sync_rejects_running_event_loop():
         agent.run_stream_sync('Hello')
 
 
+@pytest.mark.usefixtures('young_gc')
 def test_run_stream_sync_replaces_closed_event_loop(closed_event_loop: asyncio.AbstractEventLoop):
     """`run_stream_sync` must replace a closed thread-current event loop.
 
@@ -364,6 +365,7 @@ def test_run_stream_sync_replaces_closed_event_loop(closed_event_loop: asyncio.A
     assert not asyncio.all_tasks(replacement_loop)
 
 
+@pytest.mark.usefixtures('young_gc')
 def test_run_stream_sync_creates_missing_event_loop(missing_event_loop: asyncio.AbstractEventLoop):
     """`run_stream_sync` must create and install an event loop when the thread has none.
 

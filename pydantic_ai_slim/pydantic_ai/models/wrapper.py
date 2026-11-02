@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 import warnings
 from collections.abc import AsyncGenerator, Awaitable, Sequence
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -108,6 +108,9 @@ class WrapperModel(Model):
     def __init__(self, wrapped: Model | KnownModelName):
         super().__init__()
         self.wrapped = infer_model(wrapped)
+
+    def _run_scope(self) -> AbstractAsyncContextManager[None]:
+        return self.wrapped._run_scope()
 
     async def __aenter__(self) -> Self:
         if not _is_borrowed(self.wrapped):

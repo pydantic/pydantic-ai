@@ -151,7 +151,7 @@ Limits](https://pydantic.dev/docs/ai/harness/tool-output-limits/).
 
 ## Connection customization
 
-Use `auth` in almost every case. Pass `client` only when you need control of the
+Pass `client` when you need control of the
 connection itself: your own FastMCP client or transport, for example one with a
 proxy or MCP handlers. The client then owns the URL and authentication, so
 passing `client` together with `auth` raises an error.
@@ -190,5 +190,3 @@ from pydantic_ai_harness import Ordinal
 
 agent = Agent.from_file('agent.yaml', custom_capability_types=[Ordinal])
 ```
-
-Pass `custom_capability_types` so the loader can create `Ordinal` from the file.

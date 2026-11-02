@@ -20,7 +20,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, cast
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import httpx2
@@ -192,10 +192,13 @@ except ImportError:  # pragma: lax no cover
 try:
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .responses_websocket import ScriptedSocket, responses_reply, websocket_model
 except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
 
 from .._inline_snapshot import snapshot
+from ..append_only import drain_events
 from ..batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
 from ..clock_utils import LONG_TIMEOUT, Clock
 from ..conftest import IsDatetime, IsSameStr, IsStr, legacy_retry_prompt_part
@@ -466,6 +469,38 @@ model = OpenAIChatModel(
 # Simple agent for basic testing
 simple_agent = Agent(model, name='simple_agent')
 simple_prefect_agent = PrefectAgent(simple_agent)  # pyright: ignore[reportDeprecated]
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_prefect_agent_model_tasks_use_http_for_responses_websocket(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch, stream: bool
+) -> None:
+    """A flow run does not implicitly own a socket across its model tasks."""
+    pytest.importorskip('websockets')
+    connect = AsyncMock()
+    monkeypatch.setattr('openai.lib._websocket._WebSocketConnect', connect)
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(responses_reply)) as client:
+        agent = Agent(websocket_model(client), name=f'responses_websocket_{"stream" if stream else "request"}')
+        prefect_agent = PrefectAgent(agent, event_stream_handler=drain_events if stream else None)  # pyright: ignore[reportDeprecated]
+        assert (await prefect_agent.run('hello')).output == 'from HTTP'
+    connect.assert_not_called()
+
+
+async def test_prefect_model_run_scope_outside_flow_forwards_socket_ownership(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip('websockets')
+    socket = ScriptedSocket()
+    monkeypatch.setattr('openai.lib._websocket._WebSocketConnect', AsyncMock(return_value=socket))
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(responses_reply)) as client:
+        model = websocket_model(client)
+        wrapped = PrefectModel(model, task_config={}, get_event_stream_handler=lambda: None)
+        async with wrapped._run_scope():  # pyright: ignore[reportPrivateUsage]
+            response = await model.request([ModelRequest.user_text_prompt('hello')], None, ModelRequestParameters())
+            assert response.text == 'ready'
+            assert socket.close_count == 0
+    assert len(socket.sent) == 1
+    assert socket.close_count == 1
 
 
 async def test_prefect_agent_rejects_a_workspace_inside_a_flow(tmp_path: Path) -> None:

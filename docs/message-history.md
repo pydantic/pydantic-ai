@@ -242,7 +242,7 @@ Mid-conversation instructions stay where you put them rather than joining the sy
 
 How it reaches the model depends on the provider:
 
-* Where the API accepts a system message inside the conversation, it's sent as one, with the operator authority that implies. [Anthropic](models/anthropic.md#mid-conversation-system-messages) supports this on some models, and may adjust the position slightly to satisfy its own placement rules.
+* Where the API accepts a system message inside the conversation, it's sent as one, with the operator authority that implies. [Anthropic](models/anthropic.md#mid-conversation-system-messages) supports this on some models, and may adjust the position slightly to satisfy its own placement rules. [OpenRouter](models/openrouter.md#mid-conversation-system-prompts) does on some routes.
 * Everywhere else it's rendered as a `<system>`-tagged [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] at the same position. The instruction still applies from where you put it, but the model can tell it came in over the user channel and may treat it as a strong preference rather than a rule. Every `<system>` tag inside the instruction, opening or closing, in any case, with whitespace around the `/`, with attributes, self-closing, or cut off at the end of the text, goes out with its `<` escaped as `&lt;`, so text in it can't close the tag early or open another; the rest of the instruction, including any other tags, goes out as written.
 
     On these models, two more things keep the tag meaning the same thing throughout the conversation:
@@ -700,6 +700,13 @@ _(This example is complete, it can be run "as is")_
 `conversation=` stands in for the three arguments it carries, so passing it alongside any of them raises
 [`UserError`][pydantic_ai.exceptions.UserError]. The run works on a copy of the conversation's `usage`, so the
 same `Conversation` can be continued more than once, as a point to branch from.
+
+A conversation loaded from a [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] also carries
+its [`revision`][pydantic_ai.conversation.Conversation.revision], which a run passes through to its result, so
+saving the result back can tell whether someone else saved the conversation in the meantime. It also carries its
+[`new_message_index`][pydantic_ai.conversation.Conversation.new_message_index], which a run moves to where the
+messages it added start, so saving the result appends just those, even when a
+[history processor](#processing-message-history) trimmed the history the run was sent.
 
 [`agent.realtime()`][pydantic_ai.agent.AbstractAgent.realtime] takes `conversation=` too, and a
 [realtime session][pydantic_ai.realtime.RealtimeSession] exposes the same bundle as

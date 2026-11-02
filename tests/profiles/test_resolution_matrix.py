@@ -448,7 +448,7 @@ def test_openai_gpt_5_6():
             'default_cache_retention': timedelta(seconds=1800),
             'supports_cache': True,
             'supports_audio_file_input': False,
-            'supported_cache_retentions': ('30m',),
+            'supported_cache_retentions': ('30m', '12h'),
             'openai_responses_supports_prompt_cache_diagnostics': True,
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
@@ -494,7 +494,7 @@ def test_openai_gpt_6_astra():
             'default_cache_retention': timedelta(seconds=1800),
             'supports_cache': True,
             'supports_audio_file_input': False,
-            'supported_cache_retentions': ('30m',),
+            'supported_cache_retentions': ('30m', '12h'),
             'openai_responses_supports_prompt_cache_diagnostics': True,
             'openai_chat_supports_allowed_tools': True,
             'supports_mid_conversation_effort': True,
@@ -1385,6 +1385,7 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
             'openai_chat_supports_file_urls': True,
+            'openrouter_system_messages_precede_generation': True,
             'openai_chat_supports_max_completion_tokens': False,
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
@@ -1407,6 +1408,7 @@ def test_openrouter_openai_gpt_5_4():
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
@@ -1418,6 +1420,7 @@ def test_openrouter_openai_gpt_5_4():
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
             'openai_chat_supports_max_completion_tokens': False,
+            'openrouter_system_messages_precede_generation': False,
             'supports_cache': False,
             'supported_cache_retentions': (),
             'openrouter_supports_cache_control': False,
@@ -1459,6 +1462,7 @@ def test_openrouter_google_gemini_3_pro():
             'openai_chat_supports_web_search': True,
             'openai_chat_supports_file_urls': True,
             'openai_chat_supports_max_completion_tokens': False,
+            'openrouter_system_messages_precede_generation': False,
             'supports_cache': True,
             'supported_cache_retentions': (),
             'openrouter_supports_cache_control': True,
@@ -1505,6 +1509,7 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
             'openrouter_supports_cache_control': True,
             'openrouter_supports_cache_ttl': False,
             'openrouter_supports_dynamic_instruction_cache': False,
+            'openrouter_system_messages_precede_generation': False,
             'openrouter_supports_tool_cache': False,
             'supports_json_object_output': True,
             'supports_json_schema_output': True,
@@ -1529,6 +1534,7 @@ def test_openrouter_mistral_large():
             'openai_chat_supports_web_search': True,
             'openai_chat_supports_file_urls': True,
             'openai_chat_supports_max_completion_tokens': False,
+            'openrouter_system_messages_precede_generation': False,
             'supports_thinking': True,
             'supports_cache': False,
             'supported_cache_retentions': (),
@@ -1554,6 +1560,7 @@ def test_openrouter_zai_glm_5_3():
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
             'openai_chat_supports_file_urls': True,
+            'openrouter_system_messages_precede_generation': False,
             'openai_chat_supports_max_completion_tokens': False,
             'supports_cache': False,
             'supported_cache_retentions': (),
@@ -1581,6 +1588,7 @@ def test_openrouter_xai_grok_4():
             'openai_chat_supports_web_search': True,
             'openai_chat_supports_file_urls': True,
             'openai_chat_supports_max_completion_tokens': False,
+            'openrouter_system_messages_precede_generation': False,
             'supports_cache': False,
             'supported_cache_retentions': (),
             'openrouter_supports_cache_control': False,
@@ -1753,6 +1761,7 @@ def test_openrouter_qwen():
             'openai_chat_supports_web_search': True,
             'openai_chat_supports_file_urls': True,
             'openai_chat_supports_max_completion_tokens': False,
+            'openrouter_system_messages_precede_generation': False,
             'supports_thinking': True,
             'supports_cache': False,
             'supported_cache_retentions': (),
@@ -1777,6 +1786,7 @@ def test_openrouter_deepseek():
             'openai_chat_supports_web_search': True,
             'openai_chat_supports_file_urls': True,
             'openai_chat_supports_max_completion_tokens': False,
+            'openrouter_system_messages_precede_generation': False,
             'supports_cache': False,
             'supported_cache_retentions': (),
             'openrouter_supports_cache_control': False,
@@ -1799,6 +1809,7 @@ def test_openrouter_meta_llama():
             'openai_chat_supports_web_search': True,
             'openai_chat_supports_file_urls': True,
             'openai_chat_supports_max_completion_tokens': False,
+            'openrouter_system_messages_precede_generation': False,
             'supports_thinking': True,
             'supports_cache': False,
             'supported_cache_retentions': (),
@@ -1824,6 +1835,7 @@ def test_openrouter_moonshotai():
             'openai_chat_supports_file_urls': True,
             'openai_chat_supports_max_completion_tokens': False,
             'supports_thinking': True,
+            'openrouter_system_messages_precede_generation': False,
             'supports_cache': False,
             'supported_cache_retentions': (),
             'openrouter_supports_cache_control': False,
@@ -1848,6 +1860,7 @@ def test_openrouter_unknown_provider_falls_back_to_overlay_only():
             'openai_chat_supports_web_search': True,
             'openai_chat_supports_file_urls': True,
             'openai_chat_supports_max_completion_tokens': False,
+            'openrouter_system_messages_precede_generation': False,
             'supports_thinking': True,
             'supports_cache': False,
             'supported_cache_retentions': (),
@@ -1886,6 +1899,7 @@ def test_azure_openai_gpt_5():
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
             'openai_chat_supports_document_input': False,
+            'openai_responses_supports_websocket': False,
         }
     )
 
@@ -1898,6 +1912,7 @@ def test_azure_mistral_prefix():
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'tool_call_id_length': 9,
             'openai_chat_supports_document_input': False,
+            'openai_responses_supports_websocket': False,
             'openai_chat_supports_max_completion_tokens': False,
         }
     )
@@ -1912,6 +1927,7 @@ def test_azure_mistral_small_latest():
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'tool_call_id_length': 9,
             'openai_chat_supports_document_input': False,
+            'openai_responses_supports_websocket': False,
             'openai_chat_supports_max_completion_tokens': False,
         }
     )
@@ -1926,6 +1942,7 @@ def test_azure_ministral_3b():
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'tool_call_id_length': 9,
             'openai_chat_supports_document_input': False,
+            'openai_responses_supports_websocket': False,
             'openai_chat_supports_max_completion_tokens': False,
         }
     )
@@ -1942,6 +1959,7 @@ def test_azure_magistral_small_latest():
             'openai_chat_supports_document_input': False,
             'openai_chat_supports_max_completion_tokens': False,
             'supports_thinking': True,
+            'openai_responses_supports_websocket': False,
             'thinking_always_enabled': True,
         }
     )
@@ -1954,6 +1972,7 @@ def test_azure_cohere_prefix():
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'openai_chat_supports_document_input': False,
+            'openai_responses_supports_websocket': False,
         }
     )
 
@@ -1968,6 +1987,7 @@ def test_azure_grok_prefix():
             'json_schema_transformer': _AzureGrokJsonSchemaTransformer,
             'grok_supports_builtin_tools': True,
             'openai_chat_supports_document_input': False,
+            'openai_responses_supports_websocket': False,
         }
     )
 
