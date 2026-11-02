@@ -10,7 +10,7 @@ Pushing starts a loop; it does not end the task. **Work stops only when the curr
 merge bar below, every comment is triaged, and metadata is current.**
 Apply the [prose-only documentation exception](#prose-only-documentation) when that exception covers the whole PR.
 
-Lifecycle: implement → targeted verification → commit → pre-push gate → push → CI → required reviews → metadata.
+Lifecycle: implement → targeted verification → commit → pre-push gate → push → CI → required reviews → metadata → handback → watch until merge or close.
 Apply the exceptions below at each gate.
 
 ## Model tiers
@@ -580,3 +580,15 @@ Any author-selected additional review must also have settled.
    After metadata corrections, wait for the corresponding edited-event checks and triage feedback.
    Require workflow-defined accepted terminal outcomes; earlier checks on the same HEAD do not cover the edit.
    Hand the PR back after these gates settle.
+
+## After handback — watch until merge or close
+
+Keep watching the PR after you hand it back, until it merges or closes.
+The merge queue can remove the PR after handback, and new reviews can still land.
+Handle a merge-queue removal as the [Merge bar](#merge-bar) section requires, then keep watching.
+Triage each new comment or review through step 4 of "After you push — the loop".
+A push changes the head, so restart that loop on the new head.
+
+This section exempts a non-interactive run that exits when it hands back.
+A pydanty run and a hosted review workflow are examples.
+If an interactive session ends before the PR merges or closes, its last report states that nothing watches the PR.
