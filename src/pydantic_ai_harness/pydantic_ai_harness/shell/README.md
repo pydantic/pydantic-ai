@@ -209,7 +209,9 @@ A background command is not tied to the run: a conversation spans several
 runs, so a later run on the same workspace can check or stop it by its ID. It
 keeps running until it exits, `stop_command` stops it, or the workspace ends.
 `stop_command` signals the entire process group, including children left after
-the wrapper exits, then removes the job's output files.
+the wrapper exits, then removes the job's output files. In a workspace without
+`setsid` where the job cannot get a process group of its own, only the wrapper
+process is signalled, which does not stop the command or its children.
 
 Background commands and the `shell` tool keep their status and output in files, which needs `mv` and `base64` on the workspace's `PATH`. Without them the call fails at once and names the missing tool.
 
