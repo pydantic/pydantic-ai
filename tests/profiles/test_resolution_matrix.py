@@ -518,6 +518,7 @@ def test_openai_gpt_6_sol_luna(model_name: str):
 
     profile = OpenAIProvider.model_profile(model_name)
     gpt_5_6 = _normalize(OpenAIProvider.model_profile('gpt-5.6-sol'))
+    assert gpt_5_6 is not None
     assert _normalize(profile) == {
         **gpt_5_6,
         'supports_mid_conversation_effort': True,
