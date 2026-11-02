@@ -64,7 +64,7 @@ try:
     from opensandbox.manager import SandboxManager
     from opensandbox.models.execd import ExecutionHandlers, OutputMessage, RunCommandOpts
     from opensandbox.models.sandboxes import SandboxFilter
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError('Install `pydantic-ai-harness[opensandbox]` to use OpenSandbox.') from _import_error
 
 __all__ = ('OpenSandboxBackend', 'destroy_sandbox')
