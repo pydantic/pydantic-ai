@@ -5818,6 +5818,16 @@ def test_prefect_at_most_once_step_raises_a_shorter_configured_timeout_and_keeps
     assert backend.apply_policy(config, policy).get('timeout_seconds') == expected
 
 
+def test_prefect_repeatable_step_without_a_timeout_keeps_its_config() -> None:
+    from pydantic_ai.durable_exec import StepPolicy
+    from pydantic_ai.durable_exec.prefect._operation_backend import PrefectOperationBackend
+
+    backend = PrefectDurability().get_durable_operation_backend()
+    assert isinstance(backend, PrefectOperationBackend)
+    config = TaskConfig(retries=3, timeout_seconds=60)
+    assert backend.apply_policy(config, StepPolicy()) == config
+
+
 # --- `ModelSettings['first_event_timeout']` runs in the model task of the deprecated `PrefectAgent` ---
 
 
