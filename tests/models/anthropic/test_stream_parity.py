@@ -98,7 +98,7 @@ async def _streamed_and_complete(
     return _comparable(streamed.get()), _comparable(complete)
 
 
-# Each test compares every `_STRIDE`th stream, which keeps it well inside the per-test budget.
+# Splits the replays across tests so that no single test carries all of them against the per-test budget.
 _STRIDE = 8
 
 
