@@ -6,7 +6,6 @@ both streams to files that are downloaded once it exits.
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import errno
 import logging
@@ -218,20 +217,11 @@ async def _mapped_errors(
         raise translated from error
 
 
-async def _close_client(client: AsyncDaytona) -> None:
-    await client.close()
-    # `close()` cancels the SDK's event connection task without waiting for it. On a loop that is not
-    # drained afterwards, such as `Agent.run_sync`'s, the task then never closes its connection.
-    connecting = getattr(getattr(client, '_event_dispatcher', None), '_connect_task', None)
-    if connecting is not None:
-        await asyncio.wait([connecting])
-
-
 async def _close_quietly(client: AsyncDaytona) -> None:
     """Close an API client, bounded and shielded; a failure is logged, not raised."""
     with anyio.move_on_after(_TEARDOWN_TIMEOUT, shield=True) as deadline:
         try:
-            await _close_client(client)
+            await client.close()
         except Exception as error:
             logger.warning('Could not close the Daytona API client: %r', error)
     if deadline.cancelled_caught:

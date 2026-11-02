@@ -269,5 +269,6 @@ Source: [`pydantic_ai_harness/dynamic_workflow/`](https://github.com/pydantic/py
 
 - [Code Mode](code-mode.md) -- the same sandbox, calling the agent's own tools instead of sub-agents.
 - [Subagents](subagents.md) -- one-delegation-per-tool-call sub-agents, without the scripted choreography.
+- [Dynamic Workflows: feature that enabled the Bun rewrite](https://pydantic.dev/articles/dynamic-workflows) (Pydantic) -- how `DynamicWorkflow` brings the pattern to any Pydantic AI agent.
 - [Rewriting Bun in Rust](https://bun.com/blog/bun-in-rust) (Bun) -- the same pattern at scale, via Claude Code's dynamic workflows.
 - [Capabilities](../capabilities/overview.md) and [on-demand capabilities](../capabilities/on-demand.md).

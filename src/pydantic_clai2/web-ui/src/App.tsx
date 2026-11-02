@@ -4,6 +4,7 @@ import type { Attachment } from './attachments'
 import { Composer, type ComposerHandle } from './components/Composer'
 import { QuestionCard } from './components/QuestionCard'
 import { Sidebar, type SidebarHandle } from './components/Sidebar'
+import { PermissionsChip } from './components/PermissionsChip'
 import { Switches } from './components/Switches'
 import { Transcript } from './components/Transcript'
 import { TurnMeter } from './components/TurnMeter'
@@ -295,7 +296,8 @@ export function App() {
     setChanges(false)
     setSidePanel(null)
   }, [])
-  // The files may have changed when a turn ends, so the count and the panel ask again then; not while one runs.
+  // The files may have changed when a turn ends, so the count and the panel ask again then. While one runs, each asks
+  // only for a session or scope it has no answer for yet.
   const changesActive = connection === 'open' && !chat.running
   // The page hears a turn end before the session keeps its messages, so the count asks again once it saves them.
   const sessionChanges = useChanges(session, 'session', shown ?? '', changesActive, false, state.sessionsVersion).changes
@@ -629,7 +631,12 @@ export function App() {
       ref={composer}
       running={chat.running}
       meter={<TurnMeter status={status} startedAt={chat.turnStartedAt} />}
-      controls={<Switches status={status} running={chat.running} onError={showError} />}
+      controls={
+        <>
+          <PermissionsChip status={status} onError={showError} />
+          <Switches status={status} running={chat.running} onError={showError} />
+        </>
+      }
       model={status?.model ?? '…'}
       disabled={connection !== 'open'}
       placeholder={chat.running ? `Queue a follow-up, or steer with ${STEER_KEY}…` : fresh ? 'Describe a task or ask a question' : 'Ask for follow-up changes'}

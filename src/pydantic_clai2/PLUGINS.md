@@ -227,23 +227,28 @@ sampling or native provider-side MCP.
 
 ## On-demand authoring help
 
-The default CLAI agent offers this guide as the deferred capability
-`clai_customization`. Until the model loads it with `load_capability`, the
-prompt carries only its one-line entry in the deferred-capability catalog, so
-an ordinary coding turn never reads the guide. When you ask for customization,
-that entry tells the model to load it first, and the bundled text then joins
-the conversation's instructions. Reading it needs neither a checkout nor a network connection.
+The default CLAI agent lists `clai_customization` as one deferred capability.
+Its catalog entry tells the model to load it when asked about CLAI itself. Only
+then does the model get `search_clai_docs(query)` and `read_clai_docs(path)`, with
+a short instruction to read the
+[customization guide](pydantic_clai2/customization.md) before advising on CLAI
+customization. An ordinary coding turn gets neither the docs nor their tools.
+The docs are read on tool invocation, a section at a time for long ones. No
+checkout or network connection is needed.
+[Ask CLAI about itself](docs/reference.md#ask-clai-about-itself) lists
+the docs and how paths and long docs work.
 
-The [bundled guide](pydantic_clai2/customization.md) includes examples for
-commands, hooks, settings, renderers, custom Termflow menus, and custom model
-launchers. It also names current limits: PluginHost does not replace the prompt
-editor or change the built-in model catalog's entries. Those need a
-custom agent launcher or a source change, as explained in the guide.
+The customization guide includes examples for commands, hooks, settings,
+renderers, custom Termflow menus, and custom model launchers. It also names
+current limits: PluginHost does not replace the prompt editor or change the
+built-in model catalog's entries. Those need a custom agent launcher or a source
+change, as explained in the guide.
 
-Custom agents can opt in with `customization_guide()` from
-`pydantic_clai2.customization`. Loading it only returns documentation; it does not
-write files, activate plugins, or grant permission to execute generated code.
-Keep the bundled guide aligned with this contract when changing plugin APIs.
+Custom agents can opt in with `ClaiDocs()` from `pydantic_clai2.clai_docs`;
+`customization_guide()` from `pydantic_clai2.customization` returns the same. The
+tools only return documentation; they do not write files, activate plugins, or
+grant permission to execute generated code. Keep the customization guide aligned
+with this contract when changing plugin APIs.
 
 ## Default code rendering
 
@@ -1319,10 +1324,23 @@ workspace and its default filenames. Its settings:
 
 | Key | Default | Does |
 |---|---|---|
-| `walk_up` | `false` | also load instruction files from every directory between the workspace and your home directory |
+| `walk_up` | `false` | also load instruction files from the workspace up to `repo_context.walk_up_root`, inclusive (home by default); a non-ancestor root scans only the workspace |
 | `inventory_tool` | `false` | give the agent `inventory_agent_context`, which maps the repo's `.claude`, `.agents`, `.codex`, and `.grok` assets |
-| `nested_traversal` | `false` | when the agent reads or lists a directory, tell it about that directory's instruction file |
+| `nested_traversal` | `false` | when the agent reads a file in, or lists, a directory, tell it about the instruction files of that directory and of every directory between it and the workspace |
 | `nested_inject` | `"pointer"` | what nested traversal adds: `"pointer"` (one line naming the file) or `"contents"` |
+
+Two global user-only `/set` keys control autoload boundaries, not plugin JSON fields:
+
+| `/set` key | Default | Does |
+|---|---|---|
+| `repo_context.walk_up_root` | `~` | inclusive stop used only when `walk_up` is `true` |
+| `repo_context.autoload_symlink_roots` | `[]` | JSON string list of authorized external instruction-symlink target directories |
+
+These keys are rejected in `.clai/settings.json` and plugin JSON. Changes apply
+next run. See [Repository instructions](docs/reference.md#repository-instructions)
+for commands, path rules, and trust guidance, and
+[Repo Context](../../docs/harness/repo-context.md#shared-instruction-symlinks)
+for symlink loading and backend requirements.
 
 A repository can declare plugins too, in `.clai/settings.json`; they show as
 `(project)` and rank just above the built-ins. They start off, because a
@@ -1382,6 +1400,14 @@ to the clipboard without choosing an answer. Transcript text remains selectable 
 `/plugins disable ask_user` takes the tool away, and a session without a terminal, such as
 `clai2 --web` or piped output, never gets it. While the [`web` plugin](#web-this-session-in-your-browser)
 is loaded, it asks the questions instead, in the browser and this picker at once.
+
+The same picker asks about the calls [`/permissions`](docs/reference.md#permissions) holds: the plugin also binds
+`runtime/permissions.py`'s `approval_handler`, which puts each held call to the answerer as a question with
+`Approve`, `Approve for this session`, and `Deny`; a typed answer denies the call with it as the reason. The held
+command is printed in full above the picker first, since the picker cuts its question to the rows it has
+(`TerminalAnswerer.ask_approval`); a replacement approver should show it in full too. A
+replacement for this plugin that should answer approvals binds `approval_handler` with its own approver; without
+one, held calls are denied.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for
@@ -3645,6 +3671,25 @@ CLAI knows, such as an `AnthropicModel` subclass, set `settings_from='anthropic'
 models get that provider's controls instead, such as Claude's thinking mode and
 effort, and the status row shows that provider's known context window for them
 before a turn measures one. Any other value raises `ValueError`.
+
+When CLAI resolves a `claude-code` model, directly, through a profile or in a chain,
+and it is an `AnthropicModel` using `AsyncAnthropic`, CLAI adds a response hook to
+its HTTP client. Existing hooks remain in place. CLAI keeps the same client and
+authentication, and leaves the SDK's normal retry budget unchanged.
+
+The hook stays for that client's lifetime. It also applies to Messages API requests
+the plugin makes on its own with that client, outside the resolved model. When a
+`POST` to `/v1/messages` or `/v1/messages/count_tokens` gets a 429 asking for a wait of
+over 60 seconds, the hook sets `x-should-retry: false`. The SDK then raises at once
+instead of sleeping. The typed error keeps the status, body and other headers,
+including `Retry-After` and quota/reset headers. Its `x-should-retry` value is CLAI's
+local veto, not the provider's original retry decision. Other requests on the client,
+such as account usage, are unchanged.
+
+CLAI does not add this hook for other prefixes or preconstructed models that bypass
+resolution. Sharing an already-decorated HTTP client also shares its policy. A
+configured fallback chain can advance normally; without one, CLAI ends the turn
+visibly and keeps its history.
 
 The built-in `/effort [VALUE|reset]` shortcut uses the active model's
 `/model settings` effort control, including a plugin provider's `settings_from`
