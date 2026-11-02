@@ -31,6 +31,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/login [NAME[@PROFILE]]` | Sign in: `openai-codex`, `github-copilot`, or one a plugin adds; `@PROFILE` adds another account |
 | `/accounts` | Add, rename, reorder, and sign out of accounts |
 | `/keys` | Manage saved API keys |
+| `/permissions [full\|auto\|read-only]` | Show or set what runs without asking |
 | `/set [KEY [VALUE]]` | Change a setting; no arguments opens the menu (alias `/settings`) |
 | `/config show\|get\|set\|reset` | Read or write saved settings; writes apply on restart |
 | `/system_prompt` | View the system prompt and edit your own instructions |
@@ -100,12 +101,13 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `run.tool_retries` | `3` | Default retries per tool call. Explicit tool retry limits take precedence. |
 | `run.code_mode` | `true` | Fold tools into a sandboxed run_code that runs each statement while the model writes. Off, every tool is called natively. |
 | `run.speculative_code_mode` | `false` | Also start read-only calls in run_code before the model reaches them. Turns on code mode for its runs. Ctrl+X Ctrl+S toggles it. |
+| `run.permissions` | `"full"` | What runs without asking: full runs everything; auto asks before commands that delete, push, install, or reach the network; read-only asks before every file write and command. /permissions sets it. |
 | `run.instructions` | `""` | Your own instructions, sent after CLAI's built-in, AGENTS.md, and plugin instructions. /system_prompt edits them. |
 | `accounts.pool` | `true` | A model without @PROFILE runs on every signed-in account of its provider, in /accounts order, as @* does. PROVIDER@default:MODEL runs the default account alone. |
 | `sessions.naming` | `true` | Name saved sessions in the background using a model. |
 | `sessions.naming_model` | `null` | Naming model override; null uses the current model. |
 | `updates.channel` | `stable` | Where /update looks: stable PyPI releases, or main for the newest CLAI commit on main. |
-| `repo_context.walk_up_root` | `~` | User-only inclusive stop for instruction autoload when the plugin's `walk_up` is on. |
+| `repo_context.walk_up_roots` | `["~"]` | User-only JSON list of inclusive stops for instruction autoload when the plugin's `walk_up` is on; the nearest one containing the workspace applies. |
 | `repo_context.autoload_symlink_roots` | `[]` | User-only JSON list of authorized external instruction-symlink target directories, for autoload only. |
 | `worktrees.remove_commands` | `{}` | User-only repository-to-argv map for confirmed exit cleanup. See [Register a worktree removal command](#register-a-worktree-removal-command). |
 
@@ -449,22 +451,26 @@ Enable its existing `walk_up` option to read ancestors too:
 
 ```text
 /plugins add repo_context pydantic_clai2.builtin_plugins.repo_context '{"walk_up": true}'
-/set repo_context.walk_up_root /srv/projects
+/set repo_context.walk_up_roots '["~", "/srv/projects"]'
 /set repo_context.autoload_symlink_roots '["~/agent-context"]'
 ```
 
-`walk_up` defaults to `false`; setting a root does not turn it on. When enabled,
-it reads ancestors up to `repo_context.walk_up_root`, inclusive (`~`, your home,
-by default). A root outside the workspace's ancestors leaves only the workspace
-scanned. `repo_context.autoload_symlink_roots` defaults to `[]`; set it to a JSON
-list of directories if your instruction files are symlinks into a shared directory.
+`walk_up` defaults to `false`; setting roots does not turn it on. When enabled,
+it reads ancestors up to the nearest listed root that contains the workspace,
+inclusive: with the list above, a workspace under `/srv/projects` stops there and
+one elsewhere under your home stops at `~`. `repo_context.walk_up_roots` defaults
+to `["~"]`, your home. When no listed root contains the workspace, only the
+workspace is scanned. `repo_context.autoload_symlink_roots` defaults to `[]`; set
+it to a JSON list of directories if your instruction files are symlinks into a
+shared directory.
 
 Both settings are user-only, not plugin JSON options; `.clai/settings.json`
 rejects their fields. Use absolute paths, `~`, or `~/...`, not relative paths,
-`~other-user`, or environment-variable interpolation. Quote paths containing
-spaces, such as `/set repo_context.walk_up_root '/srv/My Projects'`, and
-single-quote the whole JSON list as above. Paths are normalized when used and
-need not exist when saved. Changes apply on the next run, not during a running turn.
+`~other-user`, or environment-variable interpolation. Single-quote each whole
+JSON list as above, which also keeps paths containing spaces in one argument,
+such as `/set repo_context.walk_up_roots '["~", "/srv/My Projects"]'`. Paths are
+resolved, following symlinks, when used and need not exist when saved. Changes
+apply on the next run, not during a running turn.
 
 Authorize a directory holding only trusted instructions, not `/` or all of home:
 repository symlinks can select any readable file beneath it. See
@@ -1263,6 +1269,9 @@ A press that cancels a running turn, closes completions, or leaves history searc
 does not count toward the shortcut. Wait for queued prompts to finish first.
 Typing another key or opening another menu resets the double-Esc sequence.
 
+In the web UI, a prompt's **Edit** and **Retry** buttons rewind to it the same way, between turns,
+and send the edited or unchanged prompt with its images at once.
+
 ### Shell commands with `!`
 
 A line that starts with `!`, after trimming surrounding whitespace, runs in the
@@ -1829,6 +1838,33 @@ The menu is the built-in `ask_user` plugin around the harness's
 shows how to put a different one, a web form for instance, in its place.
 `/plugins disable ask_user` removes the tool.
 
+### Permissions
+
+`/permissions` chooses what the agent may do without asking, for this session:
+
+| Mode | File writes | Shell commands |
+|---|---|---|
+| `full` (default) | run | run |
+| `auto` | run | run, except commands that delete (`rm -rf`), push (`git push`), rewrite history (`git reset --hard`, `git clean`), use `sudo`, reach the network (`curl`, `ssh`, ...), or install packages |
+| `read-only` | ask | ask |
+
+A held call waits for your answer: the inline picker in the terminal, or an approval card in the web UI,
+showing the command or the file change; the terminal prints the command (or a path too long for the
+picker) in full above it. **Approve** runs it once, **Approve for this session** also runs the
+same tool on the same command (or the same file) without asking for the rest of the conversation, and **Deny** tells
+the model the call did not run, with the reason you type, if any. The web UI shows the mode as a chip by the
+prompt box and changes it there too. A change applies from the next tool call, also during a turn, except
+that code mode's sandbox keeps the folder as the turn mounted it until the next prompt.
+
+The mode is the `run.permissions` setting: `/permissions MODE` saves it as the default for new sessions too,
+and Settings, General edits it. It is harness [`Permissions`](../../../docs/harness/permissions.md), which checks
+the coding tools' file writes and commands only; other tools, such as MCP servers', run as before. File tools
+only reach files inside the session's folder, so `auto` lets them write. In `read-only`, code mode's sandbox
+gets the folder read-only for the run. The command patterns are a convenience, not a sandbox. A session no one
+can be asked in, such as `clai2 -p`, denies held calls. Outside `full`, a delegation whose delegate would run without these checks is refused: a named
+sub-agent, or a delegation to `self` from an agent you supply (`clai2 --agent`), which gets `/permissions`
+per run rather than bound to the agent. The model is told to do the work itself instead.
+
 ### Compacting the conversation
 
 The built-in `compaction` plugin is on by default, with or without `coder`.
@@ -2228,11 +2264,11 @@ keep the original saved path; resuming does not change directories or migrate
 saved data.
 
 In the browser, <kbd>a</kbd> archives the selected session: it leaves the list and
-the web UI's sidebar, and nothing is deleted. <kbd>h</kbd> lists archived sessions too,
-marked `(archived)`, and searches them; <kbd>a</kbd> on one unarchives it. The current
-session and one running in another CLAI cannot be archived. Resuming an archived
-session, or a new turn in it, unarchives it; `--fork-session` leaves it archived
-and continues in the copy.
+the web UI's sidebar, except its **Archived** view, and nothing is deleted.
+<kbd>h</kbd> lists archived sessions too, marked `(archived)`, and searches them;
+<kbd>a</kbd> on one unarchives it. The current session and one running in another
+CLAI cannot be archived. Resuming an archived session, or a new turn in it,
+unarchives it; `--fork-session` leaves it archived and continues in the copy.
 
 CLAI saves accepted prompts before the first model request and saves the retained
 history after successful, failed, and cancelled turns. `/compact` commits its
@@ -2634,6 +2670,9 @@ many sessions run at once.
   turn here, a hollow ring while another CLAI runs it, **Needs input** while it asks
   you a question, and a bold title while it has changes you have not seen.
   **Attention** (Cmd/Ctrl+Alt+U) lists only those sessions.
+- **Archiving.** A session's menu archives it, or every session of its branch, and a
+  project's menu archives all its chats. The sidebar's **Archived** view lists them
+  with **Unarchive**.
 - **Esc** and the stop button interrupt the session you are looking at, and only it.
 - **Steering and the queue.** As at the terminal's prompt, Enter queues a message
   while a turn runs and Alt+Enter (Option+Enter), or the bolt button, steers the turn

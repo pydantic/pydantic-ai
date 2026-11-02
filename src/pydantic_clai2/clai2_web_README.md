@@ -70,6 +70,12 @@ whether you queued it here, in another browser, or in the terminal: edit a messa
 saves, Esc cancels), steer it now, or remove it before it runs. A message that runs while you edit it
 is queued again as a new follow-up when you save, as in the terminal.
 
+Between turns, hover or focus one of your prompts for **Edit** and **Retry**, the browser's
+[rewind](README.md#rewind-a-conversation). Edit opens the prompt in place; Send (or Enter) removes it
+and everything after it from the conversation, then sends your edited text with its images. Retry
+sends it again unchanged. Neither undoes changes to files. Prompts the terminal's rewind disables,
+and steering messages, offer neither.
+
 The browser can make the agent run commands, so the server listens on 127.0.0.1 only and
 every request must carry a token that is new each launch, though kept across `/update`; the printed link contains it. Keep
 the link private. The `web` plugin starts disabled; `/web` works once it is enabled with
@@ -90,7 +96,9 @@ changed, with the number of files it changed so far on the button. Pick a scope:
 **This session** come from the session's own `write_file` and `edit_file` calls, so they work
 outside Git too, and show each file once, as one diff from before the first change to what is on
 disk now. A file the session wrote whole counts as created, unless the last commit has it with
-content the session did not write, which it is then compared with. These scopes read the
+content the session did not write, which it is then compared with. In Git, they also list files
+changed otherwise since the scope began, such as by a shell command, without a diff, as
+**Uncommitted** has it. These scopes read the
 conversation, so after `/compact` they start from the compacted summary. **Uncommitted** is
 `git diff HEAD` in the session's directory, with untracked files that are not ignored listed as
 added, as `git status` and the git chip count them, and **Branch

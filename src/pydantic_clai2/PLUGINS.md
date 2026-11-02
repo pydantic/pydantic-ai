@@ -1324,7 +1324,7 @@ workspace and its default filenames. Its settings:
 
 | Key | Default | Does |
 |---|---|---|
-| `walk_up` | `false` | also load instruction files from the workspace up to `repo_context.walk_up_root`, inclusive (home by default); a non-ancestor root scans only the workspace |
+| `walk_up` | `false` | also load instruction files from the workspace up to the nearest `repo_context.walk_up_roots` entry containing it, inclusive (home by default); with no containing entry, only the workspace |
 | `inventory_tool` | `false` | give the agent `inventory_agent_context`, which maps the repo's `.claude`, `.agents`, `.codex`, and `.grok` assets |
 | `nested_traversal` | `false` | when the agent reads a file in, or lists, a directory, tell it about the instruction files of that directory and of every directory between it and the workspace |
 | `nested_inject` | `"pointer"` | what nested traversal adds: `"pointer"` (one line naming the file) or `"contents"` |
@@ -1333,7 +1333,7 @@ Two global user-only `/set` keys control autoload boundaries, not plugin JSON fi
 
 | `/set` key | Default | Does |
 |---|---|---|
-| `repo_context.walk_up_root` | `~` | inclusive stop used only when `walk_up` is `true` |
+| `repo_context.walk_up_roots` | `["~"]` | JSON string list of inclusive stops, resolved through symlinks, used only when `walk_up` is `true`; the nearest one containing the workspace applies |
 | `repo_context.autoload_symlink_roots` | `[]` | JSON string list of authorized external instruction-symlink target directories |
 
 These keys are rejected in `.clai/settings.json` and plugin JSON. Changes apply
@@ -1400,6 +1400,14 @@ to the clipboard without choosing an answer. Transcript text remains selectable 
 `/plugins disable ask_user` takes the tool away, and a session without a terminal, such as
 `clai2 --web` or piped output, never gets it. While the [`web` plugin](#web-this-session-in-your-browser)
 is loaded, it asks the questions instead, in the browser and this picker at once.
+
+The same picker asks about the calls [`/permissions`](docs/reference.md#permissions) holds: the plugin also binds
+`runtime/permissions.py`'s `approval_handler`, which puts each held call to the answerer as a question with
+`Approve`, `Approve for this session`, and `Deny`; a typed answer denies the call with it as the reason. The held
+command is printed in full above the picker first, since the picker cuts its question to the rows it has
+(`TerminalAnswerer.ask_approval`); a replacement approver should show it in full too. A
+replacement for this plugin that should answer approvals binds `approval_handler` with its own approver; without
+one, held calls are denied.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for
@@ -1493,7 +1501,8 @@ and the stop button interrupt the shown session only. Alt+Enter in the composer 
 turn (`LiveSession.steer`), as at the terminal's prompt, and the input queued behind it is listed
 above the composer from
 `LiveSession.queue`, which the terminal's own queue is: the page edits or removes an entry with
-`edit_queued` and `remove_queued`, and hears of every change through `host.live.subscribe`. A steered
+`edit_queued` and `remove_queued`, and hears of every change through `host.live.subscribe`. Edit and Retry on a
+prompt rewind its conversation while it is not `LiveSession.busy`. A steered
 message shows in the transcript once core delivers it (`EnqueuedMessagesEvent`). The process's working directory never changes: each session reads its own as
 `host.workspace`. `/resume ID` typed in a session still moves that session to the directory `ID`
 was saved in, and `/workspace DIRECTORY` (an existing absolute path) starts a new conversation
@@ -3987,6 +3996,7 @@ A `LiveSession` is one live session:
 | `tasks` | its delegated tasks, or `None` |
 | `forks` | its background `/fork` runs, oldest first, each a `ForkInfo` as `/forks` lists it |
 | `running` | whether a turn runs in it now |
+| `busy` | whether it handles input now (a turn, a command, or the terminal's rewind) or has input queued; check it before replacing its history between turns |
 | `setting(key)` | a CLAI setting's value in it, as its `host.setting` reads it, with its own `model` and `run.*` |
 | `queued` | how many inputs wait for its running turn or command to end |
 | `queue` | those inputs, oldest first, each a `QueuedInput` with an `id` (stable while it waits, also when the terminal starts or stops showing the session) and its `text`; the same queue the terminal lists above its prompt |

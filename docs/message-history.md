@@ -242,7 +242,7 @@ Mid-conversation instructions stay where you put them rather than joining the sy
 
 How it reaches the model depends on the provider:
 
-* Where the API accepts a system message inside the conversation, it's sent as one, with the operator authority that implies. [Anthropic](models/anthropic.md#mid-conversation-system-messages) supports this on some models, and may adjust the position slightly to satisfy its own placement rules.
+* Where the API accepts a system message inside the conversation, it's sent as one, with the operator authority that implies. [Anthropic](models/anthropic.md#mid-conversation-system-messages) supports this on some models, and may adjust the position slightly to satisfy its own placement rules. [OpenRouter](models/openrouter.md#mid-conversation-system-prompts) does on some routes.
 * Everywhere else it's rendered as a `<system>`-tagged [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] at the same position. The instruction still applies from where you put it, but the model can tell it came in over the user channel and may treat it as a strong preference rather than a rule. Every `<system>` tag inside the instruction, opening or closing, in any case, with whitespace around the `/`, with attributes, self-closing, or cut off at the end of the text, goes out with its `<` escaped as `&lt;`, so text in it can't close the tag early or open another; the rest of the instruction, including any other tags, goes out as written.
 
     On these models, two more things keep the tag meaning the same thing throughout the conversation:

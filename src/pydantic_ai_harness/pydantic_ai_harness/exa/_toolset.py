@@ -276,12 +276,8 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
     titles (`ExaSource` dicts), so applications can render citations from
     `ToolReturnPart.metadata` without parsing the text.
 
-    `get_page` text is capped at `max_text_chars` characters; one character of
-    headroom above the cap is requested from Exa so local truncation can detect
-    a longer page and append a marker (at the API ceiling of
-    `EXA_MAX_PAGE_TEXT_CHARS` no headroom exists, so the marker cannot fire).
-    The `web_search` result count is bounded the same way: `num_results` is
-    requested from Exa and re-applied to the response. Bounds are validated by
+    `get_page` text is capped at `max_text_chars` characters, and `num_results`
+    is requested from Exa and re-applied to the response. Bounds are validated by
     `ExaSearch` at construction.
 
     With `defer_to_native=True`, `web_search` is the local fallback for the
