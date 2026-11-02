@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from dataclasses import dataclass
 from typing import Literal
@@ -156,11 +157,11 @@ class TestDetectLoops:
 
         assert result.output == 'The config is fine.'
         # The stream was cut long before the model finished its 61 chunks.
-        assert script.sent[0] < 20
+        assert script.sent[0] < 45
         [nudge] = _nudges(result.all_messages())
         assert (nudge.content, nudge.metadata, nudge.scope) == snapshot(
             (
-                'Your thinking repeated the same passage 9 times in a row, which is not making progress. Change your approach, or explain what is blocking you.',
+                'Your thinking repeated the same passage 37 times in a row, which is not making progress. Change your approach, or explain what is blocking you.',
                 {
                     'origin': 'pydantic-ai-harness.detect_loops.nudge.v1',
                     'pattern': 'repeated_thinking',
@@ -191,17 +192,17 @@ class TestDetectLoops:
         result = await _agent(script, DetectLoops(action=record)).run('Explain', event_stream_handler=_drain)
 
         assert result.output == 'done'
-        assert script.sent[0] < 20
+        assert script.sent[0] < 45
         assert loops == snapshot(
             [
                 DetectedLoop(
                     pattern='repeated_stream_text',
                     tool_names=(),
-                    count=9,
-                    window=512,
-                    fingerprints=('4b9c2bc457212a30',),
-                    message='Your response repeated the same passage 9 times in a row, which is not making progress. Change your approach, or explain what is blocking you.',
-                    repeated_text='e config file again before answering. I should check th',
+                    count=37,
+                    window=2048,
+                    fingerprints=('dc3adfd1bb4f501d',),
+                    message='Your response repeated the same passage 37 times in a row, which is not making progress. Change your approach, or explain what is blocking you.',
+                    repeated_text='k the config file again before answering. I should chec',
                 )
             ]
         )
@@ -225,11 +226,11 @@ class TestDetectLoops:
         result = await agent.run('Write a.py', event_stream_handler=_drain)
 
         assert result.output == 'done'
-        assert script.sent[0] < 40
+        assert script.sent[0] < 80
         [nudge] = _nudges(result.all_messages())
         assert (nudge.content, nudge.metadata) == snapshot(
             (
-                'The arguments of your call to `write_file` repeated the same passage 15 times in a row, which is not making progress. Change your approach, or explain what is blocking you.',
+                'The arguments of your call to `write_file` repeated the same passage 63 times in a row, which is not making progress. Change your approach, or explain what is blocking you.',
                 {
                     'origin': 'pydantic-ai-harness.detect_loops.nudge.v1',
                     'pattern': 'repeated_tool_args',
@@ -296,10 +297,31 @@ class TestDetectLoops:
 
     def test_a_passage_around_a_run_of_a_short_unit(self):
         detector = RepetitionDetector[object]()
-        unit = 'a' * 20 + '0' * 400
+        unit = 'Checking the configuration again. ' + '0' * 400
 
-        assert detector.find(unit * 4) == Repetition(text=unit, count=4)
-        assert detector.find('=' * 1000 + '0, ' * 300) is None
+        assert detector.find(unit * 8) == Repetition(text=unit, count=8)
+        assert detector.find('=' * 1000 + '0, ' * 1000) is None
+
+    async def test_repetitive_content_written_on_purpose_is_not_a_loop(self):
+        loops, detector = _collect()
+        contents = [
+            '0 0 0 0 0 0 0 0 0 0\\n' * 100,
+            '| --- | --- | --- | --- |\\n' * 100,
+            "INSERT INTO t VALUES (1, 'x', 'y');\\n" * 50,
+        ]
+        calls = [
+            _args(json.dumps({'path': f'{index}.txt', 'content': content}), index=index, name='write_file')
+            for index, content in enumerate(contents)
+        ]
+        agent = _agent(_script(calls, ['| a | b |\n' + '| --- | --- |\n' * 100]), detector)
+
+        @agent.tool_plain
+        def write_file(path: str, content: str) -> str:
+            return 'written'
+
+        await agent.run('Write the fixtures', event_stream_handler=_drain)
+
+        assert loops == []
 
     async def test_channels_can_be_turned_off(self):
         loops: list[DetectedLoop] = []
@@ -334,24 +356,19 @@ class TestDetectLoops:
 
         assert exc_info.value.loop.pattern == 'repeated_stream_text'
         assert str(exc_info.value) == exc_info.value.loop.message
-        assert script.sent[0] < 20
+        assert script.sent[0] < 45
 
     async def test_a_handler_that_returns_lets_the_response_continue(self):
         loops, detector = _collect()
-        script = _script([LOOP] * 40)
+        script = _script([LOOP] * 80)
 
         result = await _agent(script, detector).run('Explain', event_stream_handler=_drain)
 
-        assert result.output == LOOP * 40
-        assert script.sent == [40]
+        assert result.output == LOOP * 80
+        assert script.sent == [80]
         # The loop is reported, then has to build up again before it's reported a second time.
         assert [(loop.pattern, loop.count) for loop in loops] == snapshot(
-            [
-                ('repeated_stream_text', 9),
-                ('repeated_stream_text', 9),
-                ('repeated_stream_text', 9),
-                ('repeated_stream_text', 9),
-            ]
+            [('repeated_stream_text', 37), ('repeated_stream_text', 37)]
         )
 
     async def test_a_response_that_was_not_streamed_is_checked_when_it_arrives(self):
@@ -449,7 +466,7 @@ class TestDetectLoops:
 
     async def test_arguments_that_arrive_as_an_object_are_checked_as_json(self):
         loops, detector = _collect()
-        call = ToolCallPart('write_file', {'path': 'a.py', 'content': 'value = transform(value, step)\n' * 40})
+        call = ToolCallPart('write_file', {'path': 'a.py', 'content': 'value = transform(value, step)\n' * 100})
         responses = iter([ModelResponse(parts=[call])])
 
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -472,7 +489,7 @@ class TestDetectLoops:
             async with _agent(script, DetectLoops()).run_stream('Explain') as result:
                 await result.get_output()
 
-        assert script.sent[0] < 20
+        assert script.sent[0] < 45
 
     async def test_no_task_outlives_a_stopped_or_finished_stream(self):
         def stop(ctx: RunContext[object], loop: DetectedLoop) -> None:
@@ -503,10 +520,18 @@ class TestDetectLoops:
             with pytest.raises(asyncio.CancelledError):
                 await run
 
+    async def test_a_part_is_checked_when_it_ends(self):
+        loops: list[DetectedLoop] = []
+        detector = DetectLoops[object](stream_check_every=100_000, action=lambda ctx, loop: loops.append(loop))
+
+        await _agent(_script([LOOP] * 40), detector).run('Explain', event_stream_handler=_drain)
+
+        assert [(loop.pattern, loop.window) for loop in loops] == [('repeated_stream_text', len(LOOP) * 40)]
+
     async def test_streamed_and_whole_responses_reach_the_same_decision(self):
         streamed, streamed_detector = _collect()
         whole, whole_detector = _collect()
-        chunks = [LOOP[:13], *([LOOP] * 20)]
+        chunks = [LOOP[:13], *([LOOP] * 50)]
         await _agent(_script(chunks), streamed_detector).run('Explain', event_stream_handler=_drain)
 
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -584,11 +609,11 @@ class TestDetectLoops:
             {
                 'detect_loops.pattern': 'repeated_stream_text',
                 'detect_loops.action': 'nudge',
-                'detect_loops.count': 9,
-                'detect_loops.window': 512,
+                'detect_loops.count': 37,
+                'detect_loops.window': 2048,
                 'detect_loops.tool_names': (),
-                'detect_loops.fingerprints': ('4b9c2bc457212a30',),
-                'detect_loops.repeated_text': 'e config file again before answering. I should check th',
+                'detect_loops.fingerprints': ('dc3adfd1bb4f501d',),
+                'detect_loops.repeated_text': 'k the config file again before answering. I should chec',
             }
         )
 
@@ -616,6 +641,10 @@ class TestDetectLoops:
                 '`max_period` must be at least `min_period` (30), got 20.',
             ),
             (lambda: RepetitionDetector[object](min_repeats=1), '`min_repeats` must be at least 2, got 1.'),
+            (
+                lambda: RepetitionDetector[object](min_distinct_chars=0),
+                '`min_distinct_chars` must be at least 1, got 0.',
+            ),
             (lambda: DetectLoops[object](stream_check_every=0), '`stream_check_every` must be at least 1, got 0.'),
             (
                 lambda: DetectLoops[object](repeated_parallel_call_threshold=1),
@@ -646,7 +675,7 @@ class TestLoopJudge:
         result = await _agent(script, DetectLoops(stream_detector=judge)).run('Explain', event_stream_handler=_drain)
 
         assert result.output == 'done'
-        assert script.sent[0] < 20
+        assert script.sent[0] < 45
         assert [nudge.metadata['pattern'] for nudge in _nudges(result.all_messages()) if nudge.metadata] == [
             'repeated_stream_text'
         ]

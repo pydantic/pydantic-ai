@@ -75,12 +75,15 @@ A response that isn't streamed, such as one from `agent.run()` without an `event
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `min_period` | `20` | The shortest passage that counts, in characters. A run of a shorter unit, such as a divider line or a row of zeros, isn't reported, even when a longer passage made of it repeats. |
+| `min_period` | `20` | The shortest passage that counts, in characters. A run of a shorter unit, such as a divider line, isn't reported, even when a longer passage made of it repeats. |
 | `max_period` | `2000` | The longest passage that counts. |
-| `min_repeats` | `4` | How many times in a row the passage has to repeat. |
-| `min_chars` | `400` | How many characters the repeats have to cover together. |
+| `min_distinct_chars` | `8` | How many different characters the passage has to use, so a row of numbers or a table rule doesn't count. |
+| `min_repeats` | `8` | How many times in a row the passage has to repeat. |
+| `min_chars` | `2000` | How many characters the repeats have to cover together. |
 
 It compares characters exactly, over the part's most recent `sample_chars` characters: enough for `min_repeats` repeats of a `max_period` passage. That's cheap enough to run on every check, and gives the same answer every time. It doesn't catch a loop that changes a little on each pass, such as a counter in every sentence: a model judge can.
+
+Output can repeat on purpose, so the defaults trade how early a loop is caught for fewer false alarms. A grid of numbers, a markdown table, or a few dozen identical rows in a file isn't reported, and a real loop is caught once it has filled about 2,000 characters, long before a response that loops would run out of output tokens. Content that repeats more than that, such as a fixture with hundreds of identical rows, is reported. If your agent writes that kind of content, raise `min_chars` and `min_repeats`, or leave `'tool_args'` out of `stream_channels`.
 
 ### A model judge
 

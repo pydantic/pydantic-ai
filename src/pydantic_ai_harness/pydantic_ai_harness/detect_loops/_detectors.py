@@ -83,10 +83,17 @@ class LoopDetector(ABC, Generic[AgentDepsT]):
 class RepetitionDetector(LoopDetector[AgentDepsT]):
     """Report text that ends in the same passage repeated back to back: the degenerate loop a model gets stuck in.
 
-    The passage has to be between `min_period` and `max_period` characters long, repeat at least
-    `min_repeats` times in a row, and the repeats have to cover at least `min_chars` characters. Text
-    whose repeating unit is shorter than `min_period`, such as a divider line or a row of zeros, is
-    not reported, even when the passage is a multiple of that unit.
+    The passage has to be between `min_period` and `max_period` characters long, use at least
+    `min_distinct_chars` different characters, repeat at least `min_repeats` times in a row, and the
+    repeats have to cover at least `min_chars` characters. Text whose repeating unit is shorter than
+    `min_period`, such as a divider line, is not reported, even when the passage is a multiple of that
+    unit.
+
+    The defaults are set so that repetitive content written on purpose, such as a grid of numbers, table
+    rules or a few dozen identical rows, isn't reported, at the cost of catching a real loop only after
+    about 2,000 characters. Content that repeats more than that, like a fixture with hundreds of identical
+    rows, is reported: raise the thresholds, or leave `'tool_args'` out of `stream_channels`, if your agent
+    writes such content.
 
     It compares characters exactly, so it's cheap enough to run on every check and gives the same answer
     every time.
@@ -98,11 +105,14 @@ class RepetitionDetector(LoopDetector[AgentDepsT]):
     max_period: int = 2_000
     """The longest passage that counts, in characters."""
 
-    min_repeats: int = 4
+    min_repeats: int = 8
     """How many times in a row the passage has to repeat."""
 
-    min_chars: int = 400
+    min_chars: int = 2_000
     """How many characters the repeats have to cover together."""
+
+    min_distinct_chars: int = 8
+    """How many different characters the passage has to use, so a row of numbers or a table rule doesn't count."""
 
     def __post_init__(self) -> None:
         if self.min_period < 1:
@@ -111,6 +121,8 @@ class RepetitionDetector(LoopDetector[AgentDepsT]):
             raise ValueError(f'`max_period` must be at least `min_period` ({self.min_period}), got {self.max_period}.')
         if self.min_repeats < 2:
             raise ValueError(f'`min_repeats` must be at least 2, got {self.min_repeats}.')
+        if self.min_distinct_chars < 1:
+            raise ValueError(f'`min_distinct_chars` must be at least 1, got {self.min_distinct_chars}.')
 
     @property
     def sample_chars(self) -> int:
@@ -145,9 +157,10 @@ class RepetitionDetector(LoopDetector[AgentDepsT]):
                 count += 1
             if count < self.min_repeats or count * period < self.min_chars:
                 continue
-            if (shorter := (unit + unit).find(unit, 1)) < period:
-                # The text ends in a run of a unit shorter than `min_period`, like a divider or a row of zeros.
-                # A longer passage can still repeat around it, so look on from before the run.
+            shorter = (unit + unit).find(unit, 1)
+            if shorter < period or len(set(unit)) < self.min_distinct_chars:
+                # The text ends in a run of a unit that is too short or too plain to be a loop, like a divider, a row
+                # of zeros or a table rule. A longer passage can still repeat around it, so look on from before the run.
                 run = count * period
                 while run < length and text[length - run - 1] == text[length - run - 1 + shorter]:
                     run += 1

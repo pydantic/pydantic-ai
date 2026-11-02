@@ -83,7 +83,7 @@ def test_a_loop_within_a_response_reaches_the_same_decision_without_the_judge(db
         calls.append(None)
         if 'Change your approach' in str(messages[-1]):
             return ModelResponse(parts=[TextPart('The config is fine.')])
-        return ModelResponse(parts=[TextPart('I should check the config file again. ' * 40)])
+        return ModelResponse(parts=[TextPart('I should check the config file again. ' * 80)])
 
     def judge(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         # A judge asked here would overrule the heuristic, so the nudge below proves it wasn't asked.

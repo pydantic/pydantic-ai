@@ -58,7 +58,7 @@ agent = Agent(
 def _looping_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     if 'Change your approach' in str(messages[-1]):
         return ModelResponse(parts=[TextPart('The config is fine.')])
-    return ModelResponse(parts=[TextPart('I should check the config file again. ' * 40)])
+    return ModelResponse(parts=[TextPart('I should check the config file again. ' * 80)])
 
 
 def _judge(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Literal, TypeAlias
 
 import anyio
 
+from pydantic_ai._utils import ScopedTask
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, WrapModelRequestHandler
 from pydantic_ai.exceptions import AgentRunError, ModelRetry
 from pydantic_ai.messages import (
@@ -444,33 +445,41 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
         handler: WrapModelRequestHandler,
     ) -> ModelResponse:
-        """Run the request while acting on each loop the stream hands over, stopping the request when the action raises."""
+        """Run the request while acting on each loop the stream hands over, stopping the request when an action raises."""
 
         async def run_request() -> ModelResponse:
             return await handler(request_context)
 
-        request = asyncio.create_task(run_request(), name='detect_loops:model_request')
-        try:
+        # A `ScopedTask` takes the cancellation that stops it as a cancel of its own scope, so the agent's shielded
+        # teardown of the model stream inside it finishes.
+        request = ScopedTask(run_request())
+        stopped_by: list[Exception] = []
+
+        async def act_on_loops(stop: anyio.CancelScope) -> None:
             while True:
-                detected = asyncio.create_task(check.detected.wait(), name='detect_loops:detected')
-                try:
-                    await asyncio.wait({request, detected}, return_when=asyncio.FIRST_COMPLETED)
-                finally:
-                    await _stop(detected)
-                if not check.detected.is_set():
-                    return request.result()
+                await check.detected.wait()
                 try:
                     await self._act(ctx, check.take(), in_response=True)
-                except BaseException:
-                    # Stopping the request makes the agent stop pulling the stream, before the stream is released.
-                    await _stop(request)
-                    raise
-                finally:
-                    check.release(stopped=request.done())
+                except Exception as error:
+                    stopped_by.append(error)
+                    stop.cancel()
+                    return
                 self._reported_in_stream = True
+                check.release(stopped=False)
+
+        response: ModelResponse | None = None
+        try:
+            async with anyio.create_task_group() as tasks:
+                tasks.start_soon(act_on_loops, tasks.cancel_scope)
+                response = await request.result()
+                tasks.cancel_scope.cancel()
         finally:
-            await _stop(request)
+            # Only now that the request has stopped, and with it the agent's pull of the stream, is the stream released.
             check.release(stopped=True)
+        if stopped_by:
+            raise stopped_by[0]
+        assert response is not None
+        return response
 
     async def _observe(
         self, ctx: RunContext[AgentDepsT], check: _ResponseCheck, event: AgentStreamEvent
@@ -724,16 +733,6 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
             if loop.repeated_text is not None:
                 attributes['detect_loops.repeated_text'] = loop.repeated_text
         ctx.tracer.start_span('loop detected', attributes=attributes).end()
-
-
-async def _stop(task: asyncio.Task[object]) -> None:
-    """Cancel `task` and wait for it to finish, such as a model request tearing its stream down."""
-    task.cancel()
-    # Shielded, so an outer cancellation doesn't leave the stream half torn down.
-    with anyio.CancelScope(shield=True):
-        await asyncio.wait({task})
-    if not task.cancelled():
-        task.exception()
 
 
 def _in_part_loop(part: _Part, repetition: Repetition, *, window: int) -> DetectedLoop:

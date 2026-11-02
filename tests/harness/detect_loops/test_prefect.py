@@ -47,7 +47,7 @@ async def test_flow_delivers_the_nudge(prefect_test_server: None, tmp_path: Path
 
 
 async def test_a_judge_is_not_asked_in_flow_code(prefect_test_server: None, tmp_path: Path) -> None:
-    responses = iter([ModelResponse(parts=[TextPart('I should check the config file again. ' * 40)])])
+    responses = iter([ModelResponse(parts=[TextPart('I should check the config file again. ' * 80)])])
 
     def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return next(responses, ModelResponse(parts=[TextPart('The config is fine.')]))

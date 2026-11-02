@@ -696,8 +696,9 @@ except LoopDetectedError as error:
   DBOS, and Prefect, so replay reaches the same decisions; keep a handler free of I/O.
 - Agents that poll on purpose trip `repeated_result` after 3 identical statuses: raise or disable it.
 - Also checks each response on its own, as it streams: `stream_detector` (default
-  `RepetitionDetector()`: a passage of `min_period=20` to `max_period=2000` chars repeated
-  `min_repeats=4` times covering `min_chars=400`) runs every `stream_check_every=256` chars and at
+  `RepetitionDetector()`: a passage of `min_period=20` to `max_period=2000` chars with
+  `min_distinct_chars=8`, repeated `min_repeats=8` times covering `min_chars=2000`, so grids, table
+  rules and a few dozen identical rows don't count) runs every `stream_check_every=256` chars and at
   each part's end over `stream_channels=('thinking', 'text', 'tool_args')`, giving
   `repeated_thinking`, `repeated_stream_text`, `repeated_tool_args`; `repeated_parallel_call` is the
   same call `repeated_parallel_call_threshold=5` times in one response, reported before any runs. A
