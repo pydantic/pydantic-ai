@@ -164,7 +164,7 @@ The `finally` removes the container even when setup or the run fails. To keep it
 
 ## Give the agent a desktop
 
-Pass `desktop=True` for a container with a graphical display, which [`ComputerUse`](computer-use.md) lets the agent see and control:
+Pass `desktop=True` for a container with a screen, which [`ComputerUse`](computer-use.md) lets the agent see and control:
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -179,13 +179,13 @@ async def main():
     print(result.output)
 ```
 
-Without an `image`, the first run on a machine builds one from `DESKTOP_DOCKERFILE`: Debian with a window manager and a panel that opens Firefox and a terminal (`xterm`). Later runs reuse the image. The display is 1280x800; pass a size, such as `desktop=(1440, 900)`, for another. An attached container whose X server already runs keeps its size. The agent keeps the container's shell and files too, so `Coder` and `ComputerUse` can work in the same container.
+Without an `image`, the first run builds one from `DESKTOP_DOCKERFILE` (Debian, a window manager, Firefox and a terminal), and later runs reuse it. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. An existing container keeps its size. The agent also gets the container's shell and files, so `Coder` and `ComputerUse` can share it.
 
-A custom `image` needs Xvfb, `xdotool`, `xmodmap`, `scrot` and `setsid`, plus whatever applications the agent should use, and gets a window manager when it has `fluxbox` and `xprop`; `DESKTOP_DOCKERFILE` is a starting point for one.
+A custom `image` needs Xvfb, `xdotool`, `xmodmap`, `scrot` and `setsid`, plus `fluxbox` and `xprop` for a window manager. Start from `DESKTOP_DOCKERFILE`.
 
-The container has no live viewer: to watch a run, save each screenshot as it arrives, as [Watching a run](computer-use.md#watching-a-run) shows.
+There's no live viewer. To watch a run, save each screenshot as it arrives; see [Watching a run](computer-use.md#watching-a-run).
 
-Under [durable execution](../durable_execution/overview.md), build the image before the first run, so the build doesn't count against a workspace operation's timeout, and pass it as `image`:
+Under [durable execution](../durable_execution/overview.md), build the image before the first run and pass it as `image`, so the build doesn't count against a step's timeout:
 
 ```bash
 python -c "from pydantic_ai_harness.docker_sandbox import DESKTOP_DOCKERFILE; print(DESKTOP_DOCKERFILE)" | docker build --tag my-desktop -
