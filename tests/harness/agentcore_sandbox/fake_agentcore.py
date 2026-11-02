@@ -51,12 +51,21 @@ class _SessionOs(types.ModuleType):
 
 
 @dataclass
+class Hold:
+    """A held tool call: `reached` is set once it has done its work, and it answers once `release` is set."""
+
+    reached: threading.Event = field(default_factory=threading.Event)
+    release: threading.Event = field(default_factory=threading.Event)
+
+
+@dataclass
 class FakeSession:
     session_id: str
     code_interpreter: str
     timeout: int
     active: bool = True
     tasks: dict[str, subprocess.Popen[bytes]] = field(default_factory=dict[str, 'subprocess.Popen[bytes]'])
+    canceled: set[str] = field(default_factory=set[str])
 
     def kill(self) -> None:
         for process in self.tasks.values():
@@ -133,6 +142,10 @@ class FakeClient:
             raise client_error('ValidationException', f'Code interpreter session {sessionId} is not active')
         queued = owner.take(name)
         events = queued if queued is not None else self._run(session, name, arguments)
+        # The call has done its work; a held response is one that is slow or lost on its way back.
+        if (hold := owner.holds.pop(name, None)) is not None:
+            hold.reached.set()
+            hold.release.wait()
         return {'sessionId': sessionId, 'stream': iter(events)}
 
     def _run(self, session: FakeSession, name: str, arguments: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -148,15 +161,22 @@ class FakeClient:
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
             )
-            # The process runs from here on; a held acknowledgment is a slow or lost start response.
-            self._owner.start_acknowledged.wait()
             return _result(taskId=task_id, taskStatus='submitted')
-        process = session.tasks[arguments['taskId']]
+        task_id = arguments['taskId']
+        process = session.tasks[task_id]
+        status = 'canceled' if task_id in session.canceled else 'working' if process.poll() is None else 'completed'
         if name == 'stopTask':
+            if status != 'working':
+                # AgentCore's own wording for a task that already ended.
+                return _result(
+                    f'Error executing tool stop_task: Task cannot be canceled (current status: TaskStatus.{status.upper()})',
+                    error=True,
+                )
             _kill(process)
-            return _result(taskId=arguments['taskId'], taskStatus='canceled')
+            session.canceled.add(task_id)
+            return _result('Successfully canceled a command execution task')
         assert name == 'getTask', name
-        return _result(taskStatus='working' if process.poll() is None else 'completed')
+        return _result(taskStatus=status)
 
     def _execute_code(self, code: str) -> list[dict[str, Any]]:
         printed: list[str] = []
@@ -181,9 +201,8 @@ class FakeAgentCore:
 
     def __init__(self, home: Path) -> None:
         self.home = home
-        self.start_acknowledged = threading.Event()
-        """Cleared to hold `startCommandExecution`'s response after its process has started."""
-        self.start_acknowledged.set()
+        self.holds: dict[str, Hold] = {}
+        self._issued_holds: list[Hold] = []
         self.code_interpreters = {'aws.codeinterpreter.v1'}
         self.sessions: dict[str, FakeSession] = {}
         self.ids = itertools.count(1)
@@ -225,10 +244,18 @@ class FakeAgentCore:
     def active(self) -> Iterator[FakeSession]:
         return (session for session in self.sessions.values() if session.active)
 
+    def hold(self, name: str) -> Hold:
+        """Hold the response to the next `name` call, after it has done its work, until `release` is set."""
+        hold = self.holds[name] = Hold()
+        self._issued_holds.append(hold)
+        return hold
+
     def close(self) -> None:
-        self.start_acknowledged.set()
+        # Also the ones a test reached but never released, so no worker thread stays blocked.
+        for hold in self._issued_holds:
+            hold.release.set()
         for session in self.sessions.values():
             session.kill()
 
 
-__all__ = ['FakeAgentCore', 'FakeClient', 'FakeSession', 'Outcome', 'client_error']
+__all__ = ['FakeAgentCore', 'FakeClient', 'FakeSession', 'Hold', 'Outcome', 'client_error']

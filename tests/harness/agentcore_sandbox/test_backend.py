@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
+from collections.abc import Awaitable, Callable
 
 import anyio
 import anyio.to_thread
 import botocore.session
 import pytest
-from botocore.exceptions import ClientError, NoCredentialsError, ReadTimeoutError
+from botocore.exceptions import ClientError, ConnectionClosedError, NoCredentialsError, ReadTimeoutError
 
 from pydantic_ai.workspaces import (
     WorkspaceError,
@@ -20,7 +22,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness.agentcore_sandbox import AgentCoreSandboxBackend
 
-from .fake_agentcore import FakeAgentCore, client_error
+from .fake_agentcore import FakeAgentCore, Hold, client_error
 
 
 @pytest.mark.parametrize(
@@ -57,21 +59,21 @@ async def test_calls_a_second_attempt_would_change_make_only_one(fake_agentcore:
     await backend.write_bytes(path, b'data')
     assert await backend.read_bytes(path) == b'data'
     await backend.remove(path)
-    with pytest.raises(WorkspaceTimeoutError):
-        await backend.run(['sleep', '30'], timeout=0.5)
+    await _cancel_when_reached(fake_agentcore.hold('startCommandExecution'), lambda: backend.run(['sleep', '30']))
     await backend.run(['true'])
     assert fake_agentcore.single_attempt_calls == {
         'startCommandExecution',
-        'stopTask',
         'executeCode:write',
         'executeCode:remove',
         'executeCode:finished',
     }
     assert {
         'getTask',
+        'stopTask',
         'executeCode:read',
         'executeCode:working_dir',
         'executeCode:tail',
+        'executeCode:clean_up',
     } <= fake_agentcore.retrying_calls
     assert not fake_agentcore.single_attempt_calls & fake_agentcore.retrying_calls
 
@@ -219,9 +221,25 @@ async def test_an_empty_write_creates_the_file(fake_agentcore: FakeAgentCore) ->
 
 async def test_a_timeout_returns_the_partial_output_and_stops_the_task(fake_agentcore: FakeAgentCore) -> None:
     backend = AgentCoreSandboxBackend()
-    with pytest.raises(WorkspaceTimeoutError) as caught:
-        await backend.run(['sh', '-c', 'printf started; printf warn >&2; sleep 30'], timeout=1)
-    assert (caught.value.stdout, caught.value.stderr) == ('started', 'warn')
+    await backend.working_dir()
+    ready = fake_agentcore.home / 'ready'
+    os.mkfifo(ready)
+    hold = fake_agentcore.hold('startCommandExecution')
+
+    async def release_once_written() -> None:
+        # The command writes its output, then opens the FIFO, which returns once this reads it.
+        await anyio.to_thread.run_sync(ready.read_text, abandon_on_cancel=True)
+        hold.release.set()
+
+    async with anyio.create_task_group() as group:
+        group.start_soon(release_once_written)
+        # The deadline passes while the start's answer is held, so no test time is spent waiting on it.
+        with pytest.raises(WorkspaceTimeoutError) as caught:
+            await backend.run(
+                ['sh', '-c', 'printf started; printf warn >&2; echo > "$1"; exec sleep 30', 'sh', str(ready)],
+                timeout=0.001,
+            )
+        assert (caught.value.stdout, caught.value.stderr) == ('started', 'warn')
     assert 'stopTask' in fake_agentcore.calls
     [session] = fake_agentcore.sessions.values()
     assert all(task.poll() is not None for task in session.tasks.values())
@@ -300,20 +318,11 @@ async def test_small_output_comes_back_with_the_exit_code(fake_agentcore: FakeAg
     assert fake_agentcore.calls.count('executeCode') == 1
 
 
-async def test_a_timeout_during_a_slow_start_still_stops_the_command(fake_agentcore: FakeAgentCore) -> None:
-    """The deadline passes while AgentCore has started the command but not yet answered with its task id."""
+async def test_a_cancel_during_a_slow_start_still_stops_the_command(fake_agentcore: FakeAgentCore) -> None:
+    """The caller is cancelled while AgentCore has started the command but not yet answered with its task id."""
     backend = AgentCoreSandboxBackend()
     await backend.working_dir()
-    fake_agentcore.start_acknowledged.clear()
-
-    async def acknowledge_late() -> None:
-        await anyio.sleep(0.3)
-        fake_agentcore.start_acknowledged.set()
-
-    async with anyio.create_task_group() as group:
-        group.start_soon(acknowledge_late)
-        with pytest.raises(WorkspaceTimeoutError):
-            await backend.run(['sleep', '30'], timeout=0.05)
+    await _cancel_when_reached(fake_agentcore.hold('startCommandExecution'), lambda: backend.run(['sleep', '30']))
     assert 'stopTask' in fake_agentcore.calls
     [session] = fake_agentcore.sessions.values()
     assert all(task.poll() is not None for task in session.tasks.values())
@@ -324,14 +333,66 @@ async def test_a_native_cancel_during_a_slow_start_still_stops_the_command(fake_
     backend = AgentCoreSandboxBackend()
     await backend.working_dir()
     [session] = fake_agentcore.sessions.values()
-    fake_agentcore.start_acknowledged.clear()
+    hold = fake_agentcore.hold('startCommandExecution')
     running = asyncio.create_task(backend.run(['sleep', '30']))
-    with anyio.fail_after(10):
-        while not session.tasks:
-            await anyio.sleep(0.01)
+    await anyio.to_thread.run_sync(hold.reached.wait)
     running.cancel()
-    asyncio.get_running_loop().call_later(0.2, fake_agentcore.start_acknowledged.set)
+    # Let the cancellation reach the task before the start answers.
+    await asyncio.sleep(0)
+    hold.release.set()
     with pytest.raises(asyncio.CancelledError):
         await running
     assert 'stopTask' in fake_agentcore.calls
     assert all(task.poll() is not None for task in session.tasks.values())
+
+
+@pytest.mark.parametrize(
+    'error',
+    [client_error('ThrottlingException', 'slow down'), ConnectionClosedError(endpoint_url='https://agentcore.test')],
+)
+async def test_a_failed_stop_still_reads_the_output_and_cleans_up(
+    fake_agentcore: FakeAgentCore, error: Exception
+) -> None:
+    backend = AgentCoreSandboxBackend()
+    await backend.working_dir()
+    fake_agentcore.queue('stopTask', error)
+    await _cancel_when_reached(fake_agentcore.hold('startCommandExecution'), lambda: backend.run(['sleep', '30']))
+    assert {'stopTask', 'executeCode:tail', 'executeCode:clean_up'} <= fake_agentcore.retrying_calls
+
+
+async def test_stopping_a_task_that_already_ended_still_cleans_up(fake_agentcore: FakeAgentCore) -> None:
+    """The caller is cancelled after the command ended but before a poll saw it, so AgentCore refuses the stop."""
+    backend = AgentCoreSandboxBackend()
+    await backend.working_dir()
+    [session] = fake_agentcore.sessions.values()
+    hold = fake_agentcore.hold('getTask')
+
+    async def wait_for_exit() -> None:
+        for task in session.tasks.values():
+            await anyio.to_thread.run_sync(task.wait)
+
+    await _cancel_when_reached(hold, lambda: backend.run(['true']), before_cancel=wait_for_exit)
+    assert {'stopTask', 'executeCode:tail', 'executeCode:clean_up'} <= fake_agentcore.retrying_calls
+    assert not session.canceled
+
+
+async def _cancel_when_reached(
+    hold: Hold,
+    call: Callable[[], Awaitable[object]],
+    *,
+    before_cancel: Callable[[], Awaitable[None]] | None = None,
+) -> None:
+    """Run `call`, cancel it once the held tool call has done its work, then let that call answer."""
+    with anyio.CancelScope() as scope:
+        async with anyio.create_task_group() as group:
+
+            async def cancel() -> None:
+                await anyio.to_thread.run_sync(hold.reached.wait, abandon_on_cancel=True)
+                if before_cancel is not None:
+                    await before_cancel()
+                scope.cancel()
+                hold.release.set()
+
+            group.start_soon(cancel)
+            await call()
+    assert scope.cancelled_caught

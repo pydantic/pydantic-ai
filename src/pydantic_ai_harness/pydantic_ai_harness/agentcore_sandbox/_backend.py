@@ -21,11 +21,13 @@ with boto3 1.42.63:
   stdout took 57 seconds, close to botocore's 60-second read timeout), so file contents travel in
   chunks.
 - botocore retries a request that timed out or lost its connection, and its `max_attempts` counts
-  retries after the first request. Sending `startCommandExecution`, a chunk `write`, `remove`,
-  `finished` (which deletes the command's output) or `stopTask` twice changes the outcome, so those
-  go through a client limited to one attempt (`total_max_attempts=1`). Every other call is
-  idempotent and retries with botocore's standard mode; `StartCodeInterpreterSession` carries a
-  `clientToken` botocore fills in, so retrying it cannot start a second session.
+  retries after the first request. Sending `startCommandExecution`, a chunk `write`, `remove` or
+  `finished` (which deletes the command's output) twice changes the outcome, so those go through a
+  client limited to one attempt (`total_max_attempts=1`) and surface throttling instead of
+  retrying it. Every other call retries with botocore's standard mode. `StartCodeInterpreterSession`
+  carries a `clientToken` botocore fills in, so retrying it cannot start a second session.
+  `stopTask` on a task that has already ended, or was already stopped, answers `isError` with
+  `Task cannot be canceled (current status: ...)` and changes nothing, so it retries too.
 """
 
 from __future__ import annotations
@@ -79,7 +81,7 @@ __all__ = ('AgentCoreSandboxBackend',)
 try:
     import boto3
     from botocore.config import Config
-    from botocore.exceptions import ClientError, NoCredentialsError
+    from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
 except ImportError as _import_error:
     raise ImportError('Install `pydantic-ai-harness[agentcore]` to use AgentCoreSandbox.') from _import_error
 
@@ -591,7 +593,12 @@ class AgentCoreSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesy
         async def stop() -> None:
             nonlocal partial
             if task_id is not None:
-                await self._invoke('stopTask', {'taskId': task_id}, retry=False)
+                try:
+                    await self._invoke('stopTask', {'taskId': task_id}, retry=True)
+                except (WorkspaceError, ClientError, BotoCoreError):
+                    # The task may have ended on its own meanwhile, which AgentCore reports as an
+                    # error; read what it wrote and clean up whatever the outcome.
+                    logger.debug('Could not stop AgentCore task %s', task_id, exc_info=True)
             out, err = await self._code(_TAIL, 'tail', directory=directory, limit=_PARTIAL_OUTPUT_BYTES)
             partial = (_decode(out), _decode(err))
             await self._code(_NONE, 'clean_up', directory=directory)
