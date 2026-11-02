@@ -24,7 +24,7 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.localstack import LocalStack, LocalStack as Exported, LocalStackError, LocalStackToolset
 from tests.harness._recording_durability import RecordingDurability
 
-from ._http_server import HttpResponse, http_server, unused_tcp_port
+from ._http_server import HttpResponse, http_server, refused_tcp_port
 
 
 def _toolset(
@@ -463,13 +463,15 @@ class TestLocalStackHealth:
         assert 'output truncated' in result
 
     async def test_connection_error(self) -> None:
-        result = await _toolset(endpoint_url=f'http://localhost:{unused_tcp_port()}').localstack_health()
+        with refused_tcp_port() as port:
+            result = await _toolset(endpoint_url=f'http://localhost:{port}').localstack_health()
         assert 'could not reach LocalStack' in result
 
     async def test_connection_error_is_capped_before_dispatch(self) -> None:
         """The durable operation records the method's own result, so the error must fit the cap there too."""
-        endpoint_url = f'http://localhost:{unused_tcp_port()}/' + 'p' * 1_000
-        result = await _toolset(endpoint_url=endpoint_url, max_output_chars=100).localstack_health()
+        with refused_tcp_port() as port:
+            endpoint_url = f'http://localhost:{port}/' + 'p' * 1_000
+            result = await _toolset(endpoint_url=endpoint_url, max_output_chars=100).localstack_health()
         assert len(result) <= 100
         assert 'output truncated' in result
 
