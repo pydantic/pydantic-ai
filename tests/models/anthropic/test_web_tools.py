@@ -22,6 +22,7 @@ from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool,
 from ..._inline_snapshot import snapshot
 from ...cassette_utils import single_request_body
 from ...conftest import IsStr, RequestCapture, TestEnv, try_import
+from ..conftest import AnthropicModelFactory
 from ..test_anthropic import (
     MockAnthropic,
     completion_message,
@@ -56,7 +57,7 @@ with try_import() as imports_successful:
         BetaWebFetchToolResultBlock,
     )
 
-    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings, AnthropicWebToolCaller
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 if not imports_successful():  # pragma: lax no cover
@@ -190,6 +191,109 @@ def test_anthropic_explicit_profile_instance_narrows_web_tools():
     profile = provider.model_profile('claude-sonnet-4-6')
     m = AnthropicModel('claude-sonnet-4-6', provider=provider, profile=profile)
     assert WebSearchTool not in m.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+
+
+@dataclass(frozen=True)
+class AllowedCallersCase:
+    id: str
+    model_name: str
+    allowed_callers: list[AnthropicWebToolCaller]
+    expected_tools: list[tuple[str, list[str] | None]]
+    prompt: str = 'Reply with exactly: ok'
+    expected_web_tool_calls: list[tuple[str, dict[str, Any] | None]] = field(
+        default_factory=list[tuple[str, dict[str, Any] | None]]
+    )
+
+
+ALLOWED_CALLERS_CASES = [
+    AllowedCallersCase(
+        id='setting-direct',
+        model_name='claude-sonnet-5-5',
+        allowed_callers=['direct'],
+        prompt='Use web fetch to read https://ai.pydantic.dev and say in one sentence what Pydantic AI is.',
+        expected_tools=snapshot([('web_search_20260209', ['direct']), ('web_fetch_20260209', ['direct'])]),
+        expected_web_tool_calls=snapshot([('web_fetch', None)]),
+    ),
+    AllowedCallersCase(
+        id='setting-direct-previous-versions',
+        model_name='claude-sonnet-4-5',
+        allowed_callers=['direct'],
+        expected_tools=snapshot([('web_search_20250305', ['direct']), ('web_fetch_20250910', ['direct'])]),
+    ),
+]
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in ALLOWED_CALLERS_CASES])
+async def test_anthropic_web_tools_allowed_callers(
+    case: AllowedCallersCase,
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+):
+    """The setting is sent as both web tools' `allowed_callers` on either tool version, and calls come back direct."""
+    agent = Agent(
+        anthropic_model(case.model_name, capture=True),
+        capabilities=[NativeTool(WebSearchTool(max_uses=1)), NativeTool(WebFetchTool(max_uses=1))],
+        model_settings=AnthropicModelSettings(anthropic_web_tools_allowed_callers=case.allowed_callers),
+    )
+
+    result = await agent.run(case.prompt)
+
+    tools = request_capture.body('/v1/messages')['tools']
+    assert isinstance(tools, list)
+    assert [
+        (tool['type'], tool.get('allowed_callers')) for tool in tools if isinstance(tool, dict)
+    ] == case.expected_tools
+    assert [
+        (part.tool_name, part.provider_details)
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, NativeToolCallPart) and part.tool_name in ('web_search', 'web_fetch')
+    ] == case.expected_web_tool_calls
+
+
+@pytest.mark.vcr()
+async def test_anthropic_explicit_code_execution_caller_on_previous_web_tool_versions(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """A code execution caller set on a web tool version that defaults to direct calls gets a sandbox too.
+
+    Its `code_execution` calls are kept, so the follow-up replays every call its results point at, and the follow-up
+    reuses the container.
+    """
+    model = anthropic_model('claude-sonnet-4-5', capture=True)
+    agent = Agent(
+        model,
+        capabilities=[NativeTool(WebSearchTool(max_uses=1))],
+        model_settings=AnthropicModelSettings(anthropic_web_tools_allowed_callers=['code_execution_20260120']),
+    )
+    async with agent.run_stream(
+        'First, in the code sandbox, write the text "sentinel-42" to /tmp/state.txt. '
+        'Then use web search once to find the latest pydantic-ai version on PyPI. Reply with just the version.'
+    ) as result:
+        await result.get_output()
+    second = await agent.run(
+        'In the code sandbox, print the contents of /tmp/state.txt. Reply with exactly what it printed.',
+        message_history=result.all_messages(),
+    )
+
+    bodies = request_capture.bodies('/v1/messages')
+    tools = bodies[0]['tools']
+    assert isinstance(tools, list)
+    assert [(tool['type'], tool.get('allowed_callers')) for tool in tools if isinstance(tool, dict)] == snapshot(
+        [('web_search_20250305', ['code_execution_20260120'])]
+    )
+    assert sorted(
+        {
+            part.tool_name
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, NativeToolCallPart)
+        }
+    ) == snapshot(['code_execution', 'web_search'])
+    assert ['container' in body for body in bodies] == snapshot([False, True])
+    assert second.output == snapshot('sentinel-42')
 
 
 async def test_anthropic_web_fetch_20260209_caller_pass_history_back(env: TestEnv, allow_model_requests: None):

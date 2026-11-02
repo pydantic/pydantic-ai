@@ -12,7 +12,7 @@ import pytest
 import trio
 from dirty_equals import HasRepr
 
-from ..conftest import try_import
+from ..conftest import no_leaked_tasks, try_import
 
 with try_import() as imports_successful:
     from pydantic_evals._utils import (
@@ -45,7 +45,6 @@ def test_run_until_complete_cleans_up_own_task_on_interrupt():
             cleaned.append('cleaned')
 
     loop = get_event_loop()
-    tasks_before = asyncio.all_tasks(loop)
     real_run_until_complete = loop.run_until_complete
     calls = 0
 
@@ -59,13 +58,12 @@ def test_run_until_complete_cleans_up_own_task_on_interrupt():
             raise KeyboardInterrupt
         return real_run_until_complete(future)
 
-    with pytest.MonkeyPatch.context() as mp:
+    with no_leaked_tasks(loop), pytest.MonkeyPatch.context() as mp:
         mp.setattr(loop, 'run_until_complete', interrupt_once)
         with pytest.raises(KeyboardInterrupt):
             run_until_complete(coro())
 
     assert cleaned == ['cleaned']  # our coroutine's cleanup ran
-    assert asyncio.all_tasks(loop) == tasks_before  # our task didn't leak, nothing else was touched
 
 
 def test_run_until_complete_propagates_coroutine_error():

@@ -1,0 +1,5 @@
+{
+  "against": "v2.63.0",
+  "reason": "Adds the new `output_speech_timestamps` setting's name to `RealtimeModelSettingName`, which lists every `RealtimeModelSettings` field; every existing name is unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11685"
+}

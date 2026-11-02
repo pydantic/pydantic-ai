@@ -20,6 +20,8 @@ limits and [Logfire](../logfire.md) tracing are built in. Your application owns 
 bridged through your backend, or [browser-direct over WebRTC](deployment.md#browser-webrtc-server-sideband)
 on OpenAI and Azure — while Pydantic AI runs the provider-agnostic agent loop.
 
+[Your Pydantic AI agents just gained a voice](https://pydantic.dev/articles/pydantic-ai-voice-agent) on the Pydantic blog walks through what this enables.
+
 ## Quickstart
 
 Install Pydantic AI with the OpenAI realtime dependencies, and set `OPENAI_API_KEY`:

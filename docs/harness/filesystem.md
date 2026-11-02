@@ -357,6 +357,10 @@ applies the same rule to absolute symlink targets.
 - **Optimistic concurrency.** `write_file`/`edit_file` accept an
   `expected_hash` so an agent operating on a stale read is told to re-read
   rather than silently overwriting newer content.
+- **Text encodings.** Text is read as UTF-8, and a byte that isn't valid UTF-8
+  is shown as U+FFFD. `edit_file` writes such bytes back unchanged when an edit
+  matches only the text around them; `write_file` replaces the whole file with
+  the UTF-8 content it is given.
 - **Write targets.** `write_file` won't overwrite a directory. A FIFO, socket,
   or device is refused as not a regular file.
 - **Bounded reads.** `read_file` and `file_info` read a file whole, for its line

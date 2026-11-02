@@ -37,6 +37,7 @@ from pydantic_clai2.plugins import (
 )
 from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.session_runtime import create_shell
+from tests.conftest import no_leaked_tasks
 
 
 class RecordingClient:
@@ -119,23 +120,22 @@ async def test_question_state_and_cleanup(recorded: RecordingClient, answer_erro
         deps_type=type(None),
         capabilities=[AskUser(answerer=answer), *loaded.capabilities],
     )
-    before = asyncio.all_tasks()
-    await loaded.dispatch(SessionStart(agent=agent, settings=Settings()))
-    try:
-        if answer_error:
-            with pytest.raises(ValueError, match='answerer failed'):
+    with no_leaked_tasks():
+        await loaded.dispatch(SessionStart(agent=agent, settings=Settings()))
+        try:
+            if answer_error:
+                with pytest.raises(ValueError, match='answerer failed'):
+                    await agent.run('hello')
+            else:
                 await agent.run('hello')
-        else:
-            await agent.run('hello')
-        states = [params['state'] for method, params in recorded.reports if method == 'pane.report_agent']
-        assert states[0] == 'idle'
-        assert 'working' in states
-        assert 'blocked' in states
-        assert states[-1] == 'idle'
-    finally:
-        await loaded.dispatch(SessionEnd(reason='exit'))
-    assert recorded.closed
-    assert asyncio.all_tasks() == before
+            states = [params['state'] for method, params in recorded.reports if method == 'pane.report_agent']
+            assert states[0] == 'idle'
+            assert 'working' in states
+            assert 'blocked' in states
+            assert states[-1] == 'idle'
+        finally:
+            await loaded.dispatch(SessionEnd(reason='exit'))
+        assert recorded.closed
 
 
 async def test_session_titles_metadata(recorded: RecordingClient, tmp_path: Path) -> None:

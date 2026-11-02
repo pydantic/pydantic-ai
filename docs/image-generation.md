@@ -520,7 +520,7 @@ Each call opens a span named `image_generation {model}` carrying `gen_ai.operati
 `gen_ai.output.type='image'`. `image_generation` is a custom operation name: the OpenTelemetry GenAI conventions
 enumerate no value for image generation, while `image` is one of their standard output types.
 
-See the [Debugging and Monitoring guide](logfire.md) for more details on using Logfire with Pydantic AI.
+See the [Debugging and Monitoring guide](logfire.md#using-logfire) for Logfire setup and more details on using it with Pydantic AI.
 
 ## Testing
 
