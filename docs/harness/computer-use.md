@@ -5,9 +5,8 @@ description: "Let a Pydantic AI agent see and control a desktop with the Compute
 
 # Computer Use
 
-`ComputerUse` lets your agent see and control a graphical desktop. It adds one tool, `computer`: the model sends a
-list of mouse and keyboard actions, they run on the display of the run's [workspace](../workspace.md), and the tool
-returns a screenshot of the screen afterwards.
+`ComputerUse` lets your agent use a desktop. It adds one tool, `computer`: the model sends mouse and keyboard actions,
+they run on the display of the run's [workspace](../workspace.md), and the tool returns a screenshot.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/computer_use/)
 
@@ -19,8 +18,8 @@ returns a screenshot of the screen afterwards.
 pip/uv-add "pydantic-ai-harness[anthropic]"
 ```
 
-Swap `anthropic` for your model provider's extra. The example needs Docker running locally; the first run builds a
-desktop image, which takes a few minutes.
+Use your model provider's extra instead of `anthropic`. The example needs Docker; the first run builds a desktop
+image, which takes a few minutes.
 
 ## Usage
 
@@ -36,21 +35,31 @@ async def main():
     print(result.output)
 ```
 
-Each run leaves its container running; see [Clean up](docker-sandbox.md#clean-up). A run that fails, such as on a
-usage limit, returns no ref to clean up with: remove its desktop in an `on_run_error` hook, as shown for
-[E2B](e2b-sandbox.md#clean-up).
+The container keeps running after the run; see [Clean up](docker-sandbox.md#clean-up). If the run fails, remove it
+in an `on_run_error` hook, as shown for [E2B](e2b-sandbox.md#clean-up).
 
-[`DaytonaSandbox(desktop=True)`](daytona-sandbox.md#give-the-agent-a-desktop) gives the agent a desktop in a Daytona cloud sandbox instead.
+### Where the screen comes from
 
-To give your own sandbox a display, implement [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]; see
-[Controlling a display](../workspace.md#controlling-a-display). On a [read-only](../workspace.md#read-only-access)
-workspace the agent can take screenshots but not act.
+| Capability | Screen |
+|---|---|
+| `DockerSandbox(desktop=True)` | A container on your machine |
+| [`DaytonaSandbox(desktop=True)`](daytona-sandbox.md#give-the-agent-a-desktop) | A Daytona cloud sandbox |
 
-The model must accept images. Gemini 3 models point on a 0-999 grid, which `ComputerUse` scales to pixels for them. Gemini gets `computer` as a function tool, not its own computer use tool, until `GoogleModel` moves to the Interactions API ([#6192](https://github.com/pydantic/pydantic-ai/issues/6192)).
+To give your own sandbox a screen, implement [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]; see
+[Controlling a display](../workspace.md#controlling-a-display).
 
-Claude 4 and later get Anthropic's computer use tool, on the APIs listed for [Anthropic](../models/anthropic.md#computer-use). GPT-5.4 and
-later, except GPT-5.4 nano, get OpenAI's on the Responses API of OpenAI, Azure OpenAI and Bedrock Mantle. Both are the
-format the models were trained on. Every other model that accepts images gets `computer` as a function tool.
+On a [read-only](../workspace.md#read-only-access) workspace the agent can take screenshots but not act.
+
+## Models
+
+The model must accept images.
+
+- Claude 4 and later get Anthropic's own computer use tool; see [Anthropic](../models/anthropic.md#computer-use).
+- GPT-5.4 and later, except GPT-5.4 nano, get OpenAI's on the Responses API; see
+  [OpenAI](../models/openai.md#native-tools).
+- Every other model gets `computer` as a regular function tool.
+
+Gemini 3 points on a 0-999 grid, which `ComputerUse` converts to pixels.
 
 ## Computer use, Playwright, or Browser Use
 
@@ -64,94 +73,60 @@ format the models were trained on. Every other model that accepts images gets `c
 
 | Setting | Default | What it does |
 |---|---|---|
-| `requires_approval` | `False` | `True` asks before any call that does more than look, zoom or wait. Needs a [deferred tool handler](../deferred-tools.md#human-in-the-loop-tool-approval). Turn it on for anything you'd regret an agent clicking. |
-| `keep_screenshots` | `None` | Send at least the most recent N images, screenshots and zooms, dropping older ones 25 at a time so prompt caching keeps working; the run's history keeps all of them. Use it to bound the cost of long runs, but not on Claude Fable 5.1 or the Claude 5.5 models: dropping a screenshot makes Claude lose its earlier reasoning. With `None`, the oldest are still dropped once a request would carry more than 100 images or about 15 MB of them, which providers refuse. |
-| `settle_seconds` | `0.5` | Pause after acting before the next zoom or the screenshot, so animations and page loads can finish. A `wait` the model asks for adds to it. |
-| `native` | `True` | Send the tool as the model's own computer use tool where it has one, as Claude and OpenAI's GPT-5.4 and later do: the model was trained on it. `False` sends this tool, with its own actions, to every model. OpenAI's tool can't zoom, triple-click, hold a key, press or release a mouse button, or read the pointer position, so turn it off when GPT needs those. |
+| `requires_approval` | `False` | Ask before any call that does more than look, zoom or wait. Needs a [deferred tool handler](../deferred-tools.md#human-in-the-loop-tool-approval). |
+| `keep_screenshots` | `None` | Send only the newest N screenshots, to cap the cost of long runs. Older ones are dropped 25 at a time so prompt caching keeps working. Don't use it on Claude Fable 5.1 or the Claude 5.5 models: they lose their earlier reasoning. |
+| `settle_seconds` | `0.5` | Wait this long after acting before the screenshot, so pages can load. |
+| `native` | `True` | Use the model's own computer use tool where it has one. `False` gives every model this tool and all its actions; on GPT that adds zoom, triple-click, holding keys, pressing or releasing a mouse button, and reading the pointer position. |
 
-A call its provider flags with safety checks, as OpenAI does, needs approval even with `requires_approval=False`.
-Give such an agent a deferred tool handler, such as [`HandleDeferredToolCalls`](../deferred-tools.md); without one,
-a flagged call ends the run with an error. The checks are in the call's `provider_details['safety_checks']`.
+OpenAI can flag a call with safety checks. A flagged call always needs approval, so give the agent a deferred tool
+handler such as [`HandleDeferredToolCalls`](../deferred-tools.md); without one, the run ends with an error.
 
-The actions to approve are in the model's coordinates: pixels in the latest screenshot, or the 0-999 grid for Gemini 3.
-If an approval changes them, the result tells the model the actions that ran.
-
-`ComputerUse` turns on [prompt caching](../capabilities/caching.md), since every request carries the screenshots so
-far: on Claude, a run costs several times more without it. Set `cache=False` in the model settings to turn it off.
+`ComputerUse` turns on [prompt caching](../capabilities/caching.md), since every request resends the screenshots. Set
+`cache=False` in the model settings to turn it off.
 
 ## Screen size
 
-A model's profile can limit the size of the screenshots it takes, as `computer_use_screenshot_limit`: Claude Opus 4.7,
-Opus 4.8 and the Claude 5 models take up to 2576 pixels on the longer side, earlier Claude models 1568 pixels and
-about 1.15 megapixels, and GPT 2560x1440, since it clicks less accurately on a larger screen. A 1280x800 screen fits
-every model. On a larger screen, `ComputerUse` sends the model the screenshot scaled down and scales its positions
-back up, when the display can scale its screenshots ([`SupportsScaledScreenshot`][pydantic_ai.workspaces.SupportsScaledScreenshot]); otherwise the run stops with an error naming the largest
-screen that fits. A zoom into a region larger than the limit fails the call before anything runs, and the result
-names the largest zoom of that shape that fits.
+Some models only take screenshots up to a size, set by `computer_use_screenshot_limit` in their profile:
 
-## When an action fails
+- Claude Opus 4.7, Opus 4.8 and the Claude 5 models: 2576 pixels on the longer side.
+- Earlier Claude models: 1568 pixels and about 1.15 megapixels.
+- GPT: 2560x1440. It clicks less accurately on a larger screen.
 
-The actions in a call run in order, and one that fails stops the call: the actions after it don't run, and the
-result says which action failed and why, ends with a screenshot as usual, and has the error in its `metadata`, a
-[`ComputerResult`][pydantic_ai.computer_use.ComputerResult]. A position outside the screen fails the whole call before anything runs.
-When the environment is gone, the run ends with [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError].
+A 1280x800 screen fits every model. On a larger screen, `ComputerUse` sends a scaled-down screenshot and scales the
+model's positions back up, if the display can scale screenshots
+([`SupportsScaledScreenshot`][pydantic_ai.workspaces.SupportsScaledScreenshot]). If it can't, the run stops with an
+error naming the largest size that fits.
 
-Agents in one process on one screen, such as parallel sub-agents, take turns at it a whole call at a time, so one's
-clicks and typing never land between another's. Agents in separate processes don't, nor do agents whose durable
-units run on separate event loops.
+## When something goes wrong
+
+- Actions run in order. If one fails, the rest don't run, and the result says which failed and why.
+- A position outside the screen fails the whole call before anything runs.
+- If the environment is gone, the run ends with [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError].
+- Agents in one process on one screen take turns, a whole call at a time, so their clicks never interleave.
 
 ## Watching a run
 
-Every screenshot arrives as a tool result event, so an [event stream handler](../agent.md#streaming-all-events) can save
-or show each one as the run goes:
-
-```python {title="save_screenshots.py" test="skip" lint="skip"}
-from collections.abc import AsyncIterable
-from pathlib import Path
-
-from pydantic_ai import AgentStreamEvent, BinaryContent, FunctionToolResultEvent, RunContext
-
-
-async def save_screenshots(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]) -> None:
-    async for event in events:
-        if isinstance(event, FunctionToolResultEvent) and event.part.tool_name == 'computer':
-            for item in event.part.content_items():
-                if isinstance(item, BinaryContent):
-                    Path(f'step-{ctx.run_step}.png').write_bytes(item.data)
-
-
-async def main():
-    result = await agent.run('Open the text editor and write a haiku.', event_stream_handler=save_screenshots)
-```
+Each screenshot is in a `FunctionToolResultEvent` for the `computer` tool, so an
+[event stream handler](../agent.md#streaming-all-events) can save or show them as the run goes.
 
 ## Limitations
 
-- A 1280x800 screenshot costs about 1,200 input tokens on GPT-5.5 and 1,340 on Claude Sonnet 5.5, and every later
-  request carries it again; with prompt caching, screenshots already sent cost about a tenth of that.
-- Each `computer` call is one model request, so a long task can reach the default
-  [`request_limit`](../agent.md#usage-limits) of 50. Pass higher [`UsageLimits`][pydantic_ai.usage.UsageLimits] for
-  long tasks.
-- Under durable execution, use `TemporalDurability`, `PrefectDurability` or `DBOSDurability`: the deprecated
-  `TemporalAgent`, `PrefectAgent` and `DBOSAgent` refuse a workspace, so they can't run `ComputerUse`.
-- Under [durable execution](../durable_execution/overview.md), each `computer` call is one durable unit, the `ComputerUse`
-  capability's `call` operation (on Temporal, an activity whose name ends in `computer__call`). It runs at most once,
-  with up to 15 minutes. When it fails, times out or loses its worker, the model is told some of its actions may
-  have run and to take a screenshot before acting again. Temporal and Render never repeat a call; DBOS, and Prefect
-  when a flow is run again, can repeat the one running when the process crashed; Absurd, pgtask and AWS Lambda retry
-  it under their own config.
-- When the display restarts, such as after its sandbox was stopped, the model isn't told: its next screenshot shows
-  the new screen.
-- Every screenshot rides in each model request, so under Temporal a run passes the 2 MB payload limit after a few
-  steps and then stops making progress. Configure Temporal's [external storage](../durable_execution/temporal.md#large-payloads),
-  which keeps large payloads outside the history. `keep_screenshots` doesn't avoid this: it drops screenshots 25 at a
-  time.
-- With [instrumentation](../logfire.md#excluding-binary-content), every request's screenshots are recorded on its span; pass
+- Screenshots are the main cost: about 1,300 input tokens each at 1280x800, resent with every request. Prompt caching
+  cuts the resends to about a tenth.
+- Each call is one model request, so long tasks can hit the default [`request_limit`](../agent.md#usage-limits) of 50.
+  Pass higher [`UsageLimits`][pydantic_ai.usage.UsageLimits].
+- Under [durable execution](../durable_execution/overview.md), each call is one durable step that runs at most once,
+  for up to 15 minutes. If it's cut off, the model is told some actions may have run. Temporal and Render never
+  repeat a call; DBOS, and Prefect when a flow is rerun, can repeat one cut off by a crash; Absurd, pgtask and AWS
+  Lambda use their own retry settings. Use `TemporalDurability`, `PrefectDurability` or `DBOSDurability`; the
+  deprecated `TemporalAgent`, `PrefectAgent` and `DBOSAgent` can't run it.
+- On Temporal, screenshots pass the 2 MB payload limit after a few steps. Configure
+  [external storage](../durable_execution/temporal.md#large-payloads).
+- If the display restarts, the model isn't told; its next screenshot shows the new screen.
+- [Instrumentation](../logfire.md#excluding-binary-content) records every screenshot. Pass
   `InstrumentationSettings(include_binary_content=False)` to leave them out.
-- [`Advisor(forward_history=True)`](advisor.md) forwards the run's history with every screenshot, not only the newest
-  ones, so each local consultation costs more as the conversation grows, and Anthropic refuses one past 600 images.
-- Inside a [`FallbackModel`](../models/overview.md#fallback-model) with models that don't all point on Gemini 3's
-  grid, Gemini 3 gets pixel coordinates and points less accurately, so put it only in a fallback with other Gemini 3
-  models.
+- [`Advisor(forward_history=True)`](advisor.md) forwards every screenshot; Anthropic refuses one past 600 images.
+- In a [`FallbackModel`](../models/overview.md#fallback-model), Gemini 3 gets its grid only if every model in it does.
 
 ## API reference
 
