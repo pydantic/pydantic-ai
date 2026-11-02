@@ -565,12 +565,16 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             model_name=ctx.model.model_name,
             acts=acts,
         )
+        if not ctx.in_durable_context:
+            # Run here, so an error keeps its traceback.
+            return await self._run_on_display(ctx, actions, plan)
         try:
             outcome = await self._on_display(ctx, actions, plan)
+        except UserError:
+            # A configuration error, such as a model the engine doesn't know, isn't the call failing.
+            raise
         except Exception as e:
-            # Under durable execution the unit failed, timed out or lost its worker, after any number of actions.
-            if not ctx.in_durable_context:
-                raise
+            # The unit failed, timed out or lost its worker, after any number of actions.
             raise ToolFailed(_INTERRUPTED) from e
         if isinstance(outcome, _NotRun):
             raise outcome.error()

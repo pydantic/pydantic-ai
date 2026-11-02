@@ -133,11 +133,12 @@ async def main():
   long tasks.
 - Under durable execution, use `TemporalDurability`, `PrefectDurability` or `DBOSDurability`: the deprecated
   `TemporalAgent`, `PrefectAgent` and `DBOSAgent` refuse a workspace, so they can't run `ComputerUse`.
-- Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), each `computer` call is one durable unit, its activity, step or
-  task, named `computer.call`, and it runs at most once with up to 15 minutes. When it fails, times out or loses its
-  worker, the model is told some of its actions may have run and to take a screenshot before acting again. Temporal
-  never repeats a call; DBOS, and Prefect when a flow is run again, can repeat the one running when the process
-  crashed; Absurd, pgtask and AWS Lambda retry it under their own config.
+- Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), each `computer` call is one durable unit, the `ComputerUse`
+  capability's `call` operation (on Temporal, an activity whose name ends in `computer__call`). It runs at most once,
+  with up to 15 minutes. When it fails, times out or loses its worker, the model is told some of its actions may
+  have run and to take a screenshot before acting again. Temporal and Render never repeat a call; DBOS, and Prefect
+  when a flow is run again, can repeat the one running when the process crashed; Absurd, pgtask and AWS Lambda retry
+  it under their own config.
 - When the display restarts, such as after its sandbox was stopped, the model isn't told: its next screenshot shows
   the new screen.
 - Every screenshot rides in each model request, so under Temporal a run passes the 2 MB payload limit after a few
