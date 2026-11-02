@@ -1,13 +1,7 @@
 """Durable execution for Pydantic AI agents on AWS Lambda durable functions.
 
-Checkpoints an agent's I/O -- model requests, function tool calls, MCP calls, and
-dynamic-toolset resolution -- into Lambda durable steps (`DurableContext.step(...)`), so an
-invocation that times out, fails, or is retried resumes from the last completed step instead of
-replaying the work.
-
-Lambda's durable API is synchronous and an agent run is async, so the capability drives every
-step through the bridge in `_bridge.py`. See `durable_agent_handler`, which adapts an async handler
-body, and `run_durable`, the lower-level bridge entrypoint.
+Lambda's durable API is synchronous and an agent run is async, so every step goes through the
+bridge in `_bridge.py`.
 """
 
 from __future__ import annotations
@@ -39,9 +33,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT
 
 from ._bridge import ENGINE_NAME as _ENGINE_NAME, in_durable_context
-from ._operation_backend import AWSLambdaOperationBackend, AWSLambdaOperationConfig
-
-_TOOL_CONFIG_KEY = 'aws_lambda'
+from ._operation_backend import TOOL_CONFIG_KEY, AWSLambdaOperationBackend, AWSLambdaOperationConfig
 
 
 @dataclass(init=False)
@@ -51,8 +43,7 @@ class AWSLambdaDurability(BaseDurabilityCapability[AgentDepsT]):
     Attach it with `capabilities=[AWSLambdaDurability()]` and decorate an async handler with
     `durable_agent_handler`: every model request, function tool call, MCP call, and dynamic-toolset
     resolution is wrapped in `DurableContext.step(...)`. A completed step is served from its
-    checkpoint when the execution resumes, so finished work is not repeated and tokens are not
-    re-spent.
+    checkpoint when the execution resumes, so finished work is not repeated.
 
     A step is checkpointed after it runs, so an interruption between a tool's side effect and its
     checkpoint re-runs the tool when the execution resumes: keep tool side effects idempotent, or
@@ -95,7 +86,7 @@ class AWSLambdaDurability(BaseDurabilityCapability[AgentDepsT]):
         serialization_failure=lambda exc: ExecutionError(str(exc)),
         sequential_tools_in_durable_context=True,
         unsupported_runtime_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
-        tool_config_key=_TOOL_CONFIG_KEY,
+        tool_config_key=TOOL_CONFIG_KEY,
     )
 
     def __init__(

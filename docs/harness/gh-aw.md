@@ -21,12 +21,9 @@ nobody at a prompt. Its output is a comment, a pull request or a commit rather t
 on a screen. The engine records the canonical agent session for inspection, and gh-aw can
 collect the session and usage artifacts; [Observability](#observability) covers traces.
 
-Every model vendor ships an action for this shape, each one running that vendor's agent on
-that vendor's models. The difference here is that the agent is yours: your instructions,
-your tools, your [capabilities](../capabilities/overview.md), and [any
-model](../models/overview.md) a string swap away, in a repository you can also run from the
-terminal, serve over a web UI, or call from your own backend. It is the same `Agent` object
-in all of them.
+The agent is your own `Agent` object, with your instructions, tools,
+[capabilities](../capabilities/overview.md), and [any model](../models/overview.md), so the
+same agent can also run from the terminal, a web UI, or your own backend.
 
 The finished repository is
 [dsfaccini/gh-aw-pydantic-ai-demo](https://github.com/dsfaccini/gh-aw-pydantic-ai-demo);
@@ -48,16 +45,14 @@ import-based engine like this one, so it is not part of the configuration below.
 - The [`gh` CLI](https://cli.github.com), authenticated with the `repo` and `workflow`
   scopes: `gh auth login --scopes repo,workflow`.
 - Use [gh-aw v1.0.1](https://github.com/github/gh-aw/releases/tag/v1.0.1) or newer with
-  AWF v0.29.0 or newer. That compiler release defaults to AWF v0.29.0 and includes
-  native protected capture, packaged engine parsers, and verified-publication guards.
+  AWF v0.29.0 or newer. That compiler release defaults to AWF v0.29.0.
 - Existing workflows need a compatible runtime build and a newly compiled lockfile.
   Installing a newer `gh aw` CLI locally does not change the runtime an existing lockfile
   selects.
 - The protected-capture runtime rejects workflows with `evals`, whose secondary engine invocation
   reads `evals.log`. Omit `evals` when using this engine.
-- The workflow summary is the canonical success/failure report. Categorical summary labels
-  for specific MCP failures and maximum-turn outcomes are removed; MCP startup and
-  request-limit errors retain their CLAI 2 diagnostics and nonzero exit status.
+- The workflow summary is the canonical success/failure report. MCP startup and
+  request-limit errors keep their CLAI 2 diagnostics and nonzero exit status.
 - Linux runners. gh-aw's sandbox needs Linux and Docker, so the `macos-*` and `windows-*`
   runner labels are
   [not supported](https://github.github.com/gh-aw/reference/frontmatter/).
@@ -170,8 +165,6 @@ def label_catalog() -> list[str]:
     return list(LABELS)
 ```
 
-Four things about that module.
-
 - **No model.** The engine always passes `-m` built from the workflow's `engine.model`,
   and an explicit `-m` replaces whatever model a loaded agent declares. Setting a model on
   the `Agent` would be ignored, so the workflow is the one place the model is configured.
@@ -278,8 +271,6 @@ ${{ steps.sanitized.outputs.text }}
 
 Post your triage as a single comment on that issue.
 ```
-
-Key by key:
 
 - `on: issues: types: [opened]` is the only trigger. `add-comment` posts to the issue
   that triggered the run, and a `workflow_dispatch` run has none, so the workflow declares
@@ -607,9 +598,7 @@ Python can import from `PYTHONPATH` before the recorder starts, and `PAI_AGENT` 
 the recorder interpreter. Point either setting only at code you trust.
 
 The gh-aw conclusion step gathers the agent session and usage into `aw_session.jsonl` and
-includes gateway and safe-output activity. The gh-aw usage artifact can be downloaded with
-`gh aw logs triage --artifacts all`; raw step output is available through
-`gh run view <run-id> --log` (add `--attempt N` for an earlier attempt).
+includes gateway and safe-output activity; download it with the `gh aw logs` command above.
 
 The comment lands on the issue with a gh-aw footer naming the workflow and linking its run,
 followed by an HTML comment recording the engine, its version and the model.
@@ -663,8 +652,7 @@ cannot read data back out of the project.
 `OTEL_EXPORTER_OTLP_ENDPOINT` is gh-aw's signal that observability is configured, and it is
 what the engine keys on. When it is set, and only then:
 
-- **`logfire` is installed** only when an endpoint is configured, so workflows without
-  observability do not install it.
+- **`logfire` is installed**, so workflows without observability do not install it.
 - **The launcher configures and instruments** before importing your agent, so an agent
   that starts work at import time is already traced. `send_to_logfire` is
   `'if-token-present'` and the console exporter is off. Spans go to the configured
