@@ -216,12 +216,20 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
 
   const isShown = (session: SessionEntry) => session.id === shown
 
-  const toggleMenu = (button: HTMLElement, id: string) => {
+  const openMenu = (anchor: HTMLElement, id: string) => {
     // The list scrolls and clips the menu, so a row in its lower half opens the menu upwards.
-    const list = button.closest('.projects')?.getBoundingClientRect()
-    const rect = button.getBoundingClientRect()
+    const list = anchor.closest('.projects')?.getBoundingClientRect()
+    const rect = anchor.getBoundingClientRect()
     setMenuUp(list !== undefined && rect.bottom > list.top + list.height / 2)
-    setMenu(menu === id ? null : id)
+    setMenu(id)
+  }
+
+  const toggleMenu = (button: HTMLElement, id: string) => (menu === id ? setMenu(null) : openMenu(button, id))
+
+  /** Right-click opens the same menu as the row's `…` button. */
+  const contextMenu = (id: string) => (event: React.MouseEvent<HTMLElement>) => {
+    event.preventDefault()
+    openMenu(event.currentTarget, id)
   }
 
   const row = (session: SessionEntry) => {
@@ -231,6 +239,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     return (
       <div
         key={session.id}
+        onContextMenu={contextMenu(session.id)}
         className={`session ${current ? 'current' : ''} ${viewing === session.id ? 'viewing' : ''} ${opening === session.id ? 'opening' : ''} ${session.archived ? 'archived' : ''}`}
       >
         {renaming === session.id ? (
@@ -346,7 +355,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
         className={`worktree ${nested ? 'nested' : ''} ${worktree.sessions.some(isShown) ? 'current' : ''} ${worktree.missing ? 'missing' : ''}`}
       >
         {nested && (
-          <div className="worktree-head">
+          <div className="worktree-head" onContextMenu={contextMenu(menuId)}>
             <button
               className="worktree-title"
               onClick={() => setCollapsed((current) => ({ ...current, [id]: !shut }))}

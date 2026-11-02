@@ -375,10 +375,6 @@ pre {
   height: 22px;
 }
 
-.worktree-head:hover > .session-more {
-  display: grid;
-}
-
 .worktree-title:hover,
 .worktree.current > .worktree-head > .worktree-title {
   color: var(--text-soft);
@@ -466,7 +462,7 @@ pre {
   font-variant-numeric: tabular-nums;
 }
 
-.session:hover .session-time {
+.session:is(:hover, :has(:focus-visible)) .session-time {
   display: none;
 }
 
@@ -474,19 +470,23 @@ pre {
   display: none;
 }
 
+/* Hidden by size and opacity, not `display`, so Tab still reaches it. */
 .session-more {
-  display: none;
+  display: grid;
   place-items: center;
-  width: 26px;
+  width: 0;
   height: 26px;
-  margin-right: 3px;
+  overflow: hidden;
+  opacity: 0;
   border-radius: 6px;
   color: var(--muted);
 }
 
-.session:hover .session-more,
-.session-more:focus-visible {
-  display: grid;
+.session:is(:hover, :has(:focus-visible)) .session-more,
+.worktree-head:is(:hover, :has(:focus-visible)) > .session-more {
+  width: 26px;
+  margin-right: 3px;
+  opacity: 1;
 }
 
 .session-more:hover {

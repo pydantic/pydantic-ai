@@ -428,6 +428,60 @@ async def test_removed_worktrees_fold_after_live_ones_and_archive_as_a_group(pag
     await expect(sidebar.get_by_role('button', name='Archive all sessions in this worktree')).to_be_disabled()
 
 
+async def test_row_menus_open_from_the_keyboard_and_by_right_click(page: Page, web_ui: WebUI) -> None:
+    """Tab reaches a row's `…` button, which shows on focus, and right-click opens the same menu."""
+    worktrees = [
+        {
+            'root': f'/wt/{name}',
+            'label': name,
+            'current': False,
+            'missing': False,
+            'sessions': [
+                {
+                    'id': name,
+                    'title': f'{name} work',
+                    'workspace': f'/wt/{name}',
+                    'updated_at': '2026-01-01T00:00:00Z',
+                    'state': 'ready',
+                    'messages': 2,
+                    'model': None,
+                    'current': False,
+                    'archived': False,
+                }
+            ],
+        }
+        for name in ('main', 'feature')
+    ]
+
+    async def sessions(route: Route) -> None:
+        await route.fulfill(json=[{'key': 'repo', 'name': 'repo', 'current': True, 'worktrees': worktrees}])
+
+    await page.route('**/api/sessions?*', sessions)
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    archive_all = sidebar.get_by_role('button', name='Archive all sessions in this worktree')
+    await expect(sidebar.get_by_text('main work', exact=True)).to_be_visible()
+    await sidebar.get_by_role('textbox', name='Search sessions', exact=True).focus()
+    for _ in range(20):
+        await page.keyboard.press('Tab')
+        if await page.evaluate('document.activeElement.ariaLabel') == 'Worktree actions':
+            break
+    more = page.locator(':focus')
+    await expect(more).to_have_accessible_name('Worktree actions')
+    await expect(more).to_be_visible()
+    await page.keyboard.press('Enter')
+    await expect(archive_all).to_be_visible()
+    await page.keyboard.press('Escape')
+    await expect(archive_all).to_have_count(0)
+
+    await page.mouse.move(0, 0)
+    await sidebar.locator('.worktree-head').filter(has_text='feature').click(button='right')
+    await expect(archive_all).to_be_visible()
+    await page.keyboard.press('Escape')
+    await sidebar.locator('.session').filter(has_text='feature work').click(button='right')
+    await expect(sidebar.get_by_role('button', name='Rename', exact=True)).to_be_visible()
+
+
 async def test_a_million_token_window_reads_in_millions(page: Page, web_ui: WebUI) -> None:
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Browser Beta', exact=True).click()
