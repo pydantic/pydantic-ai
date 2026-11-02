@@ -10,7 +10,7 @@ import anyio
 
 from pydantic_ai import RunContext, Tool
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.computer_use import COMPUTER_KIND, ComputerResult, ComputerToolAction, Screenshot, Wait
+from pydantic_ai.computer_use import COMPUTER_KIND, NATIVE_TOOL, ComputerResult, ComputerToolAction, Screenshot, Wait
 from pydantic_ai.messages import BinaryImage, ToolReturn
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import (
@@ -555,7 +555,7 @@ class ProviderWorkspaces(AbstractCapability[Any]):
         return ReadOnlyWorkspace(Workspace(backend)) if self.read_only else backend
 
 
-def computer_toolset(*, requires_approval: bool = False) -> FunctionToolset[Any]:
+def computer_toolset(*, requires_approval: bool = False, native: bool = True) -> FunctionToolset[Any]:
     """A `computer` tool that keeps the tool's contract and nothing more, for testing model adapters.
 
     It runs the actions on the workspace's display until one fails, then returns a summary and a screenshot, with
@@ -579,5 +579,11 @@ def computer_toolset(*, requires_approval: bool = False) -> FunctionToolset[Any]
         screenshot = BinaryImage(data=await ctx.workspace.screenshot(), media_type='image/png')
         return ToolReturn([summary, screenshot], metadata=result)
 
-    tool = Tool(computer, name='computer', tool_kind=COMPUTER_KIND, requires_approval=requires_approval)
+    tool = Tool(
+        computer,
+        name='computer',
+        tool_kind=COMPUTER_KIND,
+        requires_approval=requires_approval,
+        metadata=None if native else {NATIVE_TOOL: False},
+    )
     return FunctionToolset([tool])
