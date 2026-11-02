@@ -12,7 +12,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Literal
 
-from pydantic import JsonValue, TypeAdapter, ValidationError
+from pydantic import JsonValue, TypeAdapter
 from typing_extensions import TypeIs
 
 from pydantic_ai import (
@@ -40,7 +40,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserRequest
 from pydantic_ai_harness.filesystem import (
-    EditFileArgs,
+    EditFileCallPart,
     FileChangeRequestEvent,
     FileEditedEvent,
     FileWrittenEvent,
@@ -1030,25 +1030,37 @@ def tool_result_state(part: ToolReturnPart) -> ToolState:
     return 'error' if part.outcome == 'retried' else 'done'
 
 
-_EDIT_ARGS = TypeAdapter(EditFileArgs)
+_MAX_LINE_PAIRS = 65_536
+"""The most old-by-new lines of one replacement that is diffed, as `difflib`'s matching is quadratic."""
 
 
-def _edit_diffs(args: str) -> list[Diff]:
-    """The line diffs of an `edit_file` call's replacements, so a reloaded card counts what the live diff did."""
-    try:
-        edit = _EDIT_ARGS.validate_json(args)
-    except ValidationError:
+def _edit_diffs(part: EditFileCallPart) -> list[Diff]:
+    """A successful edit's replacements as line diffs, so a reloaded card counts about what the live diff did.
+
+    Each is one unnumbered hunk, as the saved call does not say where in the file it was; an edit too
+    large to diff gets none, and the browser rebuilds it from the arguments.
+    """
+    if (edit := part.typed_args) is None:
         return []
-    replacements = edit.get('replacements') or []
-    if (old := edit.get('old_text')) is not None and (new := edit.get('new_text')) is not None:
-        replacements = [ReplacementArgs(old_text=old, new_text=new)]
-    return [Diff(path=edit['path'], diff=_line_diff(r['old_text'], r['new_text'])) for r in replacements]
+    pairs = edit.get('replacements')
+    if not pairs:
+        old, new = edit.get('old_text'), edit.get('new_text')
+        if old is None or new is None:
+            return []
+        pairs = [ReplacementArgs(old_text=old, new_text=new)]
+    diffs: list[Diff] = []
+    for pair in pairs:
+        old, new = _lines(pair['old_text']), _lines(pair['new_text'])
+        if len(old) * len(new) > _MAX_LINE_PAIRS:
+            return []
+        hunk = difflib.unified_diff(old, new, lineterm='', n=max(len(old), len(new)))
+        diffs.append(Diff(path=edit['path'], diff='\n'.join(list(hunk)[3:])))
+    return diffs
 
 
-def _line_diff(old: str, new: str) -> str:
-    """Every line of `old` and `new` as one unnumbered hunk: a saved edit does not say where in the file it was."""
-    a, b = old.removesuffix('\n').split('\n'), new.removesuffix('\n').split('\n')
-    return '\n'.join(list(difflib.unified_diff(a, b, lineterm='', n=max(len(a), len(b))))[3:])
+def _lines(text: str) -> list[str]:
+    """`text`'s lines as the harness diffs them: split on line feeds only, with none for an empty text."""
+    return text.removesuffix('\n').split('\n') if text else []
 
 
 def image_id(image: BinaryContent) -> str:
@@ -1136,6 +1148,7 @@ def history_items(messages: Sequence[ModelMessage], *, image_ids: ImageIds | Non
     """
     items: list[Item] = []
     tools: dict[str, Item] = {}
+    edits: dict[str, EditFileCallPart] = {}
     for message in messages:
         if isinstance(message, ModelRequest):
             for part in message.parts:
@@ -1145,8 +1158,8 @@ def history_items(messages: Sequence[ModelMessage], *, image_ids: ImageIds | Non
                 elif isinstance(part, ToolReturnPart) and (tool := tools.get(part.tool_call_id)):
                     tool.text = tool_result_text(part)
                     tool.state = tool_result_state(part)
-                    if tool.name == 'edit_file' and tool.state == 'done':
-                        tool.diffs = _edit_diffs(tool.args)
+                    if part.outcome == 'success' and (edit := edits.get(part.tool_call_id)) is not None:
+                        tool.diffs = _edit_diffs(edit)
             continue
         for part in message.parts:
             if isinstance(part, TextPart) and part.content:
@@ -1163,6 +1176,8 @@ def history_items(messages: Sequence[ModelMessage], *, image_ids: ImageIds | Non
                 )
                 tools[part.tool_call_id] = tool
                 items.append(tool)
+                if isinstance(part, EditFileCallPart):
+                    edits[part.tool_call_id] = part
     return items
 
 

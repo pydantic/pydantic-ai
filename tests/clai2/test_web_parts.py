@@ -8,7 +8,7 @@ import os
 import re
 import socket
 import sys
-from collections.abc import Callable
+from collections.abc import AsyncIterable, AsyncIterator, Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -19,7 +19,9 @@ from pydantic import JsonValue
 from rich.console import Console
 
 from pydantic_ai import (
+    Agent,
     AgentRunResult,
+    AgentStreamEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     PartDeltaEvent,
@@ -28,6 +30,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.messages import (
     BinaryContent,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
@@ -40,11 +43,18 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserRequest, AskUserResponse, Question, QuestionOption
-from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
-from pydantic_ai_harness.filesystem._changes import unified_diff
+from pydantic_ai_harness.filesystem import (
+    EditFileCallPart,
+    FileChangeRequestEvent,
+    FileEditedEvent,
+    FileSystem,
+    FileWrittenEvent,
+)
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from pydantic_clai2.builtin_plugins.web import WebPlugin, channel as channel_module, server as server_module
@@ -311,43 +321,76 @@ def test_history_items() -> None:
     assert items[3].text.endswith('\n… 5 more characters') and len(items[3].text) < len(long) + 40
 
 
-def test_a_reloaded_edit_shows_the_lines_it_changed() -> None:
-    """A reloaded `edit_file` card counts the lines the live diff counted, not all of `old_text` and `new_text`."""
-    before = 'def add(a, b):\n    return a + b\n'
-    old, new = '    return a + b\n', '    return a + b\n\n\ndef sub(a, b):\n    return a - b\n'
-    live, _ = unified_diff(before, before.replace(old, new), path='calc.py')
-    pair = {'path': 'calc.py', 'old_text': old, 'new_text': new}
-    batch = {'path': 'calc.py', 'replacements': [{'old_text': 'a + b', 'new_text': 'b + a'}]}
-    messages = [
-        ModelResponse(
-            parts=[
-                ToolCallPart('edit_file', pair, tool_call_id='e1'),
-                ToolCallPart('edit_file', batch, tool_call_id='e2'),
-                ToolCallPart('edit_file', pair, tool_call_id='e3'),
-                ToolCallPart('edit_file', '{"path": 1}', tool_call_id='e4'),
-            ]
+CALC = 'def add(a, b):\n    return a + b\n\n\ndef mul(a, b):\n    return a * b\n'
+
+
+@pytest.mark.parametrize(
+    'args',
+    [
+        pytest.param(
+            {'old_text': '    return a * b\n', 'new_text': '    return a * b\n\n\ndef sub(a, b):\n    return a - b\n'},
+            id='prefix',
         ),
+        pytest.param({'old_text': '\n\ndef mul(a, b):\n    return a * b\n', 'new_text': ''}, id='deletion'),
+        pytest.param(
+            {
+                'replacements': [
+                    {'old_text': '    return a + b\n', 'new_text': '    return b + a\n'},
+                    {'old_text': 'def mul(a, b):\n', 'new_text': 'def times(a, b):\n'},
+                ]
+            },
+            id='replacements',
+        ),
+    ],
+)
+async def test_a_reloaded_edit_shows_the_lines_the_live_one_did(tmp_path: Path, args: dict[str, JsonValue]) -> None:
+    """A reloaded `edit_file` card changes the lines its live diff did, not all of `old_text` and `new_text`."""
+    (tmp_path / 'calc.py').write_text(CALC)
+    call = json.dumps({'path': 'calc.py', **args})
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) > 1:
+            yield 'done'
+        else:
+            yield {0: DeltaToolCall(name='edit_file', json_args=call, tool_call_id='e1')}
+
+    translate = EventTranslator().translate
+    live: list[Diff] = []
+
+    async def handler(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in events:
+            live.extend(message.diff for message in translate(event) if isinstance(message, DiffAdded))
+
+    agent = Agent(FunctionModel(stream_function=stream), capabilities=[FileSystem(root_dir=tmp_path)])
+    result = await agent.run('edit', event_stream_handler=handler, workspace=LocalWorkspaceBackend(tmp_path))
+    reloaded = next(item for item in history_items(result.all_messages()) if item.kind == 'tool')
+
+    def changed(diffs: list[Diff]) -> list[str]:
+        lines = [line for diff in diffs for line in diff.diff.split('\n')]
+        return [line for line in lines if line[:1] in '+-' and not line.startswith(('--- a/', '+++ b/'))]
+
+    assert changed(live) and changed(reloaded.diffs) == changed(live)
+
+
+def test_a_reloaded_edit_without_a_diff() -> None:
+    """Edits that changed nothing, or are too large to diff, leave the browser to show their arguments."""
+    huge = 'x\n' * 300
+    calls = {
+        'failed': {'path': 'a', 'old_text': 'a', 'new_text': 'b'},
+        'malformed': {'path': 1, 'old_text': 'a', 'new_text': 'b'},
+        'incomplete': {'path': 'a', 'new_text': 'b'},
+        'huge': {'path': 'a', 'old_text': huge, 'new_text': huge + 'y'},
+    }
+    messages = [
+        ModelResponse(parts=[EditFileCallPart('edit_file', args, tool_call_id=id) for id, args in calls.items()]),
         ModelRequest(
             parts=[
-                ToolReturnPart('edit_file', 'ok', tool_call_id='e1'),
-                ToolReturnPart('edit_file', 'ok', tool_call_id='e2'),
-                ToolReturnPart('edit_file', 'no match', tool_call_id='e3', outcome='retried'),
-                ToolReturnPart('edit_file', 'ok', tool_call_id='e4'),
+                ToolReturnPart('edit_file', 'no', tool_call_id=id, outcome='failed' if id == 'failed' else 'success')
+                for id in calls
             ]
         ),
     ]
-    paired, batched, failed, malformed = history_items(messages)
-
-    def changed(diff: str) -> list[str]:
-        return [line for line in diff.splitlines() if line[:1] in '+-' and line[:3] not in ('+++', '---')]
-
-    assert (
-        [changed(diff.diff) for diff in paired.diffs]
-        == [changed(live)]
-        == [['+', '+', '+def sub(a, b):', '+    return a - b']]
-    )
-    assert batched.diffs == [Diff(path='calc.py', diff='-a + b\n+b + a')]
-    assert failed.diffs == [] == malformed.diffs, 'a failed edit shows what it tried, from its arguments'
+    assert [item.diffs for item in history_items(messages)] == [[], [], [], []]
 
 
 def test_item_log_follows_what_browsers_were_sent() -> None:
