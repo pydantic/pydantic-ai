@@ -310,11 +310,23 @@ class IPythonKernel:
     async def _kill(self) -> None:
         # Unset only while the run holding the lock is still starting the kernel.
         if self._manager is not None:  # pragma: no branch
-            await self._manager.shutdown_kernel(now=True)
+            await self._shutdown_kernel(self._manager)
+
+    async def _shutdown_kernel(self, manager: _KernelManager) -> None:
+        # jupyter-client's manager handles one shutdown at a time: two overlapping calls fail with `InvalidStateError`.
+        # They overlap when `shutdown()`'s `_kill()` is still stopping the kernel and the run holding `_lock` finds the
+        # process gone and stops it too.
+        async with self._shutdown_lock:
+            await manager.shutdown_kernel(now=True)
 
     @cached_property
     def _lock(self) -> anyio.Lock:
         """Serializes cells, created on first use so it binds to the event loop that uses the kernel."""
+        return anyio.Lock()
+
+    @cached_property
+    def _shutdown_lock(self) -> anyio.Lock:
+        """Serializes stopping the kernel process, which `shutdown()` can do while a run holds `_lock`."""
         return anyio.Lock()
 
     async def _ensure_started(self) -> None:
@@ -352,7 +364,7 @@ class IPythonKernel:
         if client is not None:
             client.stop_channels()
         if manager is not None:
-            await manager.shutdown_kernel(now=True)
+            await self._shutdown_kernel(manager)
         if context is not None:
             context.destroy(linger=0)
 
