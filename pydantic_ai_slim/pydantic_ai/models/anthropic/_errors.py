@@ -86,9 +86,18 @@ def is_thread_replay_error(error: APIStatusError) -> bool:
     See https://platform.claude.com/docs/en/build-with-claude/message-threads#errors. A 404 for a model that
     doesn't exist has no thread `error_code`, so it isn't replayed.
     """
+    return _thread_error_code(error) in _THREAD_REPLAY_ERROR_CODES
+
+
+def is_thread_unsupported_error(error: APIStatusError) -> bool:
+    """Whether a thread request uses a feature or organization setting threads don't support, so it's sent without one."""
+    return _thread_error_code(error) == 'thread_unsupported_request'
+
+
+def _thread_error_code(error: APIStatusError) -> object:
     error_body = reported_error_body(error.body)
     details = error_body.get('details') if _utils.is_str_dict(error_body) else None
-    return _utils.is_str_dict(details) and details.get('error_code') in _THREAD_REPLAY_ERROR_CODES
+    return details.get('error_code') if _utils.is_str_dict(details) else None
 
 
 @contextmanager

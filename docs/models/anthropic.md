@@ -594,7 +594,12 @@ result1 = agent.run_sync('Your question')  # creates a thread
 result2 = agent.run_sync('Follow-up question', message_history=result1.all_messages())  # sends only the new prompt
 ```
 
-The thread is found from the message history, so nothing else needs to be kept: a request continues the thread of the most recent response, and leaves out the messages before it and the instructions and tools, which the thread keeps. A thread can't change its instructions, tools, thinking or other request-level settings, so a request where any of these changed starts a new thread with the full history instead. So does a request after a response from another model or a refusal. Threads expire 5 minutes after their last use; when Anthropic can no longer continue one, the full history is sent again in a new thread.
+The thread is found from the message history, so nothing else needs to be kept: a request continues the thread of the most recent response, and leaves out the messages before it and the instructions and tools, which the thread keeps. A thread can't change its instructions, tools, thinking or other request-level settings, so a request where any of these changed starts a new thread with the full history instead. So does a request after a response from another model or a refusal. Threads expire 5 minutes after their last use; when Anthropic can no longer continue one, the full history is sent again in a new thread. If the history before the most recent response changed since it was sent (a history processor trimmed or redacted it, say), a new thread is started too, so the change isn't lost. A request using something threads don't support, such as context management, is sent without a thread.
+
+Each response sent in a thread records `'thread_fingerprint'` in its [`provider_details`][pydantic_ai.messages.ModelResponse.provider_details], which is how the next request knows it can continue. Keep it when you store the message history.
+
+!!! warning "Data retention"
+    Threads aren't eligible for Zero Data Retention: Anthropic holds the conversation, system prompt and tools in memory for up to an hour after the thread's last use. They're available on the Claude API, Claude Platform on AWS, Claude Models on Google Cloud (Anthropic managed) and Microsoft Foundry.
 
 ## Carried-over thinking
 

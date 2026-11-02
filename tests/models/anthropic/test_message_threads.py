@@ -160,13 +160,16 @@ async def test_continue_within_a_tool_call_loop(allow_model_requests: None):
     ('status', 'error_code'),
     [(404, 'thread_not_found'), (400, 'thread_already_continued'), (400, 'thread_continue_in_flight')],
 )
-async def test_replay_when_thread_cannot_be_continued(allow_model_requests: None, status: int, error_code: str):
+@pytest.mark.parametrize('stream', [False, True])
+async def test_replay_when_thread_cannot_be_continued(
+    allow_model_requests: None, status: int, error_code: str, stream: bool
+):
     """A continue request the API can't serve is sent again as a create request with the full conversation."""
-    api = _Api(replies=[{'type': 'text', 'text': 'Hello'}, _thread_error(status, error_code)])
+    api = _Api(replies=[{'type': 'text', 'text': 'Hello'}, _thread_error(status, error_code)], stream=stream)
     async with _model(api) as model:
         agent = Agent(model, instructions='Be brief.', model_settings=_SETTINGS)
-        first = await agent.run('Hi')
-        second = await agent.run('Again', message_history=first.all_messages())
+        first = await _run(agent, 'Hi', [], stream)
+        second = await _run(agent, 'Again', first, stream)
 
     _, failed, replay = api.bodies
     assert failed['thread']['type'] == 'continue'
@@ -174,7 +177,7 @@ async def test_replay_when_thread_cannot_be_continued(allow_model_requests: None
     assert _instructions(replay) == 'Be brief.'
     assert _user_texts(replay) == ['Hi', 'Hello', 'Again']
     # The replayed response starts the new thread, so the run after it continues from it.
-    response = second.all_messages()[-1]
+    response = second[-1]
     assert isinstance(response, ModelResponse)
     assert response.provider_response_id == 'msg_3'
     assert response.provider_details and 'thread_fingerprint' in response.provider_details
@@ -231,5 +234,70 @@ async def test_off_by_default(allow_model_requests: None):
     assert 'thread' not in api.bodies[0]
     assert _BETA not in api.betas[0]
     response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert 'thread_fingerprint' not in (response.provider_details or {})
+
+
+async def test_edited_history_starts_a_new_thread(allow_model_requests: None):
+    """The thread holds the history as it was sent, so a request after an edit to it creates a new thread."""
+    api = _Api(replies=[{'type': 'text', 'text': 'Hello'}])
+    async with _model(api) as model:
+        agent = Agent(model, model_settings=_SETTINGS)
+        first = await agent.run('My card number is 1234')
+        redacted = [ModelRequest.user_text_prompt('My card number is [redacted]'), *first.all_messages()[1:]]
+        await agent.run('Again', message_history=redacted)
+
+    assert api.bodies[1]['thread'] == {'type': 'create'}
+    assert _user_texts(api.bodies[1]) == ['My card number is [redacted]', 'Hello', 'Again']
+
+
+async def test_refusal_starts_a_new_thread(allow_model_requests: None):
+    """Anthropic may already hold a refused turn, so the next request doesn't continue from it."""
+    refusal = {
+        'id': 'msg_refused',
+        'type': 'message',
+        'role': 'assistant',
+        'model': 'claude-sonnet-4-5',
+        'content': [{'type': 'text', 'text': 'No.'}],
+        'stop_reason': 'refusal',
+        'usage': {'input_tokens': 5, 'output_tokens': 1},
+    }
+    api = _Api(replies=[httpx2.Response(200, json=refusal)])
+    async with _model(api) as model:
+        agent = Agent(model, model_settings=_SETTINGS)
+        first = await agent.run('Hi')
+        await agent.run('Rephrased', message_history=first.all_messages())
+
+    assert api.bodies[1]['thread'] == {'type': 'create'}
+
+
+async def test_changed_skills_start_a_new_thread(allow_model_requests: None):
+    """`container.skills` is fixed for a thread, so changing it creates a new thread."""
+    api = _Api()
+
+    def skills(skill_id: str) -> AnthropicModelSettings:
+        return {**_SETTINGS, 'anthropic_container': {'skills': [{'type': 'anthropic', 'skill_id': skill_id}]}}
+
+    async with _model(api) as model:
+        agent = Agent(model)
+        first = await agent.run('Hi', model_settings=skills('pdf'))
+        await agent.run('Again', message_history=first.all_messages(), model_settings=skills('xlsx'))
+
+    assert api.bodies[1]['thread'] == {'type': 'create'}
+
+
+async def test_unsupported_request_is_sent_without_a_thread(allow_model_requests: None):
+    """A request using something threads don't support is sent again without `thread`, and isn't continued from."""
+    api = _Api(replies=[_thread_error(400, 'thread_unsupported_request')])
+    async with _model(api) as model:
+        agent = Agent(model, model_settings=_SETTINGS)
+        first = await agent.run('Hi')
+        await agent.run('Again', message_history=first.all_messages())
+
+    rejected, unthreaded, second = api.bodies
+    assert rejected['thread'] == {'type': 'create'}
+    assert 'thread' not in unthreaded
+    assert second['thread'] == {'type': 'create'}
+    response = first.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     assert 'thread_fingerprint' not in (response.provider_details or {})

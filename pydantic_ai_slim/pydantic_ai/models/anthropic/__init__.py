@@ -35,6 +35,7 @@ from ...messages import (
     InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
@@ -292,7 +293,12 @@ try:
         without_unanswered_tool_calls,
     )
     from ._containers import is_tool_result_only
-    from ._errors import is_expired_container_error, is_thread_replay_error, map_api_errors
+    from ._errors import (
+        is_expired_container_error,
+        is_thread_replay_error,
+        is_thread_unsupported_error,
+        map_api_errors,
+    )
     from ._message_passes import (
         anchor_system_messages,
         drop_unpaired_native_tool_calls,
@@ -648,8 +654,12 @@ class AnthropicModelSettings(ModelSettings, total=False):
     [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], and a request
     continues from it only when its own fingerprint matches, so changing the instructions, tools or another fixed
     field starts a new thread. So does a response from another model, a refusal, or an expired thread, which
-    Anthropic reports when the continue request fails, and the full conversation is then sent again.
-    Defaults to `False`.
+    Anthropic reports when the continue request fails, and the full conversation is then sent again. The
+    fingerprint also covers the history the response was created from, so a history processor that trims or
+    redacts it starts a new thread instead of continuing from the unchanged copy Anthropic holds. A request
+    using something threads don't support, like context management, is sent without a thread.
+
+    Threads aren't eligible for Zero Data Retention. Defaults to `False`.
     """
 
     anthropic_effort: AnthropicEffort | None
@@ -908,7 +918,7 @@ class _PreparedMessagesCreate:
 MESSAGE_THREADS_BETA = 'message-threads-2026-08-12'
 
 # The fields a thread keeps from its create request (`system`, `tools`) or requires unchanged on every request.
-# ponytail: `container.skills` and `fallbacks` are fixed too, add them once threads are used with either.
+# ponytail: `fallbacks` is fixed too, add it once pydantic-ai sends it.
 _THREAD_FIXED_PARAMS = (
     'system',
     'tools',
@@ -934,9 +944,24 @@ def _thread_fingerprint(params: _MessageCreateParams, betas: set[str]) -> str:
     ]
     if _is_str_mapping(extra_body := params['extra_body']) and 'thinking' in extra_body:
         fixed['thinking'] = extra_body['thinking']
+    container = params['container']
+    fixed['skills'] = container.get('skills') if _is_str_mapping(container) else None
     fixed['betas'] = sorted(betas)
     serialized = json.dumps(fixed, sort_keys=True, default=lambda _omit: None)
     return hashlib.sha256(serialized.encode()).hexdigest()
+
+
+def _thread_key(fingerprint: str, history: Sequence[ModelMessage]) -> str:
+    """What a response records to be continued from: the thread's fingerprint and the history it was created from.
+
+    The thread holds that history as it was sent, so if a history processor or the application changed it since,
+    the key no longer matches and a new thread is started with the history as it is now.
+    ponytail: digests the whole history once per request, fine next to mapping it; edits to the response itself
+    aren't caught, add its parts once a response can be digested as sent (see `history_digest` in `openai.py`).
+    """
+    hasher = hashlib.sha256(fingerprint.encode())
+    hasher.update(ModelMessagesTypeAdapter.dump_json(list(history), exclude_none=True))
+    return hasher.hexdigest()
 
 
 @dataclass(kw_only=True)
@@ -986,7 +1011,7 @@ def _thread_continuation(
         if (
             model.accepts_server_state(response)
             and response.provider_response_id
-            and details.get(_THREAD_FINGERPRINT_KEY) == fingerprint
+            and details.get(_THREAD_FINGERPRINT_KEY) == _thread_key(fingerprint, messages[:index])
             and response.finish_reason != 'content_filter'
             and response.state == 'complete'
             and new_messages
@@ -1813,10 +1838,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 if not is_thread_replay_error(error):
                     raise
             else:
-                thread_record.fingerprint = fingerprint
+                thread_record.fingerprint = _thread_key(fingerprint, messages)
                 return response
-        response = await create(*initial, _Thread())
-        thread_record.fingerprint = fingerprint
+        try:
+            response = await create(*initial, _Thread())
+        except APIStatusError as error:
+            if not is_thread_unsupported_error(error):
+                raise
+            # The request uses something threads don't support, like context management: send it without one.
+            return await create(*initial)
+        thread_record.fingerprint = _thread_key(fingerprint, messages)
         return response
 
     def _messages_create_params(
