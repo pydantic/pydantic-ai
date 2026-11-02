@@ -5,12 +5,14 @@ import importlib.util
 import os
 import signal
 import sys
+import sysconfig
 import threading
 from collections.abc import Callable
 from importlib import metadata
 from io import StringIO
 from typing import Any
 
+import anyio
 import pytest
 from pydantic import BaseModel
 
@@ -852,6 +854,133 @@ def test_banner_is_shown_by_agent_run(monkeypatch: pytest.MonkeyPatch, stderr: T
     agent.run_sync('hello')
 
     assert 'agent: support_agent • model: test:test • tools: 0 • capabilities: 0' in stderr.getvalue()
+
+
+_LIBRARY_FILE = '/venv/lib/python3.13/site-packages/some_library/runner.py'
+
+_RUN_SYNC_SOURCE = 'def run(agent):\n    return agent.run_sync("hello")\n'
+_RUN_SOURCE = 'async def run(agent):\n    return await agent.run("hello")\n'
+_WAIT_FOR_SOURCE = 'import asyncio\nasync def run(agent):\n    return await asyncio.wait_for(agent.run("hello"), 10)\n'
+_STREAM_EVENTS_SOURCE = (
+    'async def run(agent):\n'
+    '    async with agent.run_stream_events("hello") as events:\n'
+    '        async for _ in events:\n'
+    '            pass\n'
+)
+
+
+def _compiled_as(source: str, filename: str, module: str = 'some_library.runner') -> dict[str, Any]:
+    """The namespace of `source` compiled as if it were `module` living at `filename`, like an installed package."""
+    namespace: dict[str, Any] = {'__name__': module}
+    exec(compile(source, filename, 'exec'), namespace)
+    return namespace
+
+
+@pytest.mark.parametrize(
+    'filename',
+    [
+        _LIBRARY_FILE,
+        '/usr/lib/python3/dist-packages/some_library/runner.py',
+        # A system Python keeps `site-packages` inside its standard library directory.
+        os.path.join(sysconfig.get_paths()['stdlib'], 'site-packages', 'some_library', 'runner.py'),
+    ],
+)
+def test_banner_is_not_shown_for_a_run_an_installed_package_started(
+    monkeypatch: pytest.MonkeyPatch, stderr: TTYStream, filename: str
+):
+    """A library or platform runs agents for its own users, who didn't ask for the banner."""
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    agent = Agent(TestModel(), name='support_agent')
+
+    _compiled_as(_RUN_SYNC_SOURCE, filename)['run'](agent)
+    assert stderr.getvalue() == ''
+
+    # The claim is left for the user's own agent.
+    agent.run_sync('hello')
+    assert 'agent: support_agent' in stderr.getvalue()
+
+
+@pytest.mark.parametrize(
+    'source',
+    [
+        pytest.param(_RUN_SOURCE, id='run'),
+        # `wait_for` awaits the run in a coroutine of its own, which is part of the caller's chain.
+        pytest.param(
+            _WAIT_FOR_SOURCE,
+            id='wait_for',
+            marks=pytest.mark.skipif(
+                sys.version_info < (3, 12),
+                reason="Before 3.12, `wait_for` runs the run in a task of its own, which keeps today's banner",
+            ),
+        ),
+        # `run_stream_events()` runs the agent in its own task, so the caller's stack is read before it starts.
+        pytest.param(_STREAM_EVENTS_SOURCE, id='run_stream_events'),
+    ],
+)
+async def test_banner_is_not_shown_for_an_async_run_an_installed_package_started(
+    monkeypatch: pytest.MonkeyPatch, stderr: TTYStream, source: str
+):
+    """An installed package's coroutine starting a run is on the same stack as the run, like a sync caller."""
+    monkeypatch.setattr(sys, 'stderr', stderr)
+
+    await _compiled_as(source, _LIBRARY_FILE)['run'](Agent(TestModel()))
+
+    assert stderr.getvalue() == ''
+    assert _display.banner_pending() is True
+
+
+async def test_banner_is_shown_for_a_run_a_ui_adapter_streams_to_an_installed_server(
+    monkeypatch: pytest.MonkeyPatch, stderr: TTYStream
+):
+    """The web framework pulling a UI adapter's stream is installed, but the app serving it is the user's."""
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    adapter = _compiled_as(_STREAM_EVENTS_SOURCE, 'pydantic_ai/ui/some_adapter.py', 'pydantic_ai.ui.some_adapter')
+    server = _compiled_as(
+        'async def respond(stream, agent):\n    await stream(agent)\n',
+        '/venv/lib/python3.13/site-packages/some_server/responses.py',
+        'some_server.responses',
+    )
+
+    await server['respond'](adapter['run'], Agent(TestModel(), name='support_agent'))
+
+    assert 'agent: support_agent' in stderr.getvalue()
+
+
+def test_banner_is_shown_for_a_run_whose_starter_is_past_an_event_loop(
+    monkeypatch: pytest.MonkeyPatch, stderr: TTYStream
+):
+    """Below a loop the frames are whoever drives it, like `uvicorn` serving the user's app, so the banner stays."""
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    server = _compiled_as(
+        'import asyncio\ndef serve(coroutine):\n    return asyncio.run(coroutine)\n',
+        '/venv/lib/python3.13/site-packages/some_server/loop.py',
+        'some_server.loop',
+    )
+
+    server['serve'](Agent(TestModel(), name='support_agent').run('hello'))
+
+    assert 'agent: support_agent' in stderr.getvalue()
+
+
+async def test_banner_is_shown_for_a_run_an_anyio_task_group_starts(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
+    """`anyio` runs a task through a frame of its own, which is installed, but the user started the run."""
+    monkeypatch.setattr(sys, 'stderr', stderr)
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(Agent(TestModel(), name='support_agent').run, 'hello')
+
+    assert 'agent: support_agent' in stderr.getvalue()
+
+
+def test_banner_is_shown_for_a_run_on_its_own_thread(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
+    """Nothing but `threading` sits above a thread's run, which says nothing about who started it."""
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    thread = threading.Thread(target=Agent(TestModel(), name='support_agent').run_sync, args=('hello',))
+
+    thread.start()
+    thread.join()
+
+    assert 'agent: support_agent' in stderr.getvalue()
 
 
 def test_banner_counts_every_tool_the_model_is_offered(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
