@@ -36,6 +36,10 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 
 A sandbox lives for 1 hour (`sandbox_timeout=3600`, the most E2B's Hobby plan allows), then pauses; the next run resumes it. Pro plans allow up to `E2BSandbox(sandbox_timeout=86400)`. A lifetime over your plan's limit raises `WorkspaceUnavailableError`, with the limit in the message.
 
+To pause a sandbox only when it goes unused, pass `idle_timeout`: `E2BSandbox(idle_timeout=600)` pauses it about 10 minutes after its last command or file operation. Each operation extends its lifetime as it starts, up to `sandbox_timeout` from the run's first use (under durable execution, each activity attaches again, so from each activity's first use). Model requests and other tools in between count as idle time, and nothing extends it while one command runs, so set `idle_timeout` longer than the slowest model turn and the longest command: minutes, not seconds. With `idle_timeout` set, a new sandbox is created with the shorter of the two, so a `sandbox_timeout` over your plan's limit is not refused up front; keep it within your plan's limit.
+
+For runs longer than an hour, use a Pro plan and pass both, such as `E2BSandbox(sandbox_timeout=86400, idle_timeout=600)`: a busy run keeps the sandbox for up to 24 hours, and a finished one pauses it after 10 minutes instead of billing for the rest of the day.
+
 Commands start in the home directory, `/home/user`, which holds dotfiles and the pip cache. Pass a project directory, such as `E2BSandbox(working_dir='/home/user/project')`, so the project is not the home directory; it is created for you on a new sandbox.
 
 E2B's default template does not include ripgrep (`rg`). `Coder` can search without it, but installing `rg` makes searches faster. Build a reusable [template](https://e2b.dev/docs/template/quickstart) once, outside an agent run (building can take a minute):
@@ -123,9 +127,9 @@ later = agent.run_sync('Which capability would you add next, and where would it 
 
 The ref holds no credentials, so the process that reattaches needs `E2B_API_KEY` too. Pass `workspace='new'` to start a fresh sandbox even when the message history names one.
 
-`template` and `allow_internet_access` only shape a new sandbox. `sandbox_timeout` also applies when you reattach, and `working_dir` and `env` apply to every command.
+`template` and `allow_internet_access` only shape a new sandbox. `sandbox_timeout` and `idle_timeout` also apply when you reattach, and `working_dir` and `env` apply to every command.
 
-Already have an `e2b.AsyncSandbox`? Pass `workspace=E2BSandboxBackend(sandbox=sandbox)` to a run, with `E2BSandboxBackend` from `pydantic_ai_harness.e2b_sandbox`. `E2BSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend.
+Already have an `e2b.AsyncSandbox`? Pass `workspace=E2BSandboxBackend(sandbox=sandbox)` to a run, with `E2BSandboxBackend` from `pydantic_ai_harness.e2b_sandbox`. `E2BSandbox`'s settings don't apply to it; pass `working_dir=`, `env=` and `idle_timeout=` to the backend.
 
 ## Prepare a sandbox before the run
 
@@ -166,7 +170,7 @@ The `finally` kills the sandbox even when setup or the run fails. To keep it ins
 
 ## Preview a dev server
 
-With `Shell`, ask the agent to use `start_command` for `npm run dev -- --host 0.0.0.0 --port 3000`, then poll `check_command` and `curl http://localhost:3000/health` until ready. Save the returned command ID. Given the workspace ref, get the sandbox with `sandbox = await capability.backend(ref).get_sandbox()`, where `capability` is the `E2BSandbox` the agent runs with, so its `sandbox_timeout` applies, and use `sandbox.get_host(3000)` for the public hostname (prefix with `https://` for the preview URL). When done, call `stop_command` with the ID while the workspace is attached, then delete the sandbox with `await E2BSandbox().destroy(ref)`. Do not leave a public preview running longer than necessary.
+With `Shell`, ask the agent to use `start_command` for `npm run dev -- --host 0.0.0.0 --port 3000`, then poll `check_command` and `curl http://localhost:3000/health` until ready. Save the returned command ID. Given the workspace ref, get the sandbox with `sandbox = await capability.backend(ref).get_sandbox()`, where `capability` is the `E2BSandbox` the agent runs with, so its `sandbox_timeout` and `idle_timeout` apply, and use `sandbox.get_host(3000)` for the public hostname (prefix with `https://` for the preview URL). With `idle_timeout` set, the sandbox pauses about `idle_timeout` after the run's last use, since serving the preview does not count as use; call `await sandbox.set_timeout(seconds)` to keep it up longer, though a later run with `idle_timeout` shortens it to `idle_timeout` again. When done, call `stop_command` with the ID while the workspace is attached, then delete the sandbox with `await E2BSandbox().destroy(ref)`. Do not leave a public preview running longer than necessary.
 
 ## Clean up
 
@@ -181,7 +185,7 @@ async def kill_sandbox(ref: WorkspaceRef) -> None:
     await E2BSandbox().destroy(ref)
 ```
 
-`E2BSandbox.backend(ref)` constructs an attached backend without I/O; `destroy(ref)` kills by ID without attaching. This kills a paused sandbox too, without resuming it. A sandbox you don't kill is paused when its `sandbox_timeout` runs out. See [E2B's sandbox lifecycle](https://docs.e2b.dev/sandbox).
+`E2BSandbox.backend(ref)` constructs an attached backend without I/O; `destroy(ref)` kills by ID without attaching. This kills a paused sandbox too, without resuming it. A sandbox you don't kill is paused when its `sandbox_timeout` runs out, or its `idle_timeout` if you set one. See [E2B's sandbox lifecycle](https://docs.e2b.dev/sandbox).
 
 A failed run returns no result, so there is no ref to store. To terminate its sandbox, clean up in an `on_run_error` hook; `after_run` doesn't run when a run fails:
 
@@ -218,7 +222,8 @@ agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Coder(), hook
 | --- | --- |
 | `template` | E2B template name or ID for a new sandbox. Default: `None`, E2B's `base`. An unknown template fails on first use. |
 | `allow_internet_access` | Whether a new sandbox can reach the internet. Default: `True`. |
-| `sandbox_timeout` | Seconds the sandbox lives before E2B pauses it, set on create and on reattach. Default: `3_600` (1 hour, the most E2B's Hobby plan allows). |
+| `sandbox_timeout` | Seconds the sandbox lives before E2B pauses it, set on create and on reattach. With `idle_timeout`, the most a run extends the lifetime to, from its first use. Default: `3_600` (1 hour, the most E2B's Hobby plan allows). |
+| `idle_timeout` | Seconds without a command or file operation before E2B pauses the sandbox; model turns between operations count as idle, so use minutes. Each operation extends its lifetime, up to `sandbox_timeout`. Default: `None`, the fixed `sandbox_timeout` lifetime. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the sandbox's own (`/home/user` on the default template, where commands run as `user`); prefer relative paths or set `working_dir` for portable code. Created on a new sandbox; on an attached or caller-supplied sandbox it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Output is decoded as UTF-8 either way; the default template's locale is POSIX, so pass `env={'LC_ALL': 'C.UTF-8'}` if a tool such as `wc -m` should count characters rather than bytes. Nothing from your machine's environment reaches the sandbox. The agent's commands can read these values, and a new sandbox keeps them for every process, so leave out secrets the agent should not see. |
 

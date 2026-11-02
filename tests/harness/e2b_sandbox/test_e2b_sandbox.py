@@ -120,6 +120,7 @@ def test_backend_rejects_an_invalid_sandbox_timeout(sandbox_timeout: object) -> 
         ({'working_dir': 'repo'}, "working_dir must be an absolute POSIX path or None, got 'repo'"),
         ({'sandbox_timeout': 0}, 'sandbox_timeout must be an integer of at least 1, got 0'),
         ({'sandbox_timeout': 1.5}, 'sandbox_timeout must be an integer of at least 1, got 1.5'),
+        ({'idle_timeout': 0}, 'idle_timeout must be an integer of at least 1 or None, got 0'),
         (
             {'defer_loading': True, 'id': 'e2b'},
             (
@@ -206,6 +207,7 @@ async def test_capability_forwards_creation_options_and_run_does_not_kill(fake_e
     capability = E2BSandbox(
         template='base',
         sandbox_timeout=120,
+        idle_timeout=60,
         working_dir='/work',
         env={'FOO': 'bar'},
         allow_internet_access=False,
@@ -219,8 +221,11 @@ async def test_capability_forwards_creation_options_and_run_does_not_kill(fake_e
     result = await agent.run('run', deps=None)
     assert 'ok' in result.output
     call = fake_e2b.create_calls[0]
-    assert (call.template, call.timeout, call.envs, call.allow_internet_access) == ('base', 120, {'FOO': 'bar'}, False)
+    assert (call.template, call.timeout, call.envs, call.allow_internet_access) == ('base', 60, {'FOO': 'bar'}, False)
     assert fake_e2b.sandboxes[0].commands.calls[-1].cwd == '/work'
+    assert result.workspace is not None and result.workspace.ref is not None
+    await capability.backend(result.workspace.ref).get_sandbox()
+    assert fake_e2b.connect_calls == [('sbx-1', 60)]
     assert fake_e2b.sandboxes[0].killed is False
     assert isinstance(result.workspace, Workspace)
     backend = result.workspace.backend

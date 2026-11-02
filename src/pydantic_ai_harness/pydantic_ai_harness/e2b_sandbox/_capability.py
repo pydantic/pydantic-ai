@@ -39,7 +39,15 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
     """Total lifetime of the sandbox in seconds, applied on create and on attach.
 
     When it runs out, E2B pauses the sandbox and attaching resumes it. The default, 1 hour, is
-    the most E2B's Hobby plan allows; Pro plans allow up to 86400.
+    the most E2B's Hobby plan allows; Pro plans allow up to 86400. With `idle_timeout`, it is instead
+    the most a run extends the lifetime to, from its first use.
+    """
+
+    idle_timeout: int | None = None
+    """Seconds without use after which E2B pauses the sandbox; `None` keeps the fixed `sandbox_timeout` lifetime.
+
+    Each command or file operation extends its lifetime as it starts, but never past `sandbox_timeout` from the run's
+    first use. Model turns between operations count as idle, and one command must finish within it, so use minutes.
     """
 
     working_dir: str | None = None
@@ -58,6 +66,7 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
                 'the workspace is selected before deferred capabilities load.'
             )
         check_integer('sandbox_timeout', self.sandbox_timeout)
+        check_integer('idle_timeout', self.idle_timeout, optional=True)
         check_working_dir(self.working_dir)
         try:
             check_env_types(self.env)
@@ -67,7 +76,11 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
     def backend(self, ref: WorkspaceRef) -> E2BSandboxBackend:
         """Attach lazily to an existing E2B sandbox."""
         return E2BSandboxBackend(
-            ref=ref, sandbox_timeout=self.sandbox_timeout, working_dir=self.working_dir, env=self.env
+            ref=ref,
+            sandbox_timeout=self.sandbox_timeout,
+            idle_timeout=self.idle_timeout,
+            working_dir=self.working_dir,
+            env=self.env,
         )
 
     async def destroy(self, ref: WorkspaceRef) -> None:
@@ -86,6 +99,7 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
             template=self.template,
             allow_internet_access=self.allow_internet_access,
             sandbox_timeout=self.sandbox_timeout,
+            idle_timeout=self.idle_timeout,
             working_dir=self.working_dir,
             env=self.env,
         )

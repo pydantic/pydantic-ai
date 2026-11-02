@@ -671,6 +671,12 @@ class FakeSandbox:
             raise self._control.is_running_error
         return self._control.sandbox_is_running and not self.killed
 
+    async def set_timeout(self, timeout: int) -> None:
+        await anyio.lowlevel.checkpoint()
+        if self._control.set_timeout_error is not None:
+            raise self._control.set_timeout_error
+        self._control.set_timeout_calls.append((self.sandbox_id, timeout))
+
 
 class FakeAsyncSandboxFactory:
     """Mirrors the `AsyncSandbox.create` / `AsyncSandbox.connect` class methods."""
@@ -744,6 +750,8 @@ class FakeE2B:
     read_error: Exception | None = None
     is_running_error: Exception | None = None
     sandbox_is_running: bool = True
+    set_timeout_calls: list[tuple[str, int]] = field(default_factory=list[tuple[str, int]])
+    set_timeout_error: Exception | None = None
     # When set, sandboxes run commands and file operations on the host under this directory.
     host_root: Path | None = None
 
