@@ -251,6 +251,8 @@ Attach the [workspace](../workspace.md) capability, such as `LocalWorkspace`, wh
 - Move large files inside a tool: a workflow-side call carries the file in the activity payload, which counts against the [payload size limit](#large-payloads).
 - With `LocalWorkspace`, give every worker the directory at the same absolute path, on shared storage.
 
+When workflow code runs a command with `timeout=`, its activity gets a start-to-close timeout at least a minute longer, even when `activity_config` sets a shorter one, so a long command isn't retried while it is still running. Calls without `timeout=` keep the tool activities' timeout, and a shorter `schedule_to_close_timeout` still applies.
+
 Adding a workspace to an agent changes its workflows' history, so drain in-flight workflows first or
 deploy the change with Temporal worker versioning or on a new task queue.
 
