@@ -45,7 +45,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
 from pydantic_clai2.builtin_plugins.web.workers import Workers, task_entry
 from pydantic_clai2.commands import expand_bare_command, is_command_input
 from pydantic_clai2.plugins import CommandEnd, ForkEnd, LiveSession, TurnOutcome
-from pydantic_clai2.ui.menus.rewind import rewind_points
+from pydantic_clai2.runtime.rewind import rewind_points
 from pydantic_clai2.ui.prompt.prompt_queue import NOT_QUEUED
 from pydantic_clai2.ui.rendering.usage_report import session_usage
 
@@ -319,8 +319,8 @@ class SessionChannel:
 
         As the terminal's rewind, files and tool side effects are not undone.
         """
-        if self.session.running:
-            raise RuntimeError('Wait for the running turn to end.')
+        if self.session.busy:
+            raise RuntimeError('Wait for the running turn, command, or queued input to end.')
         conversation = self.session.conversation
         messages = conversation.messages
         point = next(

@@ -1491,7 +1491,8 @@ and the stop button interrupt the shown session only. Alt+Enter in the composer 
 turn (`LiveSession.steer`), as at the terminal's prompt, and the input queued behind it is listed
 above the composer from
 `LiveSession.queue`, which the terminal's own queue is: the page edits or removes an entry with
-`edit_queued` and `remove_queued`, and hears of every change through `host.live.subscribe`. A steered
+`edit_queued` and `remove_queued`, and hears of every change through `host.live.subscribe`. Edit and Retry on a
+prompt rewind its conversation while it is not `LiveSession.busy`. A steered
 message shows in the transcript once core delivers it (`EnqueuedMessagesEvent`). The process's working directory never changes: each session reads its own as
 `host.workspace`. `/resume ID` typed in a session still moves that session to the directory `ID`
 was saved in, and `/workspace DIRECTORY` (an existing absolute path) starts a new conversation
@@ -3984,6 +3985,7 @@ A `LiveSession` is one live session:
 | `tasks` | its delegated tasks, or `None` |
 | `forks` | its background `/fork` runs, oldest first, each a `ForkInfo` as `/forks` lists it |
 | `running` | whether a turn runs in it now |
+| `busy` | whether it handles input now (a turn, a command, or the terminal's rewind) or has input queued; check it before replacing its history between turns |
 | `setting(key)` | a CLAI setting's value in it, as its `host.setting` reads it, with its own `model` and `run.*` |
 | `queued` | how many inputs wait for its running turn or command to end |
 | `queue` | those inputs, oldest first, each a `QueuedInput` with an `id` (stable while it waits, also when the terminal starts or stops showing the session) and its `text`; the same queue the terminal lists above its prompt |

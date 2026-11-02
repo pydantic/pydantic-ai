@@ -335,6 +335,11 @@ class LiveSession(Protocol):
         """Whether a turn runs in the session now."""
         ...
 
+    @property
+    def busy(self) -> bool:
+        """Whether the session handles input now (a turn, a command, or the terminal's rewind) or has input queued."""
+        ...
+
     def setting(self, key: str, /) -> JsonValue:
         """The effective value of a CLAI setting in the session, as `PluginHost.setting` reads it."""
         ...
