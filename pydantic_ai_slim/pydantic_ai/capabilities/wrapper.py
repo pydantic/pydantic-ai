@@ -43,8 +43,13 @@ from .abstract import (
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
-    from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
-    from pydantic_ai.output import OutputContext
+    from pydantic_ai.models import (
+        KnownModelName,
+        Model,
+        ModelRequestContext,
+        ModelResolutionContext,
+    )
+    from pydantic_ai.output import OutputContext, OutputRetryContext
     from pydantic_ai.run import AgentRunResult
 
 
@@ -615,6 +620,11 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         return await self.wrapped.on_output_validate_error(
             ctx, output_context=output_context, output=output, error=error
         )
+
+    # --- Output retry notification ---
+
+    async def on_output_retry(self, ctx: RunContext[AgentDepsT], *, retry_context: OutputRetryContext) -> None:
+        await self.wrapped.on_output_retry(ctx, retry_context=retry_context)
 
     # --- Output process lifecycle hooks ---
 
