@@ -8,12 +8,19 @@ import pytest
 
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
-from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox, KubernetesSandboxBackend
 
-from .fake_sandboxd import FakeCluster
+from ...conftest import try_import
 
-# `grpc.aio` and the SDK run on asyncio only; Trio raises `UserError` (see `test_kubernetes_sandbox.py`).
-pytestmark = pytest.mark.parametrize('anyio_backend', ['asyncio'])
+with try_import() as imports_successful:
+    from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox, KubernetesSandboxBackend
+
+    from .fake_sandboxd import FakeCluster
+
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='pydantic-ai-harness[kubernetes] not installed'),
+    # `grpc.aio` and the SDK run on asyncio only; Trio raises `UserError` (see `test_kubernetes_sandbox.py`).
+    pytest.mark.parametrize('anyio_backend', ['asyncio']),
+]
 
 
 class TestKubernetesSandboxConformance(WorkspaceBackendSuite):

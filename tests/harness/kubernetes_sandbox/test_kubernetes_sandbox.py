@@ -7,15 +7,7 @@ import sys
 from pathlib import Path
 
 import anyio
-import grpc
-import grpc.aio
 import pytest
-from k8s_agent_sandbox.exceptions import SandboxClaimFailedError, SandboxNotFoundError
-from k8s_agent_sandbox.models import (
-    SandboxdInClusterConnectionConfig,
-    SandboxDirectConnectionConfig,
-    SandboxdPodTunnelConnectionConfig,
-)
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import UserError
@@ -27,9 +19,24 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness import KubernetesSandbox, KubernetesSandboxBackend
 
-from .fake_sandboxd import FakeCluster, FakeSandboxd
+from ...conftest import try_import
+
+with try_import() as imports_successful:
+    import grpc
+    import grpc.aio
+    from k8s_agent_sandbox.exceptions import SandboxClaimFailedError, SandboxNotFoundError
+    from k8s_agent_sandbox.models import (
+        SandboxdInClusterConnectionConfig,
+        SandboxDirectConnectionConfig,
+        SandboxdPodTunnelConnectionConfig,
+    )
+
+    from pydantic_ai_harness import KubernetesSandbox, KubernetesSandboxBackend
+
+    from .fake_sandboxd import FakeCluster, FakeSandboxd
+
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='pydantic-ai-harness[kubernetes] not installed')
 
 asyncio_only = pytest.mark.parametrize('anyio_backend', ['asyncio'])
 
