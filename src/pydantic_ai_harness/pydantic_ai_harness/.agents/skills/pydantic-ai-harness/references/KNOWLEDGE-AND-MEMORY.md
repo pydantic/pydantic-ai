@@ -227,7 +227,7 @@ Gotchas:
   a run with neither gets a fresh id and searches only itself.
 - `SnapshotHistorySource(store)` raises `TypeError` at construction if the store lacks
   `list_runs` / `list_snapshots`; the shipped `InMemoryStepStore`, `FileStepStore`,
-  `SqliteStepStore`, `MongoStepStore`, `PostgresStepStore` all work. A custom `HistorySource` must
+  `SqliteStepStore`, `MongoStepStore`, `PostgresStepStore`, `RedisStepStore` all work. A custom `HistorySource` must
   populate
   `conversation_id` on its `RunRecord`s.
 - Recovery of compaction-dropped messages depends on pre-compaction snapshots still being

@@ -323,8 +323,9 @@ The helper reads the active `run_id` from the `StepPersistence` `ContextVar` and
 - `SqliteStepStore(database='runs.db')` -- single SQLite file with tables `runs`, `events`, `snapshots`, `snapshot_idempotency_keys`, `tool_effects`, and a sibling `media` table for externalized blobs (see [Persisting media](#persisting-media) below), plus `snapshot_messages` and `snapshot_message_refs` (see [Storing each message once](#storing-each-message-once)). WAL mode is enabled, and a write waits up to 30 seconds for another writer, such as another process sharing the file, before raising `database is locked`; `tool_effects` upserts per `(run_id, tool_call_id)` so the latest state wins; snapshots use `AUTOINCREMENT seq` to mirror `FileStepStore._next_snapshot_seq`. Databases created before the snapshot `state` column existed gain it automatically on open (existing rows read as `complete`). Pass `connection=` instead of `database=` to share a `sqlite3.Connection` with the rest of your application; the connection must be opened with `check_same_thread=False` because hook calls are dispatched onto a worker thread; the store leaves its busy timeout and journal mode as the caller set them.
 - `MongoStepStore(client= or db_url=, database=...)` -- MongoDB collections `runs`, `events`, `snapshots`, `snapshot_messages`, `snapshot_idempotency_keys`, `tool_effects`, and `counters` (atomic `$inc` allocates the monotonic `seq`). Run registration uses an atomic insert by `runs._id = run_id`; duplicate ids raise `ValueError`. Needs the `mongodb` extra (which installs `pymongo>=4.17.0`); pass a shared `AsyncMongoClient` as `client=`, or a connection string as `db_url=` (the store then owns the client -- call `await store.aclose()` to release it). Individual parts at or above `media_threshold_bytes` externalize by default to a `MongoMediaStore` on the same client. That is a per-value offload, not an aggregate cap: a message of many below-threshold parts can still exceed MongoDB's 16 MiB document limit and fail on insert, so lower the threshold if that is a risk for your workload.
 - `PostgresStepStore(pool, table='step_persistence')` -- PostgreSQL tables `{table}_runs`, `{table}_events`, `{table}_snapshots`, `{table}_snapshot_keys`, `{table}_messages`, and `{table}_tool_effects`, plus `{table}_media` for externalized blobs (see [Persisting media](#persisting-media) below). `table` is a prefix, not a table name. `pool` is a caller-owned asyncpg-compatible pool: the harness imports no driver and defines no extra for it, and the store does not close the pool. Run registration inserts by the `run_id` primary key of `{table}_runs`; duplicate ids raise `ValueError`. Events and snapshots are ordered by a `BIGINT GENERATED ALWAYS AS IDENTITY` `seq`, which keeps counting when `ctx.run_step` resets to 0; `{table}_snapshot_keys` holds the replay-suppression keys independently of snapshot pruning; `{table}_tool_effects` upserts per `(run_id, tool_call_id)` so the latest state wins. Timestamps and JSON are stored as `TEXT`.
+- `RedisStepStore(client, prefix='pydantic-ai-harness:step')` -- one set of keys per run under `prefix`, plus `runs:*` sets that serve `list_runs` (see [What `RedisStepStore` writes](#what-redisstepstore-writes)). `client` is a caller-owned `redis.asyncio`-compatible client, reached through the `RedisClient` protocol: the harness imports no driver and defines no extra for it, and the store does not close the client. Run registration uses `SET ... NX` on the run key; duplicate ids raise `ValueError`. Pass `expire_seconds=` to have a run's keys expire that long after its last write. Unlike the stores above, `media_store` defaults to `None`, so parts stay inline: moving them out of an in-memory database is a choice to make deliberately.
 
-All implement the same async `StepStore` protocol, so capability hooks never block the event loop on the file/sqlite backends (I/O is dispatched via `anyio.to_thread`); the Mongo and Postgres backends are natively async.
+All implement the same async `StepStore` protocol, so capability hooks never block the event loop on the file/sqlite backends (I/O is dispatched via `anyio.to_thread`); the Mongo, Postgres, and Redis backends are natively async.
 
 `FileStepStore` validates `run_id` against `[A-Za-z0-9_.-]{1,200}` (and rejects `..`) to prevent path traversal. Callers passing user-controlled IDs should still sanitise first.
 
@@ -374,17 +375,58 @@ async def build_persistence() -> tuple[StepPersistence, asyncpg.Pool]:
 
 Call `build_persistence` during application startup and close the returned pool during shutdown. The store does not manage it. CI exercises both Postgres backends against `postgres:17`.
 
+### What `RedisStepStore` writes
+
+Every key that belongs to one run carries a `{run_id}` hash tag, so on Redis Cluster all of them sit on one slot. That lets the store apply each write as one Lua script (`EVAL`): the replay check, the write, the snapshot prune, and the TTL refresh run without another client's command in between. Two workers retrying the same event or snapshot can't both store it, and a worker that dies mid-write can't leave half of one behind.
+
+| Key                                     | Type   | Holds                                           |
+| --------------------------------------- | ------ | ----------------------------------------------- |
+| `<prefix>:run:{<run_id>}`               | string | `RunRecord` JSON                                |
+| `<prefix>:events:{<run_id>}`            | list   | one `StepEvent` JSON per append                 |
+| `<prefix>:event_keys:{<run_id>}`        | set    | idempotency keys of appended events             |
+| `<prefix>:snapshots:{<run_id>}`         | zset   | member `<seq>:<state>`, score `seq`             |
+| `<prefix>:snapshots:seq:{<run_id>}`     | string | counter allocating `seq`                        |
+| `<prefix>:snapshot_payloads:{<run_id>}` | hash   | `seq` -> snapshot JSON, history as message keys |
+| `<prefix>:snapshot_keys:{<run_id>}`     | set    | idempotency keys of saved snapshots             |
+| `<prefix>:messages:{<run_id>}`          | hash   | SHA-256 -> message JSON                         |
+| `<prefix>:tool_effects:{<run_id>}`      | hash   | `tool_call_id` -> `ToolEffectRecord` JSON       |
+| `<prefix>:runs:all`                     | set    | every run id                                    |
+| `<prefix>:runs:conversation:<cid>`      | set    | run ids in one conversation                     |
+| `<prefix>:runs:parent:<pid>`            | set    | run ids spawned by one run                      |
+
+- A `run_id` that is empty or starts with `}`, and a `prefix` containing `{` or `}`, raise `ValueError`: the hash tag would be empty or come from the prefix, and on a cluster the script would fail with `CROSSSLOT`.
+- The `runs:*` sets index runs on other slots, so they are written with separate commands after the script. Every write adds its run to them, not only `register_run`, so a worker that died between registering a run and indexing it is repaired by the run's next write.
+- With `expire_seconds`, every write refreshes the TTL of all the run's keys, so a run expires as a unit, that long after its last write. A `runs:*` set is refreshed by the writes that carry its id, so it expires with the last run it holds. While it is busier than its runs it can hold ids whose run has expired; `list_runs` removes those as it reads.
+- The server needs Lua scripting, which Redis has had since 2.6. CI exercises the store against `redis:8`.
+
+```python
+from redis.asyncio import Redis
+
+from pydantic_ai_harness import StepPersistence
+from pydantic_ai_harness.step_persistence import RedisStepStore
+
+client = Redis.from_url('redis://localhost')
+store = RedisStepStore(client, expire_seconds=3 * 24 * 3600)
+persistence = StepPersistence(store=store, agent_name='support_bot')
+```
+
+Install and manage the driver in your application, and close the client with `await client.aclose()` during shutdown. The store does not manage it.
+
+```bash
+pip/uv-add redis
+```
+
 ## Bounding snapshot growth
 
 Each step writes a new full-history snapshot keyed by an incrementing `seq`, and nothing is pruned by default. Within one long `Agent.run` the snapshot count equals the number of settled tool-call steps, so a long single run pays a growing storage cost.
 
-All five stores -- `InMemoryStepStore`, `FileStepStore`, `SqliteStepStore`, `MongoStepStore`, and `PostgresStepStore` -- accept an opt-in `max_snapshots_per_run: int | None` (default `None`, unbounded -- byte-for-byte the prior behavior). When set to `N >= 1`, each `save_snapshot` prunes the run down to a retain set:
+All six stores -- `InMemoryStepStore`, `FileStepStore`, `SqliteStepStore`, `MongoStepStore`, `PostgresStepStore`, and `RedisStepStore` -- accept an opt-in `max_snapshots_per_run: int | None` (default `None`, unbounded -- byte-for-byte the prior behavior). When set to `N >= 1`, each `save_snapshot` prunes the run down to a retain set:
 
 - the newest `N` snapshots by `seq`,
 - the newest snapshot overall (serves `latest_snapshot(include_interrupted=True)`),
 - the newest `complete` snapshot (serves the default read path).
 
-The last two keep both read modes correct even when the newest `N` snapshots are all `interrupted` and the newest resumable `complete` sits below that window, so the retain set can exceed `N`. `from_spec(..., max_snapshots_per_run=N)` forwards the bound to the store it constructs (`backend='memory'`, `'file'`, or `'sqlite'`; a Mongo or Postgres store takes a live client or pool, so it is built directly, not from a spec).
+The last two keep both read modes correct even when the newest `N` snapshots are all `interrupted` and the newest resumable `complete` sits below that window, so the retain set can exceed `N`. `from_spec(..., max_snapshots_per_run=N)` forwards the bound to the store it constructs (`backend='memory'`, `'file'`, or `'sqlite'`; a Mongo, Postgres, or Redis store takes a live client or pool, so it is built directly, not from a spec).
 
 ```python
 from pydantic_ai_harness.step_persistence import FileStepStore
@@ -392,7 +434,7 @@ from pydantic_ai_harness.step_persistence import FileStepStore
 store = FileStepStore('runs', max_snapshots_per_run=8)
 ```
 
-Pruning a snapshot never deletes its externalized media: blobs are content-addressed and may be shared across snapshots and runs, so orphaned-blob GC is out of scope (see the non-goals below). Age-based (TTL) expiry is out of scope too -- it belongs at whole-run granularity, not per snapshot.
+Pruning a snapshot never deletes its externalized media: blobs are content-addressed and may be shared across snapshots and runs, so orphaned-blob GC is out of scope (see the non-goals below). Age-based (TTL) expiry belongs at whole-run granularity, not per snapshot, which is how `RedisStepStore`'s `expire_seconds` works.
 
 Bounded retention discards older per-step snapshots, including pre-compaction ones. Any downstream that reconstructs history by unioning a run's retained snapshots -- snapshot search or a compaction receipt keyed on `run_id` -- can only see what is retained. With a tight bound (for example `max_snapshots_per_run=1`) the older, pre-compaction states are gone, so treat the bound as a hard limit on how far back such recovery can reach. Leave the bound at `None`, or set it high enough to cover the history you need to recover, when historical reconstruction matters.
 
@@ -404,15 +446,15 @@ Deleting a snapshot, by pruning or by deleting its conversation with `SqliteConv
 
 A database written by an earlier release keeps working: its rows hold the history inline and still read, and new snapshots in the same database store their messages once. Earlier releases can't read snapshots written this way, so don't downgrade a store that a newer release has written to. An existing database doesn't shrink right away: its earlier rows keep their history until pruning or deleting their conversation removes them, and SQLite keeps the freed space in the file until you run `VACUUM`.
 
-`PostgresStepStore` and `MongoStepStore` store each message once too, in a `{table}_messages` table and a `snapshot_messages` collection, with each snapshot holding the keys of its messages in order. Unlike `SqliteStepStore`, they keep a stored message when the snapshots referencing it are pruned, as they do externalized media: with several writers at once, deleting a message along with its last snapshot could race with a save that is about to reference it. So messages that only pruned snapshots referenced, such as those compaction replaced, stay stored, and pruning doesn't bound these stores' size or remove that content. `FileStepStore` keeps writing each snapshot as a complete JSON file, so a run's directory stays readable and greppable on its own.
+`PostgresStepStore` and `MongoStepStore` store each message once too, in a `{table}_messages` table and a `snapshot_messages` collection, with each snapshot holding the keys of its messages in order. Unlike `SqliteStepStore`, they keep a stored message when the snapshots referencing it are pruned, as they do externalized media: with several writers at once, deleting a message along with its last snapshot could race with a save that is about to reference it. So messages that only pruned snapshots referenced, such as those compaction replaced, stay stored, and pruning doesn't bound these stores' size or remove that content. `RedisStepStore` does the same with a `messages` hash per run, whose entries expire with the run under `expire_seconds`. `FileStepStore` keeps writing each snapshot as a complete JSON file, so a run's directory stays readable and greppable on its own.
 
 ## Persisting media
 
-`BinaryContent` payloads (images, audio, documents, video) inlined as base64 inside a snapshot would balloon every file or row containing the message; a large text part (e.g. a big tool-return string) does the same and can push a `MongoStepStore` message past MongoDB's 16 MiB document cap ([#440](https://github.com/pydantic/pydantic-ai-harness/issues/440)). The file, sqlite, mongo, and postgres backends externalize any `BinaryContent.data`, and any part whose string `content` is at or above **64 KiB**, through a configured `MediaStore`, leaving a URI reference in the snapshot. The same `media_threshold_bytes` governs binary and text alike; there is no separate text knob. Round-trip is transparent: `latest_snapshot(...).messages[*]` returns the original `BinaryContent` bytes and text.
+`BinaryContent` payloads (images, audio, documents, video) inlined as base64 inside a snapshot would balloon every file or row containing the message; a large text part (e.g. a big tool-return string) does the same and can push a `MongoStepStore` message past MongoDB's 16 MiB document cap ([#440](https://github.com/pydantic/pydantic-ai-harness/issues/440)). The file, sqlite, mongo, and postgres backends externalize any `BinaryContent.data`, and any part whose string `content` is at or above **64 KiB**, through a configured `MediaStore`, leaving a URI reference in the snapshot. The same `media_threshold_bytes` governs binary and text alike; there is no separate text knob. Round-trip is transparent: `latest_snapshot(...).messages[*]` returns the original `BinaryContent` bytes and text. `RedisStepStore` runs the same walk only when it is given a `media_store`: its default is `None`, so parts stay inline in the stored messages.
 
 Text externalization is not Mongo-only and has no opt-out short of `media_store=None`: the walker is shared, so an existing `FileStepStore` or `SqliteStepStore` deployment starts writing blobs for large text parts as well as binary ones from this release on. Snapshots written before it still restore -- the reader recognises the older binary marker shape. This compatibility is upgrade-only: a release that predates text externalization treats every marker as binary, so it cannot validate a snapshot containing an externalized text marker. Keep a current reader for persisted snapshots that contain those markers.
 
-Reserved-key escaping is a second marker-format generation with the same rule for these stores: a payload using the marker format's namespaced keys is moved into a versioned reserved mapping (the `__harness_external_escaped_keys__` stash, stamped with the format version under `__harness_external_marker_format__`), and the current reader moves those values back to their own keys. Compatibility the other way is upgrade-only. A reader that predates the escaping format re-inlines the externalized field correctly, but it leaves both reserved keys sitting in the restored payload rather than removing them. A marker carrying both, stamped with a version this reader does not know, is rejected rather than restored with the reserved values stripped: `restore_media` raises `ValueError`, and `latest_snapshot` surfaces it to the caller for the file, sqlite, mongo, and postgres stores. `list_snapshots` is different: each store treats the failed snapshot as unparsable, skips it, and logs the error, so an unknown version shows up as a missing snapshot rather than an exception. That rejection is the version gate and is intended, but store users have to anticipate it. Keep a current reader for persisted snapshots that contain escaped markers.
+Reserved-key escaping is a second marker-format generation with the same rule for these stores: a payload using the marker format's namespaced keys is moved into a versioned reserved mapping (the `__harness_external_escaped_keys__` stash, stamped with the format version under `__harness_external_marker_format__`), and the current reader moves those values back to their own keys. Compatibility the other way is upgrade-only. A reader that predates the escaping format re-inlines the externalized field correctly, but it leaves both reserved keys sitting in the restored payload rather than removing them. A marker carrying both, stamped with a version this reader does not know, is rejected rather than restored with the reserved values stripped: `restore_media` raises `ValueError`, and `latest_snapshot` surfaces it to the caller for the file, sqlite, mongo, postgres, and redis stores. `list_snapshots` is different: each store treats the failed snapshot as unparsable, skips it, and logs the error, so an unknown version shows up as a missing snapshot rather than an exception. That rejection is the version gate and is intended, but store users have to anticipate it. Keep a current reader for persisted snapshots that contain escaped markers.
 
 Two later additions follow the same upgrade-only rule. A dict the walker leaves inline but which carries `__harness_external_media__` or `__harness_external_literal__` (a tool return, say) is written wrapped under `__harness_external_literal__` with a `__harness_external_marker_format__` stamp, so it is never read back as a marker; a wrapper stamped with a version this reader does not know is rejected. An older reader leaves the wrapper in the restored payload, and still misreads a wrapped dict whose `__harness_external_media__` is `true`. A binary marker whose source used URL-safe base64, which is how pydantic serializes `bytes`, carries `__harness_external_urlsafe__` so the restored `data` uses the same alphabet; an older reader keeps that key in the restored part, which validation ignores.
 
@@ -423,6 +465,7 @@ Two later additions follow the same upgrade-only rule. A dict the walker leaves 
 | `SqliteStepStore`   | `SqliteMediaStore(database=<same db>)` | sibling `media` table in the same DB  |
 | `MongoStepStore`    | `MongoMediaStore(client=<same client>)` | sibling `media` + `media_chunks` collections |
 | `PostgresStepStore` | `PostgresMediaStore(<same pool>)`      | `{table}_media` table on the same pool |
+| `RedisStepStore`    | none (inline)                          | parts stay in the stored messages     |
 
 Override the destination by passing your own `MediaStore`:
 
@@ -549,7 +592,7 @@ pydantic_ai providers transparently download bytes from a URL when the target mo
 
 ### Persisting to unsupported backends
 
-DynamoDB, Redis, GCS, and other backends are out of scope for this release. Write your own `StepStore` (about ten methods on a Protocol) or your own `MediaStore` (five methods: `put`, `get`, `exists`, `public_url`, `get_metadata`) and pass it via `store=` / `media_store=`. Please open an issue if you ship one -- we want to feed the eventual shared adapter layer with N >= 3 real implementations before abstracting.
+DynamoDB, GCS, and other backends are out of scope for this release. Write your own `StepStore` (about ten methods on a Protocol) or your own `MediaStore` (five methods: `put`, `get`, `exists`, `public_url`, `get_metadata`) and pass it via `store=` / `media_store=`. Please open an issue if you ship one -- we want to feed the eventual shared adapter layer with N >= 3 real implementations before abstracting.
 
 ## Conversation heads and background names
 
