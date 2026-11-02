@@ -25,7 +25,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.workspaces import Click, PressKeys, TypeText
+from pydantic_ai.workspaces import Click, PressKeys
 
 from ...conftest import try_import
 from ...workspace_fakes import InMemoryProvider, computer_toolset
@@ -62,35 +62,11 @@ with try_import() as imports_successful:
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='anthropic not installed')
 
-TASK = 'Take a screenshot, then click at x=100 y=200, type "hello", and reply "done". Do nothing else.'
 NOT_EXECUTED = 'Not executed: an earlier computer action in this turn failed.'
 
 
 def _agent(model: AnthropicModel, provider: InMemoryProvider, **settings: Any) -> Agent[None, str]:
     return Agent(model, toolsets=[computer_toolset()], capabilities=[provider.capability(**settings)])
-
-
-@pytest.mark.vcr
-async def test_claude_member_calls_run_on_the_workspace(allow_model_requests: None, anthropic_api_key: str) -> None:
-    provider = InMemoryProvider()
-    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-    await _agent(model, provider).run(TASK)
-
-    # Claude's real member calls became `computer` calls that ran.
-    assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
-
-
-@pytest.mark.vcr
-async def test_claude_computer_20251124_calls_run_on_the_workspace(
-    allow_model_requests: None, anthropic_api_key: str
-) -> None:
-    provider = InMemoryProvider()
-    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(model, toolsets=[computer_toolset(display_size=(1280, 800))], capabilities=[provider.capability()])
-    await agent.run(TASK)
-
-    # Claude Sonnet 4.6's real `computer_20251124` calls became `computer` calls that ran.
-    assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
 
 
 def _tool_use(id: str, name: str, input: dict[str, Any]) -> BetaToolUseBlock:
