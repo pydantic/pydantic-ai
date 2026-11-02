@@ -686,7 +686,7 @@ class TestLoopJudge:
             'Explain', event_stream_handler=_drain
         )
 
-        assert 'loop_judge' in agent_run_names(capfire)
+        assert 'detect_loops' in agent_run_names(capfire)
 
     async def test_a_judge_that_quotes_no_repeating_passage(self):
         judge = LoopJudge[object](model=_judge([True], passage=''), every=600)

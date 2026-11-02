@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.detect_loops import DetectLoops, LoopJudge
 from tests.conftest import try_import
@@ -47,15 +47,14 @@ async def test_flow_delivers_the_nudge(prefect_test_server: None, tmp_path: Path
 
 
 async def test_a_judge_is_not_asked_in_flow_code(prefect_test_server: None, tmp_path: Path) -> None:
-    judged: list[None] = []
     responses = iter([ModelResponse(parts=[TextPart('I should check the config file again. ' * 40)])])
 
     def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return next(responses, ModelResponse(parts=[TextPart('The config is fine.')]))
 
     def judge(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        judged.append(None)  # pragma: no cover
-        raise AssertionError('the judge must not be asked in flow code')  # pragma: no cover
+        # A judge asked here would overrule the heuristic, so the nudge below proves it wasn't asked.
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'looping': False})])  # pragma: no cover
 
     agent = Agent(
         FunctionModel(model),
@@ -72,6 +71,5 @@ async def test_a_judge_is_not_asked_in_flow_code(prefect_test_server: None, tmp_
 
     # The heuristic alone found the loop in the response, checked whole in flow code.
     assert [nudge['pattern'] for nudge in nudges(messages) if isinstance(nudge, dict)] == ['repeated_stream_text']
-    assert judged == []
     assert isinstance(messages[-1], ModelResponse)
     assert messages[-1].text == 'The config is fine.'

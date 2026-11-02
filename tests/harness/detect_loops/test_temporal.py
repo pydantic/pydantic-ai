@@ -53,7 +53,6 @@ def _read_file(path: str) -> str:
 agent = Agent(
     FunctionModel(_model), name='detect_loops', tools=[_read_file], capabilities=[DetectLoops(), TemporalDurability()]
 )
-judged: list[None] = []
 
 
 def _looping_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -63,8 +62,8 @@ def _looping_model(messages: list[ModelMessage], info: AgentInfo) -> ModelRespon
 
 
 def _judge(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    judged.append(None)  # pragma: no cover
-    raise AssertionError('the judge must not be asked in workflow code')  # pragma: no cover
+    # A judge asked in workflow code would overrule the heuristic, so the nudge below proves it wasn't asked.
+    return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'looping': False})])  # pragma: no cover
 
 
 looping_agent = Agent(
@@ -176,6 +175,5 @@ async def test_detection_runs_inside_a_workflow_and_survives_replay() -> None:
             'tool_names': [],
         }
     ]
-    assert judged == []
     replay = await replayer.replay_workflow(in_response_history, raise_on_replay_failure=False)
     assert replay.replay_failure is None

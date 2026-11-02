@@ -246,7 +246,7 @@ Each detection emits a zero-duration `loop detected` span through `ctx.tracer`, 
 
 Without `trace_include_content`, the span contains no arguments, results, or response text. The fingerprints are left out too, because a short argument can be recovered from its hash. Checks that find nothing emit nothing.
 
-When a `LoopJudge` fails or times out, a zero-duration `loop judge failed` span records it, with the exception's class name in `error.type`. The judge's own requests are traced as runs of its agent, named `loop_judge` when you pass `model=`, when that agent is instrumented.
+When a `LoopJudge` fails or times out, a zero-duration `loop judge failed` span records it, with the exception's class name in `error.type`. The judge's own requests are traced as runs of its agent, named `detect_loops` when you pass `model=`, when that agent is instrumented.
 
 ## Composition
 

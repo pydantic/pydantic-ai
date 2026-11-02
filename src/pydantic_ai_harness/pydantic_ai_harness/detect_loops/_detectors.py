@@ -214,7 +214,7 @@ class LoopJudge(LoopDetector[AgentDepsT]):
         if self.agent is None:
             if self.model is None:
                 raise ValueError('Provide a judge `model` or a judge `agent`.')
-            self._judge = Agent(self.model, name='loop_judge')
+            self._judge = Agent(self.model, name='detect_loops')
         else:
             if self.model is not None:
                 raise ValueError('Provide either a judge `model` or a judge `agent`, not both.')

@@ -701,20 +701,24 @@ except LoopDetectedError as error:
   each part's end over `stream_channels=('thinking', 'text', 'tool_args')`, giving
   `repeated_thinking`, `repeated_stream_text`, `repeated_tool_args`; `repeated_parallel_call` is the
   same call `repeated_parallel_call_threshold=5` times in one response, reported before any runs. A
-  response that isn't streamed gets the same checks on arrival; `DetectLoops` never makes a run stream.
+  response that isn't streamed gets the same checks on arrival; `DetectLoops` never makes a run
+  stream.
 - Within a response, `'nudge'` also stops the stream and retries via `ModelRetry` (counts against
   output retries; a stopped stream is dropped from history and its tokens aren't in run usage). A
   handler that returns lets the response continue; it can raise `ModelRetry` to retry. Under
-  `run_stream()`, a loop found once output (text or an output tool call) has started streaming can't
-  be retried and ends the run with `UnexpectedModelBehavior`. `UsageLimits` don't see stopped streams.
+  `run_stream()`, a loop found once output (text or an output tool call) has started streaming
+  can't be retried and ends the run with `UnexpectedModelBehavior`. `UsageLimits` don't see
+  stopped streams.
 - `LoopJudge(model=...)` asks a small, fast "System 1" model (not a reasoning model) on heuristic
   suspicion, plus every `every` chars if set; failure or `timeout=5.0` falls back to the heuristic.
   It's never asked in durable workflow code (Temporal, DBOS, Prefect), where only the heuristic runs
-  on the whole response (so a custom detector must be deterministic, no I/O). Subclass `LoopDetector` (`async detect(ctx, sample: StreamSample) ->
+  on the whole response. A custom `LoopDetector` runs in workflow code too, so keep it deterministic
+  and free of I/O. Subclass `LoopDetector` (`async detect(ctx, sample: StreamSample) ->
   Repetition | None`) for your own methodology.
 - Emits a `loop detected` span (`detect_loops.pattern`, `.action`, `.count`, `.window`,
   `.tool_names`; `.fingerprints` and `.repeated_text` only with `trace_include_content`); no
-  arguments or results otherwise. A failed judge emits `loop judge failed` (`error.type`). The judge agent is named `loop_judge`.
+  arguments or results otherwise. A failed judge emits `loop judge failed`
+  (`error.type`). The judge agent is named `detect_loops`.
 
 ## See also
 

@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.detect_loops import DetectLoops, LoopJudge
 from tests.conftest import detach_dbos_logging, try_import
@@ -86,7 +86,8 @@ def test_a_loop_within_a_response_reaches_the_same_decision_without_the_judge(db
         return ModelResponse(parts=[TextPart('I should check the config file again. ' * 40)])
 
     def judge(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        raise AssertionError('the judge must not be asked in workflow code')  # pragma: no cover
+        # A judge asked here would overrule the heuristic, so the nudge below proves it wasn't asked.
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'looping': False})])  # pragma: no cover
 
     agent = Agent(
         FunctionModel(model),
