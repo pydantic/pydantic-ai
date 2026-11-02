@@ -285,6 +285,7 @@ def test_clai2_clipboard_runs_only_for_clai2_changes(
         ([('tests/clai2/browser/test_web_browser.py', '')], 'true'),
         ([('.github/workflows/ci.yml', '')], 'true'),
         ([('.github/workflows/clai2-web.yml', '')], 'true'),
+        ([('.github/actions/build-clai2-web-ui/action.yml', '')], 'true'),
         ([('pyproject.toml', '')], 'true'),
         ([('uv.lock', '')], 'true'),
         ([('.github/scripts/test_ci_content_classifier.py', '')], 'false'),

@@ -22,6 +22,10 @@ class ServerSettings(BaseModel):
     enabled: bool = True
     timeout: float | None = Field(default=None, gt=0)
     """Seconds allowed for the initialize handshake; core's default when unset."""
+    defer_loading: bool = False
+    """Offer the server as the on-demand capability `mcp_NAME`, whose tools stay hidden until the model loads it."""
+    description: str | None = Field(default=None, min_length=1)
+    """What the model reads about an on-demand server in the `load_capability` catalog."""
 
 
 class StdioServer(ServerSettings):

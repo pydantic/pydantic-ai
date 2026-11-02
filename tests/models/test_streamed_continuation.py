@@ -886,13 +886,18 @@ async def test_nonstream_usage_limit_on_completed_merge_does_not_cancel() -> Non
 
 
 async def test_error_on_first_streamed_segment_propagates_from_consumer_and_cancels_wrap() -> None:
-    """A streamed model error surfaces in the consumer task and cancels the model-request wrapper."""
+    """A streamed model error after the first event surfaces in the consumer task and cancels the model-request wrapper.
+
+    An error before the first event is raised while the stream is primed instead, where an
+    `on_model_request_error` hook can still handle it: see `test_model_request_attempts.py`.
+    """
 
     @dataclass
     class _ExplodingStream(StreamedResponse):
         async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            for event in self._parts_manager.handle_text_delta(vendor_part_id=0, content='partial'):
+                yield event
             raise RuntimeError('stream exploded')
-            yield  # pragma: no cover
 
         async def close_stream(self) -> None:
             pass
@@ -946,8 +951,8 @@ async def test_error_on_first_streamed_segment_propagates_from_consumer_and_canc
     agent = Agent(_ExplodingModel(), capabilities=[hooks])
 
     with pytest.raises(RuntimeError, match='stream exploded'):
-        async with agent.run_stream('go'):
-            pass
+        async with agent.run_stream('go') as result:
+            await result.get_output()
 
     assert calls == ['wrap:before', 'wrap:cancelled']
 

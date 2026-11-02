@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, overload
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
@@ -12,7 +12,7 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness.ask_user._toolset import AskUserToolset
-from pydantic_ai_harness.ask_user._types import TOOL_NAME, Answerer
+from pydantic_ai_harness.ask_user._types import TOOL_NAME, Answerer, AnyAnswerer, ContextAnswerer
 
 if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
@@ -48,8 +48,12 @@ class AskUser(AbstractCapability[AgentDepsT]):
     ```
     """
 
-    answerer: Answerer | None
+    answerer: AnyAnswerer[AgentDepsT] | None
     """Presents each `AskUserRequest` to the user and returns their `AskUserResponse`.
+
+    An answerer with two required positional parameters receives the asking run's context before
+    the request. If it also accepts just one, annotate the first as `RunContext[DepsT]` to select
+    the context form. Request-only answerers receive just the request.
 
     `None` defers every call: the run ends with `DeferredToolRequests` output, and the host answers
     in a later run with `ask_user_result` in `DeferredToolResults.calls`.
@@ -68,6 +72,40 @@ class AskUser(AbstractCapability[AgentDepsT]):
     twice when they agree, and an error when they differ. To keep two, give each its own `id` and wrap them
     in `PrefixTools`, since their tool names are the same.
     """
+
+    if TYPE_CHECKING:
+        # Preserve request-only lambda inference while retaining the generated dataclass initializer.
+        @overload
+        def __init__(
+            self,
+            *,
+            answerer: Answerer | None,
+            timeout: float | None = None,
+            id: str | None = 'ask_user',
+            description: str | None = None,
+            defer_loading: bool = False,
+        ) -> None: ...
+
+        @overload
+        def __init__(
+            self,
+            *,
+            answerer: ContextAnswerer[AgentDepsT],
+            timeout: float | None = None,
+            id: str | None = 'ask_user',
+            description: str | None = None,
+            defer_loading: bool = False,
+        ) -> None: ...
+
+        def __init__(
+            self,
+            *,
+            answerer: AnyAnswerer[AgentDepsT] | None,
+            timeout: float | None = None,
+            id: str | None = 'ask_user',
+            description: str | None = None,
+            defer_loading: bool = False,
+        ) -> None: ...
 
     def __post_init__(self) -> None:
         if self.timeout is not None and self.timeout <= 0:

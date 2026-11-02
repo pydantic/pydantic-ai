@@ -133,9 +133,10 @@ def bedrock_claude_supports_automatic_caching(model_name: str) -> bool:
     return name.startswith(_AUTOMATIC_CACHING_CLAUDE_MODEL_PREFIXES)
 
 
-# The Claude models the legacy InvokeModel API (`AsyncAnthropicBedrock`) serves per-message effort changes for,
-# under the `mid-conversation-output-config-2026-07-01` beta (which the SDK sends in the `anthropic_beta` body
-# field). Bare names, as `split_bedrock_model_id` returns them.
+# The Claude models that Amazon Bedrock serves per-message effort changes for, under the
+# `mid-conversation-output-config-2026-07-01` beta. The SDK sends the beta in the `anthropic_beta` body field on the
+# legacy InvokeModel API (`AsyncAnthropicBedrock`), and in the `anthropic-beta` header on the Bedrock Messages API
+# (`AsyncAnthropicBedrockMantle`). Bare names, as `split_bedrock_model_id` returns them.
 # https://platform.claude.com/docs/en/build-with-claude/effort#per-message-effort-beta
 _MID_CONVERSATION_EFFORT_CLAUDE_MODEL_PREFIXES = (
     'claude-fable-5-1',
@@ -144,7 +145,7 @@ _MID_CONVERSATION_EFFORT_CLAUDE_MODEL_PREFIXES = (
 
 
 def bedrock_claude_supports_mid_conversation_effort(model_name: str) -> bool:
-    """Whether the legacy Bedrock InvokeModel API takes a per-message `output_config.effort` for a Claude model.
+    """Whether Amazon Bedrock takes a per-message `output_config.effort` for a Claude model, on either Bedrock API.
 
     Accepts a full Bedrock model ID (e.g. `us.anthropic.claude-opus-5-5`) or a bare model name.
     """

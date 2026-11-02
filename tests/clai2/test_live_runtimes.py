@@ -487,11 +487,62 @@ async def test_a_conversation_another_process_runs_opens_one_copy(tmp_path: Path
             assert first.conversation.conversation_id != busy.id
             assert await fleet.live.open(busy.id) is first
             assert len(await fleet.process.conversations.listing()) == 2
-            # Once it moves on to another conversation, opening the busy one starts afresh.
+            # Once it moves on to another conversation, opening the busy one continues the same copy afresh.
             copy = first.conversation.conversation_id
             first.send_input('/new')
             await until(fleet.live, lambda: first.conversation.conversation_id != copy and not first.running)
-            assert await fleet.live.open(busy.id) is not first
+            again = await fleet.live.open(busy.id)
+            assert again is not first
+            assert again.conversation.conversation_id == copy
+            assert len(await fleet.process.conversations.listing()) == 2
+
+
+async def test_a_conversation_another_process_runs_has_one_copy_across_processes(tmp_path: Path) -> None:
+    """A CLAI started later, or another `--web`, continues the copy an earlier one made rather than another."""
+    store = Fleet(tmp_path, builtin=()).process.conversations
+    busy = await store.save(
+        summary=ConversationSummary(
+            workspace=str((tmp_path / 'a').resolve()), title='Busy', outcome='running', owner_pid=os.getpid()
+        ),
+        messages=[],
+    )
+    copies: list[str] = []
+    with anyio.fail_after(20):
+        for _ in range(2):
+            fleet = Fleet(tmp_path, builtin=())
+            fleet.folder('a')
+            async with fleet.live.serving():
+                copies.append((await fleet.live.open(busy.id)).conversation.conversation_id)
+    assert copies[0] == copies[1] != busy.id
+    summaries = await store.listing()
+    assert sorted((entry.title, entry.forked_from) for entry in summaries) == [
+        ('Busy', None),
+        ('Busy (fork)', busy.id),
+    ]
+
+
+async def test_a_copy_this_process_left_running_opens_without_another_copy(tmp_path: Path) -> None:
+    """A turn in the copy cut off without saving its end leaves this process's mark on it; opening continues it."""
+    fleet = Fleet(tmp_path, builtin=())
+    store = fleet.process.conversations
+    workspace = str(fleet.folder('a').resolve())
+    busy = await store.save(
+        summary=ConversationSummary(workspace=workspace, title='Busy', outcome='running', owner_pid=os.getpid()),
+        messages=[],
+    )
+    copy = await store.save(
+        summary=ConversationSummary(
+            workspace=workspace, title='Busy (fork)', outcome='running', owner_pid=os.getpid(), forked_from=busy.id
+        ),
+        messages=[],
+    )
+    # A copy of the copy is not opened instead: nothing runs the copy.
+    await store.save(summary=ConversationSummary(workspace=workspace, forked_from=copy.id), messages=[])
+    with anyio.fail_after(20):
+        async with fleet.live.serving():
+            opened = await fleet.live.open(busy.id)
+            assert opened.conversation.conversation_id == copy.id
+    assert len(await store.listing()) == 3
 
 
 async def test_a_session_runs_as_the_one_being_handled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

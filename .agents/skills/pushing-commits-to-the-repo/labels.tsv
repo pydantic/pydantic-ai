@@ -9,6 +9,8 @@ a2a
 agentic-workflows	about our own gh aw's -> internal/chore — about our engine -> external/feature/bug
 alibaba
 anthropic
+approved:ci-config	Maintainer approval for changes to CI config (workflows, actions, scripts, pre-commit, Makefile)
+approved:dependencies	Maintainer approval for changes to pyproject.toml or uv.lock
 area:ui-adapters
 asyncio
 attention-delivered	A delivered channel escalation is waiting for GitHub state cleanup
@@ -57,6 +59,7 @@ enhancement
 examples
 feature	New feature request, or PR implementing a feature (enhancement)
 feedback wanted
+final-review	Run the CI Review agent on this PR's head
 fix
 gateway
 genai-prices
@@ -73,6 +76,7 @@ hooks
 httpx
 huggingface
 implementation-pending
+integration-request	Request for a new third-party integration
 internal
 invalid	This doesn't seem right
 litellm
@@ -91,6 +95,7 @@ native-or-local	a.k.a. `provider adaptive` or `native fallback`
 native-tools
 needs MRE
 needs-confirmation
+needs-durable-exec-review	Touches a core definition a durable engine depends on (scripts/durable_exec_contract.json)
 needs-maintainer-action	The next meaningful action must come from a maintainer
 needs-maintainer-discussion	An unresolved design or scope decision needs maintainer input.
 new models	Support for new model(s)
@@ -120,31 +125,29 @@ probable-spam	Likely spam or package-promotion issue; needs maintainer review be
 provider-mapping-sweep
 provider-parity
 provider-parity-explore
-pydanty:bot	Managed by pydanty dogfooding automation
+pydanty:bot	Bot classification managed by pydanty.
 pydanty:brief-generated	An issue_brief artifact version landed
-pydanty:bug	Managed by pydanty dogfooding automation
 pydanty:cancel	Kill switch: pydanty never starts a run on this issue or PR while present; nothing auto-removes it.
 pydanty:failed	Pydanty could not complete issue triage
-pydanty:feature	Managed by pydanty dogfooding automation
 pydanty:fix-attempted	issue-fix-tdd workflow ran
 pydanty:fix-cannot-reproduce	Fix workflow couldn't reproduce the bug
 pydanty:fix-ci	One-shot trigger: run a single mechanical CI-fix pass on this PR. Consumed on dispatch.
 pydanty:fix-incorrect	Fix workflow tests didn't pass after fix
 pydanty:is-working	Pydanty is mid-flight reviewing/remediating this PR; do not edit until it clears
-pydanty:meta	Managed by pydanty dogfooding automation
-pydanty:model-request	Managed by pydanty dogfooding automation
+pydanty:meta	Meta classification managed by pydanty.
+pydanty:model-request	Model request classification managed by pydanty.
 pydanty:needs-human
 pydanty:pr	Pull request classification managed by pydanty.
-pydanty:processed	Managed by pydanty dogfooding automation
-pydanty:promotional	Managed by pydanty dogfooding automation
+pydanty:promotional	Promotional classification managed by pydanty.
 pydanty:rb-pending	Waiting for CI/mergeability. Pydanty auto-reviews once ready; may run CI-fix first.
 pydanty:retry-pr	Re-dispatch the pydanty PR opener from the stored handoff (skip triage)
 pydanty:review-branch	Trigger pydanty review-branch auto-review on this PR
 pydanty:review-lite	Trigger: freeform AI-decomposed review of this PR. No CI precondition. Consumed on dispatch.
 pydanty:reviewed	Reviewed by pydanty review-branch auto-review
 pydanty:skip	Opt out: pydanty never triggers (triage / retry-pr) on this issue
-pydanty:spam	Managed by pydanty dogfooding automation
-pydanty:triage-issue	Trigger pydanty dogfooding automation
+pydanty:spam	Spam classification managed by pydanty.
+pydanty:triage-completed	Pydanty verified the issue triage result
+pydanty:triage-issue	Trigger pydanty triage on this issue.
 pydanty:unclear	Unclear classification managed by pydanty.
 python:uv	Pull requests that update python:uv code
 question	Further information is requested
@@ -175,7 +178,6 @@ test-suite	Changes or improvements to the test suite
 thinking
 tools
 tracking	waiting for something that needs to happen to take the next step
-triage:legitimate
 trigger:ci-duration-report	Trigger a CI duration report comment.
 trigger:docs-preview	Trigger a documentation preview.
 typesafe	TypeSafe/Jev provider integration, configuration, and model support.

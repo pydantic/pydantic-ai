@@ -858,6 +858,8 @@ class SessionEntry:
     current: bool
     archived: bool
     """Hidden from the sidebar unless it lists archived sessions too."""
+    openable: bool
+    """Whether it opens live, as `Transcript.openable` says, so a click opens it without fetching its transcript first."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -879,6 +881,7 @@ class Project:
 
     key: str
     name: str
+    """Its folder's name, or the shortest end of its path no other listed project of that name shares."""
     current: bool
     worktrees: list[Worktree]
 
@@ -892,9 +895,12 @@ class Transcript:
     workspace: str
     items: list[Item]
     openable: bool
-    """Whether `/resume` can switch to it: saved here, or, while CLAI follows sessions' directories, in one that exists."""
+    """Whether `/resume` can switch to it: saved here, or, while CLAI follows sessions' directories, in one that exists,
+    and no other CLAI runs it."""
     missing: bool = False
     """Whether CLAI would follow it, but its directory is gone, as with a deleted worktree."""
+    owner_pid: int | None = None
+    """The process ID of another CLAI running it now, when it could otherwise be opened; opening it continues in a fork."""
 
 
 @dataclass(kw_only=True)

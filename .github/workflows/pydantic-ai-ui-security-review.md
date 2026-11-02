@@ -74,6 +74,7 @@ safe-outputs:
   # `allowed-events` enforces that host-side. The prompt also says COMMENT, but
   # a prompt is not a guarantee: without this key gh-aw allows all three events.
   submit-pull-request-review:
+    footer: always
     max: 1
     allowed-events: [COMMENT]
 timeout-minutes: 30
@@ -87,6 +88,14 @@ env:
 # Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.
 max-daily-ai-credits: -1
 imports:
+  - uses: shared/review-publication.md
+    with:
+      dependencies: [agent, safe_outputs]
+      condition: (!cancelled()) && needs.agent.result != 'skipped' && github.event.pull_request.number
+      pr_number: ${{ github.event.pull_request.number }}
+      head_sha: ${{ github.event.pull_request.head.sha }}
+      workflow_id: pydantic-ai-ui-security-review
+      failure_label: ui-security-review-failed
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md
   - shared/tool-hints.md
@@ -158,26 +167,6 @@ jobs:
           else
             echo 'touched=false' >> "$GITHUB_OUTPUT"
           fi
-  flag_failed_review:
-    # Labels the PR when this run posted no review; a later run that does clears it.
-    needs: [agent, safe_outputs]
-    if: (!cancelled()) && needs.agent.result != 'skipped' && github.event.pull_request.number
-    runs-on: ubuntu-slim
-    timeout-minutes: 5
-    permissions:
-      pull-requests: write
-    steps:
-      - env:
-          GH_TOKEN: ${{ github.token }}
-          LABELS: repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels
-          FAILED: ${{ needs.safe_outputs.result != 'success' || !(contains(needs.agent.outputs.output_types, 'submit_pull_request_review') || contains(needs.agent.outputs.output_types, 'noop')) }}
-        run: |
-          if [ "$FAILED" = true ]; then
-            gh api "$LABELS" -f 'labels[]=ui-security-review-failed' --silent
-          else
-            gh api -X DELETE "$LABELS/ui-security-review-failed" --silent || true
-          fi
-
   fetch_dynamic_prompt:
     runs-on: ubuntu-latest
     timeout-minutes: 5

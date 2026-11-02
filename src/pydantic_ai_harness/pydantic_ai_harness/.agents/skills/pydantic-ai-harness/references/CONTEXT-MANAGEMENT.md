@@ -141,7 +141,10 @@ contain `{messages}` and no other replacement field; any other prompt emits a `H
 and will raise `ValueError` in a future release), `instructions`, `bridge_prefix=False`, `receipts=False`,
 `event_stream_handler` (pass `drain_summary_events` for endpoints that reject non-streaming).
 `keep_messages=0` still keeps the newest message, the request being answered, alongside the summary.
-Usage (tokens and the request) folds into the run's `ctx.usage`, so `UsageLimits` sees it. Keep
+On its own trigger, a summary whose compacted history is not estimated smaller than the original
+is discarded and the history left unchanged (a `compact_messages` span with
+`compaction.skipped='not_smaller'` records it); direct `compact()`/`compact_now()` calls return it
+anyway. Usage (tokens and the request) folds into the run's `ctx.usage`, so `UsageLimits` sees it. Keep
 the default `id='summarizing_compaction'` under durable execution.
 
 ### `RelevanceCompaction`
@@ -168,11 +171,13 @@ returns or user prompts.
 ### `FallbackCompaction`
 
 `FallbackCompaction(fallback_chain, fallback_on=(ModelAPIError, FallbackExceptionGroup), *, max_tokens=None, max_fraction=None, background_start=None)`:
-tries the next strategy only when one raises a `fallback_on` exception; re-raises the last one
-if all fail. With no trigger, its request hook does nothing (it still works as a tier or via
-`compact_now`). Experimental `background_start` (a fraction of the trigger, such as `0.85`) runs the
-first strategy early in a background task and swaps its held result in when the trigger fires,
-falling back to the normal chain when it is stale or failed. The task can outlive a run, so call
+tries the next strategy when one raises a `fallback_on` exception, re-raising the last one if all
+fail. When its trigger runs the chain, it also skips a `SummarizingCompaction` result that isn't
+smaller than the history, and leaves the history unchanged if nothing shrinks it. With no trigger,
+its request hook does nothing (it still works as a tier or via `compact_now`). Experimental
+`background_start` (a fraction of the trigger, such as `0.85`) runs the first strategy early in a
+background task and swaps its held result in when the trigger fires, falling back to the normal
+chain when it is stale or failed. The task can outlive a run, so call
 `await compaction.aclose()` when done with the instance; `take_background_compaction(...)` applies a
 held result outside a run (for a `/compact` command) and returns `None` when there is none.
 
@@ -360,9 +365,10 @@ Gotchas: both `ToolReturn.return_value` and text `content` are reduced; `ModelRe
 are never reduced, nor are core `load_capability` / `search_tools` returns. Keep
 `Shell(max_output_chars=...)` above your thresholds. `Summarize` usage counts toward the run. Under
 durable execution spill writes and built-in summaries are journaled, so a replay reuses the recorded
-handle or summary; the payload is part of the operation input. Distinct from
-`ClampOversizedMessages`, which clamps model responses, not tool returns. With `CodeMode`, the limits
-apply to the `run_code` return, not to each tool call inside the script.
+handle or summary; the payload is part of the operation input, and a custom `OverflowStore` should
+treat a repeated `write` of a key as an overwrite. Distinct from `ClampOversizedMessages`, which
+clamps model responses, not tool returns. With `CodeMode`, the limits apply to the `run_code` return,
+not to each tool call inside the script.
 
 ## WarnOnCacheBusts
 

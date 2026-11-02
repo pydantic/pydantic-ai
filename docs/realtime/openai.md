@@ -194,7 +194,11 @@ them in hand once the backend answers. So that reply, and the results after it, 
 [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] once the backend answers, or
 calls more tools with those results, which are then a response of their own, after them. The backend's
 calls land wherever Live is in a sentence, so what Live says in the reply is recorded as one
-[`SpeechPart`][pydantic_ai.messages.SpeechPart], ahead of the calls, rather than cut in two at each one.
+[`SpeechPart`][pydantic_ai.messages.SpeechPart], ahead of the calls, rather than cut in two at each one. Live
+also finishes what it was saying when the backend answers, before it speaks the answer, and nothing on the wire
+marks where the answer starts: the reply ends where Live next pauses for half a second, or at anything else
+that happens first (the user speaking, say). Should Live run straight on into the answer without that pause, the
+start of the answer is recorded in the reply, ahead of the results.
 
 Live can also delegate to the *client* rather than to a backend model, leaving your application to
 answer in prose. Pydantic AI configures backend delegation, so a client delegation is reported as a

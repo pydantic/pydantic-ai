@@ -1,0 +1,426 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "268"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: What's 2+2? Consult your advisor first.
+            type: text
+        model: claude-sonnet-5-5
+        stream: true
+        tools:
+        - type: advisor_20260301
+          name: advisor
+          model: claude-opus-5-5
+          max_tokens: 1024
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=236
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-09e9ee8ff0a105fa47664c972bac62b9-822f6ec1120d9cbf-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgTRfE4rdsFpbES2o8rrv","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1004,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":17,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}          }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtoolu_01TmiA8ncjSFDuZiz3mExC6B","name":"advisor","input":{}}           }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}              }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0       }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"advisor_tool_result","tool_use_id":"srvtoolu_01TmiA8ncjSFDuZiz3mExC6B","content":{"type":"advisor_redacted_result","encrypted_content":"EpgDCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDGNKz+zLK6aUdfLbQhoMHZE8j3ALM0uXuj0UIjCXMnK8wfsa5WbmX2/mg5LipUq4R3TIozWQ26eaHtKTtgSl/TPKiiOqKOfkDtjz7XUqmwLqW+QDHnihzpiRexJLpiW76JpcFDv1xQMhdoj5RI1FqLmAcLRFz/HiaBE/la63wQFZhlIUeD9b4vssNucosFliDJq0O9S9dO5TsTHBvDxXt21ZwXVP7Ryojot7RGoZrLeA4QeAgnu+XjJcAZDZ6+Icu3fFCEW6CzqkJTCdu3NOajbaJNjovvphfbwu7SefDLQOd+TnRHlrCco34bIav9mOOcSX32MloIHf2B7gR/TTvySv+9Z/Y8AUix53N4IQNgZUwi/9aT0/CypwbgiTqkqR72+cPQckNUWojOnBNJ2If7bdtlYRM4lfKefnKIhVqobBVUXOio92nWg4XcayjVlg2sH46JbaxjXm/66taRb1SYJlDQngqYaYsx0UGAk=","stop_reason":"end_turn"}} }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1         }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"text","text":""} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"2+2 ="}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" 4."}  }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2   }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2124,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":36,"output_tokens_details":{"thinking_tokens":0},"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"iterations":[{"input_tokens":1004,"output_tokens":26,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"type":"message"},{"input_tokens":2609,"output_tokens":105,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"type":"advisor_message","model":"claude-opus-5-5"},{"input_tokens":1120,"output_tokens":10,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"type":"message"}]} }
+
+        event: message_stop
+        data: {"type":"message_stop"            }
+
+  recorded_at: 2026-10-27T21:08:45.356733+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1265"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: What's 2+2? Consult your advisor first.
+            type: text
+        - role: assistant
+          content:
+          - id: srvtoolu_01TmiA8ncjSFDuZiz3mExC6B
+            type: server_tool_use
+            name: advisor
+            input: {}
+          - tool_use_id: srvtoolu_01TmiA8ncjSFDuZiz3mExC6B
+            type: advisor_tool_result
+            content:
+              encrypted_content: >-
+                EpgDCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDGNKz+zLK6aUdfLbQhoMHZE8j3ALM0uXuj0UIjCXMnK8wfsa5WbmX2/mg5LipUq4R3TIozWQ26eaHtKTtgSl/TPKiiOqKOfkDtjz7XUqmwLqW+QDHnihzpiRexJLpiW76JpcFDv1xQMhdoj5RI1FqLmAcLRFz/HiaBE/la63wQFZhlIUeD9b4vssNucosFliDJq0O9S9dO5TsTHBvDxXt21ZwXVP7Ryojot7RGoZrLeA4QeAgnu+XjJcAZDZ6+Icu3fFCEW6CzqkJTCdu3NOajbaJNjovvphfbwu7SefDLQOd+TnRHlrCco34bIav9mOOcSX32MloIHf2B7gR/TTvySv+9Z/Y8AUix53N4IQNgZUwi/9aT0/CypwbgiTqkqR72+cPQckNUWojOnBNJ2If7bdtlYRM4lfKefnKIhVqobBVUXOio92nWg4XcayjVlg2sH46JbaxjXm/66taRb1SYJlDQngqYaYsx0UGAk=
+              stop_reason: end_turn
+              type: advisor_redacted_result
+          - text: 2+2 = 4.
+            type: text
+        - role: user
+          content:
+          - text: And what is that plus one? Consult your advisor again.
+            type: text
+        model: claude-sonnet-5-5
+        stream: true
+        tools:
+        - type: advisor_20260301
+          name: advisor
+          model: claude-opus-5-5
+          max_tokens: 1024
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=104
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-7ae4c52eb1d5bcee809b6907f5ea3e0c-979f9f24275f280d-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgTRfUZysqp3DqDdNX7dd","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1151,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}          }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtoolu_01KRCubfRF1xQ2dR2HxhtwNH","name":"advisor","input":{}}    }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}         }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0            }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"advisor_tool_result","tool_use_id":"srvtoolu_01KRCubfRF1xQ2dR2HxhtwNH","content":{"type":"advisor_redacted_result","encrypted_content":"EuACCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDCyJT+FYD3OawAQuWBoMLNKJ/D7HHuynpIkvIjAnXxO8uw4dy2AdtNPPS3ViOGaefw6B0x7yqmPxtB9H6NVBzHbx/6zgnaaqFlf0C5Aq4wHLxOqI0x8R59y0DV7QTWSyt6vIe4X1jwLcmCP6+UBci5qg38I6FanhPxMNia2cfVlyAxYKTfHUsEyQxxcOoWLvZuZ8eZbo+ar8OHkMQO6ucBYqylTt3Nq1yfp1Ep3bHpReln9jLC0hi1Rj6Glk2vggzS/kUYIfT16+dVJGIuoXbBIxYJFEAIH/+qKpsHBrso5i37TXT0xhZNY0IxR6X7sO09SAEZCa/tz8Hvq7bGUj4s5ZbpCQ4LXDPHg0/vv4hGqoHc4tx/+d4wRs0uE9kHj9/jWtjeZvdGRm5T8hBskiI46jmhgJ","stop_reason":"end_turn"}}         }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"4 +"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" 1 = 5."}       }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2   }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2408,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":38,"output_tokens_details":{"thinking_tokens":0},"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"iterations":[{"input_tokens":1151,"output_tokens":26,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"type":"message"},{"input_tokens":2778,"output_tokens":92,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"type":"advisor_message","model":"claude-opus-5-5"},{"input_tokens":1257,"output_tokens":12,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"type":"message"}]}     }
+
+        event: message_stop
+        data: {"type":"message_stop"      }
+
+  recorded_at: 2026-10-27T21:08:48.793028+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "2149"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 1
+        messages:
+        - role: user
+          content:
+          - text: What's 2+2? Consult your advisor first.
+            type: text
+        - role: assistant
+          content:
+          - id: srvtoolu_01TmiA8ncjSFDuZiz3mExC6B
+            type: server_tool_use
+            name: advisor
+            input: {}
+          - tool_use_id: srvtoolu_01TmiA8ncjSFDuZiz3mExC6B
+            type: advisor_tool_result
+            content:
+              encrypted_content: >-
+                EpgDCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDGNKz+zLK6aUdfLbQhoMHZE8j3ALM0uXuj0UIjCXMnK8wfsa5WbmX2/mg5LipUq4R3TIozWQ26eaHtKTtgSl/TPKiiOqKOfkDtjz7XUqmwLqW+QDHnihzpiRexJLpiW76JpcFDv1xQMhdoj5RI1FqLmAcLRFz/HiaBE/la63wQFZhlIUeD9b4vssNucosFliDJq0O9S9dO5TsTHBvDxXt21ZwXVP7Ryojot7RGoZrLeA4QeAgnu+XjJcAZDZ6+Icu3fFCEW6CzqkJTCdu3NOajbaJNjovvphfbwu7SefDLQOd+TnRHlrCco34bIav9mOOcSX32MloIHf2B7gR/TTvySv+9Z/Y8AUix53N4IQNgZUwi/9aT0/CypwbgiTqkqR72+cPQckNUWojOnBNJ2If7bdtlYRM4lfKefnKIhVqobBVUXOio92nWg4XcayjVlg2sH46JbaxjXm/66taRb1SYJlDQngqYaYsx0UGAk=
+              stop_reason: end_turn
+              type: advisor_redacted_result
+          - text: 2+2 = 4.
+            type: text
+        - role: user
+          content:
+          - text: And what is that plus one? Consult your advisor again.
+            type: text
+        - role: assistant
+          content:
+          - id: srvtoolu_01KRCubfRF1xQ2dR2HxhtwNH
+            type: server_tool_use
+            name: advisor
+            input: {}
+          - tool_use_id: srvtoolu_01KRCubfRF1xQ2dR2HxhtwNH
+            type: advisor_tool_result
+            content:
+              encrypted_content: >-
+                EuACCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDCyJT+FYD3OawAQuWBoMLNKJ/D7HHuynpIkvIjAnXxO8uw4dy2AdtNPPS3ViOGaefw6B0x7yqmPxtB9H6NVBzHbx/6zgnaaqFlf0C5Aq4wHLxOqI0x8R59y0DV7QTWSyt6vIe4X1jwLcmCP6+UBci5qg38I6FanhPxMNia2cfVlyAxYKTfHUsEyQxxcOoWLvZuZ8eZbo+ar8OHkMQO6ucBYqylTt3Nq1yfp1Ep3bHpReln9jLC0hi1Rj6Glk2vggzS/kUYIfT16+dVJGIuoXbBIxYJFEAIH/+qKpsHBrso5i37TXT0xhZNY0IxR6X7sO09SAEZCa/tz8Hvq7bGUj4s5ZbpCQ4LXDPHg0/vv4hGqoHc4tx/+d4wRs0uE9kHj9/jWtjeZvdGRm5T8hBskiI46jmhgJ
+              stop_reason: end_turn
+              type: advisor_redacted_result
+          - text: 4 + 1 = 5.
+            type: text
+        - role: user
+          content:
+          - text: And that times two?
+            type: text
+        model: claude-sonnet-5-5
+        stream: false
+        tools:
+        - type: advisor_20260301
+          name: advisor
+          model: claude-opus-5-5
+          max_tokens: 1024
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=608
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-cb45065cb7d2c856ad10a0bd829bc60e-ebe440f2b50983cb-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        model: claude-sonnet-5-5
+        id: msg_011CgTRfjpWWJAdc4CrWvjt1
+        type: message
+        role: assistant
+        content:
+        - type: text
+          text: "5"
+        container: null
+        stop_reason: max_tokens
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 1278
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          iterations:
+          - input_tokens: 1278
+            output_tokens: 1
+            cache_read_input_tokens: 0
+            cache_creation_input_tokens: 0
+            cache_creation:
+              ephemeral_5m_input_tokens: 0
+              ephemeral_1h_input_tokens: 0
+            type: message
+          output_tokens: 1
+          output_tokens_details:
+            thinking_tokens: 0
+          service_tier: standard
+          inference_geo: global
+          speed: standard
+        diagnostics: null
+  recorded_at: 2026-10-27T21:08:49.730386+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages/count_tokens?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "2119"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: What's 2+2? Consult your advisor first.
+            type: text
+        - role: assistant
+          content:
+          - id: srvtoolu_01TmiA8ncjSFDuZiz3mExC6B
+            type: server_tool_use
+            name: advisor
+            input: {}
+          - tool_use_id: srvtoolu_01TmiA8ncjSFDuZiz3mExC6B
+            type: advisor_tool_result
+            content:
+              encrypted_content: >-
+                EpgDCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDGNKz+zLK6aUdfLbQhoMHZE8j3ALM0uXuj0UIjCXMnK8wfsa5WbmX2/mg5LipUq4R3TIozWQ26eaHtKTtgSl/TPKiiOqKOfkDtjz7XUqmwLqW+QDHnihzpiRexJLpiW76JpcFDv1xQMhdoj5RI1FqLmAcLRFz/HiaBE/la63wQFZhlIUeD9b4vssNucosFliDJq0O9S9dO5TsTHBvDxXt21ZwXVP7Ryojot7RGoZrLeA4QeAgnu+XjJcAZDZ6+Icu3fFCEW6CzqkJTCdu3NOajbaJNjovvphfbwu7SefDLQOd+TnRHlrCco34bIav9mOOcSX32MloIHf2B7gR/TTvySv+9Z/Y8AUix53N4IQNgZUwi/9aT0/CypwbgiTqkqR72+cPQckNUWojOnBNJ2If7bdtlYRM4lfKefnKIhVqobBVUXOio92nWg4XcayjVlg2sH46JbaxjXm/66taRb1SYJlDQngqYaYsx0UGAk=
+              stop_reason: end_turn
+              type: advisor_redacted_result
+          - text: 2+2 = 4.
+            type: text
+        - role: user
+          content:
+          - text: And what is that plus one? Consult your advisor again.
+            type: text
+        - role: assistant
+          content:
+          - id: srvtoolu_01KRCubfRF1xQ2dR2HxhtwNH
+            type: server_tool_use
+            name: advisor
+            input: {}
+          - tool_use_id: srvtoolu_01KRCubfRF1xQ2dR2HxhtwNH
+            type: advisor_tool_result
+            content:
+              encrypted_content: >-
+                EuACCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDCyJT+FYD3OawAQuWBoMLNKJ/D7HHuynpIkvIjAnXxO8uw4dy2AdtNPPS3ViOGaefw6B0x7yqmPxtB9H6NVBzHbx/6zgnaaqFlf0C5Aq4wHLxOqI0x8R59y0DV7QTWSyt6vIe4X1jwLcmCP6+UBci5qg38I6FanhPxMNia2cfVlyAxYKTfHUsEyQxxcOoWLvZuZ8eZbo+ar8OHkMQO6ucBYqylTt3Nq1yfp1Ep3bHpReln9jLC0hi1Rj6Glk2vggzS/kUYIfT16+dVJGIuoXbBIxYJFEAIH/+qKpsHBrso5i37TXT0xhZNY0IxR6X7sO09SAEZCa/tz8Hvq7bGUj4s5ZbpCQ4LXDPHg0/vv4hGqoHc4tx/+d4wRs0uE9kHj9/jWtjeZvdGRm5T8hBskiI46jmhgJ
+              stop_reason: end_turn
+              type: advisor_redacted_result
+          - text: 4 + 1 = 5.
+            type: text
+        - role: user
+          content:
+          - text: And that times two?
+            type: text
+        model: claude-sonnet-5-5
+        tools:
+        - type: advisor_20260301
+          name: advisor
+          model: claude-opus-5-5
+          max_tokens: 1024
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "22"
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=79
+    body:
+      type: json
+      content:
+        input_tokens: 1278
+  recorded_at: 2026-10-27T21:08:48.973343+00:00

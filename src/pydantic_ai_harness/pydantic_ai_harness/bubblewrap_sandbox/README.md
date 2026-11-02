@@ -6,21 +6,23 @@ Run your agent's commands in a Linux [bubblewrap](https://github.com/containers/
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. BubblewrapSandbox wraps another workspace capability, here SSHWorkspace, and its get_workspace hook runs every command and file operation on that host inside a bwrap sandbox. In the sandbox the working directory is writable, the rest of the host's files are read-only, /tmp is private, /run is empty, and a seccomp filter blocks every socket. The sandbox does not stop commands from reading files the host user can read, signalling the host user's processes, or writing files such as git hooks that run unsandboxed later.](https://pydantic.dev/docs/ai/img/harness/bubblewrap-sandbox.svg)
+
 ## Install
 
 uv:
 
 ```bash
-uv add "pydantic-ai-harness[anthropic]"
+uv add "pydantic-ai-harness[coder,anthropic]"
 ```
 
 pip:
 
 ```bash
-pip install "pydantic-ai-harness[anthropic]"
+pip install "pydantic-ai-harness[coder,anthropic]"
 ```
 
-The sandbox's host must run Linux with `bwrap` installed (the `bubblewrap` package) and user namespaces allowed; otherwise commands raise `WorkspaceUnavailableError`. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra.
+The sandbox's host must run Linux with `bwrap` installed (the `bubblewrap` package) and user namespaces allowed; otherwise commands raise `WorkspaceUnavailableError`. The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra.
 
 ## Quick start
 

@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="657" viewBox="0 0 880 657" role="img" aria-labelledby="t d">
+<title id="t">Mutation testing: check that the tests pin the behavior down</title>
+<desc id="d">mutmut makes small changes, called mutants, to the filesystem and shell toolset sources and runs the test suite against each one. A mutant that makes a test fail is killed. A mutant that survives is triaged: either a test is missing and should be written, or the change is an equivalent mutant that no test could tell apart from the original, such as a mutated default parameter that the mutmut wrapper never uses.</desc>
+<defs><marker id="ai" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#092224"/></marker><marker id="am" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#55726A"/></marker><marker id="al" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#B417B7"/></marker><marker id="al2" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E520E9"/></marker><marker id="ap" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#7B57E8"/></marker><marker id="aa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0E9C86"/></marker><marker id="ac" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E5533D"/></marker><marker id="af" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8FA8A3"/></marker><marker id="ao" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#97998B"/></marker></defs>
+<rect x="0.5" y="0.5" width="879" height="656" rx="16" fill="#FFFFFF" stroke="#E6EAEA"/>
+<text x="32" y="50" font-size="21" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Mutation testing: check that the tests pin the behavior down</text>
+<text x="32" y="78" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Coverage shows every branch runs. mutmut changes the code one spot at a time and reruns the tests: a change that no</text>
+<text x="32" y="98" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">test notices points at a missing assertion.</text>
+<rect x="32" y="130" width="420" height="79" rx="10" fill="#092224"/>
+<text x="46" y="154" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#77FFD8">scripts/run-mutmut.sh </tspan><tspan fill="#FBFFEA">run --max-children </tspan><tspan fill="#B9A3FF">1</tspan></text>
+<text x="46" y="173" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#77FFD8">scripts/run-mutmut.sh </tspan><tspan fill="#FBFFEA">results</tspan></text>
+<text x="46" y="192" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#77FFD8">scripts/run-mutmut.sh </tspan><tspan fill="#FBFFEA">show </tspan><tspan fill="#FFD4E5">&lt;mutant-name&gt;</tspan></text>
+<text letter-spacing="1.3" x="474" y="144" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">SETUP</text>
+<text x="474" y="168" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">The script runs mutmut v3 with uv run --with, so it is not a dev</text>
+<text x="474" y="185.8" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">dependency.</text>
+<rect x="32" y="243" width="180" height="132" rx="14" fill="none" stroke="#8FA8A3" stroke-width="1.3" stroke-dasharray="4 4"/>
+<rect x="46" y="235" width="126.6" height="16" rx="4" fill="#FFFFFF"/>
+<text letter-spacing="1.3" x="53" y="247" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">MUTATED CODE</text>
+<rect x="252" y="243" width="376" height="132" rx="14" fill="none" stroke="#0E9C86" stroke-width="1.3" stroke-dasharray="4 4"/>
+<rect x="266" y="235" width="180.5" height="16" rx="4" fill="#FFFFFF"/>
+<text letter-spacing="1.3" x="273" y="247" font-size="11" fill="#0E9C86" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">MUTMUT, PER MUTANT</text>
+<rect x="668" y="243" width="180" height="132" rx="14" fill="none" stroke="#8FA8A3" stroke-width="1.3" stroke-dasharray="4 4"/>
+<rect x="682" y="235" width="71.1" height="16" rx="4" fill="#FFFFFF"/>
+<text letter-spacing="1.3" x="689" y="247" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">RESULT</text>
+<rect x="44" y="273" width="165.6" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="126.8" y="289" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">filesystem/_toolset.py</text>
+<rect x="44" y="307" width="132.1" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="110" y="323" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">shell/_toolset.py</text>
+<text x="44" y="355" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">at 100% branch coverage</text>
+<rect x="264" y="271" width="156" height="74" rx="10" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.4"/>
+<text x="342" y="294" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">mutant</text>
+<text x="342" y="313" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">one small change, such</text>
+<text x="342" y="329.6" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">as a flipped condition</text>
+<rect x="460" y="271" width="156" height="74" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="538" y="294" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">test suite</text>
+<text x="538" y="313" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">runs against the</text>
+<text x="538" y="329.6" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">mutated code</text>
+<line x1="202" y1="308" x2="262" y2="308" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="422" y1="308" x2="458" y2="308" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="680" y="267" width="156" height="42" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="758" y="282.2" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">killed</text>
+<text x="758" y="301.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">a test failed</text>
+<rect x="680" y="319" width="156" height="42" rx="10" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.4"/>
+<text x="758" y="334.2" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">survived</text>
+<text x="758" y="353.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">no test failed</text>
+<path d="M 618 301 L 664 301 Q 670 301 670 295 L 670 292 Q 670 288 674 288 L 678 288" stroke="#092224" stroke-width="1.6" fill="none" marker-end="url(#ai)"/>
+<path d="M 618 315 L 664 315 Q 670 315 670 321 L 670 336 Q 670 340 674 340 L 678 340" stroke="#092224" stroke-width="1.6" fill="none" marker-end="url(#ai)"/>
+<text letter-spacing="1.3" x="32" y="415" font-size="11" fill="#E5533D" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">TRIAGE EACH SURVIVOR</text>
+<path d="M 758 361 L 758 403 Q 758 411 750 411 L 228 411" stroke="#E5533D" stroke-width="1.6" fill="none" marker-end="url(#ac)"/>
+<rect x="32" y="429" width="250" height="64" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="157" y="455.2" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">missing test</text>
+<text x="157" y="474.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">write a test that kills it</text>
+<rect x="302" y="429" width="336" height="64" rx="10" fill="#F2F4EA" stroke="#C8CCB9" stroke-width="1.4"/>
+<text x="470" y="455.2" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">equivalent mutant</text>
+<text x="470" y="474.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">behaves like the original, so no test could tell them apart</text>
+<text x="32" y="523" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Known equivalent kinds in this codebase:</text>
+<rect x="32" y="535" width="185.8" height="24" rx="6" fill="#FFFFFF" stroke="#8FA8A3" stroke-width="1.2"/>
+<text x="124.9" y="551" font-size="11" fill="#55726A" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">trampoline default params</text>
+<rect x="225.8" y="535" width="226" height="24" rx="6" fill="#FFFFFF" stroke="#8FA8A3" stroke-width="1.2"/>
+<text x="338.8" y="551" font-size="11" fill="#55726A" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">name= omitted in add_function()</text>
+<rect x="459.8" y="535" width="125.4" height="24" rx="6" fill="#FFFFFF" stroke="#8FA8A3" stroke-width="1.2"/>
+<text x="522.4" y="551" font-size="11" fill="#55726A" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">&#x27;utf-8&#x27; encoding</text>
+<rect x="593.1" y="535" width="125.4" height="24" rx="6" fill="#FFFFFF" stroke="#8FA8A3" stroke-width="1.2"/>
+<text x="655.8" y="551" font-size="11" fill="#55726A" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">errors=&#x27;replace&#x27;</text>
+<rect x="32" y="567" width="185.8" height="24" rx="6" fill="#FFFFFF" stroke="#8FA8A3" stroke-width="1.2"/>
+<text x="124.9" y="583" font-size="11" fill="#55726A" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">unreachable except blocks</text>
+<rect x="225.8" y="567" width="219.3" height="24" rx="6" fill="#FFFFFF" stroke="#8FA8A3" stroke-width="1.2"/>
+<text x="335.4" y="583" font-size="11" fill="#55726A" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">CancelScope(shield=True) flips</text>
+<rect x="32" y="610" width="14" height="14" rx="4" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="52" y="621" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">harness code and tests</text>
+<rect x="202.2" y="610" width="14" height="14" rx="4" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.2"/>
+<text x="222.2" y="621" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">mutmut</text>
+<rect x="285" y="610" width="14" height="14" rx="4" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.2"/>
+<text x="305" y="621" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">surviving mutant</text>
+</svg>

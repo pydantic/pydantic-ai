@@ -91,6 +91,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .cassette_utils import request_json
 from .conftest import RequestCapture, iter_message_parts, message, message_part, try_import
+from .function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
@@ -8271,6 +8272,7 @@ async def _keyword_search_results(
     return [part.content for part in completed(result.all_messages())]
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 @pytest.mark.parametrize(
     'second,expected',
     [
@@ -8288,6 +8290,7 @@ async def test_keyword_search_sees_corpus_changes_within_a_run(
     assert results == [{'discovered_tools': [{'name': 'one'}]}, {'discovered_tools': [{'name': expected}]}]
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 async def test_keyword_search_ties_follow_current_corpus_order() -> None:
     first = [('a', 'alpha'), ('b', 'alpha'), ('c', 'alpha')]
     results = await _keyword_search_results([first, first[::-1]], [['alpha'], ['alpha']], max_results=1)

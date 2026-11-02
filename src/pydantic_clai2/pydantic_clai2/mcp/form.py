@@ -2,7 +2,8 @@
 
 A list of fields: the server name, its type (stdio, http, or sse), and its JSON configuration,
 edited in `$VISUAL`/`$EDITOR` in the terminal, else in a text dialog. Remote servers also get an
-OAuth toggle, which Code Puppy's HTTP wizard asks about. The list's description shows the JSON and
+OAuth toggle, which Code Puppy's HTTP wizard asks about. Every server gets an on-demand toggle and,
+while it is on, the description the model reads before loading it. The list's description shows the JSON and
 whether it is valid. It asks through `Dialogs`, so the web UI shows the same form.
 """
 
@@ -56,11 +57,13 @@ EXAMPLES: dict[ServerType, str] = {
     ),
 }
 
-NAME, TYPE, TARGET, OAUTH, CONFIG, EXAMPLE, SAVE, CANCEL = (
+NAME, TYPE, TARGET, OAUTH, ON_DEMAND, DESCRIPTION, CONFIG, EXAMPLE, SAVE, CANCEL = (
     'name',
     'type',
     'target',
     'oauth',
+    'on_demand',
+    'description',
     'json',
     'example',
     'save',
@@ -128,10 +131,7 @@ class ServerForm:
     @property
     def oauth(self) -> bool:
         """Whether the configuration asks for OAuth sign-in."""
-        try:
-            return _OBJECT.validate_json(self.config).get('auth') == 'oauth'
-        except ValidationError:
-            return False
+        return self._field('auth') == 'oauth'
 
     def toggle_oauth(self) -> None:
         """Switch browser sign-in on or off.
@@ -163,6 +163,46 @@ class ServerForm:
                     data.pop('headers')
                 self.status = 'Removed the Authorization header; OAuth sets it after sign-in'
         self.config = json.dumps(data, indent=2)
+
+    @property
+    def on_demand(self) -> bool:
+        """Whether the configuration asks for `defer_loading`."""
+        return self._field('defer_loading') is True
+
+    @property
+    def description(self) -> str:
+        """The configured catalog description, or `''`."""
+        description = self._field('description')
+        return description if isinstance(description, str) else ''
+
+    def toggle_on_demand(self) -> None:
+        """Switch on-demand loading on or off; off is the default, so it leaves the JSON."""
+        self._update('on-demand loading', defer_loading=None if self.on_demand else True)
+
+    def set_description(self, text: str) -> None:
+        """Write the catalog description; empty text removes it, so the server's own one is used."""
+        self._update('description', description=text.strip() or None)
+
+    def _field(self, key: str) -> JsonValue:
+        try:
+            return _OBJECT.validate_json(self.config).get(key)
+        except ValidationError:
+            return None
+
+    def _update(self, label: str, **values: JsonValue) -> None:
+        """Set keys in the JSON; `None` removes one."""
+        try:
+            data = _OBJECT.validate_json(self.config)
+        except ValidationError:
+            self.status = f'Fix the JSON before changing {label}'
+            return
+        for key, value in values.items():
+            if value is None:
+                data.pop(key, None)
+            else:
+                data[key] = value
+        self.config = json.dumps(data, indent=2)
+        self.status = None
 
     def select_type(self, new: ServerType) -> None:
         """Swap in the new type's example only while the configuration is the old, untouched example."""
@@ -255,6 +295,9 @@ class ServerForm:
         ]
         if self.type != 'stdio':
             rows.append(Option(value=OAUTH, label=f'OAuth sign-in: {"on" if self.oauth else "off"}'))
+        rows.append(Option(value=ON_DEMAND, label=f'On demand: {"on" if self.on_demand else "off"}'))
+        if self.on_demand:
+            rows.append(Option(value=DESCRIPTION, label=f'Description: {self.description or "(from the server)"}'))
         return [
             *rows,
             Option(value=CONFIG, label=f'JSON Configuration ({"INVALID" if self.problem() else "valid"})'),
@@ -279,6 +322,11 @@ class ServerForm:
         lines += ['', 'Use $VAR in env or headers to read secrets from your environment.']
         if self.type != 'stdio':
             lines.append('With OAuth on, /mcp auth NAME signs in through your browser.')
+        lines.append(
+            'On demand keeps its tools out of every prompt until the agent loads them by the description.'
+            if self.on_demand
+            else 'Turn on On demand to keep its tools out of prompts until the agent needs them.'
+        )
         return '\n'.join(lines)
 
 
@@ -346,6 +394,17 @@ async def _edit_row(form: ServerForm, row: str, dialogs: Dialogs, editor: Editor
             form.set_target(target)
     elif row == OAUTH:
         form.toggle_oauth()
+    elif row == ON_DEMAND:
+        form.toggle_on_demand()
+    elif row == DESCRIPTION:
+        description = await dialogs.text(
+            title='Description',
+            label='Description',
+            placeholder="what it is for; empty uses the server's own",
+            initial=form.description,
+        )
+        if description is not None:
+            form.set_description(description)
     elif row == CONFIG:
         await _edit_json(form, dialogs, editor)
     else:  # EXAMPLE: `choose` answers only with a row it offered.

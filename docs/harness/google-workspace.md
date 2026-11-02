@@ -8,6 +8,8 @@ Let an agent use Gmail, Calendar, Drive, Docs, Sheets, Slides, Chat, and People 
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![Inside your agent, the GoogleWorkspace capability opens one connection per selected product to Google's hosted MCP servers, here gmailmcp.googleapis.com and calendarmcp.googleapis.com, with the same OAuth access token. The model sees each server's tools under names that start with the product, such as gmail_search_threads. Your auth function returns the token at the start of each run; the capability does not refresh it, and Google access tokens expire after about an hour.](../img/harness/google-workspace.svg)
+
 ## Install and connect
 
 ```bash

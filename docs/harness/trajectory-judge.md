@@ -11,6 +11,8 @@ Watch a live agent run with a second model, and steer it back on course mid-run.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![TrajectoryJudge starts an evaluation from the after_model_request hook every 20 model requests. The most recent window of the transcript goes to a judge model, which runs alongside the agent instead of blocking it. The judge returns AllGood, and nothing happens, or Steer(message=...), which is enqueued and delivered on the next model request as a framework note plus the message in a judge_feedback element.](../img/harness/trajectory-judge.svg)
+
 ## The problem
 
 Long-horizon runs drift. Instructions fade, unsupported claims compound, and the agent wanders away from the goal. [Guardrails](guardrails.md) catch policy violations at fixed boundaries, and evals score the run after it ends, when recovery costs a whole re-run. Neither watches the trajectory *as it unfolds* and intervenes while a correction is still cheap.
@@ -125,7 +127,7 @@ agent = Agent(
 ## Cost and failure semantics
 
 - The judge's model usage is threaded onto the run's `usage` and respects the run's `usage_limits`: each launch claims one request on the shared usage before the evaluation starts, so the parent's next request and concurrent judges account for in-flight evaluations and the shared request limit cannot be exceeded. A launch the request budget cannot fit skips the tick, like one that finds an evaluation still in flight. The judge run is filed under the judged run's `conversation_id`.
-- An evaluation failure is raised on the run at the next cadence tick or at run end; judge failures are never silently dropped. If you need a judge to degrade instead, give it a fallback model through `agent` (for example a `FallbackModel`): resilience policy belongs to the judge agent, not to fields on the capability.
+- An evaluation failure is raised on the run at the next cadence tick or at run end; judge failures are never silently dropped. If you need a judge to degrade instead, pass an `agent` that falls back to another model (for example with the [`ModelFallback`](../capabilities/model-fallback.md) capability): resilience policy belongs to the judge agent, not to fields on the capability.
 - A judged run inside a [durable execution](../durable_execution/overview.md) workflow or flow (Temporal, DBOS, Prefect) is rejected with `UserError` before the first model request: the evaluation is launched from a capability hook in orchestration context, so its model calls would not be checkpointed and could repeat on replay. A durable-capable agent run outside its workflow or flow is unaffected. Run judged work outside durable execution.
 
 ## Observability

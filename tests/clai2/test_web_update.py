@@ -207,7 +207,7 @@ async def test_a_terminal_session_hands_its_web_ui_over(tmp_path: Path, monkeypa
     """After `/web`, `/update` in a terminal session hands the web UI's port and token to the new build."""
     updates, _ = _updates(['stable'])
     _use(monkeypatch, updates)
-    inputs(monkeypatch, ['/web', '/update', '/exit'])
+    inputs(monkeypatch, ['/web', '/update now', '/exit'])
     output = io.StringIO()
     with pytest.raises(Relaunch) as raised:
         await _chat(tmp_path, output)

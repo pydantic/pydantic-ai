@@ -204,9 +204,10 @@ class CodeMode(AbstractCapability[AgentDepsT]):
       and OpenRouter's Anthropic routes it gets a cache point of its own, so new conversations reuse it;
     - deferred tools that `run_code` will take over stay off the wire until they're found through the local
       `search_tools` tool or by loading their capability, and are callable only from `run_code` after that, so
-      no tool declaration changes. With the `'bm25'` and `'regex'` `ToolSearch` strategies, or a `tools` selector
-      that keeps another deferred tool native, only the native tool search can find them, so they're declared
-      for it and the declaration is dropped once they move into `run_code`;
+      no tool declaration changes. When a `tools` selector keeps other deferred tools native, `search_tools`
+      searches those too and the native tool search isn't sent. With the `'bm25'` and `'regex'` `ToolSearch`
+      strategies only the native tool search can find them, so they're declared for it and the declaration is
+      dropped once they move into `run_code`;
     - the functions `run_code` gains from tools a search found are announced in a short
       [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] enqueued through
       [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue], naming them as `run_code` calls them.
@@ -242,6 +243,47 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 f"`speculate` accepts a list of tool names or the string 'declared', not {self.speculate!r}. "
                 'To allowlist one tool, pass a one-element list.'
             )
+
+    @classmethod
+    def from_spec(
+        cls,
+        tools: Literal['all'] | Sequence[str] | dict[str, Any] = 'all',
+        max_retries: int = 3,
+        *,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
+        max_tool_calls: int = 100,
+        resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = None,
+        eager: bool = False,
+        speculate: Sequence[str] | Literal['declared'] | None = None,
+        monty_sandbox: str | None = None,
+        dynamic_catalog: bool = True,
+        **kwargs: Any,
+    ) -> CodeMode[Any]:
+        """Build from an agent spec, naming the fields a spec can express.
+
+        Core reads this signature to generate the spec's JSON schema. Inherited, core falls back
+        to the variadic base `from_spec`, because `__init__`'s `AsyncMontyWebsocket` hint is a
+        `TYPE_CHECKING` import, and publishes only the bare `'CodeMode'`. Reading `__init__`
+        would not help: `os_access`, `mount`, `repl_store`, and a `monty_sandbox` factory have
+        no JSON schema, and would drop the keyword form.
+        `**kwargs` reaches `__init__` unchanged, so a spec that set anything else still loads.
+        """
+        return cls(
+            tools,
+            max_retries,
+            id=id,
+            description=description,
+            defer_loading=defer_loading,
+            max_tool_calls=max_tool_calls,
+            resource_limits=resource_limits,
+            eager=eager,
+            speculate=speculate,
+            monty_sandbox=monty_sandbox,
+            dynamic_catalog=dynamic_catalog,
+            **kwargs,
+        )
 
     def get_ordering(self) -> CapabilityOrdering:
         """CodeMode wraps around ToolSearch so that search_tools stays native."""

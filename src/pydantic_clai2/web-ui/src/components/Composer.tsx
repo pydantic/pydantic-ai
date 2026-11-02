@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useContext, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { forwardRef, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
 import { SessionContext, api, interrupt } from '../api'
 import { type Attachment, base64, imageFiles, readImages } from '../attachments'
 import type { CompletionInfo, QueuedItem } from '../protocol'
@@ -8,6 +8,20 @@ import { QueuePanel } from './QueuePanel'
 
 export interface ComposerHandle {
   focus: () => void
+}
+
+/** The `@` mention the caret ends, such as `@src/pa` in `see @src/pa`: at the start or after a space. */
+const MENTION = /(?:^|\s)(@\S*)$/
+
+/** A draft and the caret in it, as a list of suggestions was found for them. */
+interface Spot {
+  text: string
+  caret: number
+}
+
+/** Where the shown suggestions apply: each replaces its `start` characters before `caret`; `mention` for `@` files. */
+interface Anchor extends Spot {
+  mention: boolean
 }
 
 interface Props {
@@ -46,7 +60,8 @@ interface Props {
 
 /**
  * The prompt box: Enter sends, or queues while a turn runs; Alt+Enter steers the running turn; Shift+Enter adds a line;
- * `/` completes commands from CLAI's own registry; Up on the first line and Down on the last recall sent prompts;
+ * `/` completes commands from CLAI's own registry; `@` anywhere completes the session folder's files and folders;
+ * Up on the first line and Down on the last recall sent prompts;
  * pasted or dropped images go with the prompt.
  */
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
@@ -74,6 +89,11 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
 ) {
   const [suggestions, setSuggestions] = useState<CompletionInfo[]>([])
   const [selected, setSelected] = useState(0)
+  const anchor = useRef<Anchor>({ text: '', caret: 0, mention: false })
+  // The `@` mention files are being found for, until they arrive.
+  const asked = useRef<Spot | null>(null)
+  // Where the caret goes once an accepted mention is in the box, which otherwise puts it at the end.
+  const caretAfter = useRef<number | null>(null)
   const [models, setModels] = useState<string[] | null>(null)
   const area = useRef<HTMLTextAreaElement>(null)
   const request = useRef(0)
@@ -84,6 +104,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   // Another session shown: the last one's completions, model list, and recall walk are not this one's.
   useEffect(() => {
     request.current++
+    asked.current = null
     recall.current = null
     setSuggestions([])
     setModels(null)
@@ -101,22 +122,46 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     element.style.height = `${Math.min(element.scrollHeight, 240)}px`
   }, [text])
 
-  const complete = useCallback(async (value: string) => {
+  useLayoutEffect(() => {
+    if (caretAfter.current === null) return
+    area.current?.setSelectionRange(caretAfter.current, caretAfter.current)
+    caretAfter.current = null
+  }, [text])
+
+  const complete = useCallback(async (value: string, caret: number = value.length) => {
     const id = ++request.current
-    if (!commands || !value.startsWith('/') || value.includes('\n')) {
+    const command = commands && value.startsWith('/') && !value.includes('\n')
+    // Only a session's own chat has a folder to pick files from; a `/command` completes its own arguments.
+    const mention = !command && !chat ? MENTION.exec(value.slice(0, caret))?.[1] : undefined
+    asked.current = mention === undefined ? null : { text: value, caret }
+    if (!command && mention === undefined) {
+      // The caret left the mention: note where, so moving it back looks again.
+      if (anchor.current.mention && anchor.current.text === value) anchor.current = { ...anchor.current, caret }
       setSuggestions([])
       return
     }
     try {
-      const found = await session.complete(value)
+      const found = mention === undefined ? await session.complete(value) : await session.files(mention.slice(1))
       if (id === request.current) {
+        asked.current = null
+        anchor.current = { text: value, caret, mention: mention !== undefined }
         setSuggestions(found.slice(0, 50))
         setSelected(0)
       }
     } catch {
-      if (id === request.current) setSuggestions([])
+      if (id === request.current) {
+        asked.current = null
+        setSuggestions([])
+      }
     }
-  }, [commands, session])
+  }, [chat, commands, session])
+
+  /** Drop the suggestions, and any on their way, which are for a draft being replaced. */
+  const dismiss = () => {
+    request.current++
+    asked.current = null
+    setSuggestions([])
+  }
 
   useEffect(() => {
     if (!models) return
@@ -135,10 +180,32 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     }
   }, [models])
 
+  /** Whether the files listed are for a draft or caret since changed. */
+  const stale = () => anchor.current.text !== text || anchor.current.caret !== area.current?.selectionStart
+
   const accept = (suggestion: CompletionInfo) => {
-    const next = text.slice(0, text.length - suggestion.start) + suggestion.text + ' '
-    setText(next)
-    void complete(next)
+    const { caret, mention } = anchor.current
+    if (mention && stale()) {
+      // Picked before the list caught up: keep the draft as it is, waiting for the files on their way.
+      if (!asked.current) setSuggestions([])
+      return
+    }
+    if (!mention) {
+      const next = text.slice(0, text.length - suggestion.start) + suggestion.text + ' '
+      setText(next)
+      void complete(next)
+      area.current?.focus()
+      return
+    }
+    // A mention replaces the rest of its word too, as in `@src/pa|ckage`.
+    const tail = text.slice(caret).replace(/^\S+/, '')
+    const folder = suggestion.text.endsWith('/')
+    const head = text.slice(0, caret - suggestion.start) + suggestion.text + (folder || /^\s/.test(tail) ? '' : ' ')
+    caretAfter.current = head.length
+    setText(head + tail)
+    // A folder stays open, so its own files are offered next; a file is done.
+    if (folder) void complete(head + tail, head.length)
+    else dismiss()
     area.current?.focus()
   }
 
@@ -159,7 +226,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     recall.current = null
     setText('')
     onAttachments?.(() => [])
-    setSuggestions([])
+    dismiss()
     // Own keys only: `constructor` or `toString` typed alone is a prompt, not a local command.
     const handle = images.length === 0 && local && Object.hasOwn(local, value) ? local[value] : undefined
     if (handle) {
@@ -226,9 +293,25 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
         setSelected((current) => (current + step + suggestions.length) % suggestions.length)
         return
       }
-      if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey && text.trim().split(/\s+/).length === 1)) {
+      const mention = anchor.current.mention
+      const single = text.trim().split(/\s+/).length === 1
+      if (mention && stale() && (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey))) {
+        // The files listed are for a draft or caret since changed: wait for the ones on their way, else drop them.
+        if (asked.current) {
+          event.preventDefault()
+          return
+        }
+        setSuggestions([])
+      } else if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey && (mention || single))) {
         const suggestion = suggestions[selected]
-        if (suggestion && `/${suggestion.text}` !== text.trim()) {
+        // As for a command: Enter on a file typed in full sends it, instead of swapping it for another file.
+        const { caret } = anchor.current
+        // The whole word under the caret, which accepting would replace, as in `@README.md|x`.
+        const typed =
+          mention && event.key === 'Enter'
+            ? `${MENTION.exec(text.slice(0, caret))?.[1] ?? ''}${text.slice(caret).match(/^\S*/)?.[0] ?? ''}`
+            : undefined
+        if (suggestion && (mention ? typed !== suggestion.text : `/${suggestion.text}` !== text.trim())) {
           event.preventDefault()
           accept(suggestion)
           return
@@ -236,6 +319,12 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
       }
       if (event.key === 'Escape') {
         event.preventDefault()
+        // Closed for good: neither files on their way nor moving the caret within the mention bring them back.
+        if (asked.current) {
+          request.current++
+          asked.current = null
+        }
+        anchor.current = { ...anchor.current, mention: false }
         setSuggestions([])
         return
       }
@@ -272,8 +361,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     walk.index = Math.min(walk.entries.length, Math.max(0, walk.index + (backwards ? -1 : 1)))
     if (walk.index === walk.entries.length) recall.current = null
     // Completions still on their way are for the text this replaces; Tab or Enter must not apply them to a recalled one.
-    request.current++
-    setSuggestions([])
+    dismiss()
     setText(walk.entries[walk.index] ?? walk.draft)
     return true
   }
@@ -351,9 +439,15 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
             // Typing ends a recall walk; the edited prompt is the draft from now on.
             recall.current = null
             setText(event.target.value)
-            void complete(event.target.value)
+            void complete(event.target.value, event.target.selectionStart)
           }}
           onKeyDown={onKeyDown}
+          onSelect={(event) => {
+            // The caret moved from the mention files were last found for: look again where it is now.
+            const caret = event.currentTarget.selectionStart
+            const spot = asked.current ?? (anchor.current.mention ? anchor.current : null)
+            if (spot && spot.text === text && spot.caret !== caret) void complete(text, caret)
+          }}
           onPaste={onPaste}
           onBlur={() => window.setTimeout(() => setSuggestions([]), 120)}
           aria-label={label}

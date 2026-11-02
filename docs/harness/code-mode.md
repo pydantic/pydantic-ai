@@ -11,6 +11,8 @@ description: "Let a Pydantic AI agent call its tools from one sandboxed Python s
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![Two lanes compare the same task. With tool calling, the model makes three requests: it calls list_items, then get_item ten times, then answers, and every tool result is sent back to the model on each later request. With Code Mode, the model makes two requests: its first writes one run_code program, which runs in the Monty sandbox, calls list_items and then get_item ten times in parallel, filters the items in Python, and returns only the names that match; the second request answers.](../img/harness/code-mode.svg)
+
 ## The problem
 
 Standard tool calling often needs another model turn for each dependent batch of tool calls. An agent that needs to fetch 10 items and then process their results can require many model turns, increasing latency, cost, and context use. Intermediate results also grow the conversation history.
@@ -27,6 +29,21 @@ Standard tool calling often needs another model turn for each dependent batch of
 | Large conversation history | Compact -- fewer messages |
 
 Durable execution integrations can record nested calls for deterministic replay.
+
+## Code Mode or IPython Code Mode
+
+[IPython Code Mode](ipython-code-mode.md) offers the same `run_code` tool backed by a persistent IPython kernel instead of Monty. Pick by where the agent runs:
+
+| | Code Mode | [IPython Code Mode](ipython-code-mode.md) |
+|---|---|---|
+| Built for | Production and web-facing agents | Local agents you trust to do whatever the code asks |
+| Safe in a webserver | Yes | No, unless the agent runs in a sandbox |
+| Python | The Monty subset, with time and memory limits | Full CPython, with any installed package |
+| Filesystem and network | Only through `mount`, `os_access`, and tools | Unrestricted, with the agent process's permissions |
+| State | Per run, plus an optional `repl_store` | A kernel per run, or one `IPythonKernel` kept across runs |
+
+!!! warning "Use Code Mode for anything web-facing"
+    IPython Code Mode runs model-written code with the permissions of the user running the agent. Do not run it in a webserver, or anywhere it handles untrusted input, without a sandbox around the agent. For production and web-facing agents, Code Mode is strongly recommended.
 
 ## Installation
 
@@ -137,7 +154,9 @@ The cache stays intact only if a callable `tools` selector gives the same answer
 
 The catalog block is keyed through the toolset id `code_mode`, which `CodeModeToolset` takes only with `dynamic_catalog=True`. If the agent has another toolset with the id `code_mode` that contributes instructions, the run raises a `UserError` for the duplicate id. Rename that toolset.
 
-Two setups still declare a deferred tool that `run_code` will take over natively, because only the provider's native tool search can find it there: the `'bm25'` and `'regex'` Tool Search strategies, which have no local `search_tools`, and a `tools` selector that keeps another deferred tool native, which keeps the native search on the wire in place of `search_tools`. In those setups the declaration is dropped when the tool moves into `run_code`, as it is with `dynamic_catalog=False`.
+When a `tools` selector sandboxes some deferred tools and keeps others native, the local `search_tools` searches all of them, and the provider's native tool search isn't sent. Neither kind is declared before it's found: a sandboxed tool joins the catalog, and a native one is added the way any tool found by `search_tools` is, which on Anthropic and OpenAI Responses appends it to the conversation. The cost is that in this setup the native tools are found by local keyword matching (or your `strategy` callable) rather than by the provider's server-side search.
+
+The `'bm25'` and `'regex'` Tool Search strategies have no local `search_tools`, so only the provider's native tool search can find a deferred tool there. With them, a deferred tool that `run_code` will take over is still declared natively, and the declaration is dropped when it moves into `run_code`, as it is with `dynamic_catalog=False`.
 
 Pass `dynamic_catalog=False` to keep the catalog in `run_code`'s description instead, which earlier releases did by default:
 
@@ -286,7 +305,7 @@ agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode(repl_store=InMemo
 - A restored REPL keeps the resource limits it was saved under, so the state records the run's resolved `resource_limits`. A state saved under other limits, or one Monty cannot load, such as a truncated dump or one from an incompatible Monty version, is dropped with a logged warning, and the run starts a fresh REPL.
 - Monty does not authenticate a dump. Return only states your application saved, from storage no one else can write to.
 - A timeout, worker crash, or cancelled snippet that resets the REPL keeps the state saved before the run, unless a later snippet in the run builds a new REPL, which is then saved. A cancelled run still saves an idle REPL.
-- A store error does not fail the run: a failed `load` starts a fresh REPL, and a failed `save` leaves the stored state as it was. A `save` still running after 10 seconds is cancelled, but work it handed to a thread may still finish, so write atomically. Each is logged as a warning.
+- A store error does not fail the run: a failed `load` starts a fresh REPL, and a failed `save` leaves the stored state as it was. A run whose `load` failed does not save, so the next run can still restore the state it could not read, unless it used `restart: true`. A `save` still running after 10 seconds is cancelled, but work it handed to a thread may still finish, so write atomically. Each is logged as a warning.
 - Restored state skips the type check a fresh REPL's first snippet gets, since the checker does not know the restored names.
 - The dump holds every live value, so it can be large. To bound it, have `save` drop an oversized state and forget the old one. With `monty_sandbox`, a server that keeps sessions returns a record ID instead, which lives as long as the server keeps it, and a server that keeps nothing fails every save with a logged warning.
 - The store is not used under durable execution, where its I/O would run in replayed workflow code.
@@ -614,7 +633,7 @@ answered by Monty from the mounts first and reach the handler on another thread.
 
 ## Observability
 
-Nested tool calls inside `run_code` produce their own spans when instrumented with [Logfire](https://pydantic.dev/logfire) or any OpenTelemetry backend -- the easiest way to understand what code mode actually did, since each `run_code` span fans out into the tool calls the model issued from inside the sandbox. See the [Pydantic AI Logfire docs](../logfire.md) for setup.
+Nested tool calls inside `run_code` produce their own spans when instrumented with [Logfire](https://pydantic.dev/logfire) or any OpenTelemetry backend -- the easiest way to understand what code mode actually did, since each `run_code` span fans out into the tool calls the model issued from inside the sandbox. See the [Pydantic AI Logfire docs](../logfire.md#using-logfire) for setup.
 
 Suspension-limit retries use the existing `run_code` error span and nested tool spans, rather
 than a separate capability span. The retry includes bounded started-call context and recovery
@@ -815,6 +834,7 @@ capabilities:
 
 ## Further reading
 
+- [Code mode: make your agents 2x faster and 2x cheaper on long tasks](https://pydantic.dev/articles/why-code-mode-is-the-future) (Pydantic)
 - [Tool use via code](https://www.anthropic.com/engineering/code-execution-with-mcp) (Anthropic)
 - [Code mode in production](https://blog.cloudflare.com/code-mode/) (Cloudflare)
 - [Pydantic AI capabilities](../capabilities/overview.md)

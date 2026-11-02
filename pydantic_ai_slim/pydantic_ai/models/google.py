@@ -54,6 +54,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     WebCitationSource,
+    _StatelessArtifactPredicate,  # pyright: ignore[reportPrivateUsage]
     _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import (
@@ -432,9 +433,14 @@ def _resolve_google_cloud_service_tier(model_settings: GoogleModelSettings) -> G
 
 
 def _map_api_error(
-    e: errors.APIError | httpx2.TransportError, model_name: str, model_id_namespace: str = 'google'
+    e: errors.APIError | httpx2.TransportError | httpx2.HTTPStatusError,
+    model_name: str,
+    model_id_namespace: str = 'google',
 ) -> ModelAPIError:
     """Map a `google.genai` API error or a transport failure to the pydantic-ai exception to raise in its place."""
+    if isinstance(e, httpx2.HTTPStatusError):
+        # A retrying transport raises this for a status it gave up on, and `google.genai` lets it through unwrapped.
+        return _model_errors.transport_status_error(model_name, e.response)
     if isinstance(e, httpx2.TransportError):
         # `google.genai` doesn't wrap connection errors and timeouts in its own exceptions.
         timeout = isinstance(e, httpx2.TimeoutException)
@@ -670,13 +676,14 @@ class GoogleModel(Model[Client]):
 
     @property
     def _matching_provider_names(self) -> frozenset[str]:
+        # The `UploadedFile.provider_name`s `_validate_uploaded_file` accepts. Files are stateful, so this stays a
+        # name set rather than going through `accepts_stateless_artifacts`, which decides which thought signatures
+        # and native tool parts are replayed.
         # Keyed on the transport, because the pre-v2 names this set exists to accept were themselves
         # transport-derived: `GoogleProvider.name` used to return `google-vertex`/`google-gla` off the
         # client. The union with `self.system` is load-bearing, not cosmetic — a Vertex-backed
         # `GoogleProvider` stamps `provider_name='google'`, which the Google Cloud set does not contain,
-        # so without it this model would reject its own history. Both consumers depend on this set:
-        # `_content_model_response` replays thinking signatures and native tool parts through it, and
-        # `_validate_uploaded_file` checks `UploadedFile.provider_name` against it.
+        # so without it this model would reject its own files.
         if self.system in _GOOGLE_CLOUD_PROVIDER_NAMES or self.system in _GEMINI_API_PROVIDER_NAMES:
             names = _GOOGLE_CLOUD_PROVIDER_NAMES if self._is_google_cloud else _GEMINI_API_PROVIDER_NAMES
             return names | {self.system}
@@ -871,7 +878,7 @@ class GoogleModel(Model[Client]):
             # The fields are not supported by the Gemini API per https://github.com/googleapis/python-genai/blob/7e4ec284dc6e521949626f3ed54028163ef9121d/google/genai/models.py#L1195-L1214
             # The Vertex `countTokens` endpoint accepts native/server-side tools (e.g. Google Search grounding), so we
             # forward `tools` as-is to mirror the real request for an accurate count. This intentionally differs from
-            # `AnthropicModel.count_tokens`, which strips native tools because Anthropic's endpoint rejects them (https://github.com/pydantic/pydantic-ai/issues/5704);
+            # `AnthropicModel.count_tokens`, which strips the native tools Anthropic's count endpoints reject or aren't verified to accept (https://github.com/pydantic/pydantic-ai/issues/5704);
             # don't copy that strip here.
             config.update(
                 system_instruction=generation_config.get('system_instruction'),
@@ -1128,7 +1135,7 @@ class GoogleModel(Model[Client]):
         try:
             with map_decode_errors(self._model_name, errors.UnknownApiResponseError):
                 return await func(model=self._model_name, contents=contents, config=config)  # pyright: ignore[reportReturnType]
-        except (errors.APIError, httpx2.TransportError) as e:
+        except (errors.APIError, httpx2.TransportError, httpx2.HTTPStatusError) as e:
             raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
 
     def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
@@ -1373,6 +1380,7 @@ class GoogleModel(Model[Client]):
             url_context_metadata=url_context_metadata,
             file_search_enabled=_file_search_enabled(model_request_parameters),
         )
+        model_response.canonical_system = self._canonical_system_stamp
         if (initial_input_tokens := _initial_input_tokens(response)) is not None:
             mark_context_input_tokens(model_response, initial_input_tokens)
         # google-genai drops the Pydantic AI Gateway's cost from `usage_metadata`, but keeps its response header.
@@ -1393,12 +1401,12 @@ class GoogleModel(Model[Client]):
         try:
             with map_decode_errors(self._model_name, errors.UnknownApiResponseError):
                 first_chunk = await peekable_response.peek()
-        except (errors.APIError, httpx2.TransportError) as e:
+        except (errors.APIError, httpx2.TransportError, httpx2.HTTPStatusError) as e:
             raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
 
-        return GeminiStreamedResponse(
+        streamed_response = GeminiStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=first_chunk.model_version or self._model_name,
             _response=peekable_response,
@@ -1408,6 +1416,8 @@ class GoogleModel(Model[Client]):
             _provider_timestamp=first_chunk.create_time,
             _web_search_billed_per_prompt=self.profile.get('google_web_search_billed_per_prompt', False),
         )
+        streamed_response.canonical_system = self._canonical_system_stamp
+        return streamed_response
 
     async def _map_messages(  # noqa: C901
         self,
@@ -1482,7 +1492,7 @@ class GoogleModel(Model[Client]):
                     contents.append({'role': 'user', 'parts': content_parts})
             elif isinstance(m, ModelResponse):
                 maybe_content = _content_model_response(
-                    m, self._matching_provider_names, supports_tool_combination=supports_tool_combination
+                    m, self.accepts_stateless_artifacts, supports_tool_combination=supports_tool_combination
                 )
                 if maybe_content:
                     contents.append(maybe_content)
@@ -1591,10 +1601,7 @@ class GoogleModel(Model[Client]):
         ):
             return ('file', file.url, file.media_type)
         elif isinstance(file, FileUrl):
-            if file.force_download or (
-                not self._is_google_cloud
-                and not file.url.startswith(r'https://generativelanguage.googleapis.com/v1beta/files')
-            ):
+            if file.force_download or (not self._is_google_cloud and not _utils.is_google_files_api_url(file.url)):
                 downloaded_item = await download_item(file, data_format='bytes')
                 return ('inline', downloaded_item['data'], downloaded_item['data_type'])
             else:
@@ -2041,11 +2048,13 @@ class GeminiStreamedResponse(StreamedResponse):
 
 
 def _content_model_response(
-    m: ModelResponse, accepted_provider_names: frozenset[str], *, supports_tool_combination: bool = False
+    m: ModelResponse, accepts: _StatelessArtifactPredicate, *, supports_tool_combination: bool = False
 ) -> ContentDict | None:
-    # `accepted_provider_names` includes both the current provider's `name` and any pre-v2 aliases
-    # (e.g. `google-cloud` + `google-vertex`) so history replayed from before the v2 rename still
-    # routes its thinking signatures and native tool parts back to this provider.
+    # `accepts` is `GoogleModel.accepts_stateless_artifacts`: thought signatures, and the native tool parts that
+    # carry them, only go back to the transport that issued them, as the Gemini API and Google Cloud reject each
+    # other's even though both providers can be named `google`. It also accepts the pre-v2 names (`google-gla`,
+    # `google-vertex`), so history from before the v2 rename still routes them back.
+    response_accepted = accepts(m, None)
     parts: list[PartDict] = []
     # Thought signature emitted by a `ThinkingPart`, to be carried over to the *next* part.
     pending_thinking_signature: str | None = None
@@ -2055,7 +2064,7 @@ def _content_model_response(
     needs_function_call_signature = True
 
     for item in m.parts:
-        item_signature = _decode_inline_thought_signature(item, m, accepted_provider_names)
+        item_signature = _decode_inline_thought_signature(item, m, accepts, response_accepted=response_accepted)
         if item_signature is None and pending_thinking_signature is not None:
             item_signature = base64.b64decode(pending_thinking_signature)
         pending_thinking_signature = None
@@ -2067,7 +2076,7 @@ def _content_model_response(
         elif isinstance(item, TextPart):
             part = _attach_signature({'text': item.content}, item_signature)
         elif isinstance(item, ThinkingPart):
-            if item.provider_name in accepted_provider_names and item.signature:
+            if item.signature and accepts(m, item):
                 # The signature attaches to the _next_ part, not the thinking part itself.
                 pending_thinking_signature = item.signature
             if item.content:
@@ -2076,11 +2085,11 @@ def _content_model_response(
                 part = None
         elif isinstance(item, NativeToolCallPart):
             part = _native_tool_call_part_dict(
-                item, accepted_provider_names, item_signature, supports_tool_combination=supports_tool_combination
+                item, accepts(m, item), item_signature, supports_tool_combination=supports_tool_combination
             )
         elif isinstance(item, NativeToolReturnPart):
             part = _native_tool_return_part_dict(
-                item, accepted_provider_names, item_signature, supports_tool_combination=supports_tool_combination
+                item, accepts(m, item), item_signature, supports_tool_combination=supports_tool_combination
             )
         elif isinstance(item, FilePart):
             inline_data_dict: BlobDict = {'data': item.content.data, 'mime_type': item.content.media_type}
@@ -2103,16 +2112,17 @@ def _content_model_response(
 
 
 def _decode_inline_thought_signature(
-    item: ModelResponsePart, m: ModelResponse, accepted_provider_names: frozenset[str]
+    item: ModelResponsePart, m: ModelResponse, accepts: _StatelessArtifactPredicate, *, response_accepted: bool
 ) -> bytes | None:
     """Decode the thought signature stored on `item.provider_details`, if any.
 
     Returns the raw signature bytes ready to embed in a `PartDict`, or `None` if no signature
-    applies (either missing, or the response originated from a different provider).
+    applies (either missing, or issued by a transport this model can't send it back to).
+    A part without a `provider_name` of its own is judged by its response (`response_accepted`).
     """
     if not item.provider_details:
         return None
-    if m.provider_name not in accepted_provider_names and item.provider_name not in accepted_provider_names:
+    if not response_accepted and not accepts(m, item):
         return None
     raw = item.provider_details.get('thought_signature')
     if not raw:
@@ -2135,18 +2145,20 @@ def _function_call_part_dict(item: ToolCallPart, signature: bytes | None, *, nee
         # Per https://ai.google.dev/gemini-api/docs/thought-signatures#faqs and
         # https://cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures#using-rest-or-manual-handling
         # the documented dummy `skip_thought_signature_validator` works for both Gemini API and Google Cloud.
+        # It's also what a signature from the other transport is replaced with: both reject each other's, and
+        # both reject a first function call without one (verified live, 2026-10-27).
         part['thought_signature'] = b'skip_thought_signature_validator'
     return part
 
 
 def _native_tool_call_part_dict(
     item: NativeToolCallPart,
-    accepted_provider_names: frozenset[str],
+    accepted: bool,
     signature: bytes | None,
     *,
     supports_tool_combination: bool,
 ) -> PartDict | None:
-    if item.provider_name not in accepted_provider_names:
+    if not accepted:
         return None
     if item.tool_name == CodeExecutionTool.kind:
         return _attach_signature({'executable_code': cast(ExecutableCodeDict, item.args_as_dict())}, signature)
@@ -2167,12 +2179,12 @@ def _native_tool_call_part_dict(
 
 def _native_tool_return_part_dict(
     item: NativeToolReturnPart,
-    accepted_provider_names: frozenset[str],
+    accepted: bool,
     signature: bytes | None,
     *,
     supports_tool_combination: bool,
 ) -> PartDict | None:
-    if item.provider_name not in accepted_provider_names:
+    if not accepted:
         return None
     if item.tool_name == CodeExecutionTool.kind and isinstance(item.content, dict):
         return _attach_signature(

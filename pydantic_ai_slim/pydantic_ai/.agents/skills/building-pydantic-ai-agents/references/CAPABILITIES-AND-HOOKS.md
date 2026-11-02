@@ -132,7 +132,7 @@ Important hook families:
 
 - run-level hooks (`before_run`, `after_run`, `wrap_run`, `on_run_error`)
 - node-level hooks (`before_node_run`, `after_node_run`, `wrap_node_run`, `on_node_run_error`)
-- model-request hooks (`before_model_request`, `after_model_request`, `wrap_model_request`, `on_model_request_error`)
+- model-request hooks (`before_model_request`, `prepare_model_request`, `after_model_request`, `wrap_model_request`, `on_model_request_error`)
 - tool-validation and tool-execution hooks, each with `before_*`, `after_*`, `wrap_*`, and `on_*_error` variants
 - output-validation and output-processing hooks, each with `before_*`, `after_*`, `wrap_*`, and `on_*_error` variants
 - event-stream hooks
@@ -140,6 +140,8 @@ Important hook families:
 For each stage, the entire `wrap_*` chain encloses the `before_*` chain, the core operation with `on_*_error` recovery, and the `after_*` chain. A wrapper that returns without calling its handler skips everything inside, so mandatory authorization belongs in an outer wrapper or outside a short-circuitable cache. Recovered core failures are hidden from wrappers; hook failures and unrecovered core failures propagate through them. The exception is `agent.run_stream()` node handling: `before_node_run` fires before streaming, non-final nodes wrap only later graph advancement, and the final streamed `ModelRequestNode` skips `wrap_node_run`/`after_node_run`.
 
 In `run_stream()`, `ContextVar` values set by an async `before_model_request` hook are available to later tool, output, and run hooks, as in non-streamed runs. Values set later in that model request may not be; use a mutable attribute on `ctx.deps` for state that must be shared throughout the run.
+
+A request step can make several attempts. `before_model_request` and `wrap_model_request` run once per step; `prepare_model_request` runs before every attempt with `request_context.model` set to the model about to serve it, so put model-dependent work (compaction, context-window fitting, per-provider translation) there, and once-per-step work (history processors, injected messages) in `before_model_request`. Changes `prepare_model_request` makes to `request_context` are for that attempt only; changes through `ctx.messages` (the persistent history) persist and aren't rolled back for another attempt, for state that doesn't depend on the attempt. Raise `RetryModelRequest()` to re-run the same model, or `RetryModelRequest(model)` to move to another, from `on_model_request_error` (the attempt raised), `after_model_request` (reject the response), or `prepare_model_request` (switch before sending). `request_context.attempt` counts attempts from 1. Unlike `ModelRetry`, the model sees no retry prompt and `usage.requests` counts the step once; rejected responses stay out of history but their tokens count. A streamed response can't be rejected after it was streamed. The `ModelFallback` capability is built on this.
 
 Changing what the model sees from `before_model_request`:
 
@@ -149,6 +151,7 @@ Changing what the model sees from `before_model_request`:
 - Change only this request (trim, filter, redact): assign a new list to `request_context.messages`. Build new messages and parts; mutating shared ones in place changes history too.
 - Rewrite history (compaction): `ctx.messages[:] = ...`, plus assign `request_context.messages` if this request should be sent it.
 - `request_context.messages.append(...)` also writes history, deprecated with a warning; use `ctx.enqueue(...)`.
+- Data tagged in prompt text (`<memory>`, `<reviewer_note>`): register the tag once at module level with `pydantic_ai.framing.register_tag('memory')` and render it with `wrap(tag, body, **attrs)`, never an f-string. Then nothing in its body can close the tag or forge `<system>`, and Pydantic AI's own frames, such as a tool result, neutralize it too. Names are lowercase snake_case.
 
 A request-only change that drops or alters content earlier requests sent moves the cached prefix, and on models with preserved thinking (Claude Opus 5.5, Sonnet 5.5, Fable 5.1) invalidates earlier reasoning. So enqueue reminders, request-scoped when one-off; never make them per-request copies.
 
@@ -214,7 +217,7 @@ Give a capability an `id` when its instructions should be addressable. You decla
 
 Assume a capability instance may outlive and be reused across runs. By default, `for_run()` returns `self`, so every run uses that same instance. Mutating its fields from hooks, tools, dynamic callables, or other code executed during a run will therefore share state across sequential and concurrent runs.
 
-Before adding an instance field, classify it as immutable configuration, a deliberately shared concurrency-safe resource, or per-run state. If code executed during a run mutates per-run state, override `for_run()` to return a fresh instance. Do not mutate and return `self`, and do not rely on clearing shared state in `after_run()`; overlapping runs can still interfere, and `after_run()` is skipped when a run produces no result. Use `wrap_run()` with `try`/`finally` when external resources need cleanup on errors or cancellation.
+Before adding an instance field, classify it as immutable configuration, a deliberately shared concurrency-safe resource, or per-run state. If code executed during a run mutates per-run state, override `for_run()` to return a fresh instance. Do not mutate and return `self`, and do not rely on clearing shared state in `after_run()`; overlapping runs can still interfere, and `after_run()` is skipped when a run produces no result. Use `wrap_run()` with `try`/`finally` when external resources need cleanup on errors or cancellation. Run awaited cleanup that must finish inside `anyio.CancelScope(shield=True)`, and bound cleanup that does I/O with `anyio.move_on_after(..., shield=True)`: an `anyio` cancellation around the run, such as `anyio.fail_after()`, cuts unshielded cleanup at its next `await`.
 
 For dataclass capabilities, keep configuration in normal fields and declare per-run state with `init=False` so `dataclasses.replace()` preserves configuration while reinitializing the run state:
 
@@ -272,7 +275,7 @@ Explicit `run(model=...)`, run-spec, and `agent.override(model=...)` choices win
 
 Keep selection separate from construction. Use the `resolve_model_id()` hook, or the `ResolveModelId` convenience capability, when tenant, region, credentials, or another dependency controls how a selected string becomes a `Model` instance. Resolution uses the first non-`None` result in capability order; model selection uses the last non-`None` contribution.
 
-Bootstrap strings use the post-`for_agent`, pre-`for_run` resolver chain. If `for_run()` replaces the capability, strings selected for step one and later use the replacement's resolver chain. Return a `FallbackModel` as the selected model when request failures, rather than routing policy, should trigger fallback.
+Bootstrap strings use the post-`for_agent`, pre-`for_run` resolver chain. If `for_run()` replaces the capability, strings selected for step one and later use the replacement's resolver chain. Add the `ModelFallback` capability when request failures, rather than routing policy, should trigger fallback: it starts from the selected model, and its own first model only stands in when the agent has no model and nothing else selects one.
 
 Both hooks are eager: deferred capabilities do not select or resolve models. Run-spec capabilities can bootstrap a model-less agent, but `CapabilityFunc` and `for_run()` need an existing model to construct their `RunContext`; they can replace it starting on step one. Do not use adaptive selection with durable execution yet, and pass an explicit model when resuming a selector-backed suspended request in another run.
 

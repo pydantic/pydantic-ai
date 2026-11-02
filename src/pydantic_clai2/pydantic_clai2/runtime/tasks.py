@@ -16,6 +16,7 @@ from rich.text import Text
 from pydantic_ai import (
     Agent,
     AgentStreamEvent,
+    ModelRetry,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -28,6 +29,8 @@ from pydantic_ai._context_size import context_tokens
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import FunctionToolCallEvent, ModelMessage, ModelResponse, ToolReturnPart
 from pydantic_ai.usage import RunUsage
+from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceError
+from pydantic_ai.workspaces.workspace import workspace_layers
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.step_persistence import StepStore
 from pydantic_ai_harness.subagents import (
@@ -36,6 +39,7 @@ from pydantic_ai_harness.subagents import (
     DelegationTask,
     DelegationTaskEvent,
     DelegationTasks,
+    DelegationWorkspaceRequest,
     SubAgent,
     TaskQuestionEvent,
 )
@@ -48,6 +52,9 @@ from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 PromptTask = Callable[[DelegationTask, str], Coroutine[object, object, object]]
 """Runs a finished task again with the user's message, apart from the conversation, for `Tasks.prompt`."""
+
+REVIEW_AGENT_NAME = 'Review'
+"""The isolated, opt-in specialist allowed to select another working directory."""
 
 
 def specialists() -> dict[str, SubAgent[object]]:
@@ -68,6 +75,27 @@ def specialists() -> dict[str, SubAgent[object]]:
             ('Plan', 'Research an implementation plan, tradeoffs, and verification steps with read-only file tools.'),
         )
     }
+
+
+async def review_workspace(ctx: RunContext[object], request: DelegationWorkspaceRequest) -> Workspace:
+    """Only the isolated Review specialist may leave a local session's directory."""
+    if request.agent_name != REVIEW_AGENT_NAME:
+        raise ModelRetry('Only Review accepts `working_directory`; omit it for other delegates.')
+    # `backend` unwraps policy layers; replacing it must not discard a sandbox.
+    if any(layer not in (LocalWorkspaceBackend, ReadOnlyWorkspace) for layer in workspace_layers(ctx.workspace)):
+        raise ModelRetry(
+            'Review directory selection requires a local parent workspace without sandbox or custom policy wrappers.'
+        )
+    directory = request.directory
+    if not directory.strip() or '\x00' in directory:
+        raise ModelRetry('Choose an existing directory for Review.')
+    path = Path(directory).expanduser()
+    workspace = Workspace(LocalWorkspaceBackend(await ctx.workspace.resolve(path.as_posix())))
+    try:
+        await workspace.working_dir()
+    except (OSError, WorkspaceError) as exc:
+        raise ModelRetry(f'Cannot use Review directory {directory!r}: {exc}') from exc
+    return workspace
 
 
 def task_tree(records: Sequence[DelegationTask]) -> list[tuple[int, DelegationTask]]:

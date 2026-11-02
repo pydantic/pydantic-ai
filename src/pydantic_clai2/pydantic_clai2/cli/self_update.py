@@ -18,8 +18,8 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from contextlib import suppress
 from dataclasses import dataclass, field
 from importlib import metadata
 from pathlib import Path
@@ -317,9 +317,18 @@ def _write_overrides(text: str) -> Path:
     return Path(name)
 
 
+@dataclass(frozen=True, kw_only=True)
+class UpdateCheck:
+    """What a check of `channel` found: a newer CLAI in `update`, none, or the `error` that kept it from telling."""
+
+    channel: UpdateChannel
+    update: Update | None = None
+    error: str | None = None
+
+
 @dataclass(kw_only=True)
 class Updates:
-    """The footer's update notice and the `/update` command, for the channel the settings name."""
+    """The footer's update notice, the update menu's status, and the `/update` install, for the channel the settings name."""
 
     channel: Callable[[], UpdateChannel]
     current: Installed = field(default_factory=installed)
@@ -344,10 +353,14 @@ class Updates:
     """Set after a successful install: the running environment was replaced, so the shell exits."""
     relaunch: str | None = None
     """The new `clai2` to start once the shell has exited, when the install found one."""
+    failed: bool = False
+    """Set when an update was found but not installed: uv failed, or is not on `PATH`."""
     web: WebHandoff | None = None
     """The web UI for the new `clai2` to serve again, read before uv replaced the installed code."""
     _checked: UpdateChannel | None = field(default=None, init=False)
-    _found: Update | None = field(default=None, init=False)
+    _result: UpdateCheck | None = field(default=None, init=False)
+    _done: threading.Event = field(default_factory=threading.Event, init=False)
+    _started: float = field(default=0.0, init=False)
 
     def segment(self) -> str:
         """A status-row hint once a background check finds an update; checks again when the channel changes.
@@ -356,24 +369,46 @@ class Updates:
         """
         if not self.current.tool:
             return ''
+        found = self.check()
+        return f'update {found.update.label}: /update' if found is not None and found.update is not None else ''
+
+    def check(self, *, wait: float = 0.0) -> UpdateCheck | None:
+        """The check of the current channel, started in the background unless one ran for it; `None` while it runs.
+
+        Waits for the answer until `wait` seconds after the check started, so a menu opened at once can show it.
+        """
         channel = self.channel()
         if channel != self._checked:
-            self._checked, self._found = channel, None
-            self.spawn(lambda: self._check(channel))
-        found = self._found
-        return f'update {found.label}: /update' if found is not None and found.channel == channel else ''
+            done = threading.Event()
+            self._checked, self._result, self._done, self._started = channel, None, done, time.monotonic()
+            self.spawn(lambda: self._check(channel, done))
+        if (left := self._started + wait - time.monotonic()) > 0:
+            self._done.wait(left)
+        found = self._result
+        return found if found is not None and found.channel == channel else None
 
-    def _check(self, channel: UpdateChannel) -> None:
+    def _check(self, channel: UpdateChannel, done: threading.Event) -> None:
         import httpx
 
-        # Offline or rate-limited: no notice. `/update` reports the error when asked directly.
-        with suppress(httpx.HTTPError, ValueError):
-            self._found = find_update(channel, self.current, self.fetch(channel))
+        try:
+            found = UpdateCheck(channel=channel, update=find_update(channel, self.current, self.fetch(channel)))
+        except (httpx.HTTPError, ValueError) as exc:
+            # Offline or rate-limited: no footer notice. The menu says why, and `/update now` reports it too.
+            found = UpdateCheck(channel=channel, error=str(exc).partition('\n')[0] or type(exc).__name__)
+        if channel == self._checked:  # Not a check of a channel the settings have since left.
+            self._result = found
+        done.set()
 
     async def command(self, args: list[str]) -> str:
-        """Install the newest CLAI on the current channel with `uv tool install`, then restart into it."""
-        if args:
-            raise ValueError('Usage: /update. Pick the channel with /set updates.channel stable|main.')
+        """Install the newest CLAI on the current channel with `uv tool install`, then restart into it.
+
+        `/update now` in a session, where bare `/update` opens the menu; `clai2 --update` passes no arguments.
+        """
+        if args not in ([], ['now']):
+            raise ValueError(
+                'Usage: /update opens the update menu; /update now installs the newest CLAI. '
+                'Pick the channel with /set updates.channel stable|main.'
+            )
         channel = self.channel()
         update = find_update(channel, self.current, await to_thread.run_sync(self.fetch, channel))
         if update is None:
@@ -382,6 +417,7 @@ class Updates:
         overrides = _write_overrides(update.overrides()) if channel == 'main' else None
         command = update.command(uv=uv or 'uv', overrides=overrides)
         if uv is None:
+            self.failed = True
             # Keep the overrides file: the printed command reads it.
             shown = powershell(command) if self.windows else shlex.join(command)
             return (
@@ -420,6 +456,7 @@ class Updates:
             if code != 0:  # Also when uv could not run at all.
                 await tell('failed')
         if code != 0:
+            self.failed = True
             return f'uv exited with status {code}; see its output above.'
         self.restart_required = True
         self.relaunch = await self.locate(uv)
