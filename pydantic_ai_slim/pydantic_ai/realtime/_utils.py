@@ -79,15 +79,15 @@ def wrap_seeded_system_prompts(messages: Sequence[ModelMessage]) -> list[ModelMe
     """Turn the mid-conversation `SystemPromptPart`s in seeded history into `<system>`-tagged user text.
 
     The standing system prompt is left for the seeders to skip, as `session_instructions` carries it. Capability parts
-    are rendered first, as for any model.
+    are rendered in place, after the standing prompt is counted: none is ever part of it.
     A later system prompt stays where it was in the conversation, and a request-scoped one whose request
     has been answered is left out: what `Model.prepare_messages` does for a model without inline or
     request-scoped system prompts.
     """
-    messages = render_capability_parts(list(messages))
     # Counted on the history as authored, as `prepare_messages` does: dropping a leading request-scoped
     # prompt mustn't promote the system prompt after it into the standing one `session_instructions` skips.
     standing_prompt_count = len(_standing_system_prompt(messages))
+    messages = render_capability_parts(list(messages))
     messages = _drop_superseded_request_scoped_prompts(list(messages))
     return _wrap_non_leading_system_prompts(messages, standing_prompt_count=standing_prompt_count, sealed=False)
 

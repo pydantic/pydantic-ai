@@ -258,7 +258,11 @@ def _memory_contexts(messages: list[ModelMessage]) -> list[str]:
         for part in message.parts:
             if not isinstance(part, UserPromptPart) or isinstance(part.content, str):
                 continue
-            texts = [item.content for item in part.content if isinstance(item, TextContent)]
+            texts = [
+                item if isinstance(item, str) else item.content
+                for item in part.content
+                if isinstance(item, str | TextContent)
+            ]
             if texts[:1] == ['<memory>']:
                 contexts.append(''.join(texts))
             else:

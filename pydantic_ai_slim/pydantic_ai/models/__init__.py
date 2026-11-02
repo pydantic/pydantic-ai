@@ -46,7 +46,7 @@ from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
 from .._canonical_system import accepts_stateless_artifact
-from .._capability_parts import content_author, is_rendered_capability_part, render_capability_parts
+from .._capability_parts import render_capability_part, render_capability_parts
 from .._file_input import (
     KNOWN_DOCUMENT_MEDIA_TYPES,
     FileInputKind,
@@ -1749,6 +1749,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         Drops [`CapabilityLoadDeltaPart`][pydantic_ai.messages.CapabilityLoadDeltaPart]s: the
         model sees a capability's load as its instructions and tools, not as the record that loads it.
 
+        Renders each [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] into the parts every adapter maps: an
+        instruction part as a mid-conversation `SystemPromptPart`, a data part as its content in its tag on the user
+        channel, behind its note. They're rendered in the lookalike pass, from the part's own fields, so an override
+        that runs before calling this sees the typed parts, and the result holds none.
+
         Renders [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s as
         `SystemPromptPart`s for this model's delivery path, dropping deltas from before the latest
         instruction baseline or compaction. A change to a loaded deferred capability's block is kept
@@ -1791,8 +1796,6 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 Framework callers pass it.
         """
         inline_system = self.profile.get('supports_inline_system_prompts', False)
-        # A no-op on the agent's path, which renders them before handing this the history.
-        messages = render_capability_parts(messages)
         messages = _drop_capability_load_deltas(messages)
         if _has_instruction_state(messages):
             # The same path choice as the prefix statement in `prepare_request`; on the fallback path
@@ -1982,10 +1985,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         compaction summary, a tool's files moved onto the user channel and reasoning carried into a user turn. The
         request is found from the history alone, so the announcement stays in the same place on every later request.
 
-        Requests made inside `second_model_prompt()` (a judge or summarizer reading a transcript) get neither.
+        Requests made inside `second_model_prompt()` (a judge or summarizer reading a transcript) get neither. Every
+        [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] is rendered here either way.
         """
         if in_second_model_prompt():
-            return messages
+            return render_capability_parts(messages)
         inline_system = self.profile.get('supports_inline_system_prompts', False)
         announce = inline_system and self._announces_lookalike_notes
         first_request_index = next((i for i, m in enumerate(messages) if isinstance(m, ModelRequest)), None)
@@ -2038,26 +2042,32 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         A tool or file note names the application's own mid-conversation system message when the request carries one
         (`genuine_change` in `lookalike_frame_note`), unless the user's text in it has a lookalike too.
+
+        Each [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] is rendered here, in place: its system parts are
+        the application's, its framed body is a frame to announce, and the lookalike notes for its body name the
+        author its source gives (`render_capability_part`).
         """
         inline_system = self.profile.get('supports_inline_system_prompts', False)
         # With a system role, a tool's note goes right after the tool results even where the API takes it ahead of
         # them: there GPT-6 Luna followed a genuine change in the same turn 44/72 times, after them 40/40.
         precede_tool_results = self._lookalike_notes_precede_tool_results and not inline_system
-        all_sources = [_lookalike_sources(original) for original in authored.parts]
+        expanded, capability_bodies = _with_capability_parts_rendered(authored, request)
         # A tool or file note names the application's own mid-conversation system message in the same request, unless
         # the user's text there has a lookalike too, which "the other <system> block" would no longer pick out.
+        # A capability part is never among the standing prompt the first request opens with, so neither is what it
+        # renders as.
         leading = (
             next((i for i, p in enumerate(request.parts) if not isinstance(p, SystemPromptPart)), len(request.parts))
             if first_request
             else 0
         )
-        genuine_change = any(isinstance(part, SystemPromptPart) for part in request.parts[leading:]) and not any(
-            source == 'user' for sources in all_sources for source, _ in sources
+        genuine_change = any(isinstance(part, SystemPromptPart) for _, _, part in expanded[leading:]) and not any(
+            source == 'user' for _, sources, _ in expanded for source, _ in sources
         )
         parts: list[ModelRequestPart] = []
         framed: list[ModelRequestPart] = []
         tool_notes: list[SystemPromptPart] = []
-        for original, sources, part in zip(authored.parts, all_sources, request.parts):
+        for original, sources, part in expanded:
             if _is_tool_result_part(part):
                 for _, tags in sources:
                     tool_notes.append(
@@ -2086,7 +2096,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                     and isinstance(part, UserPromptPart)
                 )
                 or isinstance(part, CompactionPart)
-                # A frame a capability wrote.
+                # A capability part's frame.
+                or id(part) in capability_bodies
+                # A frame a capability wrote by hand.
                 or (
                     isinstance(part, UserPromptPart)
                     and not isinstance(part.content, str)
@@ -3795,13 +3807,13 @@ def _standing_system_prompt_count(request: ModelRequest) -> int:
     exists to avoid.
 
     A request-scoped part ends the standing prompt too: the top-level system parameter is sent with every
-    request, and a request-scoped part has to stop being sent once its request has been answered. So does one
-    rendered from a [`CapabilityPart`][pydantic_ai.messages.CapabilityPart]: a capability said it, the history wasn't
-    authored with it.
+    request, and a request-scoped part has to stop being sent once its request has been answered. So does a
+    [`CapabilityPart`][pydantic_ai.messages.CapabilityPart], which `prepare_messages` renders only after counting: a
+    capability said it, the history wasn't authored with it.
     """
     count = 0
     for part in request.parts:
-        if not isinstance(part, SystemPromptPart) or part.scope == 'request' or is_rendered_capability_part(part):
+        if not isinstance(part, SystemPromptPart) or part.scope == 'request':
             break
         count += 1
     return count
@@ -4166,7 +4178,31 @@ def _tool_results_first(
     return (new_authored, new_messages) if changed else (authored, messages)
 
 
-def _lookalike_sources(part: ModelRequestPart) -> list[tuple[LookalikeSource, list[str]]]:
+_LookalikeSources: TypeAlias = list[tuple[LookalikeSource, list[str]]]
+
+
+def _with_capability_parts_rendered(
+    authored: ModelRequest, request: ModelRequest
+) -> tuple[list[tuple[ModelRequestPart, _LookalikeSources, ModelRequestPart]], set[int]]:
+    """Each of `request`'s parts with its authored form and its lookalikes, and every capability part rendered in place.
+
+    Also returns the identities of the capability parts' framed bodies, which the lookalike pass counts as frames. They
+    stay within that pass: nothing about a rendered part is written into its metadata.
+    """
+    expanded: list[tuple[ModelRequestPart, _LookalikeSources, ModelRequestPart]] = []
+    bodies: set[int] = set()
+    for original, part in zip(authored.parts, request.parts):
+        if not isinstance(part, CapabilityPart):
+            expanded.append((original, _lookalike_sources(original), part))
+            continue
+        rendering = render_capability_part(part)
+        if rendering.body is not None:
+            bodies.add(id(rendering.body))
+        expanded.extend((new, rendering.lookalikes if new is rendering.body else [], new) for new in rendering.parts)
+    return expanded, bodies
+
+
+def _lookalike_sources(part: ModelRequestPart) -> _LookalikeSources:
     """Who wrote the text in `part` that resembles a framework frame, with the system-voice tags it opens.
 
     A user prompt's text and its text files are checked separately, so each gets a note naming its author. A tool
@@ -4184,11 +4220,7 @@ def _lookalike_sources(part: ModelRequestPart) -> list[tuple[LookalikeSource, li
     if isinstance(part, UserPromptPart):
         items: Sequence[UserContent] = [part.content] if isinstance(part.content, str) else part.content
         for item in items:
-            # A rendered capability part's body names its author: a tool, a file's author, the user, or the
-            # application, whose own text gets no note.
-            author = content_author(item) if isinstance(item, TextContent) else 'user'
-            if author != 'application':
-                check(author, _text_of(item))
+            check('user', _text_of(item))
         for item in items:
             check('file', _text_file_content(item))
         # A frame a capability wrote around someone else's text, such as a background tool's output: the frame's own

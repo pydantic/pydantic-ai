@@ -88,7 +88,9 @@ def _tool_returns(messages: list[ModelMessage]) -> int:
 def _user_text(part: UserPromptPart) -> str:
     if isinstance(part.content, str):
         return part.content
-    return ''.join(item.content for item in part.content if isinstance(item, TextContent))
+    return ''.join(
+        item if isinstance(item, str) else item.content for item in part.content if isinstance(item, str | TextContent)
+    )
 
 
 def _repo_notes(messages: list[ModelMessage]) -> list[str]:

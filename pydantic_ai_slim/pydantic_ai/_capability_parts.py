@@ -1,24 +1,22 @@
 """Rendering [`CapabilityPart`][pydantic_ai.messages.CapabilityPart]s into the parts every model already maps.
 
-A capability part is rendered before any model sees the history: by the agent graph ahead of
-[`Model.prepare_messages`][pydantic_ai.models.Model.prepare_messages], so a custom model that maps parts itself, or
-overrides `prepare_messages`, never meets one, and again at the start of `prepare_messages` for a caller that drives
-a model directly. Rendering is a pure function of the stored part: no id, timestamp or metadata of the part reaches
-the model, so the same history always renders to the same bytes.
+A capability part stays a typed part in the history and in the messages handed to
+[`Model.prepare_messages`][pydantic_ai.models.Model.prepare_messages], which renders it in its lookalike pass. There
+the part's own fields say who wrote its body and which text is the framework's frame, so nothing about it is written
+into the rendered parts' metadata. Rendering is a pure function of the stored part: no id, timestamp or metadata of
+the part reaches the model, so the same history always renders to the same bytes.
 """
 
 from __future__ import annotations as _annotations
 
 from collections.abc import Sequence
-from dataclasses import replace
-from typing import Final, TypeAlias
+from dataclasses import dataclass, replace
 
 from . import _utils
-from ._framework_frame import framework_frame_text
-from ._framing import capability_frame_tags
+from ._framing import LookalikeSource, capability_frame_tags, lookalike_tags
 from .messages import (
     _FRAME_PLACEHOLDER,  # pyright: ignore[reportPrivateUsage]
-    _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
+    BinaryContent,
     CapabilityPart,
     ModelMessage,
     ModelRequest,
@@ -28,12 +26,7 @@ from .messages import (
     TextContent,
     UserContent,
     UserPromptPart,
-    _ContentAuthor,  # pyright: ignore[reportPrivateUsage]
 )
-
-RENDERED_CAPABILITY_PART_KEY: Final = 'capability_part'
-"""The key under the reserved `__pydantic_ai__` namespace of a `SystemPromptPart`'s metadata that marks it as rendered from a
-[`CapabilityPart`][pydantic_ai.messages.CapabilityPart], so it's never taken for the standing system prompt."""
 
 
 def has_capability_parts(messages: Sequence[ModelMessage]) -> bool:
@@ -41,8 +34,67 @@ def has_capability_parts(messages: Sequence[ModelMessage]) -> bool:
     return any(_has_capability_parts(message) for message in messages)
 
 
+@dataclass(frozen=True)
+class RenderedCapabilityPart:
+    """What a [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] reaches the model as, within one `prepare_messages` pass.
+
+    Never stored: what the lookalike pass needs to know about the rendered parts travels here, next to them, rather
+    than in their metadata.
+    """
+
+    parts: list[SystemPromptPart | UserPromptPart]
+    """The rendered parts, in order."""
+
+    body: UserPromptPart | None
+    """A data part's framed content on the user channel, which `prepare_messages` counts as a frame to announce."""
+
+    lookalikes: list[tuple[LookalikeSource, list[str]]]
+    """Who wrote text in the body that resembles a framework frame, with the system-voice tags it opens."""
+
+
+def render_capability_part(part: CapabilityPart) -> RenderedCapabilityPart:
+    """The parts `part` reaches the model as.
+
+    An instruction part is a system message, in its own scope. A data part is its content in a plain tag, whatever its
+    source. Its note, which vouches for the content, goes before it only when the source is trusted. The body is the
+    content as written: text in it that resembles a frame gets a lookalike note from `prepare_messages`, naming the
+    author the part's source gives.
+    """
+    rendering = part.rendering
+    content = part.model_content()
+    if rendering.voice == 'instruction':
+        # Checked when the part was created.
+        assert isinstance(content, str)
+        system = SystemPromptPart(content, timestamp=part.timestamp, scope=part.scope)
+        return RenderedCapabilityPart(parts=[system], body=None, lookalikes=[])
+    assert rendering.tag is not None
+    # TODO(#11029): deliver content from a source the operator doesn't control on the tool channel instead, as a
+    # framework-inserted read and its result, rebuilding #11837.
+    attrs = part._rendered_attributes()  # pyright: ignore[reportPrivateUsage]
+    open_tag, close_tag = capability_frame_tags(rendering.tag, attrs=attrs)
+    items: list[UserContent] = [content] if isinstance(content, str | StructuredContent) else list(content)
+    # Text goes out as `TextContent`, as in any user prompt with more than one item.
+    body = UserPromptPart(
+        [
+            TextContent(open_tag),
+            *(TextContent(item) if isinstance(item, str) else item for item in items),
+            TextContent(close_tag),
+        ],
+        timestamp=part.timestamp,
+    )
+    lookalikes = _body_lookalikes(part, items)
+    if rendering.note is None or not part.source.trusted:
+        return RenderedCapabilityPart(parts=[body], body=body, lookalikes=lookalikes)
+    reference, _ = capability_frame_tags(rendering.tag, attrs={})
+    note = SystemPromptPart(rendering.note.replace(_FRAME_PLACEHOLDER, reference), timestamp=part.timestamp)
+    return RenderedCapabilityPart(parts=[note, body], body=body, lookalikes=lookalikes)
+
+
 def render_capability_parts(messages: list[ModelMessage]) -> list[ModelMessage]:
-    """`messages` with every [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] rendered in place, or `messages` itself when there's none."""
+    """`messages` with every capability part rendered in place, with no lookalike notes, or `messages` itself when there's none.
+
+    For the paths with no lookalike pass: a second model reading a transcript, and a realtime session's seeded history.
+    """
     if not has_capability_parts(messages):
         return messages
     return [
@@ -53,12 +105,6 @@ def render_capability_parts(messages: list[ModelMessage]) -> list[ModelMessage]:
     ]
 
 
-def is_rendered_capability_part(part: SystemPromptPart) -> bool:
-    """Whether `part` was rendered from a system-voice capability part, or is a capability part's note."""
-    namespace = part.metadata.get(_PYDANTIC_AI_METADATA_KEY) if _utils.is_str_dict(part.metadata) else None
-    return _utils.is_str_dict(namespace) and namespace.get(RENDERED_CAPABILITY_PART_KEY) is True
-
-
 def _has_capability_parts(message: ModelMessage) -> bool:
     return isinstance(message, ModelRequest) and any(isinstance(part, CapabilityPart) for part in message.parts)
 
@@ -67,68 +113,29 @@ def _render_parts(parts: Sequence[ModelRequestPart]) -> list[ModelRequestPart]:
     rendered: list[ModelRequestPart] = []
     for part in parts:
         if isinstance(part, CapabilityPart):
-            rendered.extend(_render(part))
+            rendered.extend(render_capability_part(part).parts)
         else:
             rendered.append(part)
     return rendered
 
 
-def _render(part: CapabilityPart) -> list[SystemPromptPart | UserPromptPart]:
-    """The parts `part` reaches the model as.
+def _body_lookalikes(part: CapabilityPart, items: Sequence[UserContent]) -> list[tuple[LookalikeSource, list[str]]]:
+    """Who wrote text in a data part's body that resembles a framework frame, with the system-voice tags it opens.
 
-    An instruction part is a system message, in its own scope. A data part is its content in a plain tag, whatever its
-    source. Its note, which vouches for the content, goes before it only when the source is trusted. The tags are
-    marked as the framework's, so the lookalike check skips them; text in the body that resembles a frame gets the
-    lookalike note from `prepare_messages`, naming who wrote it (see `content_author`).
+    The body's text is the source's author's; text from an `OperatorSource` is the application's own and gets no note.
+    A text file in the body is its author's, as in a user prompt.
     """
-    rendering = part.rendering
-    content = part.model_content()
-    metadata = {_PYDANTIC_AI_METADATA_KEY: {RENDERED_CAPABILITY_PART_KEY: True}}
-    if rendering.voice == 'instruction':
-        # Checked when the part was created.
-        assert isinstance(content, str)
-        return [SystemPromptPart(content, timestamp=part.timestamp, scope=part.scope, metadata=metadata)]
-    assert rendering.tag is not None
-    # TODO(#11029): deliver content from a source the operator doesn't control on the tool channel instead, as a
-    # framework-inserted read and its result, rebuilding #11837.
-    attrs = part._rendered_attributes()  # pyright: ignore[reportPrivateUsage]
-    open_tag, close_tag = capability_frame_tags(rendering.tag, attrs=attrs)
-    # Only the tags are marked as the framework's: the body is the part's content, which `prepare_messages` checks
-    # for lookalike frames like any other text, so a body that closes the frame early is noted rather than trusted.
     author = part.source._author  # pyright: ignore[reportPrivateUsage]
-    items = [content] if isinstance(content, str | StructuredContent) else content
-    body = [_with_author(item, author) for item in items]
-    framed = UserPromptPart(
-        [framework_frame_text(open_tag), *body, framework_frame_text(close_tag)], timestamp=part.timestamp
-    )
-    if rendering.note is None or not part.source.trusted:
-        return [framed]
-    reference, _ = capability_frame_tags(rendering.tag, attrs={})
-    note = rendering.note.replace(_FRAME_PLACEHOLDER, reference)
-    return [SystemPromptPart(note, timestamp=part.timestamp, metadata=metadata), framed]
+    found: dict[LookalikeSource, list[str]] = {}
 
+    def check(source: LookalikeSource, text: str) -> None:
+        if tags := lookalike_tags(text):
+            found.setdefault(source, []).extend(tag for tag in tags if tag not in found.get(source, ()))
 
-ContentAuthor: TypeAlias = _ContentAuthor
-"""Who wrote a capability part's content, for the lookalike note: the lookalike sources, or the application itself."""
-
-CONTENT_AUTHOR_KEY: Final = 'content_author'
-"""The key under the reserved `__pydantic_ai__` namespace of a rendered body's `TextContent` naming its author."""
-
-
-def _with_author(item: UserContent, author: ContentAuthor) -> UserContent:
-    """`item` marked with who wrote it, when it's text; other content, such as a file, as it is."""
-    if isinstance(item, str):
-        return TextContent(item, metadata={_PYDANTIC_AI_METADATA_KEY: {CONTENT_AUTHOR_KEY: author}})
-    if not isinstance(item, TextContent):
-        return item
-    metadata = item.metadata if _utils.is_str_dict(item.metadata) else {}
-    namespace = metadata.get(_PYDANTIC_AI_METADATA_KEY)
-    namespace = namespace if _utils.is_str_dict(namespace) else {}
-    return replace(item, metadata={**metadata, _PYDANTIC_AI_METADATA_KEY: {**namespace, CONTENT_AUTHOR_KEY: author}})
-
-
-def content_author(item: TextContent) -> ContentAuthor:
-    """Who wrote `item`: the author a rendered capability part's body was marked with, or else the user."""
-    namespace = item.metadata.get(_PYDANTIC_AI_METADATA_KEY) if _utils.is_str_dict(item.metadata) else None
-    author = namespace.get(CONTENT_AUTHOR_KEY) if _utils.is_str_dict(namespace) else None
-    return author if author in ('tool', 'file', 'application') else 'user'
+    for item in items:
+        if author != 'application' and isinstance(item, str | TextContent):
+            check(author, item if isinstance(item, str) else item.content)
+    for item in items:
+        if isinstance(item, BinaryContent) and _utils.is_text_like_media_type(item.media_type):
+            check('file', item.data.decode(errors='replace'))
+    return list(found.items())
