@@ -348,6 +348,7 @@ def test_prewarm_leaves_the_runner_lock_as_checked_out(tmp_path: Path):
     'prompt_name',
     [
         'pydantic-ai-bug-hunter.md',
+        'pydantic-ai-comparison-drift.md',
         'pydantic-ai-docs-drift.md',
         'pydantic-ai-provider-mapping-sweep.md',
         'pydantic-ai-provider-parity-explore.md',

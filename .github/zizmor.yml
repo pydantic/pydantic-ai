@@ -40,6 +40,7 @@ rules:
       - pydantic-ai-attention-triage.lock.yml
       - pydantic-ai-bug-hunter.lock.yml
       - pydantic-ai-community-demand.lock.yml
+      - pydantic-ai-comparison-drift.lock.yml
       - pydantic-ai-docs-drift.lock.yml
       - pydantic-ai-feature-digest.lock.yml
       - pydantic-ai-pr-review.lock.yml
@@ -75,6 +76,7 @@ rules:
       - pydantic-ai-attention-triage.lock.yml
       - pydantic-ai-bug-hunter.lock.yml
       - pydantic-ai-community-demand.lock.yml
+      - pydantic-ai-comparison-drift.lock.yml
       - pydantic-ai-docs-drift.lock.yml
       - pydantic-ai-feature-digest.lock.yml
       - pydantic-ai-pr-review.lock.yml
