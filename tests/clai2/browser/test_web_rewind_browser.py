@@ -15,16 +15,19 @@ from tests.clai2.test_web import TOKEN
 from tests.clai2.test_web_sessions import Fleet
 
 
-async def echo(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-    """Answer with the prompt and how many requests this model has answered, so a repeated prompt answers anew."""
-    request = messages[-1]
-    assert isinstance(request, ModelRequest)
-    ANSWERED.append(request)
-    prompt = ' '.join(str(part.content) for part in request.parts if isinstance(part, UserPromptPart))
-    yield f'Echo {prompt} #{len(ANSWERED)}'
+def echo_model() -> FunctionModel:
+    """A model answering with the prompt and how many requests it has answered, so a repeated prompt answers anew."""
+    answered = 0
 
+    async def echo(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal answered
+        request = messages[-1]
+        assert isinstance(request, ModelRequest)
+        answered += 1
+        prompt = ' '.join(str(part.content) for part in request.parts if isinstance(part, UserPromptPart))
+        yield f'Echo {prompt} #{answered}'
 
-ANSWERED: list[ModelRequest] = []
+    return FunctionModel(stream_function=echo)
 
 
 @dataclass
@@ -41,7 +44,7 @@ def rewind_ui(tmp_path_factory: pytest.TempPathFactory, serve: Serve) -> Iterato
         patch.setenv('XDG_CONFIG_HOME', str(root / 'config'))
         patch.setenv('XDG_STATE_HOME', str(root / 'state'))
         patch.setattr(models, 'ALLOW_MODEL_REQUESTS', False)
-        fleet = Fleet(root=root, portal=portal, agents={'echo': Agent(FunctionModel(stream_function=echo))})
+        fleet = Fleet(root=root, portal=portal, agents={'echo': Agent(echo_model())})
         try:
             session = fleet.new('echo')
             saved: list[ModelMessage] = []

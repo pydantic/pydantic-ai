@@ -125,7 +125,7 @@ class Input(BaseModel):
 class RewindInput(BaseModel):
     """What Edit or Retry sends in a prompt's place: new text, or `None` for the prompt as saved."""
 
-    text: str | None = Field(default=None, max_length=200_000)
+    text: str | None = Field(max_length=200_000)
 
 
 class PromptInput(Input):

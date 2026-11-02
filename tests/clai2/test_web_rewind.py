@@ -59,6 +59,7 @@ def test_edit_and_retry_replace_a_prompt_and_every_later_turn(make_web: MakeWeb)
         ]:
             refused = web_.post(route, {'text': text})
             assert (refused.status_code, refused.json()) == (status, {'detail': detail})
+        assert web_.post(route, {}).status_code == 422, 'Retry is asked for with `null`, never by leaving `text` out'
         missing = web_.post('/api/rewind/nope', {'text': 'x'})
         assert (missing.status_code, missing.json()) == (
             404,
