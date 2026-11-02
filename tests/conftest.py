@@ -700,12 +700,13 @@ def missing_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
 
 @pytest.fixture
 def young_gc() -> Iterator[None]:
-    """Limit the test's `gc.collect()` calls to the objects it creates.
+    """Limit the test's garbage collections to the objects it creates.
 
     A full collection walks every object the worker has accumulated, which takes seconds per call
-    late in a CI run. Freezing everything that exists before the test keeps it out of the collector's
-    reach until teardown, so collections stay cheap, and garbage leaked by an earlier test can't be
-    finalized (and raise an unraisable exception or `ResourceWarning`) in the middle of this one.
+    late in a CI run, whether the test calls `gc.collect()` or allocates enough to trigger one.
+    Freezing everything that exists before the test keeps it out of the collector's reach until
+    teardown, so collections stay cheap, and garbage leaked by an earlier test can't be finalized
+    (and raise an unraisable exception or `ResourceWarning`) in the middle of this one.
     """
     gc.freeze()
     try:

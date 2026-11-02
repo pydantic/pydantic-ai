@@ -248,6 +248,16 @@ function FailureResult({ text }: { text: string }) {
 /** The lines each file-change diff shows until the user asks for the rest, so long diffs don't mount whole. */
 const PREVIEW_LINES = 8
 
+/** The lines of output a running command's card shows as they arrive. */
+const LIVE_LINES = 8
+
+/** The last `LIVE_LINES` a running call printed: a shell's own, or those of the calls in a `run_code` cell. */
+function liveTail(item: Item): string {
+  const outputs = item.name === 'run_code' ? item.calls.map((call) => call.output) : [item.output]
+  const lines = outputs.filter(Boolean).flatMap((output) => output.replace(/\n$/, '').split('\n'))
+  return lines.slice(-LIVE_LINES).join('\n')
+}
+
 /** One tool call as a quiet row; open it for the arguments, output, diff, and result. A file change starts open. */
 export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
   const cards = useContext(OpenCardsContext)
@@ -273,6 +283,8 @@ export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
   const reason = item.state === 'error' || refused ? failure(item.text).summary : ''
   const firstLine = summary.subject.split('\n')[0] ?? ''
   const workspace = orchestrating && item.state !== 'running' && !refused ? workspaceOf(item, args) : null
+  // An open shell card already shows all of its output.
+  const live = item.state === 'running' && !(open && item.name === 'shell') ? liveTail(raw) : ''
   const row = (
     <button className="row-toggle tool-row" onClick={() => cards.toggle(raw.id, open)} aria-expanded={open}>
       <span className="tool-icon">{summary.icon}</span>
@@ -310,6 +322,11 @@ export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
       )}
       <WorkerChips item={raw} />
       {open && <ToolDetails item={{ ...item, diffs: attempted }} args={args} />}
+      {live && (
+        <div className="tool-body">
+          <pre className="terminal">{live}</pre>
+        </div>
+      )}
     </div>
   )
 })

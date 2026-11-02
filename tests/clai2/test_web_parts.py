@@ -45,7 +45,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserRequest, AskUserResponse, Question, QuestionOption
 from pydantic_ai_harness.filesystem import (
@@ -90,10 +90,14 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     ToolOutput,
     TurnEnded,
     TurnStarted,
+    TurnSummary,
+    Usage,
     dump,
     dump_session,
+    history_entries,
     history_items,
     legacy_tags,
+    usage_info,
 )
 from pydantic_clai2.builtin_plugins.web.server import WebServer
 from pydantic_clai2.builtin_plugins.web.service import Observer
@@ -108,6 +112,7 @@ from pydantic_clai2.runtime.monty_cells import MontyCell
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
 from pydantic_clai2.runtime.worktrees import Worktree
 from pydantic_clai2.ui.rendering.status import Status
+from pydantic_clai2.ui.rendering.usage_report import session_usage
 from tests.clai2.test_web import WIRE
 
 REQUEST = AskUserRequest(
@@ -392,6 +397,42 @@ def test_a_reloaded_edit_without_a_diff() -> None:
         ),
     ]
     assert [item.diffs for item in history_items(messages)] == [[], [], [], [], []]
+
+
+def test_history_entries_follow_each_turn_with_its_usage_as_usage_reports_it() -> None:
+    """A reloaded transcript shows each saved turn's usage line, as the turn's end showed it live."""
+    messages = [
+        ModelRequest(parts=[UserPromptPart('one')]),
+        ModelResponse(
+            parts=[ToolCallPart('grep', {}, tool_call_id='g1')], usage=RequestUsage(input_tokens=10, output_tokens=2)
+        ),
+        ModelRequest(parts=[ToolReturnPart('grep', 'found', tool_call_id='g1')]),
+        ModelResponse(parts=[TextPart('first')], usage=RequestUsage(input_tokens=20, output_tokens=3)),
+        ModelRequest(parts=[UserPromptPart('two')]),
+        ModelResponse(parts=[TextPart('second')], usage=RequestUsage(input_tokens=30, output_tokens=4)),
+        ModelRequest(parts=[UserPromptPart('cancelled before any answer')]),
+        ModelRequest(parts=[UserPromptPart('three')]),
+        ModelResponse(parts=[TextPart('third')], usage=RequestUsage(input_tokens=40, output_tokens=5)),
+    ]
+    entries = history_entries(messages)
+    assert [entry.kind for entry in entries] == [
+        'user',
+        'tool',
+        'assistant',
+        'turn',
+        'user',
+        'assistant',
+        'turn',
+        'user',
+        'user',
+        'assistant',
+        'turn',
+    ]
+    summaries = [entry for entry in entries if isinstance(entry, TurnSummary)]
+    assert [summary.usage for summary in summaries] == [usage_info(turn) for turn in session_usage(messages).turns]
+    assert summaries[0].usage == Usage(input_tokens=30, output_tokens=5, requests=2)
+    assert len({entry.id for entry in entries}) == len(entries)
+    assert history_items(messages) == [entry for entry in entries if isinstance(entry, Item)]
 
 
 def test_item_log_follows_what_browsers_were_sent() -> None:

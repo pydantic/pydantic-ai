@@ -42,7 +42,7 @@ async def run_posix_search(
     include_hidden: bool = False,
     limit: int,
     accept: Callable[[Record], Awaitable[_T | None]],
-    prepare: Callable[[list[Record]], Awaitable[None]] | None = None,
+    prepare: Callable[[list[Record]], Awaitable[None]],
 ) -> tuple[list[_T], bool, list[Unreadable]]:
     """Enumerate sorted files and optionally grep them without transferring their contents to the host.
 
@@ -123,9 +123,7 @@ async def run_posix_search(
     results: list[_T] = []
     records, incomplete = _parse_records(output, listing=pattern is None)
     cut |= incomplete
-    # Every caller passes `prepare`.
-    if prepare is not None:  # pragma: no branch
-        await prepare(records)
+    await prepare(records)
     for record in records:
         kept = await accept(record)
         if kept is not None:
