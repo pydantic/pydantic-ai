@@ -37,8 +37,7 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
     client: RenderAsync | None = None
     """A caller-owned `render.RenderAsync`, never closed for you.
 
-    When omitted, each workspace operation opens a client from `RENDER_API_KEY` and `RENDER_WORKSPACE_ID`
-    and closes it when the operation ends.
+    When omitted, credentials come from `RENDER_API_KEY` and `RENDER_WORKSPACE_ID`.
     """
 
     allow_internet_access: bool = True
@@ -70,7 +69,7 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
         return RenderSandboxBackend(client=self.client, ref=ref, working_dir=self.working_dir, env=self.env)
 
     async def destroy(self, ref: WorkspaceRef) -> None:
-        """Terminate a sandbox by ID without attaching; one already terminated or unknown returns quietly.
+        """Terminate the sandbox identified by `ref`; an already terminated or unknown one returns quietly.
 
         Rejected credentials raise `WorkspaceUnavailableError`.
         """
@@ -79,7 +78,7 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
         await terminate_sandbox(self.client, ref.id)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
-        """Build the backend for this run. No I/O here: it attaches or creates on first use."""
+        """Supply a new sandbox workspace or attach to a recognized Render reference."""
         del ctx
         if ref is not None and ref.provider != 'render':
             return None

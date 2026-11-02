@@ -89,13 +89,12 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
     it attaches and never creates a replacement. The backend never terminates the sandbox: whoever holds
     the ref does, with `RenderSandbox.destroy(ref)`.
 
-    Each command runs under a small Python supervisor sent with Render's exec request, which attempts to
-    stop the command's process group on a timeout or cancellation. An unconfirmed stop is logged.
-    File contents travel through Render's `copy_to`/`copy_from`; metadata operations run as shell commands.
+    Commands and file operations use the same sandbox. On timeout or cancellation, stopping a command
+    and its children is best effort. An unconfirmed stop is logged, and the sandbox remains usable.
 
     Args:
-        client: A caller-owned `render.RenderAsync`, never closed here. When `None`, each operation opens
-            a client from `RENDER_API_KEY` and `RENDER_WORKSPACE_ID` and closes it when the operation ends.
+        client: An optional caller-owned `render.RenderAsync`, never closed here. When `None`, credentials
+            come from `RENDER_API_KEY` and `RENDER_WORKSPACE_ID`.
         ref: Identity of an existing sandbox to attach to on first use.
         allow_internet_access: Whether a newly created sandbox may reach the internet.
         sandbox_timeout: Seconds a newly created sandbox lives before Render terminates it, 1 to 86400.
@@ -214,7 +213,7 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        """Run once with stdin at EOF; a timeout or cancellation stops only this command."""
+        """Run once with stdin at EOF, attempting to stop the command on timeout or cancellation."""
         argv = command_argv(command, shell)
         check_timeout(timeout)
         check_env(env)
