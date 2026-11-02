@@ -454,6 +454,14 @@ async def test_a_capability_operation_runs_under_the_step_policy_it_declares() -
     assert durability.policies == [StepPolicy(repeatable=False, timeout=900)]
 
 
+async def test_an_engine_without_retries_or_timeouts_runs_a_policy_operation_under_its_own_config() -> None:
+    durability = RecordingDurability()
+    agent = Agent(TestModel(), name='plain', capabilities=[SendsOnce(), durability])
+    await agent.run('go')
+    names = [name for name, _ in durability.calls if '__capability__' in name]
+    assert names == ['plain__capability__sends.send', 'plain__capability__sends.look']
+
+
 async def test_capability_operation_is_direct_outside_durable_context() -> None:
     events: list[str] = []
     built_models: list[LifecycleTrackingModel] = []
