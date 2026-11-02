@@ -353,8 +353,9 @@ async def commit(workspace: Path, *, message: str, files: Sequence[str] | None =
 
     Only these files are committed, whatever else is staged. Paths are relative to the repository's top
     directory, as `git_status` lists them. Raises `ValueError` for an empty message, for nothing to
-    commit, for a file that still has a merge conflict, and for only some files while a merge is in
-    progress, which Git finishes only with every change; and `GitError` when Git refuses, as when a hook fails.
+    commit, for a file that still has a merge conflict, for only some files while a merge is in
+    progress, which Git finishes only with every change, and without a Git identity; and `GitError` when
+    Git refuses, as when a hook fails, leaving the index as it was.
     """
     message = message.strip()
     if not message:
@@ -367,10 +368,27 @@ async def commit(workspace: Path, *, message: str, files: Sequence[str] | None =
     conflicted = [_shown(file.path) for file in chosen if file.status == 'U']
     if conflicted:
         raise ValueError(f'Resolve the merge conflict in {", ".join(conflicted)} before committing.')
+    for ident in ('GIT_AUTHOR_IDENT', 'GIT_COMMITTER_IDENT'):
+        if await _try_git(root, 'var', ident) is None:
+            raise ValueError(
+                'Git does not know who you are: set it with git config user.name "Your Name" and '
+                'git config user.email "you@example.com" (add --global for every repository).'
+            )
     merging = await _try_git(root, 'rev-parse', '--quiet', '--verify', 'MERGE_HEAD') is not None
+    if merging and len(chosen) < len(status.files):
+        raise ValueError('A merge is in progress: commit every changed file to finish it.')
+    # A failed commit leaves the index as it was, not with what was staged for it.
+    index = (await _git(root, 'write-tree')).strip()
+    try:
+        await _stage_and_commit(root, chosen, message=message, merging=merging)
+    except GitError:
+        await _git(root, 'read-tree', index)
+        raise
+    return f'Committed {(await _git(root, "log", "-1", "--no-color", "--format=%h %s")).strip()}'
+
+
+async def _stage_and_commit(root: Path, chosen: list[ChangedFile], *, message: str, merging: bool) -> None:
     if merging:
-        if len(chosen) < len(status.files):
-            raise ValueError('A merge is in progress: commit every changed file to finish it.')
         # Every change, deletions included, staged as it is; Git takes no paths to finish a merge.
         await _git(root, 'add', '--all')
         await _git(root, 'commit', '--quiet', f'--message={message}', timeout=LONG_TIMEOUT)
@@ -391,7 +409,6 @@ async def commit(workspace: Path, *, message: str, files: Sequence[str] | None =
             timeout=LONG_TIMEOUT,
             input=_pathspecs(paths),
         )
-    return f'Committed {(await _git(root, "log", "-1", "--no-color", "--format=%h %s")).strip()}'
 
 
 async def push(workspace: Path, *, confirmed: bool = False) -> str:

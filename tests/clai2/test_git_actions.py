@@ -291,8 +291,27 @@ async def test_a_failing_hook_says_why(repo: Path) -> None:
     hook.write_text('#!/bin/sh\necho "lint: notes.txt is not formatted" >&2\nexit 1\n')
     hook.chmod(0o755)
     (repo / 'notes.txt').write_text('changed\n')
+    (repo / 'new.txt').write_text('new\n')
+    (repo / 'old.txt').write_text('staged\n')
+    git(repo, 'add', 'old.txt')
+    (repo / 'old.txt').write_text('staged, then changed\n')
     with pytest.raises(GitError, match=r'lint: notes.txt is not formatted'):
         await commit(repo, message='Change the notes')
+    # The index is as it was: nothing the failed commit staged stays staged.
+    assert git(repo, 'diff', '--cached', '--name-only') == 'old.txt\n'
+    assert git(repo, 'show', ':old.txt') == 'staged\n'
+
+
+async def test_commit_without_a_git_identity_says_how_to_set_one(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    for role in ('AUTHOR', 'COMMITTER'):
+        monkeypatch.delenv(f'GIT_{role}_NAME')
+        monkeypatch.delenv(f'GIT_{role}_EMAIL')
+    monkeypatch.delenv('EMAIL', raising=False)
+    git(repo, 'config', 'user.useConfigOnly', 'true')
+    (repo / 'new.txt').write_text('new\n')
+    with pytest.raises(ValueError, match=r'git config user\.name .* and git config user\.email'):
+        await commit(repo, message='Add new')
+    assert git(repo, 'diff', '--cached', '--name-only') == ''
 
 
 async def test_git_and_its_hooks_never_see_api_keys(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
