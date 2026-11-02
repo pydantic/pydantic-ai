@@ -44,14 +44,14 @@ async def main():
 `LocalDesktop` is a [`LocalWorkspace`](../workspace.md) with a screen. Commands and files are on this machine, in this
 directory, and apps the agent starts, here through [`Coder`](coder.md), open on the screen.
 
-The screen is private: the agent never sees your windows or moves your mouse, and other users can't connect to it.
+The screen is private: the `computer` tool never sees your windows or moves your mouse, and other users can't connect to it.
 
 - It starts on the first run at 1280x800; pass `size=(1920, 1080)` for another size.
 - Later runs, and runs at the same time, use the same screen, with the windows earlier runs left open. Give each
   concurrent user their own `LocalDesktop`.
 - It stops when your program exits. If only the window manager exits, it starts again and the windows stay.
-- A `LocalDesktopBackend` you build for `workspace=` shares one private screen with the other backends in the
-  process. Pass `screen=VirtualScreen(size)` for its own, and `await screen.stop()` to stop it.
+- A `LocalDesktopBackend` you build for `workspace=` shares one private 1280x800 screen with every other `LocalDesktopBackend`
+  built without a `screen`. Pass `screen=VirtualScreen(size)` for its own, and `await screen.stop()` to stop it.
 
 ## Your own screen
 
