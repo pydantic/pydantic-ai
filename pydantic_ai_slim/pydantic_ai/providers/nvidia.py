@@ -32,6 +32,9 @@ else:
     )
 
 
+_HOSTED_BASE_URL = 'https://integrate.api.nvidia.com/v1'
+
+
 class NvidiaProvider(_OpenAISDKProvider):
     """Provider for NVIDIA NIM, hosted on `build.nvidia.com` or self-hosted."""
 
@@ -110,15 +113,14 @@ class NvidiaProvider(_OpenAISDKProvider):
             self._client = openai_client
             self._base_url = str(openai_client.base_url)
         else:
-            custom_base_url = base_url or os.getenv('NVIDIA_BASE_URL')
+            self._base_url = base_url or os.getenv('NVIDIA_BASE_URL') or _HOSTED_BASE_URL
             api_key = api_key or os.getenv('NVIDIA_API_KEY')
             if not api_key:
-                if not custom_base_url:
+                if self._base_url == _HOSTED_BASE_URL:
                     raise missing_api_key_error(
                         'Set the `NVIDIA_API_KEY` environment variable or pass it via '
                         '`NvidiaProvider(api_key=...)` to use the NVIDIA provider.'
                     )
                 # Self-hosted NIM may accept anonymous requests, but the OpenAI client requires a non-empty key.
                 api_key = 'api-key-not-set'
-            self._base_url = custom_base_url or 'https://integrate.api.nvidia.com/v1'
             self._client = self._create_openai_client(base_url=self.base_url, api_key=api_key, http_client=http_client)

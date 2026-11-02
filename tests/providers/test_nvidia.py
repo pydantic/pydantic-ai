@@ -33,10 +33,14 @@ def test_nvidia_provider(env: TestEnv):
     assert provider.client.api_key == 'api-key'
 
 
-def test_nvidia_provider_need_api_key(env: TestEnv) -> None:
-    """Test that the hosted NVIDIA API requires an API key."""
+@pytest.mark.parametrize('env_base_url', [None, 'https://integrate.api.nvidia.com/v1'])
+def test_nvidia_provider_need_api_key(env_base_url: str | None, env: TestEnv) -> None:
+    """Test that the hosted NVIDIA API requires an API key, including when `NVIDIA_BASE_URL` names it."""
     env.remove('NVIDIA_API_KEY')
-    env.remove('NVIDIA_BASE_URL')
+    if env_base_url is None:
+        env.remove('NVIDIA_BASE_URL')
+    else:
+        env.set('NVIDIA_BASE_URL', env_base_url)
     with pytest.raises(
         UserError,
         match=re.escape(
@@ -103,8 +107,9 @@ def test_nvidia_model_profile():
     assert model.profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
 
-# Ids from the NVIDIA API catalog (https://integrate.api.nvidia.com/v1/models); Qwen has none listed there today.
-# Each expectation is a field the publisher's family profile sets and the OpenAI-compatible fallback doesn't.
+# Ids from the NVIDIA API catalog (https://integrate.api.nvidia.com/v1/models), except Qwen, which has none listed
+# there today. Each expectation is a field only that publisher's family profile sets; the `nvidia/` row pins the
+# OpenAI-compatible fallback that NVIDIA's own models get.
 PUBLISHER_PROFILES: dict[str, dict[str, object]] = {
     'meta/llama-3.2-90b-vision-instruct': {'json_schema_transformer': InlineDefsJsonSchemaTransformer},
     'deepseek-ai/deepseek-v4.1-flash': {'supports_thinking': False, 'ignore_streamed_leading_whitespace': False},
