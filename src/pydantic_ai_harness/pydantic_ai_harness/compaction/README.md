@@ -686,7 +686,13 @@ rendered as a `<harness_data origin="...">` element, capped like a tool return, 
 `role="user"`. When the transcript holds such content, the summary request also tells the summarizer not to
 treat it as the user's requests or standing constraints; other summary requests are unchanged.
 `max_tokens` and `keep_tokens` control when compaction runs and which history messages are retained; they
-do not cap the summary-request payload.
+do not cap the summary-request payload. A request that would not fit the summarizer model's own context
+window is fitted to it before it is sent -- a summarizer smaller than the model the run uses is the usual
+cause -- by dropping the oldest tool output first and then whole entries from the oldest end, so user and
+assistant text is what survives and the request compacts instead of failing at the provider. The window is
+the summarizer model's (`Model.context_window`, else the pricing registry), `summary_request_max_tokens`
+overrides the resulting input budget, and a window that can't be resolved leaves the request whole. A
+trimmed request is recorded on the `compact_messages` span.
 
 ### Token retention after automatic compaction
 
