@@ -158,7 +158,9 @@ def stop_span() -> AbstractContextManager[Span]:
     return _span('stop')
 
 
-def lifecycle_span(operation: Lifecycle, workspace: WorkspaceBackend | WorkspaceRef) -> AbstractContextManager[Span]:
+def lifecycle_span(
+    operation: Literal['create', 'attach', 'destroy'], workspace: WorkspaceBackend | WorkspaceRef
+) -> AbstractContextManager[Span]:
     """Open a `workspace create`, `attach` or `destroy` span around a sandbox lifecycle call.
 
     It opens even inside a workspace operation's span, as the first operation on a lazy backend is

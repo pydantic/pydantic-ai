@@ -333,11 +333,11 @@ async def test_capability_supplies_the_run_workspace(docker: FakeDocker, contain
     assert result.workspace.ref is not None and docker.containers() == [result.workspace.ref.id]
 
 
+@pytest.mark.usefixtures('instrument_all_agents')
 async def test_a_run_without_instrumentation_traces_nothing_even_under_instrument_all(
     docker: FakeDocker, container_dir: Path, capfire: CaptureLogfire
 ) -> None:
     """The run's own setting decides, also for the container it creates."""
-    Agent.instrument_all()
     agent = Agent(
         TestModel(call_tools=['look']), capabilities=[DockerSandbox(image='image', working_dir=str(container_dir))]
     )
