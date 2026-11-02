@@ -21,29 +21,23 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
-    ModelRequestPart,
     ModelResponse,
-    ModelResponsePart,
-    NativeToolCallPart,
-    NativeToolReturnPart,
     RetryFeedbackPart,
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SystemPromptPart,
     TextContent,
-    TextPart,
-    ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._durable import in_durable_context
+from pydantic_ai_harness._judge import claim_offset_limits, render_part
 
 if TYPE_CHECKING:
     from pydantic_ai.agent import AgentRunResult
     from pydantic_ai.models import ModelRequestContext
-    from pydantic_ai.usage import UsageLimits
 
 
 @dataclass
@@ -89,8 +83,7 @@ _STEERING_ORIGIN = 'pydantic-ai-harness.trajectory_judge.steering.v1'
 
 The framework note is a `SystemPromptPart` and the judge's message a `TextContent`; both carry
 `{'origin': _STEERING_ORIGIN, 'judge': name, 'ref': ref}`, where `ref` is the random id the note names its
-frame by. Identify steering by this metadata, never by its
-model-visible text.
+frame by. Identify steering by this metadata, never by its model-visible text.
 """
 
 _STEERING_TAG = 'judge_feedback'
@@ -135,13 +128,11 @@ _positive_int_adapter: TypeAdapter[int] = TypeAdapter(Annotated[int, Field(stric
 class TrajectoryJudge(AbstractCapability[AgentDepsT]):
     """Review a live run with a second model on a cadence, and steer it mid-run.
 
-    Long-horizon runs drift: instructions fade, unsupported claims compound, and the agent
-    wanders off the goal. A `TrajectoryJudge` evaluates the most recent `window` tokens of
-    the run's trajectory every `every` model requests, concurrently with the run, and
-    delivers exactly one verdict per evaluation: `AllGood`, or `Steer` with a corrective
-    message. Steering is enqueued into the run (`RunContext.enqueue`, `'asap'` priority) as a
+    A `TrajectoryJudge` evaluates the most recent `window` tokens of the run's trajectory
+    every `every` model requests, concurrently with the run, and delivers exactly one
+    verdict per evaluation: `AllGood`, or `Steer` with a corrective message. Steering is enqueued into the run (`RunContext.enqueue`, `'asap'` priority) as a
     framework note in system voice followed by the judge's message as quoted data, attributed to
-    the judge, so the running agent course-corrects while recovery is still cheap.
+    the judge, so the running agent can course-correct.
 
     At most one evaluation per judge is in flight at a time; a cadence tick that finds one
     still running is skipped. An evaluation still in flight when the run ends is cancelled.
@@ -356,7 +347,7 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
                 output_type=[AllGood, Steer],
                 conversation_id=ctx.conversation_id,
                 usage=ctx.usage,
-                usage_limits=_claim_offset_limits(ctx.usage_limits),
+                usage_limits=claim_offset_limits(ctx.usage_limits),
             )
         finally:
             self._release_claim(ctx)
@@ -405,19 +396,6 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
     def get_serialization_name(cls) -> str | None:
         """Not spec-serializable: the capability may hold a live `Agent` and a callback."""
         return None
-
-
-def _claim_offset_limits(limits: UsageLimits | None) -> UsageLimits | None:
-    """The run's limits with `request_limit` raised by the one request the launch claimed.
-
-    The claim already occupies a slot in the shared `usage.requests`, so against the
-    unadjusted limit the judge's own preflight would count its in-flight request twice and
-    refuse a call the budget affords. Raising the limit by exactly the claim keeps the
-    judge's effective budget identical to the run's.
-    """
-    if limits is None or limits.request_limit is None:
-        return limits
-    return replace(limits, request_limit=limits.request_limit + 1)
 
 
 def _steering_parts(judge: str, message: str) -> tuple[SystemPromptPart, TextContent]:
@@ -515,18 +493,6 @@ def _run_start(messages: Sequence[ModelMessage], run_id: str | None) -> int:
     return 0
 
 
-def _feedback_line(part: ModelRequestPart | ModelResponsePart) -> str | None:
-    """Render retry feedback that answers no tool call, or `None` for any other part."""
-    if isinstance(part, RetryFeedbackPart):
-        return f'retry (output): {part.model_response()}'
-    # TODO(v3): remove RetryPromptPart
-    if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
-        # A hand-built history passed as `message_history` can still hold one; the model
-        # translates it only when the request goes out.
-        return f'retry ({part.tool_name or "output"}): {part.model_response()}'
-    return None
-
-
 def _render_lines(messages: Sequence[ModelMessage]) -> tuple[list[str], list[str]]:
     """Render messages as lines, split into the opening user request and everything after it."""
     request: list[str] = []
@@ -542,27 +508,11 @@ def _render_lines(messages: Sequence[ModelMessage]) -> tuple[list[str], list[str
                 text = _prompt_text(part.content)
                 if text:
                     user_lines.append(f'user: {text}')
-            elif isinstance(part, ToolReturnPart):
-                user_lines = lines
-                lines.append(
-                    f'retry ({part.tool_name}): {part.model_response_str(wrap_if_error=False)}'
-                    if part.outcome == 'retried'
-                    else f'tool {part.tool_name} returned: {part.model_response_str()}'
-                )
-            elif isinstance(part, NativeToolReturnPart):
-                lines.append(f'native tool {part.tool_name} returned: {part.model_response_str()}')
-            elif (retry := _feedback_line(part)) is not None:
-                user_lines = lines
-                lines.append(retry)
-            elif isinstance(part, TextPart):
-                if part.content:
-                    lines.append(f'assistant: {part.content}')
-            elif isinstance(part, ToolCallPart):
-                lines.append(f'assistant called tool {part.tool_name} with {part.args_as_json_str()}')
-            elif isinstance(part, NativeToolCallPart):
-                lines.append(f'assistant called native tool {part.tool_name} with {part.args_as_json_str()}')
-            elif isinstance(part, SpeechPart) and part.transcript:
-                (user_lines if part.speaker == 'user' else lines).append(f'{part.speaker}: {part.transcript}')
+            elif (line := render_part(part)) is not None:
+                # A tool return or retry is the agent's activity, so it ends the opening request.
+                if isinstance(part, ToolReturnPart | RetryFeedbackPart | RetryPromptPart):  # pyright: ignore[reportDeprecated]
+                    user_lines = lines
+                (user_lines if isinstance(part, SpeechPart) and part.speaker == 'user' else lines).append(line)
     return request, lines
 
 

@@ -3,9 +3,8 @@
 `ToolGuardrail` is the third guardrail edge. `InputGuardrail` screens the user prompt
 and `OutputGuardrail` screens the agent output, but neither sees a tool call:
 `InputGuardrail` evaluates only the first model request, so everything a tool sends
-out and everything a tool brings back passes unchecked. That matters because
-tool results are where untrusted content enters an agent loop -- fetched pages,
-file contents, MCP server responses.
+out and everything a tool brings back passes unchecked, including the untrusted
+content tool results carry: fetched pages, file contents, MCP server responses.
 
 `ToolGuardrail` inspects both sides of a tool call with the same
 [`GuardrailResult`][pydantic_ai_harness.GuardrailResult] vocabulary the other two
@@ -271,9 +270,8 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
         """Reject a bare string where a collection of tool names is meant.
 
         `str` satisfies `Sequence[str]`, so pyright accepts `hidden='danger'`
-        and the set built from it holds the six letters of the word. The tool
-        stays on the wire and nothing reports it -- a safety control failing
-        open. `tools='delete_all'` fails the other way, matching any tool whose
+        and the set built from it holds the six letters of the word, so the
+        tool would stay visible with no error. `tools='delete_all'` fails the other way, matching any tool whose
         name is a substring of it.
         """
         for field_name, value in (('tools', self.tools), ('hidden', self.hidden)):
