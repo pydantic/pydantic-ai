@@ -324,7 +324,7 @@ gives depends on `forward_usage`, which controls whether the whole tree shares o
 
 Without `sub_agent_usage_limits`, sub-agents sharing the counter (`forward_usage=True`) run under
 the `usage_limits` you pass to the parent `run()`, so the parent's budget bounds the whole tree. With
-`forward_usage=False` they fall back to pydantic-ai's default `request_limit` of 50 per run. For an
+`forward_usage=False` they fall back to Pydantic AI's default `request_limit` of 50 per run. For an
 exact ceiling on the number of runs, use `max_agent_calls`.
 
 ### `resource_limits`: guarding the script itself

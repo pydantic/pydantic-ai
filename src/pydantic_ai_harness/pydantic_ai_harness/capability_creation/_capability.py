@@ -40,7 +40,8 @@ class CapabilityCreation(AbstractCapability[AgentDepsT]):
     one `AbstractCapability` subclass that constructs with no arguments and whose
     static getters run) before it replaces `<name>.py` in `directory`; code that
     fails is kept for inspection and, while a working version exists, does not
-    replace it. Authored capabilities are persisted as source, not as a spec.
+    replace it. Authored capabilities hold live code, so they are persisted as source
+    rather than as a spec.
 
     Pydantic AI resolves the capability set once at the start of each run, so an
     authored capability becomes usable on the next run: pass the store's active
