@@ -40,7 +40,7 @@ class AboutSource:
             return 'Checking for a newer CLAI…'
         if found.error is not None:
             return f'Could not check for a newer CLAI: {found.error}'
-        minutes = int(self._updates.age() // 60)
+        minutes = int((self._updates.clock() - found.checked) // 60)
         checked = 'just now' if minutes < 1 else f'{minutes} min ago' if minutes < 60 else f'{minutes // 60} h ago'
         if found.update is None:
             return (
