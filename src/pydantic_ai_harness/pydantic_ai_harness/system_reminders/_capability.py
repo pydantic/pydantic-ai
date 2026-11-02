@@ -247,6 +247,11 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
         default=(), init=False, repr=False, compare=False
     )
 
+    @property
+    def _speaks_in_system_voice(self) -> bool:
+        # In-tree: the framework notes this capability enqueues are `SystemPromptPart`s by design.
+        return True
+
     def __post_init__(self) -> None:
         if not self.reminders and not self.dynamic_reminders:
             raise ValueError('At least one static or dynamic reminder must be provided.')

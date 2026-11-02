@@ -269,6 +269,17 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return False
 
+    @property
+    def _speaks_in_system_voice(self) -> bool:
+        """Whether the notes this in-tree capability enqueues are bare `SystemPromptPart`s by design.
+
+        `RunContext.enqueue` warns when a capability enqueues one, since a
+        [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] says the same in the framework's voice. Harness
+        capabilities whose recorded message shapes are already part of their API opt out here. A property rather
+        than a flag so wrappers can derive it from the capability they wrap.
+        """
+        return False
+
     _: KW_ONLY
 
     id: str | None = None

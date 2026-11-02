@@ -1059,7 +1059,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # is the application's, as `emit` treats their events.
         if capability_id is not None and not (owner is not None and owner._emits_app_events):  # pyright: ignore[reportPrivateUsage]
             stamp_capability_parts(pending.messages, capability_id)
-            if reason := hand_built_capability_speech(pending.messages):
+            if (reason := hand_built_capability_speech(pending.messages)) and not (
+                owner is not None and owner._speaks_in_system_voice  # pyright: ignore[reportPrivateUsage]
+            ):
                 warnings.warn(
                     f'Capability {capability_id!r} enqueued {reason}. Define a `CapabilityPart` subclass for what it '
                     'says, so the framework renders it in the right voice and your code can find it again by type: '

@@ -233,6 +233,10 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         # `CustomEvent`s.
         return self.wrapped._emits_app_events
 
+    @property
+    def _speaks_in_system_voice(self) -> bool:
+        return self.wrapped._speaks_in_system_voice
+
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
         new_wrapped = self.wrapped.for_agent(agent)
         if new_wrapped is self.wrapped:

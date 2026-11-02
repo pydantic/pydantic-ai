@@ -181,6 +181,11 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
     _counted_steps: int = field(default=0, init=False, repr=False, compare=False)
     """How many of `_steps` a reported loop already used up."""
 
+    @property
+    def _speaks_in_system_voice(self) -> bool:
+        # In-tree: the framework notes this capability enqueues are `SystemPromptPart`s by design.
+        return True
+
     def __post_init__(self) -> None:
         if self.window < 2:
             raise ValueError(f'`window` must be at least 2, got {self.window}.')

@@ -108,6 +108,11 @@ class WarnNearLimits(AbstractCapability[AgentDepsT]):
 
     _active_kinds: tuple[WarningKind, ...] = field(default=(), init=False, repr=False)
 
+    @property
+    def _speaks_in_system_voice(self) -> bool:
+        # In-tree: the framework notes this capability enqueues are `SystemPromptPart`s by design.
+        return True
+
     def __post_init__(self) -> None:
         if self.max_iterations is not None and self.max_iterations <= 0:
             raise ValueError('max_iterations must be positive.')

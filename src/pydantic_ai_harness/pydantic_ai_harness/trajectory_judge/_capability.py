@@ -214,6 +214,11 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
     _task: asyncio.Task[None] | None = field(default=None, init=False, repr=False, compare=False)
     _claim_held: bool = field(default=False, init=False, repr=False, compare=False)
 
+    @property
+    def _speaks_in_system_voice(self) -> bool:
+        # In-tree: the framework notes this capability enqueues are `SystemPromptPart`s by design.
+        return True
+
     def __post_init__(self) -> None:
         _positive_int_adapter.validate_python(self.every)
         _positive_int_adapter.validate_python(self.window)

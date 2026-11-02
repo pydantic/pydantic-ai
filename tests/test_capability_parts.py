@@ -15,7 +15,7 @@ from pydantic import ConfigDict, TypeAdapter
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai._capability_parts import render_capability_parts
-from pydantic_ai.capabilities import AbstractCapability, Hooks
+from pydantic_ai.capabilities import AbstractCapability, Hooks, WrapperCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CAPABILITY_PART_TYPES,
@@ -945,6 +945,23 @@ def test_enqueue_from_a_capability_warns_on_hand_built_speech(item: Any, reason:
     agent = Agent(FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('Done.')])), capabilities=[Reporter([item])])
     with pytest.warns(UserWarning, match=re.escape(reason) + r'.*Define a `CapabilityPart` subclass'):
         agent.run_sync('Run the tests.')
+
+
+def test_enqueue_from_an_in_tree_system_voice_capability_does_not_warn() -> None:
+    """A capability that speaks in system voice by design is not warned, however it's wrapped."""
+
+    @dataclass
+    class SystemVoiceReporter(Reporter):
+        @property
+        def _speaks_in_system_voice(self) -> bool:
+            return True
+
+    reporter = SystemVoiceReporter([SystemPromptPart('Be brief.')])
+    agent = Agent(
+        FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('Done.')])),
+        capabilities=[WrapperCapability(reporter)],
+    )
+    agent.run_sync('Run the tests.')
 
 
 def test_enqueue_from_hooks_is_application_code() -> None:
