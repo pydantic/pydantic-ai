@@ -170,6 +170,31 @@ async def test_gateway_header_cost_google(
 
 
 @pytest.mark.parametrize(
+    'headers',
+    [
+        pytest.param({'logfire-ai-gateway-cost': '0.5'}, id='no-usd-suffix'),
+        pytest.param({'pydantic-ai-gateway-price-estimate': '0.5USD'}, id='deprecated-estimate-header'),
+    ],
+)
+async def test_gateway_header_cost_google_ignored_headers(allow_model_requests: None, headers: dict[str, str]) -> None:
+    """Google ignores a gateway cost without the `USD` suffix or under the deprecated header name."""
+    body = {
+        'candidates': [{'content': {'role': 'model', 'parts': [{'text': 'hi'}]}, 'finishReason': 'STOP'}],
+        'usageMetadata': {'promptTokenCount': 1000, 'candidatesTokenCount': 1000, 'totalTokenCount': 2000},
+        'modelVersion': 'gemini-2.5-flash',
+    }
+
+    def provider_with(headers_: dict[str, str]) -> GoogleProvider:
+        return GoogleProvider(api_key='mock-api-key', http_client=_mock_httpx_client(body, headers_))
+
+    control = await Agent(GoogleModel('gemini-2.5-flash', provider=provider_with({}))).run('hello')
+    assert control.usage.cost is not None
+
+    result = await Agent(GoogleModel('gemini-2.5-flash', provider=provider_with(headers))).run('hello')
+    assert result.usage.cost == control.usage.cost
+
+
+@pytest.mark.parametrize(
     'model_name, headers, expected_cost',
     [
         pytest.param(
@@ -214,6 +239,51 @@ async def test_gateway_header_cost_bedrock(
     assert result.usage.cost == expected_cost
 
 
+@pytest.mark.parametrize(
+    'headers',
+    [
+        pytest.param({'logfire-ai-gateway-cost': '0.5'}, id='no-usd-suffix'),
+        pytest.param({'pydantic-ai-gateway-price-estimate': '0.5USD'}, id='deprecated-estimate-header'),
+    ],
+)
+async def test_gateway_header_cost_bedrock_ignored_headers(allow_model_requests: None, headers: dict[str, str]) -> None:
+    """Bedrock ignores a gateway cost without the `USD` suffix or under the deprecated header name."""
+    body = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hi'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1000, 'outputTokens': 1000, 'totalTokens': 2000},
+        'metrics': {'latencyMs': 10},
+    }
+
+    class _Raw:
+        def stream(self, *_args: Any, **_kwargs: Any):
+            yield json.dumps(body).encode()
+
+    def provider_with(headers_: dict[str, str]) -> BedrockProvider:
+        def send(request: Any, **_kwargs: Any) -> AWSResponse:
+            response_headers = HTTPHeaders()
+            for name, value in {'content-type': 'application/json', **headers_}.items():
+                response_headers[name] = value
+            return AWSResponse(request.url, 200, response_headers, _Raw())
+
+        provider = BedrockProvider(region_name='us-east-1', aws_access_key_id='x', aws_secret_access_key='x')
+        # botocore sends a response returned from `before-send` instead of the request; the stubs type handlers as `-> None`.
+        provider.client.meta.events.register('before-send.bedrock-runtime.Converse', send)  # pyright: ignore[reportArgumentType]
+        return provider
+
+    control = await Agent(
+        BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=provider_with({})),
+        model_settings={'max_tokens': 100},
+    ).run('hello')
+    assert control.usage.cost is not None
+
+    result = await Agent(
+        BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=provider_with(headers)),
+        model_settings={'max_tokens': 100},
+    ).run('hello')
+    assert result.usage.cost == control.usage.cost
+
+
 def test_gateway_reported_cost_parsing():
     def extract(**gateway_blocks: object) -> RequestUsage:
         return RequestUsage.extract(
@@ -234,11 +304,15 @@ def test_gateway_reported_cost_parsing():
     assert extract(
         logfire_ai_gateway={'cost': 'not-a-number'}, pydantic_ai_gateway={'cost_estimate': '0.25'}
     ).cost == snapshot(Decimal('0.25'))
+    # A non-finite reported cost also falls back to the parsed deprecated one.
+    assert extract(
+        logfire_ai_gateway={'cost': 'Infinity'}, pydantic_ai_gateway={'cost_estimate': '0.25'}
+    ).cost == snapshot(Decimal('0.25'))
     assert extract(logfire_ai_gateway='not-a-mapping', pydantic_ai_gateway={'cost_estimate': '0.25'}).cost == snapshot(
         Decimal('0.25')
     )
     # NaN would break `cost_limit` comparisons and a negative cost would reduce the run total.
-    for bad_cost in ('NaN', '-0.5', True, 'not-a-number'):
+    for bad_cost in ('NaN', 'Infinity', '-0.5', True, 'not-a-number'):
         assert extract(pydantic_ai_gateway={'cost_estimate': bad_cost}).cost is None
     assert extract(pydantic_ai_gateway={}).cost is None
     assert extract().input_tokens == 2
