@@ -658,12 +658,17 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """Container configuration for multi-turn conversations.
 
     By default, if previous messages contain a container_id (from a prior response),
-    it will be reused automatically. An id recovered that way is the only container
-    Pydantic AI may replace on its own: if a request carrying both that id and
-    `CodeExecutionTool` uploads comes back `500`, the id is dropped and the request is
-    sent once more so the upload lands in a fresh container. Nothing else is replaced —
-    not a container you set here, and not the id used to reconnect a paused turn — so a
-    request pinning a container the API will not accept raises instead.
+    it will be reused automatically on requests that have code execution: `CodeExecutionTool`,
+    or `WebSearchTool` or `WebFetchTool` where code execution may call them: on Anthropic's
+    `20260209` versions by default, and on any version when `anthropic_web_tools_allowed_callers`
+    names a code execution caller. The Anthropic API rejects a container
+    on any other request, so Pydantic AI doesn't send it there. Tools passed in
+    `extra_body['tools']` aren't read, so a request that carries them still sends it. An id
+    recovered from history is the only container Pydantic AI may replace on its own: if a
+    request carrying both that id and `CodeExecutionTool` uploads comes back `500`, the id is
+    dropped and the request is sent once more so the upload lands in a fresh container.
+    Nothing else is replaced — not a container you set here, and not the id used to reconnect
+    a paused turn — so a request pinning a container the API will not accept raises instead.
 
     Set to `False` to force a fresh container (ignore any `container_id` from history).
     Set to a container id string (e.g. `'container_xxx'`) to explicitly reuse a container,
@@ -699,9 +704,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     See [the Anthropic docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers).
 
     Tools passed as `extra_body['tools']` replace the ones Pydantic AI builds, so the setting isn't
-    applied to a request that has them. Message history from a run that used code execution carries
-    its container, which Pydantic AI sends with later requests, and Anthropic rejects a container on a
-    request without code execution, so a `['direct']` request that continues such a history fails.
+    applied to a request that has them.
     """
 
     anthropic_eager_input_streaming: bool
@@ -1721,7 +1724,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             tool_choice = settle_tool_choice(tool_choice)
             output_config = settle_output_config(output_config)
         self._validate_task_budget_vs_context_management(model_settings, context_management)
-        container, container_from_history = self._get_container(messages, model_settings)
+        container, container_from_history = self._get_container(messages, model_settings, tools)
         recovery_messages, compaction_boundary = self._stale_thinking_block_recovery_history(messages)
         initial_thinking, initial_betas, initial_thinking_override, initial_effective_thinking = (
             thinking_with_stale_block_history(
@@ -1959,7 +1962,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return BetaDiagnosticsParam(previous_message_id=previous_message_id)
 
     def _get_container(
-        self, messages: list[ModelMessage], model_settings: AnthropicModelSettings
+        self, messages: list[ModelMessage], model_settings: AnthropicModelSettings, tools: list[BetaToolUnionParam]
     ) -> tuple[BetaContainerParams | str | None, bool]:
         """Resolve the `container` request parameter, and whether we resolved it from history.
 
@@ -1980,6 +1983,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         the Skills path (`{"skills": ...}` / `{"id": ..., "skills": ...}`) keeps
         working. History-based reuse is always sent as the raw id string since we
         never have skills to attach there.
+
+        An id from history, including a `pause_turn` reconnect id, isn't sent on a request without code execution,
+        such as a follow-up with no tools, since the API rejects it there. `extra_body['tools']` replaces `tools` on
+        the wire but isn't read: a request that carries it keeps the container.
         """
         if (container := model_settings.get('anthropic_container')) is not None:
             if container is False:
@@ -1988,6 +1995,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 return cid, False
             return container, False
         if not self.profile.get('anthropic_accepts_file_and_container_ids', True):
+            return None, False
+        extra_body = model_settings.get('extra_body')
+        if not (_is_str_mapping(extra_body) and 'tools' in extra_body) and not provisions_code_execution(tools):
             return None, False
         # On pause_turn continuation, pass just the container ID string to reconnect.
         # Re-passing BetaContainerParams triggers a prefill rejection on some models

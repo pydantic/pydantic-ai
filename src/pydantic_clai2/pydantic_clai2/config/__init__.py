@@ -16,6 +16,11 @@ STORED_MAIN_CHANNEL = 'bleeding'
 """`main`'s former name, still what is saved for it: older builds accept only this name."""
 ToolCallDisplay = Literal['detailed', 'grouped']
 TOOL_CALL_DISPLAYS: tuple[ToolCallDisplay, ...] = get_args(ToolCallDisplay)
+PermissionMode = Literal['full', 'auto', 'read-only']
+"""harness `PermissionMode`, spelled out so reading settings imports no harness code."""
+PERMISSION_MODES: tuple[PermissionMode, ...] = get_args(PermissionMode)
+PERMISSIONS_SETTING = 'run.permissions'
+"""The setting `/permissions` changes, defined once for every reader."""
 
 
 def _validate_user_path(value: str) -> str:
@@ -64,6 +69,13 @@ class Settings(BaseModel):
             'for its runs. Ctrl+X Ctrl+S toggles it.'
         ),
     )
+    permissions: PermissionMode = Field(
+        default='full',
+        description=(
+            'What runs without asking: full runs everything; auto asks before commands that delete, push, '
+            'install, or reach the network; read-only asks before every file write and command. /permissions sets it.'
+        ),
+    )
     instructions: str = Field(
         default='',
         description=(
@@ -71,9 +83,12 @@ class Settings(BaseModel):
             '/system_prompt edits them.'
         ),
     )
-    repo_context_walk_up_root: _UserPath = Field(
-        default='~',
-        description='User-only inclusive stop for repo_context walk_up. Defaults to home; requires walk_up enabled.',
+    repo_context_walk_up_roots: list[_UserPath] = Field(
+        default=['~'],
+        description=(
+            'User-only JSON list of inclusive stops for repo_context walk_up; the nearest one containing the '
+            'workspace wins, and none scans only the workspace. Requires walk_up enabled.'
+        ),
     )
     repo_context_autoload_symlink_roots: list[_UserPath] = Field(
         default=[],
@@ -200,12 +215,13 @@ SETTING_FIELDS = {
     'run.tool_retries': 'tool_retries',
     'run.code_mode': 'code_mode',
     'run.speculative_code_mode': 'speculative_code_mode',
+    'run.permissions': 'permissions',
     'run.instructions': 'instructions',
     'accounts.pool': 'pool_accounts',
     'sessions.naming': 'session_namer',
     'sessions.naming_model': 'session_namer_model',
     'updates.channel': 'update_channel',
-    'repo_context.walk_up_root': 'repo_context_walk_up_root',
+    'repo_context.walk_up_roots': 'repo_context_walk_up_roots',
     'repo_context.autoload_symlink_roots': 'repo_context_autoload_symlink_roots',
     'worktrees.remove_commands': 'worktree_remove_commands',
 }
@@ -214,11 +230,11 @@ STRING_SETTINGS = frozenset(
     {
         'model',
         'run.instructions',
+        'run.permissions',
         'display.theme',
         'display.spinner',
         'display.tool_calls',
         'updates.channel',
-        'repo_context.walk_up_root',
     }
 )
 """Keys whose typed value is taken as text rather than parsed as JSON."""
