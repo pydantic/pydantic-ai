@@ -688,7 +688,8 @@ class TestIPythonCodeModeKernelLifecycle:
         client = None
         async with anyio.create_task_group() as tg:
             tg.start_soon(agent.run, 'Run the code')
-            await started.wait()
+            with anyio.fail_after(_READY_TIMEOUT):
+                await started.wait()
             client = kernel._client  # pyright: ignore[reportPrivateUsage]
             await kernel.shutdown()
         _assert_process_gone(pids[0])

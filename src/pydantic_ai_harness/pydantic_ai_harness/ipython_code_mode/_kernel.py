@@ -314,14 +314,13 @@ class IPythonKernel:
             await self._stop_process(self._manager)
 
     async def _stop_process(self, manager: _KernelManager) -> None:
-        """Kill the kernel process, or wait for the kill already in progress.
+        """Kill the kernel process, once any kill already in progress has ended.
 
         `shutdown()` and the run holding the lock can both stop the same process at once, and jupyter-client
         fails a `shutdown_kernel()` that overlaps another.
         """
-        if (stopping := self._process_stopping) is not None:
+        while (stopping := self._process_stopping) is not None:
             await stopping.wait()
-            return
         self._process_stopping = stopping = anyio.Event()
         try:
             await manager.shutdown_kernel(now=True)
