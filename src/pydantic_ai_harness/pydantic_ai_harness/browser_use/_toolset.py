@@ -131,7 +131,7 @@ def _normalize_allowed_domain(domain: str) -> list[str]:
     return _restrict_to_http_schemes(domain)
 
 
-def _normalize_allowed_domains(allowed_domains: list[str] | set[str]) -> list[str]:
+def normalize_allowed_domains(allowed_domains: list[str] | set[str]) -> list[str]:
     """Normalize an allowlist into the pattern list browser-use matches entry by entry.
 
     browser-use matches a set, and any list of `DOMAIN_OPTIMIZATION_THRESHOLD` or more
@@ -196,7 +196,7 @@ def _exclude_localhost_allowlist_entries(allowed_domains: list[str]) -> list[str
     return filtered
 
 
-def _session_prohibited_domains(
+def session_prohibited_domains(
     prohibited_domains: list[str] | set[str] | None,
     *,
     block_ip_addresses: bool,
@@ -298,16 +298,14 @@ async def _kill(session: BrowserSession) -> bool:
     dispatches a stop event, and drains the event bus, so it suspends several
     times over CDP. Unshielded, the first of those awaits inside a cancelled
     scope raises and leaves a live Chromium behind -- holding a lock on
-    `user_data_dir` if the profile has one. The same shape as `ModalSandbox`'s
-    teardown, for the same reason.
+    `user_data_dir` if the profile has one.
 
-    Its failures are swallowed for that same reason. `kill()` can raise -- it awaits a
+    Its failures are swallowed. `kill()` can raise -- it awaits a
     storage-state save, a forced stop and an event-bus drain, none of which are wrapped
     upstream -- and it runs in a `finally`, where a raise replaces whatever was unwinding
     through it: a completed browse becomes a `TimeoutError` to the caller, a real error
-    becomes a teardown error, and a cancellation stops propagating. The browser is left to
-    the caller retains the session for another attempt, so nothing is gained by
-    letting it through.
+    becomes a teardown error, and a cancellation stops propagating. The caller retains the
+    session for another attempt, so nothing is gained by letting it through.
     """
     succeeded = True
     with anyio.CancelScope(shield=True):
@@ -672,12 +670,12 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
             self._allowed_domains if self._allowed_domains is not None else browser_profile.allowed_domains
         )
         if allowed_domains is not None:
-            allowed_domains = _normalize_allowed_domains(allowed_domains)
+            allowed_domains = normalize_allowed_domains(allowed_domains)
             if self._block_ip_addresses:
                 allowed_domains = _exclude_localhost_allowlist_entries(allowed_domains)
         update: dict[str, object] = {
             'block_ip_addresses': self._block_ip_addresses,
-            'prohibited_domains': _session_prohibited_domains(
+            'prohibited_domains': session_prohibited_domains(
                 browser_profile.prohibited_domains,
                 block_ip_addresses=self._block_ip_addresses,
                 allowed_domains=allowed_domains,
@@ -879,7 +877,7 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
                 return await self._run_agent(task, llm, self._shared_session)
             except BaseException:
                 # A failed or cancelled run can leave the shared browser in an
-                # unknown state; kill it so the next call starts fresh. Dropping
+                # unknown state; kill it so the next call starts fresh.
                 session, self._shared_session = self._shared_session, None
                 await self._close_session(session)
                 raise

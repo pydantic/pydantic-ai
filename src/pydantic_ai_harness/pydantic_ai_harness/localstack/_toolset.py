@@ -24,13 +24,13 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
 from pydantic_ai_harness._durable import RetryRequest, raise_retry
 from pydantic_ai_harness._output import truncate_tail
 from pydantic_ai_harness.localstack._container import (
+    HEALTH_PATH,
     LocalStackContainer,
     endpoint_port,
     managed_endpoint_url,
     validate_host_address,
 )
 
-_HEALTH_PATH = '/_localstack/health'
 _UTF8_MAX_BYTES_PER_CHAR = 4
 _AWS_GLOBAL_OPTIONS_WITH_VALUE = {
     '--ca-bundle',
@@ -479,7 +479,7 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         """
         if self._operations is not None:
             return await self._operations.localstack_health(self._endpoint_url)
-        url = self._endpoint_url.rstrip('/') + _HEALTH_PATH
+        url = self._endpoint_url.rstrip('/') + HEALTH_PATH
         try:
             async with httpx.AsyncClient(timeout=self._default_timeout) as client:
                 response = await client.get(url)

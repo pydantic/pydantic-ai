@@ -34,8 +34,8 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     dump,
     fork_entry,
     fork_notice,
+    history_entries,
     history_images,
-    history_items,
     queued_item,
     usage_info,
     usage_report,
@@ -110,7 +110,7 @@ class SessionChannel:
 
     def snapshot(self) -> Snapshot:
         conversation = self.session.conversation
-        items = history_items(conversation.messages, image_ids=self._image_ids)
+        items = history_entries(conversation.messages, image_ids=self._image_ids)
         self._image_ids.keep([*self._prompt_images, *history_images(conversation.messages)])
         if self.running:
             items += self._turn.items.values()
