@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-from collections.abc import AsyncIterable, AsyncIterator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -162,13 +162,13 @@ class TestDetectLoops:
         [nudge] = _nudges(result.all_messages())
         assert (nudge.content, nudge.metadata, nudge.scope) == snapshot(
             (
-                'Your thinking repeated the same passage 37 times in a row, which is not making progress. Change your approach, or explain what is blocking you.',
+                'Your thinking repeated the same passage 37 times, which is not making progress. Change your approach, or explain what is blocking you.',
                 {
                     'origin': 'pydantic-ai-harness.detect_loops.nudge.v1',
                     'pattern': 'repeated_thinking',
                     'tool_names': [],
                 },
-                'conversation',
+                'request',
             )
         )
         assert _retry_feedback(result.all_messages()) == snapshot(
@@ -181,6 +181,16 @@ class TestDetectLoops:
             if isinstance(message, ModelResponse)
             for part in message.parts
         )
+
+    async def test_the_nudge_reaches_only_the_retried_request(self):
+        read = [_args('{"path": "a.txt"}', name='read_file')]
+        script = _script([*(_thinking(LOOP) for _ in range(60)), 'answer'], read)
+
+        await _agent(script, DetectLoops()).run('Is the config fine?', event_stream_handler=_drain)
+
+        nudged = ['Your thinking repeated the same passage' in str(messages) for messages in script.requests]
+        # The looping request, the retry with the nudge, then the request after the tool call without it.
+        assert nudged == [False, True, False]
 
     async def test_looping_text_is_stopped(self):
         loops: list[DetectedLoop] = []
@@ -202,8 +212,8 @@ class TestDetectLoops:
                     count=37,
                     window=2048,
                     fingerprints=('dc3adfd1bb4f501d',),
-                    message='Your response repeated the same passage 37 times in a row, which is not making progress. Change your approach, or explain what is blocking you.',
-                    repeated_text='k the config file again before answering. I should chec',
+                    message='Your response repeated the same passage 37 times, which is not making progress. Change your approach, or explain what is blocking you.',
+                    passage='k the config file again before answering. I should chec',
                 )
             ]
         )
@@ -231,7 +241,7 @@ class TestDetectLoops:
         [nudge] = _nudges(result.all_messages())
         assert (nudge.content, nudge.metadata) == snapshot(
             (
-                'The arguments of your call to `write_file` repeated the same passage 63 times in a row, which is not making progress. Change your approach, or explain what is blocking you.',
+                'The arguments of your call to `write_file` repeated the same passage 63 times, which is not making progress. Change your approach, or explain what is blocking you.',
                 {
                     'origin': 'pydantic-ai-harness.detect_loops.nudge.v1',
                     'pattern': 'repeated_tool_args',
@@ -560,9 +570,7 @@ class TestDetectLoops:
 
         await _agent(script, detector).run('Explain', event_stream_handler=_drain)
 
-        assert [(loop.pattern, loop.count, loop.repeated_text) for loop in loops] == [
-            ('repeated_stream_text', 3, 'Hmm.')
-        ]
+        assert [(loop.pattern, loop.count, loop.passage) for loop in loops] == [('repeated_stream_text', 3, 'Hmm.')]
 
     async def test_detectors_get_the_channel_and_how_much_streamed(self):
         samples: list[StreamSample] = []
@@ -614,7 +622,7 @@ class TestDetectLoops:
                 'detect_loops.window': 2048,
                 'detect_loops.tool_names': (),
                 'detect_loops.fingerprints': ('dc3adfd1bb4f501d',),
-                'detect_loops.repeated_text': 'k the config file again before answering. I should chec',
+                'detect_loops.passage': 'k the config file again before answering. I should chec',
             }
         )
 
@@ -629,7 +637,7 @@ class TestDetectLoops:
 
         [span] = [span for span in exporter.get_finished_spans() if span.name == 'loop detected']
         attributes = dict(span.attributes or {})
-        assert 'detect_loops.repeated_text' not in attributes
+        assert 'detect_loops.passage' not in attributes
         assert 'detect_loops.fingerprints' not in attributes
         assert attributes['detect_loops.pattern'] == 'repeated_stream_text'
 
@@ -659,8 +667,7 @@ class TestDetectLoops:
             (lambda: LoopJudge[object](model=_judge([]), every=0), '`every` must be at least 1 or `None`, got 0.'),
         ],
     )
-    def test_rejects_invalid_settings(self, create: object, message: str):
-        assert callable(create)
+    def test_rejects_invalid_settings(self, create: Callable[[], object], message: str):
         with pytest.raises(ValueError) as exc_info:
             create()
 
@@ -712,7 +719,7 @@ class TestLoopJudge:
 
         assert len(prompts) == 2
         loop = exc_info.value.loop
-        assert (loop.pattern, loop.repeated_text) == ('repeated_stream_text', passage)
+        assert (loop.pattern, loop.passage) == ('repeated_stream_text', passage)
         assert loop.count > 2
 
     @pytest.mark.usefixtures('instrument_all_agents')

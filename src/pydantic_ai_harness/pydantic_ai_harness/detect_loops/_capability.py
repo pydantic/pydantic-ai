@@ -134,7 +134,7 @@ class DetectedLoop:
     message: str
     """The explanation sent to the model as the nudge, and used as the `LoopDetectedError` message."""
 
-    repeated_text: str | None = None
+    passage: str | None = None
     """The passage that repeated, for `'repeated_thinking'`, `'repeated_stream_text'` and
     `'repeated_tool_args'`; `None` for the other patterns. Unlike `fingerprints`, it's the model's own text."""
 
@@ -306,7 +306,8 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
     - `'nudge'`: enqueue a system prompt telling the model which loop it is in and asking it to change
       its approach. It joins the current request and keeps the default conversation scope, so it keeps
       applying on later requests instead of being shown once. For a loop within a response, the stream
-      is also stopped and the request made again with the nudge, through a `ModelRetry`.
+      is also stopped and the request made again through a `ModelRetry`, and the nudge is request-scoped,
+      so only that request carries it.
     - `'error'`: raise `LoopDetectedError`, ending the run.
     - a `LoopHandler`: call it with the run context and the `DetectedLoop`. For a loop within a response,
       the response continues when it returns; raise `ModelRetry` from it to stop the stream and make the
@@ -713,10 +714,13 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
             raise LoopDetectedError(loop)
         else:
             metadata = {'origin': _NUDGE_ORIGIN, 'pattern': loop.pattern, 'tool_names': list(loop.tool_names)}
-            ctx.enqueue(SystemPromptPart(loop.message, metadata=metadata))
-            if in_response:
-                # Rejecting the response makes the request again, and the nudge joins it.
-                raise ModelRetry(_REJECTED)
+            if not in_response:
+                ctx.enqueue(SystemPromptPart(loop.message, metadata=metadata))
+                return
+            # Rejecting the response makes the request again, and the nudge joins that request only: the response
+            # that looped is gone, so the loop doesn't build up in history the way a loop across responses does.
+            ctx.enqueue(SystemPromptPart(loop.message, metadata=metadata, scope='request'))
+            raise ModelRetry(_REJECTED)
 
     def _trace(self, ctx: RunContext[AgentDepsT], loop: DetectedLoop) -> None:
         action = self.action
@@ -730,8 +734,8 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
         if ctx.trace_include_content:
             # Hashes of short arguments, such as a user id, can be reversed by trying candidate values.
             attributes['detect_loops.fingerprints'] = loop.fingerprints
-            if loop.repeated_text is not None:
-                attributes['detect_loops.repeated_text'] = loop.repeated_text
+            if loop.passage is not None:
+                attributes['detect_loops.passage'] = loop.passage
         ctx.tracer.start_span('loop detected', attributes=attributes).end()
 
 
@@ -751,12 +755,12 @@ def _in_part_loop(part: _Part, repetition: Repetition, *, window: int) -> Detect
         window=window,
         fingerprints=(_digest(repetition.text),),
         message=(
-            f'{what} repeated the same passage {count} times in a row, which is not making progress. {_CHANGE_APPROACH}'
+            f'{what} repeated the same passage {count} times, which is not making progress. {_CHANGE_APPROACH}'
             if count > 1
             # A judge can report a loop without a passage that repeats exactly.
             else f'{what} kept repeating itself without making progress. {_CHANGE_APPROACH}'
         ),
-        repeated_text=repetition.text,
+        passage=repetition.text,
     )
 
 

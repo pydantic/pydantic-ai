@@ -704,9 +704,9 @@ except LoopDetectedError as error:
   same call `repeated_parallel_call_threshold=5` times in one response, reported before any runs. A
   response that isn't streamed gets the same checks on arrival; `DetectLoops` never makes a run
   stream.
-- Within a response, `'nudge'` also stops the stream and retries via `ModelRetry` (counts against
-  output retries; a stopped stream is dropped from history and its tokens aren't in run usage). A
-  handler that returns lets the response continue; it can raise `ModelRetry` to retry. Under
+- Within a response, `'nudge'` also stops the stream and retries via `ModelRetry`, with the nudge
+  request-scoped (counts against output retries; a stopped stream is dropped from history and its
+  tokens aren't in run usage). A handler that returns lets the response continue; it can raise `ModelRetry` to retry. Under
   `run_stream()`, a loop found once output (text or an output tool call) has started streaming
   can't be retried and ends the run with `UnexpectedModelBehavior`. `UsageLimits` don't see
   stopped streams.
@@ -717,7 +717,7 @@ except LoopDetectedError as error:
   and free of I/O. Subclass `LoopDetector` (`async detect(ctx, sample: StreamSample) ->
   Repetition | None`) for your own methodology.
 - Emits a `loop detected` span (`detect_loops.pattern`, `.action`, `.count`, `.window`,
-  `.tool_names`; `.fingerprints` and `.repeated_text` only with `trace_include_content`); no
+  `.tool_names`; `.fingerprints` and `.passage` only with `trace_include_content`); no
   arguments or results otherwise. A failed judge emits `loop judge failed`
   (`error.type`). A `model=` judge isn't instrumented; its usage is added to the run's.
 

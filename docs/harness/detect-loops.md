@@ -152,7 +152,7 @@ The text names tools using only letters, digits, and `_`; any other character be
 
 Find nudges in history by that `origin`, not by their text ([identifying system prompts](../message-history.md#identifying-system-prompts)). On a model without inline system prompts, Pydantic AI sends the part as `<system>` user text, as it does any [mid-conversation system prompt](../message-history.md#mid-conversation-system-prompts).
 
-For a [loop within a response](#loops-within-a-response), the stream is also stopped and the request made again, with the nudge. The capability raises `ModelRetry`, so the model also sees `Your previous response was rejected because it kept repeating itself.` as retry feedback, and each such retry counts against the agent's [output retries](../agent.md#how-output-retries-are-enforced): a model that keeps looping ends the run with `UnexpectedModelBehavior` once they run out. A streamed response that was stopped isn't kept in history, and the tokens it used aren't added to the run's usage. A response that arrived whole stays in history ahead of the retry, as any rejected response does.
+For a [loop within a response](#loops-within-a-response), the stream is also stopped and the request made again, with the nudge. The nudge is request-scoped there: the response that looped is gone, so it's sent with that one request instead of staying in the conversation. The capability raises `ModelRetry`, so the model also sees `Your previous response was rejected because it kept repeating itself.` as retry feedback, and each such retry counts against the agent's [output retries](../agent.md#how-output-retries-are-enforced): a model that keeps looping ends the run with `UnexpectedModelBehavior` once they run out. A streamed response that was stopped isn't kept in history, and the tokens it used aren't added to the run's usage. A response that arrived whole stays in history ahead of the retry, as any rejected response does.
 
 `run_stream()` can't make a request again once the run's output has started streaming, as output text or an output tool call. A loop found from then on ends the run with `UnexpectedModelBehavior`, after the output streamed so far. A loop found before that, in thinking or in a function tool call's arguments, is retried as usual. Use `agent.run()` with an `event_stream_handler`, or `agent.iter()`, to have loops in the output retried too.
 
@@ -220,7 +220,7 @@ A `DetectedLoop` has:
 - `window`: how many recent tool calls (responses, for `repeated_text`) the check looked at; for a loop within a response, how many of the part's characters, or for `repeated_parallel_call` how many of the response's tool calls.
 - `fingerprints`: short stable hashes of the repeated calls (tool name and canonical arguments), text, or passage. The same call has the same fingerprint in every run. They don't contain the arguments in the clear, but a short argument, such as a user id, can be recovered by hashing candidate values.
 - `message`: the text the nudge would send.
-- `repeated_text`: the passage that repeated within a response, as it appears at the end of the part, or `None` for the other patterns. It's the model's own text.
+- `passage`: the passage that repeated within a response, as it appears at the end of the part, or `None` for the other patterns. It's the model's own text.
 
 ## Durable execution
 
@@ -240,7 +240,7 @@ Each detection emits a zero-duration `loop detected` span through `ctx.tracer`, 
 | `detect_loops.window` | `DetectedLoop.window` |
 | `detect_loops.tool_names` | The tools involved |
 | `detect_loops.fingerprints` | The hashes of the repeated calls or text, only when `trace_include_content` is enabled |
-| `detect_loops.repeated_text` | The passage that repeated within a response, only when `trace_include_content` is enabled |
+| `detect_loops.passage` | The passage that repeated within a response, only when `trace_include_content` is enabled |
 
 Without `trace_include_content`, the span contains no arguments, results, or response text. The fingerprints are left out too, because a short argument can be recovered from its hash. Checks that find nothing emit nothing.
 
