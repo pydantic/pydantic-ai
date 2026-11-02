@@ -19,9 +19,10 @@ _READ_ONLY_REASON = (
 
 
 class ReadOnlyWorkspace(WrapperWorkspace):
-    """A [`Workspace`][pydantic_ai.workspaces.Workspace] that allows reads and refuses commands, file changes, and display actions.
+    """A [`Workspace`][pydantic_ai.workspaces.Workspace] that allows reads and refuses changes.
 
-    Commands are refused too, since they could change files. This restricts the workspace API; it is not isolation.
+    It refuses file changes, display actions, and commands, since they could change files. This restricts the
+    workspace API; it is not isolation.
     """
 
     @property
