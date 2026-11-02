@@ -386,13 +386,9 @@ class FakeComputerUse:
         self.owner = owner
         self.mouse = self.keyboard = self.screenshot = self.display = self
         self.started = False
-        self.start_calls = 0
         # After `stop_with_sandbox`, input before `start` breaks the desktop for good, as Daytona's does.
         self.stopped_with_sandbox = False
         self.broken = False
-        # Raised by the next desktop call, and then cleared.
-        self.error: Exception | None = None
-        self.start_gate: asyncio.Event | None = None
         self.png = b'\x89PNG\r\n\x1a\nfake'
         self.position = SimpleNamespace(x=7, y=8)
         self.displays = [SimpleNamespace(width=1280, height=800, is_active=True)]
@@ -409,9 +405,6 @@ class FakeComputerUse:
     async def _call(self, line: str) -> None:
         await anyio.lowlevel.checkpoint()
         self.owner.check_alive()
-        if (error := self.error) is not None:
-            self.error = None
-            raise error
         self._check_broken()
         if not self.started and self.stopped_with_sandbox:
             self.broken = True
@@ -420,9 +413,6 @@ class FakeComputerUse:
         self.owner.desktop_calls.append(line)
 
     async def start(self, request_timeout: float | None = None) -> None:
-        self.start_calls += 1
-        if self.start_gate is not None:
-            await self.start_gate.wait()
         self._check_broken()
         self.started = True
         await self._call('start')

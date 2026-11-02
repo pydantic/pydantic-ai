@@ -5554,13 +5554,14 @@ def test_rebuilt_request_policy_follows_the_run(
 
 
 @pytest.mark.parametrize(('configured', 'expected'), [(None, 180), (60, 180), (600, 600)])
-def test_prefect_action_raises_a_shorter_configured_timeout_and_keeps_a_longer_one(
+def test_prefect_at_most_once_step_raises_a_shorter_configured_timeout_and_keeps_a_longer_one(
     configured: int | None, expected: int
 ) -> None:
-    from pydantic_ai.durable_exec._workspace import WORKSPACE_CALL_POLICIES
+    from pydantic_ai.durable_exec import StepPolicy
     from pydantic_ai.durable_exec.prefect._operation_backend import PrefectOperationBackend
 
     backend = PrefectDurability().get_durable_operation_backend()
     assert isinstance(backend, PrefectOperationBackend)
     config = TaskConfig() if configured is None else TaskConfig(timeout_seconds=configured)
-    assert backend.apply_policy(config, WORKSPACE_CALL_POLICIES['act']).get('timeout_seconds') == expected
+    policy = StepPolicy(repeatable=False, timeout=180)
+    assert backend.apply_policy(config, policy).get('timeout_seconds') == expected

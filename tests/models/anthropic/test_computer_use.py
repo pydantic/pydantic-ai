@@ -60,7 +60,7 @@ with try_import() as imports_successful:
     from pydantic_ai.profiles.anthropic import anthropic_model_profile
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'), pytest.mark.anyio]
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='anthropic not installed')
 
 TASK = 'Take a screenshot, then click at x=100 y=200, type "hello", and reply "done". Do nothing else.'
 NOT_EXECUTED = 'Not executed: an earlier computer action in this turn failed.'
@@ -420,6 +420,7 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
     ],
 )
 def test_toolset_members_map_onto_the_computer_tool(name: str, input: dict[str, Any], action: Any) -> None:
+    """Every member Anthropic documents, including ones no recording has: a VCR test would pin only what Claude sent."""
     assert map_computer_member(name, input) == (action if isinstance(action, list) else [action])
 
 

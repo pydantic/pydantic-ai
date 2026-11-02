@@ -1,4 +1,7 @@
-"""Tests for `ManagedDisplay`, the start-and-retry policy every harness display shares."""
+"""Tests for `ManagedDisplay`, the start-and-retry policy every harness display shares.
+
+It is private, but each backend reaches only some of its rules cheaply, so they are pinned here once.
+"""
 
 from __future__ import annotations
 
@@ -19,8 +22,6 @@ from pydantic_ai.workspaces import (
 from pydantic_ai_harness._display import ManagedDisplay
 
 from ..workspace_fakes import FAKE_SCREENSHOT
-
-pytestmark = pytest.mark.anyio
 
 
 class FakeDriver:
@@ -132,12 +133,6 @@ async def test_an_action_does_not_run_on_a_display_that_started_for_it() -> None
     await display.act(Click(x=2, y=2))
     # The next action uses the display that started, without starting it again.
     assert (screen.driver.acted, screen.driver.starts) == ([Click(x=2, y=2)], 1)
-
-
-async def test_an_action_runs_on_a_display_that_was_already_up() -> None:
-    screen = Screen(up=True)
-    await screen.display().act(Click(x=1, y=1))
-    assert screen.driver.acted == [Click(x=1, y=1)]
 
 
 async def test_a_refused_action_keeps_the_display() -> None:

@@ -31,8 +31,6 @@ from pydantic_ai_harness._x11 import X11Computer
 
 from ..workspace_fakes import FAKE_SCREENSHOT
 
-pytestmark = pytest.mark.anyio
-
 RELEASE_MODIFIERS = [
     *['keyup', 'Shift_L', 'Shift_R', 'Control_L', 'Control_R', 'Alt_L', 'Alt_R', 'Super_L', 'Super_R'],
     'ISO_Level3_Shift',
