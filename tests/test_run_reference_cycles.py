@@ -568,6 +568,37 @@ class FailureNodeHook(AbstractCapability[Deps]):
         return await handler(node)
 
 
+class ModelErrorHook(AbstractCapability[Deps]):
+    """Re-raise the model request error without keeping it, so only library frames can retain it."""
+
+    async def on_model_request_error(
+        self, ctx: RunContext[Deps], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        try:
+            raise error
+        finally:
+            del error
+
+
+class NodeErrorHook(AbstractCapability[Deps]):
+    """Fail the tool node in `wrap_node_run`, then re-raise from `on_node_run_error` without keeping the error."""
+
+    async def wrap_node_run(
+        self, ctx: RunContext[Deps], *, node: AgentNode[Deps], handler: WrapNodeRunHandler[Deps]
+    ) -> NodeResult[Deps]:
+        if Agent.is_call_tools_node(node):
+            raise RuntimeError('node failed')
+        return await handler(node)
+
+    async def on_node_run_error(
+        self, ctx: RunContext[Deps], *, node: AgentNode[Deps], error: Exception
+    ) -> NodeResult[Deps]:
+        try:
+            raise error
+        finally:
+            del error
+
+
 def failure_agent(
     explicit_cause: bool,
     capabilities: Sequence[AbstractCapability[Deps]],
@@ -670,6 +701,20 @@ FAILED_RUN_CASES: list[FailedRunCase] = [
         origin='model',
         drive='run',
         drain_worker=False,
+    ),
+    FailedRunCase(
+        id='sync_model-iter-error_hook',
+        agent_factory=partial(failure_agent, model_failure=True),
+        origin='model',
+        drive='iter',
+        hook=ModelErrorHook,
+    ),
+    FailedRunCase(
+        id='sync_model-run-error_hook',
+        agent_factory=partial(failure_agent, model_failure=True),
+        origin='model',
+        drive='run',
+        hook=ModelErrorHook,
     ),
     FailedRunCase(
         id='consumer-iter-none', agent_factory=failure_agent, origin='execute', drive='iter', consumer_error=True
@@ -997,4 +1042,35 @@ async def test_run_stream_tool_error_releases_dependencies(tool_kind: Literal['a
     errors.clear()
     if tool_kind == 'sync':
         await anyio.to_thread.run_sync(lambda: None)
+    assert ref() is None
+
+
+@pytest.mark.usefixtures('no_gc')
+async def test_run_stream_node_error_hook_releases_dependencies() -> None:
+    async def model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name='lookup', json_args='{}')}
+
+    agent = Agent(FunctionModel(stream_function=model), deps_type=Deps, capabilities=[NodeErrorHook()])
+
+    @agent.tool_plain
+    async def lookup() -> str:
+        return 'result'
+
+    errors: list[RuntimeError] = []
+
+    async def execute() -> weakref.ReferenceType[Deps]:
+        deps = Deps()
+        ref = weakref.ref(deps)
+        try:
+            async with agent.run_stream('hi', deps=deps, infer_name=False):
+                pass
+        except RuntimeError as exc:
+            errors.append(exc)
+        del deps
+        return ref
+
+    ref = await execute()
+    assert ref() is not None
+    assert [str(error) for error in errors] == ['node failed']
+    errors.clear()
     assert ref() is None

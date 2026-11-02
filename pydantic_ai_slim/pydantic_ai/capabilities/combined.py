@@ -689,17 +689,21 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         node: _agent_graph.AgentNode[AgentDepsT, Any],
         error: Exception,
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
-        for capability in reversed(self._dispatch):
-            if not capability._has_on_node_run_error:
-                continue
-            cap_ctx = _ctx_for_active_cap(capability, ctx)
-            if cap_ctx is None:
-                continue
-            try:
-                return await capability.on_node_run_error(cap_ctx, node=node, error=error)
-            except Exception as new_error:
-                error = new_error
-        raise error
+        try:
+            for capability in reversed(self._dispatch):
+                if not capability._has_on_node_run_error:
+                    continue
+                cap_ctx = _ctx_for_active_cap(capability, ctx)
+                if cap_ctx is None:
+                    continue
+                try:
+                    return await capability.on_node_run_error(cap_ctx, node=node, error=error)
+                except Exception as new_error:
+                    error = new_error
+            raise error
+        finally:
+            # The raised error's traceback holds this frame; retaining error would keep ctx.deps in a cycle.
+            del error
 
     # --- Event hooks ---
 
@@ -790,22 +794,28 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
         error: Exception,
     ) -> ModelResponse:
-        for capability in reversed(self._dispatch):
-            if not capability._has_on_model_request_error:
-                continue
-            cap_ctx = _ctx_for_active_cap(capability, ctx)
-            if cap_ctx is None or not capability._handles_model_request_error(cap_ctx, request_context):
-                continue
-            try:
-                return await capability.on_model_request_error(cap_ctx, request_context=request_context, error=error)
-            except RetryModelRequest:
-                # Control flow, not a replacement error: a capability asking for another attempt has
-                # answered for the whole chain. Handing it to the next capability as `error` would let
-                # an outer one recover from — or re-wrap — the request for another attempt.
-                raise
-            except Exception as new_error:
-                error = new_error
-        raise error
+        try:
+            for capability in reversed(self._dispatch):
+                if not capability._has_on_model_request_error:
+                    continue
+                cap_ctx = _ctx_for_active_cap(capability, ctx)
+                if cap_ctx is None or not capability._handles_model_request_error(cap_ctx, request_context):
+                    continue
+                try:
+                    return await capability.on_model_request_error(
+                        cap_ctx, request_context=request_context, error=error
+                    )
+                except RetryModelRequest:
+                    # Control flow, not a replacement error: a capability asking for another attempt has
+                    # answered for the whole chain. Handing it to the next capability as `error` would let
+                    # an outer one recover from — or re-wrap — the request for another attempt.
+                    raise
+                except Exception as new_error:
+                    error = new_error
+            raise error
+        finally:
+            # The raised error's traceback holds this frame; retaining error would keep ctx.deps in a cycle.
+            del error
 
     # --- Tool validate lifecycle hooks ---
 
