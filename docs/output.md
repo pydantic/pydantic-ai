@@ -897,6 +897,10 @@ There two main challenges with streamed results:
     As the `run_stream()` method will consider the first output matching the `output_type` to be the final output,
     it will stop running the agent graph and will not execute any tool calls made by the model after this "final" output.
 
+    That first output can be text. With an output type that allows both text and [tool output](#tool-output), like `output_type=str | Foo`,
+    text the model streams before it calls the output tool becomes the run's output, and the output tool call is not used.
+    [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] and the methods below return the output tool's result.
+
     If you want to always run the agent graph to completion and stream all events from the model's streaming response and the agent's execution of tools,
     use [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] ([docs](agent.md#streaming-all-events)) or [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] ([docs](agent.md#streaming-all-events-and-output)) instead.
 
