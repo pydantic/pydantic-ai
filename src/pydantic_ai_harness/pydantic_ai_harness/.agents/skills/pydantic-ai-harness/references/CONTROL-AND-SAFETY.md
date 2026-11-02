@@ -718,7 +718,7 @@ except LoopDetectedError as error:
 - Emits a `loop detected` span (`detect_loops.pattern`, `.action`, `.count`, `.window`,
   `.tool_names`; `.fingerprints` and `.repeated_text` only with `trace_include_content`); no
   arguments or results otherwise. A failed judge emits `loop judge failed`
-  (`error.type`). The judge agent is named `detect_loops`.
+  (`error.type`). A `model=` judge isn't instrumented; its usage is added to the run's.
 
 ## See also
 

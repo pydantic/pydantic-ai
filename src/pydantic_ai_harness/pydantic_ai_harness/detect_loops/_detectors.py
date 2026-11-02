@@ -143,11 +143,17 @@ class RepetitionDetector(LoopDetector[AgentDepsT]):
                 length - (count + 1) * period : length - count * period
             ] == unit:
                 count += 1
-            if count >= self.min_repeats and count * period >= self.min_chars:
-                if (unit + unit).find(unit, 1) < period:
-                    # The passage is a shorter unit repeated, and that unit is shorter than `min_period`.
-                    return None
-                return Repetition(text=unit, count=count)
+            if count < self.min_repeats or count * period < self.min_chars:
+                continue
+            if (shorter := (unit + unit).find(unit, 1)) < period:
+                # The text ends in a run of a unit shorter than `min_period`, like a divider or a row of zeros.
+                # A longer passage can still repeat around it, so look on from before the run.
+                run = count * period
+                while run < length and text[length - run - 1] == text[length - run - 1 + shorter]:
+                    run += 1
+                end = length - run + probe - 1
+                continue
+            return Repetition(text=unit, count=count)
         return None
 
 
@@ -215,6 +221,9 @@ class LoopJudge(LoopDetector[AgentDepsT]):
             if self.model is None:
                 raise ValueError('Provide a judge `model` or a judge `agent`.')
             self._judge = Agent(self.model, name='detect_loops')
+            # The judge is shown the model's own output, so it must not inherit global instrumentation
+            # that could ignore the host agent's content or opt-out settings.
+            self._judge.instrument = False
         else:
             if self.model is not None:
                 raise ValueError('Provide either a judge `model` or a judge `agent`, not both.')
@@ -236,7 +245,9 @@ class LoopJudge(LoopDetector[AgentDepsT]):
         prompt = wrap(_SAMPLE_TAG, text, channel=sample.channel, tool_name=sample.tool_name)
         try:
             with anyio.fail_after(self.timeout):
-                result = await self._judge.run(prompt, output_type=_Verdict, instructions=_JUDGE_INSTRUCTIONS)
+                result = await self._judge.run(
+                    prompt, output_type=_Verdict, instructions=_JUDGE_INSTRUCTIONS, usage=ctx.usage
+                )
             verdict = result.output
         # Any failure, a timeout included, falls back to the heuristic: the judge is optional, the run isn't.
         except Exception as error:

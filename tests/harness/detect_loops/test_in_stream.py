@@ -294,6 +294,13 @@ class TestDetectLoops:
 
         assert loops == []
 
+    def test_a_passage_around_a_run_of_a_short_unit(self):
+        detector = RepetitionDetector[object]()
+        unit = 'a' * 20 + '0' * 400
+
+        assert detector.find(unit * 4) == Repetition(text=unit, count=4)
+        assert detector.find('=' * 1000 + '0, ' * 300) is None
+
     async def test_channels_can_be_turned_off(self):
         loops: list[DetectedLoop] = []
         detector = DetectLoops[object](stream_channels=('text',), action=lambda ctx, loop: loops.append(loop))
@@ -679,14 +686,27 @@ class TestLoopJudge:
         assert loop.count > 2
 
     @pytest.mark.usefixtures('instrument_all_agents')
-    async def test_the_judge_agent_is_named_after_the_capability(self, capfire: CaptureLogfire):
+    async def test_the_judge_is_not_traced_even_when_every_agent_is(self, capfire: CaptureLogfire):
         judge = LoopJudge[object](model=_judge([True]))
 
         await Agent(_script([LOOP] * 60).model(), name='outer', capabilities=[DetectLoops(stream_detector=judge)]).run(
             'Explain', event_stream_handler=_drain
         )
 
-        assert 'detect_loops' in agent_run_names(capfire)
+        # The judge is shown the model's own output, which the host agent's settings may keep out of traces.
+        assert agent_run_names(capfire) == ['outer']
+
+    async def test_the_judges_usage_is_added_to_the_run(self):
+        verdicts = [True]
+        judge = LoopJudge[object](model=_judge(verdicts))
+
+        result = await _agent(_script([LOOP] * 60), DetectLoops(stream_detector=judge)).run(
+            'Explain', event_stream_handler=_drain
+        )
+
+        assert verdicts == []
+        # The retried request and the judge's: the stopped stream's request isn't counted.
+        assert result.usage.requests == 2
 
     async def test_a_judge_that_quotes_no_repeating_passage(self):
         judge = LoopJudge[object](model=_judge([True], passage=''), every=600)
@@ -730,7 +750,7 @@ class TestLoopJudge:
             raise AssertionError('unreachable')  # pragma: no cover
 
         script = _script([LOOP] * 60)
-        judge = LoopJudge[object](model=FunctionModel(slow), timeout=0.01)
+        judge = LoopJudge[object](model=FunctionModel(slow), timeout=0.1)
 
         result = await _agent(script, DetectLoops(stream_detector=judge)).run('Explain', event_stream_handler=_drain)
 

@@ -99,7 +99,7 @@ agent = Agent(
 
 The judge is asked sparingly. Each check runs `heuristic` (a `RepetitionDetector()` by default) first, and the judge is asked when the heuristic suspects a loop, to confirm or overrule it, and, with `every` set, each time a part passes another `every` characters, to find loops the heuristic misses. Without `every`, it's only asked on suspicion. It's shown the part's last `max_chars` (default `4000`) characters, framed in a `<streamed_output>` tag.
 
-If the judge raises, or doesn't answer within `timeout` (default `5.0`) seconds, the heuristic's answer is used and a `loop judge failed` span records the error's type, so a judge failure doesn't break the run. Pass `agent=` instead of `model=` to use your own judge agent, with its own instructions, settings or fallback models; it's run with the judge's instructions added and its own output type, so it can't have output validators. The judge's usage is its own and isn't added to the run's usage.
+If the judge raises, or doesn't answer within `timeout` (default `5.0`) seconds, the heuristic's answer is used and a `loop judge failed` span records the error's type, so a judge failure doesn't break the run. Pass `agent=` instead of `model=` to use your own judge agent, with its own instructions, settings or fallback models; it's run with the judge's instructions added and its own output type, so it can't have output validators. The judge's usage is added to the run's usage.
 
 ### Your own detector
 
@@ -241,7 +241,7 @@ Each detection emits a zero-duration `loop detected` span through `ctx.tracer`, 
 
 Without `trace_include_content`, the span contains no arguments, results, or response text. The fingerprints are left out too, because a short argument can be recovered from its hash. Checks that find nothing emit nothing.
 
-When a `LoopJudge` fails or times out, a zero-duration `loop judge failed` span records it, with the exception's class name in `error.type`. The judge's own requests are traced as runs of its agent, named `detect_loops` when you pass `model=`, when that agent is instrumented.
+When a `LoopJudge` fails or times out, a zero-duration `loop judge failed` span records it, with the exception's class name in `error.type`. The judge agent built from `model=` is not instrumented, so the output it's shown is not recorded even when global instrumentation is on and the host agent leaves content out. A judge `agent=` you pass keeps its own instrumentation settings.
 
 ## Composition
 
