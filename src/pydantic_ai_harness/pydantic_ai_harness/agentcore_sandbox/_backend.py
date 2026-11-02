@@ -28,7 +28,8 @@ import json
 import logging
 import shlex
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Generator, Mapping, Sequence
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, NotRequired, TypeVar
 
 import anyio
@@ -50,7 +51,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
-    check_env_types,
+    check_env,
     check_timeout,
     command_argv,
     command_deadline,
@@ -81,8 +82,9 @@ _T = TypeVar('_T')
 
 PROVIDER = 'agentcore'
 DEFAULT_CODE_INTERPRETER = 'aws.codeinterpreter.v1'
-# AgentCore's own default; the service allows up to 28800 (8 hours).
+# AgentCore's own default, and the most it allows (8 hours).
 DEFAULT_SESSION_TIMEOUT = 900
+MAX_SESSION_TIMEOUT = 28_800
 
 _POLL_INTERVAL = 0.25
 _MAX_OUTPUT_BYTES = 4 * 1024 * 1024
@@ -167,19 +169,28 @@ def _pydantic_ai_workspace(encoded):
             os.makedirs(path, exist_ok=True)
         return os.path.realpath(path) if os.path.isdir(path) else None
 
-    def finished(directory):
+    def finished(directory, inline):
         def size(name):
             try:
                 return os.path.getsize(os.path.join(directory, name))
             except FileNotFoundError:
                 return 0
 
+        def content(name):
+            return tail(os.path.join(directory, name), inline)
+
         try:
             with open(os.path.join(directory, 'rc')) as file:
                 code = file.read().strip()
         except FileNotFoundError:
             code = None
-        return {'exit_code': code, 'size': size('out') + size('err')}
+        total = size('out') + size('err')
+        reply = {'exit_code': code, 'size': total, 'out': None, 'err': None}
+        # Most output is small: return it now and clean up, saving a round trip per stream.
+        if code is not None and total <= inline:
+            reply.update(out=content('out'), err=content('err'))
+            shutil.rmtree(directory, ignore_errors=True)
+        return reply
 
     def tail(path, limit):
         try:
@@ -226,6 +237,8 @@ class _Chunk(TypedDict):
 class _Finished(TypedDict):
     exit_code: str | None
     size: int
+    out: str | None
+    err: str | None
 
 
 _REPLY = TypeAdapter(_Reply)
@@ -281,15 +294,31 @@ def translate(error: Exception, session_id: str | None) -> Exception:
         return error
     if session_id is not None and is_inactive(error):
         return WorkspaceUnavailableError(
-            f'The AgentCore Code Interpreter session {session_id!r} is no longer active: it was stopped or reached '
-            "its session timeout. A session cannot be restarted; pass `workspace='new'` to start a fresh one."
+            f'The AgentCore Code Interpreter session {session_id!r} is not active in this region: it was stopped, '
+            'reached its session timeout, or was started in another region. A session cannot be restarted; '
+            "pass `workspace='new'` to start a fresh one."
         )
     code = error.response.get('Error', {}).get('Code', '')
     if code in _CREDENTIAL_ERRORS:
         return WorkspaceUnavailableError(f'AgentCore refused the AWS credentials ({code}).')
     if code in ('ValidationException', 'ResourceNotFoundException'):
-        return WorkspaceUnavailableError(f'AgentCore refused the request: {error}')
+        # Refusing to start or stop a session is final; refusing one call in a live session ends only that call.
+        if session_id is None:
+            return WorkspaceUnavailableError(f'AgentCore refused the request: {error}')
+        return WorkspaceError(f'AgentCore refused the request: {error}')
     return error
+
+
+@contextmanager
+def translated(session_id: str | None) -> Generator[None]:
+    """Raise boto3 failures inside the block as the protocol's typed failures; see `translate`."""
+    try:
+        yield
+    except Exception as error:
+        mapped = translate(error, session_id)
+        if mapped is error:
+            raise
+        raise mapped from error
 
 
 async def stop_session(ref: WorkspaceRef, *, region_name: str | None) -> None:
@@ -304,13 +333,8 @@ async def stop_session(ref: WorkspaceRef, *, region_name: str | None) -> None:
             if not is_inactive(error):
                 raise
 
-    try:
+    with translated(None):
         await anyio.to_thread.run_sync(stop)
-    except Exception as error:
-        translated = translate(error, None)
-        if translated is error:
-            raise
-        raise translated from error
 
 
 def _decode(encoded: str) -> str:
@@ -337,7 +361,7 @@ class AgentCoreSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesy
         code_interpreter: The AWS-managed `aws.codeinterpreter.v1`, or the id of a code interpreter
             you created, for example one with network access. An unknown one raises
             `WorkspaceUnavailableError` on first use.
-        session_timeout: Total lifetime of a newly started session in seconds, up to 28800. It is not
+        session_timeout: Total lifetime of a newly started session in seconds, from 1 to 28800. It is not
             an idle timeout: the session ends when it runs out, whatever it is doing.
         working_dir: Absolute directory commands start in and relative paths resolve against.
             Created in a session this backend starts; an attached session must already have it.
@@ -356,9 +380,11 @@ class AgentCoreSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesy
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
     ) -> None:
-        check_env_types(env)
-        if type(session_timeout) is not int or session_timeout < 1:
-            raise ValueError(f'session_timeout must be an integer of at least 1, got {session_timeout!r}.')
+        check_env(env)
+        if type(session_timeout) is not int or not 1 <= session_timeout <= MAX_SESSION_TIMEOUT:
+            raise ValueError(
+                f'session_timeout must be an integer from 1 to {MAX_SESSION_TIMEOUT}, got {session_timeout!r}.'
+            )
         self._code_interpreter = code_interpreter
         self._session_id: str | None = None
         if ref is not None:
@@ -387,18 +413,13 @@ class AgentCoreSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesy
             if self._session_id is None:
 
                 async def start() -> None:
-                    try:
+                    with translated(None):
                         response = await anyio.to_thread.run_sync(
                             lambda: client.start_code_interpreter_session(
                                 codeInterpreterIdentifier=self._code_interpreter,
                                 sessionTimeoutSeconds=self._session_timeout,
                             )
                         )
-                    except Exception as error:
-                        translated = translate(error, None)
-                        if translated is error:
-                            raise
-                        raise translated from error
                     # Recorded inside the call that outlives a cancelled caller, so the billed
                     # session can always be found and stopped.
                     session_id = self._session_id = response['sessionId']
@@ -428,13 +449,8 @@ class AgentCoreSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesy
                     result = event['result']
             return result
 
-        try:
+        with translated(session_id):
             result = await anyio.to_thread.run_sync(call)
-        except Exception as error:
-            translated = translate(error, session_id)
-            if translated is error:
-                raise
-            raise translated from error
         if result is None:
             raise WorkspaceError(f'AgentCore {name} returned no result')
         if result.get('isError'):
@@ -527,7 +543,7 @@ class AgentCoreSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesy
         """Run a command as a background task and return its output once it exits, stopping it on timeout or cancellation."""
         check_timeout(timeout)
         argv = command_argv(command, shell)
-        check_env_types(env)
+        check_env(env)
         cwd = await self.working_dir()
         merged_env = {**self._env, **(env or {})}
         if merged_env:
@@ -550,7 +566,8 @@ class AgentCoreSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesy
             partial = (_decode(out), _decode(err))
             await self._code(_NONE, 'clean_up', directory=directory)
 
-        async with command_deadline(timeout, stop=stop, output=lambda: partial):
+        # The deadline covers the command only; `stop` makes three calls, so it gets more than the default grace.
+        async with command_deadline(timeout, stop=stop, output=lambda: partial, grace=_CLEAN_UP_GRACE):
             started = await self._invoke(
                 'startCommandExecution', {'command': shlex.join(['sh', '-c', script, 'sh', *argv])}
             )
@@ -563,19 +580,26 @@ class AgentCoreSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesy
                 if task.get('structuredContent', {}).get('taskStatus') in _FINISHED:
                     break
                 await anyio.sleep(_POLL_INTERVAL)
-            try:
-                return await self._collect(directory)
-            finally:
+        cleaned_up = False
+        try:
+            finished = await self._code(_FINISHED_REPLY, 'finished', directory=directory, inline=_READ_CHUNK_BYTES)
+            cleaned_up = finished['out'] is not None
+            return await self._result(directory, finished)
+        finally:
+            if not cleaned_up:
                 await stop_shielded(lambda: self._code(_NONE, 'clean_up', directory=directory), grace=_CLEAN_UP_GRACE)
 
-    async def _collect(self, directory: str) -> CommandResult:
-        finished = await self._code(_FINISHED_REPLY, 'finished', directory=directory)
+    async def _result(self, directory: str, finished: _Finished) -> CommandResult:
         exit_code = finished['exit_code']
         if exit_code is None:
             raise WorkspaceError('The AgentCore command ended without recording an exit code')
         if exit_code == _NO_WORKING_DIR:
             raise WorkspaceError(
                 f'working_dir {self._resolved_working_dir!r} no longer exists in AgentCore session {self._session_id!r}'
+            )
+        if finished['out'] is not None and finished['err'] is not None:
+            return CommandResult(
+                exit_code=int(exit_code), stdout=_decode(finished['out']), stderr=_decode(finished['err'])
             )
         out, err = f'{directory}/out', f'{directory}/err'
         if finished['size'] > _MAX_OUTPUT_BYTES:

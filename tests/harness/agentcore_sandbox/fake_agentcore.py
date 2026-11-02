@@ -59,12 +59,17 @@ class FakeSession:
 
     def kill(self) -> None:
         for process in self.tasks.values():
-            if process.poll() is None:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:  # pragma: no cover - the process exited between poll and kill
-                    pass
-            process.wait()
+            _kill(process)
+
+
+def _kill(process: subprocess.Popen[bytes]) -> None:
+    """Kill a task's process group, as `stopTask` does, if it is still running."""
+    if process.poll() is None:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:  # pragma: no cover - the process exited between poll and kill
+            pass
+    process.wait()
 
 
 def _result(stdout: str = '', *, error: bool = False, **structured: Any) -> list[dict[str, Any]]:
@@ -141,9 +146,7 @@ class FakeClient:
             return _result(taskId=task_id, taskStatus='running')
         process = session.tasks[arguments['taskId']]
         if name == 'stopTask':
-            if process.poll() is None:
-                os.killpg(process.pid, signal.SIGKILL)
-            process.wait()
+            _kill(process)
             return _result(taskId=arguments['taskId'], taskStatus='canceled')
         assert name == 'getTask', name
         return _result(taskStatus='running' if process.poll() is None else 'completed')

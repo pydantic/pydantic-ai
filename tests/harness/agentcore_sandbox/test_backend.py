@@ -36,9 +36,9 @@ def test_an_invalid_ref_fails_at_construction(ref: WorkspaceRef, message: str) -
         AgentCoreSandboxBackend(ref=ref)
 
 
-@pytest.mark.parametrize('session_timeout', [0, 1.5, True])
+@pytest.mark.parametrize('session_timeout', [0, 28_801, 1.5, True])
 def test_an_invalid_session_timeout_fails_at_construction(session_timeout: object) -> None:
-    with pytest.raises(ValueError, match='session_timeout must be an integer of at least 1'):
+    with pytest.raises(ValueError, match='session_timeout must be an integer from 1 to 28800'):
         AgentCoreSandboxBackend(session_timeout=session_timeout)  # pyright: ignore[reportArgumentType]
 
 
@@ -152,6 +152,7 @@ async def test_output_over_the_limit_raises_with_its_beginning(
     fake_agentcore: FakeAgentCore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr('pydantic_ai_harness.agentcore_sandbox._backend._MAX_OUTPUT_BYTES', 8)
+    monkeypatch.setattr('pydantic_ai_harness.agentcore_sandbox._backend._READ_CHUNK_BYTES', 4)
     monkeypatch.setattr('pydantic_ai_harness.agentcore_sandbox._backend._OUTPUT_PREVIEW_BYTES', 4)
     backend = AgentCoreSandboxBackend()
     with pytest.raises(WorkspaceOutputLimitError) as caught:
@@ -227,7 +228,7 @@ async def test_unexpected_service_replies_are_workspace_errors(fake_agentcore: F
 async def test_a_command_that_left_no_exit_code_fails(fake_agentcore: FakeAgentCore) -> None:
     backend = AgentCoreSandboxBackend()
     await backend.working_dir()
-    fake_agentcore.queue_code_reply('{"ok": {"exit_code": null, "size": 0}}')
+    fake_agentcore.queue_code_reply('{"ok": {"exit_code": null, "size": 0, "out": null, "err": null}}')
     with pytest.raises(WorkspaceError, match='ended without recording an exit code'):
         await backend.run(['true'])
 
@@ -235,3 +236,28 @@ async def test_a_command_that_left_no_exit_code_fails(fake_agentcore: FakeAgentC
 async def test_a_program_that_fails_outside_the_filesystem_is_a_workspace_error(fake_agentcore: FakeAgentCore) -> None:
     with pytest.raises(WorkspaceError, match=r'(?s)AgentCore executeCode failed: .*ValueError: .*embedded null'):
         await AgentCoreSandboxBackend().read_bytes('/tmp/bad\x00name')
+
+
+async def test_a_refused_call_in_a_live_session_fails_only_that_call(fake_agentcore: FakeAgentCore) -> None:
+    backend = AgentCoreSandboxBackend()
+    await backend.working_dir()
+    fake_agentcore.queue('startCommandExecution', client_error('ValidationException', 'command is too long'))
+    with pytest.raises(WorkspaceError, match=r'AgentCore refused the request: .*command is too long') as caught:
+        await backend.run(['true'])
+    assert not isinstance(caught.value, WorkspaceUnavailableError)
+    assert (await backend.run(['printf', 'still here'])).stdout == 'still here'
+
+
+async def test_an_invalid_command_env_fails_before_running(fake_agentcore: FakeAgentCore) -> None:
+    with pytest.raises(ValueError, match='env keys must be non-empty without `=`'):
+        await AgentCoreSandboxBackend().run(['true'], env={'A=B': 'x'})
+    assert not fake_agentcore.calls
+
+
+async def test_small_output_comes_back_with_the_exit_code(fake_agentcore: FakeAgentCore) -> None:
+    backend = AgentCoreSandboxBackend()
+    await backend.working_dir()
+    fake_agentcore.calls.clear()
+    assert (await backend.run(['sh', '-c', 'printf out; printf err >&2; exit 4'])).exit_code == 4
+    # Start, at least one poll, then one program that reads both streams and cleans up.
+    assert fake_agentcore.calls.count('executeCode') == 1

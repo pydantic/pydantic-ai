@@ -45,7 +45,8 @@ def test_env_is_not_shown_in_repr() -> None:
         ({'session_timeout': 0}, 'session_timeout must be an integer of at least 1, got 0'),
         ({'session_timeout': True}, 'session_timeout must be an integer of at least 1, got True'),
         ({'session_timeout': 28_801}, 'session_timeout must be at most 28800, got 28801'),
-        ({'env': {'PORT': 3000}}, '`env` keys and values must be strings.'),
+        ({'env': {'PORT': 3000}}, '`env`: env keys and values must be strings.'),
+        ({'env': {'A=B': 'x'}}, '`env`: env keys must be non-empty without `=` or NUL'),
         ({'defer_loading': True}, '`AgentCoreSandbox` does not support `defer_loading=True`'),
     ],
 )
@@ -143,7 +144,7 @@ async def test_destroy_stops_the_session_and_is_idempotent(fake_agentcore: FakeA
     await capability.destroy(backend.ref)
     await capability.destroy(WorkspaceRef(provider='agentcore', id='aws.codeinterpreter.v1/never-existed'))
     assert not list(fake_agentcore.active())
-    with pytest.raises(WorkspaceUnavailableError, match='is no longer active'):
+    with pytest.raises(WorkspaceUnavailableError, match='is not active in this region'):
         await AgentCoreSandboxBackend(ref=backend.ref).working_dir()
 
 

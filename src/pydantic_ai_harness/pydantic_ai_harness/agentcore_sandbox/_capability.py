@@ -9,17 +9,15 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._workspace_provider import check_env_types, check_integer, check_working_dir
+from pydantic_ai_harness._workspace_provider import check_env, check_integer, check_working_dir
 from pydantic_ai_harness.agentcore_sandbox._backend import (
     DEFAULT_CODE_INTERPRETER,
     DEFAULT_SESSION_TIMEOUT,
+    MAX_SESSION_TIMEOUT,
     PROVIDER,
     AgentCoreSandboxBackend,
     stop_session,
 )
-
-# The most AgentCore allows for a Code Interpreter session.
-_MAX_SESSION_TIMEOUT = 28_800
 
 
 @dataclass(kw_only=True)
@@ -74,13 +72,13 @@ class AgentCoreSandbox(AbstractCapability[AgentDepsT]):
                 'the workspace is selected before deferred capabilities load.'
             )
         check_integer('session_timeout', self.session_timeout)
-        if self.session_timeout > _MAX_SESSION_TIMEOUT:
-            raise UserError(f'session_timeout must be at most {_MAX_SESSION_TIMEOUT}, got {self.session_timeout!r}.')
+        if self.session_timeout > MAX_SESSION_TIMEOUT:
+            raise UserError(f'session_timeout must be at most {MAX_SESSION_TIMEOUT}, got {self.session_timeout!r}.')
         check_working_dir(self.working_dir)
         try:
-            check_env_types(self.env)
-        except TypeError:
-            raise UserError('`env` keys and values must be strings.') from None
+            check_env(self.env)
+        except (TypeError, ValueError) as error:
+            raise UserError(f'`env`: {error}.') from None
 
     def backend(self, ref: WorkspaceRef) -> AgentCoreSandboxBackend:
         """Attach lazily to a running session."""
