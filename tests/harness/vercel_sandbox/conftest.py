@@ -11,7 +11,17 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-_HAS_VERCEL = importlib.util.find_spec('vercel.sandbox') is not None
+
+def _has_vercel_sandbox() -> bool:
+    # Looking up `vercel.sandbox` imports `vercel`, which raises when no Vercel package is installed.
+    try:
+        return importlib.util.find_spec('vercel.sandbox') is not None
+    # Only the jobs without the `vercel` extra get here.
+    except ModuleNotFoundError:  # pragma: lax no cover
+        return False
+
+
+_HAS_VERCEL = _has_vercel_sandbox()
 collect_ignore = (
     [] if _HAS_VERCEL else ['test_backend.py', 'test_conformance.py', 'test_vercel_live.py', 'test_vercel_sandbox.py']
 )
