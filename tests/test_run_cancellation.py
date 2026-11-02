@@ -68,7 +68,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, WrapperToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from .conftest import IsNow, IsStr
+from .conftest import IsNow, IsStr, no_leaked_tasks
 
 READINESS_WAIT_TIMEOUT = 5
 
@@ -561,6 +561,8 @@ async def test_tool_cancels_run_and_history_is_resumable():
 
     restored = ModelMessagesTypeAdapter.validate_json(error.all_messages_json())
     assert restored == messages
+    fast_return = messages[2].parts[0]
+    assert isinstance(fast_return, ToolReturnPart)
 
     result = await agent.run('never mind, wrap up', message_history=restored)
     assert result.output == 'done'
@@ -572,14 +574,14 @@ async def test_tool_cancels_run_and_history_is_resumable():
                     tool_name='fast_tool',
                     content='fast result',
                     tool_call_id='call_fast',
-                    timestamp=IsNow(tz=UTC),
+                    timestamp=fast_return.timestamp,
                 ),
                 ToolReturnPart(
                     tool_name='cancelling_tool',
                     content='The tool call was interrupted before a result was produced.',
                     tool_call_id='call_slow',
                     metadata={'pydantic_ai_synthesized_tool_return': True},
-                    timestamp=IsNow(tz=UTC),
+                    timestamp=error.response.timestamp,
                     outcome='interrupted',
                 ),
                 UserPromptPart(content='never mind, wrap up', timestamp=IsNow(tz=UTC)),
@@ -671,7 +673,7 @@ async def test_cancel_during_only_tool_call_is_resumable():
                     content='The tool call was interrupted before a result was produced.',
                     tool_call_id='call_only',
                     metadata={'pydantic_ai_synthesized_tool_return': True},
-                    timestamp=IsNow(tz=UTC),
+                    timestamp=exc_info.value.response.timestamp,
                     outcome='interrupted',
                 ),
                 UserPromptPart(content='never mind, wrap up', timestamp=IsNow(tz=UTC)),
@@ -703,7 +705,7 @@ async def test_cancel_during_only_tool_call_is_resumable_without_a_new_prompt():
                     content='The tool call was interrupted before a result was produced.',
                     tool_call_id='call_only',
                     metadata={'pydantic_ai_synthesized_tool_return': True},
-                    timestamp=IsNow(tz=UTC),
+                    timestamp=exc_info.value.response.timestamp,
                     outcome='interrupted',
                 )
             ],
@@ -1239,9 +1241,8 @@ def test_run_sync_keyboard_interrupt_preserves_nested_cleanup_errors():
     final_error = RuntimeError('cleanup recovery failed')
     agent = _fast_then_slow_tool_agent(started)
     loop = get_event_loop()
-    tasks_before = asyncio.all_tasks(loop)
 
-    with _interrupt_sync_run_once(started), pytest.MonkeyPatch.context() as mp:
+    with no_leaked_tasks(loop), _interrupt_sync_run_once(started), pytest.MonkeyPatch.context() as mp:
         run_until_complete = loop.run_until_complete
 
         def failing_cleanup(future: Any) -> Any:
@@ -1266,7 +1267,6 @@ def test_run_sync_keyboard_interrupt_preserves_nested_cleanup_errors():
     cancelled = RunCancelled.from_cancellation(exc_info.value)
     assert cancelled is not None
     assert _tool_returns(cancelled) == ['fast done']
-    assert asyncio.all_tasks(loop) == tasks_before
 
 
 def test_run_stream_sync_keyboard_interrupt_before_final_result_carries_run_state():

@@ -156,7 +156,7 @@ async def main():
 5. `agent.run()` works as usual; inside the workflow, model requests, tool calls, and MCP server communication are routed through Temporal activities.
 6. We connect to the Temporal server which keeps track of workflow and activity execution.
 7. This assumes the Temporal server is [running locally](https://github.com/temporalio/temporal#download-and-start-temporal-server-locally).
-8. The [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] tells Temporal to use Pydantic for serialization and deserialization, and automatically registers activities for agents listed in `__pydantic_ai_agents__`. Activity retry policies treat [`UserError`][pydantic_ai.exceptions.UserError], `PydanticUserError`, [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], and [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] as non-retryable, along with Temporal's own over-limit-payload failure types, `PayloadsTooLarge` and (before `temporalio` 1.31) `PayloadSizeError` (see [Large Payloads](#large-payloads)), and the workspace errors `WorkspaceTimeoutError`, `WorkspaceOutputLimitError`, `WorkspaceReadOnlyError` and `WorkspaceUnavailableError`, while the worker registers `UserError`, `PydanticUserError`, [`AgentRunError`][pydantic_ai.exceptions.AgentRunError], `FallbackExceptionGroup`, `UnsupportedEventLoopError`, and [`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError] as `workflow_failure_exception_types`.
+8. The [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] tells Temporal to use Pydantic for serialization and deserialization, and automatically registers activities for agents listed in `__pydantic_ai_agents__`. Activity retry policies treat [`UserError`][pydantic_ai.exceptions.UserError], `PydanticUserError`, [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], and [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] as non-retryable, along with Temporal's own over-limit-payload failure types, `PayloadsTooLarge` and (before `temporalio` 1.31) `PayloadSizeError` (see [Large Payloads](#large-payloads)), and the workspace errors `WorkspaceTimeoutError`, `WorkspaceOutputLimitError`, `WorkspaceReadOnlyError` and `WorkspaceUnavailableError`. A subclass of one of these errors, like [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] or your own `UserError` subclass, isn't retried either: since a retry policy's `non_retryable_error_types` only matches exact class names, the activity marks such an error as non-retryable itself. The worker registers `UserError`, `PydanticUserError`, [`AgentRunError`][pydantic_ai.exceptions.AgentRunError], `FallbackExceptionGroup`, `UnsupportedEventLoopError`, and [`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError] as `workflow_failure_exception_types`.
 9. We start the worker that will listen on the specified task queue and run workflows and activities. In a real world application, this might be run in a separate service.
 10. We call on the server to execute the workflow on a worker that's listening on the specified task queue.
 
@@ -705,6 +705,53 @@ The continuation passes `None` as the prompt: the carried-over history already e
 
 Carrying `usage` and `usage_limits` across the boundary keeps [usage limits](../agent.md#usage-limits) like `request_limit` bounding the whole logical run rather than resetting on each continuation. `message_history`, `usage`, and `usage_limits` are ordinary workflow arguments here, not a feature of `TemporalDurability` itself. The function and the `@workflow.run` signature that receives them are yours to shape.
 
+### Responses WebSocket connections
+
+An OpenAI Responses model can reuse a [Responses WebSocket](../models/openai.md#responses-websockets) across model activities when the worker holds the registered model open. Install `pydantic-ai-slim[openai-realtime]`, set [`openai_transport='websocket'`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_transport], and enter the model around the worker's lifetime:
+
+```python {test="skip" gateway_toggle="skip"}
+from temporalio import workflow
+from temporalio.client import Client
+from temporalio.worker import Worker
+
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+
+model = OpenAIResponsesModel(
+    '{{ openai:medium.name }}',
+    settings=OpenAIResponsesModelSettings(openai_transport='websocket', max_retries=0),
+)
+agent = Agent(model, name='triage', capabilities=[TemporalDurability()])
+
+
+@workflow.defn
+class TriageWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [agent]
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await agent.run(prompt)).output
+
+
+async def main():
+    client = await Client.connect('localhost:7233', plugins=[PydanticAIPlugin()])
+    async with model:
+        async with Worker(client, task_queue='triage', workflows=[TriageWorkflow]):
+            await client.execute_workflow(
+                TriageWorkflow.run,
+                'Triage this request.',
+                id='triage-1',
+                task_queue='triage',
+            )
+```
+
+Each activity still checkpoints its result independently. Activities borrow the socket only on the event loop where an outer model context holds it; without that owner, or for a model created only inside an activity, requests use HTTP. Capacity overflow also uses HTTP. Set [`max_retries=0`][pydantic_ai.settings.ModelSettings.max_retries] when Temporal owns the retry budget; this disables transport retries for both WebSocket requests and HTTP overflow, compaction and token counting.
+
+Connections are worker-local resources. A replacement worker uses its own model and connection; it can resend the retained conversation when a previous response is unavailable on that connection. Keep the full message history, especially with [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store]. Replaying completed activities uses their recorded results without opening a connection or sending another model request.
+
+With [instrumentation](../logfire.md) enabled, inspect `pydantic_ai.transport` on the model activity span within each request's `chat` span. It records `'websocket'` for a socket request or `'http'` for HTTP fallback in WebSocket mode.
+
 ### Model Selection at Runtime
 
 [`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] normally supports both model strings (like `'{{ openai:medium }}'`) and model instances. Under Temporal, a model instance can't be serialized for the replay mechanism, and rebuilding one from its `model_id` string would build a *different* model — the same model name on whatever provider the worker's environment implies, so the request would go to another endpoint with other credentials. An instance that isn't registered ahead of time is therefore rejected with a `UserError`. There are two ways to use a specific instance inside a workflow:
@@ -956,15 +1003,24 @@ A model error is different: with [`TemporalDurability`][pydantic_ai.durable_exec
 
 A retry policy and workflow code see a model error differently. Workflow code and capabilities get the [error category](../models/overview.md#handling-model-api-errors) class, so `except ModelTimeoutError` or `except ModelRateLimitError` works in a workflow. A retry policy's `non_retryable_error_types` only sees the error's `ApplicationError` type, which is `ModelHTTPError` for an error that has an HTTP status and `ModelAPIError` for any other category, the class it's raised as apart from its category. So a policy that names a category, like `'ModelRateLimitError'`, matches nothing. A policy that names `'ModelHTTPError'` or `'ModelAPIError'` matches what it did before the categories existed, except for errors that now get the HTTP status the provider uses for the same error, and so are now also raised as a `ModelHTTPError`: Bedrock `ConverseStream` exception events (e.g. a throttling event as a 429), error objects inside an OpenAI-compatible or OpenAI Responses stream, Hugging Face Text Generation Inference's in-stream `OverloadedError`, and xAI's `INVALID_ARGUMENT` (as a 400). These now report `ModelHTTPError` instead of `ModelAPIError`.
 
-To stop Temporal from retrying an error category that a retry can't fix, like [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError], [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError] or [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError], list its class in `non_retryable_model_errors` on [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. A model error that's an instance of a listed class fails the model activity on its first attempt, whatever the retry policy says, and still reaches workflow code as its own class. Because classes match with `isinstance`, listing [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] also covers [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError], and listing [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] also covers [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError], [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError] and [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError]. The `ApplicationError` type the retry policy sees doesn't change.
+Temporal doesn't retry a model error that another attempt at the same request can't fix. By default, `non_retryable_model_errors` on [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] lists:
+
+- [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError], including [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError], [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError] and [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError]: the provider rejects the same request again.
+- [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError]: the quota stays exhausted until it resets, often hours later.
+- [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout]: the request's [deadline](../timeouts.md#model-request-deadlines) ran out, so there's no time left for another attempt.
+
+A model error that's an instance of a listed class fails the model activity on its first attempt, whatever the retry policy says, and still reaches workflow code as its own class, where an `on_model_request_error` hook or the [`ModelFallback`](../capabilities/model-fallback.md) capability can act on it. Classes match with `isinstance`, so listing [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] also covers [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError]. The `ApplicationError` type the retry policy sees doesn't change. Other model errors, like a rate limit, an overloaded model or a dropped connection, are retried according to the retry policy.
+
+A list you pass replaces the default, so include the default classes you still want, or pass `()` to have the retry policy retry every model error:
 
 ```python {title="temporal_non_retryable_model_errors.py"}
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec.temporal import TemporalDurability
 from pydantic_ai.exceptions import (
-    ModelAuthenticationError,
-    ModelContextWindowExceededError,
     ModelQuotaExceededError,
+    ModelRequestRejectedError,
+    ModelRequestTimeout,
+    ModelUnavailableError,
 )
 
 agent = Agent(
@@ -973,14 +1029,17 @@ agent = Agent(
     capabilities=[
         TemporalDurability(
             non_retryable_model_errors=[
-                ModelContextWindowExceededError,
+                ModelRequestRejectedError,
                 ModelQuotaExceededError,
-                ModelAuthenticationError,
+                ModelRequestTimeout,
+                ModelUnavailableError,  # (1)!
             ],
         ),
     ],
 )
 ```
+
+1. On top of the defaults, don't retry a model that's unavailable, for example to let `ModelFallback` move on to the next model straight away.
 
 ## Observability with Logfire
 

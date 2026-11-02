@@ -480,7 +480,7 @@ def _prompt(app: FastAPI, service: WebService) -> None:
 
 
 def _queue(app: FastAPI, service: WebService) -> None:
-    """Steer the running turn, and edit, steer, or remove the input queued behind it, as the prompt does.
+    """Steer the running turn, edit, steer, or remove the input queued behind it, or rewind, as the prompt does.
 
     Each route is there twice, as the composer's are: under `/api/sessions/ID/` for the live session
     holding conversation ID, and unprefixed for the default session.
@@ -507,11 +507,15 @@ def _queue(app: FastAPI, service: WebService) -> None:
         channel = session(conversation_id)
         return Steered(steered=_run(lambda: channel.steer_queued(input_id)))
 
+    async def rewind(run_id: str, body: Input, conversation_id: str | None = None) -> None:
+        await _wait(session(conversation_id).rewind(run_id, body.text))
+
     for prefix in ('/api', '/api/sessions/{conversation_id}'):
         app.post(f'{prefix}/steer')(steer)
         app.put(f'{prefix}/queue/{{input_id}}', status_code=204)(edit_queued)
         app.delete(f'{prefix}/queue/{{input_id}}', status_code=204)(remove_queued)
         app.post(f'{prefix}/queue/{{input_id}}/steer')(steer_queued)
+        app.post(f'{prefix}/rewind/{{run_id}}', status_code=204)(rewind)
 
 
 def _images(app: FastAPI, service: WebService) -> None:

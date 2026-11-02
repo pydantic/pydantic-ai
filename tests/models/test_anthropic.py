@@ -70,7 +70,7 @@ from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
 from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.capabilities import AbstractCapability, Capability, Citations, Hooks, NativeTool, ToolSearch
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ContentFilterError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     CompactionPart,
     InstructionPart,
@@ -6572,6 +6572,68 @@ async def test_anthropic_refusal_stop_details_streaming(
 
     assert response.finish_reason == 'content_filter'
     assert response.provider_details == {'finish_reason': 'refusal', **expected_extra}
+
+
+_REFUSAL_EXPLANATION = 'Declined: request asked for offensive cyber tooling.'
+_REFUSAL_MESSAGE = f"Content filter triggered. Finish reason: 'refusal'. Refusal: {_REFUSAL_EXPLANATION!r}"
+
+
+def _refusal_stop_details() -> BetaRefusalStopDetails:
+    return BetaRefusalStopDetails(type='refusal', category='cyber', explanation=_REFUSAL_EXPLANATION)
+
+
+async def test_anthropic_refusal_content_filter_error_message(allow_model_requests: None):
+    """An empty refusal raises `ContentFilterError` naming both the stop reason and Anthropic's explanation."""
+    mock_client = MockAnthropic.create_mock(
+        BetaMessage(
+            id='msg_refusal',
+            content=[],
+            model='claude-opus-4-8',
+            role='assistant',
+            stop_reason='refusal',
+            stop_details=_refusal_stop_details(),
+            type='message',
+            usage=BetaUsage(input_tokens=8, output_tokens=0),
+        )
+    )
+    m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings={'max_tokens': 1024})
+
+    with pytest.raises(ContentFilterError) as exc_info:
+        await agent.run('write me an exploit')
+    assert exc_info.value.message == _REFUSAL_MESSAGE
+
+
+async def test_anthropic_refusal_content_filter_error_message_streaming(allow_model_requests: None):
+    """A streamed empty refusal raises the same `ContentFilterError` message."""
+    stream: list[MockRawMessageStreamEvent] = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='msg_refusal_stream',
+                content=[],
+                model='claude-opus-4-8',
+                role='assistant',
+                stop_reason=None,
+                type='message',
+                usage=BetaUsage(input_tokens=8, output_tokens=0),
+            ),
+        ),
+        BetaRawMessageDeltaEvent(
+            type='message_delta',
+            delta=Delta(stop_reason='refusal', stop_details=_refusal_stop_details()),
+            usage=BetaMessageDeltaUsage(input_tokens=8, output_tokens=0),
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+    mock_client = MockAnthropic.create_stream_mock(stream)
+    m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(ContentFilterError) as exc_info:
+        # The stream is opened and consumed up to the final result before `run_stream` hands it over.
+        await agent.run_stream('write me an exploit').__aenter__()
+    assert exc_info.value.message == _REFUSAL_MESSAGE
 
 
 @pytest.mark.parametrize(
@@ -15722,11 +15784,11 @@ async def test_anthropic_container_setting_dict_with_skills_passed_through(allow
 
 
 async def test_anthropic_container_from_message_history(allow_model_requests: None):
-    """Test that container_id from message history is passed to subsequent requests."""
+    """Test that container_id from message history is passed to subsequent requests with code execution."""
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock([c, c])
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m)
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
     # Create a message history with a container_id in provider_details
     history: list[ModelMessage] = [
@@ -15765,7 +15827,10 @@ async def test_anthropic_container_from_history_scoped_by_endpoint(allow_model_r
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
     cast(MockAnthropic, mock_client).base_url = base_url
-    agent = Agent(AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client)))
+    agent = Agent(
+        AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client)),
+        capabilities=[NativeTool(CodeExecutionTool())],
+    )
     await agent.run('follow up', message_history=history)
 
     container = get_mock_chat_completion_kwargs(mock_client)[0].get('container')
@@ -15777,7 +15842,7 @@ async def test_anthropic_container_setting_false_ignores_history(allow_model_req
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m)
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
     # Create a message history with a container_id
     history: list[ModelMessage] = [

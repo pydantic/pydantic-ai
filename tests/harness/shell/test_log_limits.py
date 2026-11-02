@@ -95,7 +95,7 @@ class _ReadsHeldUntilWritten(_FirstReadMarked):
         script = _script(command)
         if 'tail -c +' in script and 'tail -c +1 ' not in script:
             with anyio.fail_after(10):
-                while not (self.markers / 'written').exists():
+                while not await anyio.Path(self.markers / 'written').exists():
                     # A slow event poller may not read again until `written` exists, so nothing is held.
                     await anyio.sleep(0.01)  # pragma: lax no cover
         return await super().run(command, shell=shell, env=env, timeout=timeout)
@@ -119,10 +119,13 @@ class _ClearedOnEveryRead(LocalWorkspaceBackend):
         script = _script(command)
         result = await super().run(command, shell=shell, env=env, timeout=timeout)
         if 'tail -c +' in script:
-            for job in self.jobs.iterdir():
-                with (job / 'log_clears').open('ab') as clears:
-                    clears.write(b'xx')
+            await anyio.to_thread.run_sync(self._clear_every_log)
         return result
+
+    def _clear_every_log(self) -> None:
+        for job in self.jobs.iterdir():
+            with (job / 'log_clears').open('ab') as clears:
+                clears.write(b'xx')
 
 
 class _ClearsAroundReads(LocalWorkspaceBackend):
@@ -147,15 +150,18 @@ class _ClearsAroundReads(LocalWorkspaceBackend):
     ) -> CommandResult:
         script = _script(command)
         if 'tail -c +' in script and 'tail -c +1 ' not in script and self.steps < 2:
-            [job] = (self.markers / '.pydantic-ai-harness' / 'shell').iterdir()
-            if self.steps:
-                (job / 'output.log').write_text(f'{NOTICE}\n')
-            with (job / 'log_clears').open('ab') as clears:
-                clears.write(b'x')
-            if self.steps:
-                (self.markers / 'cleared').touch()
-            self.steps += 1
+            await anyio.to_thread.run_sync(self._step)
         return await super().run(command, shell=shell, env=env, timeout=timeout)
+
+    def _step(self) -> None:
+        [job] = (self.markers / '.pydantic-ai-harness' / 'shell').iterdir()
+        if self.steps:
+            (job / 'output.log').write_text(f'{NOTICE}\n')
+        with (job / 'log_clears').open('ab') as clears:
+            clears.write(b'x')
+        if self.steps:
+            (self.markers / 'cleared').touch()
+        self.steps += 1
 
 
 class _ClearedAgainDuringTheReread(LocalWorkspaceBackend):
@@ -176,14 +182,17 @@ class _ClearedAgainDuringTheReread(LocalWorkspaceBackend):
     ) -> CommandResult:
         script = _script(command)
         if 'tail -c +' in script and (self.clears or 'tail -c +1 ' not in script) and self.clears < 2:
-            [job] = (self.markers / '.pydantic-ai-harness' / 'shell').iterdir()
-            (job / 'output.log').write_text(f'{NOTICE}\n')
-            with (job / 'log_clears').open('ab') as clears:
-                clears.write(b'xx')
-            self.clears += 1
-            if self.clears == 2:
-                (self.markers / 'cleared').touch()
+            await anyio.to_thread.run_sync(self._clear)
         return await super().run(command, shell=shell, env=env, timeout=timeout)
+
+    def _clear(self) -> None:
+        [job] = (self.markers / '.pydantic-ai-harness' / 'shell').iterdir()
+        (job / 'output.log').write_text(f'{NOTICE}\n')
+        with (job / 'log_clears').open('ab') as clears:
+            clears.write(b'xx')
+        self.clears += 1
+        if self.clears == 2:
+            (self.markers / 'cleared').touch()
 
 
 class _TermIgnored(LocalWorkspaceBackend):
@@ -220,13 +229,16 @@ class _ClearedWhileCounted(_FirstReadMarked):
     ) -> CommandResult:
         script = _script(command)
         if 'tail -c +1 ' in script and not self.cleared:
-            [job] = (self.markers / '.pydantic-ai-harness' / 'shell').iterdir()
-            status = job / 'status.json'
-            if status.exists() and json.loads(status.read_text())['exit_code'] is not None:
-                (job / 'output.log').write_text(f'{NOTICE}\n')
-                (job / 'log_clears').write_bytes(b'xx')
-                self.cleared = True
+            await anyio.to_thread.run_sync(self._clear_once_exited)
         return await super().run(command, shell=shell, env=env, timeout=timeout)
+
+    def _clear_once_exited(self) -> None:
+        [job] = (self.markers / '.pydantic-ai-harness' / 'shell').iterdir()
+        status = job / 'status.json'
+        if status.exists() and json.loads(status.read_text())['exit_code'] is not None:
+            (job / 'output.log').write_text(f'{NOTICE}\n')
+            (job / 'log_clears').write_bytes(b'xx')
+            self.cleared = True
 
 
 class TestShellLogLimits:

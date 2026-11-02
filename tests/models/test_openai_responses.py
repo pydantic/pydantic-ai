@@ -15624,6 +15624,21 @@ async def test_openai_responses_refusal_streaming(
     assert 'finish_reason' not in response_msg['provider_details']
 
 
+async def test_custom_http_stream_cancel_errors(allow_model_requests: None):
+    events: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(
+            response=_text_reply('resp_http', 'hello'), type='response.created', sequence_number=0
+        )
+    ]
+    mock_client = MockOpenAIResponses.create_mock_stream(events)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        [ModelRequest.user_text_prompt('hello')], None, ModelRequestParameters()
+    ) as streamed:
+        assert isinstance(httpx2.RemoteProtocolError('closed HTTP stream'), streamed.get_stream_cancel_errors())
+
+
 async def test_stream_cancel(allow_model_requests: None):
     from openai.types import responses as resp
 

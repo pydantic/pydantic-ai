@@ -70,12 +70,9 @@ class GuardrailResult:
     def __post_init__(self) -> None:
         """Reject field combinations the outcome contract does not allow."""
         match self.action:
-            case 'allow':
+            case 'allow' | 'approve':
                 if self.message is not None or self.replacement is not _UNSET:
-                    raise UserError("GuardrailResult(action='allow') must not set `message` or `replacement`.")
-            case 'approve':
-                if self.message is not None or self.replacement is not _UNSET:
-                    raise UserError("GuardrailResult(action='approve') must not set `message` or `replacement`.")
+                    raise UserError(f'GuardrailResult(action={self.action!r}) must not set `message` or `replacement`.')
             case 'replace':
                 if self.replacement is _UNSET:
                     raise UserError("GuardrailResult(action='replace') requires a `replacement` value.")

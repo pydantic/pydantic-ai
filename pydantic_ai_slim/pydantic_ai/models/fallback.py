@@ -152,6 +152,13 @@ class FallbackModel(Model):
         for model in self.models:
             model._refresh_http_client()
 
+    @asynccontextmanager
+    async def _run_scope(self) -> AsyncGenerator[None]:
+        async with AsyncExitStack() as stack:
+            for model in self.models:
+                await stack.enter_async_context(model._run_scope())
+            yield
+
     @property
     def provider(self) -> None:
         return None  # pragma: no cover
