@@ -196,8 +196,8 @@ workflow runs default-branch `review_gates.py` with permission to publish commit
 never executes contribution code with a write token. The workflows have distinct job names because
 GitHub matches required checks by job name, even across workflows and event types.
 
-The review statuses require a clean douwebot approval for M/L/XL and another human approval for L/XL.
-Both fail until exactly one size label matches the shared PR Bots calculation; changing a label cannot
+The review status requires a clean douwebot approval for M/L/XL.
+The status fails until exactly one size label matches the shared PR Bots calculation; changing a label cannot
 lower the computed bar. PR Bots recalculates on open, push and PR edits, including base-branch changes.
 Size S remains a manual policy judgment. Merge groups receive success without reevaluating queue
 members because the review requirements are enforced before admission.
@@ -208,9 +208,6 @@ supersede an empty incomplete review, but cannot erase earlier findings. PR Bots
 reviewer and a trusted publisher that binds the result to its run and head. The gate verifies that
 receipt, so `CI Review` cannot stand in for douwebot even though both can use the same bot account.
 Maintainer-authorized protected-configuration reviews satisfy the same rule.
-A qualifying human is a `User` other than the author with current write/admin permission. Their
-latest non-dismissed approval may precede the head: GitHub's stale-approval dismissal supplies
-freshness when the diff changes. A later change request supersedes approval; a comment does not.
 
 `pr-review-gates-events.yml` observes reviews and inline-comment changes with a read-only token,
 including on forks. Its completion wakes `PR Review Gates`, which also runs on PR edits, pushes,
@@ -219,7 +216,9 @@ cannot trigger review or label workflows. The publisher binds each wake-up to th
 GitHub reports for its exact head SHA and repository. It ignores titles and artifacts, and a stale
 or ambiguous event cannot write statuses to another head. Fork observers may need contributor approval.
 
-Publication is serialized per PR and marks both statuses pending before setup. API errors or
+The `Gate: …` commit statuses carry the review verdict. The publisher job succeeds after publishing
+those statuses, including a failing verdict for an unmet requirement. The job fails on publisher errors.
+Publication is serialized per PR and marks the douwebot status pending before setup. API errors or
 incomplete data fail closed. After the requirements are met, a new evaluation replaces the previous
 failure through GitHub's latest-per-context commit statuses. Rerun an existing current-head,
 default-branch `PR Review Gates` run to recover from an API failure or delayed observer; do not add

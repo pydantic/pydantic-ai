@@ -138,6 +138,12 @@ to a store, releasing a shared lock, or emitting a metric, can also land during 
 Loop-bound resources are isolated: the next invocation gets a fresh loop, so the abandoned cleanup
 cannot touch resources such as that invocation's provider HTTP client.
 
+At the end of the grace period the abandoned cleanup is cancelled again, and the retired loop stops
+a few event-loop iterations later; on Python 3.11 it first waits for jobs already submitted to its
+default executor to finish. A cleanup that suppresses that cancellation, or is still awaiting
+something by then, is left unfinished. A cleanup that cancels every task on its loop is not
+cancelled again: the retired loop stops at the deadline whether or not that cleanup has finished.
+
 Loop reuse has one more consequence: do not detach background work from a tool with
 `asyncio.create_task()` or by leaving executor work unawaited. Detached work is not checkpointed and
 is not covered by durable execution's guarantees, and it can outlive the invocation that started it.
@@ -256,6 +262,7 @@ request is already applied inside the durable step. Attach it alongside other ca
 
 ## Further reading
 
+- [Durable execution in Pydantic AI agents with AWS Lambda Durability](https://pydantic.dev/articles/harness-aws-lambda) (Pydantic)
 - [AWS Lambda durable functions](https://docs.aws.amazon.com/lambda/latest/dg/durable-functions.html)
 - [AWS Durable Execution SDK for Python](https://github.com/aws/aws-durable-execution-sdk-python)
 - [Pydantic AI durable execution](https://pydantic.dev/docs/ai/durable_execution/overview/)

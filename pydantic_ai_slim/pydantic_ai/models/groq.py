@@ -128,6 +128,10 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'groq') -> Genera
             ) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
+        if isinstance(cause := e.__cause__, httpx.HTTPStatusError):
+            # A retrying transport raises this for a status it gave up on, and `groq` wraps it as if the connection
+            # had failed, though the provider responded.
+            raise _model_errors.transport_status_error(model_name, cause.response) from e
         raise _model_errors.connection_error(model_name, e.message, e, timeout=isinstance(e, APITimeoutError)) from e
     except APIError as e:
         # The SDK raises the base `APIError` for an error object inside a stream, after the HTTP 200 has already

@@ -96,7 +96,7 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
 - The model is called again with the return value of running the `add` tool (12)
 - The model returns the final answer
 
-You can visualise this clearly, and even see the tool call, by adding three lines of code to instrument the example with [logfire](https://logfire.pydantic.dev/docs):
+To visualise this clearly and see the tool call, run `uvx logfire-cli wizard --task pydantic-ai` once from your project. It [sets up Logfire](../logfire.md#using-logfire) and has your coding agent add these three lines:
 
 ```python {title="mcp_streamable_http_client_logfire.py" test="skip"}
 import logfire
