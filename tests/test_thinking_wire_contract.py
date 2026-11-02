@@ -474,3 +474,74 @@ async def test_model_reasoning_effort_overrides_direct_request_thinking_with_war
             model, [ModelRequest.user_text_prompt(_OVERRIDE_PROMPT)], model_settings=ModelSettings(thinking='high')
         )
     assert single_request_body(vcr)['reasoning'] == {'effort': 'low'}
+
+
+_GEMMA_4_OPENAI_CHAT_ROUTES = [
+    pytest.param('ollama', 'gemma4:31b', id='ollama-gemma4-31b'),
+    pytest.param('vercel', 'google/gemma-4-31b-it', id='vercel-google-gemma-4-31b-it'),
+    pytest.param('sambanova', 'gemma-4-31B-it', id='sambanova-gemma-4-31b-it'),
+    pytest.param('openai-compatible', 'google/gemma-4-31b-it', id='openai-compatible-google-gemma-4-31b-it'),
+    pytest.param('vllm', 'google/gemma-4-31b-it', id='vllm-google-gemma-4-31b-it'),
+]
+
+
+def _gemma_4_route_model(provider: str, model_name: str) -> Model:
+    """Build the real production model for a route with a mocked transport, no provider keys needed."""
+    import httpx2
+
+    from pydantic_ai.models.ollama import OllamaModel
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.ollama import OllamaProvider
+    from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
+    from pydantic_ai.providers.sambanova import SambaNovaProvider
+    from pydantic_ai.providers.vercel import VercelProvider
+    from pydantic_ai.providers.vllm import VLLMProvider
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            json={
+                'id': 'chatcmpl-gemma-4',
+                'object': 'chat.completion',
+                'created': 0,
+                'model': 'gemma-4-31b-it',
+                'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': '42'}, 'finish_reason': 'stop'}],
+                'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2},
+            },
+        )
+
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    if provider == 'ollama':
+        return OllamaModel(
+            model_name, provider=OllamaProvider(base_url='http://ollama.test:11434/v1', http_client=http_client)
+        )
+    if provider == 'vercel':
+        return OpenAIChatModel(model_name, provider=VercelProvider(api_key='test', http_client=http_client))
+    if provider == 'sambanova':
+        return OpenAIChatModel(model_name, provider=SambaNovaProvider(api_key='test', http_client=http_client))
+    if provider == 'openai-compatible':
+        return OpenAIChatModel(
+            model_name,
+            provider=OpenAICompatibleProvider(
+                model_name, base_url='https://gateway.test/v1', api_key='test', http_client=http_client
+            ),
+        )
+    assert provider == 'vllm'
+    return OpenAIChatModel(
+        model_name, provider=VLLMProvider(base_url='http://vllm.test:8000/v1', api_key='test', http_client=http_client)
+    )
+
+
+@pytest.mark.parametrize('provider,model_name', _GEMMA_4_OPENAI_CHAT_ROUTES)
+async def test_gemma_4_thinking_forwarded_over_openai_chat_routes(
+    provider: str, model_name: str, allow_model_requests: None, vcr: Cassette
+) -> None:
+    """Gemma 4 `thinking` requests reach the OpenAI-compatible chat wire as `reasoning_effort`."""
+    model = _gemma_4_route_model(provider, model_name)
+    await model_request(
+        model,
+        [ModelRequest.user_text_prompt('What is 6 * 7?')],
+        model_settings=ModelSettings(thinking='high'),
+    )
+    body = single_request_body(vcr)
+    assert body['reasoning_effort'] == 'high'

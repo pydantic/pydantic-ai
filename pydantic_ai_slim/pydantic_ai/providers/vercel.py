@@ -52,6 +52,7 @@ class VercelProvider(_OpenAISDKProvider):
             'bedrock': amazon_model_profile,
             'cohere': cohere_model_profile,
             'deepseek': deepseek_model_profile,
+            'google': google_model_profile,
             'groq': groq_model_profile,
             'mistral': mistral_model_profile,
             'openai': openai_model_profile,
