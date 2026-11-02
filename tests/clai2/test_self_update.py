@@ -1101,6 +1101,7 @@ def test_update_flag_rejects_session_options_before_installing(
         ['--worktree'],
         ['config'],
         ['plugins'],
+        ['sessions'],
     ],
 )
 def test_update_flag_rejects_other_modes(
@@ -1110,4 +1111,7 @@ def test_update_flag_rejects_other_modes(
     with pytest.raises(SystemExit) as exited:
         cli_module.run()
     assert exited.value.code == 2
-    assert '--update cannot be combined with config, plugins, --prompt, --web, --resume' in capsys.readouterr().err
+    assert (
+        '--update cannot be combined with config, plugins, sessions, --prompt, --web, --resume'
+        in capsys.readouterr().err
+    )

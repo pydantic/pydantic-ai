@@ -22,7 +22,12 @@ from pydantic_clai2.builtin_plugins.workspaces import (
     describe,
 )
 from pydantic_clai2.builtin_plugins.workspaces.backend import is_url, repo_slug
-from pydantic_clai2.builtin_plugins.workspaces.registry import Registry, check_id, workspaces_dir
+from pydantic_clai2.builtin_plugins.workspaces.registry import (
+    Registry,
+    check_id,
+    workspaces_dir,
+)
+from pydantic_clai2.config import private_files
 from pydantic_clai2.plugins import LoadedPlugin, PluginHost, load_plugin
 from pydantic_clai2.plugins.menus import Option
 from pydantic_clai2.runtime import worktrees
@@ -300,14 +305,12 @@ async def test_the_registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_write_private_leaves_nothing_behind_when_it_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from pydantic_clai2.builtin_plugins.workspaces import registry
-
     def fail(source: object, target: object) -> None:
         raise OSError('disk full')
 
-    monkeypatch.setattr(registry.os, 'replace', fail)
+    monkeypatch.setattr(private_files.os, 'replace', fail)
     with pytest.raises(OSError, match='disk full'):
-        registry.write_private(tmp_path / 'file', 'text')
+        private_files.write_private(tmp_path / 'file', 'text')
     assert list(tmp_path.iterdir()) == []
 
 
