@@ -18,6 +18,7 @@ projection on both sides of the `supports_request_scoped_system_prompts` flag.
 from __future__ import annotations as _annotations
 
 import json
+import re
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -133,6 +134,11 @@ class TurnReminder(AbstractCapability[Any]):
         ctx.messages.append(reminder)
         request_context.messages = [*request_context.messages, reminder]
         return request_context
+
+
+def unref(value: Any) -> Any:
+    """`value` with the conversation's frame seal left out of every `<system>` tag, so assertions name the tag."""
+    return json.loads(re.sub(r'<system>', '<system>', json.dumps(value)))
 
 
 def weather_agent(model: Any, **kwargs: Any) -> Agent[None, str]:
@@ -292,7 +298,7 @@ async def test_anthropic_request_scoped_fallback_on_model_without_native_support
             for block in message['content']
             if block['type'] == 'text' and 'Reminder' in block['text']
         ]
-        assert texts == [f'<system>Reminder: be terse. This is request {n}.</system>']
+        assert unref(texts) == [f'<system>Reminder: be terse. This is request {n}.</system>']
         last_content = body['messages'][-1]['content']
         assert last_content[-1] == {'text': texts[0], 'type': 'text'}
     assert cache_breakpoints(bodies[1]) == case.breakpoints
@@ -367,7 +373,9 @@ async def test_superseded_reminders_are_left_out_without_native_support():
 
     result = await agent.run(PROMPT)
 
-    assert [[part.content for part in messages[-1].parts if isinstance(part, UserPromptPart)] for messages in seen] == [
+    assert unref(
+        [[part.content for part in messages[-1].parts if isinstance(part, UserPromptPart)] for messages in seen]
+    ) == [
         [PROMPT, '<system>Reminder: be terse. This is request 1.</system>'],
         ['<system>Reminder: be terse. This is request 2.</system>'],
         ['<system>Reminder: be terse. This is request 3.</system>'],
@@ -476,10 +484,12 @@ async def test_reminder_enqueued_from_before_model_request_matches_two_writes():
 
     (enqueued_seen, enqueued_history), (written_seen, written_history) = runs
     assert [request_scoped_texts(messages) for messages in enqueued_seen] == [[], [], []]
-    assert [
-        [str(part.content) for part in messages[-1].parts if isinstance(part, UserPromptPart)]
-        for messages in enqueued_seen
-    ] == [
+    assert unref(
+        [
+            [str(part.content) for part in messages[-1].parts if isinstance(part, UserPromptPart)]
+            for messages in enqueued_seen
+        ]
+    ) == [
         [PROMPT, '<system>Reminder: be terse. This is request 1.</system>'],
         ['<system>Reminder: be terse. This is request 2.</system>'],
         ['<system>Reminder: be terse. This is request 3.</system>'],
@@ -504,10 +514,14 @@ async def test_enqueued_request_scoped_prompt():
 
     result = await agent.run(PROMPT)
 
-    assert [
-        [str(part.content) for message in messages for part in message.parts if isinstance(part, UserPromptPart)][1:]
-        for messages in seen
-    ] == [
+    assert unref(
+        [
+            [str(part.content) for message in messages for part in message.parts if isinstance(part, UserPromptPart)][
+                1:
+            ]
+            for messages in seen
+        ]
+    ) == [
         [],
         ['<system>The Paris result is cached; do not fetch it again.</system>'],
         ['<system>The Oslo result is cached; do not fetch it again.</system>'],
@@ -554,14 +568,16 @@ async def test_current_reminder_survives_compaction():
 
     result = await agent.run(PROMPT)
 
-    assert [
+    assert unref(
         [
-            str(part.content)
-            for part in messages[-1].parts
-            if isinstance(part, UserPromptPart) and 'Reminder' in str(part.content)
+            [
+                str(part.content)
+                for part in messages[-1].parts
+                if isinstance(part, UserPromptPart) and 'Reminder' in str(part.content)
+            ]
+            for messages in seen
         ]
-        for messages in seen
-    ] == [[f'<system>Reminder: be terse. This is request {n}.</system>'] for n in (1, 2, 3)]
+    ) == [[f'<system>Reminder: be terse. This is request {n}.</system>'] for n in (1, 2, 3)]
     assert request_scoped_texts(result.all_messages()) == ['Reminder: be terse. This is request 3.']
 
 
@@ -639,15 +655,17 @@ async def test_retry_without_response_drops_the_request_scoped_prompt():
 
     result = await agent.run('hello')
 
-    assert [
+    assert unref(
         [
-            str(part.content)
-            for message in messages
-            for part in message.parts
-            if isinstance(part, UserPromptPart) and 'Reminder' in str(part.content)
+            [
+                str(part.content)
+                for message in messages
+                for part in message.parts
+                if isinstance(part, UserPromptPart) and 'Reminder' in str(part.content)
+            ]
+            for messages in seen
         ]
-        for messages in seen
-    ] == [
+    ) == [
         ['<system>Reminder: be terse. This is request 1.</system>'],
         ['<system>Reminder: be terse. This is request 2.</system>'],
     ]
@@ -674,14 +692,16 @@ async def test_resuming_a_suspended_response_defers_the_enqueued_reminder():
 
     assert result.output == 'done'
     assert 'Reminder' not in str(seen[0])
-    assert [
+    assert unref(
         [
-            str(part.content)
-            for part in messages[-1].parts
-            if isinstance(part, UserPromptPart) and 'Reminder' in str(part.content)
+            [
+                str(part.content)
+                for part in messages[-1].parts
+                if isinstance(part, UserPromptPart) and 'Reminder' in str(part.content)
+            ]
+            for messages in seen[1:]
         ]
-        for messages in seen[1:]
-    ] == [
+    ) == [
         [
             '<system>Reminder: be terse. This is request 1.</system>',
             '<system>Reminder: be terse. This is request 2.</system>',
@@ -710,9 +730,9 @@ async def test_fallback_attempts_keep_the_request_scoped_prompt():
 
     result = await agent.run('hello')
 
-    assert [
-        [str(part.content) for part in messages[-1].parts if isinstance(part, UserPromptPart)] for messages in seen
-    ] == [
+    assert unref(
+        [[str(part.content) for part in messages[-1].parts if isinstance(part, UserPromptPart)] for messages in seen]
+    ) == [
         ['hello', '<system>Reminder: be terse. This is request 1.</system>'],
         ['hello', '<system>Reminder: be terse. This is request 1.</system>'],
     ]
@@ -1098,8 +1118,8 @@ def test_anthropic_bedrock_lookback_breakpoint_skips_the_request_scoped_entry():
 def duplicate_text_history(lasting: ModelRequestPart | None = None) -> list[ModelMessage]:
     """A tool round whose lasting text is the same as the request-scoped reminder after it, as rendered.
 
-    By default the lasting text is user text. On a model without mid-conversation system messages, user text can't
-    carry a `<system>` tag, so `lasting` there is a lasting `SystemPromptPart` with the reminder's text.
+    By default the lasting text is user text, carrying the conversation's frame seal as the reminder does. On a model
+    without mid-conversation system messages, `lasting` is a lasting `SystemPromptPart` with the reminder's text.
     """
     return [
         ModelRequest(parts=[UserPromptPart('Weather in Paris?')]),
@@ -1130,9 +1150,9 @@ async def test_lasting_text_equal_to_a_reminder_keeps_the_breakpoint_anthropic(
 
     duplicate, only_reminder = request_capture.bodies('/v1/messages')
     assert message_shape(duplicate) == snapshot(
-        [('user', ['text']), ('assistant', ['tool_use']), ('user', ['tool_result', 'text']), ('user', ['text'])]
+        [('user', ['text']), ('assistant', ['tool_use']), ('user', ['tool_result', 'text', 'text']), ('user', ['text'])]
     )
-    assert cache_breakpoints(duplicate) == snapshot((None, ['messages[2].content[1]']))
+    assert cache_breakpoints(duplicate) == snapshot((None, ['messages[2].content[2]']))
     assert cache_breakpoints(only_reminder) == snapshot((None, []))
 
 
@@ -1147,7 +1167,7 @@ async def test_lasting_text_equal_to_a_reminder_keeps_the_cache_point_bedrock(
     with converse_request_bodies(model) as bodies:
         await send(model, duplicate_text_history(SystemPromptPart('Reminder.')), settings)
 
-    assert bodies[0]['messages'][-1]['content'][-3:] == [
+    assert unref(bodies[0]['messages'][-1]['content'][-3:]) == [
         {'text': '<system>Reminder.</system>'},
         {'cachePoint': {'type': 'default'}},
         {'text': '<system>Reminder.</system>'},
@@ -1169,7 +1189,7 @@ async def test_lasting_text_equal_to_a_reminder_keeps_the_cache_control_openrout
 
     messages = cast(list[dict[str, Any]], request_capture.body('/chat/completions')['messages'])
     assert [index for index, message in enumerate(messages) if 'cache_control' in str(message)] == [len(messages) - 2]
-    assert messages[-1] == {'role': 'user', 'content': '<system>Reminder.</system>'}
+    assert unref(messages[-1]) == {'role': 'user', 'content': '<system>Reminder.</system>'}
 
 
 def ui_history() -> list[ModelMessage]:

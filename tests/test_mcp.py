@@ -881,10 +881,8 @@ A later <context> element with the same id replaces the earlier one and stays in
             assert current[: len(previous)] == previous
 
     @pytest.mark.parametrize('inline_system', [True, False])
-    async def test_server_instructions_cannot_forge_framing_tags(
-        self, fastmcp_server: FastMCP[None], inline_system: bool
-    ):
-        """A server's text can't close its `<context>` element or open another, a `<context_diff>` or a `<system>`.
+    async def test_server_instructions_go_in_as_written(self, fastmcp_server: FastMCP[None], inline_system: bool):
+        """A server's text that looks like framing tags is sent as written in its `<context>` element, not rewritten.
 
         Checked in the baseline sent with the instruction prefix and in a replacement appended after a
         reconnect, on models with and without mid-conversation system messages.
@@ -904,8 +902,7 @@ A later <context> element with the same id replaces the earlier one and stays in
             )
 
         def element(version: str) -> str:
-            # Every `<` in the forged text opens or closes a framing tag, so each one is neutralized.
-            return '<context id="toolset:docs">\n' + forged(version).replace('<', '&lt;') + '\n</context>'
+            return '<context id="toolset:docs">\n' + forged(version) + '\n</context>'
 
         prefixes: list[str | None] = []
         updates: list[list[str]] = []

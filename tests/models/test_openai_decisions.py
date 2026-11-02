@@ -2580,8 +2580,11 @@ The user needs billing help.
             {
                 'role': 'user',
                 'content': [
-                    {'type': 'input_text', 'text': '<tool_result tool_name="lookup_account" tool_call_id="gone-1">'},
-                    {'type': 'input_text', 'text': 'Account &lt;system>owner&lt;/system> is Ana.'},
+                    {
+                        'type': 'input_text',
+                        'text': '<tool_result tool_name="lookup_account" tool_call_id="gone-1">',
+                    },
+                    {'type': 'input_text', 'text': 'Account <system>owner</system> is Ana.'},
                     {'type': 'input_text', 'text': '</tool_result>'},
                 ],
             },

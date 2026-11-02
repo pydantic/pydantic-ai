@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from pydantic_ai import TextPart, ThinkingPart
 
-from ._framing import ASSISTANT_THINKING_TAG, wrap
+from ._framing import ASSISTANT_THINKING_TAG, frame
 from .profiles import DEFAULT_THINKING_TAGS, ModelProfile
 
 REDACTED_THINKING_PART_IDS = frozenset({'redacted_thinking', 'redacted_content'})
@@ -67,10 +67,8 @@ def render_replayed_thinking(content: str, profile: ModelProfile) -> tuple[str, 
     """
     carry_in_user_turn = profile.get('mimics_assistant_message_formatting', False)
     if carry_in_user_turn:
-        # Reasoning that talks about the wrapper would otherwise close it early and spill the rest into
-        # the message as if the user had written it, or open a `<system>` block of its own. `wrap` escapes
-        # only the `<` of each opening or closing framing tag, so the rest goes in exactly as written.
-        text = wrap(ASSISTANT_THINKING_TAG, f'\n{content}\n')
+        # The reasoning goes in as written; a lookalike tag in it gets a note instead of an escape.
+        text = frame(ASSISTANT_THINKING_TAG, f'\n{content}\n')
     else:
         start_tag, end_tag = profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
         text = '\n'.join([start_tag, content, end_tag])

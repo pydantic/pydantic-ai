@@ -40,7 +40,6 @@ from typing_extensions import Protocol, TypedDict
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._file_input import KNOWN_DOCUMENT_MEDIA_TYPES, TEXT_DOCUMENT_MEDIA_TYPES
-from .._framing import neutralize_voice_tag
 from .._http import to_httpx2_timeout
 from .._instrumentation import current_model_request_span, get_instructions
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
@@ -1543,6 +1542,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
     # Chat Completions has no video content part.
     _unsupported_file_inputs = frozenset({'video'})
+    # Tool results are text-only here, so a tool's files go on the user channel, framed.
+    _relocates_tool_files = True
 
     unsupported_settings = frozenset({'top_k'})
 
@@ -2800,9 +2801,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     def _inline_text_file_part(
         self, text: str, *, media_type: str, identifier: str
     ) -> ChatCompletionContentPartTextParam:
-        if not self.profile.get('supports_inline_system_prompts', False):
-            # Inlined as user text, where the framework's own voice is `<system>`-tagged user text too.
-            text = neutralize_voice_tag(text)
         return ChatCompletionContentPartTextParam(
             text=_format_inlined_text_file(text, media_type=media_type, identifier=identifier),
             type='text',
@@ -3231,6 +3229,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     supported_tool_deferral_modes = frozenset({'with_tool_search'})
     supported_tool_addition_modes = frozenset({'with_definitions'})
     _renders_effort_deltas = True
+    # The API takes a lookalike note ahead of a request's tool results.
+    _lookalike_notes_precede_tool_results = True
     # Responses only: `OpenAIChatModel` shares this model family's profile but has no compaction
     # surface, and the Responses API bills replayed pre-boundary items, so the trim is what makes
     # compaction actually compact here.

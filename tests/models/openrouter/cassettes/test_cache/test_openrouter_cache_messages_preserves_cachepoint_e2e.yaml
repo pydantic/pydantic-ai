@@ -7,7 +7,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
@@ -42,6 +42,8 @@ interactions:
       - "*"
       access-control-expose-headers:
       - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-type:
@@ -57,9 +59,9 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1792905539-ZyZmUICqqGS33l29DKXF
+        id: gen-1793320353-5VRXkRNPMhcAcAQ9RG7Q
         object: chat.completion
-        created: 1792905539
+        created: 1793320353
         model: anthropic/claude-sonnet-5.5
         provider: Claude Platform on AWS
         system_fingerprint: null
@@ -72,27 +74,29 @@ interactions:
           message:
             role: assistant
             content: |-
-              There's no question or task in your message, just the phrase "Final context to cache" repeated. I can't cache anything beyond this conversation. I only have what's in this chat, and nothing carries over to future sessions unless you paste it in again.
+              I'm not sure what you'd like me to do. Your message repeats "Final context to cache" twenty times without a question or task.
 
-              If you meant to send a document, code, or instructions, it didn't come through, so please resend it. If you're setting up prompt caching through an API, I can help with that too. Just tell me what you're trying to do.
+              I can't cache anything between conversations. I only see what's in this chat, and nothing carries over once it ends. If you're setting up prompt caching through an API, that happens in your request configuration (for example, by marking content blocks with cache control), not through a message to me.
+
+              If you meant to paste a document, code, or instructions, it didn't come through. Please send it again along with what you'd like me to do with it, such as summarizing, answering questions, or reviewing it.
             refusal: null
             reasoning: |+
-              This message just repeats "Final context to cache." over and over with no real question attached. I don't have a persistent caching mechanism, so I should let them know that and ask what they actually want help with.
+              This message just repeats "Final context to cache" without a clear task attached. I don't have a specific caching function that matches what they seem to be referring to, so I should ask them to clarify what they'd like me to help with.
 
             reasoning_details:
             - type: reasoning.text
               text: |+
-                This message just repeats "Final context to cache." over and over with no real question attached. I don't have a persistent caching mechanism, so I should let them know that and ask what they actually want help with.
+                This message just repeats "Final context to cache" without a clear task attached. I don't have a specific caching function that matches what they seem to be referring to, so I should ask them to clarify what they'd like me to help with.
 
               format: anthropic-claude-v1
               index: 0
               signature: >-
-                CAQSxAYKEAgTGAI4AUIIdGhpbmtpbmcSDK726zdjDKe5pKj/KxoMebRvxtxSTbvwNTN9IjB6jmv8qrTi+GqMqBRzjnmQR8ABm7d/lUKRvt4aztRZPRjyrZ4T48jw0DX5KrMR1scq4QVh3fIk2hVSbsg6uIOWKtA8POWSsOs9YZ6XO/jCFtTmW2QC/b7OVUNi18dxSLC8VT0EpFp+1zcwG6yLpVKm0It1zrSNebH4IAtbqpgmSiYqBtxshN+PhSXdPfwXml2FyNNbdMBNiJXHrPUjg5llCEcZY13rOrhrLI56elpj7uSLxTJ+DFkm+qhIoSBXhatI/KcXPO+A0PRjD60DRQor8O7gLSfzzCL4FAn3SW6+9v57vuDBgs3MCSC+fFsHDqnu7oTD5IS8x4vCtX3Fn0BoZZ+q821R57QwjrxfI7x8V9C4C/blpURm6cAPhvMzjk/hkul0DUtLrkRPvWk0JxRQBInVQwC2vnACqIgtBMHk5SH6JO9XzYJqasoclvc1v2OHzRO1vepveZJgp/eHqVJIB8BMMTKZ+Ca3ISfDqP43/FDtrckqxJDo0mfEXlcCSlmZ5DxLGL9DJhO6VEBC4S4uCnKodIZaKeSHN97tI2IzkHJElMUfzM6TaBdrwCS4r/ajD1L6Sygxf57U+dSJQjde7h2Y3M/n5EMtX6PT0788NIP/0cHBUUtpFVS2E2tcUMBr3tOx53zhrf6CghZQgyEB3MCKdMxRrlZcAO1PnM3jMxP/8WzkrtiN1JsuPmAPLR9+FUJOYcelQMNUoPZNxYQnR4gfuGCJBdj6+WEYz03luGLQX4ho4ow+NqJ+QrEvYV5IE3Vs9mTYeM2jXwPVirUvAXL2JxqSOYXZSPDv73o8u/LSMU3nOTmwP1KMGososCW57NJgwHqC0WC6HjkbIfzpUqeMVi44xvtIfC2gNBOHI2twk0Dw3Ys+avY/VkrpBYqNthSn08lB6j0JsrWZ7kNIc8bEMKGtd2Y8UYJORKBZA9w96Nz7pE0B7uHQkbwp9MWQietiKrtYiqk7HWhoQoR4a+LYIrTnKROwFdRFxIcs0WokBeUH4zoA21V0IFN+U886iMFiQmPujfLqizC6tl4pitE8bhgB.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1zb25uZXQtNS41LTIwMjYwOTI4fGNsYXVkZS1vbi1hd3MifQ
+                CAQSzAYKEAgTGAI4AUIIdGhpbmtpbmcSDKAHbhmCGM0W4xruOhoMiD4lomZPQ44zzmuuIjAB7eh1VfX/oIdLxnd5vTJKXjgy6ti9HvP+A0lTxNI9SpMW9wYkE7MFqBaXAaYj+Wkq6QWKYDcxPeNNX7O8dmlZLGG7/xXiFZVTEIBDUlnroi6LGObJTDoPPmTKYlKLLQvXuqzjQcNkFRbe4ScIjzHlxSEMn8ibaGKxQZMiZFSnbSOFfXO3eOR1GFXrA82aur0970Sj529XLprJTcAfaAMVw19ZjAfHzZ6zs0G8DwlN5x14qbCq3Gi0jxGrTFTzL/Mb5S7iz5ZL8Kl/ow2TUQe4NHMMIE76ZTfq5PEydn+MTV9Pq1It2lcWhtQlVwbgLsqrC3JEAbOv1e1pYIa78cFK/ajuBIa757+kdiblmZblDHoWlD6IYuNiHnqZZD9qZ3KElLZe67zo1a77yarOK9SIhssGl96RRpcz6iaAedy4vppUEpr5Q/xmi1k2ftWbX7E/JncZ3g+lDVhNXV4MMyPqKM8crZRQI/4yz+YcLeFoq9n9bJvbyX++W4ZfxEtPRreEgpM+7al0WkuTKKacgzLsKAhmJE9f39d6sApPf9lzwQugPldH/+av0eV9/blRVJzXKOd3kqRYnhTxYWbi9l0btpSAaI956IMjnP9xbO8dErYyAHohcgZAuehXDwNWm298bb74Gtxhpx9Ul1QW+xBnIrQ6jtz7w2pgPlT0scSzyFaczCndHw3QwWLCH/9JgcIdNywF4IPBtnVo+SbG+Vl1BinISzHKi4VFVqw9PBWJsJXD+M67RI3ePygBxl+oRFkDRGAQoKmaT+2W5FDmm/64UFdWfflJ/qWkimfdSqooRPEzXDb/QLrdc5KWBNM2uY5PI8uc6Mcl1pAaNZywSFMbmhvhgwgZjK+EHKNYeBMfx6ex7JQJPEIA5fuWtmA98HV40EwjSq3Mp2jb+z/4R4vjvHnFhWj45bxMWwgax2x2Seh7qytGFaVAn7Gs9GC9X8rkcyvt0CltmT1cqKHXNT9t07Tg2zNoy9Z9cXe9iFxKp08OCwFrt1+XJCbj8Srs1Uk2kmuTg9Zl+3NQO1rdSFabnPqViOaiDW2rXVqAGAE=.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1zb25uZXQtNS41LTIwMjYwOTI4fGNsYXVkZS1vbi1hd3MifQ
         usage:
           prompt_tokens: 148
-          completion_tokens: 205
-          total_tokens: 353
-          cost: 0.002346
+          completion_tokens: 255
+          total_tokens: 403
+          cost: 0.002846
           is_byok: false
           prompt_tokens_details:
             cached_tokens: 0
@@ -100,11 +104,11 @@ interactions:
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 0.002346
+            upstream_inference_cost: 0.002846
             upstream_inference_prompt_cost: 0.000296
-            upstream_inference_completions_cost: 0.00205
+            upstream_inference_completions_cost: 0.00255
           completion_tokens_details:
-            reasoning_tokens: 65
+            reasoning_tokens: 70
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-25T05:19:02.030945+00:00
+  recorded_at: 2026-10-30T00:32:36.229758+00:00

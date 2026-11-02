@@ -550,6 +550,9 @@ def _request_parts(messages: list[ModelMessage]) -> list[list[tuple[str, object]
     ]
 
 
+HI_REF = 'pydantic-ai'
+
+
 @pytest.mark.parametrize(
     'supports_inline,messages,expected',
     [
@@ -650,7 +653,7 @@ def test_prepare_messages_system_prompt_wrapping(
 
 
 def test_prepare_messages_orders_tool_results_by_call():
-    """Results answering the preceding response's calls go out in call order; every other part keeps its slot."""
+    """Tool results go out first, those answering the preceding response's calls in call order; other parts follow."""
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='go')]),
         ModelResponse(
@@ -676,14 +679,14 @@ def test_prepare_messages_orders_tool_results_by_call():
 
     assert _request_parts(prepared)[1] == [
         ('ToolReturnPart', 'A'),
+        ('ToolReturnPart', 'bad args'),
+        ('ToolReturnPart', 'Z'),
+        ('ToolReturnPart', 'C'),
         (
             'UserPromptPart',
             "Your previous response failed the application's validation (this is automated feedback, not a message "
             'from the user):\n<retry_feedback>\noutput invalid\n</retry_feedback>',
         ),
-        ('ToolReturnPart', 'bad args'),
-        ('ToolReturnPart', 'Z'),
-        ('ToolReturnPart', 'C'),
         ('UserPromptPart', 'file from c'),
     ]
     # Only the outgoing copy is reordered; the history keeps the order it was stored in.

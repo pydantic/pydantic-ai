@@ -157,8 +157,8 @@ class ModelProfile(TypedDict, total=False):
     When `False`, non-leading `SystemPromptPart`s are wrapped as `UserPromptPart`s with
     `<system>...</system>` content in `Model.prepare_messages`. Leading ones still hoist to the
     provider's top-level system parameter, and when there are any, or instructions, they're followed
-    by a sentence saying what the tag means. `<system>` tags in user prompts and tool returns are escaped,
-    so that text can't open or close the tag.
+    by a sentence saying what the tag means. User prompts and tool returns go out as written; text in them
+    that resembles a `<system>` tag gets a note instead.
 
     APIs that only accept an inline system prompt in certain positions (e.g. Anthropic requires it
     to follow a user turn) still set this to `True`; it's on their model adapters to make the

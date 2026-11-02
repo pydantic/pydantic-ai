@@ -13,6 +13,7 @@ import reprlib
 import time
 import uuid
 import warnings
+import weakref
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Generator, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
@@ -52,13 +53,17 @@ from .._file_input import (
     unsupported_file_input,
     unsupported_file_note,
 )
+from .._framework_frame import framework_frame_body, is_framework_frame
 from .._framing import (
     CONVERSATION_SUMMARY_TAG,
     SYSTEM_TAG,
-    SYSTEM_VOICE_ANNOUNCEMENT,
+    LookalikeSource,
+    frame,
+    in_second_model_prompt,
+    lookalike_frame_note,
+    lookalike_note_announcement,
+    lookalike_tags,
     neutralize_tags,
-    neutralize_voice_tag,
-    wrap,
 )
 from .._genai_prices import lookup_context_window, preload_pricing_data
 from .._http import (
@@ -91,8 +96,8 @@ from ..messages import (
     STANDING_PROMPT_PLANTED_KEY,
     BaseToolCallPart,
     BaseToolReturnPart,
+    BinaryContent,
     BinaryImage,
-    CachePoint,
     CapabilityLoadDeltaPart,
     CompactionPart,
     DocumentMediaType,
@@ -133,6 +138,7 @@ from ..messages import (
     VideoUrl,
     _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
     _is_request_scoped,  # pyright: ignore[reportPrivateUsage]
+    _is_tool_result_part,  # pyright: ignore[reportPrivateUsage]
     _post_compaction_window_start,  # pyright: ignore[reportPrivateUsage]
     _render_append_parts,  # pyright: ignore[reportPrivateUsage]
     _render_system_prompt_context,  # pyright: ignore[reportPrivateUsage]
@@ -140,10 +146,7 @@ from ..messages import (
     _StatelessArtifactPredicate,  # pyright: ignore[reportPrivateUsage]
     _tagged_append_parts,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
-    _tool_return_text,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
-    is_multi_modal_content,
-    tool_return_ta,
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME, ToolSearchTool
@@ -800,12 +803,32 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     Set by a model that judges the conversation rather than answering it: translated, the feedback would
     read as the user's request or as a system prompt, where the model has to see it as a step the agent took.
     """
-    _announces_system_voice: ClassVar[bool] = True
-    """Whether `prepare_messages` adds the `<system>` tag announcement to the standing prompt where the profile's `supports_inline_system_prompts` is `False`.
+    _announces_lookalike_notes: ClassVar[bool] = True
+    """Whether the model is told what the notes on text that resembles a framework frame mean (`lookalike_note_announcement`).
 
-    `False` for a model with no provider system field the sentence reliably reaches a model in: the test doubles,
-    which have no wire, and `MCPSamplingModel`, whose client picks the model and gets the system prompt parts joined
-    into one string with no separator.
+    Where the profile's `supports_inline_system_prompts` is `False`, the announcement goes at the end of the
+    instructions; elsewhere it's a mid-conversation `SystemPromptPart` in the first request that has a frame or a
+    lookalike note. `False` for a model with no provider system field the sentence reliably reaches a model in: the
+    test doubles, which have no wire, and `MCPSamplingModel`, whose client picks the model and gets the system
+    prompt parts joined into one string with no separator.
+    """
+    _relocates_tool_files: ClassVar[bool] = False
+    """Whether this adapter moves the files a tool returned onto the user channel, framed as `<tool_result>`.
+
+    Set by adapters whose tool result channel carries text only, so `prepare_messages` knows such a request has a
+    frame in it.
+    """
+    _lookalike_notes_precede_tool_results: ClassVar[bool] = False
+    """Whether a lookalike note for a tool result goes ahead of the request's tool results rather than after them.
+
+    Most APIs need a request's tool results first, ahead of any other content in the turn (Anthropic and Bedrock
+    reject text before a `toolResult`, Chat Completions needs `tool` messages straight after the assistant turn), so
+    the note follows them and says "preceding". Set where the API takes content ahead of them.
+    """
+    _system_entries_follow_user_turn: ClassVar[bool] = False
+    """Whether this adapter sends a request's mid-conversation system messages after the request's user content.
+
+    `AnthropicModel` does, so a lookalike note for a user prompt goes after it there and says "preceding".
     """
     unsupported_settings: ClassVar[frozenset[ModelSettingName]] = frozenset()
     """The [`ModelSettings`][pydantic_ai.settings.ModelSettings] fields this model class ignores.
@@ -1738,10 +1761,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         and moves the current request's ones to the end of the last request.
 
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
-        the profile's `supports_inline_system_prompts` is `False`. On such a profile it also escapes every
-        `<system>` tag in user prompts and tool returns, so their text can't open or close that tag, and,
-        when the request has a standing system prompt or instructions, adds one fixed sentence saying what
-        the tag means after the first request's leading system prompts. It also converts
+        the profile's `supports_inline_system_prompts` is `False`; on such a profile the instructions end with a
+        sentence saying what the tag means (see `_get_instruction_parts`). Nothing the user or a tool wrote is
+        rewritten. A user, tool or file item whose text resembles
+        a frame gets a note next to it, and on a profile with inline system messages the first request with a
+        frame or a note gets the announcement (see `_note_lookalike_frames`). It also converts
         `SpeechPart`s from realtime session history into `UserPromptPart`s /
         `TextPart`s that any model can consume, replaces each file a tool returned that the
         profile's file-input flags say the model can't read with a note naming it, and puts the
@@ -1787,18 +1811,20 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             keep=self._renders_effort_deltas and self.profile.get('supports_mid_conversation_effort', False),
         )
         messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
-        if not inline_system:
-            # After speech becomes user text, and before any step below renders `<system>` text for the
-            # framework, so only text from the user and tools is escaped.
-            messages = _neutralize_voice_tags(messages)
+        # Counted before any delta or note renders into a `SystemPromptPart`: the standing prompt is what the
+        # history was authored with, and a note or announcement in the first request is not part of it.
+        first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
+        standing_prompt_count = _standing_system_prompt_count(first_request) if first_request else 0
+        # Kept as stored, after speech becomes user text: only text from the user, tools and files is checked for
+        # lookalike frames below, never the frames the framework renders from a retry.
+        authored = messages
         # Translated before every later step — the tool-availability announcement and the `<system>`
         # wrap below it — so they see the plain parts a retry becomes rather than the retry itself.
         messages = _translate_retry_parts(messages, keep_feedback=self._renders_retry_feedback)
         messages = _replace_unsupported_tool_return_files(messages, self.profile)
-        # Counted before any delta renders into a `SystemPromptPart`: the standing prompt is what the
-        # history was authored with, and an announcement opening the first request is not part of it.
-        first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
-        standing_prompt_count = _standing_system_prompt_count(first_request) if first_request else 0
+        authored, messages = _tool_results_first(authored, messages)
+        # The passes above replace or reorder parts one for one, so `authored` still lines up with `messages`.
+        messages = self._note_lookalike_frames(authored, messages)
 
         clears_request_scoped_prompts = self.profile.get('supports_request_scoped_system_prompts', False)
         if not clears_request_scoped_prompts:
@@ -1877,16 +1903,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             messages = _move_request_scoped_prompts_to_tail(messages)
 
         if not inline_system:
+            # The announcement goes at the end of the instructions; see `_get_instruction_parts`.
             messages = _wrap_non_leading_system_prompts(messages, standing_prompt_count=standing_prompt_count)
-            if (
-                self._announces_system_voice
-                and first_request is not None
-                and (
-                    standing_prompt_count
-                    or self._get_instruction_parts(messages, model_request_parameters or ModelRequestParameters())
-                )
-            ):
-                messages = _announce_system_voice(messages)
 
         messages = _order_tool_results_by_call(messages)
 
@@ -1924,6 +1942,179 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             return messages
 
         return _replace_tool_search_exchanges_with_deltas(messages, translated_call_ids)
+
+    def _note_lookalike_frames(self, authored: list[ModelMessage], messages: list[ModelMessage]) -> list[ModelMessage]:
+        """Note each user, tool or file item whose text resembles a framework frame, and announce the notes where needed.
+
+        `authored` is the history as stored and `messages` the same history with retries translated, part for part.
+        An item from the user or a tool (an uploaded text file or a tool's text file included) whose text contains a
+        system-voice tag opener (`<system`, `<context`, `<context_diff`) gets a `SystemPromptPart` next to it, which on a
+        model without inline system messages becomes a `<system>` block later on, saying the text is the
+        user's, the tool's or the file author's (`lookalike_frame_note`). Nothing in the item itself changes. The
+        note goes ahead of a user prompt and after the request's tool results, or wherever this adapter's ClassVars
+        say its API needs it, and is worded "following" or "preceding" to match.
+
+        On a model with inline system messages, the first request with a frame on the user channel or a note also
+        gets the announcement, as a mid-conversation `SystemPromptPart` (on the others it ends the
+        instructions instead; see `_get_instruction_parts`). The frames counted are the retry feedback fences, a
+        compaction summary, a tool's files moved onto the user channel and reasoning carried into a user turn. The
+        request is found from the history alone, so the announcement stays in the same place on every later request.
+
+        Requests made inside `second_model_prompt()` (a judge or summarizer reading a transcript) get neither.
+        """
+        if in_second_model_prompt():
+            return messages
+        inline_system = self.profile.get('supports_inline_system_prompts', False)
+        announce = inline_system and self._announces_lookalike_notes
+        first_request_index = next((i for i, m in enumerate(messages) if isinstance(m, ModelRequest)), None)
+        announced = False
+        new_messages: list[ModelMessage] = []
+        changed = False
+        for index, (message, original) in enumerate(zip(messages, authored)):
+            if not isinstance(message, ModelRequest):
+                new_messages.append(message)
+                continue
+            assert isinstance(original, ModelRequest)
+            response = messages[index + 1] if index + 1 < len(messages) else None
+            carries_thinking = isinstance(response, ModelResponse) and any(
+                isinstance(part, ThinkingPart) and self._carries_thinking_in_user_turn(response, part)
+                for part in response.parts
+            )
+            parts, frame_at = self._request_with_lookalike_notes(
+                original, message, first_request=index == first_request_index
+            )
+            if frame_at is None and carries_thinking:
+                frame_at = len(parts)
+            if frame_at is not None:
+                if announce and not announced:
+                    announced = True
+                    announcement = _framework_note(
+                        SystemPromptPart(
+                            content=lookalike_note_announcement(system_role=True),
+                            timestamp=message.timestamp or _utils.now_utc(),
+                        )
+                    )
+                    parts.insert(frame_at, announcement)
+            if len(parts) != len(message.parts) or any(new is not old for new, old in zip(parts, message.parts)):
+                message = replace(message, parts=parts)
+                changed = True
+            new_messages.append(message)
+        return new_messages if changed else messages
+
+    def _request_with_lookalike_notes(
+        self,
+        authored: ModelRequest,
+        request: ModelRequest,
+        *,
+        first_request: bool,
+    ) -> tuple[list[ModelRequestPart], int | None]:
+        """`request`'s parts with lookalike notes added, and where the announcement goes if this request carries it.
+
+        The announcement goes right before the request's first note or frame, but never among the request's tool
+        results (after them, or ahead of them where the API takes content there), and never where it would join
+        the first request's standing system prompt. `None` when the request has no note or frame.
+        """
+        inline_system = self.profile.get('supports_inline_system_prompts', False)
+        precede_tool_results = self._lookalike_notes_precede_tool_results
+        parts: list[ModelRequestPart] = []
+        framed: list[ModelRequestPart] = []
+        tool_notes: list[SystemPromptPart] = []
+        for original, part in zip(authored.parts, request.parts):
+            sources = _lookalike_sources(original)
+            if _is_tool_result_part(part):
+                for _, tags in sources:
+                    tool_notes.append(
+                        _framework_note(
+                            SystemPromptPart(
+                                content=lookalike_frame_note(
+                                    'tool',
+                                    preceding=not precede_tool_results,
+                                    tags=tags,
+                                    system_role=inline_system,
+                                    tool_name=part.tool_name,
+                                    tool_call_id=part.tool_call_id,
+                                ),
+                                timestamp=request.timestamp or _utils.now_utc(),
+                            )
+                        )
+                    )
+                if self._relocates_tool_files and isinstance(part, ToolReturnPart) and part.files:
+                    framed.append(part)
+                parts.append(part)
+                continue
+            if (
+                (
+                    isinstance(original, RetryFeedbackPart | RetryPromptPart)  # pyright: ignore[reportDeprecated]
+                    and isinstance(part, UserPromptPart)
+                )
+                or isinstance(part, CompactionPart)
+                # A frame a capability wrote.
+                or (
+                    isinstance(part, UserPromptPart)
+                    and not isinstance(part.content, str)
+                    and any(is_framework_frame(item) for item in part.content)
+                )
+            ):
+                framed.append(part)
+            # Adapters that send system messages after the turn put the note after its item, and so does one that
+            # would otherwise join the first request's standing system prompt.
+            after = inline_system and (
+                self._system_entries_follow_user_turn
+                or (first_request and all(isinstance(p, SystemPromptPart) for p in parts))
+            )
+            notes = [
+                _framework_note(
+                    SystemPromptPart(
+                        content=lookalike_frame_note(source, preceding=after, tags=tags, system_role=inline_system),
+                        timestamp=request.timestamp or _utils.now_utc(),
+                    )
+                )
+                for source, tags in sources
+            ]
+            framed.extend(notes)
+            parts.extend([part, *notes] if after else [*notes, part])
+        if tool_notes:
+            framed.extend(tool_notes)
+            tool_indices = [i for i, part in enumerate(parts) if _is_tool_result_part(part)]
+            at = tool_indices[0] if precede_tool_results else tool_indices[-1] + 1
+            parts[at:at] = tool_notes
+        if not inline_system:
+            # Without a system role, the request's own mid-conversation system prompts become `<system>` blocks in the
+            # same user turn as a note and the text it describes. Ahead of both, they still read as the application's:
+            # after them, Claude Sonnet 5.5 on Bedrock followed a genuine change 0/8 times, ahead of them 7/8.
+            note_ids = {id(n) for n in [*tool_notes, *(p for p in framed if isinstance(p, SystemPromptPart))]}
+            first_note = next((i for i, p in enumerate(parts) if id(p) in note_ids), None)
+            if first_note is not None:
+                rest = parts[first_note:]
+                genuine = [p for p in rest if isinstance(p, SystemPromptPart) and id(p) not in note_ids]
+                if genuine:
+                    genuine_ids = {id(p) for p in genuine}
+                    parts = [*parts[:first_note], *genuine, *(p for p in rest if id(p) not in genuine_ids)]
+        framed_ids = {id(part) for part in framed}
+        frame_at = next((i for i, part in enumerate(parts) if id(part) in framed_ids), None)
+        if frame_at is None:
+            return parts, None
+        # Where the notes follow the tool results, so does the announcement. Where they precede them, the first
+        # frame is a note ahead of the results already: a frame among them is a moved file, which only a model
+        # without inline system messages has, and that model announces in its instructions instead.
+        last = max((i for i, part in enumerate(parts) if _is_tool_result_part(part)), default=-1)
+        if not precede_tool_results and frame_at <= last:
+            frame_at = last + 1
+        if first_request and all(isinstance(part, SystemPromptPart) for part in parts[:frame_at]):
+            frame_at = len(parts)
+        return parts, frame_at
+
+    def _carries_thinking_in_user_turn(self, message: ModelResponse, part: ThinkingPart) -> bool:
+        """Whether this adapter replays `part` of `message` as an `<assistant_thinking>` frame in a user turn.
+
+        Reasoning a model can't replay natively is written out as text, and goes in a user turn where the profile
+        sets `mimics_assistant_message_formatting`; see `render_replayed_thinking`.
+        """
+        return (
+            bool(part.content)
+            and self.profile.get('mimics_assistant_message_formatting', False)
+            and not (part.signature and self.accepts_stateless_artifacts(message, part))
+        )
 
     def _hides_deferred_schemas(self, params: ModelRequestParameters | None) -> bool:
         """Whether this request puts a tool on the wire with its schema withheld."""
@@ -2098,46 +2289,112 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Raise `UserError` if an `UploadedFile` references a different provider than this model."""
         _utils.validate_uploaded_file_provider(item, system=self.system, model_type_name=type(self).__name__)
 
-    @staticmethod
     def _get_instruction_parts(
-        messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters
+        self, messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[InstructionPart] | None:
         """Get structured instruction parts for the current request.
 
-        Uses `model_request_parameters.instruction_parts` when set (normal agent flow).
-        Falls back to synthesizing from `ModelRequest.instructions` in message history
-        when `instruction_parts` is `None` (e.g. direct `model.request()` calls).
+        Uses `model_request_parameters.instruction_parts` when set (normal agent flow), and falls back to
+        synthesizing them from `ModelRequest.instructions` in message history when it's `None` (e.g. direct
+        `model.request()` calls).
+
+        Where the profile's `supports_inline_system_prompts` is `False` and there's a standing prompt, the
+        announcement is the last part. It's marked `dynamic` so the instruction cache points stay where they'd be
+        without it, ahead of it. A request made inside `second_model_prompt()` doesn't get it.
         """
-        if model_request_parameters.instruction_parts is not None:
-            return model_request_parameters.instruction_parts or None
+        parts = _instruction_parts_of(messages, model_request_parameters)
+        if (
+            self._announces_lookalike_notes
+            and not in_second_model_prompt()
+            and not self.profile.get('supports_inline_system_prompts', False)
+            and (parts or _first_request_has_standing_prompt(messages))
+        ):
+            announcement = lookalike_note_announcement(system_role=False)
+            parts = [*(parts or []), _framework_added(InstructionPart(content=announcement, dynamic=True))]
+        return parts
 
-        # Fallback: synthesize from message history for direct model.request() callers.
-        # Mirrors the last-two-requests logic from `pydantic_ai._instrumentation.get_instructions`:
-        # if the most recent request only has tool-return/retry-prompt/retry-feedback parts (a "mock"
-        # request for result tools), use the instructions from the second-to-most-recent request.
-        last_two_requests: list[ModelRequest] = []
-        for message in reversed(messages):
-            if isinstance(message, ModelRequest):
-                last_two_requests.append(message)
-                if len(last_two_requests) == 2:
-                    break
-                if message.instructions is not None:
-                    return [InstructionPart(content=message.instructions)]
 
-        if len(last_two_requests) == 2:
-            most_recent = last_two_requests[0]
-            second = last_two_requests[1]
-            if (
-                all(
-                    # TODO(v3): remove `RetryPromptPart`
-                    isinstance(p, ToolReturnPart | RetryFeedbackPart | RetryPromptPart)  # pyright: ignore[reportDeprecated]
-                    for p in most_recent.parts
-                )
-                and second.instructions is not None
-            ):
-                return [InstructionPart(content=second.instructions)]
+_FRAMEWORK_NOTE_KEY = 'framework_note'
+"""In a `SystemPromptPart`'s `__pydantic_ai__` metadata: a note or the announcement `prepare_messages` added."""
 
-        return None
+
+def _framework_note(part: SystemPromptPart) -> SystemPromptPart:
+    return replace(part, metadata={_PYDANTIC_AI_METADATA_KEY: {_FRAMEWORK_NOTE_KEY: True}})
+
+
+_FrameworkAdded = TypeVar('_FrameworkAdded', UserPromptPart, InstructionPart)
+
+_framework_added_parts: weakref.WeakValueDictionary[int, UserPromptPart | InstructionPart] = (
+    weakref.WeakValueDictionary()
+)
+"""The `<system>`-wrapped notes and the instruction-part announcement, by identity: neither part type has a metadata
+field to carry the mark `_framework_note` sets, and text alone can't tell them from the same words a user wrote."""
+
+
+def _framework_added(part: _FrameworkAdded) -> _FrameworkAdded:
+    _framework_added_parts[id(part)] = part
+    return part
+
+
+def _is_framework_added(part: object) -> bool:
+    """Whether `part` is a lookalike note or the announcement that Pydantic AI added to a request it's preparing."""
+    if isinstance(part, SystemPromptPart):
+        namespace = (part.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+        return _utils.is_str_dict(namespace) and namespace.get(_FRAMEWORK_NOTE_KEY) is True
+    return _framework_added_parts.get(id(part)) is part
+
+
+def _wrapped_system_prompt(part: SystemPromptPart) -> UserPromptPart:
+    wrapped = UserPromptPart(content=frame(SYSTEM_TAG, part.content), timestamp=part.timestamp)
+    return _framework_added(wrapped) if _is_framework_added(part) else wrapped
+
+
+def _instruction_parts_of(
+    messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters
+) -> list[InstructionPart] | None:
+    """Get structured instruction parts for the current request.
+
+    Uses `model_request_parameters.instruction_parts` when set (normal agent flow).
+    Falls back to synthesizing from `ModelRequest.instructions` in message history
+    when `instruction_parts` is `None` (e.g. direct `model.request()` calls).
+    """
+    if model_request_parameters.instruction_parts is not None:
+        return model_request_parameters.instruction_parts or None
+
+    # Fallback: synthesize from message history for direct model.request() callers.
+    # Mirrors the last-two-requests logic from `pydantic_ai._instrumentation.get_instructions`:
+    # if the most recent request only has tool-return/retry-prompt/retry-feedback parts (a "mock"
+    # request for result tools), use the instructions from the second-to-most-recent request.
+    last_two_requests: list[ModelRequest] = []
+    for message in reversed(messages):
+        if isinstance(message, ModelRequest):
+            last_two_requests.append(message)
+            if len(last_two_requests) == 2:
+                break
+            if message.instructions is not None:
+                return [InstructionPart(content=message.instructions)]
+
+    if len(last_two_requests) == 2:
+        most_recent = last_two_requests[0]
+        second = last_two_requests[1]
+        if (
+            all(
+                # TODO(v3): remove `RetryPromptPart`
+                isinstance(p, ToolReturnPart | RetryFeedbackPart | RetryPromptPart)  # pyright: ignore[reportDeprecated]
+                # A lookalike note or the announcement `prepare_messages` added doesn't make it a real request.
+                or _is_framework_added(p)
+                for p in most_recent.parts
+            )
+            and second.instructions is not None
+        ):
+            return [InstructionPart(content=second.instructions)]
+
+    return None
+
+
+def _first_request_has_standing_prompt(messages: Sequence[ModelMessage]) -> bool:
+    first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
+    return first_request is not None and _standing_system_prompt_count(first_request) > 0
 
 
 @dataclass
@@ -3460,10 +3717,9 @@ _CONVERSATION_SUMMARY_PROVENANCE = (
 def _conversation_summary_text(content: str | None) -> str:
     """*content* framed as a summary of the conversation it replaced, with where it came from.
 
-    A summarization model wrote it from a history that can include tool output, so every framing tag in it is
-    neutralized: it can't close the summary, open another tag, or speak in the framework's voice.
+    A summarization model wrote it from a history that can include tool output; it goes in as written.
     """
-    return wrap(CONVERSATION_SUMMARY_TAG, f'\n{_CONVERSATION_SUMMARY_PROVENANCE}\n\n{content or ""}\n')
+    return frame(CONVERSATION_SUMMARY_TAG, f'\n{_CONVERSATION_SUMMARY_PROVENANCE}\n\n{content or ""}\n')
 
 
 def _standing_system_prompt_count(request: ModelRequest) -> int:
@@ -3775,8 +4031,8 @@ def _request_scoped_tail_texts(messages: Sequence[ModelMessage]) -> tuple[str, .
 def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_prompt_count: int) -> list[ModelMessage]:
     """Wrap mid-conversation `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s.
 
-    A closing `</system>` inside a part's content is neutralized as it is wrapped, so text that reached
-    the instruction from elsewhere (a tool name, a validation error) can't end the block early.
+    The content goes in as written; a `<system>` tag in text the user or a tool wrote gets a note instead, as the
+    announcement at the end of the instructions says.
 
     The run's standing system prompt is left alone; the provider's `_map_messages` hoists it. Which
     parts those are is `_standing_system_prompt_count`'s question, and it is not simply "everything
@@ -3800,9 +4056,7 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_p
         start = standing_prompt_count if offset == 0 else 0
         if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts[start:]):
             new_parts = [
-                UserPromptPart(content=wrap(SYSTEM_TAG, part.content), timestamp=part.timestamp)
-                if index >= start and isinstance(part, SystemPromptPart)
-                else part
+                _wrapped_system_prompt(part) if index >= start and isinstance(part, SystemPromptPart) else part
                 for index, part in enumerate(msg.parts)
             ]
             new_messages.append(replace(msg, parts=new_parts))
@@ -3813,92 +4067,82 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_p
     return new_messages if changed else messages
 
 
-def _announce_system_voice(messages: list[ModelMessage]) -> list[ModelMessage]:
-    """Add `SYSTEM_VOICE_ANNOUNCEMENT` to the standing prompt, for a model that gets mid-conversation system prompts as `<system>`-tagged user text.
+def _tool_results_first(
+    authored: list[ModelMessage], messages: list[ModelMessage]
+) -> tuple[list[ModelMessage], list[ModelMessage]]:
+    """Put each request's tool results ahead of its other parts, in both lists, keeping each group's order.
 
-    Models without mid-conversation system messages follow a `<system>`-tagged change, withdrawal or new rule
-    far more reliably when the standing prompt has said what the tag is. The sentence is fixed, and is added
-    to every request whose standing prompt exists, from the first, so the prefix it's part of stays the same
-    from request to request. It goes after the first request's opening system prompts, which every adapter
-    lifts into the provider's system field, ahead of the instructions.
+    Anthropic, Bedrock and OpenAI Chat need the results right after the response that called the tools: a system
+    prompt or user text ahead of them, as a history can hold (a `SystemPromptPart` before the returns), is rejected
+    with a 400. No API needs anything ahead of them, so every adapter gets them first; lookalike notes that an API
+    takes ahead of the results are placed after this.
+
+    Only requests after a response move: before the first one, nothing has been called, and a leading
+    `SystemPromptPart` there is the standing prompt, which every adapter lifts out of the conversation.
     """
-    first_request_idx, first_request = next(
-        (i, message) for i, message in enumerate(messages) if isinstance(message, ModelRequest)
-    )
-    position = _standing_system_prompt_count(first_request)
-    announcement = SystemPromptPart(
-        content=SYSTEM_VOICE_ANNOUNCEMENT, timestamp=first_request.timestamp or _utils.now_utc()
-    )
-    parts = [*first_request.parts[:position], announcement, *first_request.parts[position:]]
-    return [*messages[:first_request_idx], replace(first_request, parts=parts), *messages[first_request_idx + 1 :]]
-
-
-def _neutralize_voice_tags(messages: list[ModelMessage]) -> list[ModelMessage]:
-    """Escape every `<system>` tag in user prompts and tool returns, for a model whose framework voice is `<system>`-tagged user text.
-
-    The `<` of each opening or closing spelling becomes `&lt;`, as by `neutralize_voice_tag`, so the text reads
-    as written and can neither open nor close the tag the framework speaks in. A legacy `RetryPromptPart` that
-    answers a tool call is translated to the `ToolReturnPart` it stands for first, as `_translate_retry_parts`
-    would. Other retry feedback is fenced in a data tag later, which escapes every framing tag in it.
-
-    Parts without a `<system>` tag are left as they are, and the original list comes back when nothing changed.
-    """
+    new_authored: list[ModelMessage] = []
     new_messages: list[ModelMessage] = []
     changed = False
-    for message in messages:
-        if isinstance(message, ModelRequest):
-            parts = [_part_without_voice_tags(part) for part in message.parts]
-            if any(new is not old for new, old in zip(parts, message.parts)):
-                message = replace(message, parts=parts)
+    after_response = False
+    for original, message in zip(authored, messages):
+        if isinstance(message, ModelResponse):
+            after_response = True
+        elif after_response and isinstance(original, ModelRequest):
+            order = sorted(range(len(message.parts)), key=lambda i: not _is_tool_result_part(message.parts[i]))
+            if order != list(range(len(message.parts))):
+                message = replace(message, parts=[message.parts[i] for i in order])
+                original = replace(original, parts=[original.parts[i] for i in order])
                 changed = True
+        new_authored.append(original)
         new_messages.append(message)
-    return new_messages if changed else messages
+    return (new_authored, new_messages) if changed else (authored, messages)
 
 
-def _part_without_voice_tags(part: ModelRequestPart) -> ModelRequestPart:
-    if isinstance(part, RetryPromptPart) and part.tool_name is not None:  # pyright: ignore[reportDeprecated]
-        translated = _translate_legacy_retry_part(part)
-        neutralized = _part_without_voice_tags(translated)
-        return part if neutralized is translated else neutralized
-    if isinstance(part, UserPromptPart | ToolReturnPart):
-        content = _without_voice_tags(part.content)
-        return part if content is part.content else replace(part, content=content)
-    return part
+def _lookalike_sources(part: ModelRequestPart) -> list[tuple[LookalikeSource, list[str]]]:
+    """Who wrote the text in `part` that resembles a framework frame, with the system-voice tags it opens.
 
-
-def _without_voice_tags(value: Any) -> Any:
-    """`value` with every `<system>` tag in its text neutralized, or `value` itself when it has none.
-
-    Strings, text content and the strings in lists and dicts are neutralized in place, files are left alone, and
-    any other value, which the adapter sends as its JSON text, is replaced by its neutralized JSON form.
+    A user prompt's text and its text files are checked separately, so each gets a note naming its author. A tool
+    result is checked whole, its text files included. Text files are read as UTF-8; other files have no text to check.
     """
-    if isinstance(value, str):
-        neutralized = neutralize_voice_tag(value)
-        return value if neutralized == value else neutralized
-    if isinstance(value, TextContent):
-        content = neutralize_voice_tag(value.content)
-        # A `StructuredContent` would still send its `value` to a model that takes it natively.
-        return value if content == value.content else TextContent(content, metadata=value.metadata)
-    if isinstance(value, list | tuple):
-        sequence = cast('list[Any] | tuple[Any, ...]', value)
-        items = [_without_voice_tags(item) for item in sequence]
-        return sequence if all(new is old for new, old in zip(items, sequence)) else items
-    if isinstance(value, dict):
-        mapping = cast('dict[Any, Any]', value)
-        entries = [(_without_voice_tags(key), _without_voice_tags(item)) for key, item in mapping.items()]
-        if all(
-            new_key is key and new_item is item for (new_key, new_item), (key, item) in zip(entries, mapping.items())
-        ):
-            return mapping
-        if len({key for key, _ in entries}) < len(entries):
-            # Escaping made two keys equal: send the JSON text, which keeps every entry.
-            return neutralize_voice_tag(_tool_return_text(mapping))
-        return dict(entries)
-    if value is None or isinstance(value, bool | int | float | CachePoint) or is_multi_modal_content(value):
-        return value
-    dumped = tool_return_ta.dump_python(value, mode='json', by_alias=True)
-    neutralized = _without_voice_tags(dumped)
-    return value if neutralized is dumped else neutralized
+    # TODO(v3): remove `RetryPromptPart`
+    if isinstance(part, RetryPromptPart) and part.tool_name is not None:  # pyright: ignore[reportDeprecated]
+        part = _translate_legacy_retry_part(part)
+    found: dict[LookalikeSource, list[str]] = {}
+
+    def check(source: LookalikeSource, text: str | None) -> None:
+        if text is not None and (tags := lookalike_tags(text)):
+            found.setdefault(source, []).extend(tag for tag in tags if tag not in found.get(source, ()))
+
+    if isinstance(part, UserPromptPart):
+        items: Sequence[UserContent] = [part.content] if isinstance(part.content, str) else part.content
+        for item in items:
+            check('user', _text_of(item))
+        for item in items:
+            check('file', _text_file_content(item))
+        # A frame a capability wrote around someone else's text, such as a background tool's output: the frame's own
+        # tags aren't a lookalike, the body can hold one.
+        for item in items:
+            if is_framework_frame(item) and (body := framework_frame_body(item)) is not None:
+                check(*body)
+    elif isinstance(part, ToolReturnPart):
+        for item in part.content_items(mode='str', wrap_if_error=False):
+            check('tool', _text_of(item) if (text := _text_file_content(item)) is None else text)
+    return list(found.items())
+
+
+def _text_of(item: object) -> str | None:
+    if isinstance(item, str):
+        return item
+    # A frame a capability wrote, marked by `framework_frame_text`, is checked for its body's author alone.
+    if isinstance(item, TextContent) and not is_framework_frame(item):
+        return item.content
+    return None
+
+
+def _text_file_content(item: object) -> str | None:
+    if isinstance(item, BinaryContent) and _utils.is_text_like_media_type(item.media_type):
+        return item.data.decode(errors='replace')
+    return None
 
 
 def _replace_unsupported_tool_return_files(messages: list[ModelMessage], profile: ModelProfile) -> list[ModelMessage]:
@@ -4375,7 +4619,9 @@ def _legacy_retry_as_sendable(
     return UserPromptPart(content=part.model_response(), timestamp=part.timestamp)
 
 
-def _sendable_request_parts(parts: Sequence[ModelRequestPart]) -> Generator[ModelRequestPart]:  # pyright: ignore[reportUnusedFunction]
+def _sendable_request_parts(  # pyright: ignore[reportUnusedFunction]
+    parts: Sequence[ModelRequestPart],
+) -> Generator[ModelRequestPart]:
     """A request's parts as an adapter maps them, with any deprecated `RetryPromptPart` rendered.
 
     See `_legacy_retry_as_sendable`. A request-side `CompactionPart` becomes the user text that frames
@@ -4478,11 +4724,12 @@ def _translate_retry_parts(messages: list[ModelMessage], *, keep_feedback: bool)
             part = translated
         elif not isinstance(part, RetryFeedbackPart) or keep_feedback:
             return part
+        text = part.model_response()
         if not _retry_feedback_speaks_for_the_harness(part):
-            return UserPromptPart(content=part.model_response(), timestamp=part.timestamp)
+            return UserPromptPart(content=text, timestamp=part.timestamp)
         if in_standing_run:
-            return UserPromptPart(content=wrap(SYSTEM_TAG, part.model_response()), timestamp=part.timestamp)
-        return SystemPromptPart(content=part.model_response(), timestamp=part.timestamp)
+            return UserPromptPart(content=frame(SYSTEM_TAG, text), timestamp=part.timestamp)
+        return SystemPromptPart(content=text, timestamp=part.timestamp)
 
     first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
     transformed: list[ModelMessage] = []

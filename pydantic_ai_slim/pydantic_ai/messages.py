@@ -6,7 +6,6 @@ import difflib
 import hashlib
 import mimetypes
 import os
-import re
 import sys
 import warnings
 from abc import ABC, abstractmethod
@@ -66,9 +65,9 @@ from ._framing import (
     TOOL_RESULT_TAG,
     VALIDATION_ERRORS_TAG,
     FramingTag,
-    close_tag,
-    open_tag,
-    wrap,
+    frame,
+    frame_tags,
+    model_visible_name_error,
 )
 from ._instrumentation import redact_binary_content, serialize_any
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
@@ -652,7 +651,6 @@ class TextContent:
 StructuredContentFormat: TypeAlias = Literal['json', 'xml']
 """A built-in text format for [`StructuredContent`][pydantic_ai.messages.StructuredContent]."""
 
-_STRUCTURED_CONTENT_TAG_RE = re.compile(r'[a-z_][a-z0-9_]*')
 _FRAMING_TAG_NAMES = frozenset(get_args(FramingTag))
 
 
@@ -726,11 +724,12 @@ class StructuredContent(TextContent):
             # history fail to load once a later release adds its tag to the framework's own.
             return
         if self.tag is not None:
-            if not _STRUCTURED_CONTENT_TAG_RE.fullmatch(self.tag):
-                raise ValueError(
-                    '`StructuredContent.tag` must be lowercase letters, digits and `_`, '
-                    f'starting with a letter or `_`, got {self.tag!r}.'
-                )
+            if error := model_visible_name_error(
+                self.tag,
+                what='`StructuredContent.tag`',
+                legacy_stacklevel=3,  # user -> `__init__` -> here
+            ):
+                raise ValueError(error)
             if self.tag in _FRAMING_TAG_NAMES:
                 raise ValueError(
                     f'`StructuredContent.tag` cannot be {self.tag!r}, a tag the framework frames its own text in.'
@@ -2047,13 +2046,10 @@ def _tool_result_provenance_tags(tool_name: str, tool_call_id: str, file_identif
     could not name.
 
     They identify rather than prove. This is prompt text like any other, so a tool can emit the
-    closing tag and a user can type the opening one; the attribute values are escaped, and a provider
-    that accepts media in its tool result channel sends it there and never renders these at all.
+    closing tag and a user can type the opening one. The attribute values are escaped, and a provider that
+    accepts media in its tool result channel sends it there and never renders these at all.
     """
-    return (
-        open_tag(TOOL_RESULT_TAG, tool_name=tool_name, tool_call_id=tool_call_id, file_id=file_identifier),
-        close_tag(TOOL_RESULT_TAG),
-    )
+    return frame_tags(TOOL_RESULT_TAG, tool_name=tool_name, tool_call_id=tool_call_id, file_id=file_identifier)
 
 
 @dataclass(repr=False)
@@ -2707,14 +2703,16 @@ class RetryFeedbackPart:
         interpolate the output they reject. Only `'no_output'` is left unfenced, as its text is fixed
         and carries nothing the model wrote.
 
-        What `prepare_messages` adds around this is the voice, not the wording: the part type it goes
-        into, and the `<system>` tagging a provider without a mid-conversation system message needs.
+        The content goes in the fence exactly as written. What `prepare_messages` adds around this is the
+        voice, not the wording: the part type it goes into, and the `<system>` tagging a provider without a
+        mid-conversation system message needs.
         """
         content = _retry_feedback_text(self)
         if _retry_feedback_speaks_for_the_harness(self):
             return content
         return _fenced_retry_feedback(
-            content, tag=VALIDATION_ERRORS_TAG if self.retry.cause == 'validation_error' else RETRY_FEEDBACK_TAG
+            content,
+            tag=VALIDATION_ERRORS_TAG if self.retry.cause == 'validation_error' else RETRY_FEEDBACK_TAG,
         )
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
@@ -2743,12 +2741,11 @@ def _retry_feedback_text(part: RetryFeedbackPart) -> str:
 def _fenced_retry_feedback(content: str, *, tag: FramingTag) -> str:
     """Feedback in the user voice: the application attribution line, then the content fenced in `tag`.
 
-    `wrap` neutralizes every framing tag in the content, since it carries the model's own words: a
-    validation error's `loc` is a key it invented for a mapping output, and a `value_error`'s `msg` is
-    whatever a validator raised, commonly with the offending value interpolated in. Without that, the
-    content could end the fence early, or open a `<system>` block of its own.
+    The content carries the model's own words (a validation error's `loc` is a key it invented for a mapping
+    output, a `value_error`'s `msg` is whatever a validator raised, commonly with the offending value interpolated
+    in) and goes in as written.
     """
-    fence = wrap(tag, f'\n{content}\n')
+    fence = frame(tag, f'\n{content}\n')
     return f'{_RETRY_FEEDBACK_FRAMING}\n{fence}'
 
 
@@ -3165,10 +3162,10 @@ def _withdrawal_text(*, inline_system: bool) -> str:
 def _context_element(instruction_id: InstructionId | str | None, content: str) -> str:
     """Tag an append-mode block's statement with its id, so a later statement can name the one it replaces.
 
-    `wrap` neutralizes every framing tag in the text, including `</system>`: the element is itself
-    `<system>`-wrapped on a model without mid-conversation system messages.
+    The text is the operator's and goes in as written. The element speaks in system voice, like `<system>`, so it
+    is a system-voice tag: a lookalike `<context>` in user or tool text gets a note instead.
     """
-    return wrap(CONTEXT_TAG, f'\n{content}\n', id=_id_attribute(instruction_id))
+    return frame(CONTEXT_TAG, f'\n{content}\n', id=_id_attribute(instruction_id))
 
 
 def _id_attribute(instruction_id: InstructionId | str | None) -> str | None:
@@ -3181,7 +3178,7 @@ def _context_diff_element(instruction_id: InstructionId | None, previous: str, c
     diff = '\n'.join(
         difflib.unified_diff(previous.split('\n'), content.split('\n'), 'before', 'after', lineterm='', n=2)
     )
-    return wrap(CONTEXT_DIFF_TAG, f'\n{diff}\n', id=_id_attribute(instruction_id))
+    return frame(CONTEXT_DIFF_TAG, f'\n{diff}\n', id=_id_attribute(instruction_id))
 
 
 _SUPERSESSION_SENTENCE = (

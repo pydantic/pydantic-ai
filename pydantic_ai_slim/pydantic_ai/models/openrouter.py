@@ -36,6 +36,7 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     _effort_window_baseline,  # pyright: ignore[reportPrivateUsage]
+    _is_framework_added,  # pyright: ignore[reportPrivateUsage]
     _request_scoped_suffix_start,  # pyright: ignore[reportPrivateUsage]
     _request_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
     _without_model_settings_deltas,  # pyright: ignore[reportPrivateUsage]
@@ -1034,7 +1035,11 @@ class OpenRouterModel(OpenAIChatModel):
             return
 
         caches_instruction_prefix = self._resolved_profile.get('openrouter_supports_dynamic_instruction_cache', False)
-        if not caches_instruction_prefix and any(part.dynamic for part in instruction_parts):
+        # The announcement ends the instructions and is marked dynamic only to keep cache points ahead of
+        # it: its text never changes, so it doesn't keep the instructions from caching.
+        if not caches_instruction_prefix and any(
+            part.dynamic and not _is_framework_added(part) for part in instruction_parts
+        ):
             # OpenRouter normalizes Google system/developer messages into Gemini's single
             # `systemInstruction`, which Gemini caches as an immutable block (explicit
             # cache_control path). Unlike Anthropic prefix caching, we can't cache only the

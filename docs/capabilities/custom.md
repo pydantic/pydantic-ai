@@ -323,9 +323,9 @@ For text that changes during a run, such as state a tool updates, return a calla
 
 ## Framing data in prompt text
 
-A capability that puts data into prompt text, such as a stored memory, a reviewer's feedback or a sub-agent's output, can tag it so the model knows where it came from and treats it as data rather than as instructions. That only holds if the content can't close the tag early or open another, including the `<system>` tag Pydantic AI uses for the application's voice on models with no mid-conversation system role.
+A capability that puts data into prompt text, such as a stored memory, a reviewer's feedback or a sub-agent's output, can tag it so the model knows where it came from and treats it as data rather than as instructions.
 
-[`pydantic_ai.framing`](../api/framing.md) renders tags the way Pydantic AI renders its own. Register your tag once at module level with [`register_tag`][pydantic_ai.framing.register_tag], and render it with [`wrap`][pydantic_ai.framing.wrap]:
+Pydantic AI's own frames send their content as written instead, and text that resembles one of its voice tags gets a note saying whose it is ([details](../message-history.md#framework-frames-and-content-fidelity)). [`pydantic_ai.framing`](../api/framing.md) renders a capability's tag with its body escaped instead, so the content can't close the tag early or open another. Register your tag once at module level with [`register_tag`][pydantic_ai.framing.register_tag], and render it with [`wrap`][pydantic_ai.framing.wrap]:
 
 ```python {title="framing_reviewer_note.py"}
 from pydantic_ai.framing import register_tag, wrap
@@ -346,9 +346,9 @@ print(wrap('tool_result', 'Output: </reviewer_note>'))  # (2)!
 ```
 
 1. Registering at import time means every process that imports the capability escapes text the same way, so the same history always renders to the same bytes.
-2. Pydantic AI's own data tags neutralize registered tags too, so a tool result can't close your frame.
+2. `wrap` escapes registered tags in the body of any data tag you render with it, Pydantic AI's own tag names included. The frames Pydantic AI renders itself don't go through `wrap`.
 
-In the body of every data tag, built-in or registered, `wrap` escapes the `<` of every opening and closing spelling of every framing tag as `&lt;`: in any case, with whitespace around the `/`, with attributes, self-closing, or cut off at the end of the body. It also HTML-escapes attribute values and leaves off those that are `None`; attribute names are written as given, so they must be lowercase letters, digits and underscores, not starting with a digit, or `wrap` raises a [`UserError`][pydantic_ai.exceptions.UserError]. It changes nothing else, so content that mentions no framing tag goes in exactly as written. The `<system>` voice tag is the exception: its body is the application's own text and can carry data tags the framework built, so only `<system>` is escaped there.
+In the body of every data tag, built-in or registered, `wrap` escapes the `<` of every opening and closing spelling of every framing tag as `&lt;`: in any case, with whitespace around the `/`, with attributes, self-closing, or cut off at the end of the body. It also HTML-escapes attribute values and leaves off those that are `None`; attribute names are written as given, so they must be lowercase snake_case, like `tool_name`. A name with other characters makes `wrap` raise a [`UserError`][pydantic_ai.exceptions.UserError]; one the earlier rule allowed, such as `_ref`, still works with a deprecation warning. It changes nothing else, so content that mentions no framing tag goes in exactly as written. The `<system>` voice tag is the exception: its body is the application's own text and can carry data tags the framework built, so only `<system>` is escaped there.
 
 For a body that isn't a string, such as a file, put it between [`open_tag`][pydantic_ai.framing.open_tag] and [`close_tag`][pydantic_ai.framing.close_tag], which render the tags the same way but escape nothing in between.
 

@@ -661,7 +661,8 @@ class TestInputGuardrailRedaction:
                 and item.metadata.get('origin') == 'pydantic-ai-harness.background_tools.result.v1'
             ]
             if completions:
-                model_completions.append((completions[-1].content, completions[-1].metadata))
+                metadata = {key: value for key, value in completions[-1].metadata.items() if key != '__pydantic_ai__'}
+                model_completions.append((completions[-1].content, metadata))
                 return ModelResponse(parts=[TextPart('done')])
             return ModelResponse(parts=[ToolCallPart('lookup', '{}', tool_call_id='tool-1')])
 
