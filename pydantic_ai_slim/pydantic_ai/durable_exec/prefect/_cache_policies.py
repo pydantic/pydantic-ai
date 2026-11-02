@@ -1,3 +1,4 @@
+import hashlib
 from collections.abc import Callable
 from dataclasses import fields, is_dataclass
 from typing import Any, TypeGuard
@@ -5,6 +6,7 @@ from typing import Any, TypeGuard
 from prefect.cache_policies import INPUTS, RUN_ID, TASK_SOURCE, CachePolicy
 from prefect.context import TaskRunContext
 from prefect.utilities.hashing import hash_objects
+from prefect.utilities.importtools import to_qualified_name
 from pydantic import BaseModel
 
 from pydantic_ai import ToolsetTool
@@ -61,7 +63,8 @@ def _cacheable_value(value: Any) -> Any:
             return {name: exclude_non_serializable(getattr(value, name)) for name in type(value).model_fields}
         return _NON_SERIALIZABLE
 
-    return exclude_non_serializable(projected)
+    # Expanding a model can expose bytes the first projection didn't reach.
+    return _strip_cache_excluded_fields(exclude_non_serializable(projected))
 
 
 def _replace_run_context(
@@ -194,6 +197,16 @@ def _strip_cache_excluded_fields(
         return [_strip_cache_excluded_fields(item) for item in obj]
     elif _is_tuple(obj):
         return tuple(_strip_cache_excluded_fields(item) for item in obj)
+    elif isinstance(obj, bytes | bytearray):
+        try:
+            obj.decode()
+        except UnicodeDecodeError:
+            # Prefect's JSON encoder decodes these as UTF-8, so binary content like an image pushes
+            # `hash_objects` onto its `cloudpickle` fallback, where the key depends on which objects
+            # the payload shares as well as on their values (see `_replace_toolset_tools`). A digest
+            # under Prefect's own type tag stays on the JSON path, distinct from any string with
+            # the same content, and the keys of UTF-8 values don't change.
+            return {'__class__': to_qualified_name(type(obj)), 'sha256': hashlib.sha256(obj).hexdigest()}
     return obj
 
 

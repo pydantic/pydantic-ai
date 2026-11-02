@@ -35,6 +35,7 @@ from pydantic_ai import (
     AgentRunResult,
     AgentRunResultEvent,
     AgentStreamEvent,
+    BinaryContent,
     CapabilityEvent,
     CapabilityInstructionSource,
     CapabilityLoadDeltaPart,
@@ -151,7 +152,9 @@ from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 try:
     from prefect import flow, task
+    from prefect.cache_policies import INPUTS
     from prefect.context import FlowRunContext, TaskRunContext
+    from prefect.utilities.hashing import hash_objects
 
     from pydantic_ai.durable_exec.prefect import (
         DEFAULT_PYDANTIC_AI_CACHE_POLICY,
@@ -164,6 +167,7 @@ try:
     )
     from pydantic_ai.durable_exec.prefect._cache_policies import (
         PrefectAgentInputs,
+        _cacheable_value,  # pyright: ignore[reportPrivateUsage]
         _replace_run_context,  # pyright: ignore[reportPrivateUsage]
         _strip_cache_excluded_fields,  # pyright: ignore[reportPrivateUsage]
     )
@@ -2217,6 +2221,60 @@ def test_cache_policy_normalizes_only_framework_tool_call_ids():
     assert key_for('model-first') != key_for('model-second')
 
 
+def test_cache_policy_hashes_non_utf8_bytes_by_value():
+    """Bytes that aren't valid UTF-8 hash by value, not by which objects the payload shares.
+
+    Prefect's JSON encoder can't serialize them, and on the `cloudpickle` fallback a payload that
+    repeats one bytes object hashes differently from one holding two equal copies.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(value: Any) -> str | None:
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'value': value}, flow_parameters={})
+
+    data = b'\xff\xfe'
+    assert key_for([data, data]) == key_for([data, bytes(bytearray(data))])
+    assert key_for(data) != key_for(b'\xff\xfd')
+    assert key_for(data) != key_for(bytearray(data))
+    assert key_for(b'abc') != key_for('abc')
+    assert key_for(data) != key_for(data.decode('latin-1'))
+    assert key_for({1, 2}) != key_for([1, 2])
+    # UTF-8 bytes already hash by value on the JSON path, so their keys are what Prefect computes.
+    assert key_for(b'abc') == INPUTS.compute_key(task_ctx=mock_task_ctx, inputs={'value': b'abc'}, flow_parameters={})
+
+
+def test_cacheable_value_hashes_non_utf8_bytes_by_value():
+    """`_cacheable_value` projects bytes like the task keys do, and leaves a model on the `cloudpickle` fallback."""
+
+    def digest_of(value: Any) -> str | None:
+        return hash_objects(_cacheable_value(value))
+
+    data = b'\xff\xfe'
+    assert digest_of([data, data]) == digest_of([data, bytes(bytearray(data))])
+    assert digest_of(data) != digest_of(data.decode('latin-1'))
+
+    class Upload(BaseModel):
+        data: bytes
+
+    # Prefect can't JSON-encode this field either, so the model stays on the fallback and still forks the key.
+    upload = Upload(data=data)
+    assert _cacheable_value(upload) is upload
+    assert digest_of(upload) is not None
+    assert digest_of(upload) != digest_of(Upload(data=b'\xff\xfd'))
+
+    class Uploads(BaseModel):
+        lock: Any
+        first: bytes
+        second: bytes
+
+    # A lock can't be hashed, so this model is expanded field by field and its bytes need projecting too.
+    lock = threading.Lock()
+    assert digest_of(Uploads(lock=lock, first=data, second=data)) == digest_of(
+        Uploads(lock=lock, first=data, second=bytes(bytearray(data)))
+    )
+
+
 async def test_cache_policy_hashes_tools_by_value_not_object_identity():
     """A tool task's key must depend on the tool's value, not on which objects the payload shares.
 
@@ -2788,6 +2846,55 @@ async def test_flow_retry_replays_tool_result() -> None:
     assert attempts == 2
     assert tool_runs == ['record_side_effect']
     assert model_runs == 2
+
+
+async def test_flow_retry_replays_model_request_with_binary_history() -> None:
+    """A flow retry replays a model request whose history holds non-UTF-8 binary content.
+
+    Prefect's JSON encoder can't serialize bytes that aren't valid UTF-8, so a history holding an
+    image used to push `hash_objects` onto its `cloudpickle` fallback. The follow-up run's history
+    includes the first run's replayed (deserialized) response, which shares objects differently
+    than the live one did, so the key changed and the follow-up request was submitted again.
+    """
+    model_inputs: list[str] = []
+    tool_runs = 0
+
+    def model_fn(messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+        part = messages[-1].parts[-1]
+        if isinstance(part, UserPromptPart):
+            model_inputs.append(part.content if isinstance(part.content, str) else str(part.content[0]))
+            if part.content == 'use tool':
+                return ModelResponse(parts=[ToolCallPart('side_effect')])
+        else:
+            model_inputs.append(part.part_kind)
+        return ModelResponse(parts=[TextPart('answer')])
+
+    agent = Agent(FunctionModel(model_fn), name='binary_history_agent', capabilities=[PrefectDurability[object]()])
+
+    @agent.tool_plain
+    def side_effect() -> str:
+        nonlocal tool_runs
+        tool_runs += 1
+        return 'done'
+
+    attempts = 0
+
+    @flow(retries=1)
+    async def flaky() -> str:
+        nonlocal attempts
+        attempts += 1
+        result = await agent.run(['look', BinaryContent(data=b'\xff\xfe', media_type='image/png')])
+        follow_up = await agent.run('follow up', message_history=result.all_messages())
+        tool_run = await agent.run('use tool', message_history=follow_up.all_messages())
+        # Fail after every run, so the retry has each model request's and tool's result to replay.
+        if attempts == 1:
+            raise RuntimeError('boom')
+        return tool_run.output
+
+    assert await flaky() == 'answer'
+    assert attempts == 2
+    assert model_inputs == ['look', 'follow up', 'use tool', 'tool-return']
+    assert tool_runs == 1
 
 
 async def test_flow_retry_keeps_run_deadline() -> None:
