@@ -47,7 +47,9 @@ On a [read-only](https://pydantic.dev/docs/ai/core-concepts/workspace/#read-only
 
 The model must accept images.
 
-Every model gets `computer` as a regular function tool.
+- GPT-5.4 and later, except GPT-5.4 nano, get OpenAI's on the Responses API; see
+  [OpenAI](https://pydantic.dev/docs/ai/models/openai/#native-tools).
+- Every other model gets `computer` as a regular function tool.
 
 Gemini 3 points on a 0-999 grid, which `ComputerUse` converts to pixels.
 
@@ -77,6 +79,8 @@ handler such as [`HandleDeferredToolCalls`](https://pydantic.dev/docs/ai/tools-t
 ## Screen size
 
 Some models only take screenshots up to a size, set by `computer_use_screenshot_limit` in their profile:
+
+- GPT: 2560x1440. It clicks less accurately on a larger screen.
 
 A 1280x800 screen fits every model. On a larger screen, `ComputerUse` sends a scaled-down screenshot and scales the
 model's positions back up, if the display can scale screenshots

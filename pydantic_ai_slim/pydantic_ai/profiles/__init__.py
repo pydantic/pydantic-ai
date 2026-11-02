@@ -163,7 +163,8 @@ class ModelProfile(TypedDict, total=False):
 
     A computer-use capability, such as Pydantic AI Harness's `ComputerUse`, sends a larger screen scaled down to fit
     and scales the model's coordinates back up. Claude profiles set it: Claude refuses a larger image, or, on its
-    earlier computer use tools, is sent it scaled down and answers in the smaller image's pixels.
+    earlier computer use tools, is sent it scaled down and answers in the smaller image's pixels. OpenAI's computer
+    use models set it too: they take a 4K screenshot but click less accurately on one.
     """
 
     supports_inline_system_prompts: bool
