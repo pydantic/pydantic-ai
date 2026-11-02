@@ -8,17 +8,22 @@ the public detectors that use it.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TypeGuard
+from typing import Any, TypeGuard, cast
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import CachePoint, TextContent, ToolReturn, UserContent
+from pydantic_ai.messages import CachePoint, TextContent, ToolReturn, UserContent, is_multi_modal_content
 from pydantic_ai_harness._message_text import with_text
 from pydantic_ai_harness.guardrails._shared import GuardrailResult, TextDetector
 
 
-def is_text_tool_return(value: object) -> TypeGuard[ToolReturn[str]]:
-    """Whether `value` is a `ToolReturn` with a string payload."""
-    return isinstance(value, ToolReturn) and isinstance(value.return_value, str)
+def _is_content_list(value: object) -> TypeGuard[list[UserContent]]:
+    """Whether `value` is a list of content parts, such as text beside a screenshot, as a tool can return."""
+    if not isinstance(value, list):
+        return False
+    return all(
+        isinstance(part, str | TextContent | CachePoint) or is_multi_modal_content(part)
+        for part in cast(list[Any], value)
+    )
 
 
 def _detect_content_text(detector: TextDetector, text: str) -> tuple[GuardrailResult | None, str | None]:
@@ -161,3 +166,43 @@ def detect_tool_return_content(
         if part is not None:
             rewritten.append(part)
     return None, rewritten if replaced else None
+
+
+def is_checked_tool_return(value: object) -> TypeGuard[ToolReturn[Any]]:
+    """Whether `value` is a `ToolReturn` whose `return_value` is a string or a list of content parts."""
+    return isinstance(value, ToolReturn) and (
+        isinstance(value.return_value, str) or _is_content_list(cast(ToolReturn[Any], value).return_value)
+    )
+
+
+def detect_return_value(
+    detector: TextDetector, value: str | list[UserContent]
+) -> tuple[GuardrailResult | None, str | list[UserContent] | None]:
+    """Run `detector` over a tool result's string, or the text of its content parts, keeping images.
+
+    Returns a terminal verdict, or the replacement -- `None` when nothing was redacted.
+    """
+    if isinstance(value, str):
+        verdict = detector(value)
+        if verdict.action not in ('allow', 'replace'):
+            return verdict, None
+        if verdict.action == 'allow':
+            return None, None
+        if not isinstance(verdict.replacement, str):
+            raise UserError('A text detector used with for_tool_result_text() must replace a tool result with text.')
+        return None, verdict.replacement
+    verdict, rewritten = detect_tool_return_content(detector, value)
+    return verdict, None if rewritten is None else list(rewritten)
+
+
+def detect_content_list_result(detector: TextDetector, result: object) -> GuardrailResult | None:
+    """Run `detector` over a result made of content parts, such as text beside a screenshot, keeping the images.
+
+    Returns `None` for any other result.
+    """
+    if not _is_content_list(result):
+        return None
+    verdict, rewritten = detect_return_value(detector, result)
+    if verdict is not None:
+        return verdict
+    return GuardrailResult.allow() if rewritten is None else GuardrailResult.replace(rewritten)
