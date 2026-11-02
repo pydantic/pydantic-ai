@@ -195,7 +195,10 @@ async def test_after_tool_hook_return_extras_survive_history() -> None:
     result = await Agent(FunctionModel(model_function), capabilities=[capability, hooks]).run('load it')
     live_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, LoadCapabilityReturnPart)]
     assert len(live_returns) == 1
-    assert live_returns[0].content == {'instructions': 'Do x', 'version': 2}
+    assert live_returns[0].content == {
+        'message': "Capability 'sample' loaded. Its instructions, if any, follow.",
+        'version': 2,
+    }
     assert ModelMessagesTypeAdapter.validate_json(result.all_messages_json()) == result.all_messages()
 
 
