@@ -1048,6 +1048,59 @@ class TestMCPCapability:
         returns = iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
         assert [(part.tool_name, part.content) for part in returns] == [('docs_search', 'results for a')]
 
+    @pytest.mark.parametrize('include_instructions', [True, False])
+    async def test_mcp_include_instructions(self, include_instructions: bool):
+        """`include_instructions` decides whether the server's instructions reach the model."""
+        # `FastMCP` needs server deps; the `mcp` extra only pulls `fastmcp-slim[client]`.
+        pytest.importorskip('fastmcp.server')
+        from fastmcp import FastMCP
+
+        server = FastMCP('docs-server', instructions='Always search the docs first.')
+        instructions: list[str | None] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions.append(info.instructions)
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            instructions='Be brief.',
+            capabilities=[MCP(local=server, id='docs', include_instructions=include_instructions)],
+        )
+        await agent.run('hi')
+        if include_instructions:
+            assert instructions == snapshot(
+                [
+                    """\
+Be brief.
+
+<context id="toolset:docs">
+Always search the docs first.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+"""
+                ]
+            )
+        else:
+            assert instructions == snapshot(['Be brief.'])
+
+    @pytest.mark.parametrize('include_instructions', [True, False])
+    def test_mcp_include_instructions_url(self, include_instructions: bool):
+        """`include_instructions` reaches the local toolset built from `url=` and from a `local=` URL override."""
+        from pydantic_ai.mcp import MCPToolset
+
+        for cap in [
+            MCP[object](url='https://mcp.example.com/api', include_instructions=include_instructions),
+            MCP[object](
+                url='https://mcp.example.com/api',
+                native=True,
+                local='https://relay.example.com/api',
+                include_instructions=include_instructions,
+            ),
+        ]:
+            assert isinstance(cap.local, MCPToolset)
+            assert cap.local.include_instructions is include_instructions
+
     def test_mcp_tool_prefix_true_uses_explicit_id(self):
         """`tool_prefix=True` prefixes with the explicit `id`, and the local toolset keeps that `id`."""
         from pydantic_ai.mcp import MCPToolset
