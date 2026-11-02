@@ -31,3 +31,4 @@ kubectl wait --for=condition=Established crd --all --timeout=60s
 sed "s|SANDBOXD_IMAGE|${image}|" "$here/pools.yaml" | kubectl apply -f -
 kubectl wait swp/python-pool --for=jsonpath='{.status.readyReplicas}'=2 --timeout=180s
 kubectl wait swp/sandboxd-other-ports --for=jsonpath='{.status.readyReplicas}'=1 --timeout=180s
+kubectl wait swp/sandboxd-token --for=jsonpath='{.status.readyReplicas}'=1 --timeout=180s

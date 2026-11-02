@@ -1,7 +1,7 @@
 """A [kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) sandbox behind Pydantic AI's `WorkspaceBackend` protocol.
 
-SDK assumptions verified 2026-10-19 against `k8s-agent-sandbox` 1.0.6 and 1.0.7, sandboxd from
-agent-sandbox v1.0.7, and a kind cluster running the v1.0.7 controller:
+SDK assumptions verified 2026-11-02 against `k8s-agent-sandbox` 1.0.9, sandboxd from agent-sandbox
+v1.0.7, and a kind cluster running the v1.0.7 controller:
 
 * `AsyncSandboxClient.create_sandbox` claims a sandbox from a `SandboxWarmPool`, waits until it is
   Ready, and deletes the claim it named if that fails or is cancelled once (it awaits the delete
@@ -10,10 +10,14 @@ agent-sandbox v1.0.7, and a kind cluster running the v1.0.7 controller:
   for any failed lookup;
 * `client.k8s_helper.get_sandbox_claim` returns `None` only for a 404, and `delete_sandbox_claim`
   ignores only a 404; `AsyncSandbox.status()` reports `SandboxNotFound` only for a 404;
-* `AsyncSandbox.connector.connect()` (re)opens the transport and `grpc_channel()` returns a `grpc.aio`
-  channel to the pod's sandboxd, over a `kubectl port-forward` or an in-cluster address, depending
-  on the connection config;
-* sandboxd runs commands in its `--root-dir` (`/workspace` by default);
+* `AsyncSandbox.commands.start()` runs a string under `/bin/sh -c` over sandboxd's streaming
+  `ProcessService.Start`, reached over a `kubectl port-forward` or an in-cluster address depending
+  on the connection config, and sends the config's `auth_token`. It restarts a port-forward that
+  died before each command, and re-raises gRPC errors as `RuntimeError`;
+* closing the handle cancels the call, which SIGKILLs the command's process group (a `setsid` child
+  may survive, which the workspace protocol allows); a command killed by signal n exits 128+n;
+* sandboxd runs commands in its `--root-dir` (`/workspace` by default), and when a background child
+  keeps stdout open, ends the stream about 5 seconds after the command exits;
 * deleting a claim deletes its Sandbox, then its pod: sandboxd passes the pod's SIGTERM on to the
   commands it runs and reports them as exiting 143. A deleted pod whose claim remains is recreated.
 
@@ -25,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import logging
+import shlex
 import sys
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
@@ -54,7 +59,6 @@ from pydantic_ai_harness._workspace_provider import (
     run_to_completion,
     running_on_asyncio,
 )
-from pydantic_ai_harness.kubernetes_sandbox._process import start_command
 
 
 def _missing(name: str) -> bool:
@@ -132,22 +136,62 @@ def _client(connection: Connection) -> AsyncSandboxClient[AsyncSandbox]:
     return AsyncSandboxClient(connection_config=config, cleanup=False)
 
 
-async def _run_on_sandbox(
-    sandbox: AsyncSandbox, argv: list[str], *, env: Mapping[str, str], timeout: float | None
-) -> CommandResult:
-    import grpc
+# Output is collected in this process, so `yes` or a large `cat` stops at the cap instead of growing
+# it. sandboxd has no limit of its own yet (https://github.com/kubernetes-sigs/agent-sandbox/issues/1918).
+_MAX_OUTPUT_BYTES = 10 * 1024 * 1024
+_OUTPUT_PREVIEW_BYTES = 64 * 1024
 
-    # As the SDK's own command executor does: `connect()` restarts a `kubectl port-forward` that died
-    # and re-reads the sandbox's address, and an unreachable in-cluster address is dropped so the
-    # next command resolves it again.
-    await sandbox.connector.connect()
-    channel = await sandbox.connector.grpc_channel()
-    try:
-        return await start_command(channel, argv, env=env, timeout=timeout)
-    except grpc.aio.AioRpcError as error:
-        if error.code() == grpc.StatusCode.UNAVAILABLE:
-            await sandbox.connector.invalidate_sandboxd_transport(channel)
-        raise
+
+async def _run_on_sandbox(
+    sandbox: AsyncSandbox, script: str, *, env: Mapping[str, str], timeout: float | None
+) -> CommandResult:
+    """Run `script` with the SDK's streaming `commands.start()`, returning its complete output.
+
+    Raises `WorkspaceTimeoutError` with the output that arrived when `timeout` passes, and
+    `WorkspaceOutputLimitError` when the output passes 10 MiB. Either way, closing the handle
+    cancels the stream, and sandboxd kills the command's process group.
+    """
+    from k8s_agent_sandbox.models import ProcessExitEvent
+
+    commands = sandbox.commands
+    if commands is None:
+        raise RuntimeError('The SDK has closed this sandbox handle')
+    stdout = bytearray()
+    stderr = bytearray()
+    exit_code: int | None = None
+    with anyio.move_on_after(timeout) as scope:
+        try:
+            async with await commands.start(script, env=dict(env)) as handle:
+                async for event in handle.events():
+                    if isinstance(event, ProcessExitEvent):
+                        exit_code = event.exit_code
+                        continue
+                    (stdout if event.type == 'stdout' else stderr).extend(event.data)
+                    if len(stdout) + len(stderr) > _MAX_OUTPUT_BYTES:
+                        raise WorkspaceOutputLimitError(
+                            'Command output exceeded the 10 MiB limit; redirect it to a file and read part of it instead',
+                            limit=_MAX_OUTPUT_BYTES,
+                            stdout=stdout[:_OUTPUT_PREVIEW_BYTES].decode(errors='replace'),
+                            stderr=stderr[:_OUTPUT_PREVIEW_BYTES].decode(errors='replace'),
+                        )
+        except asyncio.CancelledError:
+            # Closing a channel cancels its calls, so another command's lost connection can end this
+            # one with a cancellation no one asked for. Raised as the connection error it is.
+            task = asyncio.current_task()
+            if task is not None and not task.cancelling():
+                raise ConnectionError('The connection to sandboxd closed while the command was running') from None
+            raise
+    if scope.cancelled_caught:
+        raise WorkspaceTimeoutError(
+            f'Command timed out after {timeout:g} seconds',
+            stdout=stdout.decode(errors='replace'),
+            stderr=stderr.decode(errors='replace'),
+        )
+    # `events()` raises when the stream ends without an exit event.
+    assert exit_code is not None
+    return CommandResult(
+        exit_code=exit_code, stdout=stdout.decode(errors='replace'), stderr=stderr.decode(errors='replace')
+    )
 
 
 def _require_asyncio() -> None:
@@ -267,22 +311,22 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
         check_env_types(env)
         argv = command_argv(command, shell)
         _require_asyncio()
-        # Workaround: sandboxd's `Start` leaves stdin open and reports a program it cannot start as a
-        # gRPC error, where the protocol wants stdin at EOF and exit codes 127 and 126, so every
-        # command goes through `sh`. sandboxd also starts every command in its root directory and
-        # moves a `cwd` outside it under the root instead of refusing it, so another directory is
-        # entered from the shell. Not tracked upstream yet.
+        # `commands.start()` runs a string under sandboxd's `/bin/sh -c`, so the argv goes in as the
+        # script's positional parameters. Workaround: sandboxd's `Start` leaves stdin open, where the
+        # protocol wants it at EOF, so the exec script redirects it. sandboxd also moves a `cwd`
+        # outside its root under the root instead of refusing it, so another directory is entered
+        # from the shell. Not tracked upstream yet.
         if self._working_dir is None:
-            argv = ['/bin/sh', '-c', EXEC_SCRIPT, 'sh', *argv]
+            script = f'set -- {shlex.join(argv)}\n{EXEC_SCRIPT}'
         else:
             # A missing `working_dir` exits 125 with only the marker on stderr, before the command runs.
             enter = f'cd -- "$1" 2>/dev/null || {{ printf %s {self._missing_cwd_marker} >&2; exit 125; }}'
-            argv = ['/bin/sh', '-c', f'{enter}\nshift\n{EXEC_SCRIPT}', 'sh', self._working_dir, *argv]
+            script = f'set -- {shlex.join([self._working_dir, *argv])}\n{enter}\nshift\n{EXEC_SCRIPT}'
         async with self._operation():
             async with self._lock:
                 sandbox = await self._acquire()
             try:
-                result = await _run_on_sandbox(sandbox, argv, env={**self._env, **(env or {})}, timeout=timeout)
+                result = await _run_on_sandbox(sandbox, script, env={**self._env, **(env or {})}, timeout=timeout)
             except (WorkspaceTimeoutError, WorkspaceOutputLimitError):
                 raise
             except Exception as error:
@@ -355,8 +399,7 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
 
         async def claim() -> AsyncSandbox:
             # Named by the SDK, which deletes the claim again if this fails or is cancelled before it is Ready.
-            # The SDK types its unused `volume_claim_templates` parameter as a bare `list[dict]`.
-            sandbox = await client.create_sandbox(  # pyright: ignore[reportUnknownMemberType]
+            sandbox = await client.create_sandbox(
                 warm_pool, namespace=self._namespace, shutdown_after_seconds=self._sandbox_timeout
             )
             self._ref = WorkspaceRef(provider=PROVIDER, id=f'{self._namespace}/{sandbox.claim_name}')

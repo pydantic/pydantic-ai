@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -13,25 +13,26 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-boxd = "2026-10-27T23:56:00Z"
-boxlite = "2026-10-18T01:35:01Z"
-cassetter = false
-certifi = "2026-10-20T02:25:00Z"
-genai-prices = false
-listentome = false
-logfire = false
-logfire-api = false
 pillow = "2026-10-16T22:19:00Z"
 prefect = "2026-10-21T03:46:00Z"
-pydantic = false
-pydantic-ai-harness = false
-pydantic-core = false
-pydantic-extra-types = false
-pydantic-handlebars = false
-pydantic-monty = false
-pydantic-monty-client = false
 pydantic-monty-runtime = false
+k8s-agent-sandbox = "2026-10-29T21:50:00Z"
+pydantic-handlebars = false
+pydantic-extra-types = false
+pydantic = false
+pydantic-core = false
+pydantic-ai-harness = false
+logfire-api = false
+cassetter = false
+listentome = false
+boxlite = "2026-10-18T01:35:01Z"
+logfire = false
 pydantic-settings = false
+pydantic-monty-client = false
+genai-prices = false
+pydantic-monty = false
+certifi = "2026-10-20T02:25:00Z"
+boxd = "2026-10-27T23:56:00Z"
 
 [manifest]
 requirements = [
@@ -1153,14 +1154,13 @@ requires-dist = [
     { name = "exa-py", marker = "extra == 'exa'", specifier = ">=2.16.0" },
     { name = "fastmcp", marker = "extra == 'stackone'", specifier = ">=3.4.5,<4" },
     { name = "genai-prices", specifier = ">=0.0.71" },
-    { name = "grpcio", marker = "extra == 'kubernetes'", specifier = ">=1.83.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "idna", marker = "extra == 'playwright'", specifier = ">=3.4" },
     { name = "ipykernel", marker = "extra == 'ipython'", specifier = ">=6.29.0" },
     { name = "json-repair", marker = "extra == 'coder'", specifier = ">=0.58.0" },
     { name = "json-repair", marker = "extra == 'repair-tool-arguments'", specifier = ">=0.58.0" },
     { name = "jupyter-client", marker = "extra == 'ipython'", specifier = ">=8.6.3" },
-    { name = "k8s-agent-sandbox", extras = ["async"], marker = "extra == 'kubernetes'", specifier = ">=1.0.6,<2" },
+    { name = "k8s-agent-sandbox", extras = ["async", "grpc"], marker = "extra == 'kubernetes'", specifier = ">=1.0.9,<2" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=4.31.0" },
     { name = "modal", marker = "extra == 'modal'", specifier = ">=1.5.2" },
     { name = "pgtask", marker = "extra == 'pgtask'", specifier = ">=0.2.0,<1" },

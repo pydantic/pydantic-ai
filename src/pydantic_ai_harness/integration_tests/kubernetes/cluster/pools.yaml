@@ -101,6 +101,54 @@ spec:
   sandboxTemplateRef:
     name: sandboxd-other-ports
 ---
+# sandboxd that requires a bearer token: the SHA-256 of `pydantic-ai-live-token`, a test value for
+# this local cluster only. `GET /v1/health`, the readiness probe, needs none.
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: sandboxd-token
+spec:
+  podTemplate:
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 1000
+      containers:
+        - name: sandboxd
+          image: SANDBOXD_IMAGE
+          imagePullPolicy: Never
+          args:
+            - --root-dir=/workspace
+            - --rest-port=8080
+            - --grpc-port=9090
+            - --auth-token-sha256=e3c2dae374869ccfe7b6261aab6455e0c1b91f9eab267ad89d24014d91eae59a
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 512Mi}
+          ports:
+            - containerPort: 8080
+            - containerPort: 9090
+          readinessProbe:
+            httpGet: {path: /v1/health, port: 8080}
+            periodSeconds: 1
+          volumeMounts:
+            - {name: workspace, mountPath: /workspace}
+      volumes:
+        - {name: workspace, emptyDir: {}}
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: sandboxd-token
+spec:
+  replicas: 1
+  sandboxTemplateRef:
+    name: sandboxd-token
+---
 # A sandbox that never becomes Ready, so a claim on it stays pending until it is deleted.
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxTemplate

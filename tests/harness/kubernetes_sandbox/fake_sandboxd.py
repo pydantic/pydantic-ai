@@ -4,7 +4,7 @@
 and runs each command as a host process in its root directory, with sandboxd's semantics: the
 command gets its own process group, which is SIGKILLed when the call is cancelled; stdin is an
 open pipe; a signal death exits 128+n. Messages are built with protobuf from a descriptor matching
-`process.proto`, independently of the backend's hand-written encoding, so the two check each other.
+`process.proto`, independently of the SDK's generated stubs, so the two check each other.
 
 `FakeCluster` stands in for the SDK's `AsyncSandboxClient`: each claim gets its own `FakeSandboxd`
 and root directory. Deleting a claim stops its server as deleting the pod stops sandboxd: commands
@@ -27,6 +27,7 @@ import anyio
 import grpc
 import grpc.aio
 from google.protobuf import descriptor_pb2, descriptor_pool, message_factory
+from k8s_agent_sandbox.commands.async_command_executor import AsyncCommandExecutor
 
 _GRACE = 0.3
 """How long output pipes may stay open after the command exits (sandboxd waits about 5 seconds)."""
@@ -247,16 +248,24 @@ class _Process:
 
 @dataclass
 class FakeSandbox:
-    """The SDK's `AsyncSandbox`, as much of it as the backend uses."""
+    """The SDK's `AsyncSandbox`, as much of it as the backend uses.
+
+    `commands` is the SDK's own executor, on a connector to the fake sandboxd, so the backend runs
+    commands through the SDK's real `commands.start()`.
+    """
 
     claim_name: str | None
     namespace: str
     sandboxd: FakeSandboxd
     cluster: FakeCluster
     connector: FakeConnector = field(init=False)
+    commands: AsyncCommandExecutor = field(init=False)
 
     def __post_init__(self) -> None:
         self.connector = FakeConnector(self)
+        # The executor only calls the connector methods `FakeConnector` has.
+        connector: Any = self.connector
+        self.commands = AsyncCommandExecutor(connector, tracer=None, trace_service_name='sandbox-client')
 
     async def status(self) -> tuple[str, str]:
         if self.cluster.status_error is not None:
@@ -277,6 +286,9 @@ class FakeConnector:
         self.channels: list[grpc.aio.Channel] = []
         self.dropped = False
         """When set, the channel points at an address nothing listens on until `connect()` reopens it."""
+
+    def is_sandboxd(self) -> bool:
+        return True
 
     async def connect(self) -> None:
         if self.dropped and not self.sandbox.cluster.reconnect_fails:

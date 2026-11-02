@@ -33,6 +33,7 @@ import grpc
 import grpc.aio
 import pytest
 from k8s_agent_sandbox.models import SandboxdInClusterConnectionConfig, SandboxdPodTunnelConnectionConfig
+from pydantic import SecretStr
 from pytest_examples import CodeExample
 
 from pydantic_ai.tools import RunContext
@@ -266,10 +267,12 @@ async def test_a_dead_port_forward_is_restarted() -> None:
         os.kill(pid, signal.SIGKILL)
     # Until asyncio reaps it, the SDK cannot tell the port-forward died, so a command sent at once may
     # fail with a retryable `UNAVAILABLE`, which drops the connection; the next one opens a new one.
+    # The SDK re-raises it as `RuntimeError`, with the gRPC error as the cause.
     try:
         await backend.run(['true'])
-    except grpc.aio.AioRpcError as error:
-        assert error.code() == grpc.StatusCode.UNAVAILABLE
+    except RuntimeError as error:
+        cause = error.__cause__
+        assert isinstance(cause, grpc.aio.AioRpcError) and cause.code() == grpc.StatusCode.UNAVAILABLE
     assert (await backend.run(['echo', 'back'])).stdout == 'back\n'
     await _destroy(backend)
 
@@ -306,6 +309,21 @@ async def test_a_connection_config_reaches_sandboxd_on_other_ports() -> None:
     connection = SandboxdPodTunnelConnectionConfig(grpc_port=9191, rest_port=8181)
     backend = _new_backend(warm_pool='sandboxd-other-ports', connection=connection)
     assert (await backend.run(['echo', 'hi'])).stdout == 'hi\n'
+    await _destroy(backend)
+
+
+async def test_a_connection_config_sends_the_sandboxd_auth_token() -> None:
+    """A config's `auth_token` reaches a sandboxd that requires one; without it, sandboxd refuses the command."""
+    backend = _new_backend(
+        warm_pool='sandboxd-token',
+        connection=SandboxdPodTunnelConnectionConfig(auth_token=SecretStr('pydantic-ai-live-token')),
+    )
+    assert (await backend.run(['echo', 'hi'])).stdout == 'hi\n'
+    await backend.aclose()
+    unauthenticated = KubernetesSandboxBackend(ref=backend.ref)
+    with pytest.raises(RuntimeError, match='UNAUTHENTICATED'):
+        await unauthenticated.run(['true'])
+    await unauthenticated.aclose()
     await _destroy(backend)
 
 

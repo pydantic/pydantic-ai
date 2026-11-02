@@ -244,6 +244,11 @@ prefect = "2026-10-21T03:46:00Z"
 # TODO(adtyavrdhn): Remove after 2026-11-03 23:56 UTC, then run `uv lock` and
 # `uv lock --script .github/scripts/pydantic-ai-runner`.
 boxd = "2026-10-27T23:56:00Z"
+# k8s-agent-sandbox 1.0.9 is the `kubernetes` extra's floor: it is the first release with the
+# streaming `sandbox.commands.start()` the backend runs commands through.
+# TODO(adtyavrdhn): Remove after 2026-11-05 21:50 UTC, then run `uv lock` and
+# `uv lock --script .github/scripts/pydantic-ai-runner`.
+k8s-agent-sandbox = "2026-10-29T21:50:00Z"
 
 [dependency-groups]
 dev = [

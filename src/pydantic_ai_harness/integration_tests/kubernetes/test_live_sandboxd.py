@@ -2,9 +2,8 @@
 
 The unit suite in `tests/harness/kubernetes_sandbox` runs against a Python stand-in for sandboxd.
 This file runs the same rules against the real daemon, so what only the daemon can answer is
-checked here: how `Start` streams and ends, that cancelling a call kills the command's process
-group, how sandboxd shuts down with a command running, and that the backend's hand-written messages
-decode as sandboxd's protobuf.
+checked here: how `Start` streams and ends through the SDK's `commands.start()`, that cancelling a
+call kills the command's process group, and how sandboxd shuts down with a command running.
 
 Only the Kubernetes side is stood in for: each claim starts its own `sandboxd` process with its own
 root directory, the way each claimed pod runs one, and deleting the claim stops it with SIGTERM, as
@@ -37,6 +36,7 @@ import anyio
 import grpc.aio
 import httpx
 import pytest
+from k8s_agent_sandbox.commands.async_command_executor import AsyncCommandExecutor
 
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
@@ -167,13 +167,22 @@ class Client:
 
 
 class Sandbox:
-    """The SDK's `AsyncSandbox` and its connector, as much as the backend uses."""
+    """The SDK's `AsyncSandbox` and its connector, as much as the backend uses.
+
+    `commands` is the SDK's own executor, so commands reach the daemon through its real `commands.start()`.
+    """
 
     def __init__(self, client: Client, namespace: str, claim_name: str) -> None:
         self.client = client
         self.namespace = namespace
         self.claim_name = claim_name
         self.connector = self
+        # The executor only calls the connector methods this class has.
+        connector: Any = self
+        self.commands = AsyncCommandExecutor(connector, tracer=None, trace_service_name='sandbox-client')
+
+    def is_sandboxd(self) -> bool:
+        return True
 
     async def connect(self) -> None:
         pass

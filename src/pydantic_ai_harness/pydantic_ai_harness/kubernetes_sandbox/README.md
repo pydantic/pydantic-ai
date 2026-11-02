@@ -209,7 +209,7 @@ sandbox = KubernetesSandbox(
 )
 ```
 
-`SandboxdInClusterConnectionConfig` takes the same ports, with `mode='in-cluster-pod-ip'` or `mode='in-cluster-service'`.
+`SandboxdInClusterConnectionConfig` takes the same ports, with `mode='in-cluster-pod-ip'` or `mode='in-cluster-service'`. For sandboxd started with `--auth-token-sha256` or `--auth-token-file`, pass the token as either config's `auth_token`; every command sends it.
 
 ## Clean up
 
@@ -298,7 +298,6 @@ Removing a capability while workflows using it are still running changes their r
 - Works on the asyncio event loop only; under Trio, workspace operations and `destroy` raise `UserError`.
 - Commands start through `/bin/sh` and file operations run as shell commands, so the image needs a POSIX shell with coreutils (`base64`, `dd`, `find`).
 - If a sandbox's pod is lost while its claim remains, for example when its node fails, agent-sandbox starts a new pod. Commands fail until it is ready, with an error durable execution retries. The new pod starts empty except for what the template keeps on a persistent volume; the template above uses `emptyDir`, so files are lost.
-- sandboxd's optional bearer token is not supported yet; rely on the NetworkPolicy to restrict who can reach the pods.
 
 See [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/) for more.
 

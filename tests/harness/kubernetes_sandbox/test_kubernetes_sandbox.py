@@ -337,16 +337,18 @@ async def test_a_dropped_connection_is_reopened(cluster: FakeCluster) -> None:
     await backend.run(['true'])
     cluster.drop_connections()
     cluster.reconnect_fails = True
-    with pytest.raises(grpc.aio.AioRpcError) as caught:
+    # The SDK re-raises gRPC errors as `RuntimeError`, keeping the original as the cause.
+    with pytest.raises(RuntimeError, match='UNAVAILABLE') as caught:
         await backend.run(['true'])
-    assert caught.value.code() == grpc.StatusCode.UNAVAILABLE
-    # Dropped from the SDK's cache, as its own command executor does.
+    cause = caught.value.__cause__
+    assert isinstance(cause, grpc.aio.AioRpcError) and cause.code() == grpc.StatusCode.UNAVAILABLE
+    # The SDK drops the unreachable connection from its cache.
     assert len(cluster.invalidated) == 1
     cluster.reconnect_fails = False
     assert (await backend.run(['true'])).exit_code == 0
     # Any other gRPC error leaves the connection cached.
     _sandboxd(cluster, backend.ref).start_error = grpc.StatusCode.INTERNAL
-    with pytest.raises(grpc.aio.AioRpcError):
+    with pytest.raises(RuntimeError, match='INTERNAL'):
         await backend.run(['true'])
     assert len(cluster.invalidated) == 1
     await backend.aclose()
@@ -394,7 +396,7 @@ async def test_a_stream_without_an_exit_event_is_an_error(cluster: FakeCluster) 
     backend = KubernetesSandboxBackend(warm_pool='pool')
     await backend.run(['true'])
     _sandboxd(cluster, backend.ref).send_exit = False
-    with pytest.raises(RuntimeError, match='without an exit event'):
+    with pytest.raises(RuntimeError, match='ended without an Exit event'):
         await backend.run(['true'])
     await backend.aclose()
 
