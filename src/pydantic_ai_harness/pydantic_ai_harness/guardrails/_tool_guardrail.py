@@ -271,8 +271,8 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
 
         `str` satisfies `Sequence[str]`, so pyright accepts `hidden='danger'`
         and the set built from it holds the six letters of the word, so the
-        tool would stay visible with no error. `tools='delete_all'` fails the other way, matching any tool whose
-        name is a substring of it.
+        tool would stay visible with no error. `tools='delete_all'` fails the
+        other way, matching any tool whose name is a substring of it.
         """
         for field_name, value in (('tools', self.tools), ('hidden', self.hidden)):
             if isinstance(value, str):

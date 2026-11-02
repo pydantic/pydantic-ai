@@ -130,9 +130,10 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
 
     A `TrajectoryJudge` evaluates the most recent `window` tokens of the run's trajectory
     every `every` model requests, concurrently with the run, and delivers exactly one
-    verdict per evaluation: `AllGood`, or `Steer` with a corrective message. Steering is enqueued into the run (`RunContext.enqueue`, `'asap'` priority) as a
-    framework note in system voice followed by the judge's message as quoted data, attributed to
-    the judge, so the running agent can course-correct.
+    verdict per evaluation: `AllGood`, or `Steer` with a corrective message. Steering is
+    enqueued into the run (`RunContext.enqueue`, `'asap'` priority) as a framework note in
+    system voice followed by the judge's message as quoted data, attributed to the judge, so
+    the running agent can course-correct.
 
     At most one evaluation per judge is in flight at a time; a cadence tick that finds one
     still running is skipped. An evaluation still in flight when the run ends is cancelled.

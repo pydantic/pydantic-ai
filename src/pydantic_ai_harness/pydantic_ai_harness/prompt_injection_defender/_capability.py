@@ -82,9 +82,9 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
     """Classify tool results for indirect prompt injection and withhold the risky ones.
 
     Indirect prompt injection is instructions planted in third-party data, such as emails,
-    tickets, documents, and MCP payloads, that redirect the agent. This capability classifies each locally executed tool result with
-    `stackone-defender` after the tool returns. A result passes through unchanged unless
-    the defense rejects it. With `block_high_risk=True`, the built-in defense rejects
+    tickets, documents, and MCP payloads, that redirect the agent. This capability
+    classifies each locally executed tool result with `stackone-defender` after the tool
+    returns. A result passes through unchanged unless the defense rejects it. With `block_high_risk=True`, the built-in defense rejects
     detected high or critical risk results, which are replaced with `blocked_message` so
     their content never reaches the model. Every flagged verdict is reported through
     `on_detection`, and a withheld result carries a diagnostics summary on
