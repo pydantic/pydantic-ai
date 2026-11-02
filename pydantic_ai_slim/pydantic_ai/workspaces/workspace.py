@@ -443,7 +443,7 @@ class Workspace(WorkspaceBackend):
         )
 
     def _operation(self, operation: Operation) -> AbstractContextManager[Span]:
-        """Trace `operation`, unless no environment is attached: there is nothing to trace it in."""
+        """Trace `operation`, unless no environment is attached."""
         return operation_span(operation, self) if self.attached else nullcontext(INVALID_SPAN)
 
     async def _resolve_traced(self, path: str, span: Span) -> str:

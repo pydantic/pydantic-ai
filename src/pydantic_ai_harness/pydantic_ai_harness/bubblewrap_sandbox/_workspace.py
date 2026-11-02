@@ -199,7 +199,7 @@ class _SandboxedCommands(WorkspaceBackend, SupportsCommands):
 
     @property
     def ref(self) -> WorkspaceRef | None:
-        # The sandbox routes only file operations through this backend; the ref names the sandbox on their spans.
+        # Names the sandbox on the spans of file operations routed through this backend.
         return self._sandbox.ref
 
     async def working_dir(self) -> str:
@@ -306,8 +306,7 @@ class BubblewrapWorkspace(WrapperWorkspace):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        # Traced here, with the caller's command: the wrapped workspace sees only the launcher, whose
-        # arguments carry the `env` values.
+        # Traced here: the wrapped workspace sees only the `bwrap` launcher, whose arguments carry `env`.
         with self._operation('run') as span:
             set_command(span, command)
             result = await self._run_sandboxed(command, shell=shell, env=env, timeout=timeout)

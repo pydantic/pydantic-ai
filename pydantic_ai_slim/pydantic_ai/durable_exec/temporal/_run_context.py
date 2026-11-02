@@ -78,7 +78,7 @@ def deserialize_run_context(
 ) -> RunContext[Any]:
     """Deserialize a run context inside a Temporal activity, attach the agent instance, and trace its workspace calls.
 
-    Workspace calls in the activity are traced as `_publish_workspace_telemetry` describes. See [`DurableRunContext.restore`][pydantic_ai.durable_exec.DurableRunContext.restore].
+    See [`DurableRunContext.restore`][pydantic_ai.durable_exec.DurableRunContext.restore].
     """
     ctx = run_context_type.restore(serialized, deps=deps, agent=agent, engine_spec=TEMPORAL_ENGINE_SPEC)
     if agent is not None:
@@ -87,12 +87,9 @@ def deserialize_run_context(
 
 
 def _publish_workspace_telemetry(ctx: RunContext[Any], agent: AbstractAgent[Any, Any]) -> None:
-    """Trace the activity's workspace calls under the activity's span, as the run traces its own.
+    """Trace the activity's workspace calls with the worker agent's tracer, as the run's tracer can't cross into it.
 
-    The run's tracer can't cross into the activity, so it is rebuilt from the worker's agent, as
-    `decide` spans are. Content is captured only if the run asked for it too. Nothing is traced when
-    the agent has no instrumentation or the activity has no recording span to attach to. Every
-    activity runs in a context of its own, so this lasts as long as the activity.
+    Content is captured only if the run captures it too.
     """
     settings = agent_instrumentation_settings(agent)
     if settings is not None and get_current_span().is_recording():

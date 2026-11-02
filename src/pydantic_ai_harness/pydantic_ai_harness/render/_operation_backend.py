@@ -197,8 +197,7 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
                 ctx = operation_run_context(params)
                 assert ctx is not None, 'every installed operation carries a run context'
                 try:
-                    # The task's workspace calls trace with the tracer and content setting its run context was
-                    # rebuilt with, the same ones its tools trace with.
+                    # Workspace calls trace like the task's tools, with its rebuilt run context's tracer.
                     with (
                         self._runtime.activate(context),
                         workspace_telemetry_scope(ctx.tracer, include_content=ctx.trace_include_content),

@@ -98,10 +98,8 @@ cannot tell a dead environment from a failed operation, probe with `working_dir(
 
 `result.workspace` continues with a live backend; `result.workspace.ref` lets another worker attach.
 
-An instrumented run traces every workspace call as a `workspace {operation}` span (`workspace run`,
-`workspace read_bytes`, ...), with shell-filesystem commands as child `workspace run` spans; commands
-and paths are recorded only with `include_content=True`. Calls outside a run, such as on
-`result.workspace`, are not traced. See
+An instrumented run traces each workspace call as a `workspace {operation}` span; commands and paths
+are recorded only with `include_content=True`. See
 [workspace spans](https://pydantic.dev/docs/ai/integrations/logfire/#workspace-spans).
 
 Under `TemporalDurability`, `DBOSDurability` or `PrefectDurability`, attach the workspace capability

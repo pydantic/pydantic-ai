@@ -345,14 +345,12 @@ async def _run_lifecycle_hooks(  # noqa: C901
     run_capability._prepare_run_context(run_ctx)  # pyright: ignore[reportPrivateUsage]
 
     outer_context = contextvars.copy_context()
-    # A workspace has no `RunContext`, so its spans find the run's instrumentation in the context the run
-    # and its tasks inherit. Set it in `wrap_run`'s context, so it is propagated and restored with the rest.
+    # Workspace spans read the run's tracer from the context, which `wrap_run`'s task inherits.
     wrap_context = outer_context.copy()
     wrap_context.run(publish_workspace_telemetry, run_ctx.tracer, include_content=run_ctx.trace_include_content)
     # Teardown after the run body returns, raises, or exits early waits for `wrap_run` through `ScopedTask`, so a
     # cancellation of the caller reaches it in the form it arrived: shielded cleanup in `wrap_run` finishes under a
     # cancelled `anyio` scope, and `on_run_error` is still reached. `_SHUTDOWN_EXCEPTIONS` cancel and drain it instead.
-    # Created inside `wrap_context`, so the task it starts copies that context.
     _wrap = wrap_context.run(_utils.ScopedTask, run_capability.wrap_run(run_ctx, handler=_do_run))
     # Wait for handler to start or wrap_run to complete (short-circuit).
     _ready_waiter = asyncio.create_task(_run_ready.wait())
