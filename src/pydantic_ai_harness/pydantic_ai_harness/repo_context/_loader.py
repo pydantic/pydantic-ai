@@ -78,7 +78,7 @@ async def _real_file(
         return None
     real = Path(await workspace.realpath(text))
     if real.parent == Path(await workspace.realpath(str(path.parent))):
-        if real.name not in filenames and real.name not in _INSTRUCTION_NAMES:
+        if real.name != path.name and real.name not in filenames and real.name not in _INSTRUCTION_NAMES:
             return None
         return real, path.parent / real.name
     # External targets require explicit authorization; their entry directory still defines their scope.

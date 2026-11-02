@@ -367,8 +367,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
                 continue
             # The tool authorized the file or directory it touched, not every directory in its lexical path: a
             # symlinked directory there can take one of them, or the file's own parent, outside the project. So
-            # each must resolve inside the working directory too.
-            if confine_target or current != directory:
+            # each must resolve inside the working directory too. The deprecated sniffer may name a directory
+            # outside the working directory on purpose; only that one is exempt.
+            if confine_target or current != directory or current.is_relative_to(working_dir):
                 if real_working_dir is None:
                     real_working_dir = Path(await ctx.workspace.realpath(str(working_dir)))
                 if not Path(await ctx.workspace.realpath(str(current))).is_relative_to(real_working_dir):

@@ -126,6 +126,11 @@ class TestDiscoverInstructionFiles:
         files = await discover_instruction_files(workspace, tmp_path, None, ('CLAUDE.md',))
         assert [(f.path.name, f.content) for f in files] == [('AGENTS.md', 'shared')]
 
+    async def test_loads_a_regular_file_configured_by_relative_path(self, tmp_path: Path, workspace: Workspace) -> None:
+        _write(tmp_path / '.github' / 'copilot-instructions.md', 'copilot')
+        files = await discover_instruction_files(workspace, tmp_path, None, ('.github/copilot-instructions.md',))
+        assert [(f.path, f.content) for f in files] == [(tmp_path / '.github' / 'copilot-instructions.md', 'copilot')]
+
     async def test_walk_up_ancestor_first(self, tmp_path: Path, workspace: Workspace) -> None:
         _write(tmp_path / 'CLAUDE.md', 'root')
         workspace_dir = tmp_path / 'a' / 'b'
@@ -845,8 +850,9 @@ class TestNestedTraversal:
             pytest.param('file', id='symlinked-file-whose-parent-resolves-outside'),
         ],
     )
+    @pytest.mark.parametrize('detection', [pytest.param('events', id='events'), pytest.param('sniffer', id='sniffer')])
     async def test_a_symlink_in_the_path_does_not_surface_files_outside_the_working_directory(
-        self, tmp_path: Path, via: Literal['directory', 'file']
+        self, tmp_path: Path, via: Literal['directory', 'file'], detection: Literal['events', 'sniffer']
     ) -> None:
         _write(tmp_path / 'AGENTS.md', 'OUTSIDE BODY')
         repo = tmp_path / 'repo'
@@ -871,12 +877,18 @@ class TestNestedTraversal:
             else:
                 yield 'done'
 
+        if detection == 'events':
+            repo_context = RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject='contents')
+        else:
+            with pytest.warns(HarnessDeprecationWarning):
+                repo_context = RepoContext(
+                    autoload_instructions=False,
+                    nested_traversal=True,
+                    nested_inject='contents',
+                    traversal_tool_names=frozenset({'read_file'}),
+                )
         result = await Agent(
-            FunctionModel(stream_function=stream),
-            capabilities=[
-                FileSystem(root_dir=repo),
-                RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject='contents'),
-            ],
+            FunctionModel(stream_function=stream), capabilities=[FileSystem(root_dir=repo), repo_context]
         ).run('go', workspace=LocalWorkspaceBackend(working_dir=repo))
         # The read itself is allowed, since the file resolves inside the repo; `bounce` resolves outside it.
         assert 'readme' in str(result.all_messages())
