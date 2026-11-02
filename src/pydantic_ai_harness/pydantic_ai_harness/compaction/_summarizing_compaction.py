@@ -424,12 +424,14 @@ def _fit_transcript(
     dropped from the oldest end, and a last entry too large on its own keeps only its tail.
 
     Sizes are accounted per entry rather than by re-measuring the joined text, so a long history costs
-    one tokenizer call per entry instead of one per candidate cut.
+    one tokenizer call per entry instead of one per candidate cut. What decides whether the entries
+    fit is the joined text, though: the per-entry sum leaves out the separators between them and each
+    entry's own rounding, so a sum that reaches the budget can still be a request that goes over it.
     """
     elements = [element for _, element in entries]
     sizes = [estimate_text_tokens(element, tokenizer) for element in elements]
     total = sum(sizes)
-    if total <= max_tokens:
+    if estimate_text_tokens('\n'.join(elements), tokenizer) <= max_tokens:
         return None
     dropped_tool_results = 0
     for index, (kind, _) in enumerate(entries):

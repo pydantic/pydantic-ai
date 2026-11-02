@@ -3646,6 +3646,18 @@ class TestFitTranscript:
     def test_returns_none_when_the_entries_fit(self):
         assert _fit_transcript([('user', 'x' * 40)], 10) is None
 
+    def test_the_joined_text_decides_whether_the_entries_fit(self):
+        # Each 402-character entry counts as 100 tokens, so the per-entry sum is exactly the
+        # budget while the newline between them puts the joined text one token over it.
+        entries: list[tuple[Any, str]] = [('user', 'x' * 402), ('user', 'y' * 402)]
+        assert _fit_transcript(entries, 201) is None
+
+        trimmed = _fit_transcript(entries, 200)
+
+        assert trimmed is not None
+        # The newest entry is what the trim keeps, so what goes is the head of the older one.
+        assert 'y' * 402 in trimmed.text
+
     def test_drops_tool_output_bodies_first_and_keeps_their_tag(self):
         entries: list[tuple[Any, str]] = [
             ('tool_return', '<message role="tool_return" name="read_file">\n' + 'r' * 4_000 + '\n</message>'),
