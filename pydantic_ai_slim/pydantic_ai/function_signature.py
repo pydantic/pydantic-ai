@@ -754,13 +754,20 @@ def _handle_union_schema(
     """Handle anyOf/oneOf schemas, returning a TypeExpr."""
     type_exprs: list[TypeExpr] = []
     has_null = False
+    # Every member of the union shares one traversal path, but an anonymous object (no `title`)
+    # names its TypedDict after that path, so members beyond the first need their own: otherwise
+    # a union of two titleless objects (as `zod-to-json-schema` emits) collapses the second
+    # member onto the first one's TypedDict, silently dropping its fields from the signature.
+    member_index = 0
 
     for s_raw in schemas:
         s = _normalize_schema_node(s_raw)
         if s.get('type') == 'null':
             has_null = True
-        else:
-            type_exprs.append(_schema_to_type_expr(s, defs, referenced_types, tool_name, path))
+            continue
+        member_path = path if member_index == 0 else f'{path}{member_index}'
+        member_index += 1
+        type_exprs.append(_schema_to_type_expr(s, defs, referenced_types, tool_name, member_path))
 
     # Deduplicate while preserving order (compare rendered strings)
     seen: set[str] = set()
