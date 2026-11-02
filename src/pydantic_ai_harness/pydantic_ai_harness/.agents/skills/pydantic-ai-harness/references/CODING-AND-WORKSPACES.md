@@ -453,7 +453,7 @@ Python up to 3.14.
 
 ### OpenSandbox
 
-`OpenSandbox(*, image=None, connection=None, resource=None, sandbox_timeout=None, working_dir='/workspace', env=None)`
+`OpenSandbox(*, image=None, connection=None, resource=None, allow_internet_access=True, sandbox_timeout=None, working_dir='/workspace', env=None)`
 (backend `OpenSandboxBackend`, extra `[opensandbox]`) runs commands and file operations in a sandbox on
 your own OpenSandbox server, which runs it as a Docker container or a Kubernetes pod.
 
@@ -466,7 +466,9 @@ your own OpenSandbox server, which runs it as a Docker container or a Kubernetes
   after that many idle seconds (renewed by use; a single command must finish within it).
 - `resource={'cpu': '500m', 'memory': '1Gi'}` sizes a new sandbox (default one CPU, 2 GiB).
 - Each command takes about 0.2 s and file operations run as commands, so large files are slow (seconds per MiB).
-- Network access is the server's egress policy, not a capability option. asyncio only.
+- `allow_internet_access=True` leaves network access to the server. `False` requests deny-all egress for a new
+  sandbox only: it needs the server's egress sidecar and `dns+nft` mode for packet-level enforcement; the default
+  `dns` mode only filters DNS lookups. Server-level allow/deny overrides still apply. asyncio only.
 
 ## Remote hosts and bubblewrap
 

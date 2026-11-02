@@ -151,6 +151,24 @@ class TestCommands:
         assert result.stdout == 'backend call\n'
 
 
+class TestNetworkPolicy:
+    @pytest.mark.parametrize(
+        ('settings', 'expected'),
+        [
+            ({}, None),
+            ({'allow_internet_access': True}, None),
+            ({'allow_internet_access': False}, {'defaultAction': 'deny'}),
+        ],
+        ids=['default', 'enabled', 'disabled'],
+    )
+    async def test_creation_requests_the_network_policy(
+        self, server: FakeOpenSandbox, working_dir: str, settings: dict[str, bool], expected: dict[str, str] | None
+    ) -> None:
+        await _create(server, working_dir, **settings).working_dir()
+        [sandbox] = server.sandboxes.values()
+        assert sandbox.network_policy == expected
+
+
 class TestLifecycle:
     async def test_the_sandbox_is_tagged_and_sized_as_asked(self, server: FakeOpenSandbox, working_dir: str) -> None:
         backend = _create(server, working_dir, resource={'cpu': '500m', 'memory': '1Gi'})

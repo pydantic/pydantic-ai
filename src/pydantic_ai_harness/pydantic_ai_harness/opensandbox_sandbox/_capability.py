@@ -50,8 +50,8 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
     runtime it uses (Docker or Kubernetes). Pass a `WorkspaceRef` to attach to a sandbox created earlier.
     Ending a run does not delete the sandbox: remove it with
     [`destroy`][pydantic_ai_harness.opensandbox_sandbox.OpenSandbox.destroy],
-    or set `sandbox_timeout`. Commands run as the image's user. Outbound network access is the
-    server's policy.
+    or set `sandbox_timeout`. Commands run as the image's user. Outbound network access follows the server's
+    policy unless `allow_internet_access=False` requests deny-all egress for a new sandbox.
 
     This capability supplies the workspace only. Compose it with capabilities that use it, such as `Coder`,
     `Shell`, and `FileSystem`. See [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/) for more.
@@ -72,6 +72,13 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
     resource: Mapping[str, str] | None = None
     """Resource limits for a new sandbox, such as `{'cpu': '500m', 'memory': '1Gi'}`; `None` keeps the SDK's
     default of one CPU and 2 GiB."""
+
+    allow_internet_access: bool = True
+    """Whether a new sandbox keeps the server's network policy. `False` requests deny-all egress.
+
+    Requires the server's egress sidecar; direct IP connections are blocked only in `dns+nft` mode, not the
+    default DNS-only mode. Does not change the policy of an attached sandbox.
+    """
 
     sandbox_timeout: int | None = None
     """Seconds a sandbox may go unused before the server deletes it, files included. Every operation renews it as it
@@ -105,6 +112,7 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
         description: str | None = None,
         image: str | None = None,
         resource: Mapping[str, str] | None = None,
+        allow_internet_access: bool = True,
         sandbox_timeout: int | None = None,
         working_dir: str | None = '/workspace',
         env: Mapping[str, str] | None = None,
@@ -120,6 +128,7 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
             description=description,
             image=image,
             resource=resource,
+            allow_internet_access=allow_internet_access,
             sandbox_timeout=sandbox_timeout,
             working_dir=working_dir,
             env=env,
@@ -156,6 +165,7 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
             working_dir=self.working_dir,
             env=self.env,
             resource=self.resource,
+            allow_internet_access=self.allow_internet_access,
             sandbox_timeout=self.sandbox_timeout,
         )
 

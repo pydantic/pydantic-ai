@@ -66,6 +66,7 @@ class FakeSandbox:
     env: dict[str, str]
     resource: dict[str, str]
     expires_at: str | None
+    network_policy: dict[str, Any] | None = None
     state: str = 'Running'
     processes: dict[str, asyncio.subprocess.Process] = field(default_factory=lambda: {})
     streams: list[asyncio.Queue[tuple[str, Any]]] = field(default_factory=lambda: [])
@@ -159,6 +160,7 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
             metadata=body.get('metadata') or {},
             env=body.get('env') or {},
             resource=body.get('resourceLimits') or {},
+            network_policy=body.get('networkPolicy'),
             expires_at=None if timeout is None else (datetime.now(UTC) + timedelta(seconds=timeout)).isoformat(),
         )
         self.sandboxes[sandbox.id] = sandbox

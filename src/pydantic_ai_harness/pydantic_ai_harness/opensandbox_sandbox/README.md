@@ -82,7 +82,7 @@ ref = result.workspace.ref  # store this, e.g. in your database
 later = agent.run_sync('Now make it print the first 100.', workspace=ref)
 ```
 
-The ref is `WorkspaceRef(provider='opensandbox', id=<sandbox id>)`. Pass `workspace='new'` to create a fresh sandbox even when the message history names one. `image` and `resource` only shape a new sandbox; `working_dir`, `env` and `sandbox_timeout` apply to an attached one too.
+The ref is `WorkspaceRef(provider='opensandbox', id=<sandbox id>)`. Pass `workspace='new'` to create a fresh sandbox even when the message history names one. `image`, `resource` and `allow_internet_access` only shape a new sandbox; `working_dir`, `env` and `sandbox_timeout` apply to an attached one too.
 
 A ref is trusted input: whoever passes one runs commands in that sandbox, and the server serves every sandbox to every holder of its API key. Only pass refs your application stored itself.
 
@@ -141,6 +141,25 @@ sandbox = OpenSandbox(
 
 Each sandbox asks for one CPU and 2 GiB unless you pass `resource`. A pod that can't be scheduled leaves the create waiting; the SDK gives up after its 30-second request timeout while the server may still finish it, so the backend finds the sandbox by a tag it set and keeps its ref, and the next operation attaches to it.
 
+## Network access
+
+`allow_internet_access=True` (the default) leaves network access to the server's configuration. Pass
+`OpenSandbox(image='python:3.13-slim', allow_internet_access=False)` to request deny-all egress for a new sandbox.
+It does not change the policy when attaching to an existing sandbox.
+
+Deny-all requires the server's egress sidecar. For packet-level enforcement, including direct IP connections,
+configure the server with:
+
+```toml
+[egress]
+image = "opensandbox/egress:v1.1.7"
+mode = "dns+nft"
+```
+
+The default `dns` mode only filters DNS lookups; it does not block direct IP connections. Server-level
+allow/deny overrides still apply. See [OpenSandbox egress configuration](https://github.com/opensandbox-group/OpenSandbox/blob/main/server/configuration.md#egress)
+for runtime requirements and configuration.
+
 ## Clean up
 
 A run never destroys its sandbox. Destroy it, files included, with the ref you stored:
@@ -184,20 +203,21 @@ Set `sandbox_timeout` above the longest gap between workspace operations, includ
 
 The sandbox's isolation is the server's runtime: a Docker container shares the host's kernel, and a Kubernetes pod shares its node's, unless the server is configured with a secure runtime such as gVisor or Kata Containers. Inside, commands run as the image's user, usually `root`.
 
-- Outbound network access is the server's policy, not the capability's. A deny-all policy blocks connections by IP address only in the server's `dns+nft` egress mode; the default `dns` mode blocks name lookups only.
+- `allow_internet_access=False` requests deny-all egress for new sandboxes. Enforcement depends on the server's egress configuration; see [Network access](#network-access).
 - The server's API key reaches every sandbox on it: keep it out of the sandbox's `env`.
 - `env` values are sent to the server with every command.
 - `image` is pulled by tag; pin a digest, such as `python:3.13-slim@sha256:...`, to get the same image every time.
 
 ## Configuration
 
-[Agent specs](https://pydantic.dev/docs/ai/core-concepts/agent/#agent-specs) can set `image`, `resource`, `sandbox_timeout`, `working_dir` and `env`. Configure the server connection through `OPEN_SANDBOX_DOMAIN` and `OPEN_SANDBOX_API_KEY`; a custom `ConnectionConfig` is a Python-only option.
+[Agent specs](https://pydantic.dev/docs/ai/core-concepts/agent/#agent-specs) can set `image`, `resource`, `allow_internet_access`, `sandbox_timeout`, `working_dir` and `env`. Configure the server connection through `OPEN_SANDBOX_DOMAIN` and `OPEN_SANDBOX_API_KEY`; a custom `ConnectionConfig` is a Python-only option.
 
 | Option | What it does |
 | --- | --- |
 | `image` | Image for a new sandbox, such as `'python:3.13-slim'`. Default: `None`, which only attaches to and destroys sandboxes by ref. |
 | `connection` | The SDK's `ConnectionConfig` for your server. Default: `None`, which reads `OPEN_SANDBOX_DOMAIN` and `OPEN_SANDBOX_API_KEY`. |
 | `resource` | Resource limits for a new sandbox, such as `{'cpu': '500m', 'memory': '1Gi'}`. Default: `None`, one CPU and 2 GiB. |
+| `allow_internet_access` | Default: `True`, which keeps the server's network configuration. `False` requests deny-all egress for new sandboxes; see [Network access](#network-access) for server requirements. |
 | `sandbox_timeout` | Seconds a sandbox may go unused before the server deletes it, files included; every operation renews it, and a single command must finish within it. Default: `None`, kept until destroyed. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against, created on first use if missing. Default: `/workspace`; `None` uses the image's own. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox, and `env` is kept out of the capability's `repr`, but the agent's commands can read it. |

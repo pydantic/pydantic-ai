@@ -63,7 +63,7 @@ try:
     from opensandbox.exceptions import SandboxApiException, SandboxConnectionException, SandboxException
     from opensandbox.manager import SandboxManager
     from opensandbox.models.execd import ExecutionHandlers, OutputMessage, RunCommandOpts
-    from opensandbox.models.sandboxes import SandboxFilter
+    from opensandbox.models.sandboxes import NetworkPolicy, SandboxFilter
 except ImportError as _import_error:
     raise ImportError('Install `pydantic-ai-harness[opensandbox]` to use OpenSandbox.') from _import_error
 
@@ -194,6 +194,8 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
         env: Environment variables every command gets; the per-call `env` goes on top. Nothing is read from the host.
         resource: Resource limits for a new sandbox, such as `{'cpu': '500m', 'memory': '1Gi'}`; `None` keeps the
             SDK's default of one CPU and 2 GiB.
+        allow_internet_access: Whether a new sandbox keeps the server's network policy. `False` requests deny-all
+            egress; blocking direct IP connections requires the server's `dns+nft` egress mode. Ignored on attach.
         sandbox_timeout: Seconds a sandbox may go unused before the server deletes it, files included. Every
             operation renews it as it starts, so a single command must finish within it. `None` keeps it until it
             is destroyed.
@@ -208,6 +210,7 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
         working_dir: str | None = '/workspace',
         env: Mapping[str, str] | None = None,
         resource: Mapping[str, str] | None = None,
+        allow_internet_access: bool = True,
         sandbox_timeout: int | None = None,
     ) -> None:
         if (image is None) == (ref is None):
@@ -225,6 +228,7 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
         self._working_dir = working_dir
         self._env = dict(env or {})
         self._resource = dict(resource) if resource is not None else None
+        self._allow_internet_access = allow_internet_access
         self._sandbox_timeout = sandbox_timeout
         self._sandbox: Sandbox | None = None
         self._resolved_working_dir: str | None = None
@@ -321,6 +325,7 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
                     timeout=timeout,
                     ready_timeout=_CREATE_READY_TIMEOUT,
                     resource=self._resource,
+                    network_policy=None if self._allow_internet_access else NetworkPolicy(defaultAction='deny'),
                     metadata={_CREATE_TAG: tag},
                     connection_config=self._connection,
                 )
