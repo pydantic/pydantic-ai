@@ -125,6 +125,8 @@ steps are reached, so concurrent runs that reach their steps in a different orde
 served each other's recorded results. A synchronous handler must call `run_durable` separately for
 each async section, and concurrent calls are rejected.
 
+Rules for the handler:
+
 - `@durable_execution` must be the outermost decorator because its wrapper is what Lambda invokes.
   Reversing the order raises a `UserError` when the handler is defined.
 - `run_durable` blocks the calling thread, so it cannot be called from inside a running event loop.
