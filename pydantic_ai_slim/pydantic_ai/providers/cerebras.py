@@ -10,7 +10,7 @@ from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
-from pydantic_ai.profiles.zai import zai_model_profile
+from pydantic_ai.profiles.zai import zai_glm_5_3_schema_profile
 
 try:
     from openai import AsyncOpenAI
@@ -47,7 +47,6 @@ class CerebrasProvider(_OpenAISDKProvider):
             'llama': meta_model_profile,
             'qwen': qwen_model_profile,
             'gpt-oss': harmony_model_profile,
-            'zai': zai_model_profile,
         }
 
         # Reasoning models that support the cerebras_disable_reasoning setting
@@ -59,6 +58,9 @@ class CerebrasProvider(_OpenAISDKProvider):
             if model_name_lower.startswith(prefix):
                 profile = profile_func(model_name_lower)
                 break
+        if model_name_lower.startswith('zai-'):
+            # GLM models are served as `zai-glm-*`. Only GLM-5.3's schema fix carries over: thinking is configured below.
+            profile = zai_glm_5_3_schema_profile(model_name_lower.removeprefix('zai-'))
 
         is_reasoning = model_name_lower.startswith(reasoning_prefixes)
         # gpt-oss reasons unconditionally on Cerebras: `disable_reasoning=True` is rejected with a 400,

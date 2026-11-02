@@ -874,16 +874,8 @@ def test_mistral_small_latest():
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_gateway_zai_glm_5_3_inline_defs():
-    """Issue-listed GLM-5.3 gateway routes resolve the Z.ai profile with inline-defs schema transformation."""
-    expected = snapshot(
-        {
-            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
-            'supports_thinking': True,
-            'thinking_always_enabled': True,
-            'zai_supports_reasoning_effort': True,
-            'zai_reasoning_effort_mapping': {'minimal': 'low', 'medium': 'high', 'xhigh': 'max'},
-        }
-    )
+    """GLM-5.3 gateway routes add only the inline-defs schema transformer, not Z.AI's native thinking settings."""
+    expected = snapshot({'json_schema_transformer': InlineDefsJsonSchemaTransformer})
     assert _normalize(TogetherProvider.model_profile('zai-org/GLM-5.3')) == expected
     assert _normalize(NebiusProvider.model_profile('zai-org/GLM-5.3')) == expected
     assert _normalize(VercelProvider.model_profile('zai/glm-5.3')) == expected
@@ -891,46 +883,80 @@ def test_gateway_zai_glm_5_3_inline_defs():
     assert _normalize(OpenAICompatibleProvider.model_profile('zai-org/GLM-5.3')) == expected
 
     fireworks_expected = snapshot(
-        {
-            'supports_json_schema_output': True,
-            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
-            'supports_thinking': True,
-            'thinking_always_enabled': True,
-            'zai_supports_reasoning_effort': True,
-            'zai_reasoning_effort_mapping': {'minimal': 'low', 'medium': 'high', 'xhigh': 'max'},
-        }
+        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'supports_json_schema_output': True}
     )
     assert _normalize(FireworksProvider.model_profile('accounts/fireworks/models/glm-5p3')) == fireworks_expected
     assert _normalize(FireworksProvider.model_profile('routers/glm-5p3-fast')) == fireworks_expected
 
     assert _normalize(OllamaProvider.model_profile('glm-5.3')) == snapshot(
         {
-            'supports_json_schema_output': True,
-            'supports_json_object_output': True,
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
-            'supports_thinking': True,
-            'thinking_always_enabled': True,
             'openai_chat_thinking_field': 'reasoning',
             'openai_supports_strict_tool_definition': False,
-            'zai_supports_reasoning_effort': True,
-            'zai_reasoning_effort_mapping': {'minimal': 'low', 'medium': 'high', 'xhigh': 'max'},
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_gateway_zai_glm_other_versions_unchanged():
+    """GLM ids other than GLM-5.3 keep each gateway's default profile."""
+    assert _normalize(TogetherProvider.model_profile('zai-org/GLM-4.6')) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer}
+    )
+    assert _normalize(NebiusProvider.model_profile('zai-org/GLM-4.7')) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer}
+    )
+    assert _normalize(VercelProvider.model_profile('zai/glm-5')) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer}
+    )
+    # Like any other name without a vendor profile.
+    assert OpenAICompatibleProvider.model_profile('zai-org/GLM-4.6') == OpenAICompatibleProvider.model_profile(
+        'GLM-4.6'
+    )
+    assert _normalize(OllamaProvider.model_profile('glm-4.7')) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'openai_chat_thinking_field': 'reasoning',
+            'openai_supports_strict_tool_definition': False,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+        }
+    )
+    assert _normalize(FireworksProvider.model_profile('accounts/fireworks/models/glm-4p6')) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'supports_json_schema_output': True}
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_cerebras_zai_glm_5_3_inline_defs():
+    """Cerebras's `zai-glm-5.3` gets only the inline-defs schema transformer on top of its own reasoning settings."""
+    assert _normalize(CerebrasProvider.model_profile('zai-glm-5.3')) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'openai_unsupported_model_settings': ('logit_bias',),
+            'supports_thinking': True,
+            'openai_chat_send_back_thinking_parts': 'tags',
+        }
+    )
+    assert _normalize(CerebrasProvider.model_profile('zai-glm-4.7')) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'openai_unsupported_model_settings': ('logit_bias',),
+            'supports_thinking': True,
+            'openai_chat_send_back_thinking_parts': 'tags',
         }
     )
 
 
 @pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
 def test_huggingface_zai_glm_5_3_inline_defs():
-    """`zai-org/GLM-5.3` on Hugging Face resolves the Z.ai profile (was None) with inline-defs transformation."""
+    """`zai-org/GLM-5.3` on Hugging Face gets the inline-defs schema transformer; other GLM ids keep no profile."""
     assert _normalize(HuggingFaceProvider.model_profile('zai-org/GLM-5.3')) == snapshot(
-        {
-            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
-            'supports_thinking': True,
-            'thinking_always_enabled': True,
-            'supports_inline_system_prompts': True,
-            'zai_supports_reasoning_effort': True,
-            'zai_reasoning_effort_mapping': {'minimal': 'low', 'medium': 'high', 'xhigh': 'max'},
-        }
+        {'json_schema_transformer': InlineDefsJsonSchemaTransformer}
     )
+    assert HuggingFaceProvider.model_profile('zai-org/GLM-4.6') is None
 
 
 @pytest.mark.skipif(not mistral_imports(), reason='mistral not installed')
@@ -952,44 +978,9 @@ def test_mistral_zai_glm_5_3_flash_inline_defs():
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_gateway_zai_glm_5_3_model_level_profile():
-    """A model-level `.profile` resolves the Z.ai glm-5.3 profile through its gateway provider."""
+    """A model-level `.profile` picks up the GLM-5.3 schema transformer through its gateway provider."""
     model = OpenAIChatModel('zai-org/GLM-5.3', provider=TogetherProvider(api_key='test'))
-    assert _normalize(model.profile) == snapshot(
-        {
-            'supports_audio_input': False,
-            'supports_image_input': True,
-            'supports_document_input': True,
-            'supported_document_media_types': frozenset(
-                {
-                    'application/msword',
-                    'application/pdf',
-                    'application/vnd.ms-excel',
-                    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                    'text/csv',
-                    'text/html',
-                    'text/markdown',
-                    'text/plain',
-                }
-            ),
-            'supports_audio_file_input': True,
-            'supports_video_input': False,
-            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
-            'supports_cache': False,
-            'supports_auto_cache': False,
-            'supported_cache_retentions': (),
-            'supports_thinking': True,
-            'thinking_always_enabled': True,
-            'forced_tool_choice_disables_thinking': False,
-            'supported_native_tools': frozenset(),
-            'context_window': None,
-            'tool_call_id_length': None,
-            'tool_deferral_mode': None,
-            'tool_addition_mode': None,
-            'zai_supports_reasoning_effort': True,
-            'zai_reasoning_effort_mapping': {'minimal': 'low', 'medium': 'high', 'xhigh': 'max'},
-        }
-    )
+    assert model.profile['json_schema_transformer'] is InlineDefsJsonSchemaTransformer
 
 
 @pytest.mark.skipif(not cohere_imports(), reason='cohere not installed')
