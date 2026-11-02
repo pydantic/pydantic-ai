@@ -8,6 +8,8 @@ lookup cannot settle.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/youdotcom/)
 
+![The model calls tools from two capabilities. YouSearch adds web_search, which returns the top ten hits with excerpts, and get_page, which returns one page as markdown capped at 10,000 characters. YouResearch adds answer, research and finance_research, which return cited answers. Each tool calls one method of the You.com API. Every tool returns a ToolReturn: the text goes to the model and the sources entry of its metadata holds YouSource records for your app. Authentication, billing and permission errors stop the run; other failures come back as a retry.](https://pydantic.dev/docs/ai/img/harness/youdotcom.svg)
+
 ## Installation
 
 The examples below use an Anthropic model and `Agent.from_file`, so they also

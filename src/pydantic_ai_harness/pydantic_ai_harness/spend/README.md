@@ -7,6 +7,8 @@ Track what an agent costs, and stop it when a budget is gone.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/spend/)
 
+![SpendLimits checks budgets around each model request. Before a request, before_model_request reads every budget window from the spend store and lets the request through while all are under their ceilings. After the response, wrap_model_request prices it and adds the cost to each window. When a later request finds the day window spent, SpendLimitExceeded is raised and the request is not sent. The store can be in memory, Redis or PostgreSQL, so several workers can share one counter.](https://pydantic.dev/docs/ai/img/harness/spend.svg)
+
 ## The problem
 
 A loop that calls a model until a condition it never reaches will keep calling until something stops it. `UsageLimits` in Pydantic AI is that stop for one run: it caps tokens, requests and cost for the duration of a single `run()`. What it does not cover is a period longer than one run, a per-tenant share of a shared allowance, or a counter that several worker processes agree on. A daily ceiling spread across a queue's workers is exactly the case where each worker independently believes it has the whole budget.

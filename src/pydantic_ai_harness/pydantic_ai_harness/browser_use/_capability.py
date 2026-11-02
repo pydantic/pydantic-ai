@@ -386,6 +386,9 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
         cdp_url: str | None = None,
         guidance: str | None = None,
         browser_use_telemetry: bool = False,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
     ) -> BrowserUse[AgentDepsT]:
         """Construct the capability from serializable spec options.
 
@@ -406,4 +409,7 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
             cdp_url=cdp_url,
             guidance=guidance,
             browser_use_telemetry=browser_use_telemetry,
+            id=id,
+            description=description,
+            defer_loading=defer_loading,
         )

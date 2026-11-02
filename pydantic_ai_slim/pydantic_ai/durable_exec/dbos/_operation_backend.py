@@ -92,7 +92,7 @@ class DBOSBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic
         return self._operation
 
     async def __call__(self, params: ParamsT, *, config: object | None = None) -> ResultT:
-        policy = self._operation.policy(params)
+        policy = self._operation.policy
         if policy is not None and not policy.repeatable and self._step_options.get('retries_allowed'):
             # The same step name without retries, so a recorded step replays whichever way it ran. DBOS steps have
             # no timeout, so `policy.timeout` doesn't apply.
