@@ -6,7 +6,7 @@ description: "Make Pydantic AI agents durable with Restate, journaling model cal
 
 [Restate](https://restate.dev) is a lightweight durable execution runtime with first-class support for AI agents. The Pydantic AI integration is provided via the [Restate Python SDK](https://github.com/restatedev/sdk-python/tree/main/python/restate/ext/pydantic).
 
-Visit the [Restate documentation](https://docs.restate.dev/ai/patterns/durable-agents) for more information.
+Visit the [Restate documentation](https://docs.restate.dev/ai/patterns/durable-agents) for more information, or read [Build durable agents with Restate and Pydantic AI](https://pydantic.dev/articles/restate-durable-execution-pydanticai) on the Pydantic blog.
 
 ## Durable Execution
 

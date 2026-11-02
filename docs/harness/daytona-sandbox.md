@@ -11,13 +11,15 @@ Run your agent's commands and file edits in an isolated [Daytona](https://www.da
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. DaytonaSandbox's get_workspace hook gives the run a Daytona cloud sandbox as ctx.workspace, so each command and file operation goes over the Daytona API, authenticated with DAYTONA_API_KEY, and runs in the sandbox as the daytona user; output comes back to the tool. The first use creates the sandbox, its WorkspaceRef is saved in the message history and on the result, a later run reattaches with it, and destroy(ref) deletes it. Left idle, Daytona stops the sandbox after 15 minutes and archives it after 7 days stopped; a later run starts it again.](../img/harness/daytona-sandbox.svg)
+
 ## Install
 
 ```bash
-pip/uv-add "pydantic-ai-harness[daytona,anthropic]"
+pip/uv-add "pydantic-ai-harness[coder,daytona,anthropic]"
 ```
 
-The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `DAYTONA_API_KEY` to an API key from your Daytona dashboard, and `ANTHROPIC_API_KEY` for the examples.
+The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `DAYTONA_API_KEY` to an API key from your Daytona dashboard, and `ANTHROPIC_API_KEY` for the examples.
 
 ## Quick start
 
@@ -157,6 +159,8 @@ A failed run returns no result, so there is no ref to store. To delete its sandb
 ```python
 from typing import Any
 
+import anyio
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.run import AgentRunResult
@@ -169,7 +173,10 @@ hooks = Hooks()
 @hooks.on.run_error
 async def delete_failed_run_sandbox(ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[Any]:
     if ctx.workspace.ref is not None:
-        await DaytonaSandbox().destroy(ctx.workspace.ref)
+        # Shielded, so an `anyio` deadline around the run doesn't cut the delete short,
+        # and bounded, so a hung API call can't hang the run indefinitely.
+        with anyio.move_on_after(30, shield=True):
+            await DaytonaSandbox().destroy(ctx.workspace.ref)
     raise error
 
 

@@ -15,6 +15,8 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_clai2.config.features import SUPPORTED_FEATURES
+from pydantic_clai2.config.plugin_requirements import apply_requirements
 from pydantic_clai2.mcp import (
     HTTPServer,
     MCPCommand,
@@ -34,7 +36,11 @@ Servers = dict[str, FastMCP]
 
 
 def in_process(monkeypatch: pytest.MonkeyPatch, servers: Servers) -> None:
-    """Connect each configured server to an in-process FastMCP server of the same name."""
+    """Connect each configured server to an in-process FastMCP server of the same name.
+
+    `MCPServers._build` is the deliberate swap point: it is where a configuration becomes a transport, which
+    `test_mcp.py` covers with real stdio and HTTP servers, so these tests need no subprocess.
+    """
 
     def build(self: MCPServers, entry: ServerEntry) -> MCPToolset[None]:
         return MCPToolset(servers[entry.name], id=f'mcp_{entry.name}')
@@ -294,12 +300,53 @@ async def test_install_and_edit_round_trip_on_demand(tmp_path: Path) -> None:
     assert not edited.defer_loading and edited.description == 'Issue tracker: search and update tickets.'
 
 
-async def test_menu_rows_show_the_on_demand_state(tmp_path: Path) -> None:
-    store = MCPStore(tmp_path / 'config', workspace=tmp_path / 'repo')
-    (tmp_path / 'repo' / '.git').mkdir(parents=True)
-    menu = servers_menu(MCPCommand(servers=MCPServers(store)))
-    store.put('docs', server(defer_loading=True))
-    store.put('off', server(defer_loading=True).model_copy(update={'enabled': False}))
-    notes = {row.key: row.note for row in menu.source.rows()}
-    assert notes['server.docs'] == 'on demand (not loaded)'
-    assert notes['server.off'] == 'Off until you start it'
+async def test_menu_rows_show_the_on_demand_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    in_process(monkeypatch, docs_and_lint())
+    plugin = make_plugin(tmp_path)
+    plugin.store.put('docs', server(defer_loading=True))
+    plugin.store.put('lint', server(defer_loading=True))
+    plugin.store.put('off', server(defer_loading=True).model_copy(update={'enabled': False}))
+    history: list[ModelMessage] = []
+    menu = servers_menu(MCPCommand(servers=plugin.servers, history=lambda: history))
+
+    def notes() -> dict[str, str]:
+        return {row.key: row.note for row in menu.source.rows()}
+
+    assert notes()['server.docs'] == 'on demand (not loaded)'
+    assert notes()['server.off'] == 'Off until you start it'
+    dialogs = ScriptedDialogs([Back()])
+    await menu.actions['server.docs'](dialogs)
+    assert dialogs.asked[0].options[0].description == 'Before the agent loads it.'
+
+    result = await plugin.agent(Scripted(call('load_capability', id='mcp_docs'))).run('Load docs.')
+    history.extend(result.all_messages())
+    assert notes()['server.docs'] == '1 tools · on demand (loaded)'
+    assert notes()['server.lint'] == 'on demand (not loaded)'
+    await plugin.servers.close()
+    assert notes()['server.docs'] == 'on demand (loaded)', 'loaded in this conversation, connecting on the next prompt'
+    dialogs = ScriptedDialogs([Back()])
+    await menu.actions['server.docs'](dialogs)
+    assert dialogs.asked[0].options[0].description == 'Instead of on your next prompt.'
+
+
+@pytest.mark.parametrize(
+    ('servers', 'requirements'),
+    [
+        ({'a': {'command': 'x'}}, {}),
+        ({'a': {'command': 'x', 'defer_loading': True}}, {'servers': frozenset({'mcp-defer-loading'})}),
+        ({'a': {'command': 'x', 'description': 'Docs.'}}, {'servers': frozenset({'mcp-defer-loading'})}),
+        ({'a': {'command': 'x', 'defer_loading': False}}, {'servers': frozenset({'mcp-defer-loading'})}),
+        ({'a': {'command': 'x', 'description': None}}, {'servers': frozenset({'mcp-defer-loading'})}),
+    ],
+    ids=['eager', 'on-demand', 'described', 'explicit-default', 'explicit-null'],
+)
+def test_saved_on_demand_servers_are_tagged_for_older_builds(
+    servers: dict[str, JsonValue], requirements: dict[str, frozenset[str]]
+) -> None:
+    """A build without on-demand servers drops tagged plugin-settings servers instead of failing to load `mcp`."""
+    host: PluginHost[None] = PluginHost(name='mcp', console=Console(file=io.StringIO()), settings={'servers': servers})
+    MCPPlugin.from_host(host)
+    assert host.requirements == requirements
+    assert 'mcp-defer-loading' in SUPPORTED_FEATURES
+    applied = apply_requirements({'servers': servers}, host.requirements, defaults={}, supported=frozenset())
+    assert applied.settings == ({} if requirements else {'servers': servers})

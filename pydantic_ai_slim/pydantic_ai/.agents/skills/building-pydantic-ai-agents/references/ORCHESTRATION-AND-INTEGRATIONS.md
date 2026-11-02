@@ -193,7 +193,7 @@ Common entry points:
 
 - `Case`
 - `Dataset`
-- evaluator classes from `pydantic_evals.evaluators`
+- evaluator classes from `pydantic_evals.evaluators`, or plain functions taking an `EvaluatorContext` for checks without parameters (saved to dataset files under the function's name, so pass them in `custom_evaluator_types` to load)
 
 ## Build Custom Toolsets, Models, or Agents
 

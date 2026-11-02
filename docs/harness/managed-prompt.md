@@ -20,6 +20,8 @@ pip/uv-add "pydantic-ai-harness[logfire]"
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The prompt lives in Logfire as the managed variable prompt__support_agent, with labels such as production and staging. At the start of each run, ManagedPrompt resolves it in the wrap_run hook and uses the value as the run's instructions, which the model receives. The resolved label and version are set as baggage, so the agent run span and its children record which prompt produced them, and those traces go back to Logfire.](../img/harness/managed-prompt.svg)
+
 ## The problem it solves
 
 Changing a prompt through the edit -> review -> deploy loop is slow, and an A/B test or a rollback needs a
@@ -35,6 +37,8 @@ stays open as a context manager for the whole run, so the selected label (and th
 later) is set as baggage, and every span in the run records which prompt produced it.
 
 ## Usage
+
+If Logfire is not set up yet, run `uvx logfire-cli wizard --task pydantic-ai` once from your project; see [Using Logfire](../logfire.md#using-logfire) for details.
 
 Pass the prompt name and a default value. The name `support_agent` is declared as the managed
 variable `prompt__support_agent`, the naming Logfire's Prompt management uses (hyphens in a name

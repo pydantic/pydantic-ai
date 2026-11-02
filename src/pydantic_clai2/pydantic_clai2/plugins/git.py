@@ -13,7 +13,7 @@ from pathlib import Path
 from types import TracebackType
 from urllib.parse import unquote, urlsplit
 
-from anyio import CancelScope, fail_after
+from anyio import CancelScope, fail_after, move_on_after
 
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import canonical_plugin_id
@@ -21,6 +21,8 @@ from pydantic_clai2.runtime.processes import kill_process_tree
 
 ADD_USAGE = 'Usage: /plugins add GIT_URL or /plugins add ID MODULE[:ATTR] [JSON]'
 CHECKOUTS_DIR = '_git'
+CANCEL_DRAIN_GRACE = 1.0
+"""How long cancellation cleanup drains Git's stderr, which a descendant that survived the kill may hold open."""
 
 _SCP_URL = re.compile(r'[\w.-]+@[\w.-]+:[^:\s].*')
 _PLUGIN_ID = re.compile(r'[A-Za-z][A-Za-z0-9_]*')
@@ -174,7 +176,12 @@ async def clone_repository(url: str, destination: Path) -> tuple[int, bytes]:
         with CancelScope(shield=True):
             process = await spawn
             await kill_process_tree(process)
-            await process.communicate()
+            # Windows kills only Git itself when `taskkill` fails, leaving descendants that hold its stderr.
+            with move_on_after(CANCEL_DRAIN_GRACE) as drain:
+                await process.communicate()
+            if drain.cancelled_caught:
+                # Release the pipe instead of holding it until that descendant exits.
+                process._transport.close()  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
         raise
     assert process.returncode is not None and stderr is not None
     return process.returncode, stderr

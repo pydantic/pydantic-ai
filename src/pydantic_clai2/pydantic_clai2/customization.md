@@ -61,6 +61,13 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
   fragment to the status row with get_status_segments; you cannot redesign or
   replace the row itself.
 
+## User worktree removal commands
+
+Use the user-only `worktrees.remove_commands` setting to replace confirmed
+exit-time cleanup, not a plugin contribution. Automatic removal of unchanged
+worktrees and `/workspaces destroy` stay on Git. See the [worktree removal reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#register-a-worktree-removal-command)
+for repository-scoped argv configuration, placeholders, and shell functions.
+
 Pydantic AI core owns the agent loop, model/provider protocols, hooks and tools.
 Harness owns reusable, non-terminal capabilities. CLAI owns the prompt loop,
 commands, plugin loading and rendering. Do not implement a second agent loop in
@@ -162,6 +169,24 @@ hooks plugin (pydantic_clai2.builtin_plugins.hooks). Outside a session,
 clai2 plugins add NAME module[:Class] [JSON] saves for the next startup.
 /plugins opens the management menu. Removing a drop-in disables it persistently;
 delete its source file yourself to remove it from disk.
+
+### Repository instruction boundaries
+
+Use the built-in repo_context plugin's `walk_up` option to enable ancestor
+instructions; its default is false. Set the inclusive stop with
+`/set repo_context.walk_up_root /srv/projects` (default `~`, home). Authorize
+shared instruction targets with
+`/set repo_context.autoload_symlink_roots '["~/agent-context"]'` (default `[]`).
+
+Use absolute paths, `~`, or `~/...`; quote paths containing spaces and
+single-quote the whole JSON list. Keep these user-only settings out of plugin
+JSON and `.clai/settings.json`; changes apply next run. Choose a directory
+containing only trusted instructions, not `/` or all of home. See the user
+reference's Repository instructions section for setup and path rules, and
+[Repo Context](https://pydantic.dev/docs/ai/harness/repo-context/#shared-instruction-symlinks)
+for loading and backend requirements.
+
+### Git plugins
 
 Inside a CLAI session only, /plugins add GIT_URL clones and loads a trusted
 repository over HTTPS or SSH (or a local file:// URL). Its root __init__.py or
@@ -629,7 +654,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai_harness.coder import Coder
 from pydantic_clai2 import chat
-from pydantic_clai2.customization import customization_guide
+from pydantic_clai2.clai_docs import ClaiDocs
 
 model = OpenAIChatModel(
     'my-model',
@@ -638,7 +663,7 @@ model = OpenAIChatModel(
         api_key=os.environ['MY_MODEL_API_KEY'],
     ),
 )
-agent = Agent(model, capabilities=[Coder(), customization_guide()])
+agent = Agent(model, capabilities=[Coder(), ClaiDocs()])
 asyncio.run(chat(agent, deps=None))
 ```
 
@@ -711,8 +736,9 @@ control say so. Like `/fast`, `/effort` waits for the current turn to finish.
 `/commit [MESSAGE]` stages and commits every change in the session's directory;
 without MESSAGE the session's model drafts one from the changes. `/push` runs
 `git push -u origin BRANCH`; on the default branch it asks for `/push confirm`.
-`/pr [TITLE]` pushes the branch and opens a GitHub pull request with `gh`, the
-model drafting its description (and title, without TITLE). The web UI's git chip
+`/pr` shows a pull request title and description the model drafts from the
+branch; `/pr confirm` then pushes the branch and opens exactly that with `gh`,
+and `/pr TITLE` does so with your title instead. The web UI's git chip
 does the same, with a file list and the drafts to edit first. A plugin's own
 `/commit`, `/push`, or `/pr` replaces these; a skill of the same name is hidden
 by them, and CLAI says so.

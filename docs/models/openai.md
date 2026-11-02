@@ -202,7 +202,7 @@ OpenAI may serve a request on a different tier than the one requested, for examp
 
 ### Prompt caching
 
-OpenAI [caches prompts implicitly](https://developers.openai.com/api/docs/guides/prompt-caching#how-caching-works) for all supported models: no setting or marker is needed, and cache hits are reported through the normalized usage fields like [`cache_read_tokens`][pydantic_ai.usage.RequestUsage.cache_read_tokens]. On GPT-5.6 and later, the unified [`ModelSettings.cache`][pydantic_ai.settings.ModelSettings.cache] setting (or the [`Caching`][pydantic_ai.capabilities.Caching] capability) also configures explicit caching: `cache=True` sends `openai_prompt_cache_options={'mode': 'implicit', 'ttl': '30m'}` and turns on [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_cache_instructions] (described below) so separate conversations share the cached instructions. `'30m'` is the only TTL OpenAI accepts, so any requested retention snaps to it. Setting `openai_prompt_cache_options` or `openai_cache_instructions` yourself takes precedence over the unified setting. See [Caching](../capabilities/caching.md) for the cost trade-off, Pydantic AI's prefix-stability guarantees and how to monitor cache efficiency.
+OpenAI [caches prompts implicitly](https://developers.openai.com/api/docs/guides/prompt-caching#how-caching-works) for all supported models: no setting or marker is needed, and cache hits are reported through the normalized usage fields like [`cache_read_tokens`][pydantic_ai.usage.RequestUsage.cache_read_tokens]. On GPT-5.6 and later, the unified [`ModelSettings.cache`][pydantic_ai.settings.ModelSettings.cache] setting (or the [`Caching`][pydantic_ai.capabilities.Caching] capability) also configures explicit caching: `cache=True` sends `openai_prompt_cache_options={'mode': 'implicit', 'ttl': '30m'}` and turns on [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_cache_instructions] (described below) so separate conversations share the cached instructions. `'30m'` is the only TTL OpenAI accepts, so any requested retention snaps to it. Setting `openai_prompt_cache_options` or `openai_cache_instructions` yourself takes precedence over the unified setting. See [Caching](../capabilities/caching.md) for the cost trade-off, Pydantic AI's prefix-stability guarantees and how to monitor cache efficiency. The unified setting works the same way with the Azure OpenAI v1 API: see [Azure prompt caching](azure.md#prompt-caching).
 
 How long a cached prefix survives depends on the [retention policy](https://developers.openai.com/api/docs/guides/prompt-caching#cache-lifetime) in effect: `in_memory` typically keeps it for 5–10 minutes of inactivity, up to an hour, while `24h` can keep it for up to a day. On models before GPT-5.6, the unified setting adds nothing to the request, and the default retention follows your organization's data-retention configuration — `24h` without zero data retention, `in_memory` with it. [`openai_prompt_cache_retention`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_retention] sets it per request:
 
@@ -273,7 +273,7 @@ On GPT-5.6 and later, OpenAI routes requests to the cache automatically, so you 
 
 When OpenAI reports prompt cache writes, Pydantic AI exposes them as [`result.usage.cache_write_tokens`][pydantic_ai.usage.RunUsage.cache_write_tokens]. Cache reads are available as [`result.usage.cache_read_tokens`][pydantic_ai.usage.RunUsage.cache_read_tokens]. For GPT-5.6 and later model families, OpenAI bills cache writes at 1.25 times the uncached input token rate.
 
-To help explain cache misses, Pydantic AI requests OpenAI's [prompt cache diagnostics](https://developers.openai.com/api/docs/guides/prompt-caching/diagnostics) on GPT-5.6 and later models with the Responses API on the OpenAI API itself (not Azure, OpenRouter or other OpenAI-compatible providers): each request compares itself against the most recent OpenAI response in the message history, unless that response came from [message compaction](#message-compaction). The result is in the response's [`provider_details`][pydantic_ai.messages.ModelResponse.provider_details] under the `'prompt_cache_diagnostics'` key, for example `{'type': 'cache_hit'}`, or `{'type': 'cache_miss', 'reason': 'model_changed', 'cache_missed_tokens': 4175, 'comparison_reusable_tokens': 4175}` when the prefix couldn't be reused. Diagnostics are free, don't affect caching, and work with `openai_store=False`. To leave them off, set [`openai_prompt_cache_diagnostics`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_diagnostics] to `False`.
+To help explain cache misses, Pydantic AI requests OpenAI's [prompt cache diagnostics](https://developers.openai.com/api/docs/guides/prompt-caching/diagnostics) on GPT-5.6 and later models with the Responses API on the OpenAI API itself (not Azure, OpenRouter or other OpenAI-compatible providers): each request compares itself against the most recent OpenAI response in the message history. It skips the comparison when that response is a [standalone compaction response](#message-compaction), or when a later compatible encrypted compaction came from another provider or from an endpoint that doesn't share server state with this one. The result is in the response's [`provider_details`][pydantic_ai.messages.ModelResponse.provider_details] under the `'prompt_cache_diagnostics'` key, for example `{'type': 'cache_hit'}`, or `{'type': 'cache_miss', 'reason': 'model_changed', 'cache_missed_tokens': 4175, 'comparison_reusable_tokens': 4175}` when the prefix couldn't be reused. Diagnostics are free, don't affect caching, and work with `openai_store=False`. To leave them off, set [`openai_prompt_cache_diagnostics`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_diagnostics] to `False`.
 
 ### Moderation
 
@@ -380,7 +380,7 @@ The Responses API supports referencing earlier model responses in a new request 
 
 When the field is set to `'auto'`, Pydantic AI automatically selects the most recent `provider_response_id` from the message history and omits messages that came before it, letting the OpenAI API reconstruct them from server-side state. The same chaining is applied inside a run across tool-call continuations and retries, so OpenAI never sees duplicate copies of the same messages.
 
-A response is only continued from while it and the messages before it are unchanged. Each response created with the setting records a digest of its parts and the history it was created from as [`ModelResponse.history_digest`][pydantic_ai.messages.ModelResponse.history_digest]. If the response or those messages have changed since, because a [history processor](../message-history.md#processing-message-history), [compaction](../capabilities/compaction.md) or your own code redacted, trimmed or rewrote them, the request sends the full history instead, so the model sees the change rather than the server's copy. A response created without the setting has no recorded history, and is continued from as before.
+A response is only continued from while it and the messages before it are unchanged. Each response created with the setting, or with [`openai_transport='websocket'`](#responses-websockets), records a digest of its parts and the history it was created from as [`ModelResponse.history_digest`][pydantic_ai.messages.ModelResponse.history_digest]. If the response or those messages have changed since, because a [history processor](../message-history.md#processing-message-history), [compaction](../capabilities/compaction.md) or your own code redacted, trimmed or rewrote them, the request sends the full history instead, so the model sees the change rather than the server's copy. A response created without either setting has no recorded history, and is continued from as before.
 
 !!! warning "Redacting stored history"
     The digest is a plain SHA-256 by default, so anyone holding the stored history can use it to test guesses at content redacted from that history after it was sent, such as a PIN or an account number. If you redact history after the fact, pass a secret as the `history_digest_key` argument to [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] to make it an HMAC.
@@ -428,10 +428,12 @@ print(result.output)
 #> 1234
 ```
 
+An encrypted [`CompactionPart`][pydantic_ai.messages.CompactionPart] ends the response-ID chain, even with a concrete seed, when it was produced by [another compatible provider](#message-compaction) (such as the [Codex backend](openai-codex.md#continuing-on-the-openai-api)) or by an endpoint that doesn't share server state with this one. The next request sends the compaction item and later messages instead of continuing the older stored response. Inline compactions from an endpoint that shares server state remain chainable.
+
 Don't continue, through `openai_previous_response_id`, a response from a model before GPT-5.6 whose request named a revealed tool in [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice]: that request declares the tool in `tools` instead of its `additional_tools` item (see [Tool Choice](../tools-advanced.md#tool-choice)), so the tool isn't in the response's stored input.
 
 !!! note
-    Referencing a stored response requires the response to have actually been stored. OpenAI stores responses by default; if you've disabled storage via [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store] or your organization has Zero Data Retention enabled, chaining is unavailable and the full message history must be sent on every request.
+    Referencing a response requires it to have been stored. OpenAI stores responses by default; if you've disabled storage via [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store] or your organization has Zero Data Retention enabled, chaining is unavailable over HTTP and the full message history must be sent on every request. On a [Responses WebSocket](#responses-websockets), a request can continue from the latest response on its lane without storage.
 
 #### Using durable conversations
 
@@ -608,6 +610,93 @@ Batch requests can't use [background mode](#background-mode), which raises a
 `extra_headers` are unsupported: configure them on the client instead. A streamed run gets the batch result's events
 all at once when it arrives.
 
+## Responses WebSockets
+
+A run that makes many requests, such as one with a tool loop, can send them over one [Responses WebSocket](https://developers.openai.com/api/docs/guides/websocket-mode) instead of a new HTTP request each time. Install the OpenAI WebSocket dependencies:
+
+```bash
+pip/uv-add "pydantic-ai-slim[openai-realtime]"
+```
+
+Then set [`openai_transport='websocket'`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_transport] on the model, the agent or a run. Other models ignore the setting, so code that takes a model string from configuration doesn't change:
+
+```python {gateway_toggle="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModelSettings
+
+agent = Agent(
+    '{{ openai:medium }}',  # or a model string from configuration
+    model_settings=OpenAIResponsesModelSettings(openai_transport='websocket'),
+)
+
+result = agent.run_sync('Triage the open tickets.')
+```
+
+Each run opens a socket on its first request that can use one and closes it when the run ends. Requests in WebSocket mode, including HTTP overflow, default [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id] to `'auto'`, unless you set it or [`openai_conversation_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_conversation_id]. These defaults and response-history metadata also apply when the model can only use HTTP. When the earlier response is stored or still cached on the request's lane, the request sends only the messages after it; otherwise it replays the retained history. That is where the socket saves time: in a run that makes many tool calls, each tool result goes out on the open socket without the conversation before it. A run that makes a single request pays for the handshake and gains nothing.
+
+To keep one socket for back-to-back runs, or for the lifetime of an app, enter the agent or the model. The socket closes once the last run or context using it ends:
+
+```python {gateway_toggle="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModelSettings
+
+agent = Agent('{{ openai:medium }}', model_settings=OpenAIResponsesModelSettings(openai_transport='websocket'))
+
+
+async def main():
+    async with agent:  # or `async with model:`
+        result = await agent.run('Triage the open tickets.')
+        await agent.run('Draft the replies.', message_history=result.all_messages())
+```
+
+The socket belongs to the [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] instance on one event loop. Runs on that instance and loop share it: concurrent runs, a run in another agent you pass the same model instance to, and a nested run that a tool starts on the parent run's [`ctx.model`][pydantic_ai.tools.RunContext.model]. Another event loop gets its own socket, capacity limit, and cleanup. Agents constructed separately from the same model string have separate model instances.
+
+- Concurrent requests run on separate [`stream_id` lanes](https://developers.openai.com/api/docs/guides/websocket-mode) of the socket. A request continues on the lane that holds its previous response, and one without earlier messages starts a new conversation on a free lane. OpenAI runs up to 16 responses at once on a socket and accepts 32 named lanes; past 32, a request reuses the least recently used free lane, and the conversation that lane cached replays its history on its next request.
+- A request that finds no free lane, or the 16 responses already running, goes over HTTP instead of waiting.
+- Lanes run by default only when the SDK client's WebSocket host is `api.openai.com`. On any other host, including xAI or Azure's `/openai/v1` endpoint reached through [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider], and a proxy in front of OpenAI, the socket runs one request at a time and sends the others over HTTP. For a host that supports lanes, set [`openai_responses_supports_websocket_stream_id`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_websocket_stream_id] to `True` with `profile=OpenAIModelProfile(openai_responses_supports_websocket_stream_id=True)` on [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]; `False` turns lanes off on OpenAI's host.
+- A provider error, a failed or incomplete response, or a stream closed early ends only that request; the socket stays open. A transport failure during a request closes the socket and raises [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError], as over HTTP, so [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] can take over (see [Model Fallback](../capabilities/model-fallback.md)). The request after it opens a new socket. Pydantic AI doesn't resend a request after a disconnect, since the provider may have acted on it.
+- OpenAI closes a socket after 60 minutes. Ten minutes before that, new requests open a new socket, and the old one closes once its responses finish. If the server closed the socket while it was idle, the request hadn't been sent, so it moves to a new socket once. If that replacement also closes before sending, the request uses HTTP without another socket retry.
+
+In WebSocket mode, these requests use HTTP instead. The warning column refers to [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning]:
+
+| When a request uses HTTP | Warns? |
+| --- | --- |
+| No agent run, `async with agent:` or `async with model:` keeps a socket open, as with a direct [`model.request()`][pydantic_ai.models.Model.request]. | No |
+| A [durable execution](../durable_execution/overview.md) activity, step or task has no explicit model or agent context that outlives the unit on its event loop. See [worker-owned Temporal connections](../durable_execution/temporal.md#responses-websocket-connections). | No |
+| The request uses [background mode](#background-mode) or resumes a suspended response. | No |
+| No lane is free, or 16 responses are already running on the socket. | No |
+| The model settings' [`extra_headers`][pydantic_ai.settings.ModelSettings.extra_headers] or SDK client's default headers differ from the socket's handshake headers. | No |
+| The SDK client uses an API key callback, workload identity, Azure AD token provider or HTTP client authentication. HTTP resolves these credentials for each request. This applies even when the profile permits WebSockets, including when HTTP authentication is added after the socket opens. | Yes |
+| The profile sets [`openai_responses_supports_websocket`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_websocket] to `False`. | Yes |
+| The OpenAI SDK cannot configure authentication for its socket client, as with Bedrock Mantle's native authentication. | Yes |
+| The WebSocket extra is missing, or the async backend is not asyncio, such as Trio. | Yes |
+| A transport failure prevents the socket connection from opening, such as a TLS, proxy or DNS error, or a connect timeout. No `response.create` has been sent. | Yes |
+
+An HTTP-level handshake rejection remains an error. Transport failures after a request is sent propagate as described above.
+After a failed connection, later requests in the same run or outer agent/model context use HTTP without trying the handshake or warning again. Once that shared lifetime ends, the next run or context tries a socket again.
+
+With instrumentation enabled, WebSocket mode records `pydantic_ai.transport` on each request's `chat` span, or under Temporal, on the model activity span within that trace. Its value is `'websocket'` for a socket request or `'http'` for one sent over HTTP. HTTP-only mode leaves the attribute unset.
+
+The profile flag defaults to `False` for [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] or an `AsyncAzureOpenAI` client, the [Pydantic AI Gateway](../gateway.md), the [`openai-chatgpt`](openai-chatgpt.md) and [`openai-codex`](openai-codex.md) OAuth providers, and [`OpenAICodexModel`][pydantic_ai.models.openai_codex.OpenAICodexModel]. The OAuth providers add their credentials to HTTP requests only; `OpenAICodexModel` resolves session headers per request.
+
+To try a socket on Azure or the gateway with static credentials, pass `profile=OpenAIModelProfile(openai_responses_supports_websocket=True)` to the model. The OAuth providers and [`OpenAICodexModel`][pydantic_ai.models.openai_codex.OpenAICodexModel] always use HTTP because their authentication or session headers do not configure the SDK socket client.
+
+!!! note "Continuing from a socket's responses"
+    Responses in WebSocket mode, including HTTP fallback, echo [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store], which defaults to `True` on OpenAI's side. The model records boolean echoes in [`provider_details`][pydantic_ai.messages.ModelResponse.provider_details] as `store`; socket responses also record `transport='websocket'`.
+
+    - **Stored responses:** automatic continuation works on another socket or over HTTP when the target endpoint shares the original endpoint's server state. Different base URLs replay history unless the provider overrides [`shares_server_state_with()`][pydantic_ai.providers.Provider.shares_server_state_with] for an alias.
+    - **`openai_store=False` or Zero Data Retention:** a response lives only in its socket's cache and continues only while it is the latest response on its lane. Elsewhere, history is replayed. A socket request with `openai_store=False` likewise replays any history outside its lane, including HTTP responses that OpenAI may never have stored. Keep the full message history so a new socket or HTTP request can replay it. With Zero Data Retention, also set `openai_store=False` to replay earlier HTTP history instead of continuing from an unstored response.
+    - **A concrete [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id]:** as over HTTP, the ID is sent as given when no automatic continuation or history boundary supersedes it. Choose an ID stored at the receiving endpoint.
+    - **Edited history or expired request-scoped prompts:** the [history validation rules](#referencing-earlier-responses) apply on the socket and replay the history.
+
+Request settings map to `response.create`. The socket has these limits:
+
+- The `websockets` library opens the socket, not the SDK client's `http_client`, so that client's proxy and CA bundle don't apply. The socket takes its proxy from the environment, such as `HTTPS_PROXY`, and Python's default TLS settings.
+- [`OpenAIResponsesModel(..., websocket_connection_options=...)`][pydantic_ai.models.openai.OpenAIResponsesModel] passes options such as `compression` or `write_limit` to `websockets`. Unless you set them, `max_size` and `max_queue` are `None`, lifting the limits on message size and unread frames: an event such as an image generation result can exceed the 1 MiB default, and the socket has to keep reading, and answering the server's keepalive pings, while the rest of a response closed early waits to be discarded.
+- Compaction and token counting use HTTP. A socket request rejected with status 408, 409, 429 or 5xx before its first response event retries up to the SDK client's `max_retries`, overridden by [`max_retries`][pydantic_ai.settings.ModelSettings.max_retries] on the model, agent or run. Retries respect `Retry-After` and `retry-after-ms`; otherwise they use exponential backoff with jitter. Rejections asking for a wait longer than 60 seconds propagate to the caller, which can schedule the wait. Set `max_retries=0` when a durable engine owns retries. Disconnects and errors after response events start propagate to the caller.
+
+Responses WebSockets carry ordinary text and tool-call responses. They are separate from [Realtime sessions](../realtime/openai.md) for audio and live interaction. See the [OpenAI WebSocket guide](https://developers.openai.com/api/docs/guides/websocket-mode) for endpoint behavior and connection-local state.
+
 ## Chat Completions API
 
 If you need the [Chat Completions API](https://platform.openai.com/docs/api-reference/chat) instead of the default [Responses API](https://platform.openai.com/docs/api-reference/responses), pin to it with the `'openai-chat:'` prefix or [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]:
@@ -629,6 +718,10 @@ agent = Agent(model)
 ```
 
 Five [`ModelSettings`][pydantic_ai.settings.ModelSettings] fields reach OpenAI only through this API — `seed`, `presence_penalty`, `frequency_penalty`, `logit_bias` and `stop_sequences`. The Responses API accepts none of them, so they are dropped on the default `openai:` path.
+
+### Audio input {#audio-input}
+
+On Chat Completions, only OpenAI's audio models take audio input, such as `gpt-audio` and `gpt-4o-audio-preview`: the OpenAI models with `audio` in their name. With another OpenAI model, audio in the prompt raises an error, and audio a tool returns is replaced by a note saying the model can't read it. The Responses API takes no audio input. The rule applies to `OpenAIProvider`. OpenAI-compatible providers, including Azure, report audio input for every model, since their model names don't say which models take it. If you point `OpenAIProvider(base_url=...)` at another server that serves an audio model, such as vLLM with Voxtral, use [`OpenAICompatibleProvider`](compatible-apis.md#other-endpoints) for it, or pass `profile=OpenAIModelProfile(supports_audio_file_input=True)` to the model.
 
 ## Decisions API {#decisions-api}
 

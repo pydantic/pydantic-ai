@@ -26,6 +26,8 @@ JavaScript-rendered SPAs, and interactive multi-step flows.
     capability runs its own browser, so a session opened by one is not visible
     to the other.
 
+![The model drives a real Chromium browser itself, one tool call per action, using the eighteen tools PlaywrightBrowser adds, such as navigate, snapshot, click and type_text. Chromium starts on the first browser call and closes when the run ends. Every request passes an egress guard that enforces allowed_domains and refuses private addresses. Each tool returns the page text, trimmed to a token budget, or a screenshot as image content.](../img/harness/playwright.svg)
+
 ## Installation
 
 The `playwright` extra pulls in Playwright, and Chromium is a separate binary

@@ -1,0 +1,116 @@
+--- expected
++++ actual
+@@ -262,0 +263,18 @@
++    }
++   ]
++  },
++  {
++   "role": "assistant",
++   "content": [
++    {
++     "text": "The refund is on its way.",
++     "type": "text"
++    }
++   ]
++  },
++  {
++   "role": "user",
++   "content": [
++    {
++     "text": "Question 2",
++     "type": "text"
+@@ -266,18 +283,0 @@
+-     "type": "text"
+-    }
+-   ]
+-  },
+-  {
+-   "role": "assistant",
+-   "content": [
+-    {
+-     "text": "The refund is on its way.",
+-     "type": "text"
+-    }
+-   ]
+-  },
+-  {
+-   "role": "user",
+-   "content": [
+-    {
+-     "text": "Question 2",
+@@ -403,0 +404,18 @@
++    }
++   ]
++  },
++  {
++   "role": "assistant",
++   "content": [
++    {
++     "text": "The refund is on its way.",
++     "type": "text"
++    }
++   ]
++  },
++  {
++   "role": "user",
++   "content": [
++    {
++     "text": "Question 2",
++     "type": "text"
+@@ -407,18 +424,0 @@
+-     "type": "text"
+-    }
+-   ]
+-  },
+-  {
+-   "role": "assistant",
+-   "content": [
+-    {
+-     "text": "The refund is on its way.",
+-     "type": "text"
+-    }
+-   ]
+-  },
+-  {
+-   "role": "user",
+-   "content": [
+-    {
+-     "text": "Question 2",
+@@ -571,0 +572,18 @@
++    }
++   ]
++  },
++  {
++   "role": "assistant",
++   "content": [
++    {
++     "text": "The refund is on its way.",
++     "type": "text"
++    }
++   ]
++  },
++  {
++   "role": "user",
++   "content": [
++    {
++     "text": "Question 2",
++     "type": "text"
+@@ -575,18 +592,0 @@
+-     "type": "text"
+-    }
+-   ]
+-  },
+-  {
+-   "role": "assistant",
+-   "content": [
+-    {
+-     "text": "The refund is on its way.",
+-     "type": "text"
+-    }
+-   ]
+-  },
+-  {
+-   "role": "user",
+-   "content": [
+-    {
+-     "text": "Question 2",
