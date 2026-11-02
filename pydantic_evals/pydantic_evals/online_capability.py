@@ -22,8 +22,9 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from . import _online as _online_internal, _task_run
+from .evaluators._run_evaluator import as_evaluator
 from .evaluators.context import EvaluatorContext
-from .evaluators.evaluator import Evaluator
+from .evaluators.evaluator import Evaluator, EvaluatorFunc
 from .online import (
     DEFAULT_CONFIG,
     OnlineEvalConfig,
@@ -114,8 +115,11 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
     ```
     """
 
-    evaluators: Sequence[Evaluator | OnlineEvaluator]
-    """Evaluators to run after each agent run."""
+    evaluators: Sequence[Evaluator | EvaluatorFunc | OnlineEvaluator]
+    """Evaluators to run after each agent run.
+
+    Plain functions are wrapped in a [`FunctionEvaluator`][pydantic_evals.evaluators.FunctionEvaluator].
+    """
 
     config: OnlineEvalConfig | None = None
     """Optional config override. Defaults to the global `DEFAULT_CONFIG`."""
@@ -125,7 +129,7 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
 
     def __post_init__(self) -> None:
         self._online_evaluators = [
-            e if isinstance(e, OnlineEvaluator) else OnlineEvaluator(evaluator=e) for e in self.evaluators
+            e if isinstance(e, OnlineEvaluator) else OnlineEvaluator(evaluator=as_evaluator(e)) for e in self.evaluators
         ]
         self._resolved_config = self.config if self.config is not None else DEFAULT_CONFIG
 

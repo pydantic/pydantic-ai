@@ -29,6 +29,7 @@ from pydantic_ai.messages import (
     BinaryContent,
     BinaryImage,
     CapabilityEvent,
+    CapabilityLoadDeltaPart,
     Citation,
     CompactionPart,
     ContentCitationAnchor,
@@ -4258,6 +4259,7 @@ async def test_tool_approval_request_emission():
                 parts=[ToolCallPart(tool_name='delete_file', args='{"path": "test.txt"}', tool_call_id='delete_1')],
                 usage=RequestUsage(input_tokens=50, output_tokens=5),
                 model_name='function::stream_function',
+                model_id='function:function::stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id='foo',
@@ -4467,6 +4469,7 @@ async def test_tool_output_denied_chunk_emission():
                 parts=[TextPart(content='The file deletion was cancelled as requested.')],
                 usage=RequestUsage(input_tokens=50, output_tokens=8),
                 model_name='function::stream_function',
+                model_id='function:function::stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id='foo',
@@ -4842,6 +4845,7 @@ async def test_run_stream_with_explicit_deferred_tool_results():
                 parts=[TextPart(content='File deleted successfully.')],
                 usage=RequestUsage(input_tokens=50, output_tokens=4),
                 model_name='function::stream_function',
+                model_id='function:function::stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id='foo',
@@ -5061,6 +5065,7 @@ async def test_adapter_dispatch_request_timeout():
                 parts=[TextPart(content='partial')],
                 usage=RequestUsage(output_tokens=1, input_tokens=50),
                 model_name='function::_stream_then_time_out',
+                model_id='function:function::_stream_then_time_out',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id='foo',
@@ -11146,6 +11151,7 @@ async def test_system_prompt_with_vercel_adapter():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=56, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -11196,6 +11202,7 @@ async def test_dynamic_system_prompt_with_vercel_adapter():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=56, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -11262,6 +11269,7 @@ async def test_system_prompt_reinjected_with_vercel_history():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=59, output_tokens=6),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -11314,6 +11322,7 @@ async def test_frontend_system_prompt_stripped_by_default():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=54, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -11365,6 +11374,7 @@ async def test_frontend_system_prompt_stripped_no_agent_prompt():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -11416,6 +11426,7 @@ async def test_client_mode_keeps_frontend_system_prompt():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=54, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -11467,6 +11478,7 @@ async def test_client_mode_keeps_frontend_system_prompt_no_agent_prompt():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=54, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -11517,6 +11529,7 @@ async def test_client_mode_does_not_reinject_agent_system_prompt():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -12251,6 +12264,23 @@ def test_tool_availability_delta_ui_round_trip():
     assert reloaded == messages
 
 
+def test_capability_load_record_ui_round_trip():
+    """A capability loaded from code keeps its record through the UI, with or without tools."""
+    messages = [
+        ModelRequest(
+            parts=[
+                CapabilityLoadDeltaPart(loaded=['refunds'], tool_call_id='open'),
+                ToolAvailabilityDeltaPart(tools_added=['refund_status'], tool_call_id='open'),
+                CapabilityLoadDeltaPart(loaded=['policy'], tool_call_id='open'),
+            ]
+        )
+    ]
+
+    loaded = VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(messages))
+    _sync_load_bookkeeping(messages, loaded)
+    assert loaded == messages
+
+
 def test_compaction_ui_round_trip_and_sanitization():
     """Compaction data stays faithful on the wire while client provenance is sanitized on ingest."""
     compaction = CompactionPart(
@@ -12303,6 +12333,122 @@ def test_compaction_ui_round_trip_and_sanitization():
         provider_name='openai',
         provider_details={'encrypted_content': 'blob'},
     )
+
+
+def test_canonical_system_round_trip():
+    """A response's `canonical_system` comes back with its `provider_name`, from every part kind that carries one.
+
+    Without it, a Google Cloud response's thought signatures would be judged by the name `google` alone and sent to
+    the Gemini API. A part from another provider in the same response doesn't carry the stamp.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Search, then call the tool.')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='Thinking...', signature='sig', provider_name='google'),
+                NativeToolCallPart(
+                    tool_name='web_search', args={'query': 'q'}, tool_call_id='ws-1', provider_name='google'
+                ),
+                NativeToolReturnPart(
+                    tool_name='web_search', content='results', tool_call_id='ws-1', provider_name='google'
+                ),
+                TextPart(content='Calling it.', provider_name='google'),
+                ToolCallPart(
+                    tool_name='lookup',
+                    args={'id': 1},
+                    tool_call_id='call-1',
+                    provider_name='google',
+                    provider_details={'thought_signature': 'sig2'},
+                ),
+            ],
+            provider_name='google',
+            canonical_system='google-cloud',
+        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='lookup', content='found', tool_call_id='call-1')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='Earlier thinking.', signature='other', provider_name='anthropic'),
+                FilePart(content=BinaryImage(data=b'img', media_type='image/png'), provider_name='google'),
+                CompactionPart(content=None, id='cmp-1', provider_name='google', provider_details={'blob': 'x'}),
+            ],
+            provider_name='google',
+            canonical_system='google-cloud',
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    reasoning_parts = [part for message in ui_messages for part in message.parts if isinstance(part, ReasoningUIPart)]
+    assert [part.provider_metadata for part in reasoning_parts] == snapshot(
+        [
+            {'pydantic_ai': {'signature': 'sig', 'provider_name': 'google', 'canonical_system': 'google-cloud'}},
+            {'pydantic_ai': {'signature': 'other', 'provider_name': 'anthropic'}},
+        ]
+    )
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    _sync_load_bookkeeping(messages, reloaded)
+    assert reloaded == messages
+
+
+def test_canonical_system_conflicting_claims_clear_the_stamp():
+    """Parts loaded into one response that claim different canonical systems for one provider fall back to the name.
+
+    A claim that isn't a string is ignored, and one for another provider than the first claim's leaves the stamp.
+    """
+    ui_messages = [
+        UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Hi')]),
+        UIMessage(
+            id='assistant-1',
+            role='assistant',
+            parts=[
+                ReasoningUIPart(
+                    text='a',
+                    provider_metadata={
+                        'pydantic_ai': {'signature': 's1', 'provider_name': 'google', 'canonical_system': 'google'}
+                    },
+                ),
+                ReasoningUIPart(
+                    text='b',
+                    provider_metadata={
+                        'pydantic_ai': {'signature': 's2', 'provider_name': 'google', 'canonical_system': 123}
+                    },
+                ),
+                TextUIPart(
+                    text='d',
+                    provider_metadata={'pydantic_ai': {'provider_name': 'openai', 'canonical_system': 'azure'}},
+                ),
+            ],
+        ),
+    ]
+
+    response = VercelAIAdapter.load_messages(ui_messages)[-1]
+    assert isinstance(response, ModelResponse)
+    assert (response.provider_name, response.canonical_system) == ('google', 'google')
+
+    conflicting = VercelAIAdapter.load_messages(
+        [
+            *ui_messages[:-1],
+            ui_messages[-1].model_copy(
+                update={
+                    'parts': [
+                        *ui_messages[-1].parts,
+                        ReasoningUIPart(
+                            text='c',
+                            provider_metadata={
+                                'pydantic_ai': {
+                                    'signature': 's3',
+                                    'provider_name': 'google',
+                                    'canonical_system': 'google-cloud',
+                                }
+                            },
+                        ),
+                    ]
+                }
+            ),
+        ]
+    )[-1]
+    assert isinstance(conflicting, ModelResponse)
+    assert (conflicting.provider_name, conflicting.canonical_system) == ('google', None)
 
 
 @pytest.mark.parametrize(
@@ -12511,6 +12657,75 @@ async def test_tool_availability_delta_round_trips_through_client_rebuilt_stream
 
     assert deltas(loaded) == snapshot([ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='reveal-1')])
     assert deltas(loaded) == deltas(server_history)
+
+
+async def test_capability_loaded_from_code_round_trips_through_client_rebuilt_stream() -> None:
+    """A capability a tool loads with `ctx.load_capability` stays loaded when the client rebuilds history from the stream.
+
+    The load's record streams as a `data-capability-load-delta` chunk after the tool result, and loading the
+    assistant message back restores it where the server-side history has it.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            yield {0: DeltaToolCall(name='open_case', json_args='{}', tool_call_id='open')}
+        else:
+            yield 'done'
+
+    policy = Capability[None](
+        id='policy', description='Refund policy.', instructions='Refunds take 5 days.', defer_loading=True
+    )
+    agent = Agent(FunctionModel(stream_function=stream_function), deps_type=type(None), capabilities=[policy])
+
+    @agent.tool
+    async def open_case(ctx: RunContext[None]) -> str:
+        ctx.load_capability('policy')
+        return 'Case opened.'
+
+    user_message = UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Open a case')])
+    adapter = VercelAIAdapter(agent, SubmitMessage(id='chat-1', messages=[user_message]))
+    server_history: list[ModelMessage] = []
+    events = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(
+            adapter.run_stream(on_complete=lambda result: server_history.extend(result.all_messages()))
+        )
+        if '[DONE]' not in encoded
+    ]
+
+    tool_output = next(event for event in events if event['type'] == 'tool-output-available')
+    delta_chunk = next(event for event in events if event['type'] == 'data-capability-load-delta')
+    assert delta_chunk['data'] == snapshot({'loaded': ['policy'], 'tool_call_id': 'open'})
+    text = ''.join(event['delta'] for event in events if event['type'] == 'text-delta')
+
+    assistant_message = UIMessage(
+        id='assistant-1',
+        role='assistant',
+        parts=[
+            StepStartUIPart(),
+            ToolOutputAvailablePart(
+                type='tool-open_case', tool_call_id=tool_output['toolCallId'], input={}, output=tool_output['output']
+            ),
+            DataUIPart(type=delta_chunk['type'], data=delta_chunk['data']),
+            StepStartUIPart(),
+            TextUIPart(text=text, state='done'),
+        ],
+    )
+    loaded = VercelAIAdapter.load_messages([user_message, assistant_message])
+
+    assert parse_loaded_capabilities(loaded) == parse_loaded_capabilities(server_history) == {'policy'}
+
+    def load_records(messages: list[ModelMessage]) -> list[tuple[int, CapabilityLoadDeltaPart]]:
+        return [
+            (index, part)
+            for index, message in enumerate(messages)
+            for part in message.parts
+            if isinstance(part, CapabilityLoadDeltaPart)
+        ]
+
+    assert load_records(loaded) == load_records(server_history)
 
 
 async def test_mid_run_tool_delta_round_trips_through_client_rebuilt_stream() -> None:
@@ -13563,6 +13778,46 @@ async def _server_history_turn(
 
 
 _HI = UIMessage(id='u1', role='user', parts=[TextUIPart(text='hi')])
+
+
+async def test_server_message_history_drops_client_supplied_capability_loads():
+    """With the history on the server, the client's new turn can't load a capability.
+
+    A client-supplied `data-capability-load-delta` part would otherwise load the capability with nothing in the
+    run loading it, so it's dropped, and the model never gets the capability's tool.
+    """
+    tools_seen: list[list[str]] = []
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        tools_seen.append([tool.name for tool in info.function_tools])
+        yield 'ok'
+
+    def refund_status() -> str:
+        return 'refunded'  # pragma: no cover
+
+    refunds = Capability[None](id='refunds', description='Refunds.', tools=[refund_status], defer_loading=True)
+    agent = Agent(
+        FunctionModel(stream_function=stream_function),
+        deps_type=type(None),
+        output_type=[str, DeferredToolRequests],
+        capabilities=[refunds],
+    )
+    stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[_HI]), None)
+    new_message = UIMessage(
+        id='u2',
+        role='user',
+        parts=[
+            DataUIPart(type='data-capability-load-delta', data={'loaded': ['refunds'], 'tool_call_id': None}),
+            TextUIPart(text='and now?'),
+        ],
+    )
+
+    persisted = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[_HI, _OK, new_message]), stored)
+
+    assert tools_seen[-1] == ['load_capability']
+    assert not any(isinstance(part, CapabilityLoadDeltaPart) for message in persisted for part in message.parts)
+
+
 # `useChat` makes up its own id for an assistant message when the server doesn't send one.
 _OK = UIMessage(id='client-made-up', role='assistant', parts=[TextUIPart(text='ok')])
 _AND_NOW = UIMessage(id='u2', role='user', parts=[TextUIPart(text='and now?')])

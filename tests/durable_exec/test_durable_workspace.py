@@ -595,6 +595,12 @@ async def test_every_method_runs_as_a_unit_against_a_provider_environment() -> N
     # The rest of the display belongs in a durable unit, so workflow code can't reach it.
     with pytest.raises(UserError, match="`act` reaches the display, which durable workflow code can't"):
         await workspace.act(PressKeys(keys=('ctrl', 's')))
+    with pytest.raises(UserError, match='`zoom` reaches the display'):
+        await workspace.zoom(Region(left=0, top=0, right=10, bottom=10))
+    with pytest.raises(UserError, match='`scaled_screenshot` reaches the display'):
+        await workspace.scaled_screenshot(640, 400)
+    with pytest.raises(UserError, match='`cursor_position` reaches the display'):
+        await workspace.cursor_position()
     assert provider.actions == []
     assert _workspace_units(durability) == snapshot(
         [

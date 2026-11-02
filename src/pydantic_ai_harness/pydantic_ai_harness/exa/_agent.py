@@ -496,6 +496,8 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
         timeout_ms: int = 3_600_000,
         guidance: str | None = None,
         id: str | None = 'exa_agent',
+        description: str | None = None,
+        defer_loading: bool = False,
     ) -> ExaAgent[AgentDepsT]:
         """Construct the capability from serializable spec options.
 
@@ -513,4 +515,6 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
             timeout_ms=timeout_ms,
             guidance=guidance,
             id=id,
+            description=description,
+            defer_loading=defer_loading,
         )

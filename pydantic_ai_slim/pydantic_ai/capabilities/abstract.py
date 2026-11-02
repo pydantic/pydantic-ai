@@ -1129,8 +1129,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         request step regardless of how many models are tried — a history processor, an injected
         message — belongs in `before_model_request` instead.
 
-        Changes made here shape the request that goes on the wire but are not persisted to the
-        agent's message history, which is finalized by `before_model_request`.
+        Changes to `request_context` shape the request that goes on the wire for this attempt and are
+        not persisted to the agent's message history; the next attempt starts again from what
+        `before_model_request` produced. Changes made through
+        [`RunContext.messages`][pydantic_ai.tools.RunContext.messages], the run's persistent history,
+        do persist, and are not rolled back for a further attempt. Use them for state that doesn't
+        depend on the attempt, such as a record an attempt makes that later requests and turns should
+        reuse.
         """
         return request_context
 
