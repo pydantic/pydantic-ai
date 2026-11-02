@@ -50,6 +50,14 @@ For a first local run, start LocalStack before constructing the agent:
 localstack start
 ```
 
+Or let the capability start and stop a Docker container for you:
+
+```python
+from pydantic_ai_harness import LocalStack
+
+LocalStack(manage_container=True)
+```
+
 ## Tools
 
 | Tool | Purpose |

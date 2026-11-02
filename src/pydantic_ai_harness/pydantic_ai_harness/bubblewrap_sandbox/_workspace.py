@@ -87,10 +87,11 @@ fi
 `/bin/sh` is absolute, so the host does not resolve the launcher through `PATH`. The script then
 skips relative entries and anything inside the writable working directory, compared as canonical
 paths: a command can plant `bwrap`, `sh` or `base64` there, and the next call would otherwise run
-that plant on the host, before the sandbox exists. It also refuses to start when `/bin/sh` itself is inside that directory,
-because the absolute launcher would then be writable. With the network off, `base64` is chosen the
-same way and decodes the seccomp filter onto descriptor 3. The filter travels on the command line
-because `bwrap` may run on another host, which receives a command, not open files.
+that plant on the host, before the sandbox exists. It also refuses to start when `/bin/sh` itself
+is inside that directory, because the absolute launcher would then be writable. With the network
+off, `base64` is chosen the same way and decodes the seccomp filter onto descriptor 3. The filter
+travels on the command line because `bwrap` may run on another host, which receives a command, not
+open files.
 """
 
 _LOGIN_PATHS = ('.ssh/', '.config/fish/', '.bashrc', '.zshenv', '.cshrc', '.tcshrc', '.pam_environment')
