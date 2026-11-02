@@ -10,6 +10,7 @@ from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai.workspaces._telemetry import lifecycle_span
 from pydantic_ai_harness._workspace import innermost_backend
 from pydantic_ai_harness._workspace_provider import check_env, check_integer, check_working_dir
 from pydantic_ai_harness.boxd_sandbox._backend import BoxdSandboxBackend, destroy_machine
@@ -111,7 +112,8 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
         """
         if ref.provider != 'boxd':
             raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'boxd'")
-        await destroy_machine(self.client, ref.id)
+        with lifecycle_span('destroy', ref):
+            await destroy_machine(self.client, ref.id)
 
     async def fork(self, ref: WorkspaceRef) -> WorkspaceRef:
         """Copy a machine into a new isolated machine and return the copy's ref.

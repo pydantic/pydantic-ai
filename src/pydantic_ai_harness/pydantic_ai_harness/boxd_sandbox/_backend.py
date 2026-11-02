@@ -63,6 +63,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai.workspaces._telemetry import lifecycle_span
 from pydantic_ai.workspaces.workspace import _ShellFilesystem  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
@@ -504,15 +505,18 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
             if self._client is None:
                 self._client = _new_client()
             client = self._client
-            if (ref := self._ref) is None:
-                # Creation finishes even if the caller is cancelled, so a billed machine is never left unrecorded.
-                ref = await run_to_completion(lambda: self._create(client))
-            if not self._ready:
-                machine_id = await self._wait_until_ready(client, ref.id)
-                if machine_id != ref.id:
-                    # A ref may name the machine; names can be reused once it is deleted, ids cannot.
-                    self._ref = ref = WorkspaceRef(provider='boxd', id=machine_id)
-                self._ready = True
+            ref = self._ref
+            if ref is None or not self._ready:
+                with lifecycle_span('create' if ref is None else 'attach', self):
+                    if ref is None:
+                        # Creation finishes even if the caller is cancelled, so a billed machine is never left unrecorded.
+                        ref = await run_to_completion(lambda: self._create(client))
+                    if not self._ready:
+                        machine_id = await self._wait_until_ready(client, ref.id)
+                        if machine_id != ref.id:
+                            # A ref may name the machine; names can be reused once it is deleted, ids cannot.
+                            self._ref = ref = WorkspaceRef(provider='boxd', id=machine_id)
+                        self._ready = True
             if self._working_dir_pending:
                 # A caller cancelled during creation stops here; the next operation makes the directory.
                 await anyio.lowlevel.checkpoint_if_cancelled()
