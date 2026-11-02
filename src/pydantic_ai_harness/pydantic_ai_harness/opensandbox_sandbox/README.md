@@ -143,12 +143,9 @@ Each sandbox asks for one CPU and 2 GiB unless you pass `resource`. A pod that c
 
 ## Network access
 
-`allow_internet_access=True` (the default) leaves network access to the server's configuration. Pass
-`OpenSandbox(image='python:3.13-slim', allow_internet_access=False)` to request deny-all egress for a new sandbox.
-It does not change the policy when attaching to an existing sandbox.
+`allow_internet_access=True` (the default) leaves network access to the server's configuration. Pass `OpenSandbox(image='python:3.13-slim', allow_internet_access=False)` to request deny-all egress for a new sandbox. It does not change the policy when attaching to an existing sandbox.
 
-Deny-all requires the server's egress sidecar. For packet-level enforcement, including direct IP connections,
-configure the server with:
+Deny-all requires the server's egress sidecar. For packet-level enforcement, including direct IP connections, configure the server with:
 
 ```toml
 [egress]
@@ -156,9 +153,7 @@ image = "opensandbox/egress:v1.1.7"
 mode = "dns+nft"
 ```
 
-The default `dns` mode only filters DNS lookups; it does not block direct IP connections. Server-level
-allow/deny overrides still apply. See [OpenSandbox egress configuration](https://github.com/opensandbox-group/OpenSandbox/blob/main/server/configuration.md#egress)
-for runtime requirements and configuration.
+The default `dns` mode only filters DNS lookups; it does not block direct IP connections. Server-level allow/deny overrides still apply. See [OpenSandbox egress configuration](https://github.com/opensandbox-group/OpenSandbox/blob/main/server/configuration.md#egress) for runtime requirements and configuration.
 
 ## Clean up
 
@@ -204,7 +199,8 @@ Set `sandbox_timeout` above the longest gap between workspace operations, includ
 The sandbox's isolation is the server's runtime: a Docker container shares the host's kernel, and a Kubernetes pod shares its node's, unless the server is configured with a secure runtime such as gVisor or Kata Containers. Inside, commands run as the image's user, usually `root`.
 
 - `allow_internet_access=False` requests deny-all egress for new sandboxes. Enforcement depends on the server's egress configuration; see [Network access](#network-access).
-- The server's API key reaches every sandbox on it: keep it out of the sandbox's `env`.
+- With network access enabled, a Docker-backed sandbox can reach services on its host and LAN, including the OpenSandbox API if it is exposed there. To restrict that access, use `allow_internet_access=False` with `dns+nft`, or a server-side network policy that blocks those destinations.
+- Set `api_key` under `[server]` and authenticate clients with `OPEN_SANDBOX_API_KEY`. Keep the key out of the sandbox's `env`: it grants access to every sandbox on that server.
 - `env` values are sent to the server with every command.
 - `image` is pulled by tag; pin a digest, such as `python:3.13-slim@sha256:...`, to get the same image every time.
 
