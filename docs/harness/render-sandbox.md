@@ -19,8 +19,6 @@ pip/uv-add "pydantic-ai-harness[coder,render,anthropic]"
 
 The `coder` extra installs the coding tools. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `RENDER_API_KEY` to a [Render API key](https://render.com/docs/api#1-create-an-api-key), `RENDER_WORKSPACE_ID` to the `tea-...` ID of a [workspace](https://render.com/docs/workspaces) with Sandboxes access and billing configured, and `ANTHROPIC_API_KEY` for the examples.
 
-Live sandbox execution for this integration has not yet been verified.
-
 ## Quick start
 
 ```python {names="defined"}
