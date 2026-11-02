@@ -42,10 +42,10 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
+from pydantic_ai_harness._models import is_request_response_model
 from pydantic_ai_harness._sub_agent_output import (
     ServingModelRecorder,
     cancel_pending_output,
-    is_request_response_model,
     resumable_output_reason,
     unresumable_output_message,
 )

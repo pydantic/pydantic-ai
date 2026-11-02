@@ -26,7 +26,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceReadOnlyError
-from pydantic_ai_harness._sub_agent_output import is_request_response_model
+from pydantic_ai_harness._models import is_request_response_model
 from pydantic_ai_harness._typeguards import is_mapping
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._workspace import METADATA_DIR, raise_tool_failure

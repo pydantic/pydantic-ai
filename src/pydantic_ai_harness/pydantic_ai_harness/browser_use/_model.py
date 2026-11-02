@@ -32,7 +32,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness._sub_agent_output import is_request_response_model
+from pydantic_ai_harness._models import is_request_response_model
 
 try:
     from browser_use.llm.base import BaseChatModel
