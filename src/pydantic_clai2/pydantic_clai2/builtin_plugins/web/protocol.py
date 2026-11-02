@@ -4,6 +4,7 @@ Pure translation, with no server or plugin in it. Wire payloads are kw-only data
 `dump` with Pydantic; the browser's `web-ui/src/protocol.ts` mirrors these shapes.
 """
 
+import difflib
 import hashlib
 import json
 from collections.abc import Sequence
@@ -38,7 +39,13 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserRequest
-from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
+from pydantic_ai_harness.filesystem import (
+    EditFileCallPart,
+    FileChangeRequestEvent,
+    FileEditedEvent,
+    FileWrittenEvent,
+    ReplacementArgs,
+)
 from pydantic_ai_harness.permissions import PermissionAction
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent
 from pydantic_ai_harness.subagents import DelegationOutcome
@@ -1060,6 +1067,41 @@ def tool_result_state(part: ToolReturnPart) -> ToolState:
     return 'error' if part.outcome == 'retried' else 'done'
 
 
+_MAX_LINE_PAIRS = 65_536
+"""The most old-by-new lines of one replacement that is diffed, as `difflib`'s matching is quadratic."""
+
+
+def _edit_diffs(call: EditFileCallPart | None, result: ToolReturnPart) -> list[Diff]:
+    """A successful edit's replacements as line diffs, so a reloaded card counts about what the live diff did.
+
+    Each is one unnumbered hunk, as the saved call does not say where in the file it was. An edit too
+    large to diff, or that only adds or drops a final line feed, gets none: the browser shows its arguments.
+    """
+    if call is None or result.outcome != 'success' or (edit := call.typed_args) is None:
+        return []
+    pairs = edit.get('replacements')
+    if not pairs:
+        old, new = edit.get('old_text'), edit.get('new_text')
+        if old is None or new is None:
+            return []
+        pairs = [ReplacementArgs(old_text=old, new_text=new)]
+    diffs: list[Diff] = []
+    for pair in pairs:
+        old, new = _lines(pair['old_text']), _lines(pair['new_text'])
+        if len(old) * len(new) > _MAX_LINE_PAIRS:
+            return []
+        hunk = list(difflib.unified_diff(old, new, lineterm='', n=max(len(old), len(new))))[3:]
+        if not hunk and pair['old_text'] != pair['new_text']:
+            return []
+        diffs.append(Diff(path=edit['path'], diff='\n'.join(hunk)))
+    return diffs
+
+
+def _lines(text: str) -> list[str]:
+    """`text`'s lines as the harness diffs them: split on line feeds only, with none for an empty text."""
+    return text.removesuffix('\n').split('\n') if text else []
+
+
 def image_id(image: BinaryContent) -> str:
     """An image's ID in the transcript: the SHA-256 of its bytes, so it stays the same after a reload."""
     return hashlib.sha256(image.data).hexdigest()
@@ -1151,6 +1193,7 @@ def history_entries(messages: Sequence[ModelMessage], *, image_ids: ImageIds | N
     """
     entries: list[Item | TurnSummary] = []
     tools: dict[str, Item] = {}
+    edits: dict[str, EditFileCallPart] = {}
     usage = RunUsage()
 
     def end_turn() -> None:
@@ -1169,6 +1212,7 @@ def history_entries(messages: Sequence[ModelMessage], *, image_ids: ImageIds | N
                 elif isinstance(part, ToolReturnPart) and (tool := tools.get(part.tool_call_id)):
                     tool.text = tool_result_text(part)
                     tool.state = tool_result_state(part)
+                    tool.diffs = _edit_diffs(edits.get(part.tool_call_id), part)
             continue
         usage.incr(message.usage)
         usage.requests += 1
@@ -1187,6 +1231,8 @@ def history_entries(messages: Sequence[ModelMessage], *, image_ids: ImageIds | N
                 )
                 tools[part.tool_call_id] = tool
                 entries.append(tool)
+                if isinstance(part, EditFileCallPart):
+                    edits[part.tool_call_id] = part
     end_turn()
     return entries
 
