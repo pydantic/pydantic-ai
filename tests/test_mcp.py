@@ -64,6 +64,7 @@ from pydantic_ai.toolsets._instruction_collection import (
     make_contribution,
 )
 from pydantic_ai.usage import RunUsage
+from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN
 
 from .conftest import IsStr, try_import
 
@@ -979,6 +980,7 @@ A later <context> element with the same id replaces the earlier one and stays in
         for previous, current in zip(sent, sent[1:]):
             assert current[: len(previous)] == previous
 
+    @pytest.mark.moves_cache_prefix(reason=INSTRUCTIONS_CHANGE_MID_RUN)
     async def test_server_instructions_without_an_id_or_url_rewrite_the_prefix(self, fastmcp_server: FastMCP[None]):
         """An in-process server without an `id` has nothing to key its instructions by, so they keep rewriting."""
         prefixes: list[str | None] = []

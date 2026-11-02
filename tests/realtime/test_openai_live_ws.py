@@ -13,7 +13,7 @@ import fractions
 import importlib
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -281,9 +281,9 @@ async def test_typed_question_runs_the_agents_tool(
     ] == snapshot(
         [
             ['user-prompt: What is the weather in London?'],
-            ['speech:  Let me check the current weather in', 'tool-call: get_weather {"city":"London"}'],
+            ['speech:  Let me check the current weather in London.', 'tool-call: get_weather {"city":"London"}'],
             ['tool-return: It is foggy and 12 degrees Celsius in London.'],
-            ['speech:  London. It\u2019s foggy and 12 degrees Celsius.'],
+            ['speech:  It\u2019s foggy and 12 degrees Celsius.'],
         ]
     )
     # Closing asked Live to end the session, which it confirmed.
@@ -891,6 +891,45 @@ async def test_webrtc_hang_up_ends_the_call(
 
     # The call is gone now: hanging it up again, without a sideband, finds nothing to end.
     await realtime.hang_up(answer.session)
+
+
+@pytest.mark.vcr
+async def test_webrtc_browser_hang_up_ends_the_session(
+    openai_live_ws_sideband_cassette: tuple[Provider[Any], RealtimeCassette],
+    realtime_recording: bool,
+) -> None:
+    """A browser that hangs up ends the server's sideband session as any hangup does, without an error.
+
+    Live reports the browser's lost connection as `session.closed` with `connection_lost`, about half a minute
+    later, then drops the sideband without a closing handshake.
+    """
+    provider, _ = openai_live_ws_sideband_cassette
+    model = OpenAILiveModel('gpt-live-1', provider=provider, settings=_FAST_TURN)
+    realtime = Agent(_BACKEND, instructions='Answer in a few words.').realtime(model)
+
+    @asynccontextmanager
+    async def browser() -> AsyncGenerator[_BrowserPeer]:
+        if realtime_recording:  # pragma: no cover
+            async with _speaking_browser(b'') as peer:
+                yield peer
+            return
+        yield REAL_SDP_OFFER, _no_browser_to_connect, lambda: None
+
+    async with AsyncExitStack() as browser_call:
+        offer, connect, _ = await browser_call.enter_async_context(browser())
+        answer = await realtime.answer_webrtc_offer(offer)
+        await connect(answer.sdp)
+        async with realtime.session(provider_session=answer.session) as session:
+            if realtime_recording:  # pragma: no cover
+                await anyio.sleep(2)
+            # The browser hangs up.
+            await browser_call.aclose()
+            with anyio.fail_after(90):
+                # The browser said nothing, so the call ends without an event, and above all without an error.
+                events = [event async for event in session]
+
+    assert session.closed
+    assert events == []
 
 
 _FAVORITE_COLOR = [

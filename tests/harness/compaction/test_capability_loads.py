@@ -39,13 +39,15 @@ from pydantic_ai_harness.compaction import (
     compact_now,
 )
 from pydantic_ai_harness.compaction._capability_loads import keep_capability_loads
+from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 
 INSTRUCTIONS = 'Call get_forecast with a city name.'
 STATED_INSTRUCTIONS = f'<system><context id="capability:weather">\n{INSTRUCTIONS}\n</context></system>'
 """The capability's instructions in the system voice, as `FunctionModel` receives them."""
 STYLE_INSTRUCTIONS = 'Answer in one sentence.'
 STATED_STYLE_INSTRUCTIONS = f'<system><context id="capability:style">\n{STYLE_INSTRUCTIONS}\n</context></system>'
-SUMMARY = 'The user asked for the weather in Athens; I loaded `weather` and it was sunny.'
+SUMMARY = 'Athens was sunny.'
+"""Short enough that the compacted history, the unloaded-capability note included, is smaller than the original."""
 RECORDED = {'pydantic-ai-harness.compaction.recorded-load.v1': True}
 UNLOADED_NOTE = (
     "Compacting the conversation unloaded these capabilities: 'weather'. Their instructions and tools are "
@@ -219,6 +221,7 @@ STRATEGIES = [
         'relevance-dropping',
         partial(RelevanceCompaction[None], FunctionModel(_judge), max_tokens=1, keep_tokens=1),
         id='relevance-dropping',
+        marks=pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY),
     ),
     pytest.param(
         'relevance-summarizing',
@@ -345,7 +348,11 @@ class TestCapabilityLoadsAcrossCompaction:
     @pytest.mark.parametrize(
         'compaction',
         [
-            pytest.param(ClearToolResults[None](max_messages=1, keep_pairs=1, clear_tool_inputs=True), id='clear'),
+            pytest.param(
+                ClearToolResults[None](max_messages=1, keep_pairs=1, clear_tool_inputs=True),
+                id='clear',
+                marks=pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY),
+            ),
             pytest.param(
                 ClampOversizedMessages[None](max_part_chars=10, keep_head_chars=1, keep_tail_chars=1), id='clamp'
             ),

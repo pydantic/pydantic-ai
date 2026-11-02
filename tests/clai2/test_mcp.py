@@ -119,7 +119,7 @@ async def test_builtin_is_enabled_and_the_dashboard_is_the_front_door() -> None:
     assert declaration.enabled
     assert declaration.factory == 'pydantic_clai2.mcp'
     plugin = make_plugin({})
-    assert len(plugin.capabilities) == 1
+    assert len(plugin.capabilities) == 2, 'eager servers as one toolset, on-demand servers as capabilities'
     dashboard = await plugin.commands.execute_async('/mcp')
     assert 'No MCP servers yet' in dashboard
     assert '/mcp install' in dashboard
@@ -219,14 +219,14 @@ async def test_loader_persistence_disable_and_project_plugin_trust(tmp_path: Pat
         assert not loader.capabilities()
         assert not list(commands)
         await loader.enable('mcp')
-        assert len(loader.capabilities()) == 1
+        assert len(loader.capabilities()) == 2
         assert 'local' in await commands.execute_async('/mcp')
         await loader.disable('mcp')
         assert not loader.capabilities()
         assert not list(commands)
         await loader.enable('mcp')
         await loader.reload('mcp')
-        assert len(loader.capabilities()) == 1
+        assert len(loader.capabilities()) == 2
         assert len(list(commands)) == 1
     finally:
         await loader.close('exit')
@@ -435,7 +435,7 @@ def test_remote_options_build_the_right_transport(tmp_path: Path) -> None:
 def test_plugin_settings_accept_the_old_transport_key() -> None:
     assert MCPSettings(servers={'x': StdioServer(type='stdio', command='x')}).servers['x'].type == 'stdio'
     plugin = make_plugin({'servers': {'old': {'transport': 'stdio', 'command': 'x'}}})
-    assert len(plugin.capabilities) == 1
+    assert len(plugin.capabilities) == 2
 
 
 def test_unknown_names_are_not_exported() -> None:

@@ -328,6 +328,10 @@ class SessionChannel:
             for completion in await self.session.complete(text)
         ]
 
+    async def files(self, query: str) -> list[CompletionInfo]:
+        """The files and folders in the session's folder that best match `query`, the text after an `@`."""
+        return await self.service.files.find(self.session.workspace, query)
+
     def answer(self, request_id: str, answers: Sequence[AskUserAnswer] | None) -> None:
         """Answer one of the session's open questions, or decline it with `None`."""
         self.service.answerer.reply(request_id, answers, session=self.id)

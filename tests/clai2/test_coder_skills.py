@@ -25,7 +25,7 @@ from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.skills import Skills
 from pydantic_clai2 import Session, chat
-from pydantic_clai2._app import create_stock_agent
+from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.builtin_plugins.coder import DEFAULT_SKILL_FOLDERS, CoderPlugin, CoderSettings, CoderSource
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import PluginSettings, Settings
@@ -481,7 +481,7 @@ class TestSkillCatalog:
         self, project: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         write_skill(project / '.agents' / 'skills', 'review')
-        monkeypatch.setattr('pydantic_clai2.runtime._session.sys.platform', 'win32')
+        monkeypatch.setattr('pydantic_clai2.runtime.session.sys.platform', 'win32')
 
         loaded, output = await load_coder()
 

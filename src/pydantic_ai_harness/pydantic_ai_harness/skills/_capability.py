@@ -6,7 +6,7 @@ import warnings
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import get_args, overload
+from typing import Any, get_args, overload
 
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability
@@ -14,6 +14,8 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend
 from pydantic_ai_harness._workspace import require_workspace, secondary_workspace
+from pydantic_ai_harness.artifact_scanning import ArtifactScanner
+from pydantic_ai_harness.artifact_scanning._scanner import record_flagged
 from pydantic_ai_harness.skills._loader import (
     DuplicateNames,
     MissingDirectories,
@@ -41,6 +43,7 @@ class _SkillSource:
     unknown_names: UnknownNames
     workspace: Workspace | None
     """The `workspace=` the libraries are read from, or `None` for the run's workspace."""
+    scanner: ArtifactScanner | None
 
 
 class _Skill(AbstractCapability[AgentDepsT]):
@@ -104,6 +107,9 @@ class Skills(AbstractCapability[AgentDepsT]):
     workspace: WorkspaceBackend | None
     """Where the libraries live, when not in the run's workspace; see `__init__`."""
 
+    scanner: ArtifactScanner | None
+    """Scans each skill's description and body before it is offered, skipping flagged skills; see `__init__`."""
+
     id: str | None = 'skills'
     """One per agent: two `Skills` combine into one catalog."""
 
@@ -121,6 +127,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         duplicate_names: DuplicateNames = 'error',
         unknown_names: UnknownNames = 'error',
         workspace: WorkspaceBackend | None = None,
+        scanner: ArtifactScanner | None = None,
     ) -> None: ...
 
     @overload
@@ -134,6 +141,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         duplicate_names: DuplicateNames = 'error',
         unknown_names: UnknownNames = 'error',
         workspace: WorkspaceBackend | None = None,
+        scanner: ArtifactScanner | None = None,
     ) -> None: ...
 
     def __init__(
@@ -146,6 +154,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         duplicate_names: DuplicateNames = 'error',
         unknown_names: UnknownNames = 'error',
         workspace: WorkspaceBackend | None = None,
+        scanner: ArtifactScanner | None = None,
     ) -> None:
         """Configure the skill libraries to read at the start of each run.
 
@@ -168,6 +177,9 @@ class Skills(AbstractCapability[AgentDepsT]):
                 `LocalWorkspaceBackend('/app')` for skills shipped with the code while the agent
                 works in a sandbox. It is read in-process only in this release: a durable engine
                 does not route it through its workflow machinery.
+            scanner: An `ArtifactScanner` that checks each skill's description and body for prompt injection,
+                credential exfiltration, and hidden content. A flagged skill is left out of the catalog, with
+                a warning, as a `SkippedSkill` whose `reason` is `'flagged'`. Omit to load skills unscanned.
         """
         if include is not None and exclude is not None:
             raise ValueError('include and exclude cannot be used together.')
@@ -186,12 +198,50 @@ class Skills(AbstractCapability[AgentDepsT]):
         self.duplicate_names = duplicate_names
         self.unknown_names = unknown_names
         self.workspace = workspace
+        self.scanner = scanner
         own = secondary_workspace(workspace, 'Skills')
         self._sources = (
             _SkillSource(
-                self.directories, self.include, self.exclude, missing_directories, duplicate_names, unknown_names, own
+                self.directories,
+                self.include,
+                self.exclude,
+                missing_directories,
+                duplicate_names,
+                unknown_names,
+                own,
+                scanner,
             ),
         )
+
+    @classmethod
+    def from_spec(
+        cls,
+        directories: str | Sequence[str],
+        *,
+        include: Sequence[str] | None = None,
+        exclude: Sequence[str] | None = None,
+        missing_directories: MissingDirectories = 'error',
+        duplicate_names: DuplicateNames = 'error',
+        unknown_names: UnknownNames = 'error',
+        **kwargs: Any,
+    ) -> Skills[Any]:
+        """Build from an agent spec, naming the fields a spec can express.
+
+        Core reads this signature to generate the spec's JSON schema. Inherited, it would read
+        `__init__`, whose `Collection[str]` selectors and `workspace` backend have no JSON schema
+        and would drop the long form, leaving only `Skills: <directories>`. `**kwargs` reaches
+        `__init__` unchanged, so a spec that set anything else still loads.
+        """
+        options: dict[str, Any] = {
+            'include': include,
+            'exclude': exclude,
+            'missing_directories': missing_directories,
+            'duplicate_names': duplicate_names,
+            'unknown_names': unknown_names,
+            **kwargs,
+        }
+        # One dict, because `__init__`'s overloads reject an `include` and `exclude` that are both optional.
+        return cls(directories, **options)
 
     def __repr__(self) -> str:
         """Show only the `Skills` configuration that callers control."""
@@ -199,7 +249,9 @@ class Skills(AbstractCapability[AgentDepsT]):
             f'{type(self).__name__}('
             f'directories={self.directories!r}, include={self.include!r}, exclude={self.exclude!r}, '
             f'missing_directories={self.missing_directories!r}, duplicate_names={self.duplicate_names!r}, '
-            f'unknown_names={self.unknown_names!r})'
+            f'unknown_names={self.unknown_names!r}'
+            + ('' if self.scanner is None else f', scanner={self.scanner!r}')
+            + ')'
         )
 
     @staticmethod
@@ -253,6 +305,15 @@ class Skills(AbstractCapability[AgentDepsT]):
         if any(source.workspace is None for source in self._sources):
             require_workspace(ctx.workspace, 'Skills', ctx.messages)
         catalog = await self._load(ctx.workspace)
+        for skipped in catalog.skipped:
+            if skipped.scan is not None:
+                record_flagged(
+                    ctx.tracer,
+                    skipped.scan,
+                    artifact='skill',
+                    action='skipped',
+                    include_content=ctx.trace_include_content,
+                )
         for message in (*(skipped.message for skipped in catalog.skipped), *self._advice(catalog.skills)):
             warnings.warn(message, UserWarning, stacklevel=2)
         offered = [_Skill[AgentDepsT](skill) for skill in catalog.skills if skill.model_invocable]
@@ -284,7 +345,9 @@ class Skills(AbstractCapability[AgentDepsT]):
         return await self._load(run_workspace)
 
     async def _load(self, run_workspace: Workspace | None) -> SkillCatalog:
-        by_name: dict[str, tuple[Workspace, SkillDefinition]] = {}
+        claimed: dict[str, tuple[Workspace, str]] = {}
+        """Where each name's first `SKILL.md` is, whether it was kept or flagged."""
+        by_name: dict[str, SkillDefinition] = {}
         messages: list[SkippedSkill] = []
         for source in self._sources:
             workspace = source.workspace or run_workspace
@@ -300,17 +363,21 @@ class Skills(AbstractCapability[AgentDepsT]):
             )
             messages.extend(skipped)
             for skill in skills:
-                previous = by_name.get(skill.name)
-                if previous is None:
-                    # A library read from `workspace=` is not where the model's file tools work.
-                    by_name[skill.name] = (workspace, replace(skill, in_run_workspace=source.workspace is None))
+                previous = claimed.get(skill.name)
+                if previous is not None:
+                    if not await same_skill(previous, (workspace, skill.path)):
+                        messages.append(
+                            skip_duplicate_name(skill.name, previous[1], skill.path, source.duplicate_names)
+                        )
                     continue
-                previous_workspace, previous_skill = previous
-                if not await same_skill((previous_workspace, previous_skill.path), (workspace, skill.path)):
-                    messages.append(
-                        skip_duplicate_name(skill.name, previous_skill.path, skill.path, source.duplicate_names)
-                    )
-        return SkillCatalog(skills=tuple(skill for _, skill in by_name.values()), skipped=tuple(messages))
+                # A flagged skill keeps its name, so a copy in a library that is not scanned cannot take its place.
+                claimed[skill.name] = (workspace, skill.path)
+                if (flagged := _flagged(source.scanner, skill)) is not None:
+                    messages.append(flagged)
+                    continue
+                # A library read from `workspace=` is not where the model's file tools work.
+                by_name[skill.name] = replace(skill, in_run_workspace=source.workspace is None)
+        return SkillCatalog(skills=tuple(by_name.values()), skipped=tuple(messages))
 
     @staticmethod
     def _advice(definitions: tuple[SkillDefinition, ...]) -> list[str]:
@@ -333,3 +400,18 @@ class Skills(AbstractCapability[AgentDepsT]):
         if ignored:
             advice.append('Ignoring unsupported Agent Skill behavioral frontmatter fields: ' + '; '.join(ignored))
         return advice
+
+
+def _flagged(scanner: ArtifactScanner | None, skill: SkillDefinition) -> SkippedSkill | None:
+    """The entry for `skill` when `scanner` flags its description or body, otherwise `None`."""
+    if scanner is None:
+        return None
+    scan = scanner.scan(f'{skill.description}\n\n{skill.body}', source=f'skill:{skill.name}')
+    if not scan.flagged:
+        return None
+    return SkippedSkill(
+        path=skill.path,
+        reason='flagged',
+        message=f'Skipping {skill.path}: an artifact scan flagged it ({scan.summary()}).',
+        scan=scan,
+    )

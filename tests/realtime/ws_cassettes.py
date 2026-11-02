@@ -322,13 +322,12 @@ def _truncate_audio(frame: dict[str, Any]) -> dict[str, Any]:
     # ElevenLabs outbound microphone chunk (the one client message without a `type` field).
     if isinstance(frame.get('user_audio_chunk'), str):
         return {**frame, 'user_audio_chunk': _truncate_b64_audio(frame['user_audio_chunk'])}
-    # ElevenLabs inbound audio: truncate the payload and drop the per-character TTS timing block,
-    # which is hundreds of numbers per frame that the session never reads.
+    # ElevenLabs inbound audio: truncate the payload, keeping the per-character `alignment` the session times
+    # words by, which doesn't depend on the audio bytes.
     if frame.get('type') == 'audio' and isinstance(audio_event := frame.get('audio_event'), dict):
         audio_event = cast('dict[str, Any]', audio_event)
         payload = audio_event.get('audio_base_64')
         if isinstance(payload, str):  # pragma: no branch
-            audio_event = {key: value for key, value in audio_event.items() if key != 'alignment'}
             return {**frame, 'audio_event': {**audio_event, 'audio_base_64': _truncate_b64_audio(payload)}}
 
     def _walk(value: Any) -> Any:

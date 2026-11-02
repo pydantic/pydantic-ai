@@ -29,7 +29,7 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 
@@ -50,7 +50,7 @@ def _heroku_kimi_model_profile(model_name: str) -> ModelProfile | None:
     return moonshotai_model_profile(model_name)
 
 
-class HerokuProvider(_OpenAICompatibleProvider):
+class HerokuProvider(_OpenAISDKProvider):
     """Provider for Heroku API."""
 
     @property

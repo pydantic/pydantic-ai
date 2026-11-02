@@ -27,6 +27,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness.boxlite_sandbox import BoxLiteSandbox, BoxLiteSandboxBackend
 from pydantic_ai_harness.coder import Coder
+from tests.conftest import no_leaked_tasks
 
 from .._tool_calls import call_tools
 from .fake_boxlite import FakeBox, FakeBoxLite, FakeHandle, PanicException
@@ -254,19 +255,18 @@ async def test_a_creation_cancelled_mid_create_waits_for_it_and_deletes_the_box(
     # BoxLite finishes a create after its caller is cancelled, so the backend waits for it, then deletes the box.
     fake_boxlite.create_gate = gate = asyncio.Event()
     backend = BoxLiteSandboxBackend(working_dir=working_dir)
-    tasks = asyncio.all_tasks()
-    caller = asyncio.create_task(backend.get_sandbox())
-    await fake_boxlite.create_started.wait()
-    caller.cancel()
-    await asyncio.sleep(0)
-    assert not caller.done()
-    gate.set()
-    with anyio.fail_after(5), pytest.raises(asyncio.CancelledError):
-        await caller
-    assert len(fake_boxlite.removed) == 1 and fake_boxlite.boxes == {}
-    # Nothing is left for cleanup to delete, and nothing runs on without its caller.
-    assert backend.ref is None
-    assert asyncio.all_tasks() == tasks
+    with no_leaked_tasks():
+        caller = asyncio.create_task(backend.get_sandbox())
+        await fake_boxlite.create_started.wait()
+        caller.cancel()
+        await asyncio.sleep(0)
+        assert not caller.done()
+        gate.set()
+        with anyio.fail_after(5), pytest.raises(asyncio.CancelledError):
+            await caller
+        assert len(fake_boxlite.removed) == 1 and fake_boxlite.boxes == {}
+        # Nothing is left for cleanup to delete, and nothing runs on without its caller.
+        assert backend.ref is None
 
 
 @pytest.mark.parametrize('cancelled', [False, True])

@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
@@ -12,6 +14,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.compaction import ClearToolResults, DeduplicateFileReads
 from pydantic_ai_harness.filesystem import FileSystem
+from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 
 
 def _file_key(call: ToolCallPart) -> str | None:
@@ -72,6 +75,7 @@ READS: list[tuple[str, dict[str, Any]]] = [
 ]
 
 
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
 async def test_clear_tool_results_does_not_count_a_retried_return_toward_keep_pairs(tmp_path: Path) -> None:
     requests = await _run(tmp_path, ClearToolResults[object](max_messages=3, keep_pairs=1), READS)
 

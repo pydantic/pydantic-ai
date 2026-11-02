@@ -9,7 +9,7 @@
 <!-- rule:910 -->
 - Wrap code identifiers in backticks in user-facing messages (errors, warnings, logs) — Improves readability and clearly distinguishes code elements from prose, making error messages easier to parse and debug
 <!-- rule:193 -->
-- Centralize validation at one layer — removes redundancy and establishes single source of truth — Prevents validation drift when requirements change and reduces maintenance burden by avoiding duplicate validation logic across the call chain
+- Centralize validation at one layer to prevent validation drift when requirements change.
 <!-- rule:2 -->
 - Extract duplicated logic into shared helpers after 2+ occurrences — refactor existing code rather than creating parallel implementations — Prevents bugs from inconsistent implementations, reduces maintenance burden, and creates single sources of truth for validation, transformation, and schema handling
 <!-- rule:341 -->

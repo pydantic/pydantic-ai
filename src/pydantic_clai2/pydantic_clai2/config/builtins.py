@@ -32,7 +32,7 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
     PluginSettings(id='posthog', factory='pydantic_clai2.builtin_plugins.posthog', enabled=False),
     PluginSettings(id='grain', factory='pydantic_clai2.builtin_plugins.grain', enabled=False),
     PluginSettings(id='linear', factory='pydantic_clai2.builtin_plugins.linear', enabled=False),
-    PluginSettings(id='herdr', factory='pydantic_clai2.builtin_plugins.herdr', enabled=False),
+    PluginSettings(id='herdr', factory='pydantic_clai2.builtin_plugins.herdr'),
     PluginSettings(id='aoe', factory='pydantic_clai2.builtin_plugins.aoe', enabled=False),
     PluginSettings(id='web', factory='pydantic_clai2.builtin_plugins.web', enabled=False),
     PluginSettings(id='workspaces', factory='pydantic_clai2.builtin_plugins.workspaces', enabled=False),

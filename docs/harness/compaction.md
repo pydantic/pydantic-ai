@@ -15,6 +15,8 @@ On OpenAI and Anthropic, core also ships [provider-native compaction](https://py
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![Compaction runs in the before_model_request hook, between the message history and the model. TieredCompaction runs its tiers in order: DeduplicateFileReads and ClearToolResults cost no model call, SummarizingCompaction makes one. After each tier it re-measures the history and stops as soon as it fits target_tokens, so in this example the summary tier never runs. The shortened history persists into the run.](../img/harness/compaction.svg)
+
 ## The problem
 
 An agent that runs for many turns accumulates history: tool outputs, file reads, model reasoning, repeated content. Left unchecked, that history outgrows the model's context window and the next request fails. Compaction keeps the history bounded, and the right strategy depends on where the bloat lives and how much you can afford to spend reclaiming it.
@@ -244,7 +246,7 @@ A tier inside `TieredCompaction` is driven directly by the orchestrator, which r
 
 ## `FallbackCompaction`: recover when a strategy fails
 
-`TieredCompaction` advances when a successful tier does not reclaim enough. `FallbackCompaction` advances only when a strategy raises an exception selected by `fallback_on`, which defaults to Pydantic AI's `ModelAPIError` and `FallbackExceptionGroup`. The latter is raised when every model in a `FallbackModel` fails. Each attempt receives a fresh list containing the original message objects, so list-level changes by a failed strategy do not affect its fallback. Strategies must still honor the `CompactionStrategy` contract and avoid mutating message objects. If every strategy fails, the last exception is re-raised. Non-matching exceptions, cancellation, and other `BaseException` subclasses pass through immediately; `fallback_on` rejects types that do not derive from `Exception`.
+`TieredCompaction` advances when a successful tier does not reclaim enough. `FallbackCompaction` advances when a strategy raises an exception selected by `fallback_on`, which defaults to Pydantic AI's `ModelAPIError` and `FallbackExceptionGroup`. The latter is raised when every model in a `FallbackModel` fails. When its trigger runs the chain, it also advances past a `SummarizingCompaction` whose result [isn't smaller](#a-summary-that-isnt-smaller) than the history, and leaves the history unchanged if no strategy shrinks it. Each attempt receives a fresh list containing the original message objects, so list-level changes by a failed strategy do not affect its fallback. Strategies must still honor the `CompactionStrategy` contract and avoid mutating message objects. If every strategy fails, the last exception is re-raised. Non-matching exceptions, cancellation, and other `BaseException` subclasses pass through immediately; `fallback_on` rejects types that do not derive from `Exception`.
 
 Register it directly when summarization should fall back to deterministic truncation:
 
@@ -501,7 +503,7 @@ The summary is a [`CompactionPart`][pydantic_ai.messages.CompactionPart] in a `M
 
 Both prompt surfaces of the summary request are fields: `summary_prompt` is the user-turn template (it must contain a `{messages}` placeholder and no other replacement field; any other prompt emits a `HarnessDeprecationWarning` and will raise `ValueError` in a future release), and `instructions` sets the internal agent's static instructions, which Pydantic AI sends in the request's system prompt. Override `instructions` when the summarizer endpoint requires a fixed leading instruction.
 
-The messages served into that template are rendered as a transcript with one `<message>` element per part (each user prompt, system prompt, response text, tool call and tool return), tagged with its role and, for a tool call or return, its tool name. Retry feedback, the correction a rejected tool call or output got, is a `role="retry_feedback"` element carrying the retry's `cause` (and, for a tool call, its tool name), so the summary records the correction rather than the rejected call as something that happened; feedback that answers no tool call is shown as the model saw it. Content that looks like the transcript's own tags, in any case or spacing, is escaped, so a tool return can't close its message and forge another, or end the transcript early. Each tool return and retry feedback is capped, after that escaping, at `tool_return_max_chars` (default 500) characters using the same explicit truncation marker as kept user turns. Raise it, or set it to `None` to render each return and retry feedback whole, when the summarizer's context window is large enough to absorb the payloads. Content a harness capability added on the user channel and tagged with an `origin` in its `TextContent.metadata` starting with `pydantic-ai-harness.` is not a user message. Today that's a [`BackgroundTools`](background-tools.md) result, [`TrajectoryJudge`](trajectory-judge.md) feedback and a [`Memory`](memory.md) snapshot, including one an older release marked with a plain string. Tagged content is rendered as a `<harness_data origin="...">` element, capped like a tool return, rather than as `role="user"`. When the transcript holds such content, the summary request also tells the summarizer not to treat it as the user's requests or standing constraints; other summary requests are unchanged. `max_tokens` and `keep_tokens` control when compaction runs and which history messages are retained; they do not cap the summary-request payload.
+The messages served into that template are rendered as a transcript with one `<message>` element per part (each user prompt, system prompt, response text, tool call and tool return), tagged with its role and, for a tool call or return, its tool name. Retry feedback, the correction a rejected tool call or output got, is a `role="retry_feedback"` element carrying the retry's `cause` (and, for a tool call, its tool name), so the summary records the correction rather than the rejected call as something that happened; feedback that answers no tool call is shown as the model saw it. Content that looks like the transcript's own tags or a framing tag Pydantic AI writes (`<system>`, `<context>`, `<tool_result>` and the rest), in any case or spacing, is escaped, so a tool return stays inside its own message and can't end the transcript early. Each tool return and retry feedback is capped, after that escaping, at `tool_return_max_chars` (default 500) characters using the same explicit truncation marker as kept user turns. Raise it, or set it to `None` to render each return and retry feedback whole, when the summarizer's context window is large enough to absorb the payloads. Content a harness capability added on the user channel and tagged with an `origin` in its `TextContent.metadata` starting with `pydantic-ai-harness.` is not a user message. Today that's a [`BackgroundTools`](background-tools.md) result, [`TrajectoryJudge`](trajectory-judge.md) feedback and a [`Memory`](memory.md) snapshot, including one an older release marked with a plain string. Tagged content is rendered as a `<harness_data origin="...">` element, capped like a tool return, rather than as `role="user"`. When the transcript holds such content, the summary request also tells the summarizer not to treat it as the user's requests or standing constraints; other summary requests are unchanged. `max_tokens` and `keep_tokens` control when compaction runs and which history messages are retained; they do not cap the summary-request payload.
 
 The summary request is non-streaming unless `event_stream_handler` is set. Supply a handler to watch the summary as it is written, or pass `drain_summary_events` to take the streaming request path without handling the events -- which is what a summarizer endpoint that rejects non-streaming requests needs:
 
@@ -518,6 +520,10 @@ agent = Agent(
 ```
 
 Neither transport works everywhere, which is why this is a choice rather than a default: some endpoints reject non-streaming requests and others reject streaming ones. The handler receives the summary run's own `RunContext` and event stream; the outer `Agent.run(...)` handler is not inherited and never sees the summary token deltas.
+
+### A summary that isn't smaller
+
+The summary replaces only part of the history: system prompts, the first user turn, the recent tail, pinned parts and receipts are kept as they are. When the summarized span is short or the summary is long, the result can be larger than the history it replaces. Automatic compaction is there to make the request smaller, so when `SummarizingCompaction` runs on its own trigger, the compacted history is kept only when it is estimated smaller than the original, using the `tokenizer` of the capability whose trigger fired (`FallbackCompaction`'s inside a chain), or the ~4-characters-per-token estimate without one. Otherwise the request goes out with the history unchanged, any receipt the attempt wrote is dropped, and a `compact_messages` span with `compaction.skipped` set to `not_smaller` records the attempt and its estimated size. The summary call's usage still counts, and while the trigger stays exceeded, the next request in the run tries again with another summary call. Inside `FallbackCompaction`, the next strategy runs instead, so putting a `SlidingWindowCompaction` after the summarizer bounds both the history and that cost. A direct `compact()` call, `compact_now()` or a `TieredCompaction` tier returns the summary either way.
 
 ### Usage accounting
 
@@ -617,13 +623,13 @@ Clearing, deduplicating, clamping, and summarizing all rewrite message content, 
 
 ## Tracing
 
-When core instrumentation is active (the `Instrumentation` capability, `agent.instrument`, or `Agent.instrument_all()`), each strategy emits a `compact_messages` span on the run's tracer the moment it actually compacts -- that is, in `before_model_request`, once the strategy's threshold is exceeded (`ClampOversizedMessages` emits only when a part is actually clamped). `TieredCompaction` emits a single span for the whole escalation rather than one per tier, because it drives each tier's `compact` directly. Without instrumentation the tracer is a no-op, so the span adds no overhead.
+When core instrumentation is active (the `Instrumentation` capability, `agent.instrument`, or `Agent.instrument_all()`), each strategy emits a `compact_messages` span on the run's tracer the moment it actually compacts -- that is, in `before_model_request`, once the strategy's threshold is exceeded (`ClampOversizedMessages` emits only when a part is actually clamped). `TieredCompaction` emits a single span for the whole escalation rather than one per tier, because it drives each tier's `compact` directly. An automatic summary that is discarded for not being smaller also emits one, with `compaction.skipped`. Without instrumentation the tracer is a no-op, so the span adds no overhead.
 
 The span name is the static `compact_messages`; the strategy is an attribute, not part of the name, to keep span cardinality low. Attributes:
 
 | Attribute | Type | Meaning |
 |---|---|---|
-| `gen_ai.conversation.compacted` | bool | Always `true`; the OpenTelemetry GenAI convention's flag for a compacted context |
+| `gen_ai.conversation.compacted` | bool | `true` when the history was compacted, absent on a skipped attempt; the OpenTelemetry GenAI convention's flag for a compacted context |
 | `compaction.strategy` | str | Strategy class name (for example `SlidingWindowCompaction`, `SummarizingCompaction`) |
 | `compaction.messages_before` | int | Message count before compaction |
 | `compaction.messages_after` | int | Message count after compaction |
@@ -631,6 +637,7 @@ The span name is the static `compact_messages`; the strategy is an attribute, no
 | `compaction.tokens_after` | int | Estimated token count after compaction |
 | `compaction.model_requested` | bool | `true` when the model asked for the compaction through `CompactOnRequest`; absent otherwise |
 | `compaction.background` | str | Only with `background_start`: `used`, `stale`, or `failed`, what became of the background compaction |
+| `compaction.skipped` | str | `not_smaller` when an automatic summary was discarded because it wasn't smaller than the history; the `*_after` attributes then describe the discarded result. Absent otherwise |
 
 `gen_ai.conversation.compacted` is the GenAI semantic convention's flag; the rest is harness-specific. Token counts use the strategy's `tokenizer` when set, otherwise the ~4-chars-per-token heuristic. Raw message content is not recorded.
 
@@ -680,7 +687,7 @@ A pinned part is never summarized away or dropped; if a strategy would have disc
 
 Pins use model-invisible `TextContent.metadata`, so their contents remain ordinary user context while compaction can distinguish them from user turns.
 
-The `Planning` capability does not need pinning: its plan is re-injected ephemerally on every request in `wrap_model_request`, so it already survives compaction by construction. Pinning is for durable task state and scratchpads that live *in* the history.
+The `Planning` capability does not need pinning: when compaction removes or clears the plan tools' results that show the latest plan, the next request records the plan from its store. Pinning is for durable task state and scratchpads that live *in* the history.
 
 ## On-demand capabilities across compaction
 

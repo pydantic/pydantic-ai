@@ -289,6 +289,16 @@ _ACTED_ON_EVENT_TYPES = frozenset(
         'error',
     }
 )
+#: The frames a reply held open for Live to pause (see `_release_settlement`) go on through: its speech, its billing,
+#: and the session ending, which says itself how the reply ends.
+_HELD_THROUGH_EVENT_TYPES = frozenset(
+    {
+        'session.output_audio.delta',
+        'session.output_transcript.delta',
+        'session.usage.updated',
+        'session.closed',
+    }
+)
 _acted_on_event_adapter: TypeAdapter[_ActedOnEvent] = TypeAdapter(_ActedOnEvent)
 _json_object_adapter: TypeAdapter[dict[str, Any]] = TypeAdapter(dict[str, Any])
 
@@ -703,7 +713,8 @@ class _LiveLifecycle(InferredLifecycle):
     settles (`delegation_settled()`), with what Live says meanwhile, or until the backend calls more tools in a
     continuation, which are a response of their own, after the results it was continued with, as in a standard run.
     Any delegation settling ends it, not only the one that asked for its calls: what Live says next is that
-    delegation's outcome, which is a reply of its own.
+    delegation's outcome, which is a reply of its own. (The connection reports a delegation settling while Live is
+    mid-sentence once Live pauses, as Live finishes what it was saying before it speaks the outcome.)
     """
 
     transcripts_lag_replies = False
@@ -730,6 +741,11 @@ class _LiveLifecycle(InferredLifecycle):
             return super().frame_for(codec)
         finally:
             self._settles = False
+
+    @property
+    def settling_ends_reply(self) -> bool:
+        """Whether a delegation settling now would end the reply under way: it called tools, and goes on past them."""
+        return self._open is not None and self._calls_awaiting_usage
 
     def delegation_settled(self) -> None:
         """The provider message being mapped settles a delegation: it owes nothing more.
@@ -865,6 +881,11 @@ class OpenAILiveConnection(RealtimeConnection):
         self._pause_ms: float | None = None
         # The last transcript fragment in each direction, for the space Live leaves out between segments.
         self._last_fragment: dict[Literal['input', 'output'], str] = {'input': '', 'output': ''}
+        # Where on the session timeline the model's transcript last ended.
+        self._last_output_end_ms: int | None = None
+        # The backend usage report of a delegation that settled while Live was mid-sentence, held back until Live
+        # pauses: it ends the reply that called the tools (see `_release_settlement`).
+        self._held_settlement: list[SessionUsage] = []
         # Where on the session timeline the user's transcript last ended.
         self._last_input_end_ms: int | None = None
         self._delegations: dict[str, _Delegation] = {}
@@ -944,7 +965,7 @@ class OpenAILiveConnection(RealtimeConnection):
         if not delegation.response_in_flight:
             # Settled outside any provider message, so no backend usage report follows to end the reply that called
             # the tools: the turn clock, which the delegation no longer holds, ends it.
-            self._settle_delegation(delegation, gave_up=True, in_frame=False)
+            self._settle_delegation(delegation, gave_up=True)
 
     def set_message_history(self, message_history: Callable[[], Sequence[ModelMessage]]) -> None:
         self._message_history = message_history
@@ -1209,6 +1230,9 @@ class OpenAILiveConnection(RealtimeConnection):
         """
         if self._closed:
             return
+        # A backend report still held back for Live to pause, now that the session has stopped reading.
+        for report in self._release_settlement(ends_reply=False):
+            yield report
         if self._session_end.ended:
             # Live already ended the session; its final usage is yielded unless the session already took it.
             unclaimed, self._session_end.unclaimed = self._session_end.unclaimed, []
@@ -1278,8 +1302,13 @@ class OpenAILiveConnection(RealtimeConnection):
                     raw = finished.result()
                 # A cancelled read is not caught here: `aclose()` sets `_closed` before cancelling,
                 # so that path returns above rather than reaching this call.
-                except websockets.ConnectionClosedOK as e:
-                    if not self._redial_on_close:
+                except websockets.ConnectionClosed as e:
+                    # A sideband's socket isn't closed with a closing handshake when its session ends, so once
+                    # `session.closed` has said the session is over, any close is the end of it, not a drop.
+                    ended = isinstance(e, websockets.ConnectionClosedOK) or (
+                        self._reattach is not None and self._session_end.ended
+                    )
+                    if ended and not self._redial_on_close:
                         # The read started above can no longer complete, and nothing will await it.
                         self._cancel_read()
                         # The session is over, so there is nothing left for `_end_session()` to ask Live for.
@@ -1316,11 +1345,13 @@ class OpenAILiveConnection(RealtimeConnection):
                         error = RealtimeSessionErrorEvent(
                             message=f'OpenAI GPT-Live connection closed: {dropped}', recoverable=False
                         )
-                        yield [*self._lifecycle.connection_lost(), error]
+                        yield [*self._held_lost(), *self._lifecycle.connection_lost(), error]
                         return
                     # Nothing under way on the dropped connection will finish when a new session replaces it. A
                     # re-attached sideband's session is the same one, which carried on meanwhile.
-                    lost: RealtimeFrame = [] if self._reattach is not None else [*self._lifecycle.connection_lost()]
+                    lost: RealtimeFrame = (
+                        [] if self._reattach is not None else [*self._held_lost(), *self._lifecycle.connection_lost()]
+                    )
                     # The read started above is on the dead socket.
                     self._cancel_read()
                     try:
@@ -1330,7 +1361,7 @@ class OpenAILiveConnection(RealtimeConnection):
                         self._socket_change_settled()
                         raise
                     if not reconnected and self._reattach is not None:
-                        lost += self._lifecycle.connection_lost()
+                        lost += [*self._held_lost(), *self._lifecycle.connection_lost()]
                     lost += self._lifecycle.take_pending()
                     if not reconnected:
                         self._gave_up = True
@@ -1471,6 +1502,7 @@ class OpenAILiveConnection(RealtimeConnection):
         self._pause_ms = None
         self._last_fragment = {'input': '', 'output': ''}
         self._last_input_end_ms = None
+        self._last_output_end_ms = None
         self._abandoned_calls.update(self._open_calls)
         self._open_calls.clear()
         # (The connection's own drop handling settles the replies they asked for.)
@@ -1544,7 +1576,7 @@ class OpenAILiveConnection(RealtimeConnection):
                 continue
             delegation.continuation_check_at = None
             delegation.continuation_unconfirmed = False
-            self._settle_delegation(delegation, gave_up=True, in_frame=False)
+            self._settle_delegation(delegation, gave_up=True)
             events.append(
                 RealtimeSessionErrorEvent(
                     message=(
@@ -1574,7 +1606,7 @@ class OpenAILiveConnection(RealtimeConnection):
 
     def _settle_open_turns(self, *, interrupted: bool = False) -> list[RealtimeCodecEvent]:
         """Finalize whichever turns are open, in either direction."""
-        events = self._close_input_turn()
+        events = [*self._release_settlement(ends_reply=not interrupted), *self._close_input_turn()]
         if self._response_open:
             self._response_open = False
             self._pause_ms = None
@@ -1592,6 +1624,31 @@ class OpenAILiveConnection(RealtimeConnection):
 
     def _heard_voice(self) -> None:
         self._last_voice = _now()
+
+    @property
+    def _speaking(self) -> bool:
+        """Whether the model's voice sounded within the last pause's length: it is mid-sentence."""
+        return self._pause_ms is not None and self._pause_ms < _MAX_FORWARDED_PAUSE_MS
+
+    def _release_settlement(self, *, ends_reply: bool = True) -> list[SessionUsage]:
+        """The held usage report of a delegation that settled mid-sentence, which now ends the reply that called it.
+
+        Live goes on with what it was saying as the backend answers, and only then speaks the answer, which the wire
+        doesn't mark. So the reply ends where Live next pauses (as long as `_MAX_FORWARDED_PAUSE_MS`, on its audio or
+        its transcript's timeline), or at anything else that happens first: rather than mid-sentence. With
+        `ends_reply=False` the report is only the reply's, which something else is ending (the session ending, say).
+        """
+        if not self._held_settlement:
+            return []
+        held, self._held_settlement = self._held_settlement, []
+        if ends_reply:
+            self._lifecycle.delegation_settled()
+        return held
+
+    def _held_lost(self) -> RealtimeFrame:
+        """A reply still held open for Live to pause, lost with the session: its backend usage report, which it keeps."""
+        held = self._release_settlement(ends_reply=False)
+        return self._frame([*held]) if held else []
 
     def _open_response(self) -> list[RealtimeCodecEvent]:
         """Note that the model is speaking, closing the user turn it is replying to."""
@@ -1614,6 +1671,11 @@ class OpenAILiveConnection(RealtimeConnection):
         if not isinstance(raw, str):
             # Live sends only text frames; skip anything else, as the Realtime connection does.
             return []
+        # A frame the connection acts on, other than Live's speech, ends a reply held open for Live to pause, ahead
+        # of it, whether it maps or not (see `_release_settlement`): the report goes out either way, rather than
+        # being lost with the frame.
+        ends_held = False
+        mapped: list[RealtimeCodecEvent]
         try:
             data = _json_object_adapter.validate_json(raw)
             event_type = data.get('type')
@@ -1625,16 +1687,21 @@ class OpenAILiveConnection(RealtimeConnection):
                 and self._seen_before(event_id)
             ):
                 return []
+            ends_held = bool(self._held_settlement) and event_type not in _HELD_THROUGH_EVENT_TYPES
             try:
                 event = _acted_on_event_adapter.validate_python(data)
             except ValidationError as e:
-                return self._map_drifted_event(event_type, data, e)
-            return self._map_event(event)
+                mapped = self._map_drifted_event(event_type, data, e)
+            else:
+                mapped = self._map_event(event)
         except ValueError as e:
             # Text that isn't a JSON object, or a well-formed event with a payload we can't decode (bad
             # base64 audio, say), costs that frame, not the call: report it as recoverable and keep
             # reading, as the Realtime connection does.
-            return [RealtimeSessionErrorEvent(message=f'Failed to parse OpenAI GPT-Live event: {e}', recoverable=True)]
+            mapped = [
+                RealtimeSessionErrorEvent(message=f'Failed to parse OpenAI GPT-Live event: {e}', recoverable=True)
+            ]
+        return [*self._release_settlement(), *mapped] if ends_held else mapped
 
     def _map_drifted_event(
         self, event_type: str, data: dict[str, Any], error: ValidationError
@@ -1671,7 +1738,12 @@ class OpenAILiveConnection(RealtimeConnection):
         if isinstance(event, OutputAudioDeltaEvent):
             return self._map_output_audio(_b64decode(event.delta))
         if isinstance(event, OutputTranscriptDeltaEvent):
-            return [*self._open_response(), OutputTranscript(self._fragment('output', event.delta))]
+            paused = self._last_output_end_ms is not None and (
+                event.start_ms - self._last_output_end_ms >= _MAX_FORWARDED_PAUSE_MS
+            )
+            self._last_output_end_ms = event.end_ms
+            released = self._release_settlement() if paused else []
+            return [*released, *self._open_response(), OutputTranscript(self._fragment('output', event.delta))]
         if isinstance(event, InputTranscriptDeltaEvent):
             continues_closed_turn = (
                 self._response_open
@@ -1748,6 +1820,7 @@ class OpenAILiveConnection(RealtimeConnection):
         for delegation in in_flight:
             events.extend(self._response_ended_without_usage(unmeasured_requests=1))
             self._settle_delegation(delegation, gave_up=True)
+            self._lifecycle.delegation_settled()
         events.append(
             RealtimeSessionErrorEvent(
                 message=f'The delegated OpenAI Responses backend did not finish ({code}: {message}).',
@@ -1759,14 +1832,17 @@ class OpenAILiveConnection(RealtimeConnection):
     def _map_session_closed(self, cumulative_seconds: float | None, *, reason: str) -> list[RealtimeCodecEvent]:
         """Record the final usage, and say so when the session ended without anyone asking.
 
-        The WebSocket close that follows is clean either way, so without this a reply cut off by the
-        safety filter or the duration limit would be settled as though the model had finished it.
+        The WebSocket close that follows ends the stream either way, so without this a reply cut off by the
+        safety filter or the duration limit would be settled as though the model had finished it. On a WebRTC
+        sideband, a lost connection is the browser's: it hung up, or went away, and the call is over as it would
+        be after any other hangup (checked live: Live reports a browser closing its peer connection as
+        `connection_lost`, about half a minute later).
         """
         events: list[RealtimeCodecEvent] = [] if cumulative_seconds is None else self._map_usage(cumulative_seconds)
         self._session_end = _SessionEnd(
             ended=True, unclaimed=[report for report in events if isinstance(report, SessionUsage)]
         )
-        if reason in _NORMAL_CLOSE_REASONS:
+        if reason in _NORMAL_CLOSE_REASONS or (self._reattach is not None and reason == 'connection_lost'):
             return events
         events.extend(self._settle_open_turns(interrupted=True))
         # A sideband's session is the WebRTC call's: when it ends, so has the call (the browser went away, say),
@@ -1801,15 +1877,17 @@ class OpenAILiveConnection(RealtimeConnection):
             self._pause_ms = 0.0
             events = self._open_response()
             return [*events, AudioDelta(data=pcm)] if self._forwards_output_audio else events
-        if self._pause_ms is None or not self._forwards_output_audio:
+        if self._pause_ms is None:
             return []
         # A chunk that crosses the allowance is cut at it, on a sample boundary, so the pause forwarded
         # doesn't depend on how Live happened to chunk the track.
         allowed = max(0, int((_MAX_FORWARDED_PAUSE_MS - self._pause_ms) * self._audio_bytes_per_ms) // 2 * 2)
         self._pause_ms += len(pcm) / self._audio_bytes_per_ms
-        if not self._response_open or self._input_open or not allowed:
-            return []
-        return [AudioDelta(data=pcm[:allowed])]
+        # Past the allowance, the model paused: a reply waiting for that to end ends ahead of the rest.
+        released: list[RealtimeCodecEvent] = [] if self._speaking else [*self._release_settlement()]
+        if not self._forwards_output_audio or not self._response_open or self._input_open or not allowed:
+            return released
+        return [AudioDelta(data=pcm[:allowed]), *released]
 
     def _map_delegation(self, event: DelegationCreatedEvent) -> list[RealtimeCodecEvent]:
         delegation = event.delegation
@@ -1857,14 +1935,7 @@ class OpenAILiveConnection(RealtimeConnection):
             return []
         if isinstance(event, (ResponseCompletedEvent, ResponseFailedEvent, ResponseIncompleteEvent)):
             self._pending_reasoning.pop(delegation_id, None)
-            events: list[RealtimeCodecEvent] = self._map_backend_usage(event.response)
-            if delegation is not None:
-                if not events:
-                    events = self._response_ended_without_usage(unmeasured_requests=int(event.response.usage is None))
-                self._settle_delegation(delegation, gave_up=not isinstance(event, ResponseCompletedEvent))
-            if not isinstance(event, ResponseCompletedEvent):
-                events.append(_delegation_stopped(event))
-            return events
+            return self._map_backend_terminal(event, delegation)
         if not isinstance(event, ResponseOutputItemDoneEvent):
             return []
         if isinstance(event.item, ResponseReasoningItem):
@@ -1897,6 +1968,26 @@ class OpenAILiveConnection(RealtimeConnection):
             ),
         ]
 
+    def _map_backend_terminal(
+        self,
+        event: ResponseCompletedEvent | ResponseFailedEvent | ResponseIncompleteEvent,
+        delegation: _Delegation | None,
+    ) -> list[RealtimeCodecEvent]:
+        """A delegated backend response is over: its usage, and the delegation settled if it owes nothing more."""
+        usage = self._map_backend_usage(event.response)
+        completed = isinstance(event, ResponseCompletedEvent)
+        if delegation is not None:
+            if not usage:
+                usage = self._response_ended_without_usage(unmeasured_requests=int(event.response.usage is None))
+            if self._settle_delegation(delegation, gave_up=not completed):
+                if completed and self._speaking and self._lifecycle.settling_ends_reply:
+                    # Live is mid-sentence, saying what it says while the backend works: the reply goes on to the
+                    # end of that, and what Live says after its next pause is the answer.
+                    self._held_settlement.extend(usage)
+                    return []
+                self._lifecycle.delegation_settled()
+        return [*usage] if completed else [*usage, _delegation_stopped(event)]
+
     def _map_web_search(
         self, item: ResponseFunctionWebSearch, reasoning: list[ResponseReasoningItem]
     ) -> list[RealtimeCodecEvent]:
@@ -1921,7 +2012,7 @@ class OpenAILiveConnection(RealtimeConnection):
         return events
 
     @staticmethod
-    def _response_ended_without_usage(*, unmeasured_requests: int = 0) -> list[RealtimeCodecEvent]:
+    def _response_ended_without_usage(*, unmeasured_requests: int = 0) -> list[SessionUsage]:
         """The usage report a backend response that ended without mapped usage still makes.
 
         Every backend response is reported exactly once, usage or not: it is a request the backend made
@@ -1933,15 +2024,15 @@ class OpenAILiveConnection(RealtimeConnection):
         """
         return [SessionUsage(RequestUsage(unmeasured_requests=unmeasured_requests))]
 
-    def _settle_delegation(self, delegation: _Delegation, *, gave_up: bool, in_frame: bool = True) -> None:
+    def _settle_delegation(self, delegation: _Delegation, *, gave_up: bool) -> bool:
         """Account for one finished backend response, closing the delegation once it owes nothing.
 
         A delegation suspends the turn clock, so leaving a dead one in the map would keep the session
         from ever reporting another turn boundary: a backend that fails or stops short has to close
         it just as a completed one does.
 
-        `in_frame` says it is settled by the provider message being mapped, whose backend usage report then ends the
-        reply that called the tools (see `_LiveLifecycle.delegation_settled()`).
+        Returns whether the delegation is settled. Settled by a provider message, its backend usage report then ends
+        the reply that called the tools (see `_LiveLifecycle.delegation_settled()`), which is for the caller to say.
         """
         delegation.response_in_flight = False
         if gave_up or delegation.stalled:
@@ -1953,16 +2044,15 @@ class OpenAILiveConnection(RealtimeConnection):
             delegation.pending_tool_calls.clear()
             delegation.continuation_due = False
         if delegation.pending_tool_calls:
-            return  # the last result to come back continues it
+            return False  # the last result to come back continues it
         if delegation.continuation_due:
             self._continuations_due.append(delegation)
-            return
+            return False
         self._delegations.pop(delegation.id, None)
-        if in_frame:
-            self._lifecycle.delegation_settled()
         self._heard_voice()
+        return True
 
-    def _map_backend_usage(self, response: Response) -> list[RealtimeCodecEvent]:
+    def _map_backend_usage(self, response: Response) -> list[SessionUsage]:
         """Accumulate the delegated backend's token usage, priced as the backend.
 
         Live meters its own audio by the second and reports no tokens for it, but the Responses

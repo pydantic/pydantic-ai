@@ -144,6 +144,7 @@ def test_form_rows_preview_and_examples(tmp_path: Path) -> None:
         'Server Name: (not set)',
         'Server Type: stdio',
         'Command: npx -y @modelcontextprotocol/server-filesystem /path/to/dir',
+        'On demand: off',
         'JSON Configuration (valid)',
         'Load example for stdio',
         'Save & Install',

@@ -93,7 +93,7 @@ _TMP_FILES=()
 track_tmp() { _TMP_FILES+=("$1"); }
 cleanup_tmp() {
   for f in "${_TMP_FILES[@]:-}"; do
-    [ -n "$f" ] && rm -f "$f"
+    [ -n "$f" ] && rm -rf "$f"
   done
 }
 trap cleanup_tmp EXIT
@@ -235,19 +235,6 @@ jq -r --arg last_review "$LAST_REVIEW_TS" '
 ' "$THREADS_JSON" >> "$CTX/review-comments.txt"
 [ -s "$CTX/review-comments.txt" ] || echo "(No review comments)" > "$CTX/review-comments.txt"
 
-# Review verdicts are in neither file above: `review-comments.txt` holds only
-# inline threads, `pr-comments.txt` only issue comments. Every gh-aw reviewer here
-# posts as `github-actions[bot]`, so each one tells its own reviews apart by the
-# first line of the body. Non-fatal: the diffs below matter more than this file.
-echo "  - Bot reviews"
-gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --paginate \
-  | jq -rs '
-      [add[] | select(.user.login == "github-actions[bot]")] | sort_by(.submitted_at) | .[]
-      | "\(.submitted_at) \(.state) at \(.commit_id): \((.body // "") | split("\n") | (.[0] // "") | rtrimstr("\r") | if . == "" then "(no body)" else . end)"
-    ' > "$CTX/bot-reviews.txt" \
-  || echo "(Could not list reviews)" > "$CTX/bot-reviews.txt"
-[ -s "$CTX/bot-reviews.txt" ] || echo "(No reviews from github-actions[bot])" > "$CTX/bot-reviews.txt"
-
 # Related issues: extract issue numbers from PR body
 echo "  - Related issues"
 PR_BODY=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq '.body')
@@ -267,9 +254,11 @@ done > "$CTX/related-issues.txt"
 echo "  - Fetching base branch for function-context diffs"
 BASE_REF=$(jq -r '.baseRefName' "$CTX/pr-details.json")
 MERGE_BASE=""
+BASE_SHA=""
 if [ -n "$BASE_REF" ]; then
   if git fetch "https://github.com/${REPO}.git" "$BASE_REF" --quiet 2>/dev/null; then
     MERGE_BASE=$(git merge-base HEAD FETCH_HEAD 2>/dev/null || echo "")
+    BASE_SHA=$(git rev-parse FETCH_HEAD 2>/dev/null || echo "")
   fi
 fi
 if [ -n "$MERGE_BASE" ]; then
@@ -425,10 +414,49 @@ DIFF_LINES=$(jq '[.[] | select(.filename | test("uv\\.lock|/cassettes/") | not) 
 printf '%s files, %s diff lines (excluding generated files)\n' "$FILE_COUNT" "$DIFF_LINES" > "$CTX/pr-size.txt"
 rm -f "$FILES_JSON"
 
+# Core definitions the durable engines depend on that this PR changes, found as the
+# `durable-exec-label` job in `.github/workflows/bots.yml` finds them: with the base branch's
+# classifier and manifest, never this checkout's copies, so a PR's edits to either take effect
+# only once merged.
+# Written only when there are any. Non-fatal: without it the reviewer has less context.
+echo "  - Durable-exec contract entries"
+DURABLE_EXEC_AGENTS_MD=pydantic_ai_slim/pydantic_ai/durable_exec/AGENTS.md
+DURABLE_EXEC_GATE=$(mktemp -d)
+track_tmp "$DURABLE_EXEC_GATE"
+durable_exec_touched() {
+  local path
+  mkdir -p "$DURABLE_EXEC_GATE/scripts" || return 1
+  for path in scripts/durable_exec_contract.py scripts/durable_exec_contract.json; do
+    gh api -H 'Accept: application/vnd.github.raw+json' "repos/${REPO}/contents/${path}?ref=${BASE_SHA}" \
+      > "$DURABLE_EXEC_GATE/$path" || return 1
+  done
+  python3 -I "$DURABLE_EXEC_GATE/scripts/durable_exec_contract.py" \
+    --touched "$REPO" "$PR_NUMBER" "$BASE_SHA" "$(git rev-parse HEAD)"
+}
+if [ -n "$BASE_SHA" ] && TOUCHED=$(durable_exec_touched); then
+  if [ "$(jq '[.[] | length] | add // 0' <<<"$TOUCHED")" -gt 0 ]; then
+    {
+      echo "# Durable-exec contract entries this PR touches"
+      echo ""
+      echo "The base branch's \`scripts/durable_exec_contract.py --touched\` placed this PR's changed lines in"
+      echo "these entries of \`scripts/durable_exec_contract.json\`: core definitions a durable engine"
+      echo "depends on, each with its kinds, its engines and the engine sites that depend on it."
+      echo "\`agents-md.txt\` carries \`${DURABLE_EXEC_AGENTS_MD}\`, whose section \"Core changes that"
+      echo "engines depend on\" says what to check."
+      echo ""
+      jq -r 'to_entries[] | .key as $file | .value | to_entries[]
+        | "- `\($file)::\(.key)`: \(.value.kinds | join(", ")); engines: \(.value.engines | join(", "))",
+          (.value.sites[] | "  - `\(.)`")' <<<"$TOUCHED"
+    } > "$CTX/durable-exec-contract.md"
+  fi
+else
+  echo "    Could not classify the PR against the durable-exec contract (skipping)"
+fi
+
 # Gather AGENTS.md files relevant to the PR — the repo-root file (always,
-# when present) plus any per-directory AGENTS.md whose directory has changed
-# files in this PR.
-echo "  - AGENTS.md files (repo-root + changed directories)"
+# when present), any per-directory AGENTS.md whose directory has changed
+# files in this PR, and the durable_exec one when the PR touches a contract entry.
+echo "  - AGENTS.md files (repo-root + changed directories + touched durable-exec contract)"
 > "$CTX/agents-md.txt"
 {
   if [ -f ./AGENTS.md ]; then
@@ -438,7 +466,9 @@ echo "  - AGENTS.md files (repo-root + changed directories)"
   fi
   for agents_file in $(find . -name AGENTS.md -not -path './.venv/*' -not -path ./AGENTS.md | sed 's|^\./||' | sort); do
     dir=$(dirname "$agents_file")
-    if grep -q "^${dir}/" "$CTX/changed-files.txt" 2>/dev/null && [ -f "$agents_file" ]; then
+    if { grep -q "^${dir}/" "$CTX/changed-files.txt" 2>/dev/null \
+         || { [ "$agents_file" = "$DURABLE_EXEC_AGENTS_MD" ] && [ -f "$CTX/durable-exec-contract.md" ]; }; } \
+      && [ -f "$agents_file" ]; then
       echo "=== ${agents_file} ==="
       cat "$agents_file"
       echo ""
@@ -767,6 +797,44 @@ gate, so it may branch on the transport. Also don't flag existing code that the
 diff only touches and that already diverges, such as a one-line fix inside a
 deeply nested mapper or next to an inline gate on `main`: aligning it is its
 own PR.
+
+### Example 8 — durable-exec contract
+
+Trigger: `.review-context/durable-exec-contract.md` exists. Each entry in it is
+a core definition a durable engine imports, overrides, reads or projects, with
+the engine sites that depend on it. Durable engines run the agent across
+activity, step or task boundaries and replay workflow code, so a broken site
+fails only inside a durable run, never in a plain `Agent` test. A broken site
+with a concrete trigger is HIGH.
+
+**Flag this (HIGH):**
+```python
+# Entry `models/__init__.py::Model.request`, override sites in TemporalModel,
+# DBOSModel, PrefectModel and DurableModel
+async def request(self, messages, model_settings, model_request_parameters, *, run_context=None):
+```
+*Why:* Each listed site overrides `Model.request` with the old signature, so
+once core passes `run_context=`, a durable run raises `TypeError` in the
+engine's model. Ask for every override to take the new parameter, and for a
+workflow-level test that runs a request through an engine. The same goes for a
+renamed or retyped field that an engine serializes or reads, a field that a
+`projected_field` site copies across a boundary, and a projected field that
+becomes a read-only property, which `ModelRequestContextProjection.build_context`
+assigns.
+
+**Don't flag this:**
+```python
+# Entry `models/__init__.py::infer_model`, import sites in durable_exec/_base.py
+# and TemporalModel._infer_model
+if provider == 'acme':
+    return AcmeModel(model_name)
+```
+*Why:* The sites call `infer_model(name)` and use the `Model` it returns. Its
+signature and return contract are unchanged and nothing new crosses a durable
+boundary, so the sites still hold and no workflow-level test is needed. Also
+don't flag an entry whose sites the diff already updates and tests, or a
+missing entry: the manifest is the contract this check reads, not something to
+second-guess.
 
 ## Sub-agent finding format
 

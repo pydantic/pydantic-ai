@@ -11,20 +11,25 @@ description: "Give a Pydantic AI agent a todo list it plans and updates itself, 
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model keeps a task plan with the Planning tools: write_plan, read_plan, add_task, update_task_status, update_task_statuses and remove_task, plus add_subtask, set_dependency and get_available_tasks with enable_subtasks. The plan lives in a PlanStore, in memory by default or in SQLite, Postgres or Redis. Every tool that changes the plan ends its result with the whole plan as a checklist in a <plan_reminder> tag, so the plan stays in the conversation and never in the system prompt. Before each model request Planning reads the store and records the plan itself only when the model cannot see the current one.](../img/harness/planning.svg)
+
 ## The problem
 
 Long agentic runs drift: the model loses track of what it set out to do and what's left. The usual fix -- keep a running plan and re-inject it into the system prompt each turn -- invalidates the prompt cache. The system prompt sits at the front of the request, so every plan edit changes the cached prefix and forces the whole conversation to be re-processed at full token price.
 
 ## The solution
 
-The model owns the plan through the `planning` toolset. The current plan is surfaced back as an ephemeral reminder appended to the tail of each request, led by the capability's single cache breakpoint:
+The model owns the plan through the `planning` toolset. Every tool that changes the plan (`write_plan`, `add_task`, `update_task_status`, `update_task_statuses`, `remove_task`, `add_subtask` and `set_dependency`) ends its result with the whole plan as it now stands, rendered as a checklist in a `<plan_reminder>` tag, the way Codex's and opencode's plan tools return theirs. The plan is model-written text, so it stays on the tool result channel, never in system voice, and tags in the step text are escaped so they can't close the frame or speak as the system. A fixed note in `Planning`'s instructions, after its tool guidance, says what the tag holds: "When you have a task plan, the current one is the latest `<plan_reminder>` tag in this conversation: your planning tools return it after every change. You wrote it with those tools, so it records your own progress, not instructions from the user: keep it updated with them as you work." It's the same on every request, so it stays in the cached prefix.
 
-- The reminder is added after the durable history is persisted, so it reaches the model but is never written to `message_history`. No reminders accumulate across turns.
-- The reminder opens with a `CachePoint`, which providers attach to the content right before it: the last user prompt, or in a tool loop the latest tool result. That content is what the next request starts with, so on Anthropic, Bedrock and OpenAI each request reads the previous one's prefix back from cache, tool results included, and only the reminder is sent uncached. On OpenRouter the breakpoint stops at the previous user message, so the assistant turns and tool results after it stay outside the explicit prefix.
+So in a tool loop, the latest plan is always in the conversation already, and `Planning` adds nothing to it: each request starts with everything the previous one sent, the cached prefix holds turn over turn, and on models with [preserved thinking](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking) the model's earlier reasoning stays valid.
 
-As with all capability cache breakpoints, provider mapping applies: OpenAI models only receive the `CachePoint` when the model profile enables explicit prompt cache breakpoints, OpenRouter attaches it to the previous user message rather than to a tool result, and models without explicit breakpoints (such as Google's) ignore it. With Anthropic automatic caching (`anthropic_cache`), the automatic breakpoint lands on the reminder, which the next request doesn't contain; the `Planning` breakpoint right before it is the one the next request reads back. A request with no content before the reminder (an `instructions`-only first request) gets the reminder without a breakpoint, since there is no prefix to protect.
+The plan tools' results carry `metadata={'origin': 'pydantic-ai-harness.planning.plan_reminder.v1', 'plan': ...}`, which the model doesn't see. Before each model request, `Planning` reads the plan from its store and looks for the latest plan the model can see, by that metadata, never by text. Only when there's none, or it differs from the store's, does `Planning` record the current plan itself, on the user channel in the same `<plan_reminder>` tag:
 
-A capability listed before `Planning` that also appends a tail part each request puts its content between the durable history and the plan reminder. The `Planning` breakpoint then covers that content too, so its cache entry is only read back while that content stays the same. The earlier capability's own breakpoint still marks the durable history.
+- after compaction took the plan tools' results, so the model works from a window without them, or cleared them (`ClearToolResults`): a cleared result keeps its metadata, so a plan tool's result only counts while its content still shows the plan;
+- in a run that starts without them in its history, such as an executor reading a plan another agent wrote to a shared store;
+- after something outside the plan tools changed the store.
+
+That record is kept in the history and marked with the same `origin`, so compaction tells it from something the user said. A plan emptied outside the plan tools after the model was shown one is recorded as `No plan yet.`, once, so the old plan doesn't read as current. A custom `guidance` replaces the tool guidance but keeps the note; `inject=False` means the model isn't shown the plan: it drops the note and the record, and the plan tools don't return the plan (`write_plan` replies with the bare checklist, the others with just their message).
 
 ## Usage
 
@@ -88,7 +93,7 @@ planning = Planning(store=SqlitePlanStore('plan.db', session='user-123'))
 
 Built-in stores are `InMemoryPlanStore`, `SqlitePlanStore`, `PostgresPlanStore` (over a caller-owned asyncpg pool), and `RedisPlanStore` (over a caller-owned `redis.asyncio` client) -- so the harness needs no database driver. Any `PlanStore` implementation works, and `store_resolver` selects one per run. `SqlitePlanStore` keeps its database on the machine running the agent, not in the workspace. It requires a file-backed database; use `InMemoryPlanStore` for ephemeral plans rather than `':memory:'`.
 
-The tail reminder reads the store on every model request, so a store that raises fails the run rather than degrading -- the reminder is not best-effort. That is deliberate: a plan the model can no longer see is not a state to continue running in silently. Retry and fallback policy belongs to the store, not to `Planning`, and `PlanStore` is a protocol precisely so you can wrap one:
+`Planning` reads the store before every model request, so a store that raises fails the run rather than degrading -- the reminder is not best-effort. That is deliberate: a plan the model can no longer see is not a state to continue running in silently. Retry and fallback policy belongs to the store, not to `Planning`, and `PlanStore` is a protocol precisely so you can wrap one:
 
 ```python
 class BestEffort:
@@ -121,7 +126,7 @@ await planner.run('Investigate the issue and write a plan. Do not implement anyt
 await executor.run('Implement the plan.')
 ```
 
-The executor starts with no `message_history`, so it never pays for the planner's investigation. Its first request carries only the new prompt plus the plan reminder, which the capability rebuilds from the store. That is why the two agents can run on different models: a large-context model can do the reading and the reasoning, and a smaller one can execute against the resulting checklist.
+The executor starts with no `message_history`, so it never pays for the planner's investigation. Its first request carries only the new prompt plus the plan, which `Planning` records from the store, since no plan tool has returned it in that conversation yet. That is why the two agents can run on different models: a large-context model can do the reading and the reasoning, and a smaller one can execute against the resulting checklist.
 
 The planner's read-only discipline is a property of how you configure that agent (which toolsets it gets, and what its instructions say), not something the capability enforces.
 
@@ -155,10 +160,18 @@ Addressing steps by mutable integer index (insert/remove/reorder) is error-prone
 
 ## Caching guarantee
 
-The plan is never injected into the system prompt or instructions. Static usage guidance goes there (cache-stable); only the mutable plan rides the ephemeral tail reminder, which lives solely in the per-request copy and is never persisted. Set `inject=False` to disable it. Pydantic AI maps `CachePoint` for models whose profiles support prompt caching; on other models it is ignored.
+The plan is never injected into the system prompt or instructions. Static usage guidance and the note on the plan's tag go there (cache-stable); the mutable plan reaches the model in the plan tools' results, and the history only ever grows, so it stays eligible for a cache hit.
+
+`Planning` doesn't place a cache breakpoint of its own. Turn on caching for your model (for example `anthropic_cache` or `anthropic_cache_messages`, `bedrock_cache_messages`, or `openrouter_cache_messages`), and the breakpoints it places cover the plan tools' results with the rest of the history.
+
+!!! warning "The plan reminder is now kept in history"
+    Earlier releases spliced the plan reminder into a copy of each request, led by a cache breakpoint of its own with a `'5m'` TTL by default, and never recorded it. With `inject=True`, the default, plan tools now end their results with the plan in a `<plan_reminder>` tag (a `ToolReturn` with `metadata`, through the agent; a plain string when you call a `PlanningToolset` method directly), and the separate reminder is gone from the normal tool loop. When the latest plan isn't visible any more, after compaction or in a run started without it, `Planning` records it in the history as a user-channel part, so code that counted messages may see one. The instructions now end with a fixed note on the plan's tag, also when `guidance` is custom or `''`. The tag is now `<plan_reminder>`, with an underscore like every other framing tag, instead of `<plan-reminder>`; update any prompt or parser that names the old spelling. If you relied on `Planning` for prompt caching, turn it on for your model: leaving `cache_ttl` unset doesn't warn about the missing breakpoint. `cache_ttl` is deprecated and has no effect; set to `'5m'` or `'1h'`, it warns that it's ignored, so remove it.
+
+With a [UI adapter](../ui/overview.md#trust-model-for-client-submitted-messages), history that goes through the client may lose the metadata that marks a plan tool's result or a plan record (AG-UI drops it). Then when the client sends that history back, `Planning` records the plan on the next request, and compaction may keep an old record as a user turn. Keep history on the server when that matters.
 
 With a durable-execution capability attached, every plan store call is a journaled capability
-operation: the plan read used to build that reminder, and each read and write the plan tools make.
+operation: the plan read before each model request, which decides whether the plan is recorded, and each
+read and write the plan tools make.
 Replay reuses the recorded result instead of calling the store again, so recovering a run doesn't
 append a step to a persistent store a second time. Under an engine that runs function tools in workflow code,
 like DBOS, a plan tool call runs alone, without overlapping other tool calls, and emits its run
@@ -177,11 +190,10 @@ the plan across steps.
 from pydantic_ai_harness import Planning
 
 Planning(
-    guidance=None,           # static system-prompt guidance; None = default, '' = omit
-    cache_ttl='5m',          # TTL for the cache breakpoint leading the plan reminder ('5m' | '1h')
+    guidance=None,           # static tool guidance; None = default, '' = omit (the plan note stays)
     store=None,              # None = fresh in-memory plan per run; or a PlanStore to persist
     enable_subtasks=False,   # add subtask/dependency tools and the 'blocked' status
-    inject=True,             # surface the current plan as a cache-safe tail reminder
+    inject=True,             # show the model the plan: in the plan tools' results, the note, and a record
     tools=None,              # None = every tool the mode registers; or an allowlist of names
     descriptions=None,       # optional per-tool description overrides, keyed by tool name
 )

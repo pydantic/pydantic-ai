@@ -49,6 +49,10 @@ In this case, unless the user appears to be uniquely well-suited to build a feat
 
 (It's also worth noting that overly lengthy AI-generated issues, comments, and proposals are less likely to be helpful and more likely to be ignored than a user's attempt at explaining what they want in their own (possibly translated) words: if they are not able to, they are unlikely to be the right person to be requesting and helping implement the change.)
 
+## Filing issues for maintainers
+
+When filing an issue for a maintainer, including a non-follow-up issue, use the [maintainer routing guidance](.agents/skills/file-followup-issue/SKILL.md#maintainer-routing-mechanics).
+
 # Philosophy
 
 Pydantic AI is meant to be a light-weight library that any Python developer who wants to work with LLMs and agents (whether simple or complex) should feel no hesitation to pull into their project. It's not meant to be everything to everyone, but it should enable people to build just about anything.

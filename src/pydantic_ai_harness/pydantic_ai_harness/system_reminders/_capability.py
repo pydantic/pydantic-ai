@@ -9,7 +9,7 @@ import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from copy import copy
 from dataclasses import KW_ONLY, dataclass, field
-from typing import TYPE_CHECKING, Generic, Literal, TypeGuard
+from typing import TYPE_CHECKING, Generic, Literal, TypeAlias, TypeGuard
 
 from pydantic_ai import Agent
 from pydantic_ai._framing import neutralize_tags
@@ -41,25 +41,36 @@ logger = logging.getLogger(__name__)
 class _Unset:
     """The default of an option whose default changed, so leaving it unset can warn."""
 
+    def __init__(self, default: object) -> None:
+        self.default = default
+
     def __repr__(self) -> str:
-        return 'None'
+        return repr(self.default)
 
 
-# Type checkers see the effective default, `None`; at runtime the sentinel tells an omitted `Reminder.tag` from an
-# explicit `None`, so the public field type stays what callers can pass.
+_LLM_REMINDER_INTERVAL = 10
+"""How many model requests apart an `LLMReminder` generates by default, as often as `TrajectoryJudge` evaluates."""
+
+# Type checkers see the effective defaults; at runtime the sentinels tell an omitted `Reminder.tag` or
+# `LLMReminder.interval` from an explicit value, so the public field types stay what callers can pass.
 if TYPE_CHECKING:
     _UNSET: None = None
+    _UNSET_INTERVAL: int = _LLM_REMINDER_INTERVAL
 else:
-    _UNSET = _Unset()
+    _UNSET = _Unset(None)
+    _UNSET_INTERVAL = _Unset(_LLM_REMINDER_INTERVAL)
 
 
 _REMINDER_ORIGIN = 'pydantic-ai-harness.system_reminders.reminder.v1'
 """The `origin` in the `metadata` of the parts a `SystemReminders` firing enqueues.
 
-The request-scoped `SystemPromptPart` holds the reminders in system voice, and each `TextContent` on
+The `SystemPromptPart` holds the reminders in system voice, and each `TextContent` on
 the user channel holds text a reminder quotes but didn't write. Identify reminders by this metadata,
 never by their model-visible text.
 """
+
+_Scope: TypeAlias = Literal['conversation', 'request']
+"""A reminder firing's `SystemPromptPart.scope`; `Reminder.scope` spells it out so the API docs show the values."""
 
 
 @dataclass(frozen=True)
@@ -128,6 +139,18 @@ class Reminder(Generic[AgentDepsT]):
     private sentinel shown as `None`, so the field's type stays `str | None`.)
     """
 
+    scope: Literal['conversation', 'request'] = 'request'
+    """How long each firing stays in front of the model.
+
+    Named as in [`SystemPromptPart.scope`][pydantic_ai.messages.SystemPromptPart.scope], which it sets.
+
+    `'request'` (the default) shows it for the request it fires on only. `'conversation'` records each firing as a
+    lasting system prompt, sent again on every later request, so the history gains one part per firing: with
+    `interval=N`, a run of R requests gains `R // N`. Use it for guidance that must still hold after the step it
+    fires on, such as "run the tests before you finish". Text that holds on every step belongs in the agent's
+    instructions.
+    """
+
     def __post_init__(self) -> None:
         if self.interval < 1:
             raise ValueError(f'interval must be >= 1, got {self.interval}')
@@ -142,7 +165,7 @@ class Reminder(Generic[AgentDepsT]):
                 old='system-reminder',
                 new=None,
                 impact=(
-                    'The reminder is sent as a request-scoped system prompt, so the model already sees it as '
+                    'The reminder is sent as a system prompt, so the model already sees it as '
                     'one, and its content is no longer wrapped in `<system-reminder>`.'
                 ),
             )
@@ -177,7 +200,8 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
     message history, so the cached prefix and the model's earlier reasoning stay valid. On Anthropic
     models that support it, it's sent as a turn-scoped `clear_at` system message that costs nothing
     once its request has been answered; elsewhere it's sent with its own request only. The cache
-    breakpoints the model's caching settings place go before it.
+    breakpoints the model's caching settings place go before it. A `Reminder(scope='conversation')`
+    is recorded as a lasting system prompt instead, sent again on every later request.
 
     ```python
     from pydantic_ai import Agent
@@ -204,7 +228,7 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
     """Deprecated, and has no effect; configure caching on the model instead.
 
     Reminders used to bring a cache breakpoint of their own, with a `'5m'` TTL by default. They're
-    request-scoped system prompts now, and the breakpoints the model's caching settings place (such as
+    system prompts at the tail of the request now, and the breakpoints the model's caching settings place (such as
     `anthropic_cache`) land before them. Set to `'5m'` or `'1h'`, it warns that it's ignored.
     """
 
@@ -259,9 +283,9 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        """Enqueue the reminders that fire on this request as a request-scoped system prompt.
+        """Enqueue the reminders that fire on this request as system prompts of their scope.
 
-        Enqueued from `before_model_request`, the prompt goes into this request and into the run's
+        Enqueued from `before_model_request`, the prompts go into this request and into the run's
         history, as a `ModelRequest` of its own that's sent merged into the request it follows.
         """
         messages = request_context.messages
@@ -279,10 +303,10 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
             # spent or reports a fire that never reached the model.
             fired = self._eligible_static(ctx)
             dynamic_texts = await self._collect_dynamic(ctx)
-            reminders = [text for _, text in fired] + dynamic_texts
+            reminders: list[str | _StaticText | GeneratedReminder] = [*(text for _, text in fired), *dynamic_texts]
             if reminders:
                 ctx.enqueue(*_reminder_parts(reminders))
-                for key, _text in fired:
+                for key, _ in fired:
                     self._fire_counts[key] = self._fire_counts.get(key, 0) + 1
                 for reminder in reminders:
                     await ctx.emit(ReminderFiredEvent(text=str(reminder)))
@@ -291,7 +315,7 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
                         self.on_fire(str(reminder))
         return request_context
 
-    def _eligible_static(self, ctx: RunContext[AgentDepsT]) -> list[tuple[int, str]]:
+    def _eligible_static(self, ctx: RunContext[AgentDepsT]) -> list[tuple[int, _StaticText]]:
         """Static reminders whose cadence, trigger, and `max_fires` allow firing this request.
 
         Returns `(id(reminder), rendered_text)` pairs. Pure: it reads `_fire_counts` but does
@@ -299,7 +323,7 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
         The `reminders` sequence is snapshotted so a `trigger` that mutates it mid-iteration
         cannot desync this pass.
         """
-        eligible: list[tuple[int, str]] = []
+        eligible: list[tuple[int, _StaticText]] = []
         pending: dict[int, int] = {}
         for reminder in tuple(self.reminders):
             if not _should_fire(reminder, self._request_count):
@@ -316,7 +340,7 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
             ):
                 continue
             pending[key] = pending.get(key, 0) + 1
-            eligible.append((key, _render_content(reminder)))
+            eligible.append((key, _StaticText(_render_content(reminder), reminder.scope)))
         return eligible
 
     async def _collect_dynamic(self, ctx: RunContext[AgentDepsT]) -> list[str | GeneratedReminder]:
@@ -328,6 +352,8 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
             if (
                 isinstance(dynamic, LLMReminder) and type(dynamic).__call__ is LLMReminder.__call__  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
             ):
+                if not dynamic._is_due(self._request_count):  # pyright: ignore[reportPrivateUsage]
+                    continue
                 try:
                     transcript = _build_compact_transcript(ctx.messages, dynamic.max_context_messages)
                     result, error_type = await self._generate_reminder(ctx, index, transcript)
@@ -424,12 +450,12 @@ class LLMReminder(Generic[AgentDepsT]):
     default -- pass an explicit model. On any error it falls back to `GoalReanchor` text, so a
     failed generation never blocks the run. Add it to `SystemReminders.dynamic_reminders`.
 
-    Like every dynamic reminder it is evaluated on every model request, so it issues one extra
-    model call per turn; its usage is threaded onto the parent run (`ctx.usage`) and it runs
-    under the parent's `usage_limits` minus one reserved request, so the reminder cannot push a
-    run past its `request_limit`. Once the budget is that tight the generation is skipped and
-    `GoalReanchor` text is used instead. Gate it on a cadence (see the docs) if per-turn
-    generation is too costly.
+    It generates every `interval` model requests (the 10th, 20th, ... by default), and each
+    firing adds a lasting record of two parts to the message history, so `interval` bounds both
+    the extra model calls and how fast the history grows. Its usage is threaded onto the parent
+    run (`ctx.usage`) and it runs under the parent's `usage_limits` minus one reserved request, so
+    the reminder cannot push a run past its `request_limit`. Once the budget is that tight the
+    generation is skipped and `GoalReanchor` text is used instead.
 
     When owned by `SystemReminders`, generation is a journaled capability operation under a
     durability engine. Replay restores the generated text instead of repeating the model call.
@@ -438,6 +464,14 @@ class LLMReminder(Generic[AgentDepsT]):
     model: Model | KnownModelName | str
     max_context_messages: int = 10
     instructions: str = _LLM_INSTRUCTIONS
+    interval: int = _UNSET_INTERVAL
+    """Generate every N model requests within a run: the default `10` fires on the 10th, 20th, 30th, ... request.
+
+    Each firing makes one extra model call and adds a framework note and the generated text to the message
+    history for good, so a run of R requests gains `2 * (R // interval)` parts. `interval=1` generates on every
+    request, the behavior before the default changed. Leaving it unset behaves exactly like `interval=10`, but
+    warns that the default used to be `1`; pass `interval=10` to silence it.
+    """
     _agent: Agent[None, str] | None = field(default=None, init=False, repr=False, compare=False)
     _warned_runs: dict[str, None] = field(default_factory=dict[str, None], init=False, repr=False, compare=False)
     """Runs whose generation failure was already logged, oldest first (an ordered set, bounded)."""
@@ -445,8 +479,24 @@ class LLMReminder(Generic[AgentDepsT]):
     def __post_init__(self) -> None:
         if self.max_context_messages < 1:
             raise ValueError(f'max_context_messages must be >= 1, got {self.max_context_messages}')
+        if self.interval is _UNSET_INTERVAL:
+            warn_default_changed(
+                owner='LLMReminder',
+                option='interval',
+                old=1,
+                new=_LLM_REMINDER_INTERVAL,
+                impact=(
+                    'Each generation adds a lasting record to the message history, so it now generates every '
+                    f'{_LLM_REMINDER_INTERVAL} model requests instead of on every one, and not at all in a run of fewer.'
+                ),
+            )
+            self.interval = _LLM_REMINDER_INTERVAL
+        if self.interval < 1:
+            raise ValueError(f'interval must be >= 1, got {self.interval}')
 
     async def __call__(self, ctx: RunContext[AgentDepsT]) -> str | GeneratedReminder | None:
+        if not self._is_due(ctx.run_step):
+            return None
         if _request_reserved_for_parent(ctx):
             return GoalReanchor[AgentDepsT]()(ctx)
         try:
@@ -454,6 +504,10 @@ class LLMReminder(Generic[AgentDepsT]):
         except Exception as exc:
             self._log_failure(exc, ctx.run_id)
             return GoalReanchor[AgentDepsT]()(ctx)
+
+    def _is_due(self, request_number: int) -> bool:
+        """Whether the cadence fires on model request `request_number` (1-based) of the run."""
+        return request_number % self.interval == 0
 
     def _log_failure(
         self,
@@ -526,21 +580,34 @@ def _render_content(reminder: Reminder[AgentDepsT]) -> str:
     return reminder.content
 
 
-def _reminder_parts(texts: Sequence[str | GeneratedReminder]) -> list[SystemPromptPart | TextContent]:
+@dataclass(frozen=True)
+class _StaticText:
+    """A static reminder's rendered text and the scope it fires with."""
+
+    text: str
+    scope: _Scope
+
+    def __str__(self) -> str:
+        return self.text
+
+
+def _reminder_parts(texts: Sequence[str | _StaticText | GeneratedReminder]) -> list[SystemPromptPart | TextContent]:
     """The parts a firing enqueues, in the reminders' configured order, each carrying the same origin metadata.
 
-    Reminders in the framework's or the operator's own wording are request-scoped system prompts, consecutive
-    ones sharing one. A reminder that quotes content it didn't write, such as a model's generated reminder,
-    is a record of two parts kept together in the history: the framework's note in system voice and the
-    quoted content on the user channel. Neither is request-scoped, so no later request, compaction or
-    summary sees the quoted content without the note that says what it is.
+    Reminders in the framework's or the operator's own wording are system prompts of their scope (request-scoped
+    unless a `Reminder` asks for `'conversation'`), consecutive ones of the same scope sharing one. A reminder
+    that quotes content it didn't write, such as a model's generated reminder, is a record of two parts kept
+    together in the history: the framework's note in system voice and the quoted content on the user channel.
+    Neither is request-scoped, so no later request, compaction or summary sees the quoted content without the
+    note that says what it is.
     """
     parts: list[SystemPromptPart | TextContent] = []
     plain: list[str] = []
+    plain_scope: _Scope = 'request'
 
     def flush_plain() -> None:
         if plain:
-            parts.append(SystemPromptPart('\n\n'.join(plain), scope='request', metadata={'origin': _REMINDER_ORIGIN}))
+            parts.append(SystemPromptPart('\n\n'.join(plain), scope=plain_scope, metadata={'origin': _REMINDER_ORIGIN}))
             plain.clear()
 
     for text in texts:
@@ -548,8 +615,12 @@ def _reminder_parts(texts: Sequence[str | GeneratedReminder]) -> list[SystemProm
             flush_plain()
             parts.append(SystemPromptPart(text.note, metadata={'origin': _REMINDER_ORIGIN}))
             parts.append(TextContent(text.data, metadata={'origin': _REMINDER_ORIGIN}))
-        else:
-            plain.append(text)
+            continue
+        scope = text.scope if isinstance(text, _StaticText) else 'request'
+        if scope != plain_scope:
+            flush_plain()
+            plain_scope = scope
+        plain.append(str(text))
     flush_plain()
     return parts
 

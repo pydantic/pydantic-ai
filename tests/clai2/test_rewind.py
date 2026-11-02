@@ -35,7 +35,7 @@ from pydantic_ai_harness.subagents import DelegationTask
 from pydantic_clai2 import chat
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import Conversation, Transcript
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.ui.menus.rewind import RewindPoint, build_rewind_menu, rewind
 from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
 from tests.clai2.menu_script import Script, pick

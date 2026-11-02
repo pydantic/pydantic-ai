@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Annotated, Any, TypeAlias
 from pydantic import Field, TypeAdapter
 
 from pydantic_ai import Agent
+from pydantic_ai._framing import neutralize_tags
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.exceptions import UserError
@@ -113,16 +114,17 @@ def _steering_note(ref: str) -> str:
     )
 
 
-# TODO: switch to `pydantic_ai._framing.wrap()` once it lands (#10547); this matches its escaping of
-# data frames, which neutralizes the framework's `system` voice tag as well as the frame's own tag.
+# TODO: switch to `wrap()` from the public `pydantic_ai.framing` module once it lands (#10957), registering
+# `judge_feedback` as a framing tag there.
 # The slash is grouped with the whitespace after it, so the two whitespace runs can't overlap and
 # backtrack quadratically on a long run of spaces after a `<`. A tag name at the very end of the
 # message also matches: the wrapper's own text right after it would otherwise complete the tag.
-_NEUTRALIZED_TAG_OPENER = re.compile(rf'<(?=\s*(?:/\s*)?(?:system|{_STEERING_TAG})(?:[\s/>]|$))', re.IGNORECASE)
-"""The `<` that opens anything a parser could read as a `system` or `judge_feedback` tag, opening or closing.
+_STEERING_TAG_OPENER = re.compile(rf'<(?=\s*(?:/\s*)?{_STEERING_TAG}(?:[\s/>]|$))', re.IGNORECASE)
+"""The `<` that opens anything a parser could read as a `judge_feedback` tag, opening or closing.
 
-`system` is the framework's voice tag: on a model without inline system prompts, real framework notes
-reach it as `<system>…</system>` user text, so a judge message must not be able to imitate one.
+Core's own framing tags, `system` among them, are left to `neutralize_tags`. `system` is the framework's
+voice tag: on a model without inline system prompts, real framework notes reach it as `<system>…</system>`
+user text, so a judge message must not be able to imitate one.
 """
 
 
@@ -423,10 +425,10 @@ def _steering_parts(judge: str, message: str) -> tuple[SystemPromptPart, TextCon
 
     The note is the framework's own fixed wording, so it is a `SystemPromptPart`. The message comes
     from the judge model, which read the run's tool results, so it is untrusted and goes on the user
-    channel, quoted in a `<judge_feedback>` tag. It can't forge that tag's end, or the `<system>` tag the framework's own
-    voice is rendered in on models without inline system prompts. Both keep the default
-    conversation scope: a course correction should keep applying on later requests, not only the
-    one it arrives with. Both carry the same metadata, which survives merged requests and
+    channel, quoted in a `<judge_feedback>` tag. It can't write that tag's end, any other framing tag core
+    writes, or the `<system>` tag the framework's own voice is rendered in on models without inline system
+    prompts. Both keep the default conversation scope: a course correction should keep applying on later
+    requests, not only the one it arrives with. Both carry the same metadata, which survives merged requests and
     continued conversations.
 
     A random `ref`, made once here, ties the note to its frame. Both parts store it in their text (and in
@@ -434,7 +436,7 @@ def _steering_parts(judge: str, message: str) -> tuple[SystemPromptPart, TextCon
     """
     ref = secrets.token_hex(8)
     metadata = {'origin': _STEERING_ORIGIN, 'judge': judge, 'ref': ref}
-    body = _NEUTRALIZED_TAG_OPENER.sub('&lt;', message)
+    body = _STEERING_TAG_OPENER.sub('&lt;', neutralize_tags(message))
     data = f'<{_STEERING_TAG} judge="{html.escape(judge)}" ref="{ref}">\n{body}\n</{_STEERING_TAG}>'
     return SystemPromptPart(_steering_note(ref), metadata=metadata), TextContent(data, metadata=dict(metadata))
 

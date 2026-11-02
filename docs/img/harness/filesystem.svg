@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="632" viewBox="0 0 880 632" role="img" aria-labelledby="t d">
+<title id="t">FileSystem: file tools bounded by one directory</title>
+<desc id="d">The model calls FileSystem tools such as read_file, write_file and edit_file. Before any I/O, each path is resolved with symlinks, checked to stay inside root_dir, and matched against the allowed, denied and read-only patterns; only then does the tool touch the workspace. Four example calls show a read that succeeds, a write to .env rejected as read-only, a read of /etc/passwd rejected as outside root_dir, and an edit announced as a FileChangeRequestEvent that a listener can cancel.</desc>
+<defs><marker id="ai" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#092224"/></marker><marker id="am" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#55726A"/></marker><marker id="al" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#B417B7"/></marker><marker id="al2" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E520E9"/></marker><marker id="ap" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#7B57E8"/></marker><marker id="aa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0E9C86"/></marker><marker id="ac" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E5533D"/></marker><marker id="af" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8FA8A3"/></marker><marker id="ao" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#97998B"/></marker></defs>
+<rect x="0.5" y="0.5" width="879" height="631" rx="16" fill="#FFFFFF" stroke="#E6EAEA"/>
+<text x="32" y="50" font-size="21" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">FileSystem: file tools bounded by one directory</text>
+<text x="32" y="78" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">The model gets read, write, edit, list and search tools. Every path is checked against root_dir and your glob patterns</text>
+<text x="32" y="98" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">before the workspace is touched.</text>
+<rect x="152" y="134" width="296" height="222" rx="12" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.3"/>
+<text letter-spacing="1.3" x="166" y="156" font-size="11" fill="#B417B7" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">FILESYSTEM TOOLS</text>
+<rect x="166" y="168" width="81.1" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="206.6" y="184.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">read_file</text>
+<rect x="255.1" y="168" width="88.1" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="299.2" y="184.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">write_file</text>
+<rect x="351.3" y="168" width="81.1" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="391.9" y="184.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">edit_file</text>
+<rect x="166" y="200" width="116.2" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="224.1" y="216.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">list_directory</text>
+<rect x="290.2" y="200" width="102.2" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="341.3" y="216.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">search_files</text>
+<rect x="166" y="232" width="88.1" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="210.1" y="248.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">find_files</text>
+<rect x="262.1" y="232" width="130.2" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="327.3" y="248.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">create_directory</text>
+<rect x="166" y="264" width="81.1" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="206.6" y="280.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">file_info</text>
+<text x="166" y="308" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">opt-in, backed by ripgrep</text>
+<rect x="166" y="318" width="88.1" height="24" rx="6" fill="#FFFFFF" stroke="#8FA8A3" stroke-width="1.2"/>
+<text x="210.1" y="334.1" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">list_files</text>
+<rect x="262.1" y="318" width="46.1" height="24" rx="6" fill="#FFFFFF" stroke="#8FA8A3" stroke-width="1.2"/>
+<text x="285.2" y="334.1" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">grep</text>
+<rect x="34" y="227" width="88" height="36" rx="18" fill="#092224"/>
+<text x="78" y="250" font-size="13.5" fill="#FBFFEA" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<line x1="124" y1="236" x2="148" y2="236" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="148" y1="254" x2="124" y2="254" stroke="#55726A" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#am)"/>
+<text letter-spacing="1.3" x="486" y="146" font-size="11" fill="#B417B7" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">BEFORE ANY I/O</text>
+<rect x="486" y="160" width="176" height="58.7" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="574" y="183.6" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">resolve the path</text>
+<text x="574" y="202.6" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">symlinks included</text>
+<rect x="486" y="228.7" width="176" height="58.7" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="574" y="252.2" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">inside root_dir?</text>
+<text x="574" y="271.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">.., absolute paths, links</text>
+<line x1="574" y1="218.7" x2="574" y2="226.7" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="486" y="297.3" width="176" height="58.7" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="574" y="320.9" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">match patterns</text>
+<text x="574" y="340" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">allowed, denied, read-only</text>
+<line x1="574" y1="287.3" x2="574" y2="295.3" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="452" y1="245" x2="482" y2="245" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="700" y="142" width="148" height="214" rx="14" fill="none" stroke="#7B57E8" stroke-width="1.3" stroke-dasharray="4 4"/>
+<rect x="714" y="134" width="102.4" height="16" rx="4" fill="#FFFFFF"/>
+<text letter-spacing="1.3" x="721" y="146" font-size="11" fill="#7B57E8" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">WORKSPACE</text>
+<text x="714" y="174" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">root_dir/</text>
+<rect x="714" y="188" width="88.1" height="24" rx="6" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="758.1" y="204.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">src/app.py</text>
+<rect x="714" y="218.4" width="95.2" height="24" rx="6" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="761.6" y="234.5" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">config.toml</text>
+<rect x="714" y="248.8" width="95.2" height="24" rx="6" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="761.6" y="264.9" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">migrations/</text>
+<rect x="714" y="279.2" width="46.1" height="24" rx="6" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="737" y="295.3" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">.env</text>
+<text x="768.1" y="295.2" font-size="11.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">read-only</text>
+<rect x="714" y="309.6" width="53.1" height="24" rx="6" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="740.5" y="325.7" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">.git/</text>
+<text x="775.1" y="325.6" font-size="11.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">read-only</text>
+<line x1="666" y1="245" x2="696" y2="245" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="32" y1="386" x2="848" y2="386" stroke="#E6EAEA" stroke-width="1"/>
+<text letter-spacing="1.3" x="32" y="412" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">WHAT HAPPENS TO A CALL</text>
+<rect x="36.3" y="430" width="186.4" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="129.5" y="446.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">read_file(&#x27;config.toml&#x27;)</text>
+<line x1="129.5" y1="457" x2="129.5" y2="479" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="32" y="482" width="195" height="80" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="129.5" y="508" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Allowed</text>
+<text x="129.5" y="527" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Numbered lines and a content</text>
+<text x="129.5" y="543.6" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">hash come back.</text>
+<rect x="246.8" y="430" width="179.3" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="336.5" y="446.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">write_file(&#x27;.env&#x27;, ...)</text>
+<line x1="336.5" y1="457" x2="336.5" y2="479" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="239" y="482" width="195" height="80" rx="10" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.4"/>
+<text x="336.5" y="508" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Rejected: read-only</text>
+<text x="336.5" y="527" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Matches **/.env. The model</text>
+<text x="336.5" y="543.6" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">gets the error and retries.</text>
+<rect x="450.3" y="430" width="186.4" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="543.5" y="446.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">read_file(&#x27;/etc/passwd&#x27;)</text>
+<line x1="543.5" y1="457" x2="543.5" y2="479" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="446" y="482" width="195" height="80" rx="10" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.4"/>
+<text x="543.5" y="508" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Rejected: outside</text>
+<text x="543.5" y="527" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Resolves outside root_dir, so</text>
+<text x="543.5" y="543.6" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">nothing is read.</text>
+<rect x="646.8" y="430" width="207.4" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="750.5" y="446.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">edit_file(&#x27;migrations/...&#x27;)</text>
+<line x1="750.5" y1="457" x2="750.5" y2="479" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="653" y="482" width="195" height="80" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="750.5" y="508" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">FileChangeRequestEvent</text>
+<text x="750.5" y="527" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Your listener sees the diff and</text>
+<text x="750.5" y="543.6" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">can call cancel(reason).</text>
+<rect x="32" y="585" width="14" height="14" rx="7" fill="#092224" stroke="#092224" stroke-width="1.2"/>
+<text x="52" y="596" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<rect x="107.4" y="585" width="14" height="14" rx="4" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="127.4" y="596" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">added by FileSystem</text>
+<rect x="264.3" y="585" width="14" height="14" rx="4" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="284.3" y="596" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">workspace files</text>
+<rect x="395.8" y="585" width="14" height="14" rx="4" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.2"/>
+<text x="415.8" y="596" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">rejected</text>
+</svg>

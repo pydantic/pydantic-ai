@@ -34,7 +34,7 @@ from pydantic_ai.exceptions import (
     UnexpectedModelBehavior,
     UserError,
 )
-from pydantic_ai.messages import TextContent, ToolCallPart, ToolReturn, ToolReturnPart, UserContent
+from pydantic_ai.messages import ModelRequest, TextContent, ToolCallPart, ToolReturn, ToolReturnPart, UserContent
 from pydantic_ai.tools import (
     AgentDepsT,
     DeferredToolRequests,
@@ -421,8 +421,12 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         from pydantic_graph import End
 
         if isinstance(result, End) and isinstance(result.data.output, DeferredToolRequests):
-            # Finished tasks are left unswept so that a deferred-tool pause is not turned into
-            # another model request by the end-of-run drain.
+            # At a deferred-tool pause the end-of-run drain records arrived results in the history when the
+            # step's own request ends it. After a step whose calls all deferred it would turn them into
+            # another model request instead, so finished tasks are left unswept.
+            if isinstance(ctx.messages[-1], ModelRequest):
+                for outcome in self._arrived():
+                    self._deliver(ctx, outcome)
             return result
 
         for outcome in self._arrived():

@@ -14,6 +14,8 @@ processes that keep running across the runs of a conversation.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model calls Shell tools: run_command, start_command, check_command and stop_command, or the opt-in shell tool. Before a command runs, its executable is checked against allowed_commands or denied_commands, its shell operators against denied_operators, and interactive commands are blocked; then it runs as a process in the workspace's working directory with only the workspace's environment plus Shell(env=). Four example calls show pytest running and returning labelled output, rm rejected by the default denylist, a dev server started in the background with an ID, and that ID used to check on or stop it.](../img/harness/shell.svg)
+
 ## The problem
 
 Agents frequently need to run a build, a test suite, a linter, or a quick

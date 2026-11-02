@@ -14,8 +14,8 @@ from fastmcp.client.auth import OAuth
 from fastmcp.client.transports import SSETransport, StdioTransport, StreamableHttpTransport
 from mcp.shared._httpx_utils import create_mcp_http_client
 
-from pydantic_clai2.mcp._tokens import TokenStore
-from pydantic_clai2.plugins.sign_in import SignInRequired
+from pydantic_clai2.mcp.tokens import TokenStore
+from pydantic_clai2.plugins.sign_in import SignInRequiredError
 
 __all__ = ['Client', 'SSETransport', 'SignIn', 'StdioTransport', 'StreamableHttpTransport', 'http_client']
 
@@ -55,14 +55,14 @@ class SignIn(OAuth):
 
 
 class StoredOnly(SignIn):
-    """For runs: stored tokens, refreshed when they expire, and a `SignInRequired` where FastMCP would open a browser."""
+    """For runs: stored tokens, refreshed when they expire, and a `SignInRequiredError` where FastMCP would open a browser."""
 
     def __init__(self, name: str, *, callback_host: str, refusal: str) -> None:
         super().__init__(name, callback_host=callback_host)
         self._refusal = refusal
 
     async def redirect_handler(self, authorization_url: str) -> None:
-        raise SignInRequired(self._refusal)
+        raise SignInRequiredError(self._refusal)
 
 
 class Shown(SignIn):

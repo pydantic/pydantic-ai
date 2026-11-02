@@ -213,12 +213,16 @@ async def test_file_shrinking_during_snapshot_is_not_partial_success(workspace_h
 
     def shrink_during_read(child: pytest.MonkeyPatch, action: str) -> None:
         if action == 'read':
+            calls = 0
 
             def snapshot_stat(fd: int) -> os.stat_result:
+                nonlocal calls
                 state = original_stat(fd)
-                # Return the observed size, then simulate a concurrent writer shortening the file.
-                with target.open('r+b') as writer:
-                    writer.truncate(max(0, state.st_size - 1))
+                calls += 1
+                if calls == 2:
+                    # Shorten only after the snapshot records the original size.
+                    with target.open('r+b') as writer:
+                        writer.truncate(state.st_size - 1)
                 return state
 
             child.setattr(os, 'fstat', snapshot_stat)

@@ -23,7 +23,7 @@ from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 
