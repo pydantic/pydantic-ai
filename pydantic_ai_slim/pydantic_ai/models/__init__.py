@@ -13,7 +13,6 @@ import reprlib
 import time
 import uuid
 import warnings
-import weakref
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Generator, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
@@ -2359,42 +2358,45 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             announcement = lookalike_note_announcement(
                 system_role=False, sealed=self.profile.get('needs_sealed_system_blocks', False)
             )
-            parts = [*(parts or []), _framework_added(InstructionPart(content=announcement, dynamic=True))]
+            parts = [*(parts or []), _FrameworkInstructionPart(content=announcement, dynamic=True)]
         return parts
 
 
-@dataclass(repr=False)
-class _FrameworkNote(SystemPromptPart):
-    """A lookalike note or the announcement that `prepare_messages` added, as a mid-conversation system message.
+class _FrameworkAdded:
+    """Marks a lookalike note or the announcement that Pydantic AI added to a request it's preparing.
 
-    Made fresh from the history on every request and never stored, so the mark can't come from a user's history or
-    metadata. It lowers exactly like a `SystemPromptPart`.
+    The parts carrying it are private subclasses of the public part types, made fresh from the history on every request
+    and never stored, so the mark can't come from a user's history or metadata and needs nothing on the public types.
+    Each lowers exactly like its base type.
     """
 
-
-_FrameworkAdded = TypeVar('_FrameworkAdded', UserPromptPart, InstructionPart)
-
-_framework_added_parts: weakref.WeakValueDictionary[int, UserPromptPart | InstructionPart] = (
-    weakref.WeakValueDictionary()
-)
-"""The `<system>`-wrapped notes and the instruction-part announcement, by identity: text alone can't tell them from the
-same words a user wrote."""
+    __slots__ = ()
 
 
-def _framework_added(part: _FrameworkAdded) -> _FrameworkAdded:
-    _framework_added_parts[id(part)] = part
-    return part
+@dataclass(repr=False)
+class _FrameworkNote(SystemPromptPart, _FrameworkAdded):
+    """A note or the announcement, as a mid-conversation system message."""
+
+
+@dataclass(repr=False)
+class _FrameworkUserPromptPart(UserPromptPart, _FrameworkAdded):
+    """A note or the announcement, wrapped in a `<system>` block on a model without inline system messages."""
+
+
+@dataclass(repr=False)
+class _FrameworkInstructionPart(InstructionPart, _FrameworkAdded):
+    """The announcement at the end of the instructions, on a model without inline system messages."""
 
 
 def _is_framework_added(part: object) -> bool:
     """Whether `part` is a lookalike note or the announcement that Pydantic AI added to a request it's preparing."""
-    return isinstance(part, _FrameworkNote) or _framework_added_parts.get(id(part)) is part
+    return isinstance(part, _FrameworkAdded)
 
 
 def _wrapped_system_prompt(part: SystemPromptPart, *, sealed: bool) -> UserPromptPart:
     content = frame(SYSTEM_TAG, part.content, seal=FRAME_SEAL if sealed else None)
-    wrapped = UserPromptPart(content=content, timestamp=part.timestamp)
-    return _framework_added(wrapped) if _is_framework_added(part) else wrapped
+    wrapped_type = _FrameworkUserPromptPart if _is_framework_added(part) else UserPromptPart
+    return wrapped_type(content=content, timestamp=part.timestamp)
 
 
 def _instruction_parts_of(

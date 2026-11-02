@@ -19,7 +19,7 @@ from __future__ import annotations as _annotations
 import json
 from collections.abc import Generator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, cast
 
 import pytest
@@ -302,8 +302,9 @@ def test_fallback_notes_lookalikes_and_sends_user_and_tool_text_as_written():
         ]
     )
     # The announcement ends the instructions, so the prompt ahead of it is the same in every conversation.
-    assert model._get_instruction_parts(prepared, ModelRequestParameters()) == [  # pyright: ignore[reportPrivateUsage]
-        InstructionPart(content=lookalike_note_announcement(system_role=False), dynamic=True)
+    parts = model._get_instruction_parts(prepared, ModelRequestParameters()) or []  # pyright: ignore[reportPrivateUsage]
+    assert [asdict(part) for part in parts] == [
+        asdict(InstructionPart(content=lookalike_note_announcement(system_role=False), dynamic=True))
     ]
 
 
