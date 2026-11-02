@@ -451,7 +451,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
 
         The contents and the path are the repository's, not the operator's or the framework's, so they are data on
         the user channel. Only the pointer's note, Pydantic AI's rendering of the part's class, speaks in the
-        application's voice, and only when the workspace is one the operator controls.
+        application's voice, followed by who wrote the file when the operator doesn't control the workspace.
         """
         assert self._cached_working_dir is not None, 'a note is only rendered once the directory is resolved'
         label = context_file_label(context_file.path, self._cached_working_dir)

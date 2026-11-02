@@ -12,6 +12,7 @@ from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Generic, Literal, TypeAlias, TypeGuard
 
 from pydantic_ai import Agent
+from pydantic_ai._capability_parts import check_operator_text
 from pydantic_ai._framing import neutralize_tags, second_model_prompt
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
@@ -170,6 +171,8 @@ class Reminder(Generic[AgentDepsT]):
             raise ValueError(f'first_after must be >= 1, got {self.first_after}')
         if self.max_fires is not None and self.max_fires < 1:
             raise ValueError(f'max_fires must be >= 1, got {self.max_fires}')
+        # Fixed text in the application's voice: checked now, rather than when the reminder first fires mid-run.
+        check_operator_text(self.content, what="A `Reminder`'s content")
         if self.tag is _UNSET:
             warn_default_changed(
                 owner='Reminder',

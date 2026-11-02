@@ -11,6 +11,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, SupportsIndex, TypeAlias
 
+from ._capability_parts import operator_voice_lookalike
 from ._framework_frame import is_framework_frame
 from ._framing import resembles_frame
 from ._utils import fill_run_metadata
@@ -137,7 +138,22 @@ def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> list[ModelMessag
         else:
             content.append(item)
     flush_request()
+    _check_operator_voice(messages)
     return messages
+
+
+def _check_operator_voice(messages: Sequence[ModelMessage]) -> None:
+    """Raise if a [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] would say something that looks like a framework frame in the application's voice."""
+    for message in messages:
+        if not isinstance(message, ModelRequest):
+            continue
+        for part in message.parts:
+            if isinstance(part, CapabilityPart) and operator_voice_lookalike(part):
+                raise UserError(
+                    f"Capability part {part.kind!r} speaks in the application's voice, but its content contains "
+                    'something that looks like a framework frame (such as a `<system` tag), which is usually data '
+                    'interpolated into it. Put that data in a `DataCapabilityPart` kind.'
+                )
 
 
 def stamp_capability_parts(messages: Sequence[ModelMessage], capability_id: str) -> None:

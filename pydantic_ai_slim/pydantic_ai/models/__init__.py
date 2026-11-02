@@ -46,7 +46,12 @@ from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
 from .._canonical_system import accepts_stateless_artifact
-from .._capability_parts import render_capability_part, render_capability_parts
+from .._capability_parts import (
+    LookalikeNaming,
+    RenderedCapabilityPart,
+    render_capability_part,
+    render_capability_parts,
+)
 from .._file_input import (
     KNOWN_DOCUMENT_MEDIA_TYPES,
     FileInputKind,
@@ -2061,9 +2066,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             if first_request
             else 0
         )
-        genuine_change = any(isinstance(part, SystemPromptPart) for _, _, part in expanded[leading:]) and not any(
-            source == 'user' for _, sources, _ in expanded for source, _ in sources
-        )
+        # A capability part's note about its framed content is the application's, but changes no instruction.
+        capability_notes = {id(rendering.note) for rendering in capability_bodies.values()}
+        genuine_change = any(
+            isinstance(part, SystemPromptPart) and id(part) not in capability_notes for _, _, part in expanded[leading:]
+        ) and not any(source == 'user' for _, sources, _ in expanded for source, _ in sources)
         parts: list[ModelRequestPart] = []
         framed: list[ModelRequestPart] = []
         tool_notes: list[SystemPromptPart] = []
@@ -2121,6 +2128,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                             tags=tags,
                             system_role=inline_system,
                             genuine_change=genuine_change,
+                            **(
+                                capability.naming
+                                if (capability := capability_bodies.get(id(part)))
+                                else LookalikeNaming()
+                            ),
                         ),
                         timestamp=request.timestamp or _utils.now_utc(),
                     )
@@ -4183,21 +4195,21 @@ _LookalikeSources: TypeAlias = list[tuple[LookalikeSource, list[str]]]
 
 def _with_capability_parts_rendered(
     authored: ModelRequest, request: ModelRequest
-) -> tuple[list[tuple[ModelRequestPart, _LookalikeSources, ModelRequestPart]], set[int]]:
+) -> tuple[list[tuple[ModelRequestPart, _LookalikeSources, ModelRequestPart]], dict[int, RenderedCapabilityPart]]:
     """Each of `request`'s parts with its authored form and its lookalikes, and every capability part rendered in place.
 
-    Also returns the identities of the capability parts' framed bodies, which the lookalike pass counts as frames. They
-    stay within that pass: nothing about a rendered part is written into its metadata.
+    Also returns the rendered capability parts by the identity of their framed bodies, which the lookalike pass counts
+    as frames and names in its notes. They stay within that pass: nothing about a rendered part goes in its metadata.
     """
     expanded: list[tuple[ModelRequestPart, _LookalikeSources, ModelRequestPart]] = []
-    bodies: set[int] = set()
+    bodies: dict[int, RenderedCapabilityPart] = {}
     for original, part in zip(authored.parts, request.parts):
         if not isinstance(part, CapabilityPart):
             expanded.append((original, _lookalike_sources(original), part))
             continue
         rendering = render_capability_part(part)
         if rendering.body is not None:
-            bodies.add(id(rendering.body))
+            bodies[id(rendering.body)] = rendering
         expanded.extend((new, rendering.lookalikes if new is rendering.body else [], new) for new in rendering.parts)
     return expanded, bodies
 

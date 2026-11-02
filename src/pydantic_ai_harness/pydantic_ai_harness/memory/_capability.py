@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Mapping, Sequence
 from copy import copy
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import Literal, TypeAlias
+from typing import Final, Literal, TypeAlias
 
-from pydantic_ai._framing import neutralize_tags
 from pydantic_ai.agent.abstract import AgentInstructions
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import UserError
@@ -17,8 +15,8 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelSource,
     TextContent,
-    ToolResultSource,
     ToolReturnPart,
     UserPromptPart,
     post_compaction_window,
@@ -66,18 +64,16 @@ _DEFAULT_GUIDANCE = (
     'in this turn. A later `<memory>` block for this memory supersedes its earlier ones.'
 )
 
+
 # The slash is inside the optional group so the two `\s*` never compete for one run of spaces.
-_MEMORY_TAG_RE = re.compile(r'<(?=(?:\s*/)?\s*memory\b)', re.IGNORECASE)
-"""The `<` of a `<memory>` or `</memory>` tag in stored content, which could otherwise close the block early."""
-
-
 @dataclass(kw_only=True)
 class MemorySnapshotPart(DataCapabilityPart, namespace='memory', name='snapshot', tag='memory'):
     """A snapshot of stored memory, as `Memory` records it in the conversation at the start of a run.
 
-    Memory is data the model or the user wrote, so it goes on the user channel in a `<memory>` frame, never in the
-    application's voice. The `<` of every framing tag in it, `<memory>` included, is escaped as `&lt;`. Find
-    snapshots in history by this type.
+    Memory is data the agent wrote in earlier runs, so it goes on the user channel in a `<memory>` frame, never in the
+    application's voice, with a note saying who wrote it. It goes in as stored: text in it that looks like a framework
+    frame, or opens or closes `<memory>`, gets a note saying it's the agent's, not the application's. Find snapshots in
+    history by this type.
     """
 
     scope_hash: str
@@ -442,8 +438,7 @@ class Memory(AbstractCapability[AgentDepsT]):
         reserved: int = 0,
     ) -> tuple[str, bool] | None:
         """The framed snapshot, and whether a fresh conversation can skip it, or `None` when it doesn't fit the budget."""
-        main_content = '' if main is None else _neutralize(main.content)
-        subfiles = [_neutralize(name) for name in subfiles]
+        main_content = '' if main is None else main.content
         guidance = self._render_guidance()
         # The `directory` instruction, when there is one, shares `max_tokens` with the guidance and the snapshot.
         content_budget = snapshot_content_budget(self.max_tokens, guidance) - reserved
@@ -553,12 +548,16 @@ class Memory(AbstractCapability[AgentDepsT]):
         return 'Memory'
 
 
+_MEMORY_SOURCE: Final = ModelSource('agent in an earlier run')
+"""Who wrote a memory snapshot: the agent, through its memory tools. Stores don't record which entries a user edited."""
+
+
 def _snapshot_part(content: str, metadata: dict[str, str]) -> MemorySnapshotPart:
     """A snapshot as `Memory` records it: `content` is the frame's body, its line breaks included."""
     return MemorySnapshotPart(
         content=content,
-        # What `read_memory` would return: data the model or the user wrote, never trusted.
-        source=ToolResultSource(tool_name='read_memory'),
+        # The agent writes memory with its memory tools, in earlier runs: another model's text, with no authority.
+        source=_MEMORY_SOURCE,
         scope_hash=metadata['scope'],
         memory_id=metadata['id'],
     )
@@ -591,15 +590,6 @@ def _latest_snapshot(messages: list[ModelMessage], metadata: dict[str, str]) -> 
                 if isinstance(item, TextContent) and (item.metadata == metadata or item.metadata in legacy):
                     return item.content.removeprefix('<memory>').removesuffix('</memory>')
     return None
-
-
-def _neutralize(text: str) -> str:
-    """Escape every framing tag in stored memory, and `<memory>` itself, so it can't end its block or forge one.
-
-    Memory is model- or user-written data: a `<system>` in it must not read as the application speaking.
-    """
-    # TODO: switch to `pydantic_ai.framing.wrap()` with `memory` registered as a framing tag (#10957).
-    return _MEMORY_TAG_RE.sub('&lt;', neutralize_tags(text))
 
 
 def _responded_in_run(ctx: RunContext[AgentDepsT]) -> bool:

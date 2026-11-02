@@ -73,7 +73,6 @@ from ._framing import (
     frame,
     frame_tags,
     model_visible_name_error,
-    resembles_frame,
 )
 from ._instrumentation import redact_binary_content, serialize_any
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
@@ -4388,6 +4387,29 @@ CapabilityPartVoice: TypeAlias = Literal['data', 'instruction']
 """
 
 
+Authority: TypeAlias = Literal['operator', 'user', 'none']
+"""How much authority content in a [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] carries with the model.
+
+- `'operator'`: the application's own: it reaches the model in the application's voice, as a system message.
+- `'user'`: the user's: it reaches the model in the user's turn, labelled as attached by the application on the user's
+  behalf, since the user didn't type it now.
+- `'none'`: data, such as a tool's output, another model's text or a file someone else wrote: it reaches the model in
+  a frame, with a note naming who wrote it.
+
+Every [source][pydantic_ai.messages.CapabilityPartSource] has one. A part reaches the model with the lower of its
+source's authority and the authority its kind asks for: an
+[`InstructionCapabilityPart`][pydantic_ai.messages.InstructionCapabilityPart] asks for `'operator'` and a
+[`DataCapabilityPart`][pydantic_ai.messages.DataCapabilityPart] for `'none'`. A part whose source has less authority
+than its kind asks for is downgraded, never refused.
+"""
+
+_AUTHORITY_RANK: Final[dict[Authority, int]] = {'none': 0, 'user': 1, 'operator': 2}
+
+
+def _lower_authority(a: Authority, b: Authority) -> Authority:
+    return a if _AUTHORITY_RANK[a] <= _AUTHORITY_RANK[b] else b
+
+
 def _workspace_is_trusted(workspace: Workspace) -> bool:
     """Whether the operator controls `workspace`'s files."""
     # TODO(#11836): read `workspace.trusted` directly once `Workspace.trusted` lands; until then every workspace is.
@@ -4399,31 +4421,32 @@ class OperatorText(str):
 
     The model gives the application's voice the operator's authority, so an instruction part's content is either a string
     literal in your code (a `LiteralString`) or an `OperatorText`: text from the operator's own configuration, or a
-    file in a workspace the operator trusts. Wrapping a string in `OperatorText(...)` is how your code says it's
-    the operator's. Build one from a workspace file with [`from_workspace`][pydantic_ai.messages.OperatorText.from_workspace],
-    which refuses a workspace whose files the operator doesn't control, as the workspace reports it. Workspaces
-    don't report that yet (#11836), so for now every workspace counts as trusted.
+    file in a workspace. Wrapping a string in `OperatorText(...)` is how your code says it's meant for the application's
+    voice; whether it gets there is up to the part's [source][pydantic_ai.messages.CapabilityPartSource].
+
+    Build one from a workspace file with [`from_workspace`][pydantic_ai.messages.OperatorText.from_workspace], which
+    remembers where the text came from: a part holding it never has more authority than that workspace, whatever source
+    the part names.
     """
 
-    __slots__ = ()
+    _source: WorkspaceSource | None = None
+    """The workspace the text was read from, which caps the authority of a part holding it."""
 
     @classmethod
     async def from_workspace(cls, workspace: Workspace, path: str) -> Self:
         """Read the text file at `path` in `workspace` as operator text.
 
-        Raises:
-            UserError: If the operator doesn't control the workspace's files, such as a cloned third-party
-                repository. Put such content in a `DataCapabilityPart` instead.
+        In a workspace whose files the operator doesn't control, such as a cloned third-party repository, the text has
+        no authority: a part holding it is downgraded to data, as its source were
+        [`WorkspaceSource.from_workspace(workspace, path)`][pydantic_ai.messages.WorkspaceSource.from_workspace].
+        Workspaces don't report that yet (#11836), so for now every workspace counts as controlled by the operator.
         """
-        if not _workspace_is_trusted(workspace):
-            raise UserError(
-                f'{path!r} is in a workspace whose files the operator does not control, so its text cannot speak in '
-                "the application's voice. Put it in a `DataCapabilityPart` instead."
-            )
-        return cls(await workspace.read_text(path))
+        text = cls(await workspace.read_text(path))
+        text._source = WorkspaceSource.from_workspace(workspace, path)
+        return text
 
 
-_ContentAuthor: TypeAlias = Literal['user', 'tool', 'file', 'application']
+_ContentAuthor: TypeAlias = Literal['user', 'tool', 'file', 'model', 'application']
 """Who wrote content from a `CapabilityPartSource`, as the lookalike note names them: the application writes its own."""
 
 
@@ -4438,9 +4461,9 @@ class OperatorSource:
     """Who wrote content from this source, for the lookalike note."""
 
     @property
-    def trusted(self) -> bool:
-        """Always `True`: the operator speaks for itself."""
-        return True
+    def authority(self) -> Authority:
+        """Always `'operator'`: the operator speaks for itself."""
+        return 'operator'
 
 
 @dataclass(frozen=True, init=False)
@@ -4448,14 +4471,14 @@ class WorkspaceSource:
     """A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] whose content was read from a file in a workspace.
 
     Built only with [`from_workspace`][pydantic_ai.messages.WorkspaceSource.from_workspace], which asks the workspace
-    whether the operator controls its files: there's no constructor to state `trusted` yourself.
+    whether the operator controls its files: there's no constructor to state its authority yourself.
     """
 
     path: str
     """The path the content was read from."""
 
-    trusted: bool
-    """Whether the operator controlled the workspace's files when the content was read.
+    authority: Authority
+    """`'operator'` when the operator controlled the workspace's files when the content was read, else `'none'`.
 
     Stored with the part, so a workspace that becomes untrusted later doesn't change parts already in the history.
     """
@@ -4468,14 +4491,14 @@ class WorkspaceSource:
 
     @classmethod
     def from_workspace(cls, workspace: Workspace, path: str) -> WorkspaceSource:
-        """The source for content read from `path` in `workspace`, trusted when the operator controls its files.
+        """The source for content read from `path` in `workspace`: `'operator'` authority when the operator controls its files, else `'none'`.
 
-        Workspaces don't report that yet (#11836), so for now every workspace counts as trusted.
+        Workspaces don't report that yet (#11836), so for now every workspace counts as controlled by the operator.
         """
         source = cls.__new__(cls)
         # Frozen, and with no generated `__init__`, so the fields are set the way a frozen dataclass sets them.
         object.__setattr__(source, 'path', path)
-        object.__setattr__(source, 'trusted', _workspace_is_trusted(workspace))
+        object.__setattr__(source, 'authority', 'operator' if _workspace_is_trusted(workspace) else 'none')
         object.__setattr__(source, 'source_kind', 'workspace')
         return source
 
@@ -4497,14 +4520,14 @@ class ToolResultSource:
     """Who wrote content from this source, for the lookalike note."""
 
     @property
-    def trusted(self) -> bool:
-        """Always `False`: a tool's output is data, whoever wrote the tool."""
-        return False
+    def authority(self) -> Authority:
+        """Always `'none'`: a tool's output is data, whoever wrote the tool."""
+        return 'none'
 
 
 @dataclass(frozen=True, kw_only=True)
 class UserSource:
-    """A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] whose content the user wrote, such as text imported from another conversation."""
+    """A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] whose content the user wrote, such as a prompt they saved earlier or text imported from another conversation."""
 
     source_kind: Literal['user'] = 'user'
     """Source type identifier, used as a discriminator."""
@@ -4513,19 +4536,40 @@ class UserSource:
     """Who wrote content from this source, for the lookalike note."""
 
     @property
-    def trusted(self) -> bool:
-        """Always `False`: the user doesn't speak with the operator's authority."""
-        return False
+    def authority(self) -> Authority:
+        """Always `'user'`: the user's own words, though not typed in the current turn."""
+        return 'user'
+
+
+@dataclass(frozen=True)
+class ModelSource:
+    """A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] whose content another model wrote, such as a judge's assessment, a generated reminder, a summary or a sub-agent's report."""
+
+    author: str
+    """The model's role, as the notes about its text name it, such as `'trajectory judge'`: "the trajectory judge"."""
+
+    source_kind: Literal['model'] = 'model'
+    """Source type identifier, used as a discriminator."""
+
+    _author: ClassVar[_ContentAuthor] = 'model'
+    """Who wrote content from this source, for the lookalike note."""
+
+    @property
+    def authority(self) -> Authority:
+        """Always `'none'`: another model's text is data, whatever it says."""
+        return 'none'
 
 
 CapabilityPartSource = Annotated[
-    OperatorSource | WorkspaceSource | ToolResultSource | UserSource, pydantic.Discriminator('source_kind')
+    OperatorSource | WorkspaceSource | ToolResultSource | UserSource | ModelSource,
+    pydantic.Discriminator('source_kind'),
 ]
-"""Where a [`CapabilityPart`][pydantic_ai.messages.CapabilityPart]'s content came from.
+"""Where a [`CapabilityPart`][pydantic_ai.messages.CapabilityPart]'s content came from, which gives it its [`Authority`][pydantic_ai.messages.Authority].
 
-Only an [`OperatorSource`][pydantic_ai.messages.OperatorSource], or a
-[`WorkspaceSource`][pydantic_ai.messages.WorkspaceSource] from a workspace the operator controls, is `trusted`: content
-from any other source never reaches the model in the application's voice.
+An [`OperatorSource`][pydantic_ai.messages.OperatorSource], and a [`WorkspaceSource`][pydantic_ai.messages.WorkspaceSource]
+from a workspace the operator controls, have `'operator'` authority, a [`UserSource`][pydantic_ai.messages.UserSource]
+has `'user'`, and a [`ToolResultSource`][pydantic_ai.messages.ToolResultSource],
+[`ModelSource`][pydantic_ai.messages.ModelSource] or any other `WorkspaceSource` has `'none'`.
 """
 
 
@@ -4598,10 +4642,10 @@ class CapabilityPart:
     """
 
     source: CapabilityPartSource
-    """Where the content came from, which decides whether it can speak in the application's voice.
+    """Where the content came from, which gives it its [`Authority`][pydantic_ai.messages.Authority].
 
-    An instruction part needs a trusted source. A data part from a source that isn't trusted is rendered without its
-    note, which would vouch for the content.
+    The part reaches the model with the lower of the source's authority and the one its kind asks for: an instruction
+    part from a source without `'operator'` authority is downgraded, to the user's turn or to framed data.
     """
 
     scope: Literal['conversation', 'request'] = 'conversation'
@@ -4669,18 +4713,13 @@ class CapabilityPart:
         if self.rendering.voice == 'instruction':
             if not isinstance(content, str):
                 raise UserError(f"{owner} speaks in the application's voice, so its `content` must be a string.")
-            if not self.source.trusted:
-                raise UserError(
-                    f"{owner} speaks in the application's voice, but its content comes from a source the operator doesn't "
-                    f"control ({self.source!r}), which must never speak in the application's voice. Use a "
-                    '`DataCapabilityPart` kind for it.'
-                )
-            if resembles_frame(content):
-                raise UserError(
-                    f"{owner} speaks in the application's voice, but its content contains something that looks like a "
-                    'framework frame (such as a `<system` tag), which is usually data interpolated into '
-                    'it. Put that data in a `DataCapabilityPart` kind.'
-                )
+            # Text read from a workspace never has more authority than that workspace, whatever source the part names.
+            origin = content._source if isinstance(content, OperatorText) else None  # pyright: ignore[reportPrivateUsage]
+            if (
+                origin is not None
+                and _lower_authority(origin.authority, self.source.authority) != self.source.authority
+            ):
+                self.source = origin
         elif self.scope == 'request':
             raise UserError(f"{owner} is data; only an `InstructionCapabilityPart` can have `scope='request'`.")
         for name in self.rendering.attributes:
@@ -4811,6 +4850,15 @@ def _capability_part_kind(cls: type[CapabilityPart], namespace: str | None, name
             f'Capability part {cls.__qualname__} has kind {namespace}.{part_name!s}; its namespace segments and name '
             'must be lowercase snake_case.'
         )
+    if cls._voice == 'instruction':  # pyright: ignore[reportPrivateUsage]
+        # A downgraded instruction part is framed in a tag named after its kind.
+        try:
+            check_capability_frame(part_name, ())
+        except UserError as e:
+            raise UserError(
+                f'Capability part {cls.__qualname__} is named {part_name!r}, which a part downgraded from the '
+                f"application's voice is framed in, so it must work as a data tag: {e} Pass another `name`."
+            ) from e
     return f'{namespace}.{part_name}'
 
 
@@ -4848,9 +4896,10 @@ def _class_rendering(
 class DataCapabilityPart(CapabilityPart, _register=False):
     """A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] holding data the application or a capability inserts.
 
-    Such as a state update, a memory snapshot, a late tool result or a sub-agent's report. Its content reaches the model
-    in the kind's tag on the user channel, never in the application's voice: only a kind's optional note is, and only
-    for content from a trusted source.
+    Such as a state update, a memory snapshot, a late tool result or a sub-agent's report. Its content has no
+    [authority][pydantic_ai.messages.Authority], whatever its source: it reaches the model in the kind's tag on the user
+    channel, never in the application's voice. Only the kind's optional note is in the application's voice, followed by
+    who wrote the content when its source isn't the application's own code.
 
     ```python
     from dataclasses import dataclass
@@ -4893,8 +4942,19 @@ class DataCapabilityPart(CapabilityPart, _register=False):
 class InstructionCapabilityPart(CapabilityPart, _register=False):
     """An instruction a capability adds mid-conversation, as a [`CapabilityPart`][pydantic_ai.messages.CapabilityPart].
 
-    It reaches the model in the application's voice, as a mid-conversation system message. Its content speaks with the operator's authority, so it's a string literal in your code or an
-    [`OperatorText`][pydantic_ai.messages.OperatorText], which a type checker enforces, and its source must be trusted:
+    It reaches the model in the application's voice, as a mid-conversation system message. Its content speaks with the
+    operator's authority, so it's a string literal in your code or an [`OperatorText`][pydantic_ai.messages.OperatorText],
+    which a type checker enforces.
+
+    That takes a source with `'operator'` [authority][pydantic_ai.messages.Authority]. With less, the part is
+    downgraded rather than refused: from a [`UserSource`][pydantic_ai.messages.UserSource] it goes in the user's turn,
+    labelled as attached on the user's behalf, and from a source with no authority it's framed data, with a note naming
+    who wrote it. Either way it's framed in a tag named after the kind, which is why a kind's name must work as one:
+    lowercase snake_case, and not a system-voice tag like `system` or `context`.
+
+    Content [`ctx.enqueue`][pydantic_ai.tools.RunContext.enqueue] would send in the application's voice can't contain
+    something that looks like a framework frame, such as a `<system>` tag, which is usually data interpolated into it:
+    enqueueing it raises `UserError`.
 
     ```python
     from dataclasses import dataclass
