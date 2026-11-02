@@ -12,13 +12,13 @@ from __future__ import annotations as _annotations
 import json
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import httpx2
 import pytest
 
-from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart
+from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolReturn
 from pydantic_ai.exceptions import ModelHTTPError
 
 from ...conftest import try_import
@@ -301,3 +301,25 @@ async def test_unsupported_request_is_sent_without_a_thread(allow_model_requests
     response = first.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     assert 'thread_fingerprint' not in (response.provider_details or {})
+
+
+def weather_with_metadata(city: str) -> ToolReturn:
+    """Get the weather for a city."""
+    return ToolReturn(return_value=f'Sunny in {city}', metadata={'handle': object()})
+
+
+async def test_application_metadata_is_not_digested(allow_model_requests: None):
+    """`metadata` is never sent, so a value that isn't JSON, or a change to it, doesn't stop the thread continuing."""
+    api = _Api(
+        replies=[{'type': 'tool_use', 'id': 'toolu_1', 'name': 'weather_with_metadata', 'input': {'city': 'Paris'}}]
+    )
+    async with _model(api) as model:
+        agent = Agent(model, tools=[weather_with_metadata], model_settings=_SETTINGS)
+        first = await agent.run('Weather in Paris?')
+        history = first.all_messages()
+        first_request = history[0]
+        assert isinstance(first_request, ModelRequest)
+        history[0] = replace(first_request, metadata={'tag': 'added later'})
+        await agent.run('Thanks', message_history=history)
+
+    assert [body['thread']['type'] for body in api.bodies] == ['create', 'continue', 'continue']

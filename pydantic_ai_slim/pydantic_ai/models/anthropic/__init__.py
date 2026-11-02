@@ -25,6 +25,7 @@ from ...exceptions import UserError
 from ...messages import (
     ERROR_OUTCOMES,
     AudioUrl,
+    BaseToolReturnPart,
     BinaryContent,
     CachePoint,
     CompactionPart,
@@ -37,6 +38,7 @@ from ...messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
     ModelSettingsDeltaPart,
@@ -960,8 +962,29 @@ def _thread_key(fingerprint: str, history: Sequence[ModelMessage]) -> str:
     aren't caught, add its parts once a response can be digested as sent (see `history_digest` in `openai.py`).
     """
     hasher = hashlib.sha256(fingerprint.encode())
-    hasher.update(ModelMessagesTypeAdapter.dump_json(list(history), exclude_none=True))
+    hasher.update(ModelMessagesTypeAdapter.dump_json([_as_sent(m) for m in history], exclude_none=True))
     return hasher.hexdigest()
+
+
+def _as_sent(message: ModelMessage) -> ModelMessage:
+    """`message` without the application-only `metadata` fields, which are never sent and may not serialize to JSON.
+
+    A request's `instructions` are left out too: the fingerprint's `system` covers them.
+    ponytail: mirrors `_without_application_metadata` in `openai.py`; share it if maintainers prefer.
+    """
+    if isinstance(message, ModelRequest):
+        parts = [_part_as_sent(part) for part in message.parts]
+        return replace(message, parts=parts, metadata=None, instructions=None)
+    return replace(message, metadata=None)
+
+
+def _part_as_sent(part: ModelRequestPart) -> ModelRequestPart:
+    if isinstance(part, BaseToolReturnPart):
+        return replace(part, metadata=None)
+    if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+        content = [replace(item, metadata=None) if isinstance(item, TextContent) else item for item in part.content]
+        return replace(part, content=content)
+    return part
 
 
 @dataclass(kw_only=True)
