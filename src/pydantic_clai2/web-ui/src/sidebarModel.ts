@@ -181,10 +181,30 @@ const VIEW_NAMES: readonly View[] = ['projects', 'recent', 'attention', 'archive
 
 export const isView = (value: unknown): value is View => VIEW_NAMES.includes(value as View)
 
-export const isList = (value: unknown): value is Project[] => Array.isArray(value)
-
-export const isFlags = (value: unknown): value is Record<string, boolean> =>
+const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const hasStrings = (value: Record<string, unknown>, keys: readonly string[]): boolean =>
+  keys.every((key) => typeof value[key] === 'string')
+
+const isSession = (value: unknown): boolean =>
+  isObject(value) && hasStrings(value, ['id', 'title', 'created_at', 'updated_at'])
+
+const isWorktree = (value: unknown): boolean =>
+  isObject(value) && hasStrings(value, ['label']) && Array.isArray(value.sessions) && value.sessions.every(isSession)
+
+/** Projects down to the fields the sidebar reads before the list is fetched again, so a stale cache cannot crash it. */
+export const isList = (value: unknown): value is Project[] =>
+  Array.isArray(value) &&
+  value.every(
+    (project) =>
+      isObject(project) &&
+      hasStrings(project, ['key', 'name']) &&
+      Array.isArray(project.worktrees) &&
+      project.worktrees.every(isWorktree),
+  )
+
+export const isFlags = (value: unknown): value is Record<string, boolean> => isObject(value)
 
 /** Save a small JSON value in `localStorage`; a full or disabled store only loses it. */
 export function keep(key: string, value: unknown): void {
