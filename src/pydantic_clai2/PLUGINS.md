@@ -1324,7 +1324,7 @@ workspace and its default filenames. Its settings:
 
 | Key | Default | Does |
 |---|---|---|
-| `walk_up` | `false` | also load instruction files from the workspace up to `repo_context.walk_up_root`, inclusive (home by default); a non-ancestor root scans only the workspace |
+| `walk_up` | `false` | also load instruction files from the workspace up to the nearest `repo_context.walk_up_roots` entry containing it, inclusive (home by default); with no containing entry, only the workspace |
 | `inventory_tool` | `false` | give the agent `inventory_agent_context`, which maps the repo's `.claude`, `.agents`, `.codex`, and `.grok` assets |
 | `nested_traversal` | `false` | when the agent reads a file in, or lists, a directory, tell it about the instruction files of that directory and of every directory between it and the workspace |
 | `nested_inject` | `"pointer"` | what nested traversal adds: `"pointer"` (one line naming the file) or `"contents"` |
@@ -1333,7 +1333,7 @@ Two global user-only `/set` keys control autoload boundaries, not plugin JSON fi
 
 | `/set` key | Default | Does |
 |---|---|---|
-| `repo_context.walk_up_root` | `~` | inclusive stop used only when `walk_up` is `true` |
+| `repo_context.walk_up_roots` | `["~"]` | JSON string list of inclusive stops, resolved through symlinks, used only when `walk_up` is `true`; the nearest one containing the workspace applies |
 | `repo_context.autoload_symlink_roots` | `[]` | JSON string list of authorized external instruction-symlink target directories |
 
 These keys are rejected in `.clai/settings.json` and plugin JSON. Changes apply
