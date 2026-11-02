@@ -3,7 +3,7 @@
 Inside a durable container, [`RunContext.workspace`][pydantic_ai.tools.RunContext.workspace] is a
 `DurableWorkspace`: every call made in workflow code (capability hooks, output functions,
 `result.workspace`) runs as the durability capability's workspace operation, so it is journaled and
-never repeated on replay. Inside a durable unit (a tool, a `@durable_operation`) calls go straight to
+never repeated on replay. Display calls other than `display_size` raise a `UserError` there instead. Inside a durable unit (a tool, a `@durable_operation`) calls go straight to
 the workspace, rebuilt from the run's `WorkspaceRef`.
 
 An `ensure` call runs first, once per run: it creates or attaches to the environment and journals its
@@ -54,7 +54,7 @@ from pydantic_ai.workspaces import (
     WrapperWorkspace,
 )
 
-from ._operation import CacheIdentity, CapabilityOperationId, StepPolicy
+from ._operation import CacheIdentity, CapabilityOperationId
 from ._operation_backend import in_durable_unit
 
 if TYPE_CHECKING:
@@ -74,8 +74,8 @@ _BYTES_CONFIG = ConfigDict(ser_json_bytes='base64', val_json_bytes='base64')
 _JOURNAL_CONFIG = ConfigDict(ser_json_bytes='base64', val_json_bytes='base64', extra='forbid')
 
 # Of the display methods only `display_size` is journaled, for code such as a tool's `prepare` that reads it in
-# workflow code. The rest run inside a durable operation, such as the harness `ComputerUse` running each `computer`
-# call as one, so a display fact added later never adds a journaled step that recorded histories lack.
+# workflow code. The rest run inside a durable unit, such as a capability running each tool call that clicks and
+# looks as one `@durable_operation`, so a display fact added later never adds a journaled step that recorded histories lack.
 WorkspaceMethod: TypeAlias = Literal[
     'ensure',
     'run',
@@ -89,15 +89,6 @@ WorkspaceMethod: TypeAlias = Literal[
     'realpath',
     'display_size',
 ]
-
-WORKSPACE_CALL_POLICIES: Mapping[str, StepPolicy] = {'display_size': StepPolicy()}
-"""How an engine may repeat each kind of workspace call: reading the display size may run again.
-
-A method not listed runs under the engine's config for capability operations unchanged, and a failure the engine
-gives up on reaches the caller as the engine raised it. Commands and file methods aren't listed: whether one may run
-again depends on which of its errors are transient, which isn't settled.
-"""
-
 
 @pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
 class WorkspaceCallError:
@@ -452,21 +443,9 @@ class DurableWorkspace(WrapperWorkspace):
 
     async def _dispatch(self, call: WorkspaceCall, *, ref: WorkspaceRef | None) -> WorkspaceCallResult:
         ctx = self._run_context()
-        try:
-            result = await self._durability._call_workspace(  # pyright: ignore[reportPrivateUsage]
-                WorkspaceCallParams(run_context=ctx, ref=ref, call=call)
-            )
-        except Exception as error:
-            # The engine gave up on a call with a policy: report it like any other failure of that call. A
-            # configuration error, such as no capability supplying the workspace, isn't the call failing.
-            if (policy := WORKSPACE_CALL_POLICIES.get(call.method)) is None or isinstance(error, UserError):
-                raise
-            if policy.repeatable:
-                raise WorkspaceError(f'The {call.method} call failed ({type(error).__name__}).') from error
-            raise WorkspaceError(
-                f'The {call.method} call did not finish, so it may or may not have taken effect '
-                f'({type(error).__name__}).'
-            ) from error
+        result = await self._durability._call_workspace(  # pyright: ignore[reportPrivateUsage]
+            WorkspaceCallParams(run_context=ctx, ref=ref, call=call)
+        )
         if result.error is not None:
             raise_error(result.error)
         return result
