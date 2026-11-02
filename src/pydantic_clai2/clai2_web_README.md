@@ -70,6 +70,12 @@ whether you queued it here, in another browser, or in the terminal: edit a messa
 saves, Esc cancels), steer it now, or remove it before it runs. A message that runs while you edit it
 is queued again as a new follow-up when you save, as in the terminal.
 
+Between turns, hover or focus one of your prompts for **Edit** and **Retry**, the browser's
+[rewind](README.md#rewind-a-conversation). Edit opens the prompt in place; Send (or Enter) removes it
+and everything after it from the conversation, then sends your edited text with its images. Retry
+sends it again unchanged. Neither undoes changes to files. Prompts the terminal's rewind disables,
+and steering messages, offer neither.
+
 The browser can make the agent run commands, so the server listens on 127.0.0.1 only and
 every request must carry a token that is new each launch, though kept across `/update`; the printed link contains it. Keep
 the link private. The `web` plugin starts disabled; `/web` works once it is enabled with

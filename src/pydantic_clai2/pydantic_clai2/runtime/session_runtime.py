@@ -755,6 +755,11 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             self.live_session.changed()
 
     @property
+    def handling(self) -> bool:
+        """Whether the prompt handles an input now: a turn, a command, or a rewind."""
+        return self._handling
+
+    @property
     def idle(self) -> bool:
         """Whether nothing runs or waits: no turn, command, queued input, background fork, or delegated task."""
         return not (self._handling or self.session.running or self.queued or self.background_running())
@@ -1247,13 +1252,14 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     async def _rewind(self) -> None:
         assert self.editor is not None
-        async with self.forks.busy(), self._released():
-            try:
-                notice = await rewind(self.session, self.editor)
-            except Exception as exc:  # noqa: BLE001 -- a failed save must not end the shell.
-                self.console.print(f'Rewind failed: {exc}', style=theme.color(theme.WARNING), markup=False)
-            else:
-                self.console.print(notice, markup=False)
+        with self._handling_input():
+            async with self.forks.busy(), self._released():
+                try:
+                    notice = await rewind(self.session, self.editor)
+                except Exception as exc:  # noqa: BLE001 -- a failed save must not end the shell.
+                    self.console.print(f'Rewind failed: {exc}', style=theme.color(theme.WARNING), markup=False)
+                else:
+                    self.console.print(notice, markup=False)
 
     async def _read_loop(self) -> SessionEndReason:
         while True:

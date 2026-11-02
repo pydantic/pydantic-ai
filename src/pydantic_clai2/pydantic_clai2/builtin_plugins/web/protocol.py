@@ -55,6 +55,7 @@ from pydantic_clai2.runtime.eager_timing import NESTED_CALL
 from pydantic_clai2.runtime.forks import failure_line
 from pydantic_clai2.runtime.imported_history import is_typed_prompt
 from pydantic_clai2.runtime.monty_cells import NOTE_PREFIX
+from pydantic_clai2.runtime.rewind import rewind_points
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
 from pydantic_clai2.runtime.session import STEERING
 from pydantic_clai2.ui.prompt.prompt_queue import InputKind, input_kind
@@ -116,6 +117,8 @@ class Item:
     """A `run_code` cell the user ran with `/monty`, rather than one the model wrote."""
     images: list[str] = field(default_factory=list[str])
     """The IDs of a prompt's images, in order, which the session's `images/ID` route serves."""
+    run_id: str | None = None
+    """The run a prompt started, which Edit and Retry rewind to; `None` for a prompt they cannot rewind to."""
 
 
 @dataclass(kw_only=True)
@@ -1159,13 +1162,15 @@ def user_text(part: UserPromptPart, *, thumbnails: bool = False) -> str:
     )
 
 
-def user_item(part: UserPromptPart, *, id: str, image_ids: ImageIds | None = None) -> Item:
+def user_item(part: UserPromptPart, *, id: str, image_ids: ImageIds | None = None, run_id: str | None = None) -> Item:
     """A prompt's transcript item: its text, and its images by `image_ids` for a session that serves them.
 
     Without `image_ids`, as in a saved session's preview, each image shows as `[image]`.
     """
     images = [] if image_ids is None else [image_ids(image) for image in user_images(part)]
-    return Item(id=id, kind='user', text=user_text(part, thumbnails=image_ids is not None), images=images)
+    return Item(
+        id=id, kind='user', text=user_text(part, thumbnails=image_ids is not None), images=images, run_id=run_id
+    )
 
 
 def history_images(messages: Sequence[ModelMessage]) -> list[BinaryContent]:
@@ -1195,20 +1200,23 @@ def history_entries(messages: Sequence[ModelMessage], *, image_ids: ImageIds | N
     tools: dict[str, Item] = {}
     edits: dict[str, EditFileCallPart] = {}
     usage = RunUsage()
+    rewindable = {point.message_index for point in rewind_points(messages) if not point.reason}
 
     def end_turn() -> None:
         if usage.requests:
             entries.append(TurnSummary(id=f'h{len(entries)}', usage=usage_info(usage)))
 
-    for message in messages:
+    for index, message in enumerate(messages):
         if isinstance(message, ModelRequest):
             if starts_turn(message):
                 end_turn()
                 usage = RunUsage()
+            run_id = message.run_id if index in rewindable else None
             for part in message.parts:
                 if isinstance(part, UserPromptPart):
                     if is_typed_prompt(part):
-                        entries.append(user_item(part, id=f'h{len(entries)}', image_ids=image_ids))
+                        entries.append(user_item(part, id=f'h{len(entries)}', image_ids=image_ids, run_id=run_id))
+                        run_id = None
                 elif isinstance(part, ToolReturnPart) and (tool := tools.get(part.tool_call_id)):
                     tool.text = tool_result_text(part)
                     tool.state = tool_result_state(part)
