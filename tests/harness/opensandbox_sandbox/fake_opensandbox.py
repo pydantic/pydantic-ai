@@ -108,6 +108,8 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
         """Fail every request to connect, as an unreachable server does."""
         self.stopping = False
         """Leave a killed sandbox reporting `Stopping`, as Kubernetes does for a few seconds, instead of gone."""
+        self.stale_running_queries = 0
+        """Report a killed sandbox as `Running` for this many state queries before reporting `Stopping`."""
         self.api_key: str | None = API_KEY
         """The key the server requires; `None` runs it without authentication, as a local server may."""
         self.strip_newlines = False
@@ -145,7 +147,8 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
                 if self.endpoint_error is not None:
                     return _error(*self.endpoint_error, 'endpoint lookup failed')
                 return _json(200, {'endpoint': f'execd.{DOMAIN}/{sandbox_id}/proxy/{port}'})
-            case _:  # pragma: no cover - a request the backend never makes
+            # A request the backend never makes.
+            case _:  # pragma: no cover
                 raise AssertionError(f'unexpected request {request.method} {path}')
 
     async def _create(self, body: dict[str, Any]) -> httpx.Response:
@@ -189,7 +192,11 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
         sandbox = self.sandboxes.get(sandbox_id)
         if sandbox is None:
             return _error(404, _NOT_FOUND, f'Sandbox {sandbox_id} not found.')
-        return _json(200, sandbox.info())
+        info = sandbox.info()
+        if sandbox.state == 'Stopping' and self.stale_running_queries:
+            self.stale_running_queries -= 1
+            info['status']['state'] = 'Running'
+        return _json(200, info)
 
     async def _kill(self, sandbox_id: str) -> httpx.Response:
         sandbox = self.sandboxes.get(sandbox_id)
@@ -234,7 +241,8 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
                 if sandbox.state != 'Running':
                     raise httpx.ConnectError('connection refused')
                 return await self._command(sandbox, json.loads(request.content))
-            case _:  # pragma: no cover - a request the backend never makes
+            # A request the backend never makes.
+            case _:  # pragma: no cover
                 raise AssertionError(f'unexpected execd request {request.url.path}')
 
     async def _command(self, sandbox: FakeSandbox, body: dict[str, Any]) -> httpx.Response:
@@ -298,20 +306,21 @@ class _EventStream(httpx.AsyncByteStream):
         # execd reports the exit as soon as the command exits, even while a background child holds its output
         # open: once the command has exited, output still arriving is read for a moment, the rest dropped.
         code: int | None = None
+        deadline: float | None = None
         open_pipes = 2
         while code is None or open_pipes:
+            remaining = None if deadline is None else deadline - time.monotonic()
+            if remaining is not None and remaining <= 0:
+                break
             try:
-                kind, value = (
-                    await asyncio.wait_for(self._queue.get(), _DRAIN_GRACE)
-                    if code is not None
-                    else await self._queue.get()
-                )
+                kind, value = await asyncio.wait_for(self._queue.get(), remaining)
             except TimeoutError:
                 break
             if kind == 'broken':
                 raise httpx.RemoteProtocolError('peer closed connection without sending complete message body')
             if kind == 'exit':
                 code = value
+                deadline = time.monotonic() + _DRAIN_GRACE
             elif kind == 'eof':
                 open_pipes -= 1
             else:
@@ -354,6 +363,8 @@ class _EventStream(httpx.AsyncByteStream):
         # Closing the stream leaves the command running, as execd does.
         for task in self._tasks:
             task.cancel()
+        with anyio.CancelScope(shield=True):
+            await asyncio.gather(*self._tasks, return_exceptions=True)
         with suppress(ValueError):
             self._sandbox.streams.remove(self._queue)
 
@@ -397,8 +408,10 @@ async def wait_until_gone(*pids: int) -> None:
             os.kill(pid, 0)
         except ProcessLookupError:
             return False
-        return True  # pragma: lax no cover - depends on how fast the process dies
+        # Depends on how fast the process dies.
+        return True  # pragma: lax no cover
 
     with anyio.fail_after(5):
         while any(alive(pid) for pid in pids):
-            await anyio.sleep(0.01)  # pragma: lax no cover - depends on how fast the process dies
+            # Depends on how fast the process dies.
+            await anyio.sleep(0.01)  # pragma: lax no cover

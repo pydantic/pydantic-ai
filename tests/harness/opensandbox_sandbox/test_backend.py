@@ -8,9 +8,11 @@ from __future__ import annotations
 import asyncio
 import itertools
 import logging
+import os
 import signal
 import types
 import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -29,11 +31,12 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness.opensandbox_sandbox import OpenSandbox, OpenSandboxBackend, _backend
+from pydantic_ai_harness.opensandbox_sandbox import OpenSandbox, OpenSandboxBackend
 
+from ...conftest import no_leaked_tasks
+
+from . import fake_opensandbox
 from .fake_opensandbox import DOMAIN, FakeOpenSandbox, wait_until_gone
-
-pytestmark = pytest.mark.anyio(backends=['asyncio'])
 
 _MODULE = 'pydantic_ai_harness.opensandbox_sandbox._backend'
 
@@ -46,7 +49,7 @@ def _create(server: FakeOpenSandbox, working_dir: str, **kwargs: Any) -> OpenSan
 def fast_clock(monkeypatch: pytest.MonkeyPatch) -> None:
     """Advance the backend's clock a second on every read, so its two-second wait for a kill to show ends at once."""
     ticks = itertools.count()
-    monkeypatch.setattr(_backend, 'time', types.SimpleNamespace(monotonic=lambda: float(next(ticks))))
+    monkeypatch.setattr(f'{_MODULE}.time', types.SimpleNamespace(monotonic=lambda: float(next(ticks))))
 
 
 async def _wait_for(path: Path) -> None:
@@ -90,22 +93,34 @@ class TestCommands:
             group.cancel_scope.cancel()
         await wait_until_gone(*map(int, pids.read_text(encoding='utf-8').split()))
 
-    async def test_a_background_child_holding_the_output_open_does_not_hold_up_the_result(
-        self, server: FakeOpenSandbox, working_dir: str
+    async def test_a_background_child_writing_continuously_does_not_hold_up_the_result(
+        self, server: FakeOpenSandbox, working_dir: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """execd reports the exit once the command exits, as the test server does."""
-        result = await _create(server, working_dir).run(['sh', '-c', 'sleep 300 & echo started'])
-        assert (result.exit_code, result.stdout) == (0, 'started\n')
+        """execd reports the leader's exit even when a background child keeps writing."""
+        ticks = itertools.count()
+        monkeypatch.setattr(
+            fake_opensandbox,
+            'time',
+            types.SimpleNamespace(monotonic=lambda: float(next(ticks)), time_ns=fake_opensandbox.time.time_ns),
+        )
+        with no_leaked_tasks(), anyio.fail_after(5):
+            result = await _create(server, working_dir).run(['sh', '-c', '(while :; do printf x; done) &'])
+        assert result.exit_code == 0
 
     async def test_a_signal_death_reports_128_plus_the_signal(self, server: FakeOpenSandbox, working_dir: str) -> None:
         result = await _create(server, working_dir).run(['sh', '-c', f'kill -{signal.SIGTERM.value} $$'])
         assert result.exit_code == 128 + signal.SIGTERM.value
 
-    async def test_output_past_10_mib_is_refused_and_stopped(self, server: FakeOpenSandbox, working_dir: str) -> None:
+    async def test_output_past_the_limit_is_refused_and_stopped(
+        self, server: FakeOpenSandbox, working_dir: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(f'{_MODULE}._MAX_OUTPUT_BYTES', 1024)
+        monkeypatch.setattr(f'{_MODULE}._OUTPUT_PREVIEW_CHARS', 64)
+        pid = Path(working_dir, 'pid')
         with pytest.raises(WorkspaceOutputLimitError) as raised:
-            await _create(server, working_dir).run(['sh', '-c', 'yes 0123456789abcdef'])
-        assert raised.value.limit == 10 * 1024 * 1024
-        assert len(raised.value.stdout) == 64 * 1024
+            await _create(server, working_dir).run(['sh', '-c', f'echo $$ > {pid}; exec yes 0123456789abcdef'])
+        assert (raised.value.limit, len(raised.value.stdout)) == (1024, 64)
+        await wait_until_gone(int(pid.read_text(encoding='utf-8')))
 
     async def test_an_execd_older_than_1_1_1_is_refused(self, server: FakeOpenSandbox, working_dir: str) -> None:
         """execd before 1.1.1 drops every line's newline, so no output could be trusted."""
@@ -119,6 +134,7 @@ class TestCommands:
         with pytest.raises(WorkspaceError, match='could not run the command'):
             await _create(server, working_dir).run(['sh', '-c', 'kill -KILL $PPID'])
 
+    @pytest.mark.skipif(os.geteuid() == 0, reason='root ignores directory permissions')
     async def test_a_wrapper_that_cannot_record_its_pid_says_why(
         self, server: FakeOpenSandbox, working_dir: str
     ) -> None:
@@ -241,9 +257,10 @@ class TestLifecycle:
             await attached.run(['true'])
 
     async def test_a_kill_during_a_command_waits_for_the_server_to_catch_up(
-        self, server: FakeOpenSandbox, working_dir: str
+        self, server: FakeOpenSandbox, working_dir: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The stream breaks at once, while the server still reports the sandbox `Stopping` for a while."""
+        """The broken stream precedes the control plane changing from `Running` to `Stopping`."""
+        monkeypatch.setattr(f'{_MODULE}._GONE_POLL_INTERVAL', 0)
         backend = _create(server, working_dir)
         started = Path(working_dir, 'started')
 
@@ -256,7 +273,10 @@ class TestLifecycle:
             await _wait_for(started)
             assert backend.ref is not None
             server.stopping = True
+            server.stale_running_queries = 1
             await server.kill(backend.ref.id)
+        assert backend.ref is not None
+        assert server.requests.count(f'GET /v1/sandboxes/{backend.ref.id}') == 2
 
     async def test_a_sandbox_the_sdk_killed_after_a_failed_create_is_not_recorded(
         self, server: FakeOpenSandbox, working_dir: str
@@ -390,17 +410,23 @@ class TestSandboxTimeout:
         attached = OpenSandboxBackend(
             ref=created.ref, connection=server.connection, working_dir=working_dir, sandbox_timeout=600
         )
+        before = datetime.now(UTC) + timedelta(seconds=600)
         await attached.run(['true'])
-        assert [sandbox_id for sandbox_id, _ in server.renewals] == [created.ref.id]
+        [(sandbox_id, expires_at)] = server.renewals
+        assert sandbox_id == created.ref.id
+        assert before <= datetime.fromisoformat(expires_at) <= datetime.now(UTC) + timedelta(seconds=600)
 
     async def test_every_operation_after_the_create_renews_it(self, server: FakeOpenSandbox, working_dir: str) -> None:
         backend = _create(server, working_dir, sandbox_timeout=600)
         await backend.run(['true'])
         assert server.renewals == []
+        before = datetime.now(UTC) + timedelta(seconds=600)
         await backend.run(['true'])
         await backend.run(['true'])
         assert backend.ref is not None
         assert [sandbox_id for sandbox_id, _ in server.renewals] == [backend.ref.id] * 2
+        after = datetime.now(UTC) + timedelta(seconds=600)
+        assert all(before <= datetime.fromisoformat(expires_at) <= after for _, expires_at in server.renewals)
 
     async def test_one_that_ran_out_is_unavailable(self, server: FakeOpenSandbox, working_dir: str) -> None:
         backend = _create(server, working_dir, sandbox_timeout=600)
@@ -449,6 +475,25 @@ class TestTransport:
         assert 'POST /v1/sandboxes' not in server.requests
         await backend.aclose()
         assert server.closed_transports == server.opened_transports
+
+    async def test_closing_as_an_operation_starts_keeps_its_transport_open(
+        self, server: FakeOpenSandbox, owned_connection: ConnectionConfig, working_dir: str
+    ) -> None:
+        backend = OpenSandboxBackend(image='fake-image', connection=owned_connection, working_dir=working_dir)
+        await backend.run(['true'])
+        closed = server.closed_transports
+        started, release = Path(working_dir, 'started'), Path(working_dir, 'release')
+        script = f'touch {started}; while [ ! -e {release} ]; do sleep 0.01; done'
+        closing = asyncio.create_task(backend.aclose())
+        running = asyncio.create_task(backend.run(['sh', '-c', script]))
+        try:
+            await _wait_for(started)
+            await closing
+            assert server.closed_transports == closed
+        finally:
+            release.touch()
+            await running
+            await backend.aclose()
 
     async def test_closing_during_an_operation_waits_for_it(
         self, server: FakeOpenSandbox, owned_connection: ConnectionConfig, working_dir: str

@@ -124,6 +124,7 @@ _CREATE_READY_TIMEOUT = timedelta(seconds=120)
 _GONE_STATES = frozenset({'Stopping', 'Deleting', 'Terminated', 'Failed'})
 _GONE_SETTLE = 2.0
 """How long a broken command waits for the server to stop reporting a killed sandbox as running."""
+_GONE_POLL_INTERVAL = 0.1
 
 _CREATE_TAG = 'pydantic-ai-create'
 """Metadata key a new sandbox is tagged with, to find it when its create response is lost."""
@@ -263,13 +264,13 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
         if not running_on_asyncio():
             # Every operation refuses Trio, so there is no transport to close.
             return
-        if self._operations:
-            self._close_after_operation = True
-            return
 
         async def close() -> None:
-            # Under the lock, so a sandbox still being created is recorded before its transport closes.
+            # Check and detach together: an operation may start before this task gets the lock.
             async with self._lock:
+                if self._operations:
+                    self._close_after_operation = True
+                    return
                 sandbox, self._sandbox = self._sandbox, None
             if sandbox is not None:
                 await sandbox.close()
@@ -531,4 +532,4 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
                 raise _unavailable(sandbox.id)
             if time.monotonic() >= deadline:
                 return
-            await anyio.sleep(0.1)
+            await anyio.sleep(_GONE_POLL_INTERVAL)

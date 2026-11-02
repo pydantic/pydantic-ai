@@ -38,7 +38,8 @@ pytestmark = [pytest.mark.opensandbox_live, pytest.mark.anyio]
 def live_capability() -> OpenSandbox[None]:
     """The capability the live tier uses, configured for the server the environment names."""
     connection = None
-    if os.getenv('OPENSANDBOX_LIVE_SERVER_PROXY') == '1':  # pragma: no cover - live job on Kubernetes
+    # Live job on Kubernetes.
+    if os.getenv('OPENSANDBOX_LIVE_SERVER_PROXY') == '1':  # pragma: no cover
         connection = ConnectionConfig(use_server_proxy=True)
     small = os.getenv('OPENSANDBOX_LIVE_RESOURCE') == 'small'
     return OpenSandbox(

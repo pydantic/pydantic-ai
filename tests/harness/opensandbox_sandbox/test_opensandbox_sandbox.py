@@ -2,23 +2,23 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 from opensandbox.config import ConnectionConfig
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
-from pydantic_ai.workspaces import WorkspaceRef
+from pydantic_ai.workspaces import Workspace, WorkspaceRef
 from pydantic_ai_harness.opensandbox_sandbox import OpenSandbox, OpenSandboxBackend
 
 from .fake_opensandbox import FakeOpenSandbox
-
-pytestmark = pytest.mark.anyio(backends=['asyncio'])
 
 
 def _call_pwd_then_answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -42,13 +42,41 @@ def _ctx() -> RunContext[None]:
     return RunContext(deps=None, model=TestModel(), usage=RunUsage())
 
 
-def _backend(workspace: Any) -> OpenSandboxBackend:
+def _backend(workspace: Workspace) -> OpenSandboxBackend:
     backend = workspace.backend
     assert isinstance(backend, OpenSandboxBackend)
     return backend
 
 
 class TestConfiguration:
+    def test_agent_spec_schema_publishes_the_spec_expressible_fields(self) -> None:
+        definitions = AgentSpec.model_json_schema_with_capabilities([OpenSandbox])['$defs']
+        assert sorted(definitions['spec_params_OpenSandbox']['properties']) == [
+            'description',
+            'env',
+            'id',
+            'image',
+            'resource',
+            'sandbox_timeout',
+            'working_dir',
+        ]
+
+    def test_from_spec_forwards_the_spec_fields(self) -> None:
+        fields: dict[str, Any] = {
+            'id': 'sandbox',
+            'description': 'self-hosted workspace',
+            'image': 'python:3.13-slim',
+            'resource': {'cpu': '500m', 'memory': '1Gi'},
+            'sandbox_timeout': 60,
+            'working_dir': '/project',
+            'env': {'CONFIGURED': 'value'},
+        }
+        assert OpenSandbox[None].from_spec(**fields) == OpenSandbox(**fields)
+
+    def test_repr_does_not_expose_the_api_key(self) -> None:
+        capability = OpenSandbox[None](connection=ConnectionConfig(api_key='secret-server-key'))
+        assert 'secret-server-key' not in repr(capability)
+
     @pytest.mark.parametrize(
         ('kwargs', 'message'),
         [
@@ -68,10 +96,23 @@ class TestConfiguration:
         with pytest.raises(ValueError, match="expected 'opensandbox'"):
             await capability.destroy(WorkspaceRef(provider='docker', id='x'))
 
-    def test_backend_attaches_lazily_with_the_capabilitys_settings(self, server: FakeOpenSandbox) -> None:
-        ref = WorkspaceRef(provider='opensandbox', id='x')
-        backend = OpenSandbox[None](connection=server.connection, sandbox_timeout=60).backend(ref)
-        assert (backend.ref, server.requests) == (ref, [])
+    async def test_backend_attaches_lazily_with_the_capabilitys_settings(
+        self, server: FakeOpenSandbox, working_dir: str
+    ) -> None:
+        created = OpenSandboxBackend(image='fake-image', connection=server.connection, working_dir=working_dir)
+        await created.run(['true'])
+        assert created.ref is not None
+        server.requests.clear()
+        backend = OpenSandbox[None](
+            connection=server.connection, sandbox_timeout=60, working_dir=working_dir, env={'CONFIGURED': 'value'}
+        ).backend(created.ref)
+        assert server.requests == []
+        before = datetime.now(UTC) + timedelta(seconds=60)
+        result = await backend.run(['sh', '-c', 'pwd; printf %s "$CONFIGURED"'])
+        assert result.stdout == f'{working_dir}\nvalue'
+        [(sandbox_id, expires_at)] = server.renewals
+        assert sandbox_id == created.ref.id
+        assert before <= datetime.fromisoformat(expires_at) <= datetime.now(UTC) + timedelta(seconds=60)
 
     def test_without_an_image_only_refs_are_supplied(self, server: FakeOpenSandbox) -> None:
         capability = OpenSandbox[None](connection=server.connection)

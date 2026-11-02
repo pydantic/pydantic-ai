@@ -96,6 +96,35 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
         check_integer('sandbox_timeout', self.sandbox_timeout, optional=True)
         check_env(self.env)
 
+    @classmethod
+    def from_spec(
+        cls,
+        *,
+        id: str | None = None,
+        description: str | None = None,
+        image: str | None = None,
+        resource: Mapping[str, str] | None = None,
+        sandbox_timeout: int | None = None,
+        working_dir: str | None = '/workspace',
+        env: Mapping[str, str] | None = None,
+        **kwargs: Any,
+    ) -> OpenSandbox[Any]:
+        """Build from an agent spec using fields expressible in JSON.
+
+        An explicit signature keeps the SDK's `ConnectionConfig` annotation from hiding the configuration
+        schema. Specs use the server connection from the environment; pass `connection` in Python instead.
+        """
+        return cls(
+            id=id,
+            description=description,
+            image=image,
+            resource=resource,
+            sandbox_timeout=sandbox_timeout,
+            working_dir=working_dir,
+            env=env,
+            **kwargs,
+        )
+
     def backend(self, ref: WorkspaceRef) -> OpenSandboxBackend:
         """Construct a lazy backend for an existing sandbox."""
         return OpenSandboxBackend(

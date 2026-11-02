@@ -14,10 +14,10 @@ Run your agent's commands and file edits in a sandbox on your own [OpenSandbox](
 ## Install
 
 ```bash
-pip/uv-add "pydantic-ai-harness[opensandbox,anthropic]"
+pip/uv-add "pydantic-ai-harness[coder,opensandbox,anthropic]"
 ```
 
-The `opensandbox` extra installs the [OpenSandbox SDK](https://pypi.org/project/opensandbox/). The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra, and set `ANTHROPIC_API_KEY` for the examples.
+The `opensandbox` extra installs the [OpenSandbox SDK](https://pypi.org/project/opensandbox/), and `coder` installs `Coder`'s dependencies. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra, and set `ANTHROPIC_API_KEY` for the examples.
 
 ## Run a server
 
@@ -177,6 +177,8 @@ The sandbox's isolation is the server's runtime: a Docker container shares the h
 - `image` is pulled by tag; pin a digest, such as `python:3.13-slim@sha256:...`, to get the same image every time.
 
 ## Configuration
+
+[Agent specs](../agent.md#agent-specs) can set `image`, `resource`, `sandbox_timeout`, `working_dir` and `env`. Configure the server connection through `OPEN_SANDBOX_DOMAIN` and `OPEN_SANDBOX_API_KEY`; a custom `ConnectionConfig` is a Python-only option.
 
 | Option | What it does |
 | --- | --- |

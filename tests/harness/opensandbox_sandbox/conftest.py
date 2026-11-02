@@ -17,7 +17,8 @@ collect_ignore = (
     else ['test_backend.py', 'test_conformance.py', 'test_opensandbox_live.py', 'test_opensandbox_sandbox.py']
 )
 
-if TYPE_CHECKING or _HAS_OPENSANDBOX:  # pragma: no branch - the SDK-installed and slim jobs take opposite branches
+# The SDK-installed and slim jobs take opposite branches.
+if TYPE_CHECKING or _HAS_OPENSANDBOX:  # pragma: no branch
     import httpx
     from opensandbox.config import ConnectionConfig
 
@@ -34,10 +35,12 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
     if item.get_closest_marker('opensandbox_live') is None:
         return
     opted_in = os.getenv('PYDANTIC_AI_HARNESS_OPENSANDBOX_LIVE') == '1'
-    if opted_in and os.getenv('OPEN_SANDBOX_DOMAIN'):  # pragma: no cover - live job
+    # Live job.
+    if opted_in and os.getenv('OPEN_SANDBOX_DOMAIN'):  # pragma: no cover
         return
     reason = 'requires PYDANTIC_AI_HARNESS_OPENSANDBOX_LIVE=1 and OPEN_SANDBOX_DOMAIN naming a server'
-    if os.getenv('OPENSANDBOX_REQUIRE_LIVE') == '1':  # pragma: no cover - live job
+    # Live job.
+    if os.getenv('OPENSANDBOX_REQUIRE_LIVE') == '1':  # pragma: no cover
         pytest.fail(f'OPENSANDBOX_REQUIRE_LIVE=1 but the live tier cannot run: it {reason}.')
     pytest.skip(reason)
 
@@ -50,14 +53,16 @@ def _no_real_server(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPa
     the fake's `connection` must fail instead of creating real sandboxes there. The SDK also posts each create's
     latency through a client of its own that skips the configured transport, as a task left running.
     """
-    if 'opensandbox_live' in request.keywords:  # pragma: no cover - live tier runs without coverage
+    # Live tier runs without coverage.
+    if 'opensandbox_live' in request.keywords:  # pragma: no cover
         return
     monkeypatch.setenv('OPEN_SANDBOX_DOMAIN', 'unit-tests-use-the-fake-server.invalid')
     monkeypatch.delenv('OPEN_SANDBOX_API_KEY', raising=False)
     monkeypatch.setenv('OPENSANDBOX_DISABLE_METRICS', '1')
 
 
-if _HAS_OPENSANDBOX:  # pragma: no branch - the fixture cannot be defined without the SDK the fake runs
+# The fixture cannot be defined without the SDK the fake runs.
+if _HAS_OPENSANDBOX:  # pragma: no branch
 
     @pytest.fixture
     async def server(tmp_path_factory: pytest.TempPathFactory) -> AsyncIterator[FakeOpenSandbox]:
