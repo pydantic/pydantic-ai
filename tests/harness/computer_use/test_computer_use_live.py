@@ -91,6 +91,13 @@ def _claude(model_name: str, anthropic_api_key: str, capture: RequestCapture) ->
     return AnthropicModel(model_name, provider=AnthropicProvider(api_key=anthropic_api_key, http_client=capture.client))
 
 
+def _tools(body: dict[str, Any]) -> list[dict[str, Any]]:
+    """The request's tools, without the prompt-cache breakpoint that lands on the last of them."""
+    return [
+        {k: v for k, v in tool.items() if k != 'cache_control'} for tool in cast(list[dict[str, Any]], body['tools'])
+    ]
+
+
 def _results(body: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         block
@@ -113,8 +120,7 @@ async def test_claude_drives_the_screen_through_the_computer_toolset(
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
     first, *_, last = request_capture.bodies('/v1/messages')
     # The capability's `computer` tool went out as Claude's toolset, which has no name or schema of ours.
-    assert {'type': 'computer_toolset_20260801'} in cast(list[Any], first['tools'])
-    assert not any(tool.get('name') == 'computer' for tool in cast(list[dict[str, Any]], first['tools']))
+    assert _tools(first) == [{'type': 'computer_toolset_20260801'}]
     # Every member call got its own result, in the toolset.
     results = _results(last)
     assert results and all(result['toolset_name'] == 'computer' for result in results)
@@ -131,8 +137,7 @@ async def test_claude_sonnet_4_6_gets_computer_20251124_sized_to_the_display(
 
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
     # The capability gave the display size the earlier tool must declare, and the beta it needs went out.
-    tools = cast(list[dict[str, Any]], request_capture.bodies('/v1/messages')[0]['tools'])
-    assert [tool for tool in tools if tool.get('type') == 'computer_20251124'] == [
+    assert _tools(request_capture.bodies('/v1/messages')[0]) == [
         {
             'type': 'computer_20251124',
             'name': 'computer',
