@@ -322,7 +322,7 @@ class TestPixeltableToolsetQuery:
             tools.query_table(f'{catalog}.chunks', where={'vec': 5})
         assert tools.query_table(f'{catalog}.chunks', columns=['pos'], where={'pos': 0})['rows'] == [{'pos': 0}]
 
-    def test_where_accepts_bool_and_int_for_float(self, catalog: str) -> None:
+    def test_where_accepts_bool_for_bool_and_int_for_float(self, catalog: str) -> None:
         flags = create_table(f'{catalog}.flags', {'name': pxt.String, 'on': pxt.Bool, 'x': pxt.Float})
         insert_rows(flags, [{'name': 'a', 'on': True, 'x': 2.0}, {'name': 'b', 'on': False, 'x': 3.5}])
         tools = _tools([f'{catalog}.flags'])

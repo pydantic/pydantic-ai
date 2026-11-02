@@ -105,8 +105,9 @@ recalls it in a second run without the first run's chat history.
   mutation instead of applying it twice. Paths are limited to 255 characters and operation ids to
   248; the `__op__` path root is reserved.
 - Pixeltable has no multi-statement transaction, so a receipt is recorded as pending before its
-  mutation. After a crash, a pending receipt is replayed if the file holds its version and dropped
-  otherwise, so the retry runs compare-and-set like a fresh call.
+  mutation and completed after it. After a crash, the next mutation of that file settles the
+  receipt first: it is completed if the file holds its version and dropped otherwise, so the retry
+  runs compare-and-set like a fresh call. `FileStore` settles receipts the same way.
 - It does not implement `MetadataMemoryStore`, so `Memory(write_metadata=...)` raises `UserError`.
 - `search_memory` uses the same lexical scoring and prefix isolation as the other stores.
 - `store.table` supports queries, joins, and computed columns; filter to `kind == 'file'` for memory

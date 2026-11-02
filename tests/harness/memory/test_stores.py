@@ -67,7 +67,7 @@ def test_unknown_memory_attribute_raises() -> None:
     import pydantic_ai_harness.memory as memory
 
     with pytest.raises(AttributeError, match="has no attribute 'MissingStore'"):
-        memory.MissingStore  # pyright: ignore[reportAttributeAccessIssue]
+        memory.MissingStore
 
 
 _PIXELTABLE = pytest.param(3, marks=pytest.mark.skipif(find_spec('pixeltable') is None, reason='pixeltable extra'))

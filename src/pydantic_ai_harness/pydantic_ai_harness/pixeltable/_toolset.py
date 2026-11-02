@@ -119,7 +119,8 @@ def validate_config(tables: Sequence[str], max_rows: int, max_chars: int) -> lis
         raise ValueError(f'max_chars must be at least 1, got {max_chars}')
     if isinstance(tables, str):
         raise ValueError('tables must be a list of paths, not a string')
-    cleaned = [_norm(entry) for entry in tables if entry]
+    # Sorted and deduplicated, so equal allowlists compare equal when same-id capabilities combine.
+    cleaned = sorted({_norm(entry) for entry in tables if entry})
     if not cleaned:
         raise ValueError("tables must be a non-empty allowlist, or ['*'] for the whole catalog")
     if ALL_TABLES in cleaned and cleaned != [ALL_TABLES]:
@@ -306,9 +307,9 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
             table: Pixeltable table path.
             query: Text to embed and search for.
             column: Column with an embedding index.
-            columns: Extra columns to return with the match and score. Indexed media is
-                omitted unless explicitly requested. Explicit media, array, binary, and unstored
-                computed columns are rejected.
+            columns: Extra columns to return with the match and score. Omit to return the
+                default columns; indexed media is never returned. Explicit media, array, binary,
+                and unstored computed columns are rejected.
             limit: Maximum rows to return, capped by the capability.
             idx: Embedding index name. Required when the column has more than one index.
 

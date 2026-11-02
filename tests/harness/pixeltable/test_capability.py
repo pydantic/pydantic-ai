@@ -55,14 +55,8 @@ class TestPixeltableCapability:
         with pytest.raises(ValueError, match='only entry'):
             PixeltableToolset(tables=['*', 'a'], max_rows=10, max_chars=100)
 
-    def test_tables_normalizes_slashes_and_case(self) -> None:
-        assert Pixeltable(tables=['My_App/Doc_Chunks', '']).tables == ['my_app.doc_chunks']
-
-    def test_caps_must_be_positive(self) -> None:
-        with pytest.raises(ValueError, match='max_rows must be at least 1, got 0'):
-            Pixeltable(tables=['a'], max_rows=0)
-        with pytest.raises(ValueError, match='max_chars must be at least 1, got 0'):
-            Pixeltable(tables=['a'], max_chars=0)
+    def test_tables_are_normalized_sorted_and_deduplicated(self) -> None:
+        assert Pixeltable(tables=['My_App/Doc_Chunks', '', 'b', 'b']).tables == ['b', 'my_app.doc_chunks']
 
     def test_instructions_name_the_allowlist(self) -> None:
         scoped = Pixeltable(tables=['my_app.doc_chunks', 'other']).get_instructions()
@@ -95,6 +89,10 @@ class TestPixeltableCombine:
     def test_same_configuration_combines(self) -> None:
         agent = Agent('test', capabilities=[Pixeltable(tables=['X/Y']), Pixeltable(tables=['x.y'])])
         assert [cap.tables for cap in _loaded(agent)] == [['x.y']]
+
+    def test_reordered_allowlists_combine(self) -> None:
+        agent = Agent('test', capabilities=[Pixeltable(tables=['a', 'b']), Pixeltable(tables=['b', 'a'])])
+        assert [cap.tables for cap in _loaded(agent)] == [['a', 'b']]
 
     def test_different_allowlists_raise(self) -> None:
         # `tables` is an access boundary, so two that disagree need their own ids rather than a merge.

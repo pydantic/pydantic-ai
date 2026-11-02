@@ -291,13 +291,30 @@ class TestPixeltableMemoryStoreRecovery:
         assert file is not None
         assert file.content == 'other'
 
-    async def test_missing_receipt_does_not_reapply_the_write(self, store: PixeltableMemoryStore) -> None:
+    async def test_write_after_a_lost_receipt_still_checks_the_version(self, store: PixeltableMemoryStore) -> None:
         operation = MemoryOperation(id='run-1:call-1', fingerprint='write:notes/main.md:one')
         await store.write('notes/main.md', 'one', expected_version=None, operation=operation)
         table = store.table
         table.delete(where=table.path == f'__op__/{operation.id}')
         with pytest.raises(MemoryConflictError):
             await store.write('notes/main.md', 'one', expected_version=None, operation=operation)
+
+    async def test_landed_mutation_is_replayed_after_another_writer(
+        self, store: PixeltableMemoryStore, table_name: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        operation = MemoryOperation(id='crash-then-append', fingerprint='write:a.md:x')
+        _intercept(monkeypatch, store.table, 'update', receipt=True, around=_crash)
+        with pytest.raises(RuntimeError, match='crashed'):
+            await store.write('a.md', 'x', expected_version=None, operation=operation)
+        other = PixeltableMemoryStore(table_name=table_name)
+        landed = await other.read('a.md', max_chars=10)
+        assert landed is not None
+        await other.write('a.md', 'x+y', expected_version=landed.version)
+
+        # The other writer's mutation completed the pending receipt, so the retry replays it.
+        assert await other.get_operation(operation) == MemoryMutation(
+            version=landed.version, replayed=True, existed=False
+        )
 
 
 class TestPixeltableMemoryStoreRaces:
@@ -393,3 +410,40 @@ class TestPixeltableMemoryStoreRaces:
         with pytest.raises(MemoryConflictError, match='Duplicate primary key'):
             await store.write('a.md', 'hello', expected_version=None, operation=operation)
         assert await store.get_operation(operation) is None
+
+    async def test_lookup_leaves_an_in_flight_receipt(
+        self, store: PixeltableMemoryStore, table_name: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        operation = MemoryOperation(id='in-flight', fingerprint='write:a.md:x')
+        peer = PixeltableMemoryStore(table_name=table_name)
+        seen: list[MemoryMutation | None] = []
+
+        def peer_looks_up_first(call: Callable[[], object]) -> object:
+            seen.append(anyio.from_thread.run(peer.get_operation, operation))
+            return call()
+
+        _intercept(monkeypatch, store.table, 'insert', receipt=False, around=peer_looks_up_first)
+        written = await store.write('a.md', 'x', expected_version=None, operation=operation)
+        assert seen == [None]
+        assert await peer.get_operation(operation) == MemoryMutation(
+            version=written.version, replayed=True, existed=False
+        )
+
+    async def test_receipt_dropped_by_another_writer_is_restored(
+        self, store: PixeltableMemoryStore, table_name: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        base = await store.write('a.md', 'base', expected_version=None)
+        operation = MemoryOperation(id='restored', fingerprint='write:a.md:x')
+        other = PixeltableMemoryStore(table_name=table_name)
+
+        def stale_writer_settles_first(call: Callable[[], object]) -> object:
+            # Its mutation drops our pending receipt, then fails compare-and-set on a stale version.
+            with pytest.raises(MemoryConflictError):
+                anyio.from_thread.run(partial(other.write, 'a.md', 'other', expected_version='stale'))
+            return call()
+
+        _intercept(monkeypatch, store.table, 'update', receipt=False, around=stale_writer_settles_first)
+        written = await store.write('a.md', 'x', expected_version=base.version, operation=operation)
+        assert await store.get_operation(operation) == MemoryMutation(
+            version=written.version, replayed=True, existed=True
+        )
