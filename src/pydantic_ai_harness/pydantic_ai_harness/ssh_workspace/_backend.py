@@ -85,6 +85,16 @@ def _not_started(timeout: float) -> WorkspaceTimeoutError:
     )
 
 
+def _remaining(timeout: float | None, started: float) -> float | None:
+    """What is left of `timeout` since `started`; raise `_not_started` if nothing is."""
+    if timeout is None:
+        return None
+    remaining = timeout - (anyio.current_time() - started)
+    if remaining <= 0:
+        raise _not_started(timeout)
+    return remaining
+
+
 class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
     """Run commands on a remote host with the system's OpenSSH `ssh` client.
 
@@ -185,12 +195,7 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
         # The first command also resolves the working directory, within the same timeout.
         started = anyio.current_time()
         directory = await self._resolve_working_dir(timeout=timeout)
-        if timeout is not None:
-            remaining = timeout - (anyio.current_time() - started)
-            if remaining <= 0:
-                raise _not_started(timeout)
-            timeout = remaining
-        return await self._remote(directory, line, env=merged_env, timeout=timeout)
+        return await self._remote(directory, line, env=merged_env, timeout=_remaining(timeout, started))
 
     async def _remote(
         self, directory: str, line: str, *, env: Mapping[str, str], timeout: float | None
@@ -258,12 +263,7 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
                 # `-n`, `-f` and `StdinNull` give `ssh` an empty input. From now on the script goes on the remote
                 # command line, which caps how long a command can be, within the time this attempt left.
                 self._script_on_stdin = False
-                if timeout is not None:
-                    remaining = timeout - (anyio.current_time() - started)
-                    if remaining <= 0:
-                        raise _not_started(timeout)
-                    timeout = remaining
-                return await self._remote(directory, line, env=env, timeout=timeout)
+                return await self._remote(directory, line, env=env, timeout=_remaining(timeout, started))
             reason = before.strip() or f'`ssh` exited with code {result.exit_code}'
             raise WorkspaceUnavailableError(f'SSH workspace {self._ref.id} is unavailable: {reason}')
         # The marker carries the status because `ssh` uses exit 255 for a lost connection, and a command can too.

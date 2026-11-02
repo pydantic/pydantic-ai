@@ -86,9 +86,8 @@ fi
 
 `/bin/sh` is absolute, so the host does not resolve the launcher through `PATH`. The script then
 skips relative entries and anything inside the writable working directory, compared as canonical
-paths: a command can plant
-`bwrap`, `sh` or `base64` there, and the next call would otherwise run that plant on the host,
-before the sandbox exists. It also refuses to start when `/bin/sh` itself is inside that directory,
+paths: a command can plant `bwrap`, `sh` or `base64` there, and the next call would otherwise run
+that plant on the host, before the sandbox exists. It also refuses to start when `/bin/sh` itself is inside that directory,
 because the absolute launcher would then be writable. With the network off, `base64` is chosen the
 same way and decodes the seccomp filter onto descriptor 3. The filter travels on the command line
 because `bwrap` may run on another host, which receives a command, not open files.
@@ -374,8 +373,6 @@ class BubblewrapWorkspace(WrapperWorkspace):
                 "bubblewrap could not read the host account's home directory, so it cannot keep its "
                 'login files out of the writable sandbox'
             )
-        # ZDOTDIR overrides $HOME for zsh startup files. If set via sshd_config SetEnv to a directory inside
-        # the writable working directory, zsh would execute <ZDOTDIR>/.zshenv before bwrap starts.
         zdotdir_reported = await self.wrapped.run(['/bin/sh', '-c', _CANONICAL_ZDOTDIR], timeout=_PROBE_TIMEOUT)
         zdotdir = zdotdir_reported.stdout.removesuffix('\n')
         if zdotdir_reported.exit_code != 0:
