@@ -16,7 +16,7 @@ import pytest
 
 from pydantic_ai_harness.localstack import LocalStackContainer, LocalStackError
 
-from ._http_server import HttpResponse, http_server, unused_tcp_port
+from ._http_server import HttpResponse, http_server, refused_tcp_port
 
 _LOCALSTACK_ENV_NAMES = (
     'LOCALSTACK_AUTH_TOKEN',
@@ -291,10 +291,9 @@ class TestLifecycle:
 
     async def test_readiness_timeout_stops_container(self, tmp_path: Path) -> None:
         docker, log = _docker_stub(tmp_path)
-        port = unused_tcp_port()
         # startup_timeout also bounds `docker run` (the stub subprocess); keep it well
         # above subprocess-spawn time so the readiness poll, not the launch, times out.
-        with pytest.raises(LocalStackError, match=r'did not become ready within 1.0s'):
+        with refused_tcp_port() as port, pytest.raises(LocalStackError, match=r'did not become ready within 1.0s'):
             async with LocalStackContainer(docker_path=docker, host_port=port, startup_timeout=1.0, poll_interval=0.01):
                 pass  # pragma: no cover
         assert 'stop container-abc123' in log.read_text()
@@ -342,7 +341,6 @@ class TestLifecycle:
 
     async def test_readiness_failure_raises_original_error_even_if_stop_fails(self, tmp_path: Path) -> None:
         docker = _stop_failing_docker_stub(tmp_path)
-        port = unused_tcp_port()
-        with pytest.raises(LocalStackError, match=r'did not become ready within 1.0s'):
+        with refused_tcp_port() as port, pytest.raises(LocalStackError, match=r'did not become ready within 1.0s'):
             async with LocalStackContainer(docker_path=docker, host_port=port, startup_timeout=1.0, poll_interval=0.01):
                 pass  # pragma: no cover
