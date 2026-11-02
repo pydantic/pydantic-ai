@@ -32,10 +32,11 @@ from pydantic_ai.messages import BinaryContent, BinaryImage
 from pydantic_ai.models import Model, ModelRequestContext, ModelSelectionContext
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import UsageLimits
+from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import (
     Click,
     ComputerAction,
@@ -51,6 +52,12 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness.compaction import ClampOversizedMessages
 from pydantic_ai_harness.computer_use import ComputerUse
+from pydantic_ai_harness.computer_use._capability import (
+    _changed,  # pyright: ignore[reportPrivateUsage]
+    _grid,  # pyright: ignore[reportPrivateUsage]
+    _recorded_space,  # pyright: ignore[reportPrivateUsage]
+    _the_call,  # pyright: ignore[reportPrivateUsage]
+)
 from tests.function_model_prefix import HOOK_REWRITES_REQUEST
 from tests.harness._recording_durability import RecordingDurability
 
@@ -93,14 +100,17 @@ def _returns(messages: list[ModelMessage]) -> list[ToolReturnPart]:
 
 
 class TestComputerUse:
-    async def test_actions_run_in_order_and_the_model_gets_a_summary_and_a_screenshot(self) -> None:
+    async def test_actions_run_in_order_and_the_model_gets_a_summary_and_a_screenshot(
+        self, durability: list[AbstractCapability[Any]]
+    ) -> None:
         provider = InMemoryProvider()
         agent = Agent(
             _scripted(
                 [{'type': 'screenshot'}, {'type': 'click', 'x': 10, 'y': 20}, {'type': 'type', 'text': 'hi'}],
                 [{'type': 'keypress', 'keys': ['ctrl+s']}, {'type': 'wait', 'seconds': 0.01}],
             ),
-            capabilities=[provider.capability(), ComputerUse(settle_seconds=0)],
+            name='computer',
+            capabilities=[provider.capability(), ComputerUse(settle_seconds=0), *durability],
         )
         result = await agent.run('Type hi and save.')
 
@@ -109,7 +119,11 @@ class TestComputerUse:
         assert provider.actions == [Click(x=10, y=20), TypeText(text='hi'), PressKeys(keys=('ctrl', 's'))]
         first, second = _returns(result.all_messages())
         assert first.content == ['Ran 3 actions. Screenshot attached (1280x800).', SCREENSHOT]
-        assert first.metadata == {'performed': 3, 'screenshot_size': (1280, 800)}
+        # A durable call's result comes back through its JSON journal, so the size may be a list.
+        assert {**first.metadata, 'screenshot_size': tuple(first.metadata['screenshot_size'])} == {
+            'performed': 3,
+            'screenshot_size': (1280, 800),
+        }
         assert second.content == ['Ran 2 actions. Screenshot attached (1280x800).', SCREENSHOT]
 
     @pytest.mark.parametrize(
@@ -499,24 +513,24 @@ You can see and control a computer screen with the `computer` tool. Each call ru
             await agent.run('Go.')
 
     @pytest.mark.parametrize(
-        'actions',
+        'actions, gone',
         [
-            [{'type': 'type', 'text': 'a'}],
-            [{'type': 'screenshot'}],
-            [{'type': 'click', 'x': 1, 'y': 1}],
+            ([{'type': 'type', 'text': 'a'}], 'act'),
+            ([{'type': 'screenshot'}], 'screenshot'),
+            ([{'type': 'click', 'x': 1, 'y': 1}], 'display_size'),
         ],
         ids=['act', 'look', 'size'],
     )
     async def test_an_environment_that_goes_away_mid_run_ends_it(
-        self, actions: list[dict[str, Any]], durability: list[AbstractCapability[Any]]
+        self, actions: list[dict[str, Any]], gone: str, durability: list[AbstractCapability[Any]]
     ) -> None:
         class Vanishing(ProviderBackend):
-            """Gone once the run has started: the first read of the display size works, nothing after it does."""
+            """Gone once the run has started, at the first call to `gone`; `act` and `screenshot` run only there."""
 
             started = False
 
             async def display_size(self) -> tuple[int, int]:
-                if self.started:
+                if self.started and gone == 'display_size':
                     raise WorkspaceUnavailableError('the environment is gone')
                 self.started = True
                 return await super().display_size()
@@ -653,7 +667,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
     async def test_a_configuration_error_ends_a_durable_run(self, where: str, message: str) -> None:
         # Rather than telling the model to look again, which would meet the same error.
         class Misconfigured(ProviderBackend):
-            async def display_size(self) -> tuple[int, int]:
+            async def act(self, action: ComputerAction) -> None:
                 raise UserError('the display is misconfigured')
 
         class Provider(InMemoryProvider):
@@ -767,6 +781,29 @@ You can see and control a computer screen with the `computer` tool. Each call ru
 
         assert first.metadata == {'performed': 1, 'screenshot_size': (1000, 625)}
         assert second.metadata == {'performed': 1, 'screenshot_size': (1000, 625)}
+        assert provider.actions == [Click(x=640, y=384)]
+
+    async def test_a_screen_within_what_the_model_takes_is_sent_as_it_is(self) -> None:
+        # The display can't scale, so a scaled screenshot would end the run.
+        model = _scripted([{'type': 'screenshot'}], profile=ModelProfile(computer_use_screenshot_limit=(2576, 10**7)))
+        agent = Agent(model, capabilities=[ComputerUse(settle_seconds=0)])
+        result = await agent.run('Go.', workspace=DisplayOnlyBackend(InMemoryProvider().backend(None)))
+        (tool_return,) = _returns(result.all_messages())
+        assert tool_return.metadata == {'performed': 1, 'screenshot_size': (1280, 800)}
+
+    async def test_after_a_failed_call_the_next_one_is_in_the_size_the_model_is_sent(self) -> None:
+        # A failed call returns no screenshot, so the model has still seen none.
+        provider = InMemoryProvider()
+        model = _scripted(
+            [{'type': 'click', 'x': 1100, 'y': 10}],
+            [{'type': 'click', 'x': 500, 'y': 300}],
+            profile=ModelProfile(computer_use_screenshot_limit=(1000, 1_000_000)),
+        )
+        agent = Agent(model, capabilities=[provider.capability(), ComputerUse(settle_seconds=0)])
+        failed, ran = _returns((await agent.run('Go.')).all_messages())
+
+        assert failed.content == 'Action 1 (click) at (1100, 10) is outside the 1000x625 screen, so no action ran.'
+        assert ran.metadata == {'performed': 1, 'screenshot_size': (1000, 625)}
         assert provider.actions == [Click(x=640, y=384)]
 
     async def test_a_screen_larger_than_the_model_takes_ends_the_run_when_the_display_cannot_scale_it(self) -> None:
@@ -1017,3 +1054,17 @@ def _images_sent(calls: int) -> tuple[FunctionModel, list[int]]:
 
 def _unchanged(messages: list[ModelMessage]) -> list[ModelMessage]:
     return messages
+
+
+def test_the_call_helpers_fall_back_when_the_messages_lack_what_they_look_for() -> None:
+    other = ToolCallPart('computer', {'actions': 'not a list'}, tool_call_id='other')
+    messages: list[ModelMessage] = [ModelResponse(parts=[other]), ModelRequest.user_text_prompt('Go.')]
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), messages=messages, tool_call_id='missing')
+    # A call that isn't in the run's messages, so there is no record of the space it was made in.
+    assert _the_call(ctx) is None
+    # A response made without `ComputerUse`, such as one from an older history.
+    assert _recorded_space(ModelResponse(parts=[other])) is None
+    # Arguments that no longer validate don't match any actions.
+    assert _changed(other, []) is True
+    # A realtime model has no profile, so it points in pixels.
+    assert _grid(object()) is None

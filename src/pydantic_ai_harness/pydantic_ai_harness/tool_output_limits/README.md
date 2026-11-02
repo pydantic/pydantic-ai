@@ -12,6 +12,8 @@ dropping context already inside it.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/tool_output_limits/)
 
+![ToolOutputLimits runs in the after_tool_execute hook, on a tool result before it enters the history. With the default band, a 48,000-character result is spilled: the full payload is written to the workspace store under .pydantic-ai-harness/tool-output/, and the model gets a short marker with the handle and a head and tail preview. The model reads slices back with the read_tool_result tool.](https://pydantic.dev/docs/ai/img/harness/tool-output-limits.svg)
+
 ## The three modes
 
 | Mode | Cost | Lossy? | What the model gets |

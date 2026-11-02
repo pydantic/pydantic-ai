@@ -28,7 +28,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai.usage import UsageLimits
+from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import (
     LocalWorkspaceBackend,
     ReadOnlyWorkspace,
@@ -78,6 +78,28 @@ async def test_workspace_free_temporal_delegate() -> None:
     )
     result = await toolset.delegate_task(
         TemporalRunContext[object](deps=None, tool_name='delegate_task'), 'worker', 'hello', model='test'
+    )
+    assert result == 'worker'
+
+
+async def test_temporal_delegate_with_its_own_model_does_not_read_the_parent_model() -> None:
+    """A Temporal activity's context has no `model`; a delegate with a model of its own doesn't need it."""
+    pytest.importorskip('temporalio')
+    from pydantic_ai.durable_exec.temporal import TemporalRunContext
+
+    toolset = SubAgentToolset[object](
+        agents={'worker': SubAgent(Agent[object, str](TestModel(custom_output_text='worker'), name='worker'))},
+        forward_usage=False,
+        inherit_tools=False,
+        shared_capabilities=[],
+        event_stream_handler=None,
+        tool_name='delegate_task',
+        tool_retries=None,
+        contain_errors=False,
+        call_counts={},
+    )
+    result = await toolset.delegate_task(
+        TemporalRunContext[object](deps=None, tool_name='delegate_task'), 'worker', 'hello'
     )
     assert result == 'worker'
 
@@ -712,6 +734,19 @@ class TestRunControls:
         )
         with pytest.raises(UsageLimitExceeded):
             await parent.run('go', usage_limits=UsageLimits(request_limit=1))
+
+    async def test_shared_usage_child_runs_under_parent_usage_limits(self) -> None:
+        # The child shares the parent's usage, so it must check it against the parent's limits,
+        # not the default `request_limit=50` that 50 earlier requests would already exhaust.
+        worker = Agent(TestModel(custom_output_text='W'), name='worker')
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('worker'),
+            capabilities=[SubAgents(agents=[SubAgent(worker)])],
+        )
+        result = await parent.run('go', usage=RunUsage(requests=50), usage_limits=UsageLimits(request_limit=100))
+        assert result.output == 'all done'
+        assert _delegate_returns(result) == ['W']
+        assert result.usage.requests == 53
 
     async def test_timeout_returns_soft_message(self) -> None:
         async def slow_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

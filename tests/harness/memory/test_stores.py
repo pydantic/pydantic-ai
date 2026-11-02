@@ -7,7 +7,7 @@ import json
 import os
 import sqlite3
 from collections.abc import Mapping, Sequence
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import TracebackType
@@ -1247,6 +1247,17 @@ async def test_postgres_concurrent_store_initialization_cannot_regress_versions(
 def test_postgres_store_rejects_unsafe_table_names(table: str) -> None:
     with pytest.raises(ValueError, match='invalid table name'):
         PostgresMemoryStore(FakePostgresPool(), table=table)
+
+
+class _NonConnectionPool:
+    def acquire(self) -> AbstractAsyncContextManager[object]:
+        return nullcontext(object())
+
+
+async def test_postgres_store_rejects_an_acquired_non_connection() -> None:
+    store = PostgresMemoryStore(_NonConnectionPool())
+    with pytest.raises(TypeError, match='pool acquired object, which is not a PostgresConnection'):
+        await store.read('notes.md', max_chars=10)
 
 
 class _TruncatingBackend(LocalWorkspaceBackend):

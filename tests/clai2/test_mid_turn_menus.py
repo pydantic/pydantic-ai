@@ -561,7 +561,7 @@ async def test_plugins_typed_mid_turn_apply_at_once_and_end_after_the_run(
             pipe.send_text('/exit\r')
             await done.wait()
     # The queued `/exit` echoes once the turn is over and its plugin hooks have run.
-    text = output.getvalue()
+    text = Text.from_ansi(output.getvalue()).plain
     assert text.index('> /plugins disable alpha') < text.index(reply) < text.index('> /exit')
     if delegating:
         assert TURN_NOTICE not in text

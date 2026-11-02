@@ -21,7 +21,7 @@ If you just want the assembled version, every packaged harness ([`Coder`](coder.
 [CLI](https://pydantic.dev/docs/ai/cli/#custom-agents):
 
 ```bash
-uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent
+uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent
 ```
 
 ## Running an example

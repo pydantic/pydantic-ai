@@ -288,6 +288,11 @@ class RunBinding:
 
     cancellation: RunCancellation = dataclasses.field(default_factory=RunCancellation)
     agent_run: AgentRun[Any, Any] | None = None
+    started_by_installed_package: bool = False
+    """Whether an installed package started the run, decided in the caller's stack before the background run.
+
+    The run itself can't tell: below its task are only the frames of whatever drives the event loop.
+    """
 
 
 _current_run_binding: ContextVar[RunBinding | None] = ContextVar('pydantic_ai.run_binding', default=None)
