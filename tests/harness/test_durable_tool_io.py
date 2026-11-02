@@ -41,6 +41,7 @@ from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, Validat
 from pydantic_ai.messages import CapabilityEvent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai_harness.capability_creation import CapabilityCreation, CapabilityStore
+from pydantic_ai_harness.keenable import KeenableSearch
 from pydantic_ai_harness.localstack import LocalStack
 from pydantic_ai_harness.memory import InMemoryStore, Memory
 from pydantic_ai_harness.planning import (
@@ -219,6 +220,16 @@ class _YouClient:
         )
 
 
+class _KeenableClient:
+    async def search(self, query: str) -> list[dict[str, Any]]:
+        _requests['keenable.search'] += 1
+        return [{'url': 'https://a.dev', 'title': 'A', 'snippet': 'excerpt'}]
+
+    async def fetch(self, url: str) -> dict[str, Any]:
+        _requests['keenable.fetch'] += 1
+        return {'url': url, 'title': 'A', 'content': 'body'}
+
+
 def _counting_aws_cli() -> str:
     """An `aws` stand-in that counts its runs in the file named by `HARNESS_AWS_CLI_COUNT`."""
     directory = Path(tempfile.mkdtemp(prefix='harness_durable_tool_io_'))
@@ -273,6 +284,12 @@ _AGENTS: dict[str, Agent[None, str]] = {
         ('answer', {'query': 'q'}),
         ('research', {'input': 'q'}),
         ('finance_research', {'input': 'q'}),
+    ),
+    'keenable_search': _agent(
+        'keenable_search_agent',
+        KeenableSearch[None](client=_KeenableClient()),
+        ('web_search', {'query': 'q'}),
+        ('get_page', {'url': 'https://a.dev'}),
     ),
     'localstack': _agent(
         'localstack_agent',
@@ -366,6 +383,7 @@ _EXPECTED_STEPS: dict[str, Collection[str]] = {
     'exa_agent': ['exa_agent.create_run', 'exa_agent.resolve_run'],
     'you_search': ['you_search.web_search', 'you_search.get_page'],
     'you_research': ['you_research.answer', 'you_research.research', 'you_research.finance_research'],
+    'keenable_search': ['keenable_search.web_search', 'keenable_search.get_page'],
     'localstack': ['localstack.aws_cli'],
     'capability_creation': [
         'capability_creation.write',
@@ -601,6 +619,7 @@ async def test_dbos_recovery_replays_plan_tool_events_in_recorded_order(
         pytest.param(lambda: ExaAgent[None](runs=_ExaAgentRuns()), id='exa_agent'),
         pytest.param(lambda: YouSearch[None](client=_YouClient()), id='you_search'),
         pytest.param(lambda: YouResearch[None](client=_YouClient()), id='you_research'),
+        pytest.param(lambda: KeenableSearch[None](client=_KeenableClient()), id='keenable_search'),
         pytest.param(lambda: LocalStack[None](), id='localstack'),
         pytest.param(lambda: CapabilityCreation[None](directory=_CREATION_DIRECTORY), id='capability_creation'),
     ],
