@@ -275,7 +275,7 @@ def _move_trailing_cache_control(openai_messages: list[chat.ChatCompletionMessag
 
     message = openai_messages[message_index]
     is_request_end = (
-        message_index == len(openai_messages) - 1 and part_index == len(cast(list[Any], message['content'])) - 1
+        message_index == len(openai_messages) - 1 and part_index == len(cast(list[Any], message.get('content'))) - 1
     )
     if message['role'] != 'tool' and not is_request_end:
         last_carrier['cache_control'] = cache_control
@@ -288,7 +288,7 @@ def _move_trailing_cache_control(openai_messages: list[chat.ChatCompletionMessag
                     {'type': 'text', 'text': content, 'cache_control': cache_control}
                 ]
             else:
-                cast(dict[str, Any], content[-1])['cache_control'] = cache_control
+                cast(list[dict[str, Any]], content)[-1]['cache_control'] = cache_control
             return
 
 
