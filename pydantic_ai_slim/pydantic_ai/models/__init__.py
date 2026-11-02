@@ -2006,11 +2006,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             if frame_at is not None:
                 if announce and not announced:
                     announced = True
-                    announcement = _framework_note(
-                        SystemPromptPart(
-                            content=lookalike_note_announcement(system_role=True),
-                            timestamp=message.timestamp or _utils.now_utc(),
-                        )
+                    announcement = _FrameworkNote(
+                        content=lookalike_note_announcement(system_role=True),
+                        timestamp=message.timestamp or _utils.now_utc(),
                     )
                     parts.insert(frame_at, announcement)
             if len(parts) != len(message.parts) or any(new is not old for new, old in zip(parts, message.parts)):
@@ -2057,19 +2055,17 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             if _is_tool_result_part(part):
                 for _, tags in sources:
                     tool_notes.append(
-                        _framework_note(
-                            SystemPromptPart(
-                                content=lookalike_frame_note(
-                                    'tool',
-                                    preceding=not precede_tool_results,
-                                    tags=tags,
-                                    system_role=inline_system,
-                                    genuine_change=genuine_change,
-                                    tool_name=part.tool_name,
-                                    tool_call_id=part.tool_call_id,
-                                ),
-                                timestamp=request.timestamp or _utils.now_utc(),
-                            )
+                        _FrameworkNote(
+                            content=lookalike_frame_note(
+                                'tool',
+                                preceding=not precede_tool_results,
+                                tags=tags,
+                                system_role=inline_system,
+                                genuine_change=genuine_change,
+                                tool_name=part.tool_name,
+                                tool_call_id=part.tool_call_id,
+                            ),
+                            timestamp=request.timestamp or _utils.now_utc(),
                         )
                     )
                 if self._relocates_tool_files and isinstance(part, ToolReturnPart) and part.files:
@@ -2097,17 +2093,15 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 or (first_request and all(isinstance(p, SystemPromptPart) for p in parts))
             )
             notes = [
-                _framework_note(
-                    SystemPromptPart(
-                        content=lookalike_frame_note(
-                            source,
-                            preceding=after,
-                            tags=tags,
-                            system_role=inline_system,
-                            genuine_change=genuine_change,
-                        ),
-                        timestamp=request.timestamp or _utils.now_utc(),
-                    )
+                _FrameworkNote(
+                    content=lookalike_frame_note(
+                        source,
+                        preceding=after,
+                        tags=tags,
+                        system_role=inline_system,
+                        genuine_change=genuine_change,
+                    ),
+                    timestamp=request.timestamp or _utils.now_utc(),
                 )
                 for source, tags in sources
             ]
@@ -2369,12 +2363,13 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         return parts
 
 
-_FRAMEWORK_NOTE_KEY = 'framework_note'
-"""In a `SystemPromptPart`'s `__pydantic_ai__` metadata: a note or the announcement `prepare_messages` added."""
+@dataclass(repr=False)
+class _FrameworkNote(SystemPromptPart):
+    """A lookalike note or the announcement that `prepare_messages` added, as a mid-conversation system message.
 
-
-def _framework_note(part: SystemPromptPart) -> SystemPromptPart:
-    return replace(part, metadata={_PYDANTIC_AI_METADATA_KEY: {_FRAMEWORK_NOTE_KEY: True}})
+    Made fresh from the history on every request and never stored, so the mark can't come from a user's history or
+    metadata. It lowers exactly like a `SystemPromptPart`.
+    """
 
 
 _FrameworkAdded = TypeVar('_FrameworkAdded', UserPromptPart, InstructionPart)
@@ -2382,8 +2377,8 @@ _FrameworkAdded = TypeVar('_FrameworkAdded', UserPromptPart, InstructionPart)
 _framework_added_parts: weakref.WeakValueDictionary[int, UserPromptPart | InstructionPart] = (
     weakref.WeakValueDictionary()
 )
-"""The `<system>`-wrapped notes and the instruction-part announcement, by identity: neither part type has a metadata
-field to carry the mark `_framework_note` sets, and text alone can't tell them from the same words a user wrote."""
+"""The `<system>`-wrapped notes and the instruction-part announcement, by identity: text alone can't tell them from the
+same words a user wrote."""
 
 
 def _framework_added(part: _FrameworkAdded) -> _FrameworkAdded:
@@ -2393,10 +2388,7 @@ def _framework_added(part: _FrameworkAdded) -> _FrameworkAdded:
 
 def _is_framework_added(part: object) -> bool:
     """Whether `part` is a lookalike note or the announcement that Pydantic AI added to a request it's preparing."""
-    if isinstance(part, SystemPromptPart):
-        namespace = (part.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
-        return _utils.is_str_dict(namespace) and namespace.get(_FRAMEWORK_NOTE_KEY) is True
-    return _framework_added_parts.get(id(part)) is part
+    return isinstance(part, _FrameworkNote) or _framework_added_parts.get(id(part)) is part
 
 
 def _wrapped_system_prompt(part: SystemPromptPart, *, sealed: bool) -> UserPromptPart:
