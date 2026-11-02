@@ -145,7 +145,7 @@ from .models._continuation import (
 )
 from .models._request_timeout import enforce_request_deadline, start_request_deadline, without_carried_deadline
 from .models.wrapper import WrapperModel, serving_wrapper_scope
-from .output import OutputDataT, OutputSpec, PendingModelResponse, StructuredOutputMode
+from .output import OutputDataT, OutputRetryContext, OutputSpec, PendingModelResponse, StructuredOutputMode
 from .settings import ModelSettings
 from .tools import (
     AgentNativeTool,
@@ -2991,6 +2991,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         ctx.state.run_step += 1
 
+        await _select_model(ctx)
+
         _refresh_loaded_capability_ids(ctx)
         _refresh_discovered_tool_names(ctx)
 
@@ -3915,6 +3917,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         )
                     except ToolRetryError as e:
                         ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e, feedback=e.tool_retry)
+                        assert isinstance(e.tool_retry, _messages.RetryFeedbackPart)
+                        await notify_output_retry(
+                            ctx, OutputRetryContext(response=self.model_response, retry=e.tool_retry.retry)
+                        )
                         self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
                             _messages.ModelRequest(parts=[e.tool_retry])
                         )
@@ -4021,6 +4027,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 raise ToolRetryError(m)
             except ToolRetryError as e:
                 ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e, feedback=e.tool_retry)
+                assert isinstance(e.tool_retry, _messages.RetryFeedbackPart)
+                await notify_output_retry(
+                    ctx, OutputRetryContext(response=self.model_response, retry=e.tool_retry.retry)
+                )
                 self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
 
         try:
@@ -4110,25 +4120,33 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
         output_parts: list[_messages.ModelRequestPart] = []
         output_final_result: deque[result.FinalResult[NodeRunEndT]] = deque(maxlen=1)
+        output_retry_parts: list[_messages.ToolReturnPart] = []
 
         try:
             # When `final_result` is set (schema-validated text or image output already won under
             # `end_strategy='early'`), `process_tool_calls` records the tool calls as skipped rather than
             # executing them.
-            async with aclosing(
-                process_tool_calls(
-                    tool_manager=ctx.deps.tool_manager,
-                    tool_calls=tool_calls,
-                    tool_call_results=self.tool_call_results,
-                    tool_call_metadata=self.tool_call_metadata,
-                    final_result=final_result,
-                    ctx=ctx,
-                    output_parts=output_parts,
-                    output_final_result=output_final_result,
-                )
-            ) as events:
-                async for event in events:
-                    yield event
+            try:
+                async with aclosing(
+                    process_tool_calls(
+                        tool_manager=ctx.deps.tool_manager,
+                        tool_calls=tool_calls,
+                        tool_call_results=self.tool_call_results,
+                        tool_call_metadata=self.tool_call_metadata,
+                        final_result=final_result,
+                        ctx=ctx,
+                        output_parts=output_parts,
+                        output_final_result=output_final_result,
+                        output_retry_parts=output_retry_parts,
+                    )
+                ) as events:
+                    async for event in events:
+                        yield event
+            except Exception:
+                await notify_output_tool_retries(ctx, self.model_response, output_retry_parts)
+                raise
+            else:
+                await notify_output_tool_retries(ctx, self.model_response, output_retry_parts)
         except BaseException:
             # Capture the partial tool returns collected so far. State is 'interrupted'
             # so `capture_run_messages` consumers can detect partial state. The user prompt
@@ -4760,6 +4778,33 @@ def build_validation_context(
         return fn(run_context)
     else:
         return validation_ctx
+
+
+async def notify_output_tool_retries(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+    response: _messages.ModelResponse,
+    parts: list[_messages.ToolReturnPart],
+) -> None:
+    """Notify accepted output-tool charges, including those preceding a terminal sibling."""
+    for part in parts:
+        assert part.retry is not None
+        await notify_output_retry(
+            ctx,
+            OutputRetryContext(
+                response=response,
+                retry=part.retry,
+                tool_name=part.tool_name,
+                tool_call_id=part.tool_call_id,
+            ),
+        )
+
+
+async def notify_output_retry(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+    retry_context: OutputRetryContext,
+) -> None:
+    """Notify capabilities after core accepts an output retry charge."""
+    await ctx.deps.root_capability.on_output_retry(_build_output_run_context(ctx), retry_context=retry_context)
 
 
 def _build_output_run_context(

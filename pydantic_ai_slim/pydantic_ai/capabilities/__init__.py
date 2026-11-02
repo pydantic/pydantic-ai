@@ -8,7 +8,7 @@ from pydantic_ai.native_tools._tool_search import (
     ToolSearchNativeStrategy as ToolSearchNativeStrategy,
     ToolSearchStrategy as ToolSearchStrategy,
 )
-from pydantic_ai.output import OutputContext
+from pydantic_ai.output import OutputContext, OutputRetryContext, OutputRetrySource
 
 from ._dynamic import CapabilityFunc, DynamicCapability
 from ._on_event import on_event
@@ -50,7 +50,7 @@ from .include_return_schemas import IncludeToolReturnSchemas
 from .instrumentation import Instrumentation
 from .local_workspace import LocalWorkspace
 from .mcp import MCP, MCPAuthorizationTokenFunc
-from .model_fallback import ModelFallback
+from .model_fallback import ModelFallback, OutputFallbackEvent
 from .native_or_local import NativeOrLocalTool
 from .native_tool import NativeTool
 from .prefix_tools import PrefixTools
@@ -181,6 +181,9 @@ __all__ = [
     'HookTimeoutError',
     'Hooks',
     'OutputContext',
+    'OutputRetryContext',
+    'OutputRetrySource',
+    'OutputFallbackEvent',
 ]
 
 

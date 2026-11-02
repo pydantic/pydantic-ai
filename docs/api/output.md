@@ -16,3 +16,5 @@
             - DeferredToolRequests
             - PendingModelResponse
             - OutputObjectDefinition
+            - OutputRetryContext
+            - OutputRetrySource

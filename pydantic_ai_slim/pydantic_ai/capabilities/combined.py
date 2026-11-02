@@ -20,6 +20,7 @@ from pydantic_ai._instructions import (
 from pydantic_ai._utils import aclose_all, gather, replace_no_init
 from pydantic_ai.exceptions import ModelRetry, RetryModelRequest
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
+from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
     AgentDepsT,
@@ -49,8 +50,12 @@ from .wrapper import WrapperCapability
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
     from pydantic_ai.agent.abstract import AbstractAgent
-    from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
-    from pydantic_ai.output import OutputContext
+    from pydantic_ai.models import (
+        KnownModelName,
+        ModelRequestContext,
+        ModelResolutionContext,
+    )
+    from pydantic_ai.output import OutputContext, OutputRetryContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End
@@ -431,6 +436,20 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 else:
                     model = capability_model
         return model if model is not None else default
+
+    def _model_is_default(self) -> bool:
+        # Preserve a run-bound default selector through containers without changing the
+        # precedence of existing static container contributions or subclass selections.
+        model = self.get_model()
+        return (
+            type(self).get_model is CombinedCapability.get_model
+            and callable(model)
+            and not isinstance(model, Model)
+            and all(
+                capability.defer_loading is True or capability.get_model() is None or capability._model_is_default()
+                for capability in self._dispatch
+            )
+        )
 
     @property
     def has_resolve_model_id(self) -> bool:
@@ -1002,6 +1021,13 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 # Defensive.
                 raise
         raise error
+
+    # --- Output retry notification ---
+
+    async def on_output_retry(self, ctx: RunContext[AgentDepsT], *, retry_context: OutputRetryContext) -> None:
+        for capability in reversed(self._dispatch):
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
+                await capability.on_output_retry(cap_ctx, retry_context=retry_context)
 
     # --- Output process lifecycle hooks ---
 

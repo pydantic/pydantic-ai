@@ -1132,19 +1132,27 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 # So we call `process_tool_calls` directly and then end the run with the found final result.
 
                                 parts: list[_messages.ModelRequestPart] = []
+                                output_retry_parts: list[_messages.ToolReturnPart] = []
                                 # A response the provider is still working on ended the run as `PendingModelResponse`,
                                 # so its tool calls aren't complete and don't run.
                                 pending = isinstance(final_result.output, PendingModelResponse)
-                                async for _event in _agent_graph.process_tool_calls(
-                                    tool_manager=graph_ctx.deps.tool_manager,
-                                    tool_calls=[] if pending else stream.response.tool_calls,
-                                    tool_call_results=None,
-                                    tool_call_metadata=None,
-                                    final_result=final_result,
-                                    ctx=graph_ctx,
-                                    output_parts=parts,
-                                ):
-                                    pass
+                                try:
+                                    async for _event in _agent_graph.process_tool_calls(
+                                        tool_manager=graph_ctx.deps.tool_manager,
+                                        tool_calls=[] if pending else stream.response.tool_calls,
+                                        tool_call_results=None,
+                                        tool_call_metadata=None,
+                                        final_result=final_result,
+                                        ctx=graph_ctx,
+                                        output_parts=parts,
+                                        output_retry_parts=output_retry_parts,
+                                    ):
+                                        pass
+                                except Exception:
+                                    await _agent_graph.notify_output_tool_retries(
+                                        graph_ctx, stream.response, output_retry_parts
+                                    )
+                                    raise
 
                                 # To allow this message history to be used in a future run without dangling tool calls,
                                 # append a new ModelRequest using the tool returns and retries
@@ -1158,6 +1166,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                         )
                                     )
 
+                                await _agent_graph.notify_output_tool_retries(
+                                    graph_ctx, stream.response, output_retry_parts
+                                )
                                 await agent_run.next(_agent_graph.SetFinalResult(final_result))
 
                                 # The tool calls above (and any agents they delegated to) added usage to the run

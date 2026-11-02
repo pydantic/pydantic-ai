@@ -445,7 +445,7 @@ An [`override(model=...)`][pydantic_ai.agent.AbstractAgent.override] still wins 
 
 Later model contributions override earlier ones. If [`for_run()`][pydantic_ai.capabilities.AbstractCapability.for_run] leaves the capability unchanged, its bootstrap selection is reused on step one; if it returns a replacement with a different selector, that selector makes a new step-one selection.
 
-Fallback is complementary to selection: add [`ModelFallback`](model-fallback.md) to the agent when request failures should be retried on another model, and it falls back from whichever model was selected.
+Fallback is complementary to selection: add [`ModelFallback`](model-fallback.md) to the agent when request failures should be retried on another model, and it falls back from whichever model was selected. Its opt-in [`output_retry_threshold`](model-fallback.md#output-validation-retries) policy can also move later request steps to another model after output validation failures. Output-driven selection offers a default: an explicit run model or another capability's selection, such as `SelectModel`, keeps control for the whole run.
 
 ## Resolving model IDs
 
@@ -561,7 +561,7 @@ Bootstrap resolution uses the capability tree after `for_agent()` binding but be
 
 Model selection and resolution are eager hooks, so deferred capabilities do not contribute them, even after they are loaded. Run-spec capabilities are known during bootstrap and can supply the first model. A [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc], or another capability whose model is only introduced by `for_run()`, requires an existing bootstrap model because `for_run()` receives a full `RunContext`; it may replace that model starting with step one, but cannot bootstrap a model-less agent. If selecting a new model after loading a deferred capability would be useful for your application, please open an issue describing the desired step and continuation semantics.
 
-Dynamic selection is not currently supported by durable execution capabilities. Durable runs need model IDs registered before execution and must recreate the same selected model during replay or cross-run resumption. Pass an explicit registered model for durable execution. Resuming a suspended provider request in a separate ordinary run likewise requires an explicit model when the previous model came from a selector.
+Custom dynamic selection is not currently supported by durable execution capabilities. Durable runs need model IDs registered before execution and must recreate the same selected model during replay or cross-run resumption. Pass an explicit registered model for durable execution. Resuming a suspended provider request in a separate ordinary run likewise requires an explicit model when the previous model came from a custom selector. The built-in [`ModelFallback` output policy](model-fallback.md#output-validation-retries) supports recovery and suspended continuation using its configured candidates and static initial model.
 
 ## Configuration methods reference
 
@@ -903,7 +903,7 @@ Tool validation and execution hooks can raise [`ModelRetry`][pydantic_ai.excepti
 
 Like tool processing, [output](../output.md) processing has two phases: **validation** (parsing the model's raw output against the output schema) and **processing** (extracting the value and calling any [output function](../output.md#output-functions)). Each phase has its own hooks.
 
-All output hooks receive an `output_context` parameter with [`OutputContext`][pydantic_ai.capabilities.OutputContext] (mode, output type, schema info, and tool call details for [tool output](../output.md#tool-output)).
+Validation and processing hooks receive an `output_context` parameter with [`OutputContext`][pydantic_ai.capabilities.OutputContext] (mode, output type, schema info, and tool call details for [tool output](../output.md#tool-output)).
 
 **Validate hooks** fire only for structured output that requires parsing (prompted, native, tool, union output). They do not fire for plain text or image output. **Process hooks** fire for **all output types** including text, structured, and image output. For [tool output](../output.md#tool-output), only output hooks fire — tool hooks are skipped entirely.
 
@@ -926,6 +926,8 @@ All output hooks receive an `output_context` parameter with [`OutputContext`][py
 | [`on_output_process_error`][pydantic_ai.capabilities.AbstractCapability.on_output_process_error] | `(ctx, *, output_context, output: Any, error: Exception) -> Any` | Handle core processing errors (see [error hooks](#error-hooks)) |
 
 Output validate and process hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with a custom message — the same pattern used in [output functions](../output.md#output-functions) and [output validators](../output.md#output-validator-functions). See [Triggering retries with `ModelRetry`](../hooks.md#triggering-retries-with-modelretry) for the full pattern.
+
+[`on_output_retry`][pydantic_ai.capabilities.AbstractCapability.on_output_retry] is a separate notification when an output failure consumes an allowed retry: `(ctx, *, retry_context: OutputRetryContext) -> None`. It runs inside response processing, before the event stream closes and before the next step's model selection. [`OutputRetryContext`][pydantic_ai.capabilities.OutputRetryContext] carries the rejected response, actual retry metadata, and optional output-tool name/call ID. See [Output retries](../hooks.md#output-retries) for eligibility, ordering, and failure semantics.
 
 ### Tool preparation
 
