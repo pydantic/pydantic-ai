@@ -150,7 +150,7 @@ const lines = (text: string, sign: string) =>
     .map((line) => sign + line)
     .join('\n')
 
-/** The diffs an edit or write made, or tried to make, rebuilt from its arguments; live runs send the real ones. */
+/** The diffs an edit or write made, or tried to make, rebuilt from its arguments; live runs and reloaded edits send their own. */
 function argumentDiffs(item: Item, args: Args): Diff[] {
   if (item.diffs.length > 0) return item.diffs
   const path = str(args.path)

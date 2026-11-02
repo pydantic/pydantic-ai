@@ -4,6 +4,7 @@ Pure translation, with no server or plugin in it. Wire payloads are kw-only data
 `dump` with Pydantic; the browser's `web-ui/src/protocol.ts` mirrors these shapes.
 """
 
+import difflib
 import hashlib
 import json
 from collections.abc import Sequence
@@ -11,7 +12,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Literal
 
-from pydantic import JsonValue, TypeAdapter
+from pydantic import JsonValue, TypeAdapter, ValidationError
 from typing_extensions import TypeIs
 
 from pydantic_ai import (
@@ -38,7 +39,13 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserRequest
-from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
+from pydantic_ai_harness.filesystem import (
+    EditFileArgs,
+    FileChangeRequestEvent,
+    FileEditedEvent,
+    FileWrittenEvent,
+    ReplacementArgs,
+)
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent
 from pydantic_ai_harness.subagents import DelegationOutcome
 from pydantic_clai2.plugins import ForkEnd, ForkInfo, ForkStatus, PanelIcon, PluginOrigin, PluginStatus, QueuedInput
@@ -1023,6 +1030,27 @@ def tool_result_state(part: ToolReturnPart) -> ToolState:
     return 'error' if part.outcome == 'retried' else 'done'
 
 
+_EDIT_ARGS = TypeAdapter(EditFileArgs)
+
+
+def _edit_diffs(args: str) -> list[Diff]:
+    """The line diffs of an `edit_file` call's replacements, so a reloaded card counts what the live diff did."""
+    try:
+        edit = _EDIT_ARGS.validate_json(args)
+    except ValidationError:
+        return []
+    replacements = edit.get('replacements') or []
+    if (old := edit.get('old_text')) is not None and (new := edit.get('new_text')) is not None:
+        replacements = [ReplacementArgs(old_text=old, new_text=new)]
+    return [Diff(path=edit['path'], diff=_line_diff(r['old_text'], r['new_text'])) for r in replacements]
+
+
+def _line_diff(old: str, new: str) -> str:
+    """Every line of `old` and `new` as one unnumbered hunk: a saved edit does not say where in the file it was."""
+    a, b = old.removesuffix('\n').split('\n'), new.removesuffix('\n').split('\n')
+    return '\n'.join(list(difflib.unified_diff(a, b, lineterm='', n=max(len(a), len(b))))[3:])
+
+
 def image_id(image: BinaryContent) -> str:
     """An image's ID in the transcript: the SHA-256 of its bytes, so it stays the same after a reload."""
     return hashlib.sha256(image.data).hexdigest()
@@ -1117,6 +1145,8 @@ def history_items(messages: Sequence[ModelMessage], *, image_ids: ImageIds | Non
                 elif isinstance(part, ToolReturnPart) and (tool := tools.get(part.tool_call_id)):
                     tool.text = tool_result_text(part)
                     tool.state = tool_result_state(part)
+                    if tool.name == 'edit_file' and tool.state == 'done':
+                        tool.diffs = _edit_diffs(tool.args)
             continue
         for part in message.parts:
             if isinstance(part, TextPart) and part.content:
