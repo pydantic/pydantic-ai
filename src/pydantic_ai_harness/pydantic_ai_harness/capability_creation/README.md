@@ -59,7 +59,7 @@ string; set `guidance=''` to omit it entirely.
 ## Activation boundary
 
 Writing and validation happen in the current run; activation happens on the next run.
-pydantic-ai resolves the effective capability set once at the start of each run (the run's
+Pydantic AI resolves the effective capability set once at the start of each run (the run's
 `root_capability` is fixed; there is no setter), so an authored capability's tools and hooks only
 exist once the next run's toolset and capability chain are assembled.
 
