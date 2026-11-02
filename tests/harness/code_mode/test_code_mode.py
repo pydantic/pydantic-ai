@@ -164,6 +164,11 @@ def add(a: int, b: int) -> int:
     return a + b
 
 
+def make_big_string(n: int) -> str:
+    """Return a string of `n` letters."""
+    return 'x' * n
+
+
 def greet(name: str, greeting: str = 'Hello') -> str:
     """Greet someone."""
     return f'{greeting}, {name}!'
@@ -1086,6 +1091,64 @@ class TestCodeMode:
         assert 'memory limit exceeded' in message
         assert "add({'a': 1, 'b': 2}) returned 3" in message
         assert 'session was reset' not in message
+
+    async def test_worker_memory_kill_reports_reset_and_next_snippet_succeeds(self) -> None:
+        """A worker killed for its memory limit resets the session and reports the reset.
+
+        The kill fires when decoding a tool result over `max_memory` terminates the worker.
+        Skips on a pydantic-monty that survives that decode at the floor.
+        """
+        wrapper = CodeMode[object](resource_limits={'max_memory': 8 * 1024 * 1024}).get_wrapper_toolset(
+            _build_function_toolset(make_big_string)
+        )
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+
+        try:
+            await wrapper.call_tool(
+                'run_code',
+                {'code': 'big = make_big_string(n=20_000_000)'},
+                ctx,
+                tools['run_code'],
+            )
+        except ModelRetry as retry:
+            assert 'exceeded its memory limit' in retry.message
+            assert 'session was reset' in retry.message
+        else:
+            pytest.skip('this pydantic-monty does not kill the worker on a tool-result decode over max_memory')
+
+        result = await wrapper.call_tool('run_code', {'code': '1 + 1'}, ctx, tools['run_code'])
+        assert result.return_value == 2
+
+    async def test_worker_memory_kill_restart_sequence_recovers(self) -> None:
+        """After the reset the retry rebuilds state and the new session keeps working.
+
+        Skips like `test_worker_memory_kill_reports_reset_and_next_snippet_succeeds` when the
+        installed pydantic-monty survives the decode.
+        """
+        wrapper = CodeMode[object](resource_limits={'max_memory': 8 * 1024 * 1024}).get_wrapper_toolset(
+            _build_function_toolset(make_big_string)
+        )
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+
+        try:
+            await wrapper.call_tool(
+                'run_code',
+                {'code': 'big = make_big_string(n=20_000_000)'},
+                ctx,
+                tools['run_code'],
+            )
+        except ModelRetry as retry:
+            assert 'session was reset' in retry.message
+        else:
+            pytest.skip('this pydantic-monty does not kill the worker on a tool-result decode over max_memory')
+
+        await wrapper.call_tool('run_code', {'code': 'v = 40'}, ctx, tools['run_code'])
+        result = await wrapper.call_tool('run_code', {'code': 'v + 2'}, ctx, tools['run_code'])
+        assert result.return_value == 42
 
     async def test_every_resource_limit_reports_started_calls_when_exhausted(self) -> None:
         """Exhausting any option a caller can set still reports the calls that already ran.
