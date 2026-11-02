@@ -104,7 +104,7 @@ async def test_operations_are_traced(tmp_path: Path, include_content: bool) -> N
     assert workspace_spans(exporter, tmp_path) == expected[include_content]
     # Every operation names the workspace, with or without content.
     assert {
-        (span.attributes or {}).get('pydantic_ai.workspace.id')
+        str((span.attributes or {}).get('pydantic_ai.workspace.id'))
         for span in exporter.get_finished_spans()
         if span.name.startswith('workspace ')
     } == {str(tmp_path)}

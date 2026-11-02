@@ -511,12 +511,11 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
                     if ref is None:
                         # Creation finishes even if the caller is cancelled, so a billed machine is never left unrecorded.
                         ref = await run_to_completion(lambda: self._create(client))
-                    if not self._ready:
-                        machine_id = await self._wait_until_ready(client, ref.id)
-                        if machine_id != ref.id:
-                            # A ref may name the machine; names can be reused once it is deleted, ids cannot.
-                            self._ref = ref = WorkspaceRef(provider='boxd', id=machine_id)
-                        self._ready = True
+                    machine_id = await self._wait_until_ready(client, ref.id)
+                    if machine_id != ref.id:
+                        # A ref may name the machine; names can be reused once it is deleted, ids cannot.
+                        self._ref = ref = WorkspaceRef(provider='boxd', id=machine_id)
+                    self._ready = True
             if self._working_dir_pending:
                 # A caller cancelled during creation stops here; the next operation makes the directory.
                 await anyio.lowlevel.checkpoint_if_cancelled()
