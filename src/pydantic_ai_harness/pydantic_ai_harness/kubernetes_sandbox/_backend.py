@@ -154,7 +154,7 @@ async def _run_on_sandbox(
     from k8s_agent_sandbox.models import ProcessExitEvent
 
     commands = sandbox.commands
-    if commands is None:
+    if commands is None:  # pragma: no cover - the SDK clears it on close, and the backend detaches its handle first
         raise RuntimeError('The SDK has closed this sandbox handle')
     stdout = bytearray()
     stderr = bytearray()
