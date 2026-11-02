@@ -131,7 +131,7 @@ Summaries are now a `CompactionPart`; this only recognizes ones in histories sav
 
 # Anchored-incremental update instruction (opencode mechanism): the previous summary is fed
 # back as an anchor to update in place rather than a summary to re-summarize, which avoids
-# summary-of-summary decay.  Wording is minimal/neutral and flagged pending the eval-rig pass.
+# summary-of-summary decay.
 _INCREMENTAL_UPDATE_INSTRUCTION = (
     'An anchored summary from earlier compaction is provided below in <previous-summary>. '
     'Update it using the conversation above: preserve still-true details, remove stale '
@@ -147,7 +147,7 @@ _HARNESS_DATA_INSTRUCTION = (
 
 # Cross-model bridge prefix (Codex prior art): when the summarizer's model family differs from
 # the family that produced the history, prefix the summary with a neutral one-liner so the
-# resuming model treats it as a handoff from a different model.  Wording flagged pending eval-rig.
+# resuming model treats it as a handoff from a different model.
 _BRIDGE_PREFIX = 'This summary was produced by a different model than the one continuing the task.'
 
 _KEPT_USER_MESSAGE_METADATA = 'pydantic-ai-harness.compaction.kept-user-message.v1'
@@ -184,8 +184,7 @@ def _model_family(model: str | AbstractModel | None) -> str | None:
     """Reduce a model name to a coarse family token (e.g. `openai:gpt-4o` -> `gpt`).
 
     A neutral structural heuristic: drop any `provider:` prefix, then take the leading token
-    before the first `-` or `/`.  Good enough to tell `gpt` from `claude`; the exact
-    family taxonomy is left to the eval-rig pass.
+    before the first `-` or `/`.  Good enough to tell `gpt` from `claude`.
     """
     if isinstance(model, FallbackModel):
         return _model_family(model.models[0])

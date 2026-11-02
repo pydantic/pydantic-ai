@@ -43,7 +43,7 @@ definitions, every prior message), so only the messages added since are estimate
 those, and the fallback when no response carries usage yet, is a ~4-chars-per-token heuristic; pass
 a `tokenizer` callable (e.g. `tiktoken`) to sharpen it. The anchor corrects the heuristic's
 undercount on token-dense content: minified JSON or base64 tokenizes at ~1-2 chars per token, enough
-for a history to exceed the context window before any trigger fires. Instruction replacement and withdrawal records contribute their full rendered system text to token estimates. Superseded updates before a new instruction baseline are excluded. Newly revealed tool schemas that are pending in the request are conservatively
+that, without the anchor, a history could exceed the context window before any trigger fires. Instruction replacement and withdrawal records contribute their full rendered system text to token estimates. Superseded updates before a new instruction baseline are excluded. Newly revealed tool schemas that are pending in the request are conservatively
 estimated by the implementation. `DeduplicateFileReads` runs on every request when no trigger is set (it is
 cheap and near-lossless). `TieredCompaction` triggers and stops on a single `target_tokens` /
 `target_fraction` budget. `ClampOversizedMessages` triggers per *part* (`max_part_tokens` /

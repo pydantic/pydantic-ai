@@ -2,9 +2,9 @@
 
 The ranking and rendering core is ported from VStorm's `pydantic-deepagents`
 (`pydantic_deep/features/history_archive/toolset.py`), with BM25 parameters taken from
-the owning capability. The corpus comes from a `HistorySource` (one document per persisted message, across the runs selected
-by the configured scope); ranking is global within that scope, while context windows
-around a match stay within the match's run.
+the owning capability. The corpus comes from a `HistorySource` (one document per
+persisted message, across the runs selected by the configured scope); ranking is global
+within that scope, while context windows around a match stay within the match's run.
 """
 
 from __future__ import annotations
