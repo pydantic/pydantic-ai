@@ -34,8 +34,9 @@ def test_nvidia_provider(env: TestEnv):
 
 
 def test_nvidia_provider_need_api_key(env: TestEnv) -> None:
-    """Test that NVIDIA provider requires an API key."""
+    """Test that the hosted NVIDIA API requires an API key."""
     env.remove('NVIDIA_API_KEY')
+    env.remove('NVIDIA_BASE_URL')
     with pytest.raises(
         UserError,
         match=re.escape(
@@ -44,6 +45,20 @@ def test_nvidia_provider_need_api_key(env: TestEnv) -> None:
         ),
     ):
         NvidiaProvider()
+
+
+@pytest.mark.parametrize('base_url_source', ['argument', 'env'])
+def test_nvidia_provider_self_hosted_without_api_key(base_url_source: str, env: TestEnv) -> None:
+    """A self-hosted NIM deployment can accept anonymous requests, so a custom base URL needs no key."""
+    env.remove('NVIDIA_API_KEY')
+    if base_url_source == 'env':
+        env.set('NVIDIA_BASE_URL', 'http://localhost:8000/v1')
+        provider = NvidiaProvider()
+    else:
+        env.remove('NVIDIA_BASE_URL')
+        provider = NvidiaProvider(base_url='http://localhost:8000/v1')
+    assert provider.base_url == 'http://localhost:8000/v1'
+    assert provider.client.api_key == 'api-key-not-set'
 
 
 def test_nvidia_pass_openai_client(env: TestEnv) -> None:

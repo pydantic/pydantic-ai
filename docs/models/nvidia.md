@@ -54,7 +54,6 @@ Other models you can use include `nvidia/nemotron-3.5-lightning-30b-a3b` and the
 deployment, set `NVIDIA_BASE_URL` to its OpenAI-compatible endpoint:
 
 ```bash
-export NVIDIA_API_KEY="your-nvidia-api-key"
 export NVIDIA_BASE_URL="http://localhost:8000/v1"
 ```
 
@@ -63,3 +62,6 @@ You can then use the model-string configuration shown above.
 Alternatively, pass `base_url='http://localhost:8000/v1'` to
 [`NvidiaProvider`][pydantic_ai.providers.nvidia.NvidiaProvider].
 An explicit `base_url` overrides `NVIDIA_BASE_URL`.
+
+An API key is only required for the hosted API. If your deployment requires bearer auth, also set
+`NVIDIA_API_KEY` or pass `api_key`.

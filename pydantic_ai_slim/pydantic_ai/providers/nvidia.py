@@ -16,6 +16,7 @@ from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.zai import zai_model_profile
+from pydantic_ai.providers import missing_api_key_error
 
 try:
     from openai import AsyncOpenAI
@@ -93,7 +94,8 @@ class NvidiaProvider(_OpenAISDKProvider):
 
         Args:
             api_key: The API key for authentication. Defaults to the `NVIDIA_API_KEY`
-                environment variable.
+                environment variable. Required for the hosted API; a self-hosted NIM deployment
+                that accepts anonymous requests needs none.
             base_url: The base URL for requests. Defaults to the `NVIDIA_BASE_URL`
                 environment variable, then `https://integrate.api.nvidia.com/v1`.
                 Use the URL of your own NIM deployment for self-hosted models.
@@ -101,13 +103,6 @@ class NvidiaProvider(_OpenAISDKProvider):
                 instead of `NVIDIA_BASE_URL`. Cannot be combined with `base_url`.
             http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
         """
-        api_key = api_key or os.getenv('NVIDIA_API_KEY')
-        if not api_key and openai_client is None:
-            raise UserError(
-                'Set the `NVIDIA_API_KEY` environment variable or pass it via '
-                '`NvidiaProvider(api_key=...)` to use the NVIDIA provider.'
-            )
-
         if openai_client is not None and base_url is not None:
             raise UserError('Cannot provide both `openai_client` and `base_url`')
 
@@ -115,5 +110,15 @@ class NvidiaProvider(_OpenAISDKProvider):
             self._client = openai_client
             self._base_url = str(openai_client.base_url)
         else:
-            self._base_url = base_url or os.getenv('NVIDIA_BASE_URL') or 'https://integrate.api.nvidia.com/v1'
+            custom_base_url = base_url or os.getenv('NVIDIA_BASE_URL')
+            api_key = api_key or os.getenv('NVIDIA_API_KEY')
+            if not api_key:
+                if not custom_base_url:
+                    raise missing_api_key_error(
+                        'Set the `NVIDIA_API_KEY` environment variable or pass it via '
+                        '`NvidiaProvider(api_key=...)` to use the NVIDIA provider.'
+                    )
+                # Self-hosted NIM may accept anonymous requests, but the OpenAI client requires a non-empty key.
+                api_key = 'api-key-not-set'
+            self._base_url = custom_base_url or 'https://integrate.api.nvidia.com/v1'
             self._client = self._create_openai_client(base_url=self.base_url, api_key=api_key, http_client=http_client)
