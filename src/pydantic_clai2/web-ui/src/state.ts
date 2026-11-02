@@ -54,6 +54,8 @@ export interface Chat {
   questions: Questions[]
   /** When the running turn started, by this page's clock. */
   turnStartedAt: number | null
+  /** Where the running turn's entries start; from a snapshot, which may come during a turn, the first. */
+  turnFrom: number
   /** The conversation's delegated tasks, each parent before its children. */
   tasks: TaskEntry[]
   /** What each running task has done so far, by task ID; a finished task's saved history is fetched instead. */
@@ -69,6 +71,7 @@ export const initialChat: Chat = {
   status: null,
   questions: [],
   turnStartedAt: null,
+  turnFrom: 0,
   tasks: [],
   taskItems: {},
   queue: [],
@@ -220,13 +223,10 @@ export function applyItem(entries: Entry[], message: ItemMessage): Entry[] {
   }
 }
 
-/** How many tool calls of the latest turn in `entries` have finished, a `run_code` cell's own too: each may have
- * changed files. */
+/** How many tool calls in `entries` have finished, a `run_code` cell's own calls too: each may have changed files. */
 export function finishedCalls(entries: Entry[]): number {
   let finished = 0
-  for (let index = entries.length - 1; index >= 0; index--) {
-    const entry = entries[index]
-    if (!entry || entry.kind === 'turn') break
+  for (const entry of entries) {
     if (entry.kind !== 'tool') continue
     if (entry.state !== 'running') finished++
     for (const call of entry.calls) if (call.state !== 'running') finished++
@@ -274,6 +274,7 @@ export function reduceChat(chat: Chat, message: SessionMessage): Chat {
         ...chat,
         running: true,
         turnStartedAt: Date.now(),
+        turnFrom: chat.entries.length,
         entries: message.item ? [...chat.entries, message.item] : chat.entries,
       }
     case 'turn_ended': {
@@ -331,6 +332,7 @@ function snapshotChat(message: Snapshot, previous: Chat | undefined, notice: Not
     status: message.status,
     questions: message.questions,
     turnStartedAt: message.running ? (previous?.turnStartedAt ?? null) : null,
+    turnFrom: 0,
     tasks: message.tasks,
     taskItems: message.task_items,
     queue: message.queue,

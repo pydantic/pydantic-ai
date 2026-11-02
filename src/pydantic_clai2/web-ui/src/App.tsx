@@ -71,18 +71,19 @@ const SessionTranscript = memo(function SessionTranscript({
   )
 })
 
-/** `value`, followed at most once per `ms`: a change waits for the timer the first one started, not a fresh one. */
-function useThrottled<T>(value: T, ms: number): T {
-  const [shown, setShown] = useState(value)
-  const latest = useRef(value)
-  latest.current = value
-  const behind = value !== shown
+/** `count` as it rises, at most once per `ms`, the latest each time; a drop, as when a turn ends, shows at once. */
+function useRising(count: number, ms: number): number {
+  const [shown, setShown] = useState(count)
+  const latest = useRef(count)
+  latest.current = count
+  if (count < shown) setShown(count)
+  const behind = count > shown
   useEffect(() => {
     if (!behind) return
     const timer = window.setTimeout(() => setShown(latest.current), ms)
     return () => window.clearTimeout(timer)
   }, [behind, ms])
-  return shown
+  return Math.min(count, shown)
 }
 
 function initialTheme(): Theme {
@@ -321,8 +322,11 @@ export function App() {
   // The files may have changed when a turn ends, so the count, the panel, and the git chip ask again then. While one
   // runs, each asks again as its tool calls finish, at most once a second.
   const changesActive = connection === 'open' && !chat.running
-  const finished = useMemo(() => (chat.running ? finishedCalls(chat.entries) : 0), [chat.running, chat.entries])
-  const edits = useThrottled(finished, 1000)
+  const finished = useMemo(
+    () => (chat.running ? finishedCalls(chat.entries.slice(chat.turnFrom)) : 0),
+    [chat.running, chat.entries, chat.turnFrom],
+  )
+  const edits = useRising(finished, 1000)
   // The page hears a turn end before the session keeps its messages, so the count asks again once it saves them.
   const sessionChanges = useChanges(
     session,
