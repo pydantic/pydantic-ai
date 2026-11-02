@@ -261,7 +261,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
     async def _jobs_base(self, ctx: RunContext[AgentDepsT]) -> str:
         """The workspace directory holding job and capture files, looked up once per workspace."""
         if (jobs_dir := self._jobs_dirs.get(ctx.workspace)) is None:
-            jobs_dir = self._jobs_dirs[ctx.workspace] = await metadata_dir(ctx.workspace, 'shell')
+            jobs_dir = self._jobs_dirs[ctx.workspace] = await metadata_dir(ctx.workspace, 'shell', temp_fallback=True)
         return jobs_dir
 
     async def _job(self, ctx: RunContext[AgentDepsT], command_id: str) -> Job | None:
@@ -423,15 +423,19 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         mode: CommandMode = 'foreground',
         timeout: float | None = None,
     ) -> str:
-        """Run a command that keeps running after this call and after the agent run.
+        """Run a shell command and return its output.
 
-        Foreground waits up to `timeout` seconds (at most 270) for the command to
-        exit, then returns handles to the same still-running process. Background
-        returns the handles immediately. Both return the PID, the path of the
-        combined stdout/stderr log, and the path of a JSON status file whose
-        `exit_code` is null until the command exits. Read those files with your
-        other tools and stop the process with `kill` and the returned PID; no
-        notification arrives when it finishes.
+        Foreground (the default) waits up to `timeout` seconds (at most 270) and
+        returns the command's combined stdout/stderr inline (the last ~16 KB; any
+        earlier output is marked as truncated), then the PID, log path, status file
+        and exit status. A command that finished in the foreground needs no further
+        reads: do not open its log or status file. Chain related commands in one
+        call (e.g. `cmd1; cmd2`); read files with `read_file`, not `cat`, since long
+        output is truncated. Background mode returns the handles
+        immediately; only for background jobs, a foreground command still running
+        at its timeout, or truncated long output, read the log or status file (e.g.
+        `tail` in a later shell call) and stop the process with `kill` and the
+        returned PID. No notification arrives when a background job finishes.
 
         Args:
             ctx: The current agent run context.

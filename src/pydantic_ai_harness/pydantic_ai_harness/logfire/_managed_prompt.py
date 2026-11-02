@@ -154,6 +154,40 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
     )
     """Per-run resolution, isolated across concurrent runs via the context variable."""
 
+    @classmethod
+    def from_spec(
+        cls,
+        name: str,
+        default: str | None = None,
+        label: str | None = None,
+        targeting_key: str | None = None,
+        attributes: Mapping[str, Any] | None = None,
+        render_template: bool = False,
+        *,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
+        **kwargs: Any,
+    ) -> ManagedPrompt[Any]:
+        """Build from an agent spec, covering the fields a spec can express.
+
+        Every JSON-expressible parameter is named because that signature is what core reads to
+        generate the spec's JSON schema. `logfire_instance` has no JSON form, so it is passed
+        through `**kwargs`, which the schema omits.
+        """
+        return cls(
+            name,
+            default,
+            label,
+            targeting_key,
+            attributes,
+            render_template,
+            id=id,
+            description=description,
+            defer_loading=defer_loading,
+            **kwargs,
+        )
+
     def __post_init__(self) -> None:
         self._variable = self._build_variable()
         if self.id is None:

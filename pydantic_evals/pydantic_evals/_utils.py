@@ -82,6 +82,23 @@ def get_unwrapped_function_name(func: Callable[..., Any]) -> str:
             raise e
 
 
+def get_function_serialization_name(func: Callable[..., Any]) -> str | None:
+    """Get the name that identifies a function in serialized data, like a dataset file.
+
+    Returns:
+        The function's `__name__`, or `None` if it doesn't have one that identifies it: a lambda has the name
+        `<lambda>` and a `functools.partial` or other callable object has no name, while a bound method's name
+        doesn't identify the instance it's bound to, just like the name of the function a partial wraps doesn't
+        capture its bound arguments.
+    """
+    # Python and built-in bound methods both have a `__self__`, while built-in functions are bound to their module.
+    bound_to = getattr(func, '__self__', None)
+    if bound_to is not None and not inspect.ismodule(bound_to):
+        return None
+    name = getattr(func, '__name__', None)
+    return name if isinstance(name, str) and name.isidentifier() else None
+
+
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
 

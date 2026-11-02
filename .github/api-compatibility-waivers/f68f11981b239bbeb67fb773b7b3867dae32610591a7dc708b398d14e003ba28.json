@@ -1,0 +1,5 @@
+{
+  "against": "v2.62.0",
+  "reason": "clai2 0.x: intentional default change enabling the guarded `herdr` integration. Saved disabled declarations are preserved; `/plugins disable herdr` opts out. Also retains the `hooks` declaration approved in #11423; every other declaration is unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11661"
+}

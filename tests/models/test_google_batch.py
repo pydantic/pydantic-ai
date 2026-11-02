@@ -107,7 +107,6 @@ async def test_gemini_batch_request_is_the_generate_content_request_without_secr
     'settings, setting',
     [
         ({'timeout': 10}, 'timeout'),
-        ({'max_retries': 0}, 'max_retries'),
         ({'extra_headers': {'x-custom': '1'}}, 'extra_headers'),
     ],
 )
@@ -115,6 +114,13 @@ async def test_gemini_batch_rejects_per_request_http_options(settings: ModelSett
     model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key'))
     with pytest.raises(UserError, match=f'do not support per-request `{setting}`'):
         await model.batch_encode(_request(settings=settings))
+
+
+async def test_gemini_batch_ignores_max_retries() -> None:
+    """Google runs a batched request itself, so an SDK retry count is ignored rather than rejected."""
+    model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key'))
+    encoded = await model.batch_encode(_request(settings={'max_retries': 0}))
+    assert encoded == await model.batch_encode(_request())
 
 
 async def test_gemini_batch_is_not_on_google_cloud() -> None:

@@ -153,8 +153,11 @@ class AzureProvider(_OpenAISDKProvider):
             # https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/prompt-caching
             base = openai_model_profile(model_name)
 
-        # Azure Chat Completions API doesn't support document input.
-        base = merge_profile(base, OpenAIModelProfile(openai_chat_supports_document_input=False))
+        # Azure Chat Completions API doesn't support document input, and Responses WebSockets aren't verified on Azure.
+        base = merge_profile(
+            base,
+            OpenAIModelProfile(openai_chat_supports_document_input=False, openai_responses_supports_websocket=False),
+        )
 
         # Reported in #6593 (not verified against the live API here): Azure AI Foundry's
         # Mistral gateway rejects `max_completion_tokens` with a 422 and accepts the legacy
@@ -169,6 +172,23 @@ class AzureProvider(_OpenAISDKProvider):
             base = merge_profile(base, OpenAIModelProfile(json_schema_transformer=_AzureGrokJsonSchemaTransformer))
 
         return base
+
+    def _configured_model_profile(self, model_name: str) -> ModelProfile | None:
+        """The model profile, with the unified `cache` setting turned on where this provider's API takes it.
+
+        The [Azure OpenAI v1 API](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/api-version-lifecycle)
+        honors the `prompt_cache_options` (whose only TTL is `'30m'`) and explicit breakpoints of GPT-5.6 and later,
+        which the unified `cache` setting maps onto, as on `OpenAIProvider`. Dated `api-version` deployments and
+        Azure AI Foundry serverless endpoints aren't verified to accept them, so `cache` stays off there.
+        """
+        profile = self.model_profile(model_name)
+        if (
+            profile is None
+            or not profile.get('openai_supports_prompt_cache_breakpoints')
+            or not _is_azure_openai_v1_api(self.base_url)
+        ):
+            return profile
+        return merge_profile(profile, OpenAIModelProfile(supports_cache=True, supported_cache_retentions=('30m',)))
 
     @staticmethod
     def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
@@ -421,6 +441,14 @@ class _AzureGrokJsonSchemaTransformer(
             result = transformer.walk()
             self.is_strict_compatible = transformer.is_strict_compatible
         return result
+
+
+def _is_azure_openai_v1_api(base_url: str) -> bool:
+    """Whether a client's base URL targets the Azure OpenAI v1 API (`/openai/v1/`), whatever its client class.
+
+    An `AsyncAzureOpenAI` client can reach it too, with `base_url` set and `api_version='preview'` or `'latest'`.
+    """
+    return urlparse(base_url).path.rstrip('/').endswith('/openai/v1')
 
 
 def _openai_compatible_v1_base_url(endpoint: str) -> str | None:

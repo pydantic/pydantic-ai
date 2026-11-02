@@ -8,6 +8,8 @@ Let an agent query Logfire telemetry and manage Logfire projects. `LogfireMCP` g
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![Inside your agent, the LogfireMCP capability connects to Logfire's hosted MCP server, US region by default or EU with LOGFIRE_EU_MCP_URL, sending the API key as a bearer token. The model sees the server's tools under the logfire_ prefix, such as logfire_query_run. The capability also adds guidance to the agent's instructions: the current UTC hour, that queries cover a short time window, that links are made only when asked, and the logfire_ prefix.](../img/harness/logfire-mcp.svg)
+
 ## Install and connect
 
 ```bash
