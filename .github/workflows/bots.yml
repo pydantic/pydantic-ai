@@ -250,7 +250,8 @@ jobs:
     outputs:
       review_url: ${{ steps.find.outputs.review_url }}
     steps:
-      - id: find
+      - name: Find a douwebot review with findings on this head
+        id: find
         # Mirrors `douwebot_approval`: an inline comment on a marked review, or
         # body text beyond the verdict line, is a finding.
         run: |
@@ -567,7 +568,7 @@ jobs:
             A Python hunk covers its enclosing function or method, not the whole class.
             When a hunk changes a method of a class in a sibling family, read the full class from `pr-head/` to see its sibling methods.
             The sibling families are `models/`, `providers/`, `profiles/`, `toolsets/`, `native_tools/`, `capabilities/`, `embeddings/`, `images/`, `realtime/`, `ui/` and `durable_exec/` under `pydantic_ai_slim/pydantic_ai/`;
-            the `*_sandbox/`, `ssh_workspace/`, `absurd/`, `aws_lambda/`, `pgtask/` and `render/` backends under `src/pydantic_ai_harness/pydantic_ai_harness/`; and `src/pydantic_clai2/pydantic_clai2/builtin_plugins/`.
+            under `src/pydantic_ai_harness/pydantic_ai_harness/`, the `*_sandbox/` and `ssh_workspace/` backends and every directory with an `_operation_backend.py`; and `src/pydantic_clai2/pydantic_clai2/builtin_plugins/`.
             Each commentable line in the diff is prefixed with its source line number: `NL:<number>` for new or context lines, `OL:<number>` for deleted lines.
             For newly added files, the diff contains the complete file contents — do not re-read these from disk.
             The diff file paths are listed in the third column of `changed-files.txt`.

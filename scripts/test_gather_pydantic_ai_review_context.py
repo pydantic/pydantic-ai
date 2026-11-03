@@ -159,8 +159,11 @@ def _git(repo: Path, env: dict[str, str], *args: str) -> None:
     subprocess.run(['git', *args], cwd=repo, env=env, check=True, capture_output=True)
 
 
-def _douwebot_python_diff(tmp_path: Path, *, gitattributes: str, in_ci: bool) -> tuple[Path, str]:
-    """Gather douwebot's context for a PR that changes one of two methods; return the head and its diff."""
+def _douwebot_diffs(tmp_path: Path, *, gitattributes: str, in_ci: bool) -> tuple[Path, Path]:
+    """Gather douwebot's context for a PR that changes a method, a Markdown file and a binary.
+
+    Returns the head repository and the per-file diff directory.
+    """
     head = tmp_path / 'head'
     head.mkdir()
     bin_dir = tmp_path / 'bin'
@@ -194,11 +197,17 @@ def _douwebot_python_diff(tmp_path: Path, *, gitattributes: str, in_ci: bool) ->
         '        return 2\n',
         encoding='utf-8',
     )
+    notes = head / 'NOTES.md'
+    notes.write_text('first line\n', encoding='utf-8')
+    logo = head / 'logo.png'
+    logo.write_bytes(b'\x89PNG\x00\x01')
     _git(head, env, 'init', '-q', '-b', 'main')
     _git(head, env, 'add', '.')
     _git(head, env, 'commit', '-qm', 'base')
     _git(head, env, 'checkout', '-qb', 'pr')
     module.write_text(module.read_text(encoding='utf-8').replace('return 2', 'return 3'), encoding='utf-8')
+    notes.write_text('first line\nsecond line\n', encoding='utf-8')
+    logo.write_bytes(b'\x89PNG\x00\x02')
     (head / '.gitattributes').write_text(gitattributes, encoding='utf-8')
     _git(head, env, 'add', '.')
     _git(head, env, 'commit', '-qm', 'pr')
@@ -213,21 +222,33 @@ def _douwebot_python_diff(tmp_path: Path, *, gitattributes: str, in_ci: bool) ->
         text=True,
     )
     assert result.returncode == 0, result.stderr
-    return head, (work / '.github/.review-context/diff/family.py.diff').read_text(encoding='utf-8')
+    return head, work / '.github/.review-context/diff'
 
 
 def test_douwebot_diff_in_ci_ignores_a_pr_marking_python_as_binary(tmp_path: Path):
     """In CI, a PR's `*.py -diff` cannot hide its Python changes, and the hunk stops at the changed method."""
-    _, diff = _douwebot_python_diff(tmp_path, gitattributes='*.py -diff\n', in_ci=True)
+    _, diffs = _douwebot_diffs(tmp_path, gitattributes='*.py -diff\n', in_ci=True)
+    diff = (diffs / 'family.py.diff').read_text(encoding='utf-8')
 
     assert 'Binary files' not in diff
     assert 'return 3' in diff
     assert "marker = 'first'" not in diff
 
 
+def test_douwebot_diff_in_ci_ignores_a_pr_marking_markdown_as_binary(tmp_path: Path):
+    """In CI, a PR's `*.md -diff` cannot hide its Markdown changes, while a real binary stays binary."""
+    _, diffs = _douwebot_diffs(tmp_path, gitattributes='*.md -diff\n', in_ci=True)
+    notes = (diffs / 'NOTES.md.diff').read_text(encoding='utf-8')
+
+    assert 'Binary files' not in notes
+    assert 'second line' in notes
+    assert 'Binary files' in (diffs / 'logo.png.diff').read_text(encoding='utf-8')
+
+
 def test_douwebot_diff_outside_ci_leaves_repository_attributes_untouched(tmp_path: Path):
     """A local run gets the same Python hunks without writing the repository's `info/attributes`."""
-    head, diff = _douwebot_python_diff(tmp_path, gitattributes='', in_ci=False)
+    head, diffs = _douwebot_diffs(tmp_path, gitattributes='', in_ci=False)
+    diff = (diffs / 'family.py.diff').read_text(encoding='utf-8')
 
     assert 'return 3' in diff
     assert "marker = 'first'" not in diff

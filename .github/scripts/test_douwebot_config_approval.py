@@ -30,7 +30,7 @@ args = sys.argv[1:]
 if args[:1] != ['api']:
     sys.exit('stub gh: unhandled command ' + repr(args))
 
-endpoint = args[1]
+endpoint = next(arg for arg in args[1:] if not arg.startswith('-'))
 with open(os.environ['FAKE_CALLS_OUT'], 'a') as handle:
     handle.write(endpoint + '\\n')
 
@@ -38,6 +38,10 @@ if '/collaborators/' in endpoint:
     if os.environ.get('FAKE_PERMISSION_ERROR') == '1':
         sys.exit('stub gh: permission API error')
     payload = json.dumps({'permission': os.environ['FAKE_PERMISSION']})
+elif '/reviews' in endpoint:
+    payload = os.environ['FAKE_REVIEWS']
+elif '/comments' in endpoint:
+    payload = os.environ['FAKE_COMMENTS']
 elif '/pulls/' in endpoint:
     if os.environ.get('FAKE_PULL_ERROR') == '1':
         sys.exit('stub gh: pull request API error')
@@ -196,10 +200,13 @@ def test_workflow_routes_events_and_cancellation_without_relying_on_label_presen
 
     jobs = workflow['jobs']
     review = jobs['review']
-    assert review['if'] == (
+    review_requested = (
         "github.event.action == 'labeled' && (github.event.label.name == 'douwebot' "
         "|| github.event.label.name == 'douwebot:review-agent-config')"
     )
+    assert jobs['prior-findings']['if'] == review_requested
+    assert review['needs'] == 'prior-findings'
+    assert review['if'] == f"!cancelled() && needs.prior-findings.outputs.review_url == '' && {review_requested}"
     assert jobs['size-label']['if'] == (
         "github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'edited'"
     )
@@ -217,8 +224,12 @@ def test_workflow_routes_events_and_cancellation_without_relying_on_label_presen
     steps = review['steps']
     publish_review = jobs['publish-review']
     assert review['permissions']['pull-requests'] == 'read'
-    assert publish_review['needs'] == 'review'
-    assert publish_review['if'] == "always() && needs.review.result != 'skipped'"
+    assert publish_review['needs'] == ['prior-findings', 'review']
+    assert publish_review['if'] == (
+        "always() && (needs.review.result != 'skipped' || needs.prior-findings.outputs.review_url != '')"
+    )
+    skipped = next(step for step in publish_review['steps'] if step.get('name') == 'Report skipped review')
+    assert skipped['if'] == "needs.prior-findings.outputs.review_url != ''"
     assert publish_review['permissions']['pull-requests'] == 'write'
     cleanup = next(step for step in publish_review['steps'] if step.get('name') == 'Remove douwebot label')
     assert cleanup['if'] == "always() && github.event.action == 'labeled' && github.event.label.name == 'douwebot'"
@@ -248,3 +259,85 @@ def test_reapplication_is_a_new_first_attempt_request(tmp_path: Path):
     assert first.returncode == 0
     assert reapplied.returncode == 0
     assert replayed.returncode == 1
+
+
+REVIEWED_HEAD = 'a' * 40
+
+
+def _douwebot_review(
+    review_id: int, state: str, verdict: str, *, head: str = REVIEWED_HEAD, login: str = 'github-actions[bot]'
+) -> dict[str, Any]:
+    return {
+        'id': review_id,
+        'user': {'login': login, 'type': 'Bot' if login.endswith('[bot]') else 'User'},
+        'commit_id': REVIEWED_HEAD,
+        'state': state,
+        'html_url': f'review-{review_id}',
+        'body': f'{verdict}\n\n<!-- douwebot:review run=7 head={head} -->',
+    }
+
+
+@pytest.mark.skipif(shutil.which('jq') is None, reason='the prior-findings step filters reviews with jq')
+@pytest.mark.parametrize(
+    ('review', 'commented', 'expected'),
+    [
+        pytest.param(_douwebot_review(1, 'APPROVED', 'No blocking findings.'), False, '', id='clean-approval'),
+        pytest.param(_douwebot_review(2, 'APPROVED', 'No blocking findings.'), True, 'review-2', id='optional-inline'),
+        pytest.param(
+            _douwebot_review(3, 'APPROVED', 'No blocking findings.\n\nConsider X.'), False, 'review-3', id='discussion'
+        ),
+        pytest.param(
+            _douwebot_review(4, 'CHANGES_REQUESTED', 'Blocking findings are recorded inline.'),
+            False,
+            '',
+            id='earlier-head-findings-only',
+        ),
+        pytest.param(
+            _douwebot_review(5, 'COMMENTED', 'Review incomplete.\n\nCould not read X.'), True, '', id='incomplete'
+        ),
+        pytest.param(
+            _douwebot_review(6, 'DISMISSED', 'Blocking findings are recorded inline.'), True, 'review-6', id='dismissed'
+        ),
+        pytest.param(
+            _douwebot_review(7, 'CHANGES_REQUESTED', 'Blocking findings are recorded below.\n\n### `a.py:1`'),
+            False,
+            'review-7',
+            id='body-findings-after-422',
+        ),
+        pytest.param(
+            _douwebot_review(8, 'CHANGES_REQUESTED', 'Blocking findings are recorded inline.', head='b' * 40),
+            True,
+            '',
+            id='another-head',
+        ),
+        pytest.param(
+            _douwebot_review(9, 'CHANGES_REQUESTED', 'Please rename this.', login='maintainer'),
+            True,
+            '',
+            id='human-review',
+        ),
+    ],
+)
+def test_prior_findings_skip_only_heads_that_already_have_douwebot_findings(
+    tmp_path: Path, review: dict[str, Any], commented: bool, expected: str
+):
+    """A head with douwebot findings cannot pass the gate, so only those heads skip a re-review."""
+    step = _workflow()['jobs']['prior-findings']['steps'][0]
+    comments = [{'pull_request_review_id': review['id']}] if commented else []
+    output = tmp_path / 'github-output'
+
+    result, _ = _run_step(
+        step,
+        tmp_path,
+        {
+            'FAKE_REVIEWS': json.dumps([[review]]),
+            'FAKE_COMMENTS': json.dumps([comments]),
+            'HEAD_SHA': REVIEWED_HEAD,
+            'REPO': REPOSITORY,
+            'RUNNER_TEMP': str(tmp_path),
+            'GITHUB_OUTPUT': str(output),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert output.read_text(encoding='utf-8') == f'review_url={expected}\n'
