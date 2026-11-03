@@ -6,6 +6,7 @@ variable instead. Outside an instrumented run there is none, and nothing is trac
 
 from __future__ import annotations as _annotations
 
+import shlex
 from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -104,12 +105,22 @@ def set_command(span: Span, command: WorkspaceCommand) -> None:
 
 
 @contextmanager
-def operation_span(operation: Operation, workspace: WorkspaceBackend) -> Generator[Span]:
-    """Open a `workspace {operation}` span, unless tracing is off or an operation's span is already open."""
+def operation_span(
+    operation: Operation, workspace: WorkspaceBackend, subject: WorkspaceCommand | None = None
+) -> Generator[Span]:
+    """Open a `workspace {operation}` span, unless tracing is off or an operation's span is already open.
+
+    `subject`, the path or command, is shown in the span's message only when the run captures content.
+    """
     if _in_operation.get():
         yield INVALID_SPAN
         return
+    unattached = workspace.ref is None
     with _span(operation) as span:
+        message = f'workspace {operation}'
+        if subject is not None and (telemetry := _telemetry.get()) is not None and telemetry.include_content:
+            message += f': {_one_line(subject)}'
+        span.set_attribute('logfire.msg', message)
         try:
             yield span
         finally:
@@ -117,6 +128,9 @@ def operation_span(operation: Operation, workspace: WorkspaceBackend) -> Generat
             if span.is_recording() and (ref := workspace.ref) is not None:
                 span.set_attribute('pydantic_ai.workspace.provider', ref.provider)
                 span.set_attribute('pydantic_ai.workspace.id', ref.id)
+                if unattached:
+                    span.set_attribute('pydantic_ai.workspace.created', True)
+                    span.set_attribute('logfire.msg', f'{message} (sandbox created)')
 
 
 @contextmanager
@@ -124,7 +138,14 @@ def command_span(step: Step) -> Generator[Span]:
     """Open a `workspace run` span for a shell-filesystem command, recording its `step` but never its text, which can carry file contents."""
     with _span('run') as span:
         span.set_attribute('pydantic_ai.workspace.command.step', step)
+        span.set_attribute('logfire.msg', f'workspace run ({step})')
         yield span
+
+
+def _one_line(subject: WorkspaceCommand) -> str:
+    text = subject if isinstance(subject, str) else shlex.join(subject)
+    first, newline, _ = text.strip().partition('\n')
+    return f'{first} …' if newline else first
 
 
 @contextmanager

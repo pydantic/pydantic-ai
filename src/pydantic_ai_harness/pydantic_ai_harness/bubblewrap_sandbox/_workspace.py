@@ -307,7 +307,7 @@ class BubblewrapWorkspace(WrapperWorkspace):
         timeout: float | None = None,
     ) -> CommandResult:
         # Traced here: the wrapped workspace sees only the `bwrap` launcher, whose arguments carry `env`.
-        with self._operation('run') as span:
+        with self._operation('run', command) as span:
             set_command(span, command)
             result = await self._run_sandboxed(command, shell=shell, env=env, timeout=timeout)
             span.set_attribute('process.exit.code', result.exit_code)
