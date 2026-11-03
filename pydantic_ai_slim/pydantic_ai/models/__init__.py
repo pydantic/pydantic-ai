@@ -57,7 +57,6 @@ from .. import _utils
 from .._canonical_system import accepts_stateless_artifact
 from .._capability_parts import (
     LookalikeNaming,
-    RenderedCapabilityPart,
     render_capability_part,
     render_capability_parts,
 )
@@ -2069,15 +2068,13 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         # With a system role, a tool's note goes right after the tool results even where the API takes it ahead of
         # them: there GPT-6 Luna followed a genuine change in the same turn 44/72 times, after them 40/40.
         precede_tool_results = self._lookalike_notes_precede_tool_results and not inline_system
-        expanded, capability_bodies = _with_capability_parts_rendered(authored, request)
+        expanded = _with_capability_parts_rendered(authored, request)
         # A tool or file note names the application's own mid-conversation system message in the same request, unless
         # the user's text there has a lookalike too, which "the other <system> block" would no longer pick out.
         # A capability part is never among the standing prompt the first request opens with, so neither is what it
         # renders as.
         leading = _leading_system_prompt_count(request) if first_request else 0
-        # A capability part's note about its framed content is the application's, but changes no instruction.
-        capability_notes = {id(rendering.note) for rendering in capability_bodies.values()}
-        has_genuine = any(_is_genuine_system_prompt(part, capability_notes) for _, _, part in expanded[leading:])
+        has_genuine = any(_is_genuine_system_prompt(part) for _, _, part in expanded[leading:])
         genuine_change = has_genuine and not _has_user_lookalike([sources for _, sources, _ in expanded])
         parts: list[ModelRequestPart] = []
         framed: list[ModelRequestPart] = []
@@ -2093,8 +2090,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                     framed.append(part)
                 parts.append(part)
                 continue
-            capability = capability_bodies.get(id(part))
-            if _is_user_channel_frame(original, part, capability):
+            if _is_user_channel_frame(original, part):
                 framed.append(part)
             after = self._lookalike_notes_follow_item(parts, first_request=first_request)
             notes = self._item_lookalike_notes(
@@ -2103,13 +2099,13 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 preceding=after,
                 has_genuine=has_genuine,
                 genuine_change=genuine_change,
-                naming=capability.naming if capability is not None else LookalikeNaming(),
+                naming=part.naming if isinstance(part, _RenderedCapabilityBody) else LookalikeNaming(),
             )
             framed.extend(notes)
             parts.extend([part, *notes] if after else [*notes, part])
         framed.extend(tool_notes)
         parts = _with_tool_notes(parts, tool_notes, precede_tool_results=precede_tool_results)
-        parts = self._system_prompts_placed_for_notes(parts, leading=leading, capability_notes=capability_notes)
+        parts = self._system_prompts_placed_for_notes(parts, leading=leading)
         return parts, self._announcement_index(
             parts, framed, tool_notes, first_request=first_request, precede_tool_results=precede_tool_results
         )
@@ -2165,7 +2161,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         ]
 
     def _system_prompts_placed_for_notes(
-        self, parts: list[ModelRequestPart], *, leading: int, capability_notes: set[int]
+        self, parts: list[ModelRequestPart], *, leading: int
     ) -> list[ModelRequestPart]:
         """`parts` with the request's own system prompts placed for its notes, on a model without a system role.
 
@@ -2174,7 +2170,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """
         if self.profile.get('supports_inline_system_prompts', False):
             return parts
-        parts = _system_prompts_before_notes(parts, capability_notes)
+        parts = _system_prompts_before_notes(parts)
         if self._seals_system_blocks:
             parts = _system_prompts_after_user_words(parts, leading=leading)
         return parts
@@ -4333,23 +4329,17 @@ def _with_tool_notes(
     return [*parts[:at], *tool_notes, *parts[at:]]
 
 
-def _is_user_channel_frame(
-    original: ModelRequestPart, part: ModelRequestPart, capability: RenderedCapabilityPart | None
-) -> bool:
+def _is_user_channel_frame(original: ModelRequestPart, part: ModelRequestPart) -> bool:
     """Whether `part`, sent for `original`, is a frame on the user channel.
 
-    That is retry feedback, a compaction summary, or a capability part's framed body (`capability`, when `part` is one).
+    That is retry feedback, a compaction summary, or a capability part's framed body.
     """
-    return (
-        capability is not None
-        or isinstance(part, CompactionPart)
-        or (
-            isinstance(part, UserPromptPart) and isinstance(original, RetryFeedbackPart | RetryPromptPart)  # pyright: ignore[reportDeprecated]
-        )
+    return isinstance(part, _RenderedCapabilityBody | CompactionPart) or (
+        isinstance(part, UserPromptPart) and isinstance(original, RetryFeedbackPart | RetryPromptPart)  # pyright: ignore[reportDeprecated]
     )
 
 
-def _system_prompts_before_notes(parts: list[ModelRequestPart], capability_notes: set[int]) -> list[ModelRequestPart]:
+def _system_prompts_before_notes(parts: list[ModelRequestPart]) -> list[ModelRequestPart]:
     """Move the request's own mid-conversation system prompts ahead of its first lookalike note.
 
     Without a system role, they become `<system>` blocks in the same user turn as a note and the text it describes.
@@ -4362,19 +4352,37 @@ def _system_prompts_before_notes(parts: list[ModelRequestPart], capability_notes
         return parts
     rest = parts[first_note:]
     # A capability part's note stays with the content it's about.
-    genuine = [p for p in rest if _is_genuine_system_prompt(p, capability_notes)]
-    others = [p for p in rest if not _is_genuine_system_prompt(p, capability_notes)]
+    genuine = [p for p in rest if _is_genuine_system_prompt(p)]
+    others = [p for p in rest if not _is_genuine_system_prompt(p)]
     return [*parts[:first_note], *genuine, *others]
 
 
-def _is_genuine_system_prompt(part: ModelRequestPart, capability_notes: set[int]) -> bool:
-    """Whether `part` is one of the application's own system prompts, not a framework note about another part.
+def _is_genuine_system_prompt(part: ModelRequestPart) -> bool:
+    """Whether `part` is one of the application's own system prompts, not a note about another part.
 
-    A capability part's note, in `capability_notes` by identity, is the application's but changes no instruction.
+    A capability part's note is the application's, but changes no instruction.
     """
-    return (
-        isinstance(part, SystemPromptPart) and not isinstance(part, _FrameworkNote) and id(part) not in capability_notes
-    )
+    return isinstance(part, SystemPromptPart) and not isinstance(part, _FrameworkNote | _RenderedCapabilityNote)
+
+
+@dataclass(repr=False)
+class _RenderedCapabilityNote(SystemPromptPart):
+    """A capability part's note about its framed content, as `prepare_messages` renders it.
+
+    Like `_FrameworkNote`, a private subclass made fresh on every request and never stored: it tells the lookalike pass
+    the note isn't a change to the application's instructions, and lowers exactly like its base type.
+    """
+
+
+@dataclass(repr=False, kw_only=True)
+class _RenderedCapabilityBody(UserPromptPart):
+    """A capability part's framed content, as `prepare_messages` renders it: a frame to announce.
+
+    A private subclass made fresh on every request and never stored, which lowers exactly like its base type.
+    """
+
+    naming: LookalikeNaming = field(default_factory=LookalikeNaming, compare=False)
+    """How a lookalike note about this content names it and its author."""
 
 
 _LookalikeSources: TypeAlias = list[tuple[LookalikeSource, list[str]]]
@@ -4382,23 +4390,37 @@ _LookalikeSources: TypeAlias = list[tuple[LookalikeSource, list[str]]]
 
 def _with_capability_parts_rendered(
     authored: ModelRequest, request: ModelRequest
-) -> tuple[list[tuple[ModelRequestPart, _LookalikeSources, ModelRequestPart]], dict[int, RenderedCapabilityPart]]:
+) -> list[tuple[ModelRequestPart, _LookalikeSources, ModelRequestPart]]:
     """Each of `request`'s parts with its authored form and its lookalikes, and every capability part rendered in place.
 
-    Also returns the rendered capability parts by the identity of their framed bodies, which the lookalike pass counts
-    as frames and names in its notes. They stay within that pass: nothing about a rendered part goes in its metadata.
+    A capability part's framed body and its note are private part subclasses (`_RenderedCapabilityBody`,
+    `_RenderedCapabilityNote`) that carry what the lookalike pass needs as typed fields, within this pass only.
     """
     expanded: list[tuple[ModelRequestPart, _LookalikeSources, ModelRequestPart]] = []
-    bodies: dict[int, RenderedCapabilityPart] = {}
     for original, part in zip(authored.parts, request.parts):
-        if not isinstance(part, CapabilityPart):
+        if isinstance(part, CapabilityPart):
+            expanded.extend(_rendered_capability_part(part))
+        else:
             expanded.append((original, _lookalike_sources(original), part))
-            continue
-        rendering = render_capability_part(part)
-        if rendering.body is not None:
-            bodies[id(rendering.body)] = rendering
-        expanded.extend((new, rendering.lookalikes if new is rendering.body else [], new) for new in rendering.parts)
-    return expanded, bodies
+    return expanded
+
+
+def _rendered_capability_part(
+    part: CapabilityPart,
+) -> list[tuple[ModelRequestPart, _LookalikeSources, ModelRequestPart]]:
+    """The parts `part` renders as, each with its lookalikes, the way `_with_capability_parts_rendered` lists them."""
+    rendering = render_capability_part(part)
+    if rendering.body is None:
+        return [(new, [], new) for new in rendering.parts]
+    body = _RenderedCapabilityBody(
+        content=rendering.body.content, timestamp=rendering.body.timestamp, naming=rendering.naming
+    )
+    rendered: list[tuple[ModelRequestPart, _LookalikeSources, ModelRequestPart]] = []
+    if rendering.note is not None:
+        note = _RenderedCapabilityNote(content=rendering.note.content, timestamp=rendering.note.timestamp)
+        rendered.append((note, [], note))
+    rendered.append((body, rendering.lookalikes, body))
+    return rendered
 
 
 def _lookalike_sources(part: ModelRequestPart) -> list[tuple[LookalikeSource, list[str]]]:
