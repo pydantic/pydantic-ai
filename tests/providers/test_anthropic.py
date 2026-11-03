@@ -106,7 +106,7 @@ def test_anthropic_provider_model_profile_older_model_still_resolves():
         # Sonnet 5 accepts the entry with a 200 and then ignores it, so it is deliberately out.
         ('claude-sonnet-5', False),
         ('claude-sonnet-5-5', True),
-        ('claude-haiku-5-5', True),
+        ('claude-haiku-5-5', False),
         ('claude-opus-4-7', False),
         ('claude-sonnet-4-6', False),
         ('claude-haiku-4-5', False),
