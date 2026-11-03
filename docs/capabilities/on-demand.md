@@ -630,6 +630,7 @@ agent = Agent(FunctionModel(scripted_model), deps_type=Deps, capabilities=runboo
 result = agent.run_sync('The primary database is down.', deps=Deps(db))
 print(result.output)
 #> Paging the on-call DBA.
+db.close()
 ```
 
 The first request sends only the catalog, so no runbook body is read. After the model loads `db-failover`, the second request reads that runbook's body and sends it to the model; `cert-renewal` is never read. With an async database driver, make the instructions function `async def` and `await` the query.
