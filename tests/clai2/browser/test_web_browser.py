@@ -1051,7 +1051,8 @@ async def test_at_mentions_pick_files_from_the_session_folder(page: Page, web_ui
     # A mention typed before more text replaces only itself, the caret stays after it, and the list stays closed.
     await composer.fill('see  and more')
     await composer.evaluate('area => area.setSelectionRange(4, 4)')
-    await page.keyboard.type('@REA')
+    # Entered at once: typed key by key, the list for `@RE` could show first, and Tab waits for the newer one.
+    await page.keyboard.insert_text('@REA')
     await expect(names.first).to_have_text('README.md')
     await composer.press('Tab')
     await expect(composer).to_have_value('see @README.md and more')
