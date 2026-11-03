@@ -858,7 +858,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     conversation_scope: str | None = None
     """The [`scope`][pydantic_ai.conversation_store.ConversationRecord.scope] to load and save the conversation with, such as the authenticated user.
 
-    A conversation saved with another scope is treated as not found: the run is rejected with a
+    Always pass the authenticated user or tenant. A conversation saved with another scope, or with any
+    scope when this is `None`, is treated as not found: the run is rejected with a
     `UserError`, which reaches the client as a protocol error event, and
     [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request] answers `404` before running anything.
     Only used with a [`conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store].
@@ -1209,9 +1210,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         if (store := self.conversation_store) is None:
             return None
         assert conversation_id is not None
-        loaded = await store.load(conversation_id, scope=self.conversation_scope)
-        if loaded is None and not await self._conversation_available(conversation_id):
+        if not await self._conversation_available(conversation_id):
             raise UserError(f'Conversation {conversation_id!r} was not found.')
+        loaded = await store.load(conversation_id, scope=self.conversation_scope)
         stored = loaded.messages if loaded is not None else []
         # A conversation the store doesn't have is waiting on nothing.
         waiting_on = (loaded.deferred_tool_requests if loaded is not None else None) or DeferredToolRequests()
@@ -1252,15 +1253,16 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         )
 
     async def _conversation_available(self, conversation_id: str) -> bool:
-        """Whether a run can use the conversation: one in `conversation_scope`, or one the store doesn't have yet.
+        """Whether a run can use the conversation: one saved with `conversation_scope`, or one the store doesn't have yet.
 
         A conversation saved with another scope is reported as not found, as it would be if the store
-        didn't have it, rather than as a conflict that suggests reloading it.
+        didn't have it, rather than as a conflict that suggests reloading it. Without a `conversation_scope`,
+        only a conversation saved without one is found: unlike the store's own `scope=None`, which reaches
+        every scope, an adapter that names no scope can't reach a scoped conversation by its client-supplied ID.
         """
         assert self.conversation_store is not None
         record = await self.conversation_store.read_record(conversation_id)
-        scope = self.conversation_scope
-        return record is None or scope is None or record.scope == scope
+        return record is None or record.scope == self.conversation_scope
 
     async def _save_conversation(self, result: AgentRunResult[Any]) -> None:
         """Save what the run added to the stored conversation, keeping the stored entries for the client."""

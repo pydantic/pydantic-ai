@@ -14172,9 +14172,37 @@ async def test_conversation_store_scope():
     assert conversation_view(conversation.messages) == snapshot(['user-prompt: hi', 'text: ok'])
 
 
+async def test_conversation_store_without_a_scope_reaches_only_unscoped_conversations():
+    """An endpoint that passes no scope can't reach a conversation saved with one, but keeps unscoped ones."""
+    agent, requests, _ = server_history_agent()
+    store = InMemoryConversationStore()
+    await _stored_turn(agent, store, SubmitMessage(id='scoped', messages=[_HI]), scope='alice')
+    await _stored_turn(agent, store, SubmitMessage(id='unscoped', messages=[_HI]))
+    model_requests = len(requests)
+
+    chunks = await _stored_turn(agent, store, SubmitMessage(id='scoped', messages=[_HI, _OK, _AND_NOW]))
+
+    assert len(requests) == model_requests
+    assert [chunk.error_text for chunk in chunks if isinstance(chunk, ErrorChunk)] == snapshot(
+        ["Conversation 'scoped' was not found."]
+    )
+    scoped = await store.load('scoped')
+    assert scoped is not None
+    assert conversation_view(scoped.messages) == snapshot(['user-prompt: hi', 'text: ok'])
+
+    await _stored_turn(agent, store, SubmitMessage(id='unscoped', messages=[_HI, _OK, _AND_NOW]))
+
+    assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
+    unscoped = await store.load('unscoped')
+    assert unscoped is not None
+    assert conversation_view(unscoped.messages) == snapshot(
+        ['user-prompt: hi', 'text: ok', 'user-prompt: and now?', 'text: ok']
+    )
+
+
 @pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
-@pytest.mark.parametrize(('scope', 'status'), [('alice', 200), ('bob', 404)])
-async def test_dispatch_request_conversation_store_scope(scope: str, status: int):
+@pytest.mark.parametrize(('scope', 'status'), [('alice', 200), ('bob', 404), (None, 404)])
+async def test_dispatch_request_conversation_store_scope(scope: str | None, status: int):
     """`dispatch_request` answers `404` for a conversation saved with another scope, before running anything."""
     agent, requests, _ = server_history_agent()
     store = InMemoryConversationStore()
