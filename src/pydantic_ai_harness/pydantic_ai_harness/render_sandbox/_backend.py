@@ -305,10 +305,10 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
 
     async def _copy(self, client: RenderAsync, sandbox_id: str, remote: str, data: bytes | None, size: int) -> bytes:
         """Download `remote` (`data` is `None`) or upload `data` to it through a local staging file."""
-        # Named before any await, so cleanup knows it even if cancellation lands while it is being made.
         directory = anyio.Path(await anyio.to_thread.run_sync(gettempdir)) / f'render-pydantic-{uuid4().hex}'
         try:
-            await directory.mkdir(mode=0o700)
+            # Finished even if the caller is cancelled, so the cleanup below cannot run before it.
+            await run_to_completion(lambda: directory.mkdir(mode=0o700))
             local = directory / 'data'
             if data is not None:
                 await local.write_bytes(data)
