@@ -23,7 +23,7 @@ If you only need background execution, a native Render task around `agent.run(..
 The example uses Pydantic AI's `TestModel` and a mock weather tool, so it needs no LLM API key or Render deployment.
 The model generates sample tool arguments and returns fixed text rather than interpreting the prompt.
 
-You need Python 3.11 or later. Install the [Render CLI](https://render.com/docs/cli) 2.28.0 or later separately. The integration requires Render SDK 1.2.0 or later.
+You need Python 3.11 or later. Install the [Render CLI](https://render.com/docs/cli) 2.28.0 or later separately. The integration requires Render SDK 1.6.0 or later.
 
 ## 1. Install dependencies
 
