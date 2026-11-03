@@ -24,6 +24,8 @@ from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 
+from . import _openrouter_catalog
+
 try:
     from openai import AsyncOpenAI
 except ImportError as _import_error:
@@ -199,6 +201,57 @@ Mythos isn't routable on OpenRouter and is included on the strength of Anthropic
 """
 
 
+_CATALOG_CORRECTIONS: dict[str, OpenRouterModelProfile] = {}
+"""Hand-maintained corrections to the generated catalog data, keyed by catalog route id.
+
+`_openrouter_catalog` is generated from OpenRouter's public model list (see
+`scripts/update_openrouter_catalog.py`), so it carries whatever that list claims. Where a live probe
+contradicts it — or the list omits a fact these profiles rely on — record the observed value here.
+Corrections are applied after the dated probe tables and before the gateway overrides, so they win
+over generated data but never over the gateway layer, which is maintained by hand below.
+"""
+
+
+def _openrouter_catalog_route_id(route_id: str) -> str | None:
+    """Resolve a requested route id against the generated catalog, returning the catalog key or `None`.
+
+    OpenRouter ids may carry a tag suffix (`provider/model:tag`) and aliases resolve to their
+    canonical id, so lookups try the id as requested, then without tags, then via the alias map.
+    """
+    catalog = _openrouter_catalog.OPENROUTER_MODEL_CATALOG
+    aliases = _openrouter_catalog.OPENROUTER_CATALOG_ALIASES
+    tagless = route_id.partition(':')[0]
+    for candidate in (route_id, tagless, aliases.get(route_id), aliases.get(tagless)):
+        if candidate is not None and candidate in catalog:
+            return candidate
+    return None
+
+
+def _openrouter_catalog_profile(route_id: str) -> ModelProfile:
+    """Build the profile fragment for a catalog route from the facts the catalog actually carries.
+
+    Generated data can only add facts: `thinking_mandatory` switches `thinking_always_enabled` on,
+    never off — the dated probe tables and the gateway layer keep precedence over everything else.
+    """
+    entry = _openrouter_catalog.OPENROUTER_MODEL_CATALOG[route_id]
+    flags: ModelProfile = {}
+    if entry.get('thinking_mandatory') is True:
+        flags['thinking_always_enabled'] = True
+    structured_outputs = entry.get('structured_outputs')
+    if structured_outputs is not None:
+        flags['supports_json_schema_output'] = structured_outputs
+    tools = entry.get('tools')
+    if tools is not None:
+        flags['supports_tools'] = tools
+    modalities = entry.get('input_modalities')
+    if modalities is not None:
+        flags['supports_image_input'] = 'image' in modalities
+        flags['supports_document_input'] = 'file' in modalities
+        flags['supports_audio_file_input'] = 'audio' in modalities
+        flags['supports_video_input'] = 'video' in modalities
+    return flags
+
+
 class OpenRouterProvider(_OpenAISDKProvider):
     """Provider for OpenRouter API."""
 
@@ -249,6 +302,9 @@ class OpenRouterProvider(_OpenAISDKProvider):
         # OpenRouter exposes latest-model aliases as `~provider/model`; strip the
         # alias marker before using the provider prefix for profile selection.
         provider, model_name = model_name.removeprefix('~').split('/', 1)
+        # The generated catalog is keyed by OpenRouter's own route ids, so resolve it against the
+        # id as requested, before the upstream lookup below normalizes it.
+        catalog_route_id = f'{provider}/{model_name}'
         if provider in provider_to_profile:
             model_name, *_ = model_name.split(':', 1)  # drop tags
             if provider == 'anthropic':
@@ -258,6 +314,13 @@ class OpenRouterProvider(_OpenAISDKProvider):
             # Inline GLM-5.3 schemas without importing Z.AI's native thinking settings.
             # See https://github.com/pydantic/pydantic-ai/issues/10243.
             profile = ModelProfile(json_schema_transformer=InlineDefsJsonSchemaTransformer)
+
+        catalog_key = _openrouter_catalog_route_id(catalog_route_id)
+        if catalog_key is not None:
+            # Generated catalog data adds facts the lab profiles don't carry. It sits below the dated
+            # probe tables and the gateway layer, so those keep precedence, and it can only switch
+            # mandatory reasoning on, never off.
+            profile = merge_profile(profile, _openrouter_catalog_profile(catalog_key))
 
         if model_name.lower().startswith(_MANDATORY_REASONING_MODEL_PREFIXES.get(provider, ())):
             profile = merge_profile(profile, ModelProfile(thinking_always_enabled=True))
@@ -269,6 +332,12 @@ class OpenRouterProvider(_OpenAISDKProvider):
         supports_inline_system_prompts = (
             provider == 'openai' and not model_name.lower().startswith('gpt-oss-')
         ) or model_name.lower().startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES.get(provider, ()))
+
+        if catalog_key is not None:
+            # Hand-maintained corrections to the generated data, verified live; see `_CATALOG_CORRECTIONS`.
+            correction = _CATALOG_CORRECTIONS.get(catalog_key)
+            if correction is not None:
+                profile = merge_profile(profile, correction)
 
         # Cache capability flags are set on the gateway layer based on the downstream provider.
         # The TTL / tool-cache / dynamic-instruction flags are kept separate even though they all

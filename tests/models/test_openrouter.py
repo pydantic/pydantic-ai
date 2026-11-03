@@ -1,4 +1,5 @@
 import datetime
+import json
 import os
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from copy import deepcopy
@@ -47,6 +48,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import AdvisorTool, WebSearchTool
 from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.providers import _openrouter_catalog, openrouter as openrouter_provider  # pyright: ignore[reportPrivateUsage]
 
 from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
@@ -3011,3 +3013,75 @@ async def test_eager_input_streaming_sent_to_openrouter(
     assert ('eager_input_streaming' in tool_param) is expected_eager_key
     if expected_eager_key:
         assert tool_param['eager_input_streaming'] is True
+
+
+def test_openrouter_catalog_flags_mandatory_reasoning_beyond_prefix_tables(monkeypatch: pytest.MonkeyPatch):
+    """Catalog data can switch mandatory reasoning on beyond the prefix tables, and never off."""
+    monkeypatch.setattr(
+        _openrouter_catalog, 'OPENROUTER_MODEL_CATALOG', {'vendor/model-alpha': {'thinking_mandatory': True}}
+    )
+    profile = openrouter_provider.OpenRouterProvider.model_profile('vendor/model-alpha')
+    assert profile['thinking_always_enabled'] is True
+
+    # Aliases resolve to the canonical catalog entry.
+    monkeypatch.setattr(
+        _openrouter_catalog, 'OPENROUTER_MODEL_CATALOG', {'vendor/model-canonical': {'thinking_mandatory': True}}
+    )
+    monkeypatch.setattr(
+        _openrouter_catalog, 'OPENROUTER_CATALOG_ALIASES', {'vendor/model-alias': 'vendor/model-canonical'}
+    )
+    profile = openrouter_provider.OpenRouterProvider.model_profile('vendor/model-alias')
+    assert profile['thinking_always_enabled'] is True
+
+
+def test_openrouter_catalog_missing_id_falls_back_and_never_disables(monkeypatch: pytest.MonkeyPatch):
+    """Routes without catalog data keep today's profiles, and tags are stripped before the lookup."""
+    monkeypatch.setattr(
+        _openrouter_catalog, 'OPENROUTER_MODEL_CATALOG', {'vendor/model-tagged': {'structured_outputs': True}}
+    )
+    monkeypatch.setattr(_openrouter_catalog, 'OPENROUTER_CATALOG_ALIASES', {'vendor/alias-void': 'vendor/model-gone'})
+    profile = openrouter_provider.OpenRouterProvider.model_profile('vendor/absent-model')
+    assert 'supports_json_schema_output' not in profile
+    assert 'supports_image_input' not in profile
+    assert (
+        openrouter_provider.OpenRouterProvider.model_profile('vendor/model-tagged:free')['supports_json_schema_output']
+        is True
+    )
+    # An alias whose target left the catalog degrades to no catalog data.
+    assert 'supports_json_schema_output' not in openrouter_provider.OpenRouterProvider.model_profile(
+        'vendor/alias-void'
+    )
+
+
+def test_openrouter_catalog_corrections_then_gateway_win(monkeypatch: pytest.MonkeyPatch):
+    """Corrections beat the generated catalog; the gateway layer still wins on every key it sets."""
+    monkeypatch.setattr(
+        _openrouter_catalog,
+        'OPENROUTER_MODEL_CATALOG',
+        {'vendor/model-gamma': {'structured_outputs': False, 'tools': False, 'input_modalities': ['text']}},
+    )
+    monkeypatch.setattr(
+        openrouter_provider,
+        '_CATALOG_CORRECTIONS',
+        {'vendor/model-gamma': openrouter_provider.OpenRouterModelProfile(supports_tools=True)},
+    )
+    profile = openrouter_provider.OpenRouterProvider.model_profile('vendor/model-gamma')
+    assert profile['supports_tools'] is True  # correction over the catalog
+    assert profile['supports_json_schema_output'] is False  # catalog fact stands where the correction is silent
+    assert profile['supports_image_input'] is False  # catalog modalities survived
+    # A correction can't reach a gateway-owned key.
+    monkeypatch.setattr(
+        openrouter_provider,
+        '_CATALOG_CORRECTIONS',
+        {'vendor/model-gamma': openrouter_provider.OpenRouterModelProfile(openai_chat_send_back_thinking_parts=False)},
+    )
+    profile = openrouter_provider.OpenRouterProvider.model_profile('vendor/model-gamma')
+    assert profile['openai_chat_send_back_thinking_parts'] == 'field'  # the gateway layer wins on its own keys
+
+
+def test_openrouter_catalog_module_matches_snapshot():
+    """The committed generated module matches the committed snapshot it was rendered from."""
+    snapshot = json.loads((Path(__file__).parents[2] / 'scripts' / 'openrouter_catalog_snapshot.json').read_text())
+    assert _openrouter_catalog.CATALOG_GENERATED_AT == snapshot['generated_at']
+    assert _openrouter_catalog.OPENROUTER_MODEL_CATALOG == snapshot['models']
+    assert _openrouter_catalog.OPENROUTER_CATALOG_ALIASES == snapshot['aliases']

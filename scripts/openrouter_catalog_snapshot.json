@@ -1,0 +1,9 @@
+{
+  "aliases": {},
+  "generated_at": null,
+  "models": {},
+  "sources": [
+    "https://openrouter.ai/api/v1/models",
+    "https://openrouter.ai/api/v1/models/{id}/endpoints"
+  ]
+}
