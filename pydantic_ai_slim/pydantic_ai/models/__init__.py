@@ -4347,8 +4347,10 @@ def _lookalike_texts(part: ModelRequestPart) -> Iterator[tuple[LookalikeSource, 
     """The texts in `part` to check for lookalike frames, each with its author, in the order their notes go."""
     if isinstance(part, UserPromptPart):
         items: Sequence[UserContent] = [part.content] if isinstance(part.content, str) else part.content
-        yield from (('user', _text_of(item)) for item in items)
-        yield from (('file', _text_file_content(item)) for item in items)
+        for item in items:
+            yield 'user', _text_of(item)
+        for item in items:
+            yield 'file', _text_file_content(item)
         # A frame a capability wrote around someone else's text, such as a background tool's output: the frame's own
         # tags aren't a lookalike, the body can hold one.
         yield from (body for item in items if is_framework_frame(item) and (body := framework_frame_body(item)))
