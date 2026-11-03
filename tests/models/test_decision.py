@@ -1734,7 +1734,9 @@ async def test_arguments_past_the_node_limit_are_not_filled(
     with pytest.raises(UnfillableRoute, match="picked 'look_up'"):
         await Agent(model, output_type=Triage, tools=[tool]).run('Where is my order?')
 
-    assert [list(request.questions) for request in model.requests] == snapshot()
+    assert [list(request.questions) for request in model.requests] == snapshot(
+        [['Triage.urgent', 'Triage.action', 'route']]
+    )
 
 
 @pytest.mark.parametrize('schema', [True, False, {'$ref': '#/$defs/Anything'}, {'$ref': '#/$defs/Nothing'}])
