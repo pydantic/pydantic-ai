@@ -298,7 +298,7 @@ def test_upgrade_legacy_database_preserves_data(tmp_path: Path, version: int, ha
     assert store.load().task_models is True
     # Databases from before `/system_prompt` add no instructions of the user's own.
     assert store.load().instructions == ''
-    assert store.load().repo_context_walk_up_root == '~'
+    assert store.load().repo_context_walk_up_roots == ['~']
     assert store.load().repo_context_autoload_symlink_roots == []
     assert store.overrides() == {'model': 'test', 'display.thinking': False}
     assert store.plugins() == [PluginSettings(id='notify', factory='notify', enabled=False, settings={'sound': False})]
@@ -372,7 +372,12 @@ async def test_historical_tool_output_preference_is_preserved(tmp_path: Path, va
 
 @pytest.mark.parametrize(
     ('key', 'value_json'),
-    [('future.setting', '{"enabled":true}'), ('future.setting', 'unrecognized encoding')],
+    [
+        ('future.setting', '{"enabled":true}'),
+        ('future.setting', 'unrecognized encoding'),
+        # Saved by a `main` build before `repo_context.walk_up_roots` replaced it; never released.
+        ('repo_context.walk_up_root', '"/offline mount/projects"'),
+    ],
 )
 def test_unknown_saved_settings_survive_edits(tmp_path: Path, key: str, value_json: str) -> None:
     path = tmp_path / 'config.db'
@@ -419,7 +424,7 @@ def test_unknown_saved_settings_survive_edits(tmp_path: Path, key: str, value_js
         ('run.instructions', '42'),
         ('run.permissions', '"sometimes"'),
         ('accounts.pool', '"off"'),
-        ('repo_context.walk_up_root', '"relative"'),
+        ('repo_context.walk_up_roots', '["relative"]'),
         ('repo_context.autoload_symlink_roots', '["~other-user/shared"]'),
     ],
 )
@@ -1252,7 +1257,7 @@ def test_repo_context_boundaries_survive_a_build_without_them(tmp_path: Path, mo
     path = tmp_path / 'config.db'
     store = SettingsStore(path)
     saved: dict[str, JsonValue] = {
-        'repo_context.walk_up_root': '/offline mount/projects',
+        'repo_context.walk_up_roots': ['~', '/offline mount/projects'],
         'repo_context.autoload_symlink_roots': ['~/shared tooling', '/offline mount/instructions'],
     }
     for key, value in saved.items():
@@ -1286,17 +1291,18 @@ def test_repo_context_boundaries_survive_a_build_without_them(tmp_path: Path, mo
 @pytest.mark.parametrize(
     ('key', 'value'),
     [
-        ('repo_context.walk_up_root', ''),
-        ('repo_context.walk_up_root', '   '),
-        ('repo_context.walk_up_root', 'relative/path'),
-        ('repo_context.walk_up_root', '.'),
-        ('repo_context.walk_up_root', './'),
-        ('repo_context.walk_up_root', '~another-user'),
-        ('repo_context.walk_up_root', '~another-user/path'),
-        ('repo_context.walk_up_root', '$HOME/projects'),
-        ('repo_context.walk_up_root', '/bad\x00path'),
-        ('repo_context.walk_up_root', 42),
-        ('repo_context.walk_up_root', ['/']),
+        ('repo_context.walk_up_roots', '/'),
+        ('repo_context.walk_up_roots', ['']),
+        ('repo_context.walk_up_roots', ['   ']),
+        ('repo_context.walk_up_roots', ['relative/path']),
+        ('repo_context.walk_up_roots', ['.']),
+        ('repo_context.walk_up_roots', ['./']),
+        ('repo_context.walk_up_roots', ['~another-user']),
+        ('repo_context.walk_up_roots', ['~another-user/path']),
+        ('repo_context.walk_up_roots', ['$HOME/projects']),
+        ('repo_context.walk_up_roots', ['/bad\x00path']),
+        ('repo_context.walk_up_roots', [42]),
+        ('repo_context.walk_up_roots', ['~', 'bad']),
         ('repo_context.autoload_symlink_roots', '/'),
         ('repo_context.autoload_symlink_roots', [1]),
         ('repo_context.autoload_symlink_roots', ['']),
@@ -1310,7 +1316,7 @@ def test_repo_context_boundaries_survive_a_build_without_them(tmp_path: Path, mo
 )
 def test_invalid_repo_context_boundary_writes_preserve_data(tmp_path: Path, key: str, value: JsonValue) -> None:
     store = SettingsStore(tmp_path / 'config.db')
-    store.set('repo_context.walk_up_root', '~/projects')
+    store.set('repo_context.walk_up_roots', ['~/projects'])
     store.set('repo_context.autoload_symlink_roots', ['/offline/shared'])
     store.set('model', 'test')
     snapshot = store.path.read_bytes()
@@ -1322,14 +1328,14 @@ def test_invalid_repo_context_boundary_writes_preserve_data(tmp_path: Path, key:
 @pytest.mark.parametrize('path', ['~', '~/offline mount', '/offline mount'])
 def test_repo_context_paths_are_stored_without_requiring_existence(tmp_path: Path, path: str) -> None:
     store = SettingsStore(tmp_path / 'config.db')
-    config_command(store, ['set', 'repo_context.walk_up_root', path])
+    config_command(store, ['set', 'repo_context.walk_up_roots', f'["{path}"]'])
     config_command(store, ['set', 'repo_context.autoload_symlink_roots', f'["{path}"]'])
     settings = SettingsStore(store.path).load()
-    assert settings.repo_context_walk_up_root == path
+    assert settings.repo_context_walk_up_roots == [path]
     assert settings.repo_context_autoload_symlink_roots == [path]
-    config_command(store, ['reset', 'repo_context.walk_up_root'])
+    config_command(store, ['reset', 'repo_context.walk_up_roots'])
     config_command(store, ['reset', 'repo_context.autoload_symlink_roots'])
-    assert store.load().repo_context_walk_up_root == '~'
+    assert store.load().repo_context_walk_up_roots == ['~']
     assert store.load().repo_context_autoload_symlink_roots == []
 
 

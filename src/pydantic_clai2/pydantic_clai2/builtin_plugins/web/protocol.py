@@ -4,6 +4,7 @@ Pure translation, with no server or plugin in it. Wire payloads are kw-only data
 `dump` with Pydantic; the browser's `web-ui/src/protocol.ts` mirrors these shapes.
 """
 
+import difflib
 import hashlib
 import json
 from collections.abc import Sequence
@@ -38,7 +39,13 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserRequest
-from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
+from pydantic_ai_harness.filesystem import (
+    EditFileCallPart,
+    FileChangeRequestEvent,
+    FileEditedEvent,
+    FileWrittenEvent,
+    ReplacementArgs,
+)
 from pydantic_ai_harness.permissions import PermissionAction
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent
 from pydantic_ai_harness.subagents import DelegationOutcome
@@ -48,6 +55,7 @@ from pydantic_clai2.runtime.eager_timing import NESTED_CALL
 from pydantic_clai2.runtime.forks import failure_line
 from pydantic_clai2.runtime.imported_history import is_typed_prompt
 from pydantic_clai2.runtime.monty_cells import NOTE_PREFIX
+from pydantic_clai2.runtime.rewind import rewind_points
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
 from pydantic_clai2.runtime.session import STEERING
 from pydantic_clai2.ui.prompt.prompt_queue import InputKind, input_kind
@@ -109,6 +117,8 @@ class Item:
     """A `run_code` cell the user ran with `/monty`, rather than one the model wrote."""
     images: list[str] = field(default_factory=list[str])
     """The IDs of a prompt's images, in order, which the session's `images/ID` route serves."""
+    run_id: str | None = None
+    """The run a prompt started, which Edit and Retry rewind to; `None` for a prompt they cannot rewind to."""
 
 
 @dataclass(kw_only=True)
@@ -917,6 +927,8 @@ class Project:
     """Saved sessions grouped by repository, then by checkout, as the `/resume` browser groups them."""
 
     key: str
+    folder: str | None
+    """Its main checkout's folder; `None` for Removed folders."""
     name: str
     """Its folder's name, or the shortest end of its path no other listed project of that name shares."""
     current: bool
@@ -1060,6 +1072,41 @@ def tool_result_state(part: ToolReturnPart) -> ToolState:
     return 'error' if part.outcome == 'retried' else 'done'
 
 
+_MAX_LINE_PAIRS = 65_536
+"""The most old-by-new lines of one replacement that is diffed, as `difflib`'s matching is quadratic."""
+
+
+def _edit_diffs(call: EditFileCallPart | None, result: ToolReturnPart) -> list[Diff]:
+    """A successful edit's replacements as line diffs, so a reloaded card counts about what the live diff did.
+
+    Each is one unnumbered hunk, as the saved call does not say where in the file it was. An edit too
+    large to diff, or that only adds or drops a final line feed, gets none: the browser shows its arguments.
+    """
+    if call is None or result.outcome != 'success' or (edit := call.typed_args) is None:
+        return []
+    pairs = edit.get('replacements')
+    if not pairs:
+        old, new = edit.get('old_text'), edit.get('new_text')
+        if old is None or new is None:
+            return []
+        pairs = [ReplacementArgs(old_text=old, new_text=new)]
+    diffs: list[Diff] = []
+    for pair in pairs:
+        old, new = _lines(pair['old_text']), _lines(pair['new_text'])
+        if len(old) * len(new) > _MAX_LINE_PAIRS:
+            return []
+        hunk = list(difflib.unified_diff(old, new, lineterm='', n=max(len(old), len(new))))[3:]
+        if not hunk and pair['old_text'] != pair['new_text']:
+            return []
+        diffs.append(Diff(path=edit['path'], diff='\n'.join(hunk)))
+    return diffs
+
+
+def _lines(text: str) -> list[str]:
+    """`text`'s lines as the harness diffs them: split on line feeds only, with none for an empty text."""
+    return text.removesuffix('\n').split('\n') if text else []
+
+
 def image_id(image: BinaryContent) -> str:
     """An image's ID in the transcript: the SHA-256 of its bytes, so it stays the same after a reload."""
     return hashlib.sha256(image.data).hexdigest()
@@ -1117,13 +1164,15 @@ def user_text(part: UserPromptPart, *, thumbnails: bool = False) -> str:
     )
 
 
-def user_item(part: UserPromptPart, *, id: str, image_ids: ImageIds | None = None) -> Item:
+def user_item(part: UserPromptPart, *, id: str, image_ids: ImageIds | None = None, run_id: str | None = None) -> Item:
     """A prompt's transcript item: its text, and its images by `image_ids` for a session that serves them.
 
     Without `image_ids`, as in a saved session's preview, each image shows as `[image]`.
     """
     images = [] if image_ids is None else [image_ids(image) for image in user_images(part)]
-    return Item(id=id, kind='user', text=user_text(part, thumbnails=image_ids is not None), images=images)
+    return Item(
+        id=id, kind='user', text=user_text(part, thumbnails=image_ids is not None), images=images, run_id=run_id
+    )
 
 
 def history_images(messages: Sequence[ModelMessage]) -> list[BinaryContent]:
@@ -1151,24 +1200,29 @@ def history_entries(messages: Sequence[ModelMessage], *, image_ids: ImageIds | N
     """
     entries: list[Item | TurnSummary] = []
     tools: dict[str, Item] = {}
+    edits: dict[str, EditFileCallPart] = {}
     usage = RunUsage()
+    rewindable = {point.message_index for point in rewind_points(messages) if not point.reason}
 
     def end_turn() -> None:
         if usage.requests:
             entries.append(TurnSummary(id=f'h{len(entries)}', usage=usage_info(usage)))
 
-    for message in messages:
+    for index, message in enumerate(messages):
         if isinstance(message, ModelRequest):
             if starts_turn(message):
                 end_turn()
                 usage = RunUsage()
+            run_id = message.run_id if index in rewindable else None
             for part in message.parts:
                 if isinstance(part, UserPromptPart):
                     if is_typed_prompt(part):
-                        entries.append(user_item(part, id=f'h{len(entries)}', image_ids=image_ids))
+                        entries.append(user_item(part, id=f'h{len(entries)}', image_ids=image_ids, run_id=run_id))
+                        run_id = None
                 elif isinstance(part, ToolReturnPart) and (tool := tools.get(part.tool_call_id)):
                     tool.text = tool_result_text(part)
                     tool.state = tool_result_state(part)
+                    tool.diffs = _edit_diffs(edits.get(part.tool_call_id), part)
             continue
         usage.incr(message.usage)
         usage.requests += 1
@@ -1187,6 +1241,8 @@ def history_entries(messages: Sequence[ModelMessage], *, image_ids: ImageIds | N
                 )
                 tools[part.tool_call_id] = tool
                 entries.append(tool)
+                if isinstance(part, EditFileCallPart):
+                    edits[part.tool_call_id] = part
     end_turn()
     return entries
 

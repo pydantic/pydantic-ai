@@ -950,8 +950,7 @@ def test_a_stale_check_runs_again_and_the_about_note_says_when_it_ran(
     now[0] += 2 * ABOUT_MAX_AGE
     assert updates.segment() == 'update 0.54.0: /update' and not checks, 'the footer checks again only after an hour'
     now[0] += CHECK_MAX_AGE
-    updates.segment()
-    assert len(checks) == 1
+    assert updates.segment() == 'update 0.54.0: /update' and len(checks) == 1, 'the old answer stays while it re-checks'
     assert note() == 'a new version 0.54.0 of clai2 is available on the stable channel (checked 1 h ago).'
     assert len(checks) == 1, 'one check at a time'
 

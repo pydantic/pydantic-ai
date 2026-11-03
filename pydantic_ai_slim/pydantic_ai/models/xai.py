@@ -1361,15 +1361,14 @@ class XaiStreamedResponse(StreamedResponse):
                                 else:
                                     args_delta = accumulated_args or None
                                 prev_tool_call_args[tool_call.id] = accumulated_args
-                                maybe_event = self._parts_manager.handle_tool_call_delta(
+                                for event in self._parts_manager.handle_tool_call_delta_events(
                                     vendor_part_id=tool_call.id,
                                     # Only pass tool_name on the first call; it would be appended otherwise.
                                     tool_name=tool_call.function.name if is_new_tool_call else None,
                                     args=args_delta,
                                     tool_call_id=tool_call.id,
-                                )
-                                if maybe_event is not None:  # pragma: no branch
-                                    yield maybe_event
+                                ):
+                                    yield event
 
             # Backfill x_search return parts with the top-level response citations, which xAI only
             # populates alongside the final chunk. We mutate the existing part in place rather than

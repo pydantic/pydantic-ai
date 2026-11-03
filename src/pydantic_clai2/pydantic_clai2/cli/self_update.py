@@ -328,6 +328,8 @@ class UpdateCheck:
     channel: UpdateChannel
     update: Update | None = None
     error: str | None = None
+    checked: float = field(default=0.0, compare=False)
+    """When the answer landed, on `Updates.clock`."""
 
 
 @dataclass(kw_only=True)
@@ -367,7 +369,6 @@ class Updates:
     _result: UpdateCheck | None = field(default=None, init=False)
     _done: threading.Event = field(default_factory=threading.Event, init=False)
     _started: float = field(default=0.0, init=False)
-    _answered: float = field(default=0.0, init=False)
 
     def segment(self) -> str:
         """A status-row hint once a background check finds an update; checks again on a channel change or after an hour.
@@ -386,7 +387,8 @@ class Updates:
         answer until `wait` seconds after the check started, so a menu opened at once can show it.
         """
         channel = self.channel()
-        if channel != self._checked or (self._done.is_set() and self.age() > max_age):
+        stale = self._result is not None and self.clock() - self._result.checked > max_age
+        if channel != self._checked or (self._done.is_set() and stale):
             if channel != self._checked:
                 self._result = None
             done = threading.Event()
@@ -397,20 +399,18 @@ class Updates:
         found = self._result
         return found if found is not None and found.channel == channel else None
 
-    def age(self) -> float:
-        """Seconds since the last check's answer landed."""
-        return self.clock() - self._answered
-
     def _check(self, channel: UpdateChannel, done: threading.Event) -> None:
         import httpx
 
         try:
-            found = UpdateCheck(channel=channel, update=find_update(channel, self.current, self.fetch(channel)))
+            update = find_update(channel, self.current, self.fetch(channel))
+            found = UpdateCheck(channel=channel, update=update, checked=self.clock())
         except (httpx.HTTPError, ValueError) as exc:
             # Offline or rate-limited: no footer notice. The menu says why, and `/update now` reports it too.
-            found = UpdateCheck(channel=channel, error=str(exc).partition('\n')[0] or type(exc).__name__)
+            error = str(exc).partition('\n')[0] or type(exc).__name__
+            found = UpdateCheck(channel=channel, error=error, checked=self.clock())
         if channel == self._checked:  # Not a check of a channel the settings have since left.
-            self._answered, self._result = self.clock(), found
+            self._result = found
         done.set()
 
     async def command(self, args: list[str]) -> str:

@@ -382,14 +382,13 @@ class FunctionStreamedResponse(StreamedResponse):
                         if delta.json_args:
                             response_tokens = _estimate_string_tokens(delta.json_args)
                             self._usage += usage.RequestUsage(output_tokens=response_tokens)
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                        for event in self._parts_manager.handle_tool_call_delta_events(
                             vendor_part_id=dtc_index,
                             tool_name=delta.name,
                             args=delta.json_args,
                             tool_call_id=delta.tool_call_id,
-                        )
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
+                        ):
+                            yield event
                     elif isinstance(delta, NativeToolCallPart):
                         if content := delta.args_as_json_str():  # pragma: no branch
                             response_tokens = _estimate_string_tokens(content)
