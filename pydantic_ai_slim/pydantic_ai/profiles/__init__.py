@@ -198,6 +198,18 @@ class ModelProfile(TypedDict, total=False):
     a user lookalike and steering after a tool result more reliably sealed than with plain blocks.
     """
 
+    needs_json_string_tool_returns: bool
+    """Whether a tool's text output is sent as an escaped JSON string field. Default: `False`.
+
+    When `True`, `Model.prepare_messages` sends the content of each successful `ToolReturnPart` whose content is a
+    string as `{"tool_output": "..."}`, with the text JSON-escaped, so its newlines and quotes don't read as plain
+    lines in the tool message. Only the outgoing copy changes: the history keeps the tool's output as returned.
+    Lookalike notes are still decided on the output as returned.
+
+    Set for Qwen3 Next, which treated a tool's output as information more reliably in this form than as plain text,
+    on every route measured, at a few tokens per tool result and with the cached prefix unchanged.
+    """
+
     supports_request_scoped_system_prompts: bool
     """Whether the provider's API keeps a request-scoped `SystemPromptPart` in the conversation and stops rendering it itself. Default: `False`.
 

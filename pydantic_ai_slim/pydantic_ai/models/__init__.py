@@ -1837,6 +1837,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             sealed=self._seals_system_blocks,
         )
         messages = _replace_unsupported_tool_return_files(messages, self.profile)
+        messages = _tool_returns_as_json_strings(messages, self.profile)
         authored, messages = _tool_results_first(authored, messages)
         # The passes above replace or reorder parts one for one, so `authored` still lines up with `messages`.
         tool_call_id_length = self.profile.get('tool_call_id_length')
@@ -4375,6 +4376,33 @@ def _text_file_content(item: object) -> str | None:
     if isinstance(item, BinaryContent) and _utils.is_text_like_media_type(item.media_type):
         return item.data.decode(errors='replace')
     return None
+
+
+def _tool_returns_as_json_strings(messages: list[ModelMessage], profile: ModelProfile) -> list[ModelMessage]:
+    """Send each successful string tool return as a JSON string field, where the profile asks for it.
+
+    See [`needs_json_string_tool_returns`][pydantic_ai.profiles.ModelProfile.needs_json_string_tool_returns]. Parts are
+    replaced one for one, and only in the outgoing copy. Returns the original list when nothing changed.
+    """
+    if not profile.get('needs_json_string_tool_returns', False):
+        return messages
+    new_messages: list[ModelMessage] = []
+    changed = False
+    for message in messages:
+        if isinstance(message, ModelRequest):
+            parts = [_as_json_string_tool_return(part) for part in message.parts]
+            if _parts_changed(parts, message.parts):
+                message = replace(message, parts=parts)
+                changed = True
+        new_messages.append(message)
+    return new_messages if changed else messages
+
+
+def _as_json_string_tool_return(part: ModelRequestPart) -> ModelRequestPart:
+    """`part` with its content as `{"tool_output": ...}` JSON when it's a successful tool return of a string."""
+    if not isinstance(part, ToolReturnPart) or part.outcome != 'success' or not isinstance(part.content, str):
+        return part
+    return replace(part, content=json.dumps({'tool_output': part.content}, ensure_ascii=False))
 
 
 def _replace_unsupported_tool_return_files(messages: list[ModelMessage], profile: ModelProfile) -> list[ModelMessage]:
