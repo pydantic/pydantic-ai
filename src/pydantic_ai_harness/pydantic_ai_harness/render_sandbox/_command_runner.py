@@ -177,7 +177,7 @@ def _run(config: _RunConfig) -> None:
                 raise RuntimeError('Cannot record process identity')
             _state(claim, pid=process.pid, birth=birth, done=False)
         assert process.stdout is not None and process.stderr is not None
-        _capture(process, claim, config['limit'], config['timeout'], config['drain'])
+        _Capture(process, claim, config['limit'], config['timeout'], config['drain']).run()
     finally:
         if process is not None:
             with _locked(claim):
@@ -195,76 +195,87 @@ def _run(config: _RunConfig) -> None:
         # calls remain idempotent and cannot recreate an ambiguous registration.
 
 
-def _capture(
-    process: subprocess.Popen[bytes],
-    claim: Path,
-    limit: int,
-    timeout: float | int | None,
-    drain: float | int,
-) -> None:
-    assert process.stdout is not None and process.stderr is not None
-    pipes: dict[int, tuple[str, IO[bytes]]] = {
-        process.stdout.fileno(): ('stdout', process.stdout),
-        process.stderr.fileno(): ('stderr', process.stderr),
-    }
-    started = time.monotonic()
-    drain_deadline: float | None = None
-    direct_exit: int | None = None
-    terminal: str | None = None
-    output_bytes = 0
-    with selectors.DefaultSelector() as selector:
-        for fd in pipes:
-            os.set_blocking(fd, False)
-            selector.register(fd, selectors.EVENT_READ)
-        while True:
-            now = time.monotonic()
-            with _locked(claim):
-                # poll() reaps. The state changes in the same critical section,
-                # so the stop process never signals a reused PID after reaping.
-                direct_exit = process.poll()
-                if direct_exit is not None:
-                    # A stop that arrives while output drains still kills the command's process group.
-                    _state(claim, done=True, draining_group=process.pid)
-                    if drain_deadline is None:
-                        drain_deadline = now + drain
-                elif terminal is None and timeout is not None and now - started >= timeout:
-                    terminal = 'timeout'
-                    _signal_owned(claim)
-            # After the direct child exits, keep reading until every pipe reaches EOF or the drain grace ends.
-            if drain_deadline is not None and (not selector.get_map() or terminal == 'limit' or now >= drain_deadline):
-                break
-            ready = selector.select(0.02 if drain_deadline is None else min(0.02, drain_deadline - now))
-            for key, _ in ready:
-                fd = key.fd
-                stream_name, pipe = pipes[fd]
-                try:
-                    data = os.read(fd, _CHUNK_SIZE)
-                except BlockingIOError:  # pragma: lax no cover - nonblocking readiness can race the kernel
-                    continue
-                if not data:
-                    selector.unregister(fd)
-                    pipe.close()
-                    continue
-                remaining = max(0, limit - output_bytes)
-                captured = data[:remaining]
-                output_bytes += len(data)
-                if captured:  # pragma: no branch - pipe draining can finish before another post-limit read
-                    _frame(
-                        'output',
-                        stream=stream_name,
-                        data=base64.b64encode(captured).decode('ascii'),
-                    )
-                if output_bytes > limit and terminal is None:
-                    terminal = 'limit'
-                    with _locked(claim):
-                        _signal_owned(claim)
-        # Closing our pipe ends, instead of waiting for EOF, is what permits a
-        # normal direct exit while a background child still holds its ends.
-        for _, pipe in pipes.values():
+class _Capture:
+    """Frames a running command's output until it ends, hits its limit or timeout, or its drain grace ends."""
+
+    def __init__(
+        self, process: subprocess.Popen[bytes], claim: Path, limit: int, timeout: float | int | None, drain: float | int
+    ) -> None:
+        assert process.stdout is not None and process.stderr is not None
+        self.process, self.claim, self.limit, self.timeout, self.drain = process, claim, limit, timeout, drain
+        self.pipes: dict[int, tuple[str, IO[bytes]]] = {
+            process.stdout.fileno(): ('stdout', process.stdout),
+            process.stderr.fileno(): ('stderr', process.stderr),
+        }
+        self.started = time.monotonic()
+        self.drain_deadline: float | None = None
+        self.direct_exit: int | None = None
+        self.terminal: str | None = None
+        self.output_bytes = 0
+
+    def run(self) -> None:
+        with selectors.DefaultSelector() as selector:
+            for fd in self.pipes:
+                os.set_blocking(fd, False)
+                selector.register(fd, selectors.EVENT_READ)
+            while True:
+                now = time.monotonic()
+                self._check_process(now)
+                if self._finished(selector, now):
+                    break
+                wait = 0.02 if self.drain_deadline is None else min(0.02, self.drain_deadline - now)
+                for key, _ in selector.select(wait):
+                    self._read(selector, key.fd)
+            # Closing our pipe ends, instead of waiting for EOF, is what permits a
+            # normal direct exit while a background child still holds its ends.
+            for _, pipe in self.pipes.values():
+                pipe.close()
+        direct_exit = self.direct_exit
+        # Popen reports a signal death as -N; shells and core's local backend report 128+N.
+        code = 128 - direct_exit if direct_exit is not None and direct_exit < 0 else direct_exit
+        _frame(self.terminal or 'exit', code=code)
+
+    def _check_process(self, now: float) -> None:
+        with _locked(self.claim):
+            # poll() reaps. The state changes in the same critical section,
+            # so the stop process never signals a reused PID after reaping.
+            self.direct_exit = self.process.poll()
+            if self.direct_exit is not None:
+                # A stop that arrives while output drains still kills the command's process group.
+                _state(self.claim, done=True, draining_group=self.process.pid)
+                if self.drain_deadline is None:
+                    self.drain_deadline = now + self.drain
+            elif self._timed_out(now):
+                self.terminal = 'timeout'
+                _signal_owned(self.claim)
+
+    def _timed_out(self, now: float) -> bool:
+        return self.terminal is None and self.timeout is not None and now - self.started >= self.timeout
+
+    def _finished(self, selector: selectors.BaseSelector, now: float) -> bool:
+        """After the direct child exits, keep reading until every pipe reaches EOF or the drain grace ends."""
+        if self.drain_deadline is None:
+            return False
+        return not selector.get_map() or self.terminal == 'limit' or now >= self.drain_deadline
+
+    def _read(self, selector: selectors.BaseSelector, fd: int) -> None:
+        stream_name, pipe = self.pipes[fd]
+        try:
+            data = os.read(fd, _CHUNK_SIZE)
+        except BlockingIOError:  # pragma: lax no cover - nonblocking readiness can race the kernel
+            return
+        if not data:
+            selector.unregister(fd)
             pipe.close()
-    # Popen reports a signal death as -N; shells and core's local backend report 128+N.
-    code = 128 - direct_exit if direct_exit is not None and direct_exit < 0 else direct_exit
-    _frame(terminal or 'exit', code=code)
+            return
+        captured = data[: max(0, self.limit - self.output_bytes)]
+        self.output_bytes += len(data)
+        if captured:  # pragma: no branch - pipe draining can finish before another post-limit read
+            _frame('output', stream=stream_name, data=base64.b64encode(captured).decode('ascii'))
+        if self.output_bytes > self.limit and self.terminal is None:
+            self.terminal = 'limit'
+            with _locked(self.claim):
+                _signal_owned(self.claim)
 
 
 def main() -> None:

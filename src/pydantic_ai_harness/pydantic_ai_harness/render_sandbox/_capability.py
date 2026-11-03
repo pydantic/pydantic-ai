@@ -8,10 +8,9 @@ from dataclasses import dataclass, field
 from render import RenderAsync
 
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._workspace_provider import check_working_dir
+from pydantic_ai_harness._workspace_provider import check_provider, check_working_dir, reject_defer_loading
 
 from ._backend import (
     DEFAULT_SANDBOX_TIMEOUT,
@@ -56,11 +55,7 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
     """Environment variables every command gets, also on an attached sandbox; nothing is read from the host."""
 
     def __post_init__(self) -> None:
-        if self.defer_loading:
-            raise UserError(
-                '`RenderSandbox` does not support `defer_loading=True`: '
-                'the workspace is selected before deferred capabilities load.'
-            )
+        reject_defer_loading('RenderSandbox', self.defer_loading)
         check_sandbox_timeout(self.sandbox_timeout)
         check_working_dir(self.working_dir)
 
@@ -73,8 +68,7 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
 
         Rejected credentials raise `WorkspaceUnavailableError`.
         """
-        if ref.provider != 'render':
-            raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'render'")
+        check_provider(ref, 'render')
         await terminate_sandbox(self.client, ref.id)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:

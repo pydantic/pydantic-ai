@@ -1,10 +1,9 @@
 """A Render sandbox behind Pydantic AI's `WorkspaceBackend` protocol.
 
-External assumptions verified 2026-10-09 against Render SDK 1.2.0 and
+External assumptions verified against the stable Sandbox API of Render SDK 1.6.0 and
 https://render.com/docs/sandboxes: asynchronous exec streams keep running after the
 client disconnects, `copy_to`/`copy_from` transfer file contents, and the default image
-provides Python 3 on Linux. Recheck them with the live suite when upgrading the
-experimental SDK API.
+provides Python 3 on Linux. Recheck them with the live suite when upgrading the SDK.
 """
 
 from __future__ import annotations
@@ -14,14 +13,16 @@ import json
 import logging
 import posixpath
 import shlex
+import shutil
 from collections.abc import Mapping
 from contextlib import AbstractAsyncContextManager
+from functools import partial
 from importlib.resources import files
-from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import mkdtemp
 from uuid import uuid4
 
 import anyio
+import anyio.to_thread
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
@@ -42,10 +43,11 @@ from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env,
     check_integer,
+    check_provider,
     check_timeout,
     command_argv,
+    require_asyncio,
     run_to_completion,
-    running_on_asyncio,
 )
 
 try:
@@ -77,9 +79,7 @@ def check_sandbox_timeout(value: int) -> None:
         raise UserError(f'sandbox_timeout must be at most 86400 seconds, got {value!r}.')
 
 
-def _require_asyncio() -> None:
-    if not running_on_asyncio():
-        raise UserError('Render sandbox needs the asyncio event loop: the backend runs its calls on asyncio tasks.')
+_ASYNCIO_ONLY = 'Render sandbox needs the asyncio event loop: the backend runs its calls on asyncio tasks.'
 
 
 class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
@@ -114,8 +114,8 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         working_dir: str = DEFAULT_WORKING_DIR,
         env: Mapping[str, str] | None = None,
     ) -> None:
-        if ref is not None and ref.provider != 'render':
-            raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'render'")
+        if ref is not None:
+            check_provider(ref, 'render')
         check_sandbox_timeout(sandbox_timeout)
         check_env(env)
         self._env = dict(env or {})
@@ -140,7 +140,7 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
     def _operation(self) -> AbstractAsyncContextManager[RenderAsync]:
         # Without a caller-supplied client, each top-level operation opens its own and closes it when
         # done, so a backend dropped by a durable task or another event loop leaves no pool behind.
-        _require_asyncio()
+        require_asyncio(_ASYNCIO_ONLY)
         return client_scope(self._client)
 
     async def _create(self, client: RenderAsync) -> None:
@@ -278,24 +278,10 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         remote = f'/tmp/.render-pydantic-{uuid4().hex}'
         try:
             size = await self._helper(client, 'read' if data is None else 'prepare', path, remote)
-            with TemporaryDirectory(prefix='render-pydantic-') as directory:
-                local = Path(directory) / 'data'
-                if data is not None:
-                    await anyio.Path(local).write_bytes(data)
-                # The public SDK has per-connection timeouts but no total file deadline.
-                # Never retry an uncertain upload or hide failure with a shell fallback.
-                async with asyncio.timeout(self._deadline(size if data is None else len(data))):
-                    if data is None:
-                        await client.sandboxes.copy_from(ref.id, f'{remote}/data', local)
-                    else:
-                        await client.sandboxes.copy_to(ref.id, local, f'{remote}/data')
-                if data is None:
-                    # Reject a changed snapshot before allocating the returned bytes.
-                    if local.is_symlink() or local.stat().st_size != size:
-                        raise WorkspaceError('Render file download size did not match its snapshot')
-                    return await anyio.Path(local).read_bytes()
+            content = await self._copy(client, ref.id, f'{remote}/data', data, size)
+            if data is not None:
                 await self._helper(client, 'commit', path, remote, len(data))
-                return b''
+            return content
         except SandboxFileNotFoundError as error:
             raise FileNotFoundError(path) from error
         except SandboxNotFoundError as error:
@@ -316,6 +302,28 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
                     await self._run(client, argv, self._env, _OPERATION_TIMEOUT)
                 except Exception:
                     pass
+
+    async def _copy(self, client: RenderAsync, sandbox_id: str, remote: str, data: bytes | None, size: int) -> bytes:
+        """Download `remote` (`data` is `None`) or upload `data` to it through a local staging file."""
+        directory = await anyio.to_thread.run_sync(partial(mkdtemp, prefix='render-pydantic-'))
+        try:
+            local = anyio.Path(directory) / 'data'
+            if data is not None:
+                await local.write_bytes(data)
+            # The public SDK has per-connection timeouts but no total file deadline.
+            # Never retry an uncertain upload or hide failure with a shell fallback.
+            async with asyncio.timeout(self._deadline(size if data is None else len(data))):
+                if data is not None:
+                    await client.sandboxes.copy_to(sandbox_id, str(local), remote)
+                    return b''
+                await client.sandboxes.copy_from(sandbox_id, remote, str(local))
+            # Reject a changed snapshot before allocating the returned bytes.
+            if await local.is_symlink() or (await local.stat()).st_size != size:
+                raise WorkspaceError('Render file download size did not match its snapshot')
+            return await local.read_bytes()
+        finally:
+            with anyio.CancelScope(shield=True):
+                await anyio.to_thread.run_sync(partial(shutil.rmtree, directory, ignore_errors=True))
 
     async def read_bytes(self, path: str) -> bytes:
         async with self._operation() as client:
@@ -343,7 +351,7 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
 
 async def terminate_sandbox(client: RenderAsync | None, sandbox_id: str) -> None:
     """Terminate a sandbox by ID; Render accepts an already terminated one, and an unknown ID is already gone."""
-    _require_asyncio()
+    require_asyncio(_ASYNCIO_ONLY)
     async with client_scope(client) as scope:
         try:
             await scope.sandboxes.terminate(sandbox_id)
