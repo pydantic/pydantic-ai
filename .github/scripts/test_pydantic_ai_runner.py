@@ -280,12 +280,14 @@ fi
     assert (agent_dir / 'github-context' / preserved_corpus).exists()
 
 
-def test_prefetch_github_context_rejects_capped_corpus(tmp_path: Path):
+# 1,277 open issues filled a cap of 1000, which dropped the corpus from every issue-filing sweep.
+@pytest.mark.parametrize(('open_issues', 'kept'), [(1277, True), (10000, False)])
+def test_prefetch_github_context_rejects_only_a_capped_corpus(tmp_path: Path, open_issues: int, kept: bool):
     result, agent_dir = _run_context_prefetch(
         tmp_path,
-        gh_script="""\
+        gh_script=f"""\
 if [ "$1:$2" = "issue:list" ]; then
-  python3 -c 'import json; print(json.dumps([{}] * 1000))'
+  python3 -c 'import json; print(json.dumps([{{}}] * {open_issues}))'
   exit 0
 fi
 """
@@ -295,8 +297,8 @@ fi
 
     context_dir = agent_dir / 'github-context'
     assert result.returncode == 0
-    assert 'Could not prefetch open issues' in result.stdout
-    assert not (context_dir / 'open-issues.json').exists()
+    assert ('Could not prefetch open issues' in result.stdout) is not kept
+    assert (context_dir / 'open-issues.json').exists() is kept
     assert (context_dir / 'open-pull-requests.json').exists()
 
 
@@ -1010,12 +1012,23 @@ def test_run_routes_workflow_prompt_to_system_instructions(monkeypatch: pytest.M
     assert sentinel not in user_text
 
 
-def _safe_outputs_toolset(sink: Path) -> AbstractToolset[object]:
-    """Stand-in for gh-aw's safe-outputs MCP server, which appends each output to `GH_AW_SAFE_OUTPUTS`."""
+def _safe_outputs_toolset(sink: Path, *, noop_max: int | None = None) -> AbstractToolset[object]:
+    """Stand-in for gh-aw's safe-outputs MCP server, which appends each output to `GH_AW_SAFE_OUTPUTS`.
+
+    `noop_max` enforces the server's per-run limit, which reaches the model as a retry from a bare `McpError`.
+    """
     toolset: FunctionToolset[object] = FunctionToolset()
+    noops = 0
 
     @toolset.tool_plain
     def noop(message: str) -> str:
+        nonlocal noops
+        if noop_max is not None and noops >= noop_max:
+            error = _mcp_error(
+                f'calling "tools/call": E002: noop limit reached — {noops} of {noop_max} already used this run'
+            )
+            raise ModelRetry(str(error)) from error
+        noops += 1
         with sink.open('a', encoding='utf-8') as f:
             f.write(json.dumps({'type': 'noop', 'message': message}) + '\n')
         return 'ok'
@@ -1034,14 +1047,18 @@ def _safe_outputs_toolset(sink: Path) -> AbstractToolset[object]:
 
 
 def _run_shim(
-    respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse], sink: Path, *, mcp_tool_names: bool = False
+    respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse],
+    sink: Path,
+    *,
+    mcp_tool_names: bool = False,
+    noop_max: int | None = None,
 ) -> int:
     """Run the shim on a `FunctionModel` that streams each response `respond` returns.
 
     `mcp_tool_names` names the safe-output tools as the model sees gh-aw's `safeoutputs` server,
     `mcp__safeoutputs__<tool>`, instead of by their bare names.
     """
-    safe_outputs = _safe_outputs_toolset(sink)
+    safe_outputs = _safe_outputs_toolset(sink, noop_max=noop_max)
 
     async def _stream(messages: list[ModelMessage], info: AgentInfo):
         response = respond(messages, info)
@@ -1576,6 +1593,144 @@ def test_run_offers_only_safe_output_tools_inside_the_time_reserve(monkeypatch: 
     # The in-flight request's tool call still ran.
     assert len(glob_returns) == 1
     assert 'module.py' in glob_returns[0]
+
+
+@pytest.mark.parametrize(
+    ('inside_reserve', 'withheld', 'args'),
+    [(False, 'mcp__safeoutputs__noop', {'message': 'progress note'}), (True, 'mcp__safeoutputs__probe', {})],
+)
+def test_ci_review_withholds_noop_and_non_publishing_outputs_in_the_reserve(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, inside_reserve: bool, withheld: str, args: dict[str, object]
+):
+    """CI Review's model spent its one `noop` on progress notes, and looped on non-publishing outputs in the reserve.
+
+    The model can still call a withheld tool from memory, and each call is answered without spending a retry.
+    """
+    monkeypatch.setenv('GITHUB_WORKFLOW', shim.CI_REVIEW_WORKFLOW)
+    sink = tmp_path / 'outputs.jsonl'
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    monkeypatch.setattr(shim, 'emit', lambda obj: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    seconds_left = shim.RUN_TIME_RESERVE_SECS + (-1 if inside_reserve else 60)
+    monkeypatch.setattr(shim, '_run_deadline', time.monotonic() + seconds_left)
+    offered: list[set[str]] = []
+    withheld_returns: list[str] = []
+
+    def _respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        offered.append({tool_def.name for tool_def in info.function_tools})
+        withheld_returns.extend(
+            str(part.content)
+            for part in messages[-1].parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == withheld
+        )
+        if sink.exists():
+            return ModelResponse(parts=[TextPart('done')])
+        if len(withheld_returns) < 2:
+            return ModelResponse(parts=[ToolCallPart(withheld, args)])
+        return ModelResponse(
+            parts=[ToolCallPart('mcp__safeoutputs__submit_pull_request_review', {'body': 'Review complete'})]
+        )
+
+    assert _run_shim(_respond, sink, mcp_tool_names=True) == 0
+    assert (
+        withheld_returns
+        == [
+            'error: this tool is not available to CI Review now. Finish by submitting your review with '
+            '`submit_pull_request_review`, as a COMMENT review if coverage is incomplete.'
+        ]
+        * 2
+    )
+    assert [entry['type'] for entry in map(json.loads, sink.read_text(encoding='utf-8').splitlines())] == [
+        'submit_pull_request_review'
+    ]
+    if inside_reserve:
+        assert offered == [{'mcp__safeoutputs__submit_pull_request_review'}] * 4
+    else:
+        assert {'Glob', 'Task', 'mcp__safeoutputs__probe', 'mcp__safeoutputs__submit_pull_request_review'} <= offered[0]
+        assert all('mcp__safeoutputs__noop' not in tools for tools in offered)
+
+
+def test_safe_output_past_its_limit_does_not_spend_the_tool_retry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """A sweep that called `noop` three times died on the second rejection with `exceeded max retries count of 1`."""
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'Pydantic AI Streaming Resilience Sweep')
+    sink = tmp_path / 'outputs.jsonl'
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    monkeypatch.setattr(shim, 'emit', lambda obj: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    noop_returns: list[str] = []
+
+    def _respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        noop_returns.extend(
+            str(part.content)
+            for part in messages[-1].parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'mcp__safeoutputs__noop'
+        )
+        if len(noop_returns) == 3:
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('mcp__safeoutputs__noop', {'message': 'progress note'})])
+
+    assert _run_shim(_respond, sink, mcp_tool_names=True, noop_max=1) == 0
+    assert noop_returns[0] == 'ok'
+    assert all(
+        returned.startswith('error: calling "tools/call": E002: noop limit reached')
+        and returned.endswith('The earlier calls are already recorded, so do not call this tool again.')
+        for returned in noop_returns[1:]
+    )
+
+
+@pytest.mark.parametrize(
+    ('workflow', 'requested', 'before_reserve', 'expected'),
+    [
+        (shim.CI_REVIEW_WORKFLOW, 600, 90.5, 90),
+        (shim.CI_REVIEW_WORKFLOW, None, 900, shim.BASH_DEFAULT_TIMEOUT),
+        (shim.CI_REVIEW_WORKFLOW, 60, 900, 60),
+        (shim.CI_REVIEW_WORKFLOW, 600, 0.5, None),
+        ('Pydantic AI Bug Hunter', 600, 90.5, 600),
+    ],
+)
+def test_ci_review_bash_stops_when_the_time_reserve_starts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    workflow: str,
+    requested: int | None,
+    before_reserve: float,
+    expected: int | None,
+):
+    """A CI Review `timeout 900 uv run …` started with 9 minutes left ran past the deadline with no review posted."""
+    monkeypatch.setenv('GITHUB_WORKFLOW', workflow)
+    sink = tmp_path / 'outputs.jsonl'
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    monkeypatch.setattr(shim, 'emit', lambda obj: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(shim, '_run_seconds_left', lambda: shim.RUN_TIME_RESERVE_SECS + before_reserve)
+    timeouts: list[float] = []
+
+    async def _run_shell(_ctx: RunContext[object], _command: str, *, timeout_seconds: float) -> str:
+        timeouts.append(timeout_seconds)
+        return 'installed'
+
+    monkeypatch.setattr(sys.modules['pydantic_ai_gh_aw_shim.bash'], 'run_shell', _run_shell)
+    bash_returns: list[str] = []
+
+    def _respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        bash_returns.extend(
+            str(part.content)
+            for part in messages[-1].parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'Bash'
+        )
+        if not bash_returns:
+            args: dict[str, object] = {'command': 'make install'}
+            if requested is not None:
+                args['timeout'] = requested
+            return ModelResponse(parts=[ToolCallPart('Bash', args)])
+        if not sink.exists():
+            return ModelResponse(parts=[ToolCallPart('submit_pull_request_review', {'body': 'Review complete'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    assert _run_shim(_respond, sink) == 0
+    if expected is None:
+        assert timeouts == []
+        assert bash_returns == ['error: the time budget is nearly spent; finish the task from what you already have']
+    else:
+        assert timeouts == [expected]
+        assert bash_returns == ['installed']
 
 
 @pytest.mark.parametrize('parallel_tasks', [1, 2])
@@ -2275,27 +2430,31 @@ def test_compact_history_uses_trim_alone_when_sufficient(monkeypatch: pytest.Mon
     assert 'superseded read' in str(first_return.content)
 
 
-def test_compact_history_falls_back_to_truncation_on_failure(monkeypatch: pytest.MonkeyPatch):
-    # Same size-driven setup as the previous test — 13 big msgs > trigger.
+def _failing_summariser(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    raise RuntimeError('boom')
+
+
+def _oversized_summariser(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('y' * 200_000)])
+
+
+@pytest.mark.parametrize('summariser', [_failing_summariser, _oversized_summariser])
+def test_compact_history_fallback_keeps_the_first_request_ahead_of_the_tail(
+    summariser: Callable[[list[ModelMessage], AgentInfo], ModelResponse],
+):
+    """The tail of an odd-length history starts with a model response; Z.AI rejects that with code 1214 (#11820)."""
     big = 'x' * 50_000
-    msgs: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=f'm{i} {big}')]) for i in range(13)]
-
-    class _FailingAgent:
-        def __init__(self, *a: object, **k: object) -> None:
-            pass
-
-        async def run(self, *a: object, **k: object) -> None:
-            raise RuntimeError('boom')
-
-    monkeypatch.setattr(shim, 'Agent', _FailingAgent)
+    msgs: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=shim.RUN_TRIGGER)])]
+    for i in range(6):
+        msgs += [ModelResponse(parts=[TextPart(f'r{i} {big}')]), ModelRequest(parts=[UserPromptPart(f'q{i} {big}')])]
 
     class _Ctx:
-        model = TestModel()
+        model = FunctionModel(summariser)
         usage = RunUsage()
 
     out = asyncio.run(shim._compact_history(cast(RunContext[None], _Ctx()), msgs))  # pyright: ignore[reportPrivateUsage]
-    # On failure: keep just the tail (no head, no synthetic summary).
-    assert len(out) == shim.COMPACTION_KEEP_RECENT
+    assert out == [msgs[0], *msgs[-shim.COMPACTION_KEEP_RECENT :]]
+    assert isinstance(out[1], ModelResponse)
 
 
 def test_compact_history_preserves_prior_synthetic_on_fallback(monkeypatch: pytest.MonkeyPatch):

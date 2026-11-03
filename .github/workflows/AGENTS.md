@@ -56,7 +56,9 @@ PR has closed or moved to a new head. The engine's gh-aw harness must exit on a 
 (`hasNoopInSafeOutputs`). Any other engine harness, including
 `src/pydantic_ai_harness/gh-aw/pydantic.md`, must do the same, or every stale run
 spends a full review. The `noop` does not skip the `detection` job, which still runs
-one threat-detection pass outside the agent slot.
+one threat-detection pass outside the agent slot. The shim withholds `noop` from the
+`CI Review` model, so this step writes the run's only `noop`. Keep `safe-outputs.noop`
+enabled for it.
 
 Both review workflows require a formal review from this run on the reviewed head.
 Their shim completion validator rejects placeholder noops and missing-data signals alone.
@@ -304,8 +306,8 @@ The provider-health job checks out the default branch and runs outside the agent
 container. It writes a decision summary and the `provider-health` artifact for every
 decision. A blocked gate must skip inference without emitting a passing review or other
 fabricated agent result. The non-model provider-health monitor owns incident issue
-creation and recovery; do not enable gh-aw's generic failure-as-issue reporting for these
-workflows.
+creation and recovery. Do not enable gh-aw's generic failure-as-issue reporting or its
+failed-job reporting (`report-failed-jobs`) for these workflows.
 
 The agent job waits for its engine concurrency slot after `provider_health` decides,
 sometimes for hours. Incidents and quota exhaustion from that wait must still stop
@@ -425,9 +427,13 @@ fresh PR run.
 For workflow and task incidents, inspect the affected host stage and output, link that
 evidence to the incident, and close it manually. A green run that skips the model or
 affected stage is not proof.
-Resolve closed-PR tasks as retired only after API verification and representative
-workflow recovery. Record why each task is retired. Do not describe retired tasks as
-same-target recoveries.
+
+The hourly scheduled run retires a task incident whose pull request head can no longer run.
+That is the case when the pull request is merged or closed, or its head moved off the SHA in
+the key. The run comments the pull request state it read, then closes the incident. A
+retired incident records no recovery. Do not describe a retired task as a same-target
+recovery. Close a task incident manually when its key names no pull request head, such as
+a manual dispatch's key.
 
 The health controller never enables a disabled agent workflow. After a fresh healthy
 provider-health check, an operator may deliberately enable a disabled workflow.
