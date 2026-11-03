@@ -65,3 +65,18 @@ An explicit `base_url` overrides `NVIDIA_BASE_URL`.
 
 An API key is only required for the hosted API. If your deployment requires bearer auth, also set
 `NVIDIA_API_KEY` or pass `api_key`.
+
+## Embeddings
+
+The `nvidia:` prefix also works with [`Embedder`][pydantic_ai.embeddings.Embedder] for NIM embedding models:
+
+```python
+from pydantic_ai import Embedder
+
+embedder = Embedder('nvidia:nvidia/nemotron-3.5-embed-1b')
+```
+
+NIM's asymmetric embedding models require an `input_type`, so
+[`embed_query()`][pydantic_ai.embeddings.Embedder.embed_query] sends `'query'` and
+[`embed_documents()`][pydantic_ai.embeddings.Embedder.embed_documents] sends `'passage'`.
+An `input_type` you set in the `extra_body` setting takes precedence.

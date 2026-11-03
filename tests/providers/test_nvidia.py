@@ -297,7 +297,11 @@ async def test_nvidia_nemotron_forced_tool_choice(
 async def test_nvidia_embeddings(
     allow_model_requests: None, nvidia_api_key: str, request_capture: RequestCapture, env: TestEnv
 ):
-    """`nvidia:` embedding models route through `OpenAIEmbeddingModel` to NIM's `/v1/embeddings`."""
+    """`nvidia:` embedding models route through `OpenAIEmbeddingModel` to NIM's `/v1/embeddings`.
+
+    NIM rejects asymmetric models without `input_type`, so queries send `'query'`, documents send `'passage'`,
+    and an `input_type` the caller sets in `extra_body` wins.
+    """
     env.set('NVIDIA_API_KEY', nvidia_api_key)
     env.remove('NVIDIA_BASE_URL')
     inferred = infer_embedding_model('nvidia:nvidia/nemotron-3.5-embed-1b')
@@ -308,4 +312,7 @@ async def test_nvidia_embeddings(
     embedder = Embedder(OpenAIEmbeddingModel('nvidia/nemotron-3.5-embed-1b', provider=provider))
     result = await embedder.embed_query('Hello, world!')
     assert result == snapshot()
-    assert request_capture.paths == ['/v1/embeddings']
+    await embedder.embed_documents(['Hello, world!'])
+    await embedder.embed_query('Hello, world!', settings={'extra_body': {'input_type': 'passage'}})
+    assert request_capture.paths == ['/v1/embeddings'] * 3
+    assert [body['input_type'] for body in request_capture.bodies()] == ['query', 'passage', 'passage']
