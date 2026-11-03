@@ -187,14 +187,12 @@ class ModelProfile(TypedDict, total=False):
     the seal.
 
     Set for Claude Sonnet 4.6, Claude Haiku 5.5 and Grok 4.7. Sonnet 4.6, with plain `<system>` blocks, ignored two
-    mid-conversation instruction changes 8/8 times, and followed both 16/16 times with the seal and the sentence
-    together (either alone: 0/8). With the blocks after the user's words it also followed steering after a tool
-    result and a change next to a user lookalike 16/16 times, where ahead of them it got 0/16. Haiku 5.5 honors a
-    native mid-conversation system message but did as well or better on every cell measured with this rendering
-    (instruction history 158/176 native, 64/64 sealed; a genuine change next to a tool lookalike 4-5/16 and 16/16),
-    and worse with plain `<system>` blocks, so its Anthropic profile doesn't use the native role. Grok 4.7 followed a
-    genuine change next to a user lookalike 16/16 times sealed and 0/15 with plain blocks, and steering after a tool
-    result 16/16 and 9/16, and followed no lookalike either way (0/16).
+    mid-conversation instruction changes, and followed both with the seal and the sentence together (not with either
+    alone). With the blocks after the user's words it also followed steering after a tool result and a change next
+    to a user lookalike, where ahead of them it didn't. Haiku 5.5 honors a native mid-conversation system message but
+    did as well or better on every cell measured with this rendering, and worse with plain `<system>` blocks, so its
+    Anthropic profile doesn't use the native role. Grok 4.7 followed a genuine change next to a user lookalike and
+    steering after a tool result more reliably sealed than with plain blocks.
     """
 
     supports_request_scoped_system_prompts: bool

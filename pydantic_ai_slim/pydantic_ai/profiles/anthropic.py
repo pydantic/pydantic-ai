@@ -44,11 +44,10 @@ so the entry costs nothing measurable and keeps the instruction's operator autho
 `claude-mythos-5` is published as supported but isn't reachable with our credentials.
 
 `claude-haiku-5-5` is published as supported and honors the entry, but is deliberately absent: it gets the sealed
-`<system>` rendering instead (`needs_sealed_system_blocks`), which measured equal or better on every cell. With the
-entry it tracked instruction changes 158/176 times (sealed: 64/64), followed a genuine change next to a tool's
-lookalike 4–5/16 times (16/16) and next to a user's 1–2/16 (11/16), and followed a request-scoped prompt 30/48 times
-(64/64), at +1.4% cost per cached conversation with the prefix unchanged. The unsealed fallback was worse than the
-entry on instruction history (112/176), so it's the sealed one or neither.
+`<system>` rendering instead (`needs_sealed_system_blocks`), which measured equal or better on every cell
+(instruction changes, a genuine change next to a lookalike, request-scoped prompts), at +1.4% cost per cached
+conversation with the prefix unchanged. The unsealed fallback was worse than the entry on instruction history, so
+it's the sealed one or neither.
 
 It lives here rather than beside `AnthropicProvider` so `OpenRouterProvider` can share it without the `anthropic`
 SDK. It's a fact about Anthropic's API, not the model family, so `anthropic_model_profile()` doesn't apply it: the

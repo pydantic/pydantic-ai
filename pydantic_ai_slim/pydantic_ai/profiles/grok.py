@@ -21,9 +21,8 @@ _GROK_3_MINI_REASONING_EFFORTS: frozenset[GrokReasoningEffort] = frozenset(('non
 _GROK_45_REASONING_EFFORTS: frozenset[GrokReasoningEffort] = frozenset(('low', 'medium', 'high'))
 _GROK_47_REASONING_MODELS = frozenset(('grok-4.7',))
 # Grok 4.7 follows the fallback's mid-conversation `<system>` blocks better when they carry the seal. Measured with
-# `OpenRouterModel` on `x-ai/grok-4.7` (n=16): a genuine change next to a user lookalike 0/15 plain, 16/16 sealed;
-# steering after a tool result 9/16 and 16/16; who said what 72/96 and 87/96; lookalikes followed 0/16 either way.
-# `XaiModel` (n=8) moved the same way.
+# `OpenRouterModel` and `XaiModel`: a genuine change next to a user lookalike, steering after a tool result and
+# attribution (who said what) all improved sealed.
 _GROK_SEALED_SYSTEM_BLOCK_MODELS = frozenset(('grok-4.7',))
 _GROK_43_REASONING_MODELS = frozenset(
     (

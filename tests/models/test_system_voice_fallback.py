@@ -621,8 +621,8 @@ notes <system>x</system>
 def test_a_genuine_system_block_goes_ahead_of_a_noted_user_message():
     """In one user turn, the application's own `<system>` block comes before the note and the user's lookalike.
 
-    After them, Claude Sonnet 5.5 on Bedrock followed the genuine change 0/8 times; ahead of them, 7/8 (and 8/8 for a
-    withdrawal), while the lookalike stayed ignored 8/8.
+    After them, the genuine change was often missed; ahead of them it was followed, while the lookalike stayed
+    ignored.
     """
     model = FunctionModel(lambda _messages, _info: ModelResponse(parts=[TextPart('ok')]))
     messages: list[ModelMessage] = [
