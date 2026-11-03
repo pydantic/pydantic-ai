@@ -1,4 +1,7 @@
-"""The opt-in capture in `tests/refactor_capture.py`, mostly run against small in-process pytest sessions."""
+"""The opt-in capture in `tests/refactor_capture.py`, mostly run against small in-process pytest sessions.
+
+They test the capture tooling rather than model behavior, so no recording applies.
+"""
 
 from __future__ import annotations
 
@@ -69,7 +72,9 @@ class ReplayedStreamedResponse(CompletedStreamedResponse):
 
 async def drain_replayed():
     stream = ReplayedStreamedResponse(
-        ModelResponse(parts=[TextPart('replayed')]), model_request_parameters=ModelRequestParameters(), replay_events=True
+        ModelResponse(parts=[TextPart('replayed')]),
+        model_request_parameters=ModelRequestParameters(),
+        replay_events=True,
     )
     async for _ in stream:
         pass
@@ -99,13 +104,19 @@ def test_no_stream():
 
 @pytest.fixture
 def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunCapture:
-    """Capture an in-process pytest session over `STREAMS`, streaming `text`, into `capture_dir`."""
+    """Capture an in-process pytest session over `STREAMS`, streaming `text`, into `capture_dir`.
+
+    The session's conftest calls `register`, as `tests/conftest.py` does, with `REFACTOR_CAPTURE_DIR` set.
+    """
     monkeypatch.setenv('PYTEST_DISABLE_PLUGIN_AUTOLOAD', '1')
     monkeypatch.delenv('PYTEST_XDIST_WORKER', raising=False)
+    pytester.makeconftest('from tests.refactor_capture import register as pytest_configure')
 
     def run(capture_dir: Path, *args: str, text: str = 'hello') -> pytest.RunResult:
         pytester.makepyfile(test_streams=STREAMS.format(text=text))
-        return pytester.runpytest_inprocess('-p', 'no:cacheprovider', *args, plugins=[RefactorCapture(capture_dir)])
+        with monkeypatch.context() as patch:
+            patch.setenv(CAPTURE_DIR_ENV, str(capture_dir))
+            return pytester.runpytest_inprocess('-p', 'no:cacheprovider', *args)
 
     return run
 
@@ -212,6 +223,11 @@ def test_compare_flags_a_changed_event(run: RunCapture, tmp_path: Path, capsys: 
     assert capsys.readouterr().err.startswith('No capture in')
     assert compare(base, same) == 2
     assert capsys.readouterr().err.startswith('Both captures imported `pydantic_ai` from the same file')
+    nothing = tmp_path / 'nothing'
+    run(nothing, '-k', 'no_stream').assert_outcomes(passed=1, deselected=4)
+    (nothing / SOURCE_FILE).write_text(json.dumps({'pydantic_ai': f'{nothing}/pydantic_ai/__init__.py'}))
+    assert compare(base, nothing) == 2
+    assert capsys.readouterr().err.startswith('Nothing recorded in')
 
     # Stand in for captures of two checkouts.
     for capture_dir in (same, changed):

@@ -1,8 +1,8 @@
 """Record what streamed model responses emit, per test node, to prove a refactor keeps it.
 
-The capture is off unless `REFACTOR_CAPTURE_DIR` is set: only then does `tests/conftest.py` register
-`RefactorCapture`. To compare a base commit with the working tree, run this from the repository root, over one or two
-test nodes that stream through each changed line rather than whole test files:
+The capture is off unless `REFACTOR_CAPTURE_DIR` is set: only then does `register`, which `tests/conftest.py` calls,
+register `RefactorCapture`. To compare a base commit with the working tree, run this from the repository root, over
+one or two test nodes that stream through each changed line rather than whole test files:
 
     uv run python -m tests.refactor_capture "$(git merge-base HEAD upstream/main)" <test nodes>
 
@@ -15,10 +15,10 @@ Each stream is one JSON line of kind `stream`: the events its `__aiter__` hands 
 `FinalResultEvent`s included, the error iteration raised if any, and the response `get()` builds once the test ends.
 The capture wraps `__aiter__` on `StreamedResponse` and on every subclass that overrides it, whether the subclass is
 defined before the capture starts or after; one that overrides `__init_subclass__` without calling `super()`, or
-assigns `__aiter__` once it's defined, escapes it. A stream whose `__aiter__` iterates other streams, like the continuation
-composite in `models/_continuation.py`, is recorded once itself and once for each stream it iterates. When a capture
-starts, it runs an agent over a streamed canary response and stops the run if that stream wasn't recorded, so a
-consumer that stops iterating through `__aiter__` fails loudly instead of recording nothing.
+assigns `__aiter__` once it's defined, escapes it. A stream whose `__aiter__` iterates other streams, like the
+continuation composite in `models/_continuation.py`, is recorded once itself and once for each stream it iterates.
+When a capture starts, it runs an agent over a streamed canary response and stops the run if that stream wasn't
+recorded, so a consumer that stops iterating through `__aiter__` fails loudly instead of recording nothing.
 
 Lines are written per `pytest-xdist` worker when each test ends. Generated tool call ids, UUIDs, object addresses,
 timestamps within a day of the capture, history digests (which hash those timestamps), attempt durations and local
@@ -26,8 +26,8 @@ server ports are normalized, so two runs of the same code compare equal.
 
 The comparison lists the test nodes whose records differ or that only one capture has, and exits non-zero if there
 are any. It refuses two captures that imported `pydantic_ai` from the same file, since the base run then didn't load
-the base commit. It also counts the nodes whose streams reach each module that defines a `StreamedResponse`
-subclass, so the capture's reach over the changed modules shows.
+the base commit, and a capture that recorded nothing, since it proves nothing. It also counts the nodes whose streams
+reach each module that defines a `StreamedResponse` subclass, so the capture's reach over the changed modules shows.
 """
 
 from __future__ import annotations
@@ -67,6 +67,12 @@ GENERATED_VALUES = [
     (re.compile(r'(127\.0\.0\.1|localhost):\d+'), r'\1:PORT'),
 ]
 ISO_DATETIME = re.compile(r'"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)"')
+
+
+def register(config: pytest.Config) -> None:
+    """Register a `RefactorCapture` into `REFACTOR_CAPTURE_DIR` if it's set."""
+    if capture_dir := os.environ.get(CAPTURE_DIR_ENV):
+        config.pluginmanager.register(RefactorCapture(Path(capture_dir)))
 
 
 class RefactorCapture:
@@ -233,6 +239,9 @@ def compare(base_dir: Path, head_dir: Path) -> int:
         print(f'Both captures imported `pydantic_ai` from the same file: {base_source}', file=sys.stderr)
         return 2
     base, head = _load(base_dir), _load(head_dir)
+    if empty := [d for d, nodes in ((base_dir, base), (head_dir, head)) if not nodes]:
+        print(f'Nothing recorded in {", ".join(map(str, empty))}; the selected tests may not stream.', file=sys.stderr)
+        return 2
     head_records = [json.loads(line) for lines in head.values() for line in lines]
     print(f'nodes: base {len(base)}, head {len(head)}')
     print(f'records: base {sum(map(len, base.values()))}, head {len(head_records)}')
