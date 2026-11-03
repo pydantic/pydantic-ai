@@ -116,6 +116,11 @@ class PromptInputs(Protocol):
 
     def steer(self, text: str) -> bool: ...
 
+    @property
+    def handling(self) -> bool:
+        """Whether the prompt handles an input now: a turn, a command, or a rewind."""
+        ...
+
 
 class LiveRuntime:
     """A live session as `PluginHost.live` lists it, read through the host its session plugins get."""
@@ -191,6 +196,12 @@ class LiveRuntime:
     def running(self) -> bool:
         """Whether a turn runs in the session now."""
         return self._running()
+
+    @property
+    def busy(self) -> bool:
+        """Whether the session handles input now or has input queued."""
+        inputs = self._inputs()
+        return self.running or self.queued > 0 or (inputs is not None and inputs.handling)
 
     def setting(self, key: str, /) -> JsonValue:
         """The effective value of a CLAI setting in the session."""

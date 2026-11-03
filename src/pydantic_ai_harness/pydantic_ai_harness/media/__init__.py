@@ -2,9 +2,7 @@
 
 Used by `pydantic_ai_harness.step_persistence` to keep snapshots small when
 messages carry `BinaryContent` payloads or large text (e.g. big tool-return
-strings). A forthcoming `MediaExternalizer` capability (#254) will reuse
-these stores for in-flight wire-payload reduction (rewriting `BinaryContent`
-to URL parts before the model sees them).
+strings).
 
 `MongoMediaStore` needs the `mongodb` extra (`pip install
 pydantic-ai-harness[mongodb]`); it is imported lazily so the rest of this
