@@ -160,6 +160,18 @@ def open_request_policy() -> ContentPolicy | None:
     return policy
 
 
+def current_model_request_span() -> Span | None:
+    """The request-policy span, only while it's the caller's current span, for a model to record attributes on."""
+    policy = include_content_ctx.get()
+    if (
+        policy is None
+        or not policy.span.is_recording()
+        or get_current_span().get_span_context() != policy.span.get_span_context()
+    ):
+        return None
+    return policy.span
+
+
 @contextmanager
 def request_policy_scope(policy: ContentPolicy | None) -> Generator[None]:
     """Install `policy` for the scope, for a durable unit that runs outside the context that opened the request."""

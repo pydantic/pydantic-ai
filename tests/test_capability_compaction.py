@@ -49,6 +49,7 @@ from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelContextWindowExceededError,
     ModelRetry,
+    RetryModelRequest,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
@@ -793,6 +794,26 @@ async def test_context_overflow_is_compacted_and_retried_on_the_same_model():
     assert result.response.failed_attempts is None
 
 
+async def test_retry_request_from_the_resent_overflow_attempt_makes_another_attempt():
+    """A `RetryModelRequest` the compacted resend raises is the attempt loop's, not an error for the hooks."""
+    calls: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('m')
+        if len(calls) == 1:
+            raise ModelContextWindowExceededError('m', 'context_length_exceeded')
+        if len(calls) == 2:
+            raise RetryModelRequest()
+        return ModelResponse(parts=[TextPart('done')])
+
+    summarize = Summarize()
+    result = await Agent(FunctionModel(respond), capabilities=[summarize]).run('hi')
+    assert result.output == 'done'
+    assert calls == ['m', 'm', 'm']
+    # A compaction for an overflow isn't a pending request, so the next attempt isn't compacted again.
+    assert [request.reason for request in summarize.calls] == ['context_overflow']
+
+
 async def test_context_overflow_twice_raises_the_overflow():
     calls: list[str] = []
     summarize = Summarize()
@@ -1246,7 +1267,11 @@ async def test_capability_loads_are_recorded_again_after_the_summary():
 
 
 async def test_capability_loads_after_a_provider_compaction_end_the_kept_messages():
-    """After a provider's compaction response, the records go after the requests following it, inside the kept messages."""
+    """After a provider's compaction response, the records go after the requests following it, inside the kept messages.
+
+    A regression test for native compaction through the hook unloading deferred capabilities (#11494): the
+    capability loaded before the provider's `CompactionPart` stays loaded, and its tool is still offered.
+    """
 
     def native(request: CompactionRequest) -> CompactionResult:
         part = CompactionPart(provider_name='openai', provider_details={'encrypted_content': 'gAAA'})

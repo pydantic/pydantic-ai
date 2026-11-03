@@ -17,8 +17,7 @@ the agent rarely needs in full and pins a snapshot that drifts from `main`.
 `PydanticAIDocs` exposes one tool, `read_pyai_docs(topic)`, that locates the requested page and
 returns it in full, with its model aliases resolved -- nothing is bundled into context up front.
 Each call resolves the topic from a configured local checkout first, then falls back to fetching
-the page from `pydantic/pydantic-ai:main`, so it works whether or not you have a local checkout
-(the remote fallback needs network access).
+the page from `pydantic/pydantic-ai:main` (the remote fallback needs network access).
 
 Topics: `capabilities`, `hooks`, `tools`, `tools-advanced`, `toolsets`, `agent`.
 
@@ -38,7 +37,7 @@ result = agent.run_sync('Read the toolsets docs, then explain how to build a Fun
 print(result.output)
 ```
 
-A configured local checkout is read through the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), so a run with a local path and no workspace fails at its start. With no local path configured, every call goes to the remote source and no workspace is needed.
+A configured local checkout is read through the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), so a run with a local path and no workspace fails at its start. With no local path configured, no workspace is needed.
 
 ## Resolution order
 
@@ -63,7 +62,7 @@ always reads `main`, so it is the fresh fallback.
 
 `local_docs_path` takes precedence over the `PYDANTIC_AI_HARNESS_DOCS_PATH` environment variable.
 `~` is not expanded -- use an absolute workspace path or a path relative to its working
-directory. With neither path set, every call goes straight to the remote source.
+directory.
 
 ## Configuration
 

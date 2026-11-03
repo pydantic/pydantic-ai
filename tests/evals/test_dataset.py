@@ -106,6 +106,7 @@ class TaskOutput(BaseModel):
     confidence: float = 1.0
 
 
+@pytest.mark.usefixtures('young_gc')
 def test_evaluate_sync_replaces_closed_event_loop(closed_event_loop: asyncio.AbstractEventLoop):
     """`evaluate_sync` must replace a closed thread-current event loop.
 
@@ -125,6 +126,7 @@ def test_evaluate_sync_replaces_closed_event_loop(closed_event_loop: asyncio.Abs
     assert not asyncio.all_tasks(replacement_loop)
 
 
+@pytest.mark.usefixtures('young_gc')
 def test_evaluate_sync_creates_missing_event_loop(missing_event_loop: asyncio.AbstractEventLoop):
     """`evaluate_sync` must create and install an event loop when the thread has none."""
     dataset = Dataset(name='test', cases=[Case(name='case', inputs='input')])

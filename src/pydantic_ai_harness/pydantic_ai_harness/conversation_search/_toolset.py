@@ -24,6 +24,7 @@ from pydantic_core import ErrorDetails
 
 from pydantic_ai import RunContext
 from pydantic_ai.messages import (
+    CapabilityLoadDeltaPart,
     CompactionPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
@@ -246,10 +247,13 @@ def _format_request_part(part: ModelRequestPart, *, terms: frozenset[str] | None
         if not part.transcript:
             return None
         return f'Speech [{part.speaker}]: {_clip(part.transcript, _EXCERPT_CHARS, terms)}'
-    # Tool-list, instruction and effort bookkeeping rather than conversation, so there is no line to contribute.
-    # Redundant against the union as it stands today, but kept explicit so the fallthrough
-    # below stays a real branch at runtime rather than dead code.
-    if isinstance(part, (ToolAvailabilityDeltaPart, InstructionBaselinePart, ModelSettingsDeltaPart)):
+    # Tool-list, capability, instruction and effort bookkeeping rather than conversation, so there is no line to
+    # contribute. Redundant against the union as it stands today, but kept explicit so the fallthrough below stays a
+    # real branch at runtime rather than dead code.
+    if isinstance(
+        part,
+        (ToolAvailabilityDeltaPart, CapabilityLoadDeltaPart, InstructionBaselinePart, ModelSettingsDeltaPart),
+    ):
         return None
     # A part pydantic-ai added after this was written. Indexing it would mean guessing which
     # of its fields read as conversation, and a search index is not worth failing a run over,

@@ -682,6 +682,8 @@ A short-circuiting wrapper skips `before_*`, including policy hooks. Put mandato
 
     Cancellation is terminal: a hook may observe it and clean up, but returning a result to recover the run does not work. The run re-asserts the cancellation at the next step boundary.
 
+    Under an `anyio` cancellation, such as an `anyio.fail_after()` deadline around the run, cleanup that awaits in `on_run_error`, `after_run`, or after `handler()` in `wrap_run` or `wrap_node_run` is cut at its next `await`. Run cleanup that must finish inside `anyio.CancelScope(shield=True)`. Bound shielded cleanup that does I/O with `anyio.move_on_after(..., shield=True)` instead, so a hung call can't hang the run indefinitely.
+
 ### Node hooks
 
 | Hook | Signature | Purpose |

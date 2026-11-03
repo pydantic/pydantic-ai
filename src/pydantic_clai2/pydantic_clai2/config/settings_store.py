@@ -126,6 +126,19 @@ class SettingsStore:
         """Resolve persisted overrides against built-in defaults."""
         return resolve_settings(self.overrides())
 
+    def worktree_remove_commands(self) -> dict[str, list[str]]:
+        """Read only cleanup configuration on exit; `ValueError` if it is invalid or cannot be read."""
+        try:
+            with self._connect() as connection:
+                row = connection.execute(
+                    'SELECT value_json FROM settings WHERE key = ?', ('worktrees.remove_commands',)
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise ValueError(str(exc)) from exc
+        if row is None:
+            return {}
+        return resolve_settings({'worktrees.remove_commands': _JSON.validate_json(row[0])}).worktree_remove_commands
+
     def set(self, key: str, value: JsonValue) -> None:
         """Validate before committing a single override."""
         resolve_settings({key: value})
