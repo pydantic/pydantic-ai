@@ -695,10 +695,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
             assert agent_run.result is not None, 'The graph run did not finish properly'
             return agent_run.result
-        except BaseException:
-            # Context exit can recover a body error; drop run references only after an unrecovered failure.
-            del agent_run, node, _stream_step
-            raise
+        finally:
+            # An escaping error's traceback holds this frame; context exit may already have recovered a body error,
+            # so the run is dropped only once the result is returned or the failure propagates.
+            agent_run = node = _stream_step = None
 
     @overload
     def run_sync(
