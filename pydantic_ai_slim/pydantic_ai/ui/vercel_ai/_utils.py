@@ -67,6 +67,9 @@ ENQUEUED_MESSAGES_DATA_TYPE = 'data-enqueued-messages'
 """Data chunk type for messages delivered into the run by `RunContext.enqueue`, encoded as `UIMessage`s."""
 
 MCP_APPS_DATA_TYPE = f'data-{MCP_APPS_UI_TYPE}'
+
+CONVERSATION_SAVED_DATA_TYPE = 'data-conversation-saved'
+"""Transient data chunk type for the entries a `conversation_store` save stored, sent after the run."""
 """Data chunk type for the MCP Apps data of a tool call, keyed by its tool call ID."""
 
 PROVIDER_METADATA_KEY = 'pydantic_ai'

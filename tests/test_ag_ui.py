@@ -161,6 +161,7 @@ with try_import() as imports_successful:
     from starlette.requests import Request
     from starlette.responses import StreamingResponse
 
+    from pydantic_ai.conversation_store import InMemoryConversationStore
     from pydantic_ai.ui import (
         DEFAULT_ALLOWED_CONTENT_TYPES,
         SSE_CONTENT_TYPE,
@@ -11897,6 +11898,57 @@ async def test_server_message_history_rejects_an_approval_for_a_call_not_pending
         'at the end of the stored history. If the conversation changed since the client loaded it, reload it from '
         'the server.'
     ]
+
+
+async def _stored_turn(
+    agent: Agent[None, str | DeferredToolRequests], store: InMemoryConversationStore, run_input: RunAgentInput
+) -> list[BaseEvent]:
+    """One request through an endpoint that loads and saves the conversation with a store, returning its events."""
+    adapter = AGUIAdapter(agent, run_input, manage_message_history='server', conversation_store=store)
+    return [event async for event in adapter.run_stream()]
+
+
+@pytestmark_interrupts
+async def test_conversation_store_loads_saves_and_resumes():
+    """With a store, the thread is loaded and saved on every run, a `resume[]` answers its pending call, and the stored entry ids follow the run."""
+    agent, requests, deleted = server_history_agent()
+    store = InMemoryConversationStore()
+    delete = UserMessage(id='u1', content='delete a.txt')
+    await _stored_turn(agent, store, create_input(delete, thread_id='thread'))
+    conversation = await store.load('thread')
+    assert conversation is not None and conversation.deferred_tool_requests is not None
+
+    events = await _stored_turn(agent, store, create_input(thread_id='thread', resume=_approve('del-1')))
+
+    assert deleted == ['a.txt']
+    assert conversation_view(requests[-1]) == snapshot(
+        ['user-prompt: delete a.txt', 'call del-1', 'return del-1: Deleted a.txt']
+    )
+    [saved] = [event for event in events if isinstance(event, CustomEvent)]
+    entries = await store.load_entries('thread')
+    assert saved.name == 'pydantic_ai_conversation_saved'
+    assert saved.value == {'conversation_id': 'thread', 'entry_ids': [entry.id for entry in entries[2:]]}
+    conversation = await store.load('thread')
+    assert conversation is not None and conversation.deferred_tool_requests is None
+    assert conversation_view(conversation.messages) == snapshot(
+        ['user-prompt: delete a.txt', 'call del-1', 'return del-1: Deleted a.txt', 'text: ok']
+    )
+
+
+@pytestmark_interrupts
+async def test_conversation_store_rejects_a_resume_for_a_call_not_pending():
+    agent, _, deleted = server_history_agent()
+    store = InMemoryConversationStore()
+    await _stored_turn(agent, store, create_input(UserMessage(id='u1', content='delete a.txt'), thread_id='thread'))
+
+    events = await _stored_turn(agent, store, create_input(thread_id='thread', resume=_approve('del-2')))
+
+    assert deleted == []
+    assert [event.message for event in events if isinstance(event, RunErrorEvent)] == snapshot(
+        [
+            "The request answers 1 tool call(s) that `message_history` is not waiting on: 'del-2'. With `manage_message_history='server'`, an approval or denial can only answer a tool call that is still pending at the end of the stored history. If the conversation changed since the client loaded it, reload it from the server."
+        ]
+    )
 
 
 async def test_dispatch_request_forwards_manage_message_history():

@@ -29,6 +29,8 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.abstract import AgentMetadata
 from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
+from pydantic_ai.conversation import Conversation
+from pydantic_ai.conversation_store import ConversationConflict, ConversationEntry, ConversationStore
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CapabilityLoadDeltaPart,
@@ -56,13 +58,14 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputDataT, OutputSpec
+from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
-from ._event_stream import NativeEvent, OnCancelFunc, OnCompleteFunc, UIEventStream
+from ._event_stream import NativeEvent, OnCancelFunc, OnCompleteFunc, UIEventStream, dispatch_callback
 from ._messages_builder import MessagesBuilder
 from ._utils import get_ui_message_id, set_ui_message_id, without_ui_message_id
 
@@ -533,7 +536,11 @@ class _ServerHeldTurn:
 
 
 def _take_new_turn(
-    message_history: Sequence[ModelMessage], client_messages: Sequence[ModelMessage], *, regenerate: bool = False
+    message_history: Sequence[ModelMessage],
+    client_messages: Sequence[ModelMessage],
+    *,
+    regenerate: bool = False,
+    waiting_on: DeferredToolRequests | None = None,
 ) -> _ServerHeldTurn:
     """Take the client's new turn under `manage_message_history='server'`, and the stored history it continues.
 
@@ -557,6 +564,10 @@ def _take_new_turn(
     `CapabilityLoadDeltaPart`s: the stored history has the loads the server recorded, and a client-supplied one would
     load a capability no part of the run loaded, as a client-made `load_capability` exchange would if it weren't
     dropped with the response it's in.
+
+    `waiting_on` is the stored conversation's deferred tool requests, when a conversation store says what
+    each pending call is waiting for: a tool result is then kept only for a call waiting on one, not for a
+    call waiting on an approval.
     """
     last_response = max((i for i, m in enumerate(client_messages) if isinstance(m, ModelResponse)), default=-1)
     new_turn = client_messages[last_response + 1 :]
@@ -590,6 +601,7 @@ def _take_new_turn(
         )
 
     pending = {call.tool_call_id for call in pending_tool_calls(history)}
+    answerable = _waiting_for_results(pending, waiting_on)
     kept: list[ModelMessage] = []
     dropped = 0
     for message in new_turn:
@@ -599,9 +611,10 @@ def _take_new_turn(
             if isinstance(part, CapabilityLoadDeltaPart):
                 continue
             if _is_tool_result_part(part):
-                if part.tool_call_id not in pending:
+                if part.tool_call_id not in answerable:
                     dropped += part.tool_call_id not in resubmitted_results
                     continue
+                answerable.discard(part.tool_call_id)
                 pending.discard(part.tool_call_id)
             parts.append(part)
         if len(parts) == len(message.parts):
@@ -613,18 +626,38 @@ def _take_new_turn(
     return _ServerHeldTurn(history, _drop_compaction_parts(kept), cut_at, pending)
 
 
-def _reject_answers_for_calls_not_pending(turn: _ServerHeldTurn, deferred_tool_results: DeferredToolResults) -> None:
+def _waiting_for_results(pending: set[str], waiting_on: DeferredToolRequests | None) -> set[str]:
+    """The `pending` calls a tool result may answer: all of them, or with `waiting_on`, those waiting on a result.
+
+    Without `waiting_on` it's `pending` itself, so answering a call discards it from both.
+    """
+    return pending if waiting_on is None else pending & {call.tool_call_id for call in waiting_on.calls}
+
+
+def _reject_answers_for_calls_not_pending(
+    turn: _ServerHeldTurn,
+    deferred_tool_results: DeferredToolResults,
+    *,
+    waiting_on: DeferredToolRequests | None = None,
+) -> None:
     """Raise a `UserError` when `deferred_tool_results` answers a tool call `turn` isn't waiting on.
 
     Under `manage_message_history='server'`, an approval, a denial or a result can only answer a tool call
     the stored history is waiting on, so a tool call the model didn't make, or one that's already answered,
     is never run. The whole request is rejected rather than the answer dropped: without the answer, the run
     would have nothing to continue with.
+
+    `waiting_on` is the stored conversation's deferred tool requests, when a conversation store says what
+    each pending call is waiting for: an approval or denial then has to answer a call waiting on one, and
+    a result a call waiting on a result.
     """
+    approvable = answerable = turn.pending
+    if waiting_on is not None:
+        approvable = turn.pending & {call.tool_call_id for call in waiting_on.approvals}
+        answerable = turn.pending & {call.tool_call_id for call in waiting_on.calls}
     if not_pending := [
-        tool_call_id
-        for tool_call_id in (*deferred_tool_results.approvals, *deferred_tool_results.calls)
-        if tool_call_id not in turn.pending
+        *(tool_call_id for tool_call_id in deferred_tool_results.approvals if tool_call_id not in approvable),
+        *(tool_call_id for tool_call_id in deferred_tool_results.calls if tool_call_id not in answerable),
     ]:
         raise UserError(
             f'The request answers {len(not_pending)} tool call(s) that `message_history` is not waiting on: '
@@ -632,6 +665,23 @@ def _reject_answers_for_calls_not_pending(turn: _ServerHeldTurn, deferred_tool_r
             f"`manage_message_history='server'`, an approval or denial can only answer a tool call that is "
             f'still pending at the end of the stored history. If the conversation changed since the client '
             f'loaded it, reload it from the server.'
+        )
+
+
+def _check_conversation_store_run(
+    manage_message_history: Literal['client', 'server'],
+    message_history: Sequence[ModelMessage] | None,
+    conversation_id: str | None,
+) -> None:
+    """Raise a `UserError` for a run that can't use a `conversation_store` as it was called."""
+    if manage_message_history != 'server':
+        raise UserError("`conversation_store` requires `manage_message_history='server'`.")
+    if message_history is not None:
+        raise UserError('Pass either `message_history` or a `conversation_store`, not both.')
+    if conversation_id is None or conversation_id == 'new':
+        raise UserError(
+            'A `conversation_store` needs the ID of the conversation to load: the request carries none, '
+            'so pass `conversation_id`.'
         )
 
 
@@ -775,6 +825,33 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
     See [Keeping the history on the server](https://pydantic.dev/docs/ai/integrations/ui/overview/#keeping-the-history-on-the-server).
     """
+
+    conversation_store: ConversationStore | None = None
+    """A [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] to load and save the conversation with.
+
+    Requires [`manage_message_history='server'`][pydantic_ai.ui.UIAdapter.manage_message_history], whose
+    rules for the client's new turn it follows. A run method then loads the conversation the request names
+    ([`conversation_id`][pydantic_ai.ui.UIAdapter.conversation_id], or the one passed to it) instead of
+    taking `message_history`, runs the agent on it and the client's new turn, and saves what the run
+    added. An approval, denial or tool result from the client has to answer a call the stored
+    conversation's deferred tool requests are waiting on with that kind of answer.
+
+    After the save, the stream sends the stored entries' ids to the client, as a Vercel AI
+    `data-conversation-saved` part or an AG-UI `pydantic_ai_conversation_saved` custom event. If the
+    conversation was saved by another request while this one ran, nothing is saved and the stream ends
+    with a protocol error event asking the client to reload. A run that fails or is stopped isn't saved.
+
+    See [Saving to a conversation store](https://pydantic.dev/docs/ai/integrations/ui/overview/#saving-to-a-conversation-store).
+    """
+
+    conversation_scope: str | None = None
+    """The [`scope`][pydantic_ai.conversation_store.ConversationRecord.scope] to load and save the conversation with, such as the authenticated user.
+
+    A conversation saved with another scope loads as one the store doesn't have, and can't be saved over.
+    Only used with a [`conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store].
+    """
+
+    _saved_entries: list[ConversationEntry] | None = field(default=None, init=False, repr=False)
 
     allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'})
     """URL schemes that are allowed for [`FileUrl`][pydantic_ai.messages.FileUrl] parts
@@ -1053,8 +1130,13 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
     def _run_message_history(
         self, message_history: Sequence[ModelMessage] | None, deferred_tool_results: DeferredToolResults | None
-    ) -> list[ModelMessage]:
-        """The history to run on: `message_history` and the client's messages, per `manage_message_history`."""
+    ) -> list[ModelMessage] | None:
+        """The history to run on: `message_history` and the client's messages, per `manage_message_history`.
+
+        `None` with a `conversation_store`: `_load_conversation` takes the client's messages instead.
+        """
+        if self.conversation_store is not None:
+            return None
         if self.manage_message_history == 'server':
             stored = message_history or []
             client_messages = self._server_held_client_messages(stored)
@@ -1076,6 +1158,72 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         frontend_messages = self.sanitize_messages(frontend_messages, deferred_tool_results=deferred_tool_results)
         return [*(message_history or []), *frontend_messages]
 
+    def _check_conversation_store_run(
+        self, message_history: Sequence[ModelMessage] | None, conversation_id: str | None
+    ) -> None:
+        """Raise a `UserError` for a run that can't use `conversation_store` as it was called."""
+        if self.conversation_store is not None:
+            _check_conversation_store_run(self.manage_message_history, message_history, conversation_id)
+
+    async def _saving_conversation(self, events: AsyncIterator[NativeEvent]) -> AsyncIterator[NativeEvent]:
+        """Pass `events` on, saving the run to `conversation_store` before its result."""
+        async for event in events:
+            if isinstance(event, AgentRunResultEvent):
+                await self._save_conversation(event.result)
+            yield event
+
+    async def _load_conversation(
+        self, conversation_id: str | None, deferred_tool_results: DeferredToolResults | None
+    ) -> Conversation | None:
+        """Load the stored conversation and add the client's new turn to it, as `manage_message_history='server'` takes it.
+
+        `None` without a `conversation_store`.
+        """
+        if (store := self.conversation_store) is None:
+            return None
+        assert conversation_id is not None
+        scope = self.conversation_scope
+        loaded = await store.load(conversation_id, scope=scope)
+        stored = loaded.messages if loaded is not None else []
+        # A conversation the store doesn't have is waiting on nothing.
+        waiting_on = (loaded.deferred_tool_requests if loaded is not None else None) or DeferredToolRequests()
+        turn = _take_new_turn(
+            stored,
+            self._server_held_client_messages(stored),
+            regenerate=self._regenerates(),
+            waiting_on=waiting_on,
+        )
+        if deferred_tool_results is not None:
+            _reject_answers_for_calls_not_pending(turn, deferred_tool_results, waiting_on=waiting_on)
+        new_turn = self.sanitize_messages(turn.new_turn, deferred_tool_results=deferred_tool_results)
+        if loaded is None:
+            return Conversation(messages=new_turn, conversation_id=conversation_id)
+        if turn.cut_at is not None:
+            # A resubmitted message replaces its turn: the store keeps what it replaces as a branch.
+            loaded = await store.branch(conversation_id, at=turn.cut_at, expected_revision=loaded.revision, scope=scope)
+            loaded.messages.extend(turn.history[turn.cut_at :])
+        loaded.messages.extend(new_turn)
+        return loaded
+
+    async def _save_conversation(self, result: AgentRunResult[Any]) -> None:
+        """Save what the run added to the stored conversation, keeping the stored entries for the client."""
+        if (store := self.conversation_store) is None:
+            return
+        try:
+            self._saved_entries = await store.save(result, scope=self.conversation_scope)
+        except ConversationConflict as e:
+            raise UserError(
+                'The conversation was changed by another request while this one ran, so this turn was not saved. '
+                'Reload the conversation from the server and try again.'
+            ) from e
+
+    def conversation_saved_events(self, conversation_id: str, entries: Sequence[ConversationEntry]) -> list[EventT]:
+        """The protocol events that tell the client which entries a [`conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store] save stored.
+
+        Sent after the run's own events, before the stream ends. None by default.
+        """
+        return []
+
     def transform_stream(
         self,
         stream: AsyncIterator[NativeEvent],
@@ -1091,7 +1239,22 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             on_cancel: Optional callback function called when the agent run ends in first-party cancellation.
                 The callback receives the [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] and can optionally yield additional protocol-specific events.
         """
+        if self.conversation_store is not None:
+            on_complete = self._announce_saved_entries(on_complete)
         return self.build_event_stream().transform_stream(stream, on_complete=on_complete, on_cancel=on_cancel)
+
+    def _announce_saved_entries(self, on_complete: OnCompleteFunc[EventT] | None) -> OnCompleteFunc[EventT]:
+        """Wrap `on_complete` so the stored entries reach the client before whatever it sends."""
+
+        async def announce(result: AgentRunResult[Any]) -> AsyncIterator[EventT]:
+            if self._saved_entries is not None:
+                for event in self.conversation_saved_events(result.conversation.conversation_id, self._saved_entries):
+                    yield event
+            if on_complete is not None:
+                async for event in dispatch_callback(on_complete, result):
+                    yield event
+
+        return announce
 
     def encode_stream(self, stream: AsyncIterator[EventT]) -> AsyncIterator[str]:
         """Encode a stream of protocol-specific events as strings according to the `Accept` header value.
@@ -1168,6 +1331,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         """
         if conversation_id is None:
             conversation_id = self.conversation_id
+        self._check_conversation_store_run(message_history, conversation_id)
 
         # A `UserError` rejecting the request is handed back as a failing stream so it reaches
         # `transform_stream`'s error handling; the early return keeps the run setup below, like
@@ -1219,11 +1383,13 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             run_capabilities.extend(capabilities)
 
         async def stream_events() -> AsyncIterator[NativeEvent]:
+            conversation = await self._load_conversation(conversation_id, deferred_tool_results)
             async with self.agent.run_stream_events(
                 output_type=output_type,
+                conversation=conversation,
                 message_history=message_history,
                 deferred_tool_results=deferred_tool_results,
-                conversation_id=conversation_id,
+                conversation_id=None if conversation is not None else conversation_id,
                 run_id=run_id,
                 cancellation_token=cancellation_token,
                 timeout=timeout,
@@ -1239,7 +1405,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 capabilities=run_capabilities,
                 workspace=workspace,
             ) as events:
-                async for event in events:
+                async for event in self._saving_conversation(events):
                     yield event
 
         return stream_events()

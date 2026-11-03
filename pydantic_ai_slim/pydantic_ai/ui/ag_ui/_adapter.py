@@ -22,6 +22,7 @@ from pydantic import TypeAdapter, ValidationError
 from ... import ExternalToolset, ToolDefinition
 from ..._mcp_apps import get_mcp_app_tool_result
 from ..._utils import is_str_dict
+from ...conversation_store import ConversationEntry
 from ...messages import (
     ERROR_OUTCOMES,
     AudioUrl,
@@ -93,6 +94,7 @@ try:
         ActivityMessage,
         AssistantMessage,
         BaseEvent,
+        CustomEvent as AGUICustomEvent,
         DeveloperMessage,
         FunctionCall,
         InputContent,
@@ -119,6 +121,7 @@ try:
         BUILTIN_TOOL_CALL_ID_PREFIX,
         CAPABILITY_LOAD_DELTA_ACTIVITY_TYPE,
         COMPACTION_ACTIVITY_TYPE,
+        CONVERSATION_SAVED_EVENT_NAME,
         DEFAULT_AG_UI_VERSION,
         ENCRYPTED_VALUE_VERSION,
         ENQUEUED_MESSAGES_ACTIVITY_TYPE,
@@ -469,6 +472,15 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     def messages(self) -> list[ModelMessage]:
         """Pydantic AI messages from the AG-UI run input."""
         return self.load_messages(self.run_input.messages, preserve_file_data=self.preserve_file_data)
+
+    def conversation_saved_events(self, conversation_id: str, entries: Sequence[ConversationEntry]) -> list[BaseEvent]:
+        """A `pydantic_ai_conversation_saved` custom event with the stored entries' ids."""
+        return [
+            AGUICustomEvent(
+                name=CONVERSATION_SAVED_EVENT_NAME,
+                value={'conversation_id': conversation_id, 'entry_ids': [entry.id for entry in entries]},
+            )
+        ]
 
     def _server_held_client_messages(self, message_history: Sequence[ModelMessage]) -> list[ModelMessage]:
         """Load a tool result the client sends without its call against the call `message_history` is waiting on.

@@ -16,6 +16,7 @@ from pydantic_ai import Agent, RunContext, _utils
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, ReinjectSystemPrompt
+from pydantic_ai.conversation_store import InMemoryConversationStore
 from pydantic_ai.exceptions import RunCancelled, UserError
 from pydantic_ai.messages import (
     BinaryImage,
@@ -2098,6 +2099,40 @@ async def test_client_message_history_without_overlapping_ids_does_not_warn():
         await _run(adapter, stored)
 
     assert conversation_view(requests[0]) == snapshot(['user-prompt: server context', 'text: noted', 'user-prompt: hi'])
+
+
+async def test_conversation_store_without_protocol_saved_events_still_saves():
+    """An adapter that doesn't announce saved entries still saves the turn, and `on_complete` runs after the save."""
+    agent, requests = _recording_agent()
+    store = InMemoryConversationStore()
+    run_input = DummyUIRunInput(messages=[_with_ui_id(ModelRequest.user_text_prompt('hi'), 'u1')])
+    adapter = DummyUIAdapter(
+        agent=agent, run_input=run_input, manage_message_history='server', conversation_store=store
+    )
+    revisions: list[str | None] = []
+
+    async def on_complete(result: AgentRunResult[Any]) -> None:
+        revisions.append(result.conversation.revision)
+
+    events = [event async for event in adapter.run_stream(conversation_id='chat', on_complete=on_complete)]
+
+    assert conversation_view(requests[0]) == snapshot(['user-prompt: hi'])
+    conversation = await store.load('chat')
+    assert conversation is not None
+    assert conversation_view(conversation.messages) == snapshot(['user-prompt: hi', 'text: ok'])
+    assert revisions == [conversation.revision]
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            '<text follows_text=False>ok',
+            '<final-result tool_name=None />',
+            '</text followed_by_text=False>',
+            '</response>',
+            '<run-result>ok</run-result>',
+            '</stream>',
+        ]
+    )
 
 
 @pytest.mark.parametrize('client_sends', ['everything', 'new turn only'])

@@ -14,6 +14,7 @@ from pydantic import TypeAdapter, ValidationError
 from pydantic_ai._utils import is_str_dict as _is_str_dict
 
 from ... import _instructions
+from ...conversation_store import ConversationEntry
 from ...messages import (
     _FILE_URL_KINDS,  # pyright: ignore[reportPrivateUsage]
     ERROR_OUTCOMES,
@@ -87,6 +88,7 @@ from ._event_stream import VercelAIEventStream
 from ._utils import (
     CAPABILITY_LOAD_DELTA_DATA_TYPE,
     COMPACTION_DATA_TYPE,
+    CONVERSATION_SAVED_DATA_TYPE,
     ENQUEUED_MESSAGES_DATA_TYPE,
     MODEL_SETTINGS_DELTA_DATA_TYPE,
     PROVIDER_METADATA_KEY,
@@ -379,6 +381,16 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
     def _regenerates(self) -> bool:
         return isinstance(self.run_input, RegenerateMessage)
+
+    def conversation_saved_events(self, conversation_id: str, entries: Sequence[ConversationEntry]) -> list[BaseChunk]:
+        """A transient `data-conversation-saved` part with the stored entries' ids, for `useChat`'s `onData`."""
+        return [
+            DataChunk(
+                type=CONVERSATION_SAVED_DATA_TYPE,
+                data={'conversation_id': conversation_id, 'entry_ids': [entry.id for entry in entries]},
+                transient=True,
+            )
+        ]
 
     @classmethod
     def load_messages(cls, messages: Sequence[UIMessage]) -> list[ModelMessage]:  # noqa: C901
