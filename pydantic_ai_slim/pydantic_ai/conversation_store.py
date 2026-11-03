@@ -25,7 +25,7 @@ from typing import Any, Literal
 from . import messages as _messages, usage as _usage
 from ._conversation_marks import mark_stored, stored_boundary
 from ._deferred import DeferredToolRequests
-from ._utils import now_utc
+from ._utils import UNSET, Unset, now_utc
 from ._uuid import uuid7
 from .conversation import Conversation
 from .exceptions import UserError
@@ -92,6 +92,19 @@ class ConversationRecord:
 
     forked_at: str | None = None
     """The last entry of the history the fork kept, or `None` if it kept none or this conversation isn't a fork."""
+
+    title: str | None = None
+    """What the conversation is about, for a list of conversations to show.
+
+    Set with [`update`][pydantic_ai.conversation_store.ConversationStore.update], say by an agent that
+    keeps it current as the topic shifts. A save never changes it.
+    """
+
+    metadata: dict[str, Any] | None = None
+    """Anything else the app keeps about the conversation, such as whether the user pinned it.
+
+    Set with [`update`][pydantic_ai.conversation_store.ConversationStore.update]. A save never changes it.
+    """
 
     branches: list[str] = dataclasses.field(default_factory=list[str])
     """The last entries of the branches this conversation has left, oldest first.
@@ -325,6 +338,8 @@ class ConversationStore(ABC):
             scope=scope if scope is not None else record.scope if record is not None else None,
             forked_from=record.forked_from if record is not None else None,
             forked_at=record.forked_at if record is not None else None,
+            title=record.title if record is not None else None,
+            metadata=record.metadata if record is not None else None,
             branches=branches,
         )
         await self.write_record(updated, new_entries=new_entries, expected_revision=expected_revision)
@@ -492,6 +507,51 @@ class ConversationStore(ABC):
             raise UserError('`limit` must not be negative.')
         return list(await self.read_records(scope=scope, limit=limit))
 
+    async def update(
+        self,
+        conversation_id: str,
+        *,
+        title: str | None | Unset = UNSET,
+        metadata: dict[str, Any] | None | Unset = UNSET,
+        scope: str | None = None,
+    ) -> ConversationRecord:
+        """Change a conversation's title or metadata.
+
+        These are its record's [`title`][pydantic_ai.conversation_store.ConversationRecord.title] and
+        [`metadata`][pydantic_ai.conversation_store.ConversationRecord.metadata]. Only what's passed changes, and `None` clears it. An update doesn't change the conversation's
+        [`revision`][pydantic_ai.conversation.Conversation.revision], so it never makes a save of the
+        conversation conflict, and a save never undoes it: an agent can keep the title current while
+        the conversation goes on. Of two updates at once, the last one written wins.
+
+        Args:
+            conversation_id: The conversation to update.
+            title: Its new title.
+            metadata: Its new metadata, which replaces the old.
+            scope: Only update it if it was saved with this scope.
+
+        Returns:
+            The updated record.
+
+        Raises:
+            UserError: If the store doesn't have the conversation.
+            NotImplementedError: If the backend doesn't implement
+                [`write_details`][pydantic_ai.conversation_store.ConversationStore.write_details].
+        """
+        while (record := await self._read_record(conversation_id, scope=scope)) is not None:
+            updated = dataclasses.replace(
+                record,
+                title=record.title if isinstance(title, Unset) else title,
+                metadata=record.metadata if isinstance(metadata, Unset) else metadata,
+            )
+            try:
+                await self.write_details(
+                    conversation_id, expected_revision=record.revision, title=updated.title, metadata=updated.metadata
+                )
+            except ConversationConflict:
+                continue  # Saved or replaced since it was read: check its scope again.
+            return updated
+        raise UserError(f'Conversation {conversation_id!r} is not in the store.')
+
     async def delete(self, conversation_id: str, *, scope: str | None = None) -> None:
         """Delete a conversation, so it no longer loads or lists.
 
@@ -561,7 +621,9 @@ class ConversationStore(ABC):
         """Store a record and the new entries its history adds, replacing the record with `expected_revision`.
 
         `new_entries` are in order, each after the one it points at. A backend that can should
-        store them and the record together, so a conflict leaves neither behind.
+        store them and the record together, so a conflict leaves neither behind. A backend that
+        implements [`write_details`][pydantic_ai.conversation_store.ConversationStore.write_details]
+        keeps the replaced record's `title` and `metadata`.
 
         Raises:
             ConversationConflict: If the stored record's revision isn't `expected_revision`, a record
@@ -570,6 +632,22 @@ class ConversationStore(ABC):
                 the conversation a fork points into released it.
         """
         raise NotImplementedError
+
+    async def write_details(
+        self, conversation_id: str, *, expected_revision: str, title: str | None, metadata: dict[str, Any] | None
+    ) -> None:
+        """Replace the record's `title` and `metadata`, keeping its `revision` and `updated_at`.
+
+        A backend that implements this keeps a stored record's `title` and `metadata` when
+        [`write_record`][pydantic_ai.conversation_store.ConversationStore.write_record] replaces it, so a
+        save that read the record before an update doesn't undo it. The default raises
+        `NotImplementedError`, for backends written before conversations had titles.
+
+        Raises:
+            ConversationConflict: If no record with `expected_revision` is stored, because the
+                conversation was saved, replaced or deleted since it was read.
+        """
+        raise NotImplementedError(f"{type(self).__name__} doesn't support updating a conversation's title or metadata.")
 
     @abstractmethod
     async def delete_record(self, conversation_id: str, *, expected_revision: str) -> None:
@@ -630,7 +708,18 @@ class InMemoryConversationStore(ConversationStore):
             raise ConversationConflict(record.conversation_id)
         for entry in new_entries:
             self._entries[entry.id] = deepcopy(entry)
+        if stored is not None:
+            record = dataclasses.replace(record, title=stored.title, metadata=stored.metadata)
         self._records[record.conversation_id] = deepcopy(record)
+
+    async def write_details(
+        self, conversation_id: str, *, expected_revision: str, title: str | None, metadata: dict[str, Any] | None
+    ) -> None:
+        stored = self._records.get(conversation_id)
+        if stored is None or stored.revision != expected_revision:
+            raise ConversationConflict(conversation_id)
+        stored.title = title
+        stored.metadata = deepcopy(metadata)
 
     async def delete_record(self, conversation_id: str, *, expected_revision: str) -> None:
         stored = self._records.get(conversation_id)
