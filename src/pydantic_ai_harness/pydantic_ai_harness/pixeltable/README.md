@@ -83,11 +83,11 @@ recalls it in a second run without the first run's chat history.
 - `tables` requires table paths or directory prefixes; `['*']` allows the whole catalog, including
   memory tables. Allowed views expose their base table's columns. Version handles (`'dir.tbl:3'`)
   are refused because they expose deleted rows and dropped columns.
-- Default projections skip media, array, binary, and unstored computed columns, including indexed
-  media in similarity search. Unstored computed columns and unstored iterator outputs rerun their
-  functions (possibly model calls) on read, so default projections skip them and explicit
-  projections and filters reject them. Explicit media projections are rejected
-  because they expose local file paths. Explicit array and binary projections are also rejected.
+- Default projections skip media, array, binary, unstored computed columns, and unstored iterator
+  outputs, including indexed media in similarity search. Explicit projections reject the same
+  columns: media because it exposes local file paths, and unstored computed or iterator columns
+  because they rerun their functions (possibly model calls) on read. Filters reject unstored
+  computed or iterator columns too.
 - `query_table` and `similarity_search` return `{"table", "rows", "truncated"}`, bounded by `max_rows`
   (default 20) and `max_chars` (default 8000). Oversized strings end in `...`; other oversized values
   become `null`, and `truncated` reports applied bounds. A cap below the minimal result envelope
