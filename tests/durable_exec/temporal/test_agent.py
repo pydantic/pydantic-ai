@@ -4041,6 +4041,10 @@ async def _enqueue_guard_handler(ctx: RunContext[object], stream: AsyncIterable[
     async for event in stream:
         with pytest.raises(UserError, match='enqueued messages would be dropped'):
             ctx.enqueue('later')
+        with pytest.raises(UserError, match=r'`ctx\.withdraw\(\)` is not supported inside a durable activity'):
+            ctx.withdraw('some-enqueue-id')
+        with pytest.raises(UserError, match=r'`ctx\.reprioritize\(\)` is not supported inside a durable activity'):
+            ctx.reprioritize('some-enqueue-id', 'asap')
         boundary = 'model' if isinstance(event, (PartStartEvent, PartDeltaEvent)) else 'agent'
         _enqueue_handler_boundaries.add(boundary)
 

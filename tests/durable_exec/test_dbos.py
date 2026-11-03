@@ -4849,6 +4849,10 @@ async def test_dbos_durability_event_stream_handler_rejects_enqueue(dbos: DBOS) 
         async for _ in stream:
             with pytest.raises(UserError, match='enqueued messages would be dropped') as exc_info:
                 ctx.enqueue('later')
+            with pytest.raises(UserError, match=r'`ctx\.withdraw\(\)` is not supported inside a durable step'):
+                ctx.withdraw('some-enqueue-id')
+            with pytest.raises(UserError, match=r'`ctx\.reprioritize\(\)` is not supported inside a durable step'):
+                ctx.reprioritize('some-enqueue-id', 'asap')
             # The ambient current context is guarded too, so reading it instead of the argument
             # doesn't bypass the guard.
             ambient = get_current_run_context()

@@ -2659,6 +2659,32 @@ async def test_run_context_withdraw_and_demote_from_a_tool():
     )
 
 
+async def test_tool_content_promoted_back_goes_next_to_the_tool_result():
+    """Content a tool enqueued, demoted and promoted back still goes next to that tool's result."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('work', {}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def work(ctx: RunContext[object]) -> str:
+        note = ctx.enqueue('note')
+        assert note is not None
+        assert ctx.reprioritize(note, 'when_idle') is True
+        assert ctx.reprioritize(note, 'asap') is True
+        return 'worked'
+
+    result = await agent.run('Hello')
+
+    tool_request = result.all_messages()[2]
+    assert isinstance(tool_request, ModelRequest)
+    assert [type(part).__name__ for part in tool_request.parts] == ['ToolReturnPart', 'UserPromptPart']
+    assert len(result.all_messages()) == 4
+
+
 @pytest.mark.parametrize('end', ['delivered', 'run-ended', 'early-exit'])
 async def test_withdraw_and_reprioritize_return_false_once_no_longer_queued(end: str):
     """Both return `False` for a delivered message, and after the run ends, instead of raising like `enqueue`.
@@ -2734,11 +2760,11 @@ def test_queue_change_does_not_race_pending_message_drain(method: str):
 @pytest.mark.parametrize(
     'pending_messages, match',
     [
-        (None, 'only available during an agent run'),
-        ([], 'only available during an agent run'),
+        (None, r'^`{method}` is only available during an agent run'),
+        ([], r'^`{method}` is only available during an agent run'),
         (
             EnqueueGuard('activity', 'workflow'),
-            r'is not supported inside a durable activity.*change to the queued message would be lost',
+            r'^`ctx\.{method}\(\)` is not supported inside a durable activity.*change to the queued message would be lost',
         ),
     ],
     ids=['no-queue', 'plain-list', 'durable-unit'],
@@ -2753,10 +2779,9 @@ def test_run_context_queue_changes_need_a_live_queue(
     """
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), pending_messages=pending_messages)
 
-    with pytest.raises(UserError, match=match) as exc_info:
+    # The error names the method that was called.
+    with pytest.raises(UserError, match=match.format(method=method)):
         if method == 'withdraw':
             ctx.withdraw('some-id')
         else:
             ctx.reprioritize('some-id', 'asap')
-    # The error names the method that was called.
-    assert f'`{method}`' in str(exc_info.value) or f'`ctx.{method}()`' in str(exc_info.value)

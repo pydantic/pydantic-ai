@@ -165,7 +165,8 @@ class PendingMessage:
     """The `tool_call_id` and run step of the tool call whose result this content goes next to, if any.
 
     Set by `from_content` for parts enqueued with `priority='asap'` during a tool call (from the tool or a
-    capability hook wrapping it). The step matters because a model may reuse a `tool_call_id` later, and
+    capability hook wrapping it). Only `asap` delivery reads it, so content demoted to `when_idle` is
+    delivered as its own request, and goes next to the result again if promoted back. The step matters because a model may reuse a `tool_call_id` later, and
     content an earlier call enqueues late (say, from a task it started) mustn't go next to the later return.
     """
 
@@ -343,18 +344,17 @@ class EnqueueGuard(list[PendingMessage]):
         self._container_noun = container_noun
 
     def append(self, pending: PendingMessage) -> None:
-        raise UserError(
-            f'`ctx.enqueue()` is not supported inside a durable {self._unit_noun}: the durable runtime replays '
-            f"the {self._unit_noun}'s recorded result without re-running your code, so the enqueued messages "
-            f'would be dropped. Enqueue messages from {self._container_noun}-level code instead.'
-        )
+        raise self._error('enqueue', 'the enqueued messages would be dropped', 'Enqueue messages')
 
     def change_error(self, method: str) -> UserError:
         """The error for `ctx.<method>()`, a change to a queued message, inside the durable unit."""
+        return self._error(method, 'the change to the queued message would be lost', 'Change queued messages')
+
+    def _error(self, method: str, consequence: str, advice: str) -> UserError:
         return UserError(
             f'`ctx.{method}()` is not supported inside a durable {self._unit_noun}: the durable runtime replays '
-            f"the {self._unit_noun}'s recorded result without re-running your code, so the change to the queued "
-            f'message would be lost. Change queued messages from {self._container_noun}-level code instead.'
+            f"the {self._unit_noun}'s recorded result without re-running your code, so {consequence}. "
+            f'{advice} from {self._container_noun}-level code instead.'
         )
 
 

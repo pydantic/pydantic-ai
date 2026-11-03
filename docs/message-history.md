@@ -1084,18 +1084,17 @@ async def main():
             if Agent.is_call_tools_node(node) and typo is not None:
                 # The user pressed "send now" on one message and "remove" on the other.
                 agent_run.reprioritize(follow_up, 'asap')
-                if not agent_run.withdraw(typo):
-                    print('Too late: it was already sent.')
+                agent_run.withdraw(typo)
                 typo = None
             node = await agent_run.next(node)
 ```
 
 Both return `False` once the message is no longer queued: it was delivered, it was already withdrawn,
 or the run has ended. That's not an error, as a click can race with the delivery: the check and the
-change happen under the same lock as delivery, so exactly one of them wins. To tell the user the
-message was sent, go by the [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent]
-carrying its `enqueue_id`, not by `False`, which also covers a second withdrawal of the same message.
-A withdrawn message gets no such event; a reprioritized one is announced under its original
+change happen under the same lock as delivery, so exactly one of them wins. `False` doesn't say which
+of these happened. To tell the user a message was sent, watch for the
+[`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] carrying its `enqueue_id`. A
+withdrawn message gets no such event; a reprioritized one is announced under its original
 `enqueue_id` when it's delivered.
 
 A message enqueued at `'when_idle'` and promoted goes into the next model request as its own
