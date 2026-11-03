@@ -126,11 +126,6 @@ class ConversationSearch(AbstractCapability[AgentDepsT]):
     """
 
     def __post_init__(self) -> None:
-        """Warn once, at construction, when the caller left `scope` to the changed default.
-
-        Construction is where the caller's choice (or non-choice) is expressed, so warning
-        here fires once per instance instead of once per `search_conversation_history` call.
-        """
         if self.scope is None:
             warn_default_changed(
                 owner='ConversationSearch',

@@ -242,7 +242,7 @@ Mid-conversation instructions stay where you put them rather than joining the sy
 
 How it reaches the model depends on the provider:
 
-* Where the API accepts a system message inside the conversation, it's sent as one, with the operator authority that implies. [Anthropic](models/anthropic.md#mid-conversation-system-messages) supports this on some models, and may adjust the position slightly to satisfy its own placement rules.
+* Where the API accepts a system message inside the conversation, it's sent as one, with the operator authority that implies. [Anthropic](models/anthropic.md#mid-conversation-system-messages) supports this on some models, and may adjust the position slightly to satisfy its own placement rules. [OpenRouter](models/openrouter.md#mid-conversation-system-prompts) does on some routes.
 * Everywhere else it's rendered as a `<system>`-tagged [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] at the same position. The instruction still applies from where you put it, but the model can tell it came in over the user channel and may treat it as a strong preference rather than a rule. Every `<system>` tag inside the instruction, opening or closing, in any case, with whitespace around the `/`, with attributes, self-closing, or cut off at the end of the text, goes out with its `<` escaped as `&lt;`, so text in it can't close the tag early or open another; the rest of the instruction, including any other tags, goes out as written.
 
     On these models, two more things keep the tag meaning the same thing throughout the conversation:
@@ -1065,6 +1065,12 @@ custom processing logic.
 Pydantic AI provides the [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] capability that allows
 you to intercept and modify the message history before each model request.
 
+That includes every request inside a run, not only the first: once the model calls a tool, the processor runs
+again before the next request and sees the run's own tool calls and results after the earlier history. To process
+only the history from earlier runs, use a [context-aware processor](#runcontext-parameter) and leave unchanged
+the messages whose [`run_id`][pydantic_ai.messages.ModelRequest.run_id] equals
+[`ctx.run_id`][pydantic_ai.tools.RunContext.run_id].
+
 !!! note "`ProcessHistory` is a thin wrapper over `before_model_request`"
     [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] is a migration-friendly wrapper
     around the [`before_model_request`](hooks.md) lifecycle hook. If you want richer control
@@ -1076,6 +1082,7 @@ you to intercept and modify the message history before each model request.
 !!! warning "History processors replace the message history"
     History processors replace the message history in the state with the processed messages, including the new user prompt part.
     This means that if you want to keep the original message history, you need to make a copy of it.
+    Later requests in the same run start from the processed messages, so a processor sees its own earlier output, not the original history.
 
     When using deferred tools, preserve their
     [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] entries, or the
@@ -1240,7 +1247,7 @@ agent = Agent('{{ openai:medium }}', capabilities=[ProcessHistory(summarize_old_
 ```
 
 !!! warning "Be careful when summarizing the message history"
-    When summarizing the message history, you need to make sure that tool calls and returns are paired, otherwise the LLM may return an error. For more details, refer to [this GitHub issue](https://github.com/pydantic/pydantic-ai/issues/2050#issuecomment-3019976269), where you can find examples of summarizing the message history.
+    Summarize each tool call together with its result, or keep both. A split pair no longer fails the request, but as with [slicing](#keep-only-recent-messages), the repair that resolves it changes what the model sees. The example above starts the kept turn with `starts_a_turn` so that no pair is split.
 
 #### Compact when the context window fills {#compact-when-the-context-window-fills}
 

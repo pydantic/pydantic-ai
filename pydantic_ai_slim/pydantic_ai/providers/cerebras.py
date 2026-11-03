@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+from collections.abc import Callable
 from typing import overload
 
 from pydantic_ai import ModelProfile
@@ -10,7 +11,7 @@ from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
-from pydantic_ai.profiles.zai import zai_model_profile
+from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 try:
     from openai import AsyncOpenAI
@@ -43,14 +44,16 @@ class CerebrasProvider(_OpenAISDKProvider):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        prefix_to_profile = {
+        prefix_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
             'llama': meta_model_profile,
             'qwen': qwen_model_profile,
             'gpt-oss': harmony_model_profile,
-            'zai': zai_model_profile,
+            # GLM models are served as `zai-glm-*`. Only GLM-5.3's schema fix carries over from Z.AI's profile.
+            'zai-': lambda name: _glm_5_3_schema_profile(name.removeprefix('zai-')),
         }
 
-        # Reasoning models that support the cerebras_disable_reasoning setting
+        # Reasoning models that support the cerebras_disable_reasoning setting.
+        # GLM's thinking is configured here rather than by Z.AI's profile.
         reasoning_prefixes = ('zai', 'gpt-oss')
 
         profile = None
