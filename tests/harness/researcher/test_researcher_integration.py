@@ -154,6 +154,7 @@ Available sub-agents:
 """,
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'lookalike_kinds': []}},
             ),
             ModelResponse(
                 parts=[
@@ -389,6 +390,7 @@ Available sub-agents:
 """,
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'lookalike_kinds': []}},
             ),
             ModelResponse(
                 parts=[
@@ -586,6 +588,7 @@ Available sub-agents:
 """,
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'lookalike_kinds': []}},
             ),
             ModelResponse(
                 parts=[
@@ -714,6 +717,7 @@ Available sub-agents:
 """,
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'lookalike_kinds': []}},
             ),
             ModelResponse(
                 parts=[

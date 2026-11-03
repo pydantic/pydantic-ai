@@ -27,6 +27,7 @@ from ._framing import (
 from .exceptions import UserError
 from .messages import (
     _FRAME_PLACEHOLDER,  # pyright: ignore[reportPrivateUsage]
+    CAPABILITY_PART_TYPES,
     Authority,
     BinaryContent,
     CapabilityPart,
@@ -117,7 +118,7 @@ class RenderedCapabilityPart:
     """How a lookalike note about the body names it."""
 
 
-def render_capability_part(part: CapabilityPart) -> RenderedCapabilityPart:
+def render_capability_part(part: CapabilityPart, *, data_tags: Sequence[str] = ()) -> RenderedCapabilityPart:
     """The parts `part` reaches the model as, by its [effective authority][pydantic_ai.messages.Authority].
 
     - `'operator'`: a system message, in the part's own scope.
@@ -128,7 +129,8 @@ def render_capability_part(part: CapabilityPart) -> RenderedCapabilityPart:
 
     A data part's frame is its kind's tag; a downgraded instruction part's is its kind's name. The body is the content
     as written: text in it that resembles a framework frame, or opens or closes its own frame, gets a lookalike note
-    from `prepare_messages` naming the author its source gives.
+    from `prepare_messages` naming the author its source gives. `data_tags` are the other data frames the body is
+    checked for, the request's scan set (`lookalike_scan_tags`).
     """
     rendering = part.rendering
     content = part.model_content()
@@ -138,13 +140,10 @@ def render_capability_part(part: CapabilityPart) -> RenderedCapabilityPart:
         assert isinstance(content, str)
         system = SystemPromptPart(content, timestamp=part.timestamp, scope=part.scope)
         return RenderedCapabilityPart(parts=[system], body=None, note=None, lookalikes=[], naming=LookalikeNaming())
-    if rendering.voice == 'instruction':
-        tag = part.kind.rpartition('.')[2]
-        attrs: dict[str, str | None] = {}
-    else:
-        assert rendering.tag is not None
-        tag = rendering.tag
-        attrs = part._rendered_attributes()  # pyright: ignore[reportPrivateUsage]
+    tag = capability_frame_tag(part)
+    attrs: dict[str, str | None] = (
+        {} if rendering.voice == 'instruction' else part._rendered_attributes()  # pyright: ignore[reportPrivateUsage]
+    )
     # TODO(#11029): deliver content from a source the operator doesn't control on the tool channel instead, as a
     # framework-inserted read and its result, rebuilding #11837.
     open_tag, close_tag = capability_frame_tags(tag, attrs=attrs)
@@ -165,7 +164,7 @@ def render_capability_part(part: CapabilityPart) -> RenderedCapabilityPart:
         ],
         timestamp=part.timestamp,
     )
-    lookalikes = _body_lookalikes(part, items, tag)
+    lookalikes = _body_lookalikes(part, items, tag, data_tags)
     naming = _lookalike_naming(part.source, tag)
     text = _note(part, authority, open_tag)
     note = None if text is None else SystemPromptPart(text, timestamp=part.timestamp)
@@ -298,8 +297,32 @@ def _render_parts(parts: Sequence[ModelRequestPart]) -> list[ModelRequestPart]:
     return rendered
 
 
+def registered_kind_tags() -> set[str]:
+    """The frame tag of every capability part kind registered in this process, which depends on what it has imported.
+
+    Only read when a request's lookalike decision is made (`stamp_lookalike_decisions`), never to re-decide one.
+    """
+    tags: set[str] = set()
+    for kind, cls in CAPABILITY_PART_TYPES.items():
+        rendering = cls._class_rendering  # pyright: ignore[reportPrivateUsage]
+        if rendering is None:
+            continue
+        tag = kind.rpartition('.')[2] if rendering.voice == 'instruction' else rendering.tag
+        if tag is not None:
+            tags.add(tag)
+    return tags
+
+
+def capability_frame_tag(part: CapabilityPart) -> str:
+    """The tag `part` is framed in when it reaches the model as data: its kind's tag, or for an instruction its kind's name."""
+    if part.rendering.voice == 'instruction':
+        return part.kind.rpartition('.')[2]
+    assert part.rendering.tag is not None
+    return part.rendering.tag
+
+
 def _body_lookalikes(
-    part: CapabilityPart, items: Sequence[UserContent], tag: str
+    part: CapabilityPart, items: Sequence[UserContent], tag: str, data_tags: Sequence[str]
 ) -> list[tuple[LookalikeSource, list[str]]]:
     """Who wrote text in a framed part's body that resembles a framework frame or its own `tag`, with the tags it opens.
 
@@ -310,19 +333,19 @@ def _body_lookalikes(
     found: dict[LookalikeSource, list[str]] = {}
     for item in items:
         if author != 'application' and isinstance(item, str | TextContent):
-            _record_body_lookalikes(found, author, item if isinstance(item, str) else item.content, tag)
+            _record_body_lookalikes(found, author, item if isinstance(item, str) else item.content, tag, data_tags)
     for item in items:
         if isinstance(item, BinaryContent) and _utils.is_text_like_media_type(item.media_type):
-            _record_body_lookalikes(found, 'file', item.data.decode(errors='replace'), tag)
+            _record_body_lookalikes(found, 'file', item.data.decode(errors='replace'), tag, data_tags)
     return list(found.items())
 
 
 def _record_body_lookalikes(
-    found: dict[LookalikeSource, list[str]], source: LookalikeSource, text: str, tag: str
+    found: dict[LookalikeSource, list[str]], source: LookalikeSource, text: str, tag: str, data_tags: Sequence[str]
 ) -> None:
     """Add the tags `text` opens that resemble a framework frame or the part's own `tag` to `source`'s entry in `found`, once each."""
-    tags = lookalike_tags(text)
-    if frame_tag_lookalike(text, tag):
+    tags = lookalike_tags(text, data_tags)
+    if tag not in tags and frame_tag_lookalike(text, tag):
         tags.append(tag)
     if tags:
         found.setdefault(source, []).extend(t for t in tags if t not in found.get(source, ()))

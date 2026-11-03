@@ -342,6 +342,7 @@ async def test_bedrock_mixed_strict_tool_run(
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'lookalike_kinds': []}},
             ),
             ModelResponse(
                 parts=[

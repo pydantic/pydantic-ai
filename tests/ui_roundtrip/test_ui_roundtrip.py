@@ -43,7 +43,7 @@ from abc import ABC, abstractmethod
 from collections import Counter
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal, cast
 
 import anyio
@@ -155,6 +155,24 @@ def _project_part(part: ModelRequestPart | ModelResponsePart) -> dict[str, Any]:
 # Keys in the reserved `__pydantic_ai__` message metadata that are the UI adapters' own bookkeeping, not state
 # that changes how later requests render.
 _UI_BOOKKEEPING_METADATA = frozenset({'ui_message_id'})
+
+# A request's stored lookalike decision, which a UI client never sends back: a reloaded request is decided again when
+# it's rendered, against the kinds the server has registered, so it isn't part of what the client must round-trip.
+_REDECIDED_METADATA = 'lookalike_kinds'
+
+
+def _without_redecided_metadata(messages: list[ModelMessage]) -> list[ModelMessage]:
+    stripped: list[ModelMessage] = []
+    for message in messages:
+        namespace = (message.metadata or {}).get(INTERNAL_METADATA_KEY)
+        if isinstance(namespace, dict) and _REDECIDED_METADATA in namespace:
+            kept = {k: v for k, v in cast(dict[str, Any], namespace).items() if k != _REDECIDED_METADATA}
+            metadata = {k: v for k, v in (message.metadata or {}).items() if k != INTERNAL_METADATA_KEY}
+            if kept:
+                metadata[INTERNAL_METADATA_KEY] = kept
+            message = replace(message, metadata=metadata or None)
+        stripped.append(message)
+    return stripped
 
 
 def _framework_metadata(message: ModelMessage) -> dict[str, Any]:
@@ -1022,7 +1040,12 @@ class Client(ABC):
     def received(self, adapter: UIAdapter[Any, Any, Any, Any, Any], expected: list[ModelMessage]) -> Turn:
         """What the client sent, next to what it should have, both sanitized as the adapter does."""
         sent = self.adapter_type.load_messages(adapter.run_input.messages[:-1])
-        return Turn(sent=self.sanitize(adapter, sent), expected=self.sanitize(adapter, expected), history=[], calls=[])
+        return Turn(
+            sent=self.sanitize(adapter, sent),
+            expected=self.sanitize(adapter, _without_redecided_metadata(expected)),
+            history=[],
+            calls=[],
+        )
 
     @property
     @abstractmethod

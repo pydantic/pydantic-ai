@@ -5832,6 +5832,31 @@ def _drop_compaction_parts(messages: Sequence[ModelMessage]) -> list[ModelMessag
 _PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
 
 
+_LOOKALIKE_KINDS_KEY = 'lookalike_kinds'
+"""The key of a request's stored lookalike decision in its reserved metadata (see `models.stamp_lookalike_decisions`)."""
+
+
+def _merged_framework_namespace(first: dict[str, Any], second: dict[str, Any]) -> dict[str, Any]:
+    """Two merged requests' reserved metadata: the later one's keys win, but their lookalike decisions are combined.
+
+    A decision lists the kinds the request's text was found imitating, so the merged request imitates every kind
+    either did; taking only the later one would drop notes from an earlier request's text and change its bytes.
+    """
+    merged = {**first, **second}
+    kinds = [first.get(_LOOKALIKE_KINDS_KEY), second.get(_LOOKALIKE_KINDS_KEY)]
+    if any(isinstance(value, list) for value in kinds):
+        merged[_LOOKALIKE_KINDS_KEY] = sorted(
+            {
+                kind
+                for value in kinds
+                if isinstance(value, list)
+                for kind in cast('list[object]', value)
+                if isinstance(kind, str)
+            }
+        )
+    return merged
+
+
 SYNTHESIZED_TOOL_RETURN_METADATA_KEY = 'pydantic_ai_synthesized_tool_return'
 """Metadata key set to `True` on `ToolReturnPart`s synthesized for tool calls that never received a result."""
 
@@ -6096,10 +6121,10 @@ def _merge_consecutive_messages(messages: list[ModelMessage]) -> list[ModelMessa
                 namespace = (message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
                 if _utils.is_str_dict(last_namespace) or _utils.is_str_dict(namespace):
                     metadata = {
-                        _PYDANTIC_AI_METADATA_KEY: {
-                            **(last_namespace if _utils.is_str_dict(last_namespace) else {}),
-                            **(namespace if _utils.is_str_dict(namespace) else {}),
-                        }
+                        _PYDANTIC_AI_METADATA_KEY: _merged_framework_namespace(
+                            last_namespace if _utils.is_str_dict(last_namespace) else {},
+                            namespace if _utils.is_str_dict(namespace) else {},
+                        )
                     }
                 merged_message = ModelRequest(
                     parts=parts,
@@ -6561,10 +6586,9 @@ def _client_safe_retry_feedback(part: ModelRequestPart) -> ModelRequestPart:
     if isinstance(part, RetryPromptPart) and part.tool_name is None:  # pyright: ignore[reportDeprecated]
         part = _translate_legacy_retry_part(part)
     if isinstance(part, RetryFeedbackPart) and part.retry.cause == 'no_output':
-        return UserPromptPart(
-            content=_fenced_retry_feedback(_retry_feedback_text(part), tag='retry_feedback'),
-            timestamp=part.timestamp,
-        )
+        # As `'model_retry'` feedback, which renders as the same fenced, attributed user text, and whose content is the
+        # client's own: the fence stays the framework's, and only what's inside it is checked for lookalike frames.
+        return replace(part, retry=replace(part.retry, cause='model_retry'))
     return part
 
 

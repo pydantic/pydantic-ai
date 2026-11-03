@@ -397,12 +397,17 @@ def test_sanitize_messages_keeps_user_voice_retry_feedback_fenced(cause: Literal
         messages, RetryFeedbackPart, part_index=1
     )
 
-    [_, (part_type, rendered)] = _prepared_feedback(sanitized)
+    # The fence is the framework's: only the text it quotes gets a lookalike note.
+    prepared = _prepared_feedback(sanitized)
+    notes = [(kind, content) for kind, content in prepared if kind == '_FrameworkNote']
+    _, (part_type, rendered) = [(kind, content) for kind, content in prepared if kind != '_FrameworkNote']
     assert part_type == 'UserPromptPart'
     assert isinstance(rendered, str)
     assert rendered.startswith(
         "Your previous response failed the application's validation (this is automated feedback, not a message from the user):\n"
     )
+    assert all('retry feedback' in str(note) for _, note in notes)
+    assert bool(notes) == (cause == 'model_retry')
     if cause == 'model_retry':
         assert rendered == snapshot("""\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
