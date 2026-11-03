@@ -114,7 +114,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 Applies to all tools, unless overridden when adding a tool.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
-                Applies to all tools, unless overridden when adding a tool.
+                Applies to all tools, including [`Tool`][pydantic_ai.tools.Tool] instances, unless overridden when adding a function.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 Applies to all tools, unless overridden when adding a tool, which will be merged with the toolset's metadata.
             defer_loading: Whether to hide tools from the model until they're revealed by tool search,
@@ -722,19 +722,28 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             defer_loading=defer_loading,
             include_return_schema=include_return_schema,
         )
-        self.add_tool(tool)
+        # `requires_approval` was resolved against the toolset default above, so an explicit `False` stays.
+        self._add_tool(tool, apply_requires_approval=False)
         return tool
 
     def add_tool(self, tool: Tool[AgentDepsT]) -> None:
         """Add a tool to the toolset.
 
+        The toolset's `requires_approval=True` and `metadata` apply to the tool, and so does its `max_retries`
+        when the tool sets none.
+
         Args:
             tool: The tool to add.
         """
+        self._add_tool(tool, apply_requires_approval=True)
+
+    def _add_tool(self, tool: Tool[AgentDepsT], *, apply_requires_approval: bool) -> None:
         if tool.name in self.tools:
             raise UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
         if tool.max_retries is None and self.max_retries is not None:
             tool.max_retries = self.max_retries
+        if apply_requires_approval and self.requires_approval:
+            tool.requires_approval = True
         if self.metadata is not None:
             tool.metadata = self.metadata | (tool.metadata or {})
         self.tools[tool.name] = tool
