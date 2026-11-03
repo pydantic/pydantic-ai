@@ -928,10 +928,8 @@ class _RecordRacingStore(InMemoryConversationStore):
         return record
 
 
-def _call_look_up_once(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    if isinstance(messages[-1].parts[-1], UserPromptPart):
-        return ModelResponse(parts=[ToolCallPart('look_up')])
-    return ModelResponse(parts=[TextPart('done')])  # pragma: no cover
+def _call_look_up(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart('look_up')])
 
 
 async def _loaded(store: InMemoryConversationStore, turns: int) -> Conversation:
@@ -944,7 +942,7 @@ async def _loaded(store: InMemoryConversationStore, turns: int) -> Conversation:
 async def test_a_run_that_hits_a_usage_limit_can_still_store_what_it_did() -> None:
     store = InMemoryConversationStore()
     loaded = await _loaded(store, turns=1)
-    agent = Agent(FunctionModel(_call_look_up_once))
+    agent = Agent(FunctionModel(_call_look_up))
 
     @agent.tool_plain
     def look_up() -> str:
@@ -1020,12 +1018,10 @@ async def test_a_nested_run_s_error_carries_the_outer_run_s_conversation() -> No
 
     @outer.tool_plain
     async def delegate() -> str:
-        result = await inner.run('Look it up', usage_limits=UsageLimits(request_limit=1))
-        return result.output  # pragma: no cover
+        return (await inner.run('Look it up', usage_limits=UsageLimits(request_limit=1))).output
 
     with pytest.raises(UsageLimitExceeded) as exc_info:
-        result = await outer.run('Delegate', conversation_id='outer')
-        assert result  # pragma: no cover
+        await outer.run('Delegate', conversation_id='outer')
 
     failed = exc_info.value.conversation
     assert failed is not None

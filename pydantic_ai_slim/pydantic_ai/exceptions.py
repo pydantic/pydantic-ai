@@ -340,9 +340,10 @@ class AgentRunError(RuntimeError):
 
         It includes a partial response with `state='interrupted'`, and saving it to a
         [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] appends just what the run
-        added. `None` if the error didn't come out of an [`Agent`][pydantic_ai.agent.Agent] run. For an
-        exception raised by a tool's own code, use
-        [`capture_run_conversation`][pydantic_ai.agent.capture_run_conversation].
+        added. It's set once the error leaves the `run`, `iter` or `run_stream` call or `async with` block,
+        so it's `None` when caught inside an `iter` or `run_stream` block, or if the error didn't come out of
+        an [`Agent`][pydantic_ai.agent.Agent] run. To get the conversation there, or for an exception raised
+        by a tool's own code, use [`capture_run_conversation`][pydantic_ai.agent.capture_run_conversation].
         """
         return self._conversation
 
