@@ -156,6 +156,10 @@ class AzureDurableTaskDurability(BaseDurabilityCapability[AgentDepsT]):
         """
         return self.get_durable_operation_backend().worker_scope(worker)
 
+    def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
+        # Continuation only acts inside an orchestration, like the base hooks it extends.
+        return self._realtime_uncalled_hooks_overriding(AzureDurableTaskDurability)
+
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
