@@ -431,7 +431,9 @@ classifies it, so a name pointing at an internal address (`169.254.169.254.nip.i
 and similar wildcard DNS services) is refused rather than followed. That lookup runs
 for every kind, matching the literal check, so a spelling does not decide the
 verdict; answers are cached, which makes it a lookup per distinct host rather than
-per request. `resolved_kinds` sets which kinds are looked up.
+per request. `resolved_kinds` sets which kinds are looked up. A host that
+`allowed_domains` or `blocked_domains` already refuses by name is refused with
+that reason and not looked up.
 
 A lookup that does not answer within two seconds is a refusal, not an allow:
 whoever controls a name controls whether its lookup answers, so a stall would

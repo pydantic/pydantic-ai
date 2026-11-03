@@ -14,6 +14,7 @@ import socket
 import sys
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from typing import Protocol, get_args
 
 import anyio
@@ -1505,6 +1506,29 @@ class TestNameResolutionBlocking:
         request = toolset_module.EgressRequest(url='https://example.com/', kind='navigation')
         assert await session.decide(request) is None
         assert [r.resolved_addresses for r in asked] == [('93.184.216.34',)]
+
+    async def test_an_override_permitting_a_listed_out_host_still_gets_the_address_check(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # An override can permit what the lists refuse while deferring to the base
+        # class for the private-address block, which needs the lookup to see the name.
+        looked_up = self._pointing_at(monkeypatch, '10.0.0.1')
+
+        class FontsFromAnywhere(toolset_module.EgressPolicy):
+            def refuse(self, request: toolset_module.EgressRequest) -> str | None:
+                if request.resource_type == 'font':
+                    return toolset_module.EgressPolicy.refuse(replace(self, allowed_domains=None), request)
+                return super().refuse(request)
+
+        policy = FontsFromAnywhere(
+            allowed_domains=['example.com'], allowlist_reach=frozenset(get_args(toolset_module.RequestKind))
+        )
+        session = PlaywrightBrowserSession(policy=policy)
+        request = toolset_module.EgressRequest(
+            url='https://fonts.other.example/x.woff2', kind='subresource', resource_type='font', top_level=False
+        )
+        assert await session.decide(request) == 'blocked private or link-local address'
+        assert looked_up == ['fonts.other.example']
 
     async def test_an_address_is_not_resolved(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # The literal already answers the question; a lookup would be wasted.

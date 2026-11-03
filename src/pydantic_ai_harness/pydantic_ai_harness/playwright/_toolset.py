@@ -704,12 +704,16 @@ class EgressPolicy:
         no async machinery, and the lookup a name-based private address requires
         happens outside it. A host that is already an address needs none, and
         neither does one the domain lists refuse, since `refuse` gives the
-        domain-list reason whatever the host resolves to.
+        domain-list reason whatever the host resolves to. That holds only for this
+        class's own `refuse`: an override may permit what the lists refuse, so its
+        hosts are still resolved.
         """
         if not self.block_private_addresses or request.kind not in self.resolved_kinds:
             return False
         host = _url_host(request.url)
-        return host is not None and not _is_ip_literal(host) and self._domain_reason(host, request.kind) is None
+        if host is None or _is_ip_literal(host):
+            return False
+        return type(self).refuse is not EgressPolicy.refuse or self._domain_reason(host, request.kind) is None
 
     def enforced(self) -> bool:
         """Whether anything is restricted, i.e. whether a route guard is worth installing."""
