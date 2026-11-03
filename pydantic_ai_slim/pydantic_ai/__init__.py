@@ -215,7 +215,7 @@ from .profiles import (
     ModelProfile,
     ModelProfileSpec,
 )
-from .run import AgentRun, AgentRunResult, AgentRunResultEvent
+from .run import AgentRun, AgentRunResult, AgentRunResultEvent, CapturedConversation, capture_run_conversation
 from .settings import ModelSettings, ToolChoice, ToolOrOutput
 from .template import TemplateStr
 from .tools import (
@@ -262,6 +262,8 @@ __all__ = (
     'ModelRequestNode',
     'UserPromptNode',
     'capture_run_messages',
+    'capture_run_conversation',
+    'CapturedConversation',
     'InstrumentationSettings',
     # embeddings
     'Embedder',

@@ -6,7 +6,19 @@ from collections.abc import Awaitable, Callable, Sequence
 import pytest
 from pydantic import TypeAdapter
 
-from pydantic_ai import Agent, AgentRunResult, Conversation, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai import (
+    Agent,
+    AgentRunResult,
+    Conversation,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    RunContext,
+    TextPart,
+    ToolCallPart,
+    UserPromptPart,
+    capture_run_conversation,
+)
 from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.conversation import ConversationTypeAdapter
 from pydantic_ai.conversation_store import (
@@ -15,10 +27,11 @@ from pydantic_ai.conversation_store import (
     ConversationRecord,
     InMemoryConversationStore,
 )
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import RunCancelled, UsageLimitExceeded, UserError
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolRequests
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RunUsage, UsageLimits
 
 pytestmark = pytest.mark.anyio
 
@@ -913,3 +926,105 @@ class _RecordRacingStore(InMemoryConversationStore):
         if race is not None:
             await race()
         return record
+
+
+def _call_look_up_once(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if isinstance(messages[-1].parts[-1], UserPromptPart):
+        return ModelResponse(parts=[ToolCallPart('look_up')])
+    return ModelResponse(parts=[TextPart('done')])  # pragma: no cover
+
+
+async def _loaded(store: InMemoryConversationStore, turns: int) -> Conversation:
+    stored = await _stored_conversation(store, turns=turns)
+    loaded = await store.load(stored.conversation_id)
+    assert loaded is not None
+    return loaded
+
+
+async def test_a_run_that_hits_a_usage_limit_can_still_store_what_it_did() -> None:
+    store = InMemoryConversationStore()
+    loaded = await _loaded(store, turns=1)
+    agent = Agent(FunctionModel(_call_look_up_once))
+
+    @agent.tool_plain
+    def look_up() -> str:
+        return 'found'
+
+    # The conversation's usage carries into the run, so this allows one more request: the one calling the tool.
+    limits = UsageLimits(request_limit=loaded.usage.requests + 1)
+    with pytest.raises(UsageLimitExceeded) as exc_info:
+        await agent.run('Look it up', conversation=loaded, usage_limits=limits)
+    failed = exc_info.value.conversation
+    assert failed is not None
+    assert failed.conversation_id == loaded.conversation_id
+
+    added = await store.save(failed)
+
+    # The new turn: the prompt, the response calling the tool, and the request with its return.
+    assert [entry.message for entry in added] == failed.messages[len(loaded.messages) :]
+    assert len(added) == 3
+    reloaded = await store.load(loaded.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages == failed.messages
+
+
+async def test_a_run_whose_tool_raises_can_still_store_what_it_did() -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def look_up() -> str:
+        raise ValueError('the database is down')
+
+    with capture_run_conversation() as captured:
+        assert captured.conversation is None
+        with pytest.raises(ValueError, match='the database is down'):
+            await agent.run('Look it up')
+    failed = captured.conversation
+    assert failed is not None
+
+    added = await store.save(failed)
+
+    # The prompt, the response calling the tool, and the request its return would have gone in, cut short.
+    assert [entry.message for entry in added] == failed.messages
+    last = added[-1].message
+    assert isinstance(last, ModelRequest)
+    assert last.state == 'interrupted'
+
+
+async def test_a_cancelled_run_carries_its_conversation() -> None:
+    agent = Agent(TestModel())
+
+    @agent.tool
+    def stop(ctx: RunContext) -> str:
+        ctx.cancel()
+        return 'unreachable'  # pragma: no cover
+
+    with pytest.raises(RunCancelled) as exc_info:
+        await agent.run('Stop')
+
+    failed = exc_info.value.conversation
+    assert failed is not None
+    assert failed.messages == exc_info.value.all_messages()
+
+
+async def test_a_nested_run_s_error_carries_the_outer_run_s_conversation() -> None:
+    inner = Agent(TestModel())
+    outer = Agent(TestModel())
+
+    @inner.tool_plain
+    def look_up() -> str:
+        return 'found'
+
+    @outer.tool_plain
+    async def delegate() -> str:
+        result = await inner.run('Look it up', usage_limits=UsageLimits(request_limit=1))
+        return result.output  # pragma: no cover
+
+    with pytest.raises(UsageLimitExceeded) as exc_info:
+        result = await outer.run('Delegate', conversation_id='outer')
+        assert result  # pragma: no cover
+
+    failed = exc_info.value.conversation
+    assert failed is not None
+    assert failed.conversation_id == 'outer'

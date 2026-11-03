@@ -114,7 +114,14 @@ from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..native_tools import AbstractNativeTool
 from ..native_tools._tool_search import ToolSearchTool
 from ..output import OutputDataT, OutputSpec, StructuredDict
-from ..run import AgentRun, AgentRunResult
+from ..run import (
+    AgentRun,
+    AgentRunResult,
+    CapturedConversation,
+    capture_conversation_of,
+    capture_run_conversation,
+    failed_run_conversation,
+)
 from ..settings import ModelSettings, merge_model_settings
 from ..template import TemplateStr
 from ..tool_manager import ParallelExecutionMode, ToolManager
@@ -209,6 +216,8 @@ __all__ = (
     'UserPromptNode',
     'WrapperAgent',
     'capture_run_messages',
+    'capture_run_conversation',
+    'CapturedConversation',
     'PydanticAIDeprecationWarning',
     'ToolsPrepareFunc',
     'ToolDenied',
@@ -4939,10 +4948,15 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
         pending_message_queue = state.pending_messages
         assert isinstance(pending_message_queue, _enqueue.PendingMessageQueue)
 
+        _failed_conversation = functools.partial(failed_run_conversation, state, graph_deps)
+        capture_conversation_of(_failed_conversation)
+
         @asynccontextmanager
         async def _translate_cancellation() -> AsyncGenerator[None]:
             def _run_cancelled(message: str, *, timed_out: bool = False) -> exceptions.RunCancelled:
-                return _agent_graph.run_cancelled_snapshot(message, state, graph_deps, timed_out=timed_out)
+                cancelled = _agent_graph.run_cancelled_snapshot(message, state, graph_deps, timed_out=timed_out)
+                cancelled._conversation = _failed_conversation()  # pyright: ignore[reportPrivateUsage]
+                return cancelled
 
             try:
                 yield
@@ -4993,6 +5007,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
         async with AsyncExitStack() as stack:
             # Enter first so cancellation is classified only after every other context has torn down.
             await stack.enter_async_context(_translate_cancellation())
+            stack.enter_context(_carrying_conversation(_failed_conversation))
             stack.callback(lambda: graph_deps.tool_manager._release_context())  # pyright: ignore[reportPrivateUsage]
             stack.callback(refresh_workspace_ref)
             # This run's usage is credited to no span until one of its own is opened (by
@@ -5139,6 +5154,19 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 finally:
                     if agent_run.result is not None:
                         self.resolve_metadata(agent_run.ctx)
+
+
+@contextmanager
+def _carrying_conversation(build: Callable[[], Conversation]) -> Generator[None]:
+    """Give an `AgentRunError` the run raises the run's conversation, so a store can record the failed turn.
+
+    A nested run's error is stamped again with this run's conversation, so its caller gets the one it can store.
+    """
+    try:
+        yield
+    except exceptions.AgentRunError as error:
+        error._conversation = build()  # pyright: ignore[reportPrivateUsage]
+        raise
 
 
 def _cancellation_error_types(capability: AbstractCapability[Any]) -> tuple[type[BaseException], ...]:
