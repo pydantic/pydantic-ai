@@ -8114,61 +8114,64 @@ async def test_non_json_response_body_raises_model_api_error(
 
 
 @pytest.mark.parametrize(
-    ('provider', 'model_name', 'supports_thinking'),
+    ('provider_factory', 'model_name', 'supports_thinking'),
     [
         pytest.param(
-            OllamaProvider(base_url='http://localhost:11434/v1', api_key='test'),
+            lambda: OllamaProvider(base_url='http://localhost:11434/v1', api_key='test'),
             'nemotron-3-super',
             True,
             id='nemotron-ollama',
         ),
-        pytest.param(TogetherProvider(api_key='test'), 'thinkingmachines/inkling', True, id='inkling-together'),
-        pytest.param(TogetherProvider(api_key='test'), 'nvidia/nemotron-3-ultra', True, id='nemotron-together'),
+        pytest.param(lambda: TogetherProvider(api_key='test'), 'thinkingmachines/inkling', True, id='inkling-together'),
+        pytest.param(lambda: TogetherProvider(api_key='test'), 'nvidia/nemotron-3-ultra', True, id='nemotron-together'),
         pytest.param(
-            FireworksProvider(api_key='test'),
+            lambda: FireworksProvider(api_key='test'),
             'accounts/fireworks/models/nemotron-3-ultra',
             True,
             id='nemotron-fireworks',
         ),
         pytest.param(
-            FireworksProvider(api_key='test'), 'accounts/fireworks/models/inkling', True, id='inkling-fireworks'
+            lambda: FireworksProvider(api_key='test'), 'accounts/fireworks/models/inkling', True, id='inkling-fireworks'
         ),
-        pytest.param(NebiusProvider(api_key='test'), 'nvidia/nemotron-3-ultra', True, id='nemotron-nebius'),
-        pytest.param(VercelProvider(api_key='test'), 'nvidia/nemotron-3-ultra', True, id='nemotron-vercel'),
+        pytest.param(lambda: NebiusProvider(api_key='test'), 'nvidia/nemotron-3-ultra', True, id='nemotron-nebius'),
+        pytest.param(lambda: VercelProvider(api_key='test'), 'nvidia/nemotron-3-ultra', True, id='nemotron-vercel'),
         pytest.param(
-            OpenAICompatibleProvider(name='generic', base_url='https://example.invalid/v1', api_key='test'),
+            lambda: OpenAICompatibleProvider(name='generic', base_url='https://example.invalid/v1', api_key='test'),
             'nvidia/nemotron-3-ultra',
             True,
             id='nemotron-openai-compatible',
         ),
         pytest.param(
-            OpenAICompatibleProvider(name='generic', base_url='https://example.invalid/v1', api_key='test'),
+            lambda: OpenAICompatibleProvider(name='generic', base_url='https://example.invalid/v1', api_key='test'),
             'thinkingmachines/inkling',
             True,
             id='inkling-openai-compatible',
         ),
         pytest.param(
-            OpenAICompatibleProvider(name='generic', base_url='https://example.invalid/v1', api_key='test'),
+            lambda: OpenAICompatibleProvider(name='generic', base_url='https://example.invalid/v1', api_key='test'),
             'inclusionai/ling-3',
             True,
             id='ling-openai-compatible',
         ),
         pytest.param(
-            OllamaProvider(base_url='http://localhost:11434/v1', api_key='test'),
+            lambda: OllamaProvider(base_url='http://localhost:11434/v1', api_key='test'),
             'unknown-model',
             False,
             id='unknown-ollama',
         ),
         pytest.param(
-            OpenAICompatibleProvider(name='generic', base_url='https://example.invalid/v1', api_key='test'),
+            lambda: OpenAICompatibleProvider(name='generic', base_url='https://example.invalid/v1', api_key='test'),
             'unknown-vendor/model',
             False,
             id='unknown-openai-compatible',
         ),
     ],
 )
-def test_parameterized_family_profile_resolution_matrix(provider: Provider, model_name: str, supports_thinking: bool):
+def test_parameterized_family_profile_resolution_matrix(
+    provider_factory: Callable[[], Provider], model_name: str, supports_thinking: bool
+):
     """Gateway dispatch resolves thinking-capable profiles for the Nemotron, Inkling and Ling families; unknown models keep the generic one."""
+    provider = provider_factory()
     profile = provider.model_profile(model_name)
     assert profile is not None
     assert profile.get('supports_thinking', False) is supports_thinking
