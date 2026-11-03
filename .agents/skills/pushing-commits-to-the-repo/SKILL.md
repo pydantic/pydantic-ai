@@ -59,7 +59,7 @@ Size S remains a manual judgment; review enforcement skips merge groups after ad
 
 ### Who merges
 
-Adding a PR to the merge queue merges it.
+Adding a PR to the merge queue counts as merging it.
 A maintainer with merge rights (Douwe, Aditya or Mike) merges at the merge bar.
 Merge a PR yourself only in these two cases.
 
@@ -70,7 +70,10 @@ Enqueue it after the final metadata check. Skip the second-opinion choice for a 
 **A re-enqueue.** Re-enqueue a PR the merge queue removed when all of these hold:
 
 - A maintainer enqueued it, or you enqueued it as a flake fix.
-- Since that enqueue, the PR changed only by merging `main` without conflicts, or by commits that meet the [Flake fixes](#flake-fixes) conditions.
+- The removal's `reason` is `failed_checks`.
+- No maintainer asked to hold the PR since that enqueue.
+- Since that enqueue, the PR changed only by merging `main` without conflicts, or by commits that meet the [Flake fixes](#flake-fixes) conditions. Outside `tests/`, `git diff <old-base>...<enqueued-head>` equals `git diff <new-base>...HEAD`.
+- You pushed every commit since that enqueue.
 - Its current head meets the merge bar again.
 
 In every other case, hand the PR to a maintainer.
@@ -90,7 +93,11 @@ The trivial-S exception does not apply: require a clean douwebot approval.
 All of these must hold:
 
 - The PR body links a CI run where the test failed.
-- Every changed file is under `tests/`.
+- The PR body names the root cause and a reproduction that fails without the fix and passes with it.
+  Force the failure, for example with a `pytest-randomly` seed, a forced ordering or a frozen clock.
+  Or run the test repeatedly, and report its failure count without the fix and zero failures in at least as many runs with it.
+- Every changed file is the failing test's module, or a cassette or snapshot of it.
+- The PR is labeled `size: S`.
 - The diff removes no test.
 - The diff adds no `skip`, `skipif`, `xfail`, `flaky` or rerun marker.
 - The diff deletes no assertion.
@@ -626,7 +633,7 @@ Any author-selected additional review must also have settled.
 Keep watching the PR after you hand it back, until it merges or closes.
 Poll the PR's state, timeline, comments and reviews every 30 minutes.
 The merge queue can remove the PR after handback, and new reviews can still land.
-Handle a merge-queue removal as the [Merge bar](#merge-bar) section requires, then keep watching.
+Handle a merge-queue removal as [Merge-queue removals](#merge-queue-removals) requires, then keep watching.
 Triage each new comment or review through step 4 of [After you push — the loop](#after-you-push--the-loop).
 A push changes the head, so restart that loop on the new head.
 
