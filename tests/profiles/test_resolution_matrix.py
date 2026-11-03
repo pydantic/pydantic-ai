@@ -860,6 +860,23 @@ def test_xai_grok_3_mini():
     )
 
 
+@pytest.mark.skipif(not xai_imports(), reason='xai not installed')
+def test_xai_grok_4_7():
+    profile = XaiProvider.model_profile('grok-4.7')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'grok_supports_builtin_tools': True,
+            'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
+            'grok_default_effort_omitted': True,
+            'needs_sealed_system_blocks': True,
+        }
+    )
+
+
 @pytest.mark.skipif(not mistral_imports(), reason='mistral not installed')
 def test_mistral_mistral_large():
     profile = MistralProvider.model_profile('mistral-large-latest')
@@ -1340,6 +1357,7 @@ def test_bedrock_xai_grok(region: str):
                 'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
                 'supported_native_tools': frozenset(),
                 'grok_default_effort_omitted': True,
+                'needs_sealed_system_blocks': True,
                 'bedrock_supports_tool_choice': True,
                 'bedrock_thinking_variant': 'xai',
                 'bedrock_disallows_sampling_settings': True,
@@ -1530,6 +1548,38 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
             'default_cache_retention': timedelta(seconds=300),
             'supports_cache': True,
             'supported_cache_retentions': (),
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openrouter_x_ai_grok_4_7():
+    profile = OpenRouterProvider.model_profile('x-ai/grok-4.7')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'grok_supports_builtin_tools': True,
+            'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
+            'grok_default_effort_omitted': True,
+            'needs_sealed_system_blocks': True,
+            'openai_chat_send_back_thinking_parts': 'field',
+            'openai_chat_thinking_field': 'reasoning',
+            'openai_chat_supports_file_urls': True,
+            'openai_chat_supports_web_search': True,
+            'openai_chat_supports_max_completion_tokens': False,
+            'openrouter_system_messages_precede_generation': False,
+            'supports_cache': False,
+            'supported_cache_retentions': (),
+            'openrouter_supports_cache_control': False,
+            'openrouter_supports_trailing_cache_control': True,
+            'openrouter_supports_cache_ttl': False,
+            'openrouter_supports_tool_cache': False,
+            'openrouter_supports_dynamic_instruction_cache': False,
+            'openrouter_max_cache_points': None,
         }
     )
 

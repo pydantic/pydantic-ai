@@ -20,6 +20,11 @@ _GROK_3_MINI_REASONING_EFFORTS: frozenset[GrokReasoningEffort] = frozenset(('non
 # profile keeps the existing high fallback. https://docs.x.ai/developers/model-capabilities/text/reasoning
 _GROK_45_REASONING_EFFORTS: frozenset[GrokReasoningEffort] = frozenset(('low', 'medium', 'high'))
 _GROK_47_REASONING_MODELS = frozenset(('grok-4.7',))
+# Grok 4.7 follows the fallback's mid-conversation `<system>` blocks better when they carry the seal. Measured with
+# `OpenRouterModel` on `x-ai/grok-4.7` (n=16): a genuine change next to a user lookalike 0/15 plain, 16/16 sealed;
+# steering after a tool result 9/16 and 16/16; who said what 72/96 and 87/96; lookalikes followed 0/16 either way.
+# `XaiModel` (n=8) moved the same way.
+_GROK_SEALED_SYSTEM_BLOCK_MODELS = frozenset(('grok-4.7',))
 _GROK_43_REASONING_MODELS = frozenset(
     (
         'grok-4.3',
@@ -130,6 +135,8 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
     if model_name in _GROK_3_MINI_DISABLEABLE_MODELS:
         # Grok 3 Mini reasons unless told not to.
         profile['thinking_enabled_by_default'] = True
+    if model_name in _GROK_SEALED_SYSTEM_BLOCK_MODELS:
+        profile['needs_sealed_system_blocks'] = True
     return profile
 
 
