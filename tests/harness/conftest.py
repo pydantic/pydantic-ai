@@ -55,6 +55,14 @@ __all__ = (
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
 
+@pytest.fixture(scope='session', autouse=True)
+def pixeltable_home(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """Keep Pixeltable's catalog out of `~/.pixeltable`; it reads the variable once per process."""
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setenv('PIXELTABLE_HOME', str(tmp_path_factory.mktemp('pixeltable')))
+        yield
+
+
 @pytest.fixture(scope='session')
 def anyio_backend() -> str:
     """The harness suite is asyncio-only: capabilities lean on `asyncio.create_task`, Temporal, Monty and
@@ -63,13 +71,6 @@ def anyio_backend() -> str:
     Session-scoped like the root override so module-scoped async fixtures (`temporal_env`, Modal `session`)
     can depend on it."""
     return 'asyncio'
-
-
-@pytest.fixture
-def blockbuster_enabled() -> bool:
-    """Not yet: the suite predates the detector, and inside a Temporal workflow it turns Code Mode's portal
-    startup failure into a hang. https://github.com/pydantic/pydantic-ai/issues/8821"""
-    return False
 
 
 @pytest.fixture

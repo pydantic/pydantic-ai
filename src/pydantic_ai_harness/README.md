@@ -153,6 +153,7 @@ The workspace the agent acts in: the files it edits and the commands it runs, lo
 | [boxd Sandbox](pydantic_ai_harness/boxd_sandbox/) | Harness | Commands and files in an isolated [boxd](https://boxd.sh) cloud machine |
 | [Smol Sandbox](pydantic_ai_harness/smol_sandbox/) | Harness | Commands and files in a [smolvm](https://github.com/smol-machines/smolvm) microVM on your own machine; no cloud account |
 | [BoxLite Sandbox](pydantic_ai_harness/boxlite_sandbox/) | Harness | Commands and files in a [BoxLite](https://github.com/boxlite-ai/boxlite) micro-VM on your own machine, with an optional egress allow-list; no cloud account |
+| [OpenSandbox](pydantic_ai_harness/opensandbox_sandbox/) | Harness | Commands and files in a sandbox on your own [OpenSandbox](https://open-sandbox.ai) server, on Docker or Kubernetes |
 | [Docker Sandbox](pydantic_ai_harness/docker_sandbox/) | Harness | Commands and files in a local [Docker](https://www.docker.com/) or Podman container |
 | [SSH Workspace](pydantic_ai_harness/ssh_workspace/) | Harness | Commands and files on a remote host over your `ssh` client; no isolation |
 | [Bubblewrap Sandbox](pydantic_ai_harness/bubblewrap_sandbox/) | Harness | Wraps another workspace capability so its commands run in a Linux [bubblewrap](https://github.com/containers/bubblewrap) sandbox on that workspace's host |
@@ -237,6 +238,7 @@ What the agent knows and remembers, loaded when relevant instead of carried in e
 | Capability | Package | What it does |
 |---|---|---|
 | [Memory](pydantic_ai_harness/memory/) | Harness | A persistent, namespaced notebook: bounded prompt injection, on-demand search; in-memory/file/Postgres stores |
+| [Pixeltable](pydantic_ai_harness/pixeltable/) | Harness | Read-only, allowlisted tools over Pixeltable tables and embedding indexes, plus a Pixeltable `MemoryStore` |
 | [Conversation Search](pydantic_ai_harness/conversation_search/) | Harness | BM25 search over stored history, including turns compaction dropped |
 | [Skills](pydantic_ai_harness/skills/) | Harness | Load [Agent Skill](https://ai.pydantic.dev/capabilities/on-demand/) (`SKILL.md`) instructions on demand |
 | [Repo Context](pydantic_ai_harness/repo_context/) | Harness | Start runs oriented: `AGENTS.md`/`CLAUDE.md` + repository structure |
@@ -257,6 +259,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 | [Tool approval](https://ai.pydantic.dev/deferred-tools#human-in-the-loop-tool-approval) | Core | Flag tool calls that need human approval before they run |
 | [Tool Call Judge](pydantic_ai_harness/tool_call_judge/) | Harness | A second model answers one risk question per tool call and blocks the call before the tool function runs |
 | [Approval Reviewer](pydantic_ai_harness/approval_reviewer/) | Harness | A second model answers one risk question per call waiting for approval, approves the low-risk ones, and leaves the rest to a person |
+| [Permissions](pydantic_ai_harness/permissions/) | Harness | Ask a person before file writes and commands, by permission mode: full access, auto (asks before risky commands), or read-only |
 | [Handle Deferred Tool Calls](https://ai.pydantic.dev/capabilities/handle-deferred-tool-calls/) | Core | Resolve approval-deferred tool calls programmatically |
 | [System Reminders](pydantic_ai_harness/system_reminders/) | Harness | Cache-safe re-injection of guidance mid-run to counter instruction fade |
 | [Detect Loops](pydantic_ai_harness/detect_loops/) | Harness | Notice repeated tool calls, results, alternations, or responses, and nudge the model, stop the run, or call your handler |
@@ -274,10 +277,11 @@ Outside the loop: how runs persist, survive failures, and get observed and confi
 
 | Capability | Package | What it does |
 |---|---|---|
-| [Durable execution](https://ai.pydantic.dev/capabilities/durable_execution/overview/) | Core | Runs that survive restarts and failures, on eight engines: [Temporal](https://ai.pydantic.dev/capabilities/durable_execution/temporal/), [DBOS](https://ai.pydantic.dev/capabilities/durable_execution/dbos/), [Prefect](https://ai.pydantic.dev/capabilities/durable_execution/prefect/), [Restate](https://ai.pydantic.dev/capabilities/durable_execution/restate/), [Airflow](https://ai.pydantic.dev/capabilities/durable_execution/airflow/), and the Harness engines AWS Lambda, Absurd, and pgtask below. See the [workspace guide](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) for Coder, Shell, and FileSystem |
+| [Durable execution](https://ai.pydantic.dev/capabilities/durable_execution/overview/) | Core | Runs that survive restarts and failures, on nine engines: [Temporal](https://ai.pydantic.dev/capabilities/durable_execution/temporal/), [DBOS](https://ai.pydantic.dev/capabilities/durable_execution/dbos/), [Prefect](https://ai.pydantic.dev/capabilities/durable_execution/prefect/), [Restate](https://ai.pydantic.dev/capabilities/durable_execution/restate/), [Airflow](https://ai.pydantic.dev/capabilities/durable_execution/airflow/), and the Harness engines AWS Lambda, Absurd, pgtask, and Azure Durable Task below. See the [workspace guide](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) for Coder, Shell, and FileSystem |
 | [AWS Lambda durability](pydantic_ai_harness/aws_lambda/) | Harness | Checkpoint model requests and tool calls into AWS Lambda durable function steps |
 | [Absurd durability](pydantic_ai_harness/absurd/) | Harness | Checkpoint model requests, MCP calls, and tool calls into Absurd steps on PostgreSQL |
 | [pgtask durability](pydantic_ai_harness/pgtask/) | Harness | Checkpoint model requests, MCP calls, and tool calls into pgtask steps on PostgreSQL |
+| [Azure Durable Task durability](pydantic_ai_harness/azure_durable_task/) | Harness | Run model requests, tool calls and durable operations as activities in Durable Task Scheduler orchestrations |
 | [Render Workflows](pydantic_ai_harness/render/) | Harness | Run model requests and tool calls as chained task runs with separate retries, timeouts, and compute settings; retrying the task that runs the agent can repeat completed work |
 | [Step Persistence](pydantic_ai_harness/step_persistence/) | Harness | Save, restore, resume (`continue_run`), and fork (`fork_run`) runs; file/SQLite/Mongo backends |
 | [Model Fallback](https://ai.pydantic.dev/capabilities/model-fallback/) | Core | Fall back to other models when a model request fails or its response is rejected, within the run's own request step |

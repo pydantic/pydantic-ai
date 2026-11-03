@@ -77,7 +77,7 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
     """
 
     text_summary: bool | str = False
-    """Have `web_search` also return a synthesized text summary above the results. Off by default.
+    """Have `web_search` also return a synthesized text summary above the results.
 
     When enabled, each `web_search` call requests Exa's plain-text output
     schema, so the response carries a short summary synthesized from the
@@ -88,11 +88,11 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
     """
 
     include_deep_search: bool = False
-    """Also expose the `deep_search` tool. Off by default.
+    """Also expose the `deep_search` tool.
 
     Deep search (Exa search `type='deep'`) runs a multi-step agentic search
     and synthesizes a cited answer in one call. Each call invests more time
-    and search depth than `web_search` (Exa's research-grade mode), and the
+    and search depth than `web_search`, and the
     model decides when to invoke tools, so that investment is opt-in rather
     than the default.
     """
@@ -126,7 +126,7 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
     """
 
     native: bool = False
-    """Use the model's native web search where it has one, with Exa's `web_search` as the fallback. Off by default.
+    """Use the model's native web search where it has one, with Exa's `web_search` as the fallback.
 
     When enabled, the capability also adds the provider's native web search
     tool, and Exa's `web_search` is only sent to models that do not support it,
