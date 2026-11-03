@@ -54,8 +54,12 @@ class _Skill(AbstractCapability[AgentDepsT]):
 
     def __init__(self, skill: SkillDefinition) -> None:
         self.id = skill.name
+        description = skill.description
+        if skill.when_to_use:
+            # Appended verbatim, Claude Code style: the author writes the trigger clause, e.g. 'Use when ...'.
+            description = f'{description} {skill.when_to_use}'
         # Continuation lines are indented so a multiline description doesn't read as separate catalog entries.
-        self.description = skill.description.replace('\n', '\n  ')
+        self.description = description.replace('\n', '\n  ')
         self.defer_loading = True
         self.instructions = skill.render()
 

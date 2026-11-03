@@ -266,13 +266,21 @@ behavior is not implemented:
 
 ```text
 agent, allowed-tools, argument-hint, arguments, context, dependencies,
-disallowed-tools, effort, hooks, model, paths, shell, tools, when_to_use
+disallowed-tools, effort, hooks, model, paths, shell, tools
 ```
 
 If a selected skill uses any of these fields, the run emits one aggregated
 `UserWarning` at its start. Fields such as `license`, `compatibility`, and `metadata` are
 accepted without changing runtime behavior. Other unknown, non-behavioral fields
 are also accepted.
+
+`when_to_use` is not one of them: its text is appended to the skill's
+description in the model's catalog, so the model sees when to load the skill.
+Multiline values keep their line breaks, with continuation lines indented
+inside the catalog entry. Migration: skills whose frontmatter sets
+`when_to_use` no longer contribute to the aggregated `UserWarning`, and their
+catalog descriptions grow by the field's text. A host asserting the catalog's
+exact text for a skill that sets it must update the assertion.
 
 To keep a skill's tools hidden until the skill is loaded, define that skill as
 an [on-demand capability with its tools](../capabilities/on-demand.md#hide-tools-until-loaded)
@@ -309,8 +317,9 @@ a `reason`, and the `message` a run would warn with, for the host to show:
 | `'not_a_directory'` | A library path that is a file, with `missing_directories='skip'` |
 | `'skill_package'` | A library path that holds a `SKILL.md` itself, with `missing_directories='skip'` |
 
-Each `SkillDefinition` has the skill's `name`, `description`, `body`, `path`,
-`directory`, `in_run_workspace`, `model_invocable`, and `user_invocable`. The
+Each `SkillDefinition` has the skill's `name`, `description`, `when_to_use`,
+`body`, `path`, `directory`, `in_run_workspace`, `model_invocable`, and
+`user_invocable`. The
 catalog includes skills with `disable-model-invocation: true`
 (`model_invocable` is `False`), which a run leaves out of the model's catalog,
 so a host can offer them as commands only. `Skills` doesn't offer commands
