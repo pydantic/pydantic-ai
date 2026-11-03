@@ -36,6 +36,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -407,6 +408,36 @@ class TestCompactOnCacheExpiry:
         (record,) = result.compactions
         assert record.messages_before == len(history) + 1
         assert record.messages_after == len(history) + 2
+
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+    async def test_the_standing_system_prompt_stays_ahead_of_the_mark(self) -> None:
+        """The mark goes after the opening system prompt, as `SummarizingCompaction`'s summary does.
+
+        Ahead of it, the system prompt would no longer open the history, and a model without inline system prompts,
+        like Anthropic's, would send it as `<system>`-wrapped user text instead of in its system parameter.
+        """
+        model = _anthropic()
+        system_prompt = 'You are a careful investigator.'
+        history = _idle(await _conversation(model, system_prompt=system_prompt), timedelta(minutes=6))
+        local = _Local(model)
+        result = await _agent(local, CompactOnCacheExpiry(max_fraction=None), system_prompt=system_prompt).run(
+            'next', message_history=history
+        )
+
+        messages = result.all_messages()
+        assert [[type(part).__name__ for part in message.parts] for message in messages[:3]] == [
+            ['SystemPromptPart'],
+            ['CompactionPart'],
+            ['UserPromptPart'],
+        ]
+        # Only the parts moved: the original user turn is still there, and every tool result after it.
+        assert len(messages) == len(history) + 4
+        prepared = model.prepare_messages(local.sent[0])
+        opening = prepared[0]
+        assert isinstance(opening, ModelRequest)
+        assert isinstance(opening.parts[0], SystemPromptPart)
+        assert opening.parts[0].content == system_prompt
+        assert isinstance(opening.parts[1], CompactionPart)
 
     @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
     async def test_a_later_fallback_replaces_the_mark_an_earlier_one_left(self) -> None:

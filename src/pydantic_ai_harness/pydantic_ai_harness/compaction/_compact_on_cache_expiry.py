@@ -15,7 +15,14 @@ from pydantic_ai.capabilities import (
     CompactionResult,
     durable_operation,
 )
-from pydantic_ai.messages import CompactionPart, ModelMessage, ModelRequest, ModelResponse
+from pydantic_ai.messages import (
+    CompactionPart,
+    ModelMessage,
+    ModelRequest,
+    ModelRequestPart,
+    ModelResponse,
+    SystemPromptPart,
+)
 from pydantic_ai.profiles import ModelProfile, PromptCacheOutlook, prompt_cache_outlook
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.compaction._clear_tool_results import ClearToolResults
@@ -276,7 +283,11 @@ def _fallback_result(original: Sequence[ModelMessage], compacted: list[ModelMess
         return CompactionResult(messages=compacted, part=latest[1], handler='compact_on_cache_expiry')
     part = CompactionPart(content=_FALLBACK_NOTE, metadata={_FALLBACK_METADATA_KEY: True})
     if latest is None:
-        messages = [ModelRequest(parts=[part]), *compacted]
+        messages = [
+            *_standing_prompt_requests(compacted),
+            ModelRequest(parts=[part]),
+            *_after_standing_prompt(compacted),
+        ]
     else:
         index, previous = latest
         holder = compacted[index]
@@ -286,6 +297,41 @@ def _fallback_result(original: Sequence[ModelMessage], compacted: list[ModelMess
         else:
             messages = [*compacted[: index + 1], ModelRequest(parts=[part]), *compacted[index + 1 :]]
     return CompactionResult(messages=messages, part=part, handler='compact_on_cache_expiry')
+
+
+def _standing_prompt_count(messages: Sequence[ModelMessage]) -> int:
+    """How many of the first request's opening parts are the standing system prompt, as core counts them."""
+    first = messages[0]
+    parts: Sequence[ModelRequestPart] = first.parts if isinstance(first, ModelRequest) else ()
+    return next(
+        (
+            index
+            for index, part in enumerate(parts)
+            if not isinstance(part, SystemPromptPart) or part.scope == 'request'
+        ),
+        len(parts),
+    )
+
+
+def _standing_prompt_requests(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+    """The standing system prompt in a request of its own, which the mark goes after, as `SummarizingCompaction`'s summary does.
+
+    The model sends the parts the first request opens with as its system prompt. With the mark ahead of them, a
+    model without inline system prompts would send the application's system prompt as user text.
+    """
+    count = _standing_prompt_count(messages)
+    first = messages[0]
+    return [replace(first, parts=first.parts[:count])] if count else []
+
+
+def _after_standing_prompt(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """*messages* without the standing system prompt `_standing_prompt_requests` moved ahead of the mark."""
+    count = _standing_prompt_count(messages)
+    if not count:
+        return messages
+    first = messages[0]
+    rest = first.parts[count:]
+    return [*([replace(first, parts=rest)] if rest else []), *messages[1:]]
 
 
 def _latest_compaction_part(messages: Sequence[ModelMessage]) -> tuple[int, CompactionPart] | None:
