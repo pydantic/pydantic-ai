@@ -11,13 +11,15 @@ Run your agent's commands and file edits in an isolated [boxd](https://boxd.sh) 
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. BoxdSandbox's get_workspace hook gives the run a boxd cloud machine as ctx.workspace, so each command and file operation goes over the boxd API, authenticated with BOXD_API_KEY, and runs in the machine as the boxd user; output comes back to the tool. The first use creates the machine, its WorkspaceRef is saved in the message history and on the result, a later run reattaches with it, and destroy(ref) deletes it. fork(ref) copies a machine, with its files and running processes, into a new isolated one.](../img/harness/boxd-sandbox.svg)
+
 ## Install
 
 ```bash
-pip/uv-add "pydantic-ai-harness[boxd,anthropic]"
+pip/uv-add "pydantic-ai-harness[coder,boxd,anthropic]"
 ```
 
-The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `BOXD_API_KEY` to an API key from `boxd auth keys create` (each key belongs to one boxd organization), and `ANTHROPIC_API_KEY` for the examples.
+The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `BOXD_API_KEY` to an API key from `boxd auth keys create` (each key belongs to one boxd organization), and `ANTHROPIC_API_KEY` for the examples.
 
 ## Quick start
 

@@ -1,0 +1,5 @@
+{
+  "against": "v2.60.0",
+  "reason": "False positive: `create_async_httpx2_client`'s `limits` default is still `httpx2.Limits(max_connections=1000, max_keepalive_connections=100)`; Griffe compares the expression text, which now names the `DEFAULT_HTTP_LIMITS` constant holding that value.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11073"
+}

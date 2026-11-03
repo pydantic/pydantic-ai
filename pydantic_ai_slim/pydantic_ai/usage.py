@@ -6,16 +6,23 @@ from copy import copy
 from dataclasses import dataclass
 from decimal import Decimal
 from functools import cache
-from typing import Annotated, Any, Literal, cast
+from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 
 from genai_prices.data_snapshot import get_snapshot
 from pydantic import AliasChoices, BeforeValidator, Field, GetCoreSchemaHandler, TypeAdapter
 from pydantic_core import SchemaSerializer, core_schema
+from typing_extensions import deprecated
 
 from . import _utils
 from ._gateway_cost import gateway_reported_cost
 from ._genai_prices import iter_provider_references
-from ._warnings import CostNotFoundWarning, UsageExtractionFailedWarning, UsageLimitUnavailableWarning
+from ._removed_names import removed_names_getattr
+from ._warnings import (
+    CostNotFoundWarning,
+    PydanticAIDeprecationWarning,
+    UsageExtractionFailedWarning,
+    UsageLimitUnavailableWarning,
+)
 from .exceptions import UsageLimitExceeded
 
 __all__ = 'RequestUsage', 'RunUsage', 'UsageLimits'
@@ -480,6 +487,18 @@ class RunUsage(UsageBase):
         new_usage.cost = self.cost - (other.cost or 0) if self.cost is not None and self.cost != other.cost else None
         return new_usage
 
+    @deprecated(
+        '`usage` is a property, not a method: use `.usage` instead of `.usage()`.',
+        category=PydanticAIDeprecationWarning,
+    )
+    def __call__(self) -> RunUsage:
+        """Return this usage, so that V1-style `result.usage()` keeps working, with a deprecation warning.
+
+        Without this, the call raises `TypeError: 'RunUsage' object is not callable`, which code that wraps
+        its usage accounting in `except Exception` turns into silently zero usage.
+        """
+        return self
+
 
 def _incr_usage_cost(slf: RunUsage | RequestUsage, incr_usage: RunUsage | RequestUsage) -> None:
     if incr_usage.cost is not None:
@@ -707,3 +726,12 @@ class UsageLimits:
             )
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+_REMOVED_IN_V2 = {
+    'Usage': "use `RunUsage` for a run's usage, or `RequestUsage` for a single request's.",
+}
+
+# Kept from type checkers, which would otherwise accept any name on this module.
+if not TYPE_CHECKING:  # pragma: no branch
+    __getattr__ = removed_names_getattr(__name__, _REMOVED_IN_V2)
