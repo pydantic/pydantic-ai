@@ -72,7 +72,7 @@ Enqueue it after the final metadata check. Skip the second-opinion choice for a 
 - A maintainer enqueued it, or you enqueued it as a flake fix.
 - The removal's `reason` is `failed_checks`.
 - No maintainer asked to hold the PR since that enqueue.
-- Since that enqueue, the PR changed only by merging `main` without conflicts, or by commits that meet the [Flake fixes](#flake-fixes) conditions. Outside `tests/`, `git diff <old-base>...<enqueued-head>` equals `git diff <new-base>...HEAD`.
+- Since that enqueue, the PR changed only by merging `main` without conflicts, or by commits that meet the [Flake fixes](#flake-fixes) conditions other than the size label. Outside the flake-fixed test module and its cassettes and snapshots, `git diff <old-base>...<enqueued-head>` equals `git diff <new-base>...HEAD`. If you cannot establish the head at enqueue, hand the PR to a maintainer.
 - You pushed every commit since that enqueue.
 - Its current head meets the merge bar again.
 
@@ -97,7 +97,7 @@ All of these must hold:
   Force the failure, for example with a `pytest-randomly` seed, a forced ordering or a frozen clock.
   Or run the test repeatedly, and report its failure count without the fix and zero failures in at least as many runs with it.
 - Every changed file is the failing test's module, or a cassette or snapshot of it.
-- The PR is labeled `size: S`.
+- The PR is labeled `size: S` or `size: M`.
 - The diff removes no test.
 - The diff adds no `skip`, `skipif`, `xfail`, `flaky` or rerun marker.
 - The diff deletes no assertion.
