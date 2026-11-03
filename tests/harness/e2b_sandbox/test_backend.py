@@ -365,7 +365,8 @@ class TestRun:
                 # Hold the deadline until the child runs, so the stop has to end it rather than
                 # merely beat it: a stop that lands late on a loaded runner must not flake the test.
                 with anyio.CancelScope(shield=True), anyio.fail_after(5):
-                    while not (pid_file.exists() and pid_file.read_text().endswith('\n')):
+                    pid = anyio.Path(pid_file)
+                    while not (await pid.exists() and (await pid.read_text()).endswith('\n')):
                         await anyio.sleep(0.01)
                 if delay_ack:
                     # The start ACK is lost: the deadline passed, so this is where it cancels.

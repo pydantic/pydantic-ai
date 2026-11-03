@@ -251,6 +251,24 @@ The `pydantic-ai-*` workflows in this directory are [agentic workflows](https://
 - **Recompilation is required for anything the lock bakes in:** a source's frontmatter (`on:` triggers, `permissions`, `tools`, `safe-outputs`, jobs, path/`detect` filters) and its `imports:` shared fragments (`shared/*.md`) are inlined into the lock at compile time.
 - **Exception — runtime-resolved prompts need no recompile.** Agent prompts under `shared/prompts/` are fetched at run time (via the `fetch-dynamic-prompt` action / a Logfire-managed variable), not baked into the lock, so editing one takes effect on the next run without recompiling.
 
+## Weekly agent instructions audit
+
+`pydantic-ai-weekly-ce-audit.md` audits tracked context engineering (CE) Markdown weekly and on manual dispatch, proposing at most one focused trimming PR or a noop.
+An existing workflow PR stops primary inference; threat detection remains enabled.
+
+`.github/scripts/weekly_ce_audit.py` inventories committed objects, resolves tracked aliases, and rejects incomplete reported coverage or edits outside existing canonical instruction Markdown.
+Workflow sources, imports, distributed package instructions and the packaged gh-aw definition remain report-only.
+Keep candidate edits in a separate worktree and the reviewer checkout at the immutable policy base.
+
+A fresh read-only Task must assess the actual diff, template exemption and scope of cited maintainer agreement.
+Typos, broken links and small documentation improvements may omit an issue; nontrivial changes need an existing aligned issue assigned to the workflow actor, or noop.
+For non-exempt proposals, host validation checks frozen issue identity, open state, assignment, cited maintainer authority and closing reference.
+It also checks staged evidence and binds the review to the candidate, task and PR metadata; semantic classification belongs to the mandatory reviewer.
+Local Task evidence is an execution check, not attestation against a compromised coordinator.
+
+The separate PR publication job uses the existing Docs app and retains protected-file review.
+The validator's regressions live in `.github/scripts/test_weekly_ce_audit.py`; use the compilation rules above when changing the workflow source.
+
 ## Shared Z.AI account limits
 
 Treat Pydanty and these workflows as consumers of one Z.AI account.
