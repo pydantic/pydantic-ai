@@ -411,24 +411,21 @@ Under durable execution, the guards are evaluated in a capability hook rather th
 
 ## `CompactOnCacheExpiry`: compact once the cache has expired
 
-Editing history invalidates the provider's prompt cache from the edit onward, so the next request pays to cache it again. After a pause longer than the cache lasts, that request pays anyway. `CompactOnCacheExpiry` compacts at that moment, so compaction costs no extra cache spend.
+Editing history invalidates the provider's prompt cache from the edit onward, so the next request pays to cache it again. After a pause longer than the cache lasts, that request pays anyway. `CompactOnCacheExpiry` compacts at that moment, so the edit itself costs no extra cache write. The saving comes from what's left to write: by default it clears old tool results without a model call, so the cold request writes a shorter prefix.
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import Caching, NativeCompaction
+from pydantic_ai.capabilities import Caching
 from pydantic_ai_harness import CompactOnCacheExpiry
 
-agent = Agent(
-    'anthropic:claude-sonnet-5',
-    capabilities=[Caching(), NativeCompaction(), CompactOnCacheExpiry()],
-)
+agent = Agent('anthropic:claude-sonnet-5', capabilities=[Caching(), CompactOnCacheExpiry()])
 ```
 
-It decides *when* to compact, and the agent's [`compact_history` handlers](https://pydantic.dev/docs/ai/capabilities/compaction/#the-compaction-hook) decide *how*. On the first request after the cache expired, it calls `ctx.request_compaction(reason='cache_expiry')`, and the first capability whose `compact_history` hook returns a result serves it: above, [`NativeCompaction`](https://pydantic.dev/docs/ai/capabilities/compaction/#compacting-on-demand), with the serving model's own compaction API where it has one. The decision is made for each attempt at a request, for the model that will serve it. The strategies on this page don't serve requests yet: they still compact on their own triggers. When one of them already compacted the history for the request, `CompactOnCacheExpiry` doesn't ask.
+It decides *when* to compact, and the agent's [`compact_history` handlers](https://pydantic.dev/docs/ai/capabilities/compaction/#the-compaction-hook) decide *how*. On the first request after the cache expired, it calls `ctx.request_compaction(reason='cache_expiry')`, and the first capability whose `compact_history` hook returns a result serves it, like [`NativeCompaction`](https://pydantic.dev/docs/ai/capabilities/compaction/#compacting-on-demand) with the serving model's own compaction API; without one, as above, `fallback` serves it. The decision is made for each attempt at a request, for the model that will serve it. The strategies on this page don't serve requests yet: they still compact on their own triggers. When one of them already compacted the history for the request, `CompactOnCacheExpiry` doesn't ask.
 
 If no other capability serves the request, `fallback` does. It's `CompactOnCacheExpiry`'s own `compact_history` hook, asked after every other capability's wherever you list it, and it only serves `'cache_expiry'` requests. The default clears all but the five newest tool results and leaves a placeholder that tells the model to call the tool again if it needs the output. Pass another strategy as the first argument, or `None` to disable it. Every compaction marks where the compacted history starts with a `CompactionPart`, so a strategy that writes no summary of its own, like the default, gets one saying `Earlier parts of this conversation were compacted to save context.`, which the model sees as a conversation summary. It goes at the start of the history after the latest compaction, and replaces the one an earlier fallback left there.
 
-A compaction after expiry reads the whole history uncached once. Clearing tool results costs nothing extra.
+Clearing tool results costs nothing extra. A summarizing handler like `NativeCompaction` reads the whole history uncached to write its summary, and pays for that generation too: on histories of 50,000 to 100,000 tokens that can cost more than the cache write it saves, so add it only for histories large enough to pay it back.
 
 By default only a history larger than a fifth of the model's context window is compacted, so a short conversation keeps its tool results over a short break.
 

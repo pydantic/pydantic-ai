@@ -74,8 +74,10 @@ class CompactOnCacheExpiry(AbstractCapability[AgentDepsT]):
 
     Rewriting history moves the cached prompt prefix, so the next request pays a cache write for
     everything after the edit. Once the conversation has been idle for longer than the provider
-    keeps the prefix, the next request pays that write anyway, so compacting then costs no extra
-    cache spend.
+    keeps the prefix, the next request pays that write anyway, so the edit costs no extra cache
+    write. The saving comes from the shorter prefix left to write: the default `fallback` clears old
+    tool results without a model call. A summarizing handler reads the whole history uncached and
+    pays for its own generation, which on smaller histories can cost more than it saves.
 
     It doesn't decide how to compact: it calls
     [`ctx.request_compaction(reason='cache_expiry')`][pydantic_ai.tools.RunContext.request_compaction],
@@ -96,13 +98,10 @@ class CompactOnCacheExpiry(AbstractCapability[AgentDepsT]):
     Example:
         ```python
         from pydantic_ai import Agent
-        from pydantic_ai.capabilities import Caching, NativeCompaction
+        from pydantic_ai.capabilities import Caching
         from pydantic_ai_harness import CompactOnCacheExpiry
 
-        agent = Agent(
-            'anthropic:claude-sonnet-5',
-            capabilities=[Caching(), NativeCompaction(), CompactOnCacheExpiry()],
-        )
+        agent = Agent('anthropic:claude-sonnet-5', capabilities=[Caching(), CompactOnCacheExpiry()])
         ```
     """
 
@@ -137,14 +136,17 @@ class CompactOnCacheExpiry(AbstractCapability[AgentDepsT]):
     too short compacts while the cache is still warm and costs the cache hit."""
 
     tokenizer: Callable[[str], int] | None = field(default=None, kw_only=True)
-    """Optional token counter for `max_tokens`/`max_fraction` and the fallback's span; defaults to the characters-per-token heuristic."""
+    """Optional token counter for `max_tokens`/`max_fraction` and the fallback's span.
+
+    Defaults to the characters-per-token heuristic.
+    """
 
     id: str | None = field(default='compact_on_cache_expiry', kw_only=True)
     """One-off: an agent has one expiry policy, so the id is fixed by default.
 
-    Two of them resolve to one, merged field by field, except that a `fallback` or size floor one of them changed
-    from the default is kept as a whole, `None` included; see `combine`. The fallback runs as this capability's `compact` durable
-    operation, which needs a stable id."""
+    Two of them resolve to one, merged field by field, except that a `fallback` or size floor one of them
+    changed from the default is kept as a whole, `None` included; see `combine`. The fallback runs as this
+    capability's `compact` durable operation, which needs a stable id."""
 
     def __post_init__(self) -> None:
         if self.max_fraction is _DEFAULT_FRACTION:
@@ -263,9 +265,10 @@ class CompactOnCacheExpiry(AbstractCapability[AgentDepsT]):
 def _fallback_result(original: Sequence[ModelMessage], compacted: list[ModelMessage]) -> CompactionResult:
     """The fallback's compacted history as a `CompactionResult`, whose `part` marks where it starts.
 
-    A strategy that summarizes leaves a `CompactionPart` of its own. One that only edits or drops messages, like
-    the default clearing, gets one saying earlier parts of the conversation were compacted, at the start of the post-compaction window so the tools
-    and capabilities that window shows stay as they were. The part a previous fallback left there is replaced.
+    A strategy that summarizes leaves a `CompactionPart` of its own. One that only edits or drops messages,
+    like the default clearing, gets one saying earlier parts of the conversation were compacted, at the start
+    of the post-compaction window so the tools and capabilities that window shows stay as they were. The part
+    a previous fallback left there is replaced.
     """
     latest = _latest_compaction_part(compacted)
     original_parts = [part for message in original for part in message.parts if isinstance(part, CompactionPart)]

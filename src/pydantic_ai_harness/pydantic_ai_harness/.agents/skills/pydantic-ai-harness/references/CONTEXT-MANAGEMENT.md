@@ -245,7 +245,9 @@ handlers serve it, such as Pydantic AI's `NativeCompaction`; the harness strateg
 requests yet, and when one of them already compacted the request on its own trigger it doesn't
 ask. When no handler serves it, `fallback` does, as its own `compact_history` hook, ordered
 innermost so it's asked last (`None` disables it). A fallback that writes no summary of its
-own gets a `CompactionPart` saying earlier parts of the conversation were compacted.
+own gets a `CompactionPart` saying earlier parts of the conversation were compacted. The saving
+comes from the default fallback's shorter prefix; a summarizing handler like `NativeCompaction`
+reads the whole history uncached and can cost more than it saves on 50-100k-token histories.
 
 The decision uses Pydantic AI's `prompt_cache_outlook` with the retention the request's settings
 ask for, else the provider's documented default. Does nothing when retention is unknown (Gemini
