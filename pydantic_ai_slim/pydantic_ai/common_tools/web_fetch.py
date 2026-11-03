@@ -82,6 +82,9 @@ _MAX_HTML_TEXT_SCAN_COST = 5_000_000_000
 # Reserve most of AnyIO's default 40 worker slots for other tools during HTML conversion.
 _MAX_CONCURRENT_HTML_CONVERSIONS = 4
 _HTML_CONVERSION_LIMITER: RunVar[anyio.Semaphore] = RunVar('_HTML_CONVERSION_LIMITER')
+# With no `max_content_length`, JSON whose indented form passes this many characters is returned as
+# fetched. Indenting a 20 MB array of small objects to this length takes ~1.7 s and ~43 MiB.
+_MAX_JSON_FORMATTED_LENGTH = 20_000_000
 
 
 class WebFetchResult(TypedDict):
@@ -231,17 +234,19 @@ def _format_json(text: str, max_length: int | None) -> str:
 
     A stopped result ends in a value or bracket rather than indentation, so stripping its ends keeps
     it longer than `max_length`, and truncating it gives the same content as truncating the whole
-    document. A body that doesn't parse, or is nested deeper than the interpreter's recursion limit,
-    is returned as-is.
+    document. With no `max_length`, the body is returned as-is once the result passes
+    `_MAX_JSON_FORMATTED_LENGTH`, as is a body that doesn't parse or is nested deeper than the
+    interpreter's recursion limit.
     """
+    limit = _MAX_JSON_FORMATTED_LENGTH if max_length is None else max_length
     try:
         parsed = json.loads(text)
         content = io.StringIO()
         content.write('```json\n')
         for chunk in json.JSONEncoder(indent=2).iterencode(parsed):
             content.write(chunk)
-            if max_length is not None and content.tell() > max_length and not chunk.endswith((' ', '\n')):
-                return content.getvalue()
+            if content.tell() > limit and not chunk.endswith((' ', '\n')):
+                return text if max_length is None else content.getvalue()
         content.write('\n```')
         return content.getvalue()
     except (json.JSONDecodeError, ValueError, RecursionError):
