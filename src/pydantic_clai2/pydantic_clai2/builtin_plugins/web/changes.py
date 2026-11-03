@@ -127,13 +127,15 @@ def _file_calls(messages: Sequence[ModelMessage]) -> tuple[list[_FileCall], list
 
 def _returned_calls(request: ModelRequest, pending: dict[str, _FileCall]) -> list[_FileCall]:
     """The calls in `pending` that `request` returns a success for, in order, each taken out of `pending`."""
-    return [
-        call
-        for part in request.parts
-        if isinstance(part, ToolReturnPart)
-        and part.outcome == 'success'
-        and (call := pending.pop(part.tool_call_id, None)) is not None
-    ]
+    found: list[_FileCall] = []
+    for part in request.parts:
+        if (
+            isinstance(part, ToolReturnPart)
+            and part.outcome == 'success'
+            and (call := pending.pop(part.tool_call_id, None)) is not None
+        ):
+            found.append(call)
+    return found
 
 
 def _requested_calls(response: ModelResponse, turn: int) -> dict[str, _FileCall]:
