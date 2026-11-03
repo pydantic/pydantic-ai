@@ -180,8 +180,7 @@ A file over 64 MiB is described by its size instead of read: find the lines with
 
 `read_file` has the tool kind `READ_FILE_KIND` (`file_system.read_file`). `ToolOutputLimits`'
 `read_tool_result`, `Memory`'s `read_memory` and `RepoContext`'s inventory tool step aside for it when
-the files they read are in the run's workspace. Keep `FileSystem` under its own names: a renamed
-`FileSystem` tool can't be called yet (pydantic/pydantic-ai#10927).
+the files they read are in the run's workspace, also when `FileSystem` is renamed (`FileSystem().prefix_tools('wiki')`).
 
 Parameters: `root_dir` (default the working directory; must be the working directory or an **ancestor**
 of it, so `FileSystem(root_dir='data')` under `LocalWorkspace('.')` raises `UserError`: attach

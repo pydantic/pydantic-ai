@@ -287,6 +287,8 @@ def test_a_live_session_counts_the_queue_its_prompt_holds() -> None:
 
         def steer(self, text: str) -> bool: ...  # pragma: no cover
 
+        handling = False
+
     host = PluginHost[None](name='', console=Console(file=StringIO()), settings={})
     session = LiveRuntime(live_id='x', host=host, running=lambda: True, queued=lambda: 5, inputs=Inputs)
     assert session.queued == len(session.queue) == 2
