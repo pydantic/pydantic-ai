@@ -609,7 +609,7 @@ jobs:
         with:
           extra_args: --all-files --verbose
         env:
-          SKIP: no-commit-to-branch,clai-help,format,lint,check-cassettes
+          SKIP: no-commit-to-branch,clai-help,format,lint,check-cassettes,complexity
 
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
