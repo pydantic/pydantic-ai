@@ -161,8 +161,7 @@ async def test_command_timeout_starts_once_the_sandbox_is_acquired(fake_modal: F
     command_deadlines: list[float] = []
 
     def responder(argv: list[str], timeout: int | None) -> tuple[str, str, int]:
-        if argv == ['echo', 'hello']:
-            command_deadlines.append(anyio.current_effective_deadline())
+        command_deadlines.append(anyio.current_effective_deadline())
         return ' '.join(argv) + '\n', '', 0
 
     fake_modal.responder = responder
@@ -179,7 +178,8 @@ async def test_command_timeout_starts_once_the_sandbox_is_acquired(fake_modal: F
         tg.start_soon(release)
         result = await backend.run(['echo', 'hello'], timeout=60)
         assert result.stdout == 'echo hello\n'
-    assert command_deadlines[0] >= acquired_at[0] + 60
+    (command_deadline,) = command_deadlines
+    assert command_deadline >= acquired_at[0] + 60
     assert fake_modal.sandboxes[0].exec_calls[0].timeout == 60
 
 
