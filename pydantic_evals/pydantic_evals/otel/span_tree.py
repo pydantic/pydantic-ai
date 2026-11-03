@@ -295,7 +295,7 @@ class SpanNode:
         # At this point, all existing ANDs and no existing ORs have passed, so it comes down to this condition
         return (
             self._name_matches(query)
-            and self._attributes_match(query)
+            and self._attribute_conditions_match(query)
             and self._status_matches(query)
             and self._duration_matches(query)
             and self._children_match(query)
@@ -312,7 +312,7 @@ class SpanNode:
             return False
         return True
 
-    def _attributes_match(self, query: SpanQuery) -> bool:
+    def _attribute_conditions_match(self, query: SpanQuery) -> bool:
         if (has_attributes := query.get('has_attributes')) and not all(
             self._attribute_matches(key, value) for key, value in has_attributes.items()
         ):

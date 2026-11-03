@@ -269,7 +269,7 @@ class ReportCaseAggregate(BaseModel):
         avg_scores = _avg_numeric_dicts([a.scores for a in aggregates])
         avg_metrics = _avg_numeric_dicts([a.metrics for a in aggregates])
 
-        avg_labels = _aggregates_labels_averages(aggregates)
+        avg_labels = _avg_label_distributions(aggregates)
 
         # Average assertions
         assertion_values = [a.assertions for a in aggregates if a.assertions is not None]
@@ -315,7 +315,7 @@ def _labels_averages(labels_by_name: list[dict[str, str]]) -> dict[str, dict[str
     }
 
 
-def _aggregates_labels_averages(aggregates: list[ReportCaseAggregate]) -> dict[str, dict[str, float]]:
+def _avg_label_distributions(aggregates: list[ReportCaseAggregate]) -> dict[str, dict[str, float]]:
     """Average the label distributions of several aggregates."""
     all_label_keys: set[str] = set()
     for a in aggregates:
