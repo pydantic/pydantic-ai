@@ -80,7 +80,7 @@ Maintainers request automated reviews on PRs. They add to a maintainer's review;
 - douwebot checks a PR against the repository's guidelines and looks for bugs it can find by reading the code. It doesn't run your code. A PR labeled `size: M` or larger needs a douwebot approval with no findings on its latest commit before it can merge.
 - pydanty runs code to review a PR, when a maintainer requests it.
 - A bot approval does not mean your PR is ready to merge. A maintainer still reviews it.
-- A bot finding does not mean you must act on it. If you disagree, say so.
+- A bot finding is not the final word. If you disagree, reply on its thread, and a maintainer will decide.
 - If automated review is generating noise on your PR, tell us. We use that feedback to retune the tooling.
 
 ### Priority
