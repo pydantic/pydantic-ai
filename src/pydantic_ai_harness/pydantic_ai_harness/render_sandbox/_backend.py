@@ -148,6 +148,8 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
             async with asyncio.timeout(_OPERATION_TIMEOUT):
                 sandbox = await client.sandboxes.create(
                     timeout_seconds=self._sandbox_timeout,
+                    # Render suspends idle sandboxes by default, and a suspended one never reports `running`.
+                    idle_timeout_seconds=0,
                     network_policy='allow-all' if self._allow_internet_access else 'deny-all',
                 )
         except RateLimitError:

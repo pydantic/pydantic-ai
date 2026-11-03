@@ -117,7 +117,7 @@ The `finally` terminates the sandbox even if setup or the run fails. Read any fi
 
 ## Clean up
 
-The sandbox keeps running, and billing, until `sandbox_timeout` runs out. Pydantic AI never terminates it. Terminate it with the ref you stored:
+The sandbox keeps running, and billing, until `sandbox_timeout` runs out: `RenderSandbox` turns off Render's idle suspension for the sandboxes it creates. Pydantic AI never terminates it. Terminate it with the ref you stored:
 
 ```python {names="defined"}
 from pydantic_ai.workspaces import WorkspaceRef

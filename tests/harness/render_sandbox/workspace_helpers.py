@@ -60,6 +60,7 @@ def output(text: str, stream: str = 'stdout') -> SandboxExecOutput:
 class CreateCall:
     timeout_seconds: int
     network_policy: str
+    idle_timeout_seconds: int | None
 
 
 @dataclass
@@ -184,7 +185,7 @@ def client_is_closed(client: RenderAsync) -> bool:
 def lifecycle(
     harness: WorkspaceHarness,
 ) -> tuple[Callable[..., Awaitable[Sandbox]], Callable[[str], Awaitable[Sandbox]], Callable[[str], Awaitable[None]]]:
-    async def create(*, timeout_seconds: int, network_policy: str) -> Sandbox:
+    async def create(*, timeout_seconds: int, network_policy: str, idle_timeout_seconds: int | None = None) -> Sandbox:
         harness.create_started.set()
         if harness.create_gate is not None:
             await harness.create_gate.wait()
@@ -201,7 +202,7 @@ def lifecycle(
             idle_timeout_seconds=900,
             created_at=datetime.now(UTC),
         )
-        harness.create_calls[identifier] = CreateCall(timeout_seconds, network_policy)
+        harness.create_calls[identifier] = CreateCall(timeout_seconds, network_policy, idle_timeout_seconds)
         harness.sandbox_roots[identifier] = harness.root / identifier
         harness.sandboxes[identifier] = sandbox
         harness.created.append(identifier)

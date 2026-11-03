@@ -92,7 +92,7 @@ async def test_settings_shape_a_new_sandbox(
     backend = capability.get_workspace(_ctx(), ref=None)
     assert backend is not None
     assert (await backend.working_dir()) == str(workspace_harness.root)
-    assert workspace_harness.create_calls['sb-1'] == CreateCall(120, policy)
+    assert workspace_harness.create_calls['sb-1'] == CreateCall(120, policy, idle_timeout_seconds=0)
 
 
 async def test_backend_attaches_without_creating(workspace_harness: WorkspaceHarness) -> None:
