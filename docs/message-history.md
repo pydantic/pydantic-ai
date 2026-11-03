@@ -555,11 +555,13 @@ _(This example is complete, it can be run "as is")_
     History saved by an earlier version has no such record. In it, a mapping shaped like a URL-based
     item is reconstructed only as an HTTP(S) URL with `force_download` reset, and only when it carries
     `media_type`. A mapping shaped like an uploaded file or a non-HTTP URL stays a mapping, and so do
-    the uploaded files and non-HTTP URLs your tools returned before the upgrade. If you saved that
-    history yourself and trust it, load it with
+    the uploaded files and non-HTTP URLs your tools returned before the upgrade. If that history's
+    tool results came only from your own code, not from data a third party wrote, such as a record an
+    MCP server or an external API returned, load it with
     `ModelMessagesTypeAdapter.validate_json(data, context={'pydantic_ai': {'trusted_history': True}})`
     (or `validate_python`) and its files load as they did before. Save it again afterwards, and it
-    carries the record and no longer needs the context.
+    carries the record and no longer needs the context. Load other history without it; saving that
+    history again keeps only what it loaded as.
 
     A URL whose media type Pydantic AI can't infer from the URL is serialized with `media_type: null`,
     which validates back into the URL part's default (no media type) and dumps `null` again, in a tool

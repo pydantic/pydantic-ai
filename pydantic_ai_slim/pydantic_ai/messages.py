@@ -1338,7 +1338,10 @@ class _RecordsContentFiles:
         digests = mapping.get(_FILE_DIGESTS_KEY)
         record: frozenset[str] | _Unrecorded | None
         if isinstance(digests, list):
-            record = frozenset(cast(list[str], digests))
+            entries = cast(list[Any], digests)
+            if not all(isinstance(digest, str) for digest in entries):
+                raise PydanticCustomError('invalid_file_record', '`content_file_digests` must be a list of strings')
+            record = frozenset(cast(list[str], entries))
         else:
             # History saved before records existed: rebuilt as before only when the caller says it trusts it.
             record = None if _trusts_history(info.context) else _UNRECORDED

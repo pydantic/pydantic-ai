@@ -2145,6 +2145,28 @@ def test_tool_return_trusted_history_needs_the_exact_flag(context: Any):
     assert message_part(loaded, ToolReturnPart).content == [stored[0]['parts'][0]['content'][0]]
 
 
+@pytest.mark.parametrize('digests', [[['nested']], [1], [None]])
+def test_tool_return_rejects_a_malformed_file_record(digests: list[Any]):
+    """A record that isn't a list of strings fails validation rather than raising a raw error."""
+    stored = [
+        {
+            'kind': 'request',
+            'parts': [
+                {
+                    'part_kind': 'tool-return',
+                    'tool_name': 't',
+                    'tool_call_id': 'c',
+                    'content': [],
+                    'content_file_digests': digests,
+                }
+            ],
+        }
+    ]
+
+    with pytest.raises(ValidationError, match='`content_file_digests` must be a list of strings'):
+        ModelMessagesTypeAdapter.validate_python(stored)
+
+
 def test_tool_return_records_only_the_files_in_its_content():
     """A file the application keeps in `metadata`, or sends as `ToolReturn.content`, doesn't count toward the result's record."""
     uploaded = UploadedFile('file-1', 'openai')
