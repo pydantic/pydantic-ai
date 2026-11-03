@@ -14,7 +14,7 @@ from pydantic import TypeAdapter, ValidationError
 from pydantic_ai._utils import is_str_dict as _is_str_dict
 
 from ... import _instructions
-from ...conversation_store import ConversationEntry
+from ...conversation_store import ConversationEntry, ConversationStore
 from ...messages import (
     _FILE_URL_KINDS,  # pyright: ignore[reportPrivateUsage]
     ERROR_OUTCOMES,
@@ -227,6 +227,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     """Deprecated alias for [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files]."""
 
     def __post_init__(self, preserve_file_data: bool | None) -> None:
+        super().__post_init__()
         # `stacklevel=4` points the warning at the user's `VercelAIAdapter(...)` call:
         # user → generated `__init__` → `__post_init__` → helper → `warn`.
         self.allow_uploaded_files = resolve_allow_uploaded_files(
@@ -247,7 +248,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         sdk_version: Literal[5, 6, 7] = 5,
         server_message_id: str | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
-        manage_message_history: Literal['client', 'server'] = 'client',
+        manage_message_history: Literal['client', 'server'] | None = None,
+        conversation_store: ConversationStore | None = None,
+        conversation_scope: str | None = None,
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
@@ -267,6 +270,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             server_message_id=server_message_id,
             manage_system_prompt=manage_system_prompt,
             manage_message_history=manage_message_history,
+            conversation_store=conversation_store,
+            conversation_scope=conversation_scope,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
@@ -300,7 +305,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         on_complete: OnCompleteFunc[BaseChunk] | None = None,
         on_cancel: OnCancelFunc[BaseChunk] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
-        manage_message_history: Literal['client', 'server'] = 'client',
+        manage_message_history: Literal['client', 'server'] | None = None,
+        conversation_store: ConversationStore | None = None,
+        conversation_scope: str | None = None,
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
@@ -337,6 +344,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             on_cancel=on_cancel,
             manage_system_prompt=manage_system_prompt,
             manage_message_history=manage_message_history,
+            conversation_store=conversation_store,
+            conversation_scope=conversation_scope,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
@@ -382,7 +391,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     def _regenerates(self) -> bool:
         return isinstance(self.run_input, RegenerateMessage)
 
-    def conversation_saved_events(self, conversation_id: str, entries: Sequence[ConversationEntry]) -> list[BaseChunk]:
+    def _conversation_saved_events(self, conversation_id: str, entries: Sequence[ConversationEntry]) -> list[BaseChunk]:
         """A transient `data-conversation-saved` part with the stored entries' ids, for `useChat`'s `onData`."""
         return [
             DataChunk(

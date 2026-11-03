@@ -2039,8 +2039,11 @@ def test_manage_message_history_visible_in_base_adapter_signatures():
     from_request_parameters = inspect.signature(DummyUIAdapter.from_request).parameters
     dispatch_request_parameters = inspect.signature(DummyUIAdapter.dispatch_request).parameters
 
-    assert from_request_parameters['manage_message_history'].default == 'client'
-    assert dispatch_request_parameters['manage_message_history'].default == 'client'
+    for parameters in (from_request_parameters, dispatch_request_parameters):
+        # `None` resolves to `'server'` with a `conversation_store` and to `'client'` without one.
+        assert parameters['manage_message_history'].default is None
+        assert parameters['conversation_store'].default is None
+        assert parameters['conversation_scope'].default is None
 
 
 def _with_ui_id(message: ModelMessage, ui_message_id: str) -> ModelMessage:
@@ -2106,9 +2109,7 @@ async def test_conversation_store_without_protocol_saved_events_still_saves():
     agent, requests = _recording_agent()
     store = InMemoryConversationStore()
     run_input = DummyUIRunInput(messages=[_with_ui_id(ModelRequest.user_text_prompt('hi'), 'u1')])
-    adapter = DummyUIAdapter(
-        agent=agent, run_input=run_input, manage_message_history='server', conversation_store=store
-    )
+    adapter = DummyUIAdapter(agent=agent, run_input=run_input, conversation_store=store)
     revisions: list[str | None] = []
 
     async def on_complete(result: AgentRunResult[Any]) -> AsyncIterator[str]:
@@ -2142,9 +2143,7 @@ async def test_conversation_store_announces_only_a_run_it_saved():
     agent, _ = _recording_agent()
     store = InMemoryConversationStore()
     run_input = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('hi')])
-    adapter = DummyUIAdapter(
-        agent=agent, run_input=run_input, manage_message_history='server', conversation_store=store
-    )
+    adapter = DummyUIAdapter(agent=agent, run_input=run_input, conversation_store=store)
     completed: list[AgentRunResult[Any]] = []
 
     async with agent.run_stream_events('hi') as native:

@@ -22,7 +22,7 @@ from pydantic import TypeAdapter, ValidationError
 from ... import ExternalToolset, ToolDefinition
 from ..._mcp_apps import get_mcp_app_tool_result
 from ..._utils import is_str_dict
-from ...conversation_store import ConversationEntry
+from ...conversation_store import ConversationEntry, ConversationStore
 from ...messages import (
     ERROR_OUTCOMES,
     AudioUrl,
@@ -444,7 +444,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         ag_ui_version: str = DEFAULT_AG_UI_VERSION,
         preserve_file_data: bool = False,
         manage_system_prompt: Literal['server', 'client'] = 'server',
-        manage_message_history: Literal['client', 'server'] = 'client',
+        manage_message_history: Literal['client', 'server'] | None = None,
+        conversation_store: ConversationStore | None = None,
+        conversation_scope: str | None = None,
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
@@ -460,6 +462,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             preserve_file_data=preserve_file_data,
             manage_system_prompt=manage_system_prompt,
             manage_message_history=manage_message_history,
+            conversation_store=conversation_store,
+            conversation_scope=conversation_scope,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
@@ -473,7 +477,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         """Pydantic AI messages from the AG-UI run input."""
         return self.load_messages(self.run_input.messages, preserve_file_data=self.preserve_file_data)
 
-    def conversation_saved_events(self, conversation_id: str, entries: Sequence[ConversationEntry]) -> list[BaseEvent]:
+    def _conversation_saved_events(self, conversation_id: str, entries: Sequence[ConversationEntry]) -> list[BaseEvent]:
         """A `pydantic_ai_conversation_saved` custom event with the stored entries' ids."""
         return [
             AGUICustomEvent(

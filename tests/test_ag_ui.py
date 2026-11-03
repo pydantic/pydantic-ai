@@ -11904,7 +11904,7 @@ async def _stored_turn(
     agent: Agent[None, str | DeferredToolRequests], store: InMemoryConversationStore, run_input: RunAgentInput
 ) -> list[BaseEvent]:
     """One request through an endpoint that loads and saves the conversation with a store, returning its events."""
-    adapter = AGUIAdapter(agent, run_input, manage_message_history='server', conversation_store=store)
+    adapter = AGUIAdapter(agent, run_input, conversation_store=store)
     return [event async for event in adapter.run_stream()]
 
 

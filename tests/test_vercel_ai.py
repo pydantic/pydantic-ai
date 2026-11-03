@@ -14028,14 +14028,7 @@ async def _stored_turn(
     scope: str | None = None,
 ) -> list[BaseChunk]:
     """One request through an endpoint that loads and saves the conversation with a store, returning its chunks."""
-    adapter = VercelAIAdapter(
-        agent,
-        run_input,
-        sdk_version=6,
-        manage_message_history='server',
-        conversation_store=store,
-        conversation_scope=scope,
-    )
+    adapter = VercelAIAdapter(agent, run_input, sdk_version=6, conversation_store=store, conversation_scope=scope)
     return [chunk async for chunk in adapter.run_stream()]
 
 
@@ -14162,23 +14155,102 @@ async def test_conversation_store_conflict_asks_the_client_to_reload():
 
 
 async def test_conversation_store_scope():
-    """A conversation saved with another scope loads as one the store doesn't have, and isn't saved over."""
+    """A conversation saved with another scope is reported as not found, and nothing runs or is saved."""
     agent, requests, _ = server_history_agent()
     store = InMemoryConversationStore()
     await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]), scope='alice')
+    model_requests = len(requests)
 
     chunks = await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI, _OK, _AND_NOW]), scope='bob')
 
-    assert conversation_view(requests[-1]) == snapshot(['user-prompt: and now?'])
+    assert len(requests) == model_requests
     assert [chunk.error_text for chunk in chunks if isinstance(chunk, ErrorChunk)] == snapshot(
-        [
-            'The conversation was changed by another request while this one ran, so this turn was not saved. '
-            'Reload the conversation from the server and try again.'
-        ]
+        ["Conversation 'chat' was not found."]
     )
     conversation = await store.load('chat', scope='alice')
     assert conversation is not None
     assert conversation_view(conversation.messages) == snapshot(['user-prompt: hi', 'text: ok'])
+
+
+@pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
+@pytest.mark.parametrize(('scope', 'status'), [('alice', 200), ('bob', 404)])
+async def test_dispatch_request_conversation_store_scope(scope: str, status: int):
+    """`dispatch_request` answers `404` for a conversation saved with another scope, before running anything."""
+    agent, requests, _ = server_history_agent()
+    store = InMemoryConversationStore()
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]), scope='alice')
+    model_requests = len(requests)
+    body = SubmitMessage(id='chat', messages=[_HI, _OK, _AND_NOW]).model_dump_json(by_alias=True).encode()
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': body}
+
+    request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+    response = await VercelAIAdapter.dispatch_request(
+        request, agent=agent, conversation_store=store, conversation_scope=scope
+    )
+
+    if status == 404:
+        assert response.status_code == 404
+        assert bytes(response.body) == b'{"detail":"Conversation not found."}'
+        assert len(requests) == model_requests
+    else:
+        assert isinstance(response, StreamingResponse)
+
+        async def send(_: MutableMapping[str, Any]) -> None:
+            pass
+
+        await response.stream_response(send)
+        assert len(requests) == model_requests + 1
+
+
+@pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
+async def test_dispatch_request_conversation_store_needs_a_conversation_id():
+    agent, _, _ = server_history_agent()
+    body = SubmitMessage(id='chat', messages=[_HI]).model_dump_json(by_alias=True).encode()
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': body}
+
+    request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+    with pytest.raises(UserError, match='needs the ID of the conversation to load'):
+        await VercelAIAdapter.dispatch_request(
+            request, agent=agent, conversation_store=InMemoryConversationStore(), conversation_id='new'
+        )
+
+
+async def test_conversation_store_failed_regenerate_keeps_the_stored_turn():
+    """A regenerate branches only when its run is saved, so one whose run fails leaves the stored conversation as it was."""
+    store = InMemoryConversationStore()
+    agent, _, _ = server_history_agent()
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]))
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI, _OK, _AND_NOW]))
+
+    async def failing(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        raise RuntimeError('model unavailable')
+        yield  # pragma: no cover
+
+    broken = Agent(FunctionModel(stream_function=failing), output_type=[str, DeferredToolRequests])
+    chunks = await _stored_turn(
+        broken,
+        store,
+        RegenerateMessage(trigger='regenerate-message', id='chat', messages=[_HI, _OK, _AND_NOW], message_id='x'),
+    )
+
+    assert [chunk.error_text for chunk in chunks if isinstance(chunk, ErrorChunk)] == snapshot(['model unavailable'])
+    conversation = await store.load('chat')
+    assert conversation is not None
+    assert conversation_view(conversation.messages) == snapshot(
+        ['user-prompt: hi', 'text: ok', 'user-prompt: and now?', 'text: ok']
+    )
+    record = await store.read_record('chat')
+    assert record is not None and record.branches == []
 
 
 async def test_conversation_store_misuse():
@@ -14186,9 +14258,11 @@ async def test_conversation_store_misuse():
     store = InMemoryConversationStore()
     run_input = SubmitMessage(id='chat', messages=[_HI])
 
-    with pytest.raises(UserError, match="requires `manage_message_history='server'`"):
-        VercelAIAdapter(agent, run_input, conversation_store=store).run_stream_native()
-    adapter = VercelAIAdapter(agent, run_input, manage_message_history='server', conversation_store=store)
+    assert VercelAIAdapter(agent, run_input).manage_message_history == 'client'
+    assert VercelAIAdapter(agent, run_input, conversation_store=store).manage_message_history == 'server'
+    with pytest.raises(UserError, match="can't be used with `manage_message_history='client'`"):
+        VercelAIAdapter(agent, run_input, manage_message_history='client', conversation_store=store)
+    adapter = VercelAIAdapter(agent, run_input, conversation_store=store)
     with pytest.raises(UserError, match='Pass either `message_history` or a `conversation_store`, not both'):
         adapter.run_stream_native(message_history=[])
     with pytest.raises(UserError, match='needs the ID of the conversation to load'):

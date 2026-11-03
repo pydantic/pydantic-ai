@@ -232,7 +232,7 @@ From the client's messages, the adapter then uses only the new turn: the message
 
 #### Saving to a conversation store
 
-Instead of loading and saving the history yourself, you can give the adapter a [`ConversationStore`](../persistence.md) as `conversation_store`, with `manage_message_history='server'`. The adapter then loads the conversation the request names (the Vercel AI chat `id` or the AG-UI `threadId`, unless you pass `conversation_id`), applies the rules above to the client's new turn, runs the agent and saves what the run added. Pass the authenticated user or tenant as `conversation_scope`, so a conversation saved with another scope loads as one the store doesn't have and can't be saved over:
+Instead of loading and saving the history yourself, you can give the adapter a [`ConversationStore`](../persistence.md) as `conversation_store`, which implies `manage_message_history='server'`. The adapter then loads the conversation the request names (the Vercel AI chat `id` or the AG-UI `threadId`, unless you pass `conversation_id`), applies the rules above to the client's new turn, runs the agent and saves what the run added. Pass the authenticated user or tenant as `conversation_scope`: a conversation saved with another scope is treated as not found, so `dispatch_request` answers `404` before running anything, and the other run methods reject the request with a protocol error event.
 
 ```py {title="conversation_store_ui.py"}
 from fastapi import FastAPI
@@ -256,7 +256,6 @@ async def chat(request: Request) -> Response:
     return await VercelAIAdapter.dispatch_request(
         request,
         agent=agent,
-        manage_message_history='server',
         conversation_store=store,
         conversation_scope=user_id,
     )
@@ -268,7 +267,7 @@ async def chat(request: Request) -> Response:
 With a store, the adapter also uses what the store knows that the messages don't:
 
 - **Tool approvals and results.** The stored conversation's [`deferred_tool_requests`][pydantic_ai.conversation.Conversation.deferred_tool_requests] say what each pending call is waiting for, so an approval or denial has to answer a call waiting on one, and a tool result a call waiting on a result. A result for a call that's waiting on an approval is dropped with a warning.
-- **Regenerating and editing.** The turn a resubmitted message replaces stays stored as a branch of the conversation, rather than being dropped from the record.
+- **Regenerating and editing.** The turn a resubmitted message replaces stays stored as a branch of the conversation, rather than being dropped from the record. The stored conversation only changes once the new run completes, so a regenerate whose run fails leaves it as it was.
 - **Concurrent requests.** If another request saved the conversation while this one ran, this run's turn isn't saved, and the stream ends with a protocol error event asking the client to reload the conversation.
 
 After saving, the stream sends the ids of the stored [`ConversationEntry`][pydantic_ai.conversation_store.ConversationEntry]s to the client, so it can record them next to its own messages, for a rating, say: a transient Vercel AI `data-conversation-saved` part, or an AG-UI `pydantic_ai_conversation_saved` custom event, each with a `conversation_id` and a list of `entry_ids`.

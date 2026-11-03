@@ -178,6 +178,17 @@ def validation_error_response(e: ValidationError) -> Response:
     )
 
 
+def conversation_not_found_response() -> Response:
+    """Build the 404 response returned when a `conversation_store` conversation belongs to another scope."""
+    from starlette.responses import Response
+
+    return Response(
+        content='{"detail":"Conversation not found."}',
+        media_type='application/json',
+        status_code=HTTPStatus.NOT_FOUND,
+    )
+
+
 # TODO(v3): remove this helper along with the Vercel AI adapter's deprecated `preserve_file_data` alias (AG-UI's `preserve_file_data` is a separate, non-deprecated setting)
 def resolve_allow_uploaded_files(
     allow_uploaded_files: bool, preserve_file_data: bool | None, *, stacklevel: int = 3
@@ -668,14 +679,8 @@ def _reject_answers_for_calls_not_pending(
         )
 
 
-def _check_conversation_store_run(
-    manage_message_history: Literal['client', 'server'],
-    message_history: Sequence[ModelMessage] | None,
-    conversation_id: str | None,
-) -> None:
+def _check_conversation_store_run(message_history: Sequence[ModelMessage] | None, conversation_id: str | None) -> None:
     """Raise a `UserError` for a run that can't use a `conversation_store` as it was called."""
-    if manage_message_history != 'server':
-        raise UserError("`conversation_store` requires `manage_message_history='server'`.")
     if message_history is not None:
         raise UserError('Pass either `message_history` or a `conversation_store`, not both.')
     if conversation_id is None or conversation_id == 'new':
@@ -792,10 +797,13 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     to your agent.
     """
 
-    manage_message_history: Literal['client', 'server'] = 'client'
+    manage_message_history: Literal['client', 'server'] | None = None
     """Who owns the conversation history: the client's messages, or the `message_history` passed to a run method.
 
-    `'client'` (default): the client's messages are the conversation. A `message_history` passed to a
+    Defaults to `'server'` with a [`conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store],
+    which requires it, and to `'client'` otherwise. It's never `None` once the adapter is created.
+
+    `'client'`: the client's messages are the conversation. A `message_history` passed to a
     run method is prepended to them unchanged, which suits server-only context such as a pinned
     preamble. If a client message's UI message id already appears in `message_history`, the adapter
     warns, because the model sees that message twice. Only a history that went through an adapter
@@ -829,11 +837,13 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     conversation_store: ConversationStore | None = None
     """A [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] to load and save the conversation with.
 
-    Requires [`manage_message_history='server'`][pydantic_ai.ui.UIAdapter.manage_message_history], whose
-    rules for the client's new turn it follows. A run method then loads the conversation the request names
+    Implies [`manage_message_history='server'`][pydantic_ai.ui.UIAdapter.manage_message_history], whose
+    rules for the client's new turn it follows; passing `'client'` with a store raises a `UserError`.
+    A run method then loads the conversation the request names
     ([`conversation_id`][pydantic_ai.ui.UIAdapter.conversation_id], or the one passed to it) instead of
     taking `message_history`, runs the agent on it and the client's new turn, and saves what the run
-    added. An approval, denial or tool result from the client has to answer a call the stored
+    added. A regenerate or edit keeps the turn it replaces as a branch of the stored conversation,
+    which only changes once the run completes. An approval, denial or tool result from the client has to answer a call the stored
     conversation's deferred tool requests are waiting on with that kind of answer.
 
     After the save, the stream sends the stored entries' ids to the client, as a Vercel AI
@@ -847,7 +857,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     conversation_scope: str | None = None
     """The [`scope`][pydantic_ai.conversation_store.ConversationRecord.scope] to load and save the conversation with, such as the authenticated user.
 
-    A conversation saved with another scope loads as one the store doesn't have, and can't be saved over.
+    A conversation saved with another scope is treated as not found: the run is rejected with a
+    `UserError`, which reaches the client as a protocol error event, and
+    [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request] answers `404` before running anything.
     Only used with a [`conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store].
     """
 
@@ -932,6 +944,17 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     those protocols. Persist the ref server-side and pass an authorized `workspace=` instead.
     """
 
+    def __post_init__(self) -> None:
+        if self.conversation_store is None:
+            if self.manage_message_history is None:
+                self.manage_message_history = 'client'
+        elif self.manage_message_history == 'client':
+            raise UserError(
+                "A `conversation_store` holds the history on the server: it can't be used with `manage_message_history='client'`."
+            )
+        else:
+            self.manage_message_history = 'server'
+
     @classmethod
     async def from_request(
         cls,
@@ -939,7 +962,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         *,
         agent: AbstractAgent[AgentDepsT, OutputDataT],
         manage_system_prompt: Literal['server', 'client'] = 'server',
-        manage_message_history: Literal['client', 'server'] = 'client',
+        manage_message_history: Literal['client', 'server'] | None = None,
+        conversation_store: ConversationStore | None = None,
+        conversation_scope: str | None = None,
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
@@ -957,8 +982,13 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             agent: The agent the adapter will run.
             manage_system_prompt: Who owns the system prompt. See
                 [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
-            manage_message_history: Who owns the conversation history. See
+            manage_message_history: Who owns the conversation history. Defaults to `'server'` with a
+                `conversation_store` and `'client'` otherwise. See
                 [`UIAdapter.manage_message_history`][pydantic_ai.ui.UIAdapter.manage_message_history].
+            conversation_store: A store to load and save the conversation with. See
+                [`UIAdapter.conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store].
+            conversation_scope: The scope to load and save the conversation with, such as the authenticated user. See
+                [`UIAdapter.conversation_scope`][pydantic_ai.ui.UIAdapter.conversation_scope].
             allowed_file_url_schemes: URL schemes allowed for file URL parts from the client. See
                 [`UIAdapter.allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes].
             allowed_file_url_force_download: Additional `FileUrl.force_download` values allowed on file URL parts
@@ -983,6 +1013,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             accept=request.headers.get('accept'),
             manage_system_prompt=manage_system_prompt,
             manage_message_history=manage_message_history,
+            conversation_store=conversation_store,
+            conversation_scope=conversation_scope,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
@@ -1163,7 +1195,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     ) -> None:
         """Raise a `UserError` for a run that can't use `conversation_store` as it was called."""
         if self.conversation_store is not None:
-            _check_conversation_store_run(self.manage_message_history, message_history, conversation_id)
+            _check_conversation_store_run(message_history, conversation_id)
 
     async def _saving_conversation(self, events: AsyncIterator[NativeEvent]) -> AsyncIterator[NativeEvent]:
         """Pass `events` on, saving the run to `conversation_store` before its result."""
@@ -1182,8 +1214,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         if (store := self.conversation_store) is None:
             return None
         assert conversation_id is not None
-        scope = self.conversation_scope
-        loaded = await store.load(conversation_id, scope=scope)
+        loaded = await store.load(conversation_id, scope=self.conversation_scope)
+        if loaded is None and not await self._conversation_available(conversation_id):
+            raise UserError(f'Conversation {conversation_id!r} was not found.')
         stored = loaded.messages if loaded is not None else []
         # A conversation the store doesn't have is waiting on nothing.
         waiting_on = (loaded.deferred_tool_requests if loaded is not None else None) or DeferredToolRequests()
@@ -1199,11 +1232,40 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         if loaded is None:
             return Conversation(messages=new_turn, conversation_id=conversation_id)
         if turn.cut_at is not None:
-            # A resubmitted message replaces its turn: the store keeps what it replaces as a branch.
-            loaded = await store.branch(conversation_id, at=turn.cut_at, expected_revision=loaded.revision, scope=scope)
-            loaded.messages.extend(turn.history[turn.cut_at :])
+            # A resubmitted message replaces its turn. Without a `new_message_index`, the save compares the
+            # history with the stored one and keeps the turn it replaces as a branch, so the stored
+            # conversation only changes if the run completes.
+            return Conversation(
+                messages=[*turn.history, *new_turn],
+                usage=loaded.usage,
+                conversation_id=conversation_id,
+                revision=loaded.revision,
+            )
         loaded.messages.extend(new_turn)
         return loaded
+
+    async def _conversation_found(self, conversation_id: str | None) -> bool:
+        """Whether `dispatch_request` can run: without a store, or for a conversation `_conversation_available` allows.
+
+        Without a conversation ID, the run itself reports the missing ID.
+        """
+        if self.conversation_store is None:
+            return True
+        conversation_id = conversation_id or self.conversation_id
+        return (
+            conversation_id is None or conversation_id == 'new' or await self._conversation_available(conversation_id)
+        )
+
+    async def _conversation_available(self, conversation_id: str) -> bool:
+        """Whether a run can use the conversation: one in `conversation_scope`, or one the store doesn't have yet.
+
+        A conversation saved with another scope is reported as not found, as it would be if the store
+        didn't have it, rather than as a conflict that suggests reloading it.
+        """
+        assert self.conversation_store is not None
+        record = await self.conversation_store.read_record(conversation_id)
+        scope = self.conversation_scope
+        return record is None or scope is None or record.scope == scope
 
     async def _save_conversation(self, result: AgentRunResult[Any]) -> None:
         """Save what the run added to the stored conversation, keeping the stored entries for the client."""
@@ -1217,7 +1279,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 'Reload the conversation from the server and try again.'
             ) from e
 
-    def conversation_saved_events(self, conversation_id: str, entries: Sequence[ConversationEntry]) -> list[EventT]:
+    def _conversation_saved_events(self, conversation_id: str, entries: Sequence[ConversationEntry]) -> list[EventT]:
         """The protocol events that tell the client which entries a [`conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store] save stored.
 
         Sent after the run's own events, before the stream ends. None by default.
@@ -1248,7 +1310,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
         async def announce(result: AgentRunResult[Any]) -> AsyncIterator[EventT]:
             if self._saved_entries is not None:
-                for event in self.conversation_saved_events(result.conversation.conversation_id, self._saved_entries):
+                for event in self._conversation_saved_events(result.conversation.conversation_id, self._saved_entries):
                     yield event
             if on_complete is not None:
                 async for event in dispatch_callback(on_complete, result):
@@ -1518,7 +1580,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         on_complete: OnCompleteFunc[EventT] | None = None,
         on_cancel: OnCancelFunc[EventT] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
-        manage_message_history: Literal['client', 'server'] = 'client',
+        manage_message_history: Literal['client', 'server'] | None = None,
+        conversation_store: ConversationStore | None = None,
+        conversation_scope: str | None = None,
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
@@ -1564,8 +1628,13 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 The callback receives the [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] and can optionally yield additional protocol-specific events.
             manage_system_prompt: Who owns the system prompt. See
                 [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
-            manage_message_history: Who owns the conversation history. See
+            manage_message_history: Who owns the conversation history. Defaults to `'server'` with a
+                `conversation_store` and `'client'` otherwise. See
                 [`UIAdapter.manage_message_history`][pydantic_ai.ui.UIAdapter.manage_message_history].
+            conversation_store: A store to load and save the conversation with. See
+                [`UIAdapter.conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store].
+            conversation_scope: The scope to load and save the conversation with, such as the authenticated user. See
+                [`UIAdapter.conversation_scope`][pydantic_ai.ui.UIAdapter.conversation_scope].
             allowed_file_url_schemes: URL schemes allowed for file URL parts from the client. See
                 [`UIAdapter.allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes].
             allowed_file_url_force_download: Additional `FileUrl.force_download` values allowed on file URL parts from
@@ -1599,6 +1668,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                     agent=cast(AbstractAgent[AgentDepsT, OutputDataT], agent),
                     manage_system_prompt=manage_system_prompt,
                     manage_message_history=manage_message_history,
+                    conversation_store=conversation_store,
+                    conversation_scope=conversation_scope,
                     allowed_file_url_schemes=allowed_file_url_schemes,
                     allowed_file_url_force_download=allowed_file_url_force_download,
                     allow_uploaded_files=allow_uploaded_files,
@@ -1609,6 +1680,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             )
         except ValidationError as e:
             return validation_error_response(e)
+
+        if not await adapter._conversation_found(conversation_id):
+            return conversation_not_found_response()
 
         return adapter.streaming_response(
             adapter.run_stream(
