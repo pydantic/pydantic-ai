@@ -54,7 +54,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     dump,
     history_items,
 )
-from pydantic_clai2.builtin_plugins.web.sidebar import project_names, session_entry, worktrees
+from pydantic_clai2.builtin_plugins.web.sidebar import project_folder, project_names, session_entry, worktrees
 from pydantic_clai2.builtin_plugins.web.workers import task_entry
 from pydantic_clai2.builtin_plugins.web.workspaces import checkouts
 from pydantic_clai2.cli.self_update import installed
@@ -730,6 +730,7 @@ class WebService:
         projects = [
             Project(
                 key=key,
+                folder=None if key == MISSING else str(project_folder(key)),
                 name=names[key],
                 current=key == here.key,
                 worktrees=worktrees(found, here=here),
@@ -876,7 +877,7 @@ class Observer(AbstractCapability[None]):
         channel = self._channel(ctx)
         if channel is None or is_monty_cell(ctx):
             return await handler()
-        channel.run_started(ctx.prompt)
+        channel.run_started(ctx.prompt, run_id=ctx.run_id)
         try:
             result = await handler()
         except get_cancelled_exc_class():

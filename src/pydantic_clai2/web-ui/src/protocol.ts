@@ -37,6 +37,8 @@ export interface Item {
   by_user: boolean
   /** The IDs of a prompt's images, which the session's `images/ID` route serves. */
   images: string[]
+  /** The run a prompt started, which Edit and Retry rewind to; `null` for a prompt they cannot rewind to. */
+  run_id: string | null
 }
 
 export interface Option {
@@ -398,6 +400,7 @@ export interface Worktree {
 
 export interface Project {
   key: string
+  folder: string | null
   name: string
   current: boolean
   worktrees: Worktree[]
