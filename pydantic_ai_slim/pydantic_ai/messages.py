@@ -1272,6 +1272,33 @@ def _record_file(serialized: Any) -> None:
             digests.append(digest)
 
 
+class _OwnSerializer:
+    """A class's own pydantic serializer, built on first use, so serializing an instance by inference uses it.
+
+    `pydantic_core.to_json` and `to_jsonable_python`, and the converters that call them, such as Temporal's,
+    serialize a plain dataclass field by field and skip its serializer decorators. A pydantic dataclass
+    carries `__pydantic_serializer__`, which inference uses instead; this gives a plain dataclass the same,
+    so its tool result content is serialized with its file record either way.
+    """
+
+    def __init__(self) -> None:
+        self._serializers: dict[type, pydantic_core.SchemaSerializer] = {}
+        self._building: set[type] = set()
+
+    def __get__(self, instance: object, owner: type) -> pydantic_core.SchemaSerializer:
+        if (serializer := self._serializers.get(owner)) is not None:
+            return serializer
+        if owner in self._building:
+            # Asked while building this class's own schema: it has no serializer of its own yet.
+            raise AttributeError('__pydantic_serializer__')
+        self._building.add(owner)
+        try:
+            serializer = self._serializers[owner] = pydantic.TypeAdapter(owner).serializer
+        finally:
+            self._building.discard(owner)
+        return serializer
+
+
 class _RecordsContentFiles:
     """Keep the file items in a tool result's content, and only those, file items across serialization.
 
@@ -1298,6 +1325,7 @@ class _RecordsContentFiles:
     """
 
     _content_field: ClassVar[str]
+    __pydantic_serializer__: ClassVar[Any] = _OwnSerializer()
 
     @pydantic.field_serializer('content', 'return_value', 'result', mode='wrap', check_fields=False)
     def _serialize_content_recording_files(

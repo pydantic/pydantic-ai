@@ -76,6 +76,7 @@ from pydantic_ai.messages import (
     _USER_CONTENT_TYPES,  # pyright: ignore[reportPrivateUsage]
     INVALID_JSON_KEY,
     MULTI_MODAL_CONTENT_TYPES,
+    BaseToolReturnPart,
     CachePoint,
     CapabilityLoadDeltaPart,
     CompactionPart,
@@ -2165,6 +2166,39 @@ def test_tool_return_rejects_a_malformed_file_record(digests: list[Any]):
 
     with pytest.raises(ValidationError, match='`content_file_digests` must be a list of strings'):
         ModelMessagesTypeAdapter.validate_python(stored)
+
+
+def test_tool_return_inferred_serialization_keeps_its_files():
+    """History serialized by inference, as `to_json` and Temporal's converter do, keeps the file record.
+
+    A plain dataclass serialized by inference would skip its serializer decorators and lose the record,
+    and its files would load as mappings.
+    """
+    uploaded = UploadedFile('file-1', 'openai')
+    lookalike = _dumped_file(UploadedFile('file-2', 'openai'))
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=[uploaded, lookalike], tool_call_id='c')]),
+        ModelResponse(parts=[NativeToolReturnPart(tool_name='n', content=[uploaded], tool_call_id='n')]),
+    ]
+
+    assert to_json(messages) == ModelMessagesTypeAdapter.dump_json(messages)
+    for loaded in (
+        ModelMessagesTypeAdapter.validate_json(to_json(messages)),
+        ModelMessagesTypeAdapter.validate_python(to_jsonable_python(messages)),
+    ):
+        tool_return, native_return = (
+            cast(BaseToolReturnPart[Any], part) for message in loaded for part in message.parts
+        )
+        assert (tool_return.content, native_return.content) == ([uploaded, lookalike], [uploaded])
+        assert type(cast(list[Any], tool_return.content)[1]) is dict
+
+    from pydantic_ai.durable_exec._toolset import (
+        CallToolResult,
+        _ToolReturn,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    result = _ToolReturn(result=[uploaded, lookalike])
+    assert TypeAdapter[Any](CallToolResult).validate_json(to_json(result)) == result
 
 
 def test_tool_return_records_only_the_files_in_its_content():
