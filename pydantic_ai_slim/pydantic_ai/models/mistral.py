@@ -906,14 +906,13 @@ class MistralStreamedResponse(StreamedResponse):
                 # Continuation deltas can carry an empty name, and the SDK fills an absent id with `'null'`;
                 # both are normalized to `None` so the first name and id are retained.
                 for dtc in choice.delta.tool_calls or []:
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                    for event in self._parts_manager.handle_tool_call_delta_events(
                         vendor_part_id=dtc.index,
                         tool_name=dtc.function.name or None,
-                        args=dtc.function.arguments or None,
+                        args=dtc.function.arguments,
                         tool_call_id=None if dtc.id == 'null' else dtc.id,
-                    )
-                    if maybe_event:
-                        yield maybe_event
+                    ):
+                        yield event
 
     @property
     def model_name(self) -> MistralModelName:
