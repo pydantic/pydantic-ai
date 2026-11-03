@@ -60,11 +60,11 @@ Size S remains a manual judgment; review enforcement skips merge groups after ad
 ### Who merges
 
 Adding a PR to the merge queue counts as merging it.
-A maintainer with merge rights (Douwe, Aditya or Mike) merges at the merge bar.
+A maintainer with merge rights (Douwe, Aditya, Mike or David) merges at the merge bar.
 Merge a PR yourself only in these two cases.
 
 **A flake fix.** Once its head meets the merge bar, add it to the merge queue yourself.
-Enqueue it after the final metadata check. Skip the second-opinion choice for a flake fix.
+Enqueue it after the final metadata check.
 [Flake fixes](#flake-fixes) defines a flake fix.
 
 **A re-enqueue.** Re-enqueue a PR the merge queue removed when all of these hold:
@@ -72,7 +72,7 @@ Enqueue it after the final metadata check. Skip the second-opinion choice for a 
 - A maintainer enqueued it, or you enqueued it as a flake fix.
 - The removal's `reason` is `failed_checks`.
 - No maintainer asked to hold the PR since that enqueue.
-- Since that enqueue, the PR changed only by merging `main` without conflicts, or by commits that meet the [Flake fixes](#flake-fixes) conditions other than the size label. Outside the flake-fixed test module and its cassettes and snapshots, `git diff <old-base>...<enqueued-head>` equals `git diff <new-base>...HEAD`. If you cannot establish the head at enqueue, hand the PR to a maintainer.
+- Since that enqueue, the PR changed only by merging `main` without conflicts, or by commits that meet the [Flake fixes](#flake-fixes) conditions other than the size label. Outside the flake-fixed test module and its cassettes and snapshots, `git diff main...<enqueued-head>` equals `git diff main...HEAD`, with `main` freshly fetched. If you cannot establish the head at enqueue, hand the PR to a maintainer.
 - You pushed every commit since that enqueue.
 - Its current head meets the merge bar again.
 
@@ -88,7 +88,7 @@ After diagnosing, post a PR comment that names each failed job and its cause, wi
 
 ### Flake fixes
 
-A flake fix makes a nondeterministic test failure deterministic.
+A flake fix removes the source of nondeterminism that makes a test fail intermittently, so it passes deterministically.
 The trivial-S exception does not apply: require a clean douwebot approval.
 All of these must hold:
 
@@ -367,7 +367,7 @@ drift arbitrarily far from anything a reviewer read, each hop defensible on its 
 | Missing coverage, test-harness repairs, or fixture/snapshot corrections to established intended behavior | inspect the full diff: test code/data only; cite the established expectation and run affected tests; a snapshot must not bless a newly observed regression |
 | Output of the repo's own tooling (`make format`, lint autofix) | run that tooling on the reviewed SHA in a scratch checkout; its tree equals HEAD's |
 | Comments or docstrings only, no `docs/**` page | no non-comment line appears in `git diff <reviewed>..HEAD` |
-| Target-branch merge with no conflict resolution | `git diff <old-base>...<reviewed-head>` equals `git diff <new-base>...HEAD` |
+| Target-branch merge with no conflict resolution | `git diff main...<reviewed-head>` equals `git diff main...HEAD`, with `main` freshly fetched |
 | Commit or revert to a tree that was already reviewed | `git rev-parse HEAD^{tree}` equals a recorded reviewed tree |
 | Lockfile-only dependency bump | only lock and manifest paths changed |
 
@@ -524,7 +524,7 @@ if the head changes, capture the new SHA and restart the loop.
 
 ## When the loop completes — choose an additional review surface
 
-Skip this choice for prose-only documentation and mechanical text/data refreshes defined above.
+Skip this choice for prose-only documentation, mechanical text/data refreshes defined above, and [flake fixes](#flake-fixes).
 
 The required reviews are not on this menu. Step 3 applies the merge bar to both same-repository
 and fork PRs. `CI Review` starts on a write-access approval of the head, a `final-review` label,
