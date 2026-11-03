@@ -238,7 +238,9 @@ jobs:
 
   # A head that already has douwebot findings can never pass `review_gates.py`
   # `douwebot_approval`, so reviewing it again buys no gate value. A head with a
-  # clean approval, an incomplete review or a failed run is reviewed again.
+  # clean approval, an incomplete review or a failed run is reviewed again. An
+  # incomplete review is reviewed again to complete its coverage, even when its
+  # findings already keep that head from passing the gate.
   prior-findings:
     name: Earlier douwebot findings on this head
     if: github.event.action == 'labeled' && (github.event.label.name == 'douwebot' || github.event.label.name == 'douwebot:review-agent-config')
