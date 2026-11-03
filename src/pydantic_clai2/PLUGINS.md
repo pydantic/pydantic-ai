@@ -546,8 +546,8 @@ names by a path, such as `["./scripts/guard-paths.sh"]`: once the file's
 `hooks` or one of those programs change, they stay off until you enable
 `project_hooks` again, and removing them stops them too. CLAI checks such a
 program every time it starts it. One that changed does not start: it is
-reported as a failed command, and a `before_tool` one stops the call instead
-of letting it through. The check runs just before the start, so a change
+reported as a failed command, or for `before_tool` as a blocked one, which
+stops the call instead of letting it through. The check runs just before the start, so a change
 landing between the two is not caught. A string command is approved as
 written: the programs it runs are not checked. Nor does the approval cover a
 file such a program reads, or a script passed to another program, as in
