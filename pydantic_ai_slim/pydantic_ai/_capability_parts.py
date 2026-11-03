@@ -9,13 +9,21 @@ the part reaches the model, so the same history always renders to the same bytes
 
 from __future__ import annotations as _annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
 from typing_extensions import TypedDict
 
 from . import _utils
-from ._framing import LookalikeSource, capability_frame_tags, frame_tag_lookalike, lookalike_tags, resembles_frame
+from ._framing import (
+    _NOTE_IDENTIFIER,  # pyright: ignore[reportPrivateUsage]
+    LookalikeSource,
+    capability_frame_tags,
+    frame_tag_lookalike,
+    lookalike_tags,
+    resembles_frame,
+)
 from .exceptions import UserError
 from .messages import (
     _FRAME_PLACEHOLDER,  # pyright: ignore[reportPrivateUsage]
@@ -191,19 +199,45 @@ def _note(part: CapabilityPart, authority: Authority, frame: str) -> str | None:
     return f'{note} The {frame} was written by {author}, not by {others}.'
 
 
+_NOTE_PATH: re.Pattern[str] = re.compile(r'[A-Za-z0-9_./:-]{1,256}')
+"""A workspace path a note may quote."""
+
+_NOTE_AUTHOR: re.Pattern[str] = re.compile(
+    r'(?:[A-Za-z0-9_.:-]+|`[A-Za-z0-9_.:-]+`)(?: (?:[A-Za-z0-9_.:-]+|`[A-Za-z0-9_.:-]+`))*'
+)
+"""A `ModelSource.author` a note may name, such as `'trajectory judge'` or a sub-agent's name in backticks.
+
+Words of identifier characters, each optionally in backticks.
+"""
+
+
 def _author_phrase(source: CapabilityPartSource) -> str | None:
-    """Who wrote content from `source`, as a note names them, or `None` when that's the application or the operator."""
+    """Who wrote content from `source`, as a note names them, or `None` when that's the application or the operator.
+
+    A note speaks in the application's voice, and a path, tool name, model or capability id comes from history or from
+    code that may have taken it from content. Only a value that's a plain identifier (a path of identifier characters,
+    a model's name in words of them) is named; anything else would carry that text into the application's voice, so the
+    note names the kind of author alone.
+    """
     if source.authority == 'operator':
         return None
     if isinstance(source, WorkspaceSource):
-        return f'the author of `{source.path}`'
+        return (
+            f'the author of `{source.path}`' if _NOTE_PATH.fullmatch(source.path) else 'the author of a workspace file'
+        )
     if isinstance(source, ToolResultSource):
-        return f'the `{source.tool_name}` tool'
+        return f'the `{source.tool_name}` tool' if _NOTE_IDENTIFIER.fullmatch(source.tool_name) else 'a tool'
     if isinstance(source, ModelSource):
-        return f'the {source.author}'
+        return f'the {source.author}' if _note_author(source.author) else 'another model'
     if isinstance(source, CapabilitySource):
-        return f'the `{source.capability_id}` capability'
+        if _NOTE_IDENTIFIER.fullmatch(source.capability_id):
+            return f'the `{source.capability_id}` capability'
+        return 'a capability'
     return 'the user'
+
+
+def _note_author(author: str) -> bool:
+    return len(author) <= 128 and _NOTE_AUTHOR.fullmatch(author) is not None
 
 
 def _lookalike_naming(source: CapabilityPartSource, tag: str) -> LookalikeNaming:
@@ -213,8 +247,9 @@ def _lookalike_naming(source: CapabilityPartSource, tag: str) -> LookalikeNaming
         if source.tool_call_id:
             naming['tool_call_id'] = source.tool_call_id
     elif isinstance(source, ModelSource):
-        naming['model_name'] = source.author
-    elif isinstance(source, CapabilitySource):
+        if _note_author(source.author):
+            naming['model_name'] = source.author
+    elif isinstance(source, CapabilitySource) and _NOTE_IDENTIFIER.fullmatch(source.capability_id):
         naming['model_name'] = f'`{source.capability_id}` capability'
     return naming
 
