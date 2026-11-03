@@ -420,24 +420,28 @@ class TranscriptBuffer:
             started = theme.painted_in()
         self._pending_theme = started
         if len(self._pending) > self.max_chars:
-            cutoff = len(self._pending) - self.max_chars
-            for escape in ANSI_ESCAPE_RE.finditer(self._pending):
-                if escape.start() < cutoff < escape.end():
-                    cutoff = escape.end()
-                    break
-            # Keep an unfinished escape intact until the next write completes it.
-            start = incomplete_escape_start(self._pending)
-            if 0 <= start < cutoff:
-                if len(self._pending) - start > 4096:
-                    # A malformed unclosed control must not defeat the replay
-                    # memory bound. Keep the visible prefix, omit through EOL.
-                    self._pending = self._pending[:start]
-                    self._discard_until_newline = True
-                    cutoff = max(0, len(self._pending) - self.max_chars)
-                else:
-                    cutoff = start
-            prefix, self._pending = self._pending[:cutoff], self._pending[cutoff:]
-            self._decoder.decode_line(prefix)
+            self._trim_pending()
+
+    def _trim_pending(self) -> None:
+        """Drop the start of an unfinished line over `max_chars`, decoding it so its styling carries on."""
+        cutoff = len(self._pending) - self.max_chars
+        for escape in ANSI_ESCAPE_RE.finditer(self._pending):
+            if escape.start() < cutoff < escape.end():
+                cutoff = escape.end()
+                break
+        # Keep an unfinished escape intact until the next write completes it.
+        start = incomplete_escape_start(self._pending)
+        if 0 <= start < cutoff:
+            if len(self._pending) - start > 4096:
+                # A malformed unclosed control must not defeat the replay
+                # memory bound. Keep the visible prefix, omit through EOL.
+                self._pending = self._pending[:start]
+                self._discard_until_newline = True
+                cutoff = max(0, len(self._pending) - self.max_chars)
+            else:
+                cutoff = start
+        prefix, self._pending = self._pending[:cutoff], self._pending[cutoff:]
+        self._decoder.decode_line(prefix)
 
     def markdown(self, *, render: Render, width: int, changed: Callable[[], None]) -> MarkdownBlock:
         """Start a Markdown part on its own row, after any unfinished line."""

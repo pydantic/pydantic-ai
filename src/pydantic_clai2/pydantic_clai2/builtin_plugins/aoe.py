@@ -105,19 +105,28 @@ def locate(pane: str) -> Pane | None:
         return None
     instance_id = os.environ.get('AOE_INSTANCE_ID')
     if instance_id is None:
-        agent_session = _AGENT_SESSION.fullmatch(session_name)
-        if agent_session is None:
-            return None
-        for attempt in range(_LOOKUP_ATTEMPTS):
-            if attempt:
-                time.sleep(_LOOKUP_INTERVAL)
-            hidden = _output('tmux', 'show-environment', '-t', pane, '-h', 'AOE_INSTANCE_ID')
-            if hidden is not None and hidden.startswith('AOE_INSTANCE_ID='):
-                instance_id = hidden.strip().partition('=')[2]
-                break
-        if instance_id is None or not instance_id.startswith(agent_session.group(1)):
+        instance_id = _hidden_instance_id(pane, session_name)
+        if instance_id is None:
             return None
     return Pane(instance_id, int(pane_pid)) if _INSTANCE_ID.fullmatch(instance_id) else None
+
+
+def _hidden_instance_id(pane: str, session_name: str) -> str | None:
+    """The ID in the tmux session's hidden environment, when `session_name` is that instance's agent session."""
+    agent_session = _AGENT_SESSION.fullmatch(session_name)
+    if agent_session is None:
+        return None
+    instance_id = None
+    for attempt in range(_LOOKUP_ATTEMPTS):
+        if attempt:
+            time.sleep(_LOOKUP_INTERVAL)
+        hidden = _output('tmux', 'show-environment', '-t', pane, '-h', 'AOE_INSTANCE_ID')
+        if hidden is not None and hidden.startswith('AOE_INSTANCE_ID='):
+            instance_id = hidden.strip().partition('=')[2]
+            break
+    if instance_id is None or not instance_id.startswith(agent_session.group(1)):
+        return None
+    return instance_id
 
 
 def nested(pane_pid: int) -> bool:

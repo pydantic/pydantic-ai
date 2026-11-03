@@ -11,6 +11,7 @@ from pathlib import Path
 
 from pydantic_ai._framing import neutralize_tags
 from pydantic_ai.workspaces import Workspace
+from pydantic_ai_harness._workspace import stat_or_none
 
 # TODO: switch to `wrap()` from the public `pydantic_ai.framing` module once it lands (#10957), registering
 # `context-file` as a framing tag there.
@@ -60,11 +61,8 @@ async def _real_file(
 ) -> tuple[Path, Path] | None:
     """Return the resolved read/dedup target and display path of an authorized instruction file."""
     text = str(path)
-    try:
-        entry = await workspace.stat(text)
-    except (FileNotFoundError, NotADirectoryError):
-        return None
-    if entry.is_dir:
+    entry = await stat_or_none(workspace, text)
+    if entry is None or entry.is_dir:
         return None
     real = Path(await workspace.realpath(text))
     if real.parent == Path(await workspace.realpath(str(path.parent))):

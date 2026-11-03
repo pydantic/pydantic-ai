@@ -28,6 +28,7 @@ Many agent problems don't raise an error at all. The run finishes, but the agent
 - **The agent forgets earlier context.** [History processors](message-history.md#processing-message-history) and [compaction](capabilities/compaction.md) replace the history the model sees. Compare `gen_ai.input.messages` on the model request span with the history you passed in.
 - **A setting has no effect.** See the next section: some settings are dropped for models that don't support them.
 - **Another model answered.** With [`ModelFallback`](capabilities/model-fallback.md) or [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], the response's `model_name` says which model answered and [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts] lists the ones that failed before it.
+- **The model refuses the task.** A safety refusal is a response with a `'content_filter'` finish reason, and an empty one raises [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. To have another model take over, see [Falling back when a model refuses](capabilities/model-fallback.md#refusals).
 - **A request is sent many more times than expected, or a fallback is slow to start.** The transport, the provider SDK and a durable execution engine can each retry the same request, and their attempts multiply. See [Choosing one retry owner](retries.md#choosing-one-retry-owner).
 - **The run stops early.** A [usage limit](agent.md#usage-limits) raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded]; a tool that needs approval or is deferred ends the run with [`DeferredToolRequests`](deferred-tools.md) as its output.
 
@@ -96,9 +97,9 @@ The [V1 → V2 Migration Map](migration.md) lists every renamed or removed API. 
 
 | Error | V1 | V2 |
 |---|---|---|
-| `ImportError: cannot import name 'OpenAIModel' from 'pydantic_ai.models.openai'` | `OpenAIModel` | [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] |
+| `ImportError: ...OpenAIModel was removed in Pydantic AI V2` | `OpenAIModel` | [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] |
 | `TypeError: Agent.__init__() got an unexpected keyword argument 'result_type'` | `result_type=` | `output_type=` |
-| `TypeError: 'RunUsage' object is not callable` | `result.usage()` | `result.usage` |
+| `PydanticAIDeprecationWarning: ...usage is a property, not a method` (`TypeError: 'RunUsage' object is not callable` before v2.64.0) | `result.usage()` | `result.usage` |
 | `AttributeError: 'FunctionToolResultEvent' object has no attribute 'result'` | `event.result` | [`event.part`][pydantic_ai.messages.ToolResultEvent.part] |
 | `AttributeError: 'dict' object has no attribute 'supports_thinking'` | `profile.supports_thinking` | `profile.get('supports_thinking')` |
 
