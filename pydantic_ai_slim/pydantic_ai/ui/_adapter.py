@@ -673,7 +673,7 @@ def _reject_answers_for_calls_not_pending(
         raise UserError(
             f'The request answers {len(not_pending)} tool call(s) that `message_history` is not waiting on: '
             f'{", ".join(repr(tool_call_id) for tool_call_id in not_pending)}. With '
-            f"`manage_message_history='server'`, an approval or denial can only answer a tool call that is "
+            f"`manage_message_history='server'`, an approval, denial or deferred tool result can only answer a tool call that is "
             f'still pending at the end of the stored history. If the conversation changed since the client '
             f'loaded it, reload it from the server.'
         )
@@ -1361,9 +1361,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         A `UserError` from [`deferred_tool_results`][pydantic_ai.ui.UIAdapter.deferred_tool_results],
         or one [`manage_message_history='server'`][pydantic_ai.ui.UIAdapter.manage_message_history]
         raises for a regenerate of a message `message_history` doesn't hold or for an approval of a tool
-        call it isn't waiting on, is re-raised on the first iteration of the returned stream rather than at the call site, so a request rejected this way
-        surfaces as a protocol error event on the stream. Any other exception still raises at the call
-        site, and nothing else about the run input is deferred.
+        call it isn't waiting on, is re-raised on the first iteration of the returned stream rather than
+        at the call site, so a request rejected this way surfaces as a protocol error event on the stream.
+        Any other exception still raises at the call site, and nothing else about the run input is
+        deferred.
 
         Args:
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
