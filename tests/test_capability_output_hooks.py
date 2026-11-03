@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Annotated, Any
 
 import pytest
 from opentelemetry.trace import NoOpTracer
@@ -4035,6 +4035,36 @@ class TestHookSemanticValue:
         output, log = await self._run_and_capture(output_type=stringify, model_fn=model_fn)
         assert output == 'got 42'
         assert log == [('after_validate', 42), ('before_process', 42)]
+
+    async def test_case_d_alias_function_primitive_arg(self):
+        """Single arg with an alias: the schema is keyed by the alias, the validated args by the name."""
+
+        def stringify(city: Annotated[str, Field(alias='cityName')]) -> str:
+            return f'got {city}'
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            tool = info.output_tools[0]
+            # The model is handed the aliased schema, so that is what it answers with.
+            assert list(tool.parameters_json_schema['properties']) == ['cityName']
+            return ModelResponse(parts=[ToolCallPart(tool.name, '{"cityName": "Paris"}')])
+
+        output, log = await self._run_and_capture(output_type=stringify, model_fn=model_fn)
+        assert output == 'got Paris'
+        assert log == [('after_validate', 'Paris'), ('before_process', 'Paris')]
+
+    async def test_case_d_alias_with_validation_alias_and_no_hooks(self):
+        """`validation_alias` hits the same path, and it fails without any output hooks registered."""
+
+        def stringify(city: Annotated[str, Field(validation_alias='cityName')]) -> str:
+            return f'got {city}'
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='{"cityName": "Paris"}')])
+
+        agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput(stringify))
+        result = await agent.run('hello')
+        assert result.output == 'got Paris'
 
     async def test_case_e_function_multiple_args(self):
         """Case E: multi-arg function — hooks see the dict (genuine multi-value input)."""
