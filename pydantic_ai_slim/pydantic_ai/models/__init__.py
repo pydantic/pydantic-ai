@@ -133,6 +133,7 @@ from ..messages import (
     ModelResponseState,
     ModelResponseStreamEvent,
     ModelSettingsDeltaPart,
+    NativeToolSearchCallPart,
     NativeToolSearchReturnPart as NativeToolSearchReturnPart,
     PartEndEvent,
     PartStartEvent,
@@ -1808,144 +1809,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 which differs only for a corpus mixing capability-gated and standalone deferred tools.
                 Framework callers pass it.
         """
-        inline_system = self.profile.get('supports_inline_system_prompts', False)
-        messages = _drop_capability_load_deltas(messages)
-        if _has_instruction_state(messages):
-            # The same path choice as the prefix statement in `prepare_request`; on the fallback path
-            # `_wrap_non_leading_system_prompts` below `<system>`-wraps the update.
-            messages = _project_instruction_state(
-                messages,
-                inline_system=inline_system,
-                prefix=model_request_parameters.instruction_parts if model_request_parameters is not None else None,
-            )
-
-        messages = _render_system_prompt_contexts(
-            messages,
-            inline_system=inline_system,
-            # The appending instruction blocks the prefix opens are followed by the sentence already.
-            prefix_states_rule=model_request_parameters is not None
-            and bool(_tagged_append_parts(model_request_parameters.instruction_parts or [])),
-        )
-        messages = _project_model_settings_deltas(
-            messages,
-            keep=self._renders_effort_deltas and self.profile.get('supports_mid_conversation_effort', False),
-        )
-        messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
-        # Counted before any delta or note renders into a `SystemPromptPart`: the standing prompt is what the
-        # history was authored with, and a note or announcement in the first request is not part of it.
-        first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
-        standing_prompt_count = _standing_system_prompt_count(first_request) if first_request else 0
-        # Kept as stored, after speech becomes user text: only text from the user, tools and files is checked for
-        # lookalike frames below, never the frames the framework renders from a retry.
-        authored = messages
-        # Translated before every later step — the tool-availability announcement and the `<system>`
-        # wrap below it — so they see the plain parts a retry becomes rather than the retry itself.
-        messages = _translate_retry_parts(
-            messages,
-            keep_feedback=self._renders_retry_feedback,
-            # Without a system role, a retry that would join the standing prompt is a `<system>` block like the rest.
-            sealed=self._seals_system_blocks,
-        )
-        messages = _replace_unsupported_tool_return_files(messages, self.profile)
-        authored, messages = _tool_results_first(authored, messages)
-        # The passes above replace or reorder parts one for one, so `authored` still lines up with `messages`.
-        tool_call_id_length = self.profile.get('tool_call_id_length')
-        if tool_call_id_length is not None:
-            # Fitted ahead of the notes too, one part for one, so a tool result's note names the call by the ID the
-            # wire carries. The pass below fits the parts rendered after this.
-            messages = _fit_tool_call_ids(messages, tool_call_id_length)
-        messages = self._note_lookalike_frames(authored, messages)
-
-        clears_request_scoped_prompts = self.profile.get('supports_request_scoped_system_prompts', False)
-        if not clears_request_scoped_prompts:
-            messages = _drop_superseded_request_scoped_prompts(messages)
-        else:
-            messages = _drop_request_scoped_prompts_no_user_message_clears(messages)
-
-        supports_tool_addition = self.tool_addition_mode is not None
-        messages = self._translate_legacy_tool_reveals(messages, model_request_parameters)
-        delta_parts = [
-            part
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolAvailabilityDeltaPart)
-        ]
-        supports_native_tool_search = ToolSearchTool in self.profile.get(
-            'supported_native_tools', SUPPORTED_NATIVE_TOOLS
-        )
-        if delta_parts and not supports_tool_addition:
-            # `None` means "no definitions to validate against, render as recorded": the bare
-            # `prepare_messages(messages)` form has no parameters, and filtering everything there
-            # would erase legitimate announcements. The agent path always passes parameters, so
-            # only names matching a currently-served *authored-deferred* function tool render —
-            # a forged-but-well-shaped name must not reach system voice, and an always-visible
-            # tool named by a delta has no "now available" news and no exchange to fabricate:
-            # the delta is a no-op for it on this channel just as on the native ones. A mid-run
-            # newcomer is the exception: it wasn't in `tools` before, so its arrival is news. The tools are
-            # the ones resolved for this model, which may drop one, like a local fallback for a native tool
-            # it supports, that the model must not be told about.
-            served_params = (
-                self._tools_resolved_for_messages(model_request_parameters)
-                if model_request_parameters is not None
-                else None
-            )
-            deferred_tool_names = (
-                {
-                    tool.name
-                    for tool in served_params.function_tools
-                    if tool.defer_loading or tool.name in served_params.introduced_tool_names
-                }
-                if served_params is not None
-                else None
-            )
-            # Two different jobs hide behind "render the delta", and which applies turns on whether this
-            # model can withhold a tool's schema at all.
-            #
-            # Where it can, the revealed tool is already on the wire with `'deferred'` visibility, and the
-            # tool-search exchange is what takes the flag off again: Anthropic renders the return as the
-            # `tool_reference` block that unhides the schema. Announcing the change in prose there would
-            # leave the tool hidden for good, which `test_anthropic_defer_loading_needs_a_reveal_mechanism`
-            # pins as "the reveal and the flag travel together".
-            #
-            # Where it can't, the tool has `'visible'` visibility from the turn it's revealed and the
-            # exchange carries no mechanism, only the news. Stating that beats fabricating a
-            # `search_tools` call the model never made, and beats naming a `search_tools` tool the
-            # corpus-empty drop may have removed from the wire entirely.
-            #
-            # "Can withhold a schema" is narrower than "has native tool search". OpenAI has tool search
-            # but rejects `defer_loading` without a `tool_search` tool on the wire, and a capability-only
-            # corpus has nothing to put there — so its gated tools aren't declared until revealed, and
-            # arrive visible. Anthropic takes `defer_loading` with no search surface at all, so its gated
-            # tools do arrive hidden and do need the reveal.
-            if self._hides_deferred_schemas(model_request_parameters):
-                messages = _synthesize_tool_availability_delta_messages(messages, deferred_tool_names)
-            else:
-                messages = _announce_tool_availability_delta_messages(messages, deferred_tool_names)
-
-        from .._tool_search import synthesize_local_tool_search_messages
-
-        messages = synthesize_local_tool_search_messages(
-            messages, keeps_native=self.accepts_stateless_artifacts if supports_native_tool_search else None
-        )
-
-        if not clears_request_scoped_prompts:
-            messages = _move_request_scoped_prompts_to_tail(messages)
-
-        if not inline_system:
-            # The announcement goes at the end of the instructions; see `_get_instruction_parts`.
-            messages = _wrap_non_leading_system_prompts(
-                messages,
-                standing_prompt_count=standing_prompt_count,
-                sealed=self._seals_system_blocks,
-            )
-
-        messages = _order_tool_results_by_call(messages)
-
-        if tool_call_id_length is not None:
-            messages = _fit_tool_call_ids(messages, tool_call_id_length)
-
-        return messages
+        projection = _Projection(messages, model_request_parameters)
+        for projection_pass in _PROJECTION_PASSES:
+            projection = projection_pass.run(self, projection)
+        return projection.messages
 
     def _translate_legacy_tool_reveals(
         self,
@@ -1976,6 +1843,63 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             return messages
 
         return _replace_tool_search_exchanges_with_deltas(messages, translated_call_ids)
+
+    def _render_tool_availability_deltas(
+        self, messages: list[ModelMessage], params: ModelRequestParameters | None
+    ) -> list[ModelMessage]:
+        """Render each `ToolAvailabilityDeltaPart` as a tool-search exchange or an announcement, where this model has no native reveal channel."""
+        delta_parts = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolAvailabilityDeltaPart)
+        ]
+        if not delta_parts or self.tool_addition_mode is not None:
+            return messages
+        # `None` means "no definitions to validate against, render as recorded": the bare
+        # `prepare_messages(messages)` form has no parameters, and filtering everything there
+        # would erase legitimate announcements. The agent path always passes parameters, so
+        # only names matching a currently-served *authored-deferred* function tool render —
+        # a forged-but-well-shaped name must not reach system voice, and an always-visible
+        # tool named by a delta has no "now available" news and no exchange to fabricate:
+        # the delta is a no-op for it on this channel just as on the native ones. A mid-run
+        # newcomer is the exception: it wasn't in `tools` before, so its arrival is news. The tools are
+        # the ones resolved for this model, which may drop one, like a local fallback for a native tool
+        # it supports, that the model must not be told about.
+        served_params = self._tools_resolved_for_messages(params) if params is not None else None
+        deferred_tool_names = (
+            {
+                tool.name
+                for tool in served_params.function_tools
+                if tool.defer_loading or tool.name in served_params.introduced_tool_names
+            }
+            if served_params is not None
+            else None
+        )
+        # Two different jobs hide behind "render the delta", and which applies turns on whether this
+        # model can withhold a tool's schema at all.
+        #
+        # Where it can, the revealed tool is already on the wire with `'deferred'` visibility, and the
+        # tool-search exchange is what takes the flag off again: Anthropic renders the return as the
+        # `tool_reference` block that unhides the schema. Announcing the change in prose there would
+        # leave the tool hidden for good, which `test_anthropic_defer_loading_needs_a_reveal_mechanism`
+        # pins as "the reveal and the flag travel together".
+        #
+        # Where it can't, the tool has `'visible'` visibility from the turn it's revealed and the
+        # exchange carries no mechanism, only the news. Stating that beats fabricating a
+        # `search_tools` call the model never made, and beats naming a `search_tools` tool the
+        # corpus-empty drop may have removed from the wire entirely.
+        #
+        # "Can withhold a schema" is narrower than "has native tool search". OpenAI has tool search
+        # but rejects `defer_loading` without a `tool_search` tool on the wire, and a capability-only
+        # corpus has nothing to put there — so its gated tools aren't declared until revealed, and
+        # arrive visible. Anthropic takes `defer_loading` with no search surface at all, so its gated
+        # tools do arrive hidden and do need the reveal.
+        if self._hides_deferred_schemas(params):
+            return _synthesize_tool_availability_delta_messages(messages, deferred_tool_names)
+        else:
+            return _announce_tool_availability_delta_messages(messages, deferred_tool_names)
 
     @property
     def _seals_system_blocks(self) -> bool:
@@ -4901,6 +4825,238 @@ def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelM
 
     new_messages = [fit_message(message) for message in messages]
     return new_messages if any(new is not old for new, old in zip(new_messages, messages)) else messages
+
+
+@dataclass(frozen=True)
+class _Projection:
+    """The history between two passes of `Model.prepare_messages`, with what earlier passes noted about it."""
+
+    messages: list[ModelMessage]
+    params: ModelRequestParameters | None
+    authored: list[ModelMessage] = field(default_factory=list[ModelMessage])
+    """The history as stored, after speech becomes user text, lined up part for part with `messages` until the
+    lookalike notes are added. Only text from the user, tools and files is checked for lookalike frames, never the
+    frames the framework renders from a retry."""
+    standing_prompt_count: int = 0
+    """How many opening parts of the first request are the standing system prompt the history was authored with."""
+
+    def with_messages(self, messages: list[ModelMessage]) -> _Projection:
+        return self if messages is self.messages else replace(self, messages=messages)
+
+
+_PartKind: TypeAlias = type[ModelRequestPart] | type[ModelResponsePart]
+
+
+@dataclass(frozen=True)
+class _ProjectionPass:
+    """One named step of `Model.prepare_messages`, from stored history toward what the adapters map."""
+
+    name: str
+    run: Callable[[Model, _Projection], _Projection]
+    reads: frozenset[_PartKind] = frozenset()
+    """The part kinds whose presence changes this pass's output, besides the ones it consumes. Only kinds some pass
+    consumes or drops need listing: every other kind stays in the history throughout."""
+    consumes: frozenset[_PartKind] = frozenset()
+    """The part kinds this pass reads and renders as other parts, so what they carry stays in the history. A later pass
+    sees the rendered parts, or the kind itself on a model whose gate keeps it."""
+    drops: frozenset[_PartKind] = frozenset()
+    """The part kinds this pass leaves out of the history with nothing in their place, so no later pass may read them."""
+
+
+def _drop_capability_loads_pass(model: Model, projection: _Projection) -> _Projection:
+    # The model sees a capability's load as its instructions and tools, not as the record that loads it.
+    return projection.with_messages(_drop_capability_load_deltas(projection.messages))
+
+
+def _instruction_state_pass(model: Model, projection: _Projection) -> _Projection:
+    messages, params = projection.messages, projection.params
+    if not _has_instruction_state(messages):
+        return projection
+    # The same path choice as the prefix statement in `prepare_request`; on the fallback path the `system_voice`
+    # pass `<system>`-wraps the update.
+    return projection.with_messages(
+        _project_instruction_state(
+            messages,
+            inline_system=model.profile.get('supports_inline_system_prompts', False),
+            prefix=params.instruction_parts if params is not None else None,
+        )
+    )
+
+
+def _system_prompt_contexts_pass(model: Model, projection: _Projection) -> _Projection:
+    params = projection.params
+    return projection.with_messages(
+        _render_system_prompt_contexts(
+            projection.messages,
+            inline_system=model.profile.get('supports_inline_system_prompts', False),
+            # The appending instruction blocks the prefix opens are followed by the sentence already.
+            prefix_states_rule=params is not None and bool(_tagged_append_parts(params.instruction_parts or [])),
+        )
+    )
+
+
+def _model_settings_deltas_pass(model: Model, projection: _Projection) -> _Projection:
+    return projection.with_messages(
+        _project_model_settings_deltas(
+            projection.messages,
+            keep=model._renders_effort_deltas and model.profile.get('supports_mid_conversation_effort', False),  # pyright: ignore[reportPrivateUsage]
+        )
+    )
+
+
+def _speech_pass(model: Model, projection: _Projection) -> _Projection:
+    return projection.with_messages(
+        _convert_speech_parts(projection.messages, include_audio=model.profile.get('supports_audio_input', False))
+    )
+
+
+def _authored_pass(model: Model, projection: _Projection) -> _Projection:
+    # Counted before any delta or note renders into a `SystemPromptPart`: the standing prompt is what the history
+    # was authored with, and a note or announcement in the first request is not part of it.
+    messages = projection.messages
+    first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
+    return replace(
+        projection,
+        authored=messages,
+        standing_prompt_count=_standing_system_prompt_count(first_request) if first_request else 0,
+    )
+
+
+def _retry_feedback_pass(model: Model, projection: _Projection) -> _Projection:
+    # Translated before every later pass, the tool-availability announcement and the `<system>` wrap included, so
+    # they see the plain parts a retry becomes rather than the retry itself.
+    return projection.with_messages(
+        _translate_retry_parts(
+            projection.messages,
+            keep_feedback=model._renders_retry_feedback,  # pyright: ignore[reportPrivateUsage]
+            # Without a system role, a retry that would join the standing prompt is a `<system>` block like the rest.
+            sealed=model._seals_system_blocks,  # pyright: ignore[reportPrivateUsage]
+        )
+    )
+
+
+def _unsupported_tool_return_files_pass(model: Model, projection: _Projection) -> _Projection:
+    return projection.with_messages(_replace_unsupported_tool_return_files(projection.messages, model.profile))
+
+
+def _tool_results_first_pass(model: Model, projection: _Projection) -> _Projection:
+    # The passes since `authored` replace or reorder parts one for one, so `authored` still lines up with `messages`.
+    authored, messages = _tool_results_first(projection.authored, projection.messages)
+    return replace(projection, authored=authored, messages=messages)
+
+
+def _tool_call_ids_pass(model: Model, projection: _Projection) -> _Projection:
+    # Fitted ahead of the notes too, one part for one, so a tool result's note names the call by the ID the wire
+    # carries. The `rendered_tool_call_ids` pass fits the parts rendered after this.
+    if (length := model.profile.get('tool_call_id_length')) is None:
+        return projection
+    return projection.with_messages(_fit_tool_call_ids(projection.messages, length))
+
+
+def _lookalike_notes_pass(model: Model, projection: _Projection) -> _Projection:
+    return projection.with_messages(model._note_lookalike_frames(projection.authored, projection.messages))  # pyright: ignore[reportPrivateUsage]
+
+
+def _superseded_request_scoped_prompts_pass(model: Model, projection: _Projection) -> _Projection:
+    if model.profile.get('supports_request_scoped_system_prompts', False):
+        return projection.with_messages(_drop_request_scoped_prompts_no_user_message_clears(projection.messages))
+    return projection.with_messages(_drop_superseded_request_scoped_prompts(projection.messages))
+
+
+def _legacy_tool_reveals_pass(model: Model, projection: _Projection) -> _Projection:
+    return projection.with_messages(model._translate_legacy_tool_reveals(projection.messages, projection.params))  # pyright: ignore[reportPrivateUsage]
+
+
+def _tool_availability_deltas_pass(model: Model, projection: _Projection) -> _Projection:
+    return projection.with_messages(model._render_tool_availability_deltas(projection.messages, projection.params))  # pyright: ignore[reportPrivateUsage]
+
+
+def _local_tool_search_pass(model: Model, projection: _Projection) -> _Projection:
+    from .._tool_search import synthesize_local_tool_search_messages
+
+    supports_native_tool_search = ToolSearchTool in model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+    return projection.with_messages(
+        synthesize_local_tool_search_messages(
+            projection.messages,
+            keeps_native=model.accepts_stateless_artifacts if supports_native_tool_search else None,
+        )
+    )
+
+
+def _request_scoped_tail_pass(model: Model, projection: _Projection) -> _Projection:
+    if model.profile.get('supports_request_scoped_system_prompts', False):
+        return projection
+    return projection.with_messages(_move_request_scoped_prompts_to_tail(projection.messages))
+
+
+def _system_voice_pass(model: Model, projection: _Projection) -> _Projection:
+    if model.profile.get('supports_inline_system_prompts', False):
+        return projection
+    # The announcement goes at the end of the instructions; see `_get_instruction_parts`.
+    return projection.with_messages(
+        _wrap_non_leading_system_prompts(
+            projection.messages,
+            standing_prompt_count=projection.standing_prompt_count,
+            sealed=model._seals_system_blocks,  # pyright: ignore[reportPrivateUsage]
+        )
+    )
+
+
+def _tool_result_order_pass(model: Model, projection: _Projection) -> _Projection:
+    return projection.with_messages(_order_tool_results_by_call(projection.messages))
+
+
+_PROJECTION_PASSES: tuple[_ProjectionPass, ...] = (
+    _ProjectionPass('drop_capability_loads', _drop_capability_loads_pass, drops=frozenset({CapabilityLoadDeltaPart})),
+    _ProjectionPass(
+        'instruction_state',
+        _instruction_state_pass,
+        reads=frozenset({CapabilityLoadDeltaPart}),
+        consumes=frozenset({InstructionDeltaPart, InstructionBaselinePart}),
+    ),
+    _ProjectionPass('system_prompt_contexts', _system_prompt_contexts_pass, reads=frozenset({SystemPromptPart})),
+    _ProjectionPass('model_settings_deltas', _model_settings_deltas_pass, drops=frozenset({ModelSettingsDeltaPart})),
+    _ProjectionPass('speech', _speech_pass, consumes=frozenset({SpeechPart})),
+    _ProjectionPass('authored', _authored_pass, reads=frozenset({SystemPromptPart})),
+    _ProjectionPass(
+        'retry_feedback',
+        _retry_feedback_pass,
+        reads=frozenset({SystemPromptPart}),
+        consumes=frozenset({RetryFeedbackPart, RetryPromptPart}),  # pyright: ignore[reportDeprecated]
+    ),
+    _ProjectionPass('unsupported_tool_return_files', _unsupported_tool_return_files_pass),
+    _ProjectionPass('tool_results_first', _tool_results_first_pass, reads=frozenset({SystemPromptPart})),
+    _ProjectionPass('tool_call_ids', _tool_call_ids_pass),
+    _ProjectionPass(
+        'lookalike_notes',
+        _lookalike_notes_pass,
+        reads=frozenset({SystemPromptPart}),
+        consumes=frozenset({CapabilityPart}),
+    ),
+    _ProjectionPass(
+        'superseded_request_scoped_prompts',
+        _superseded_request_scoped_prompts_pass,
+        reads=frozenset({SystemPromptPart, RetryFeedbackPart}),
+    ),
+    _ProjectionPass('legacy_tool_reveals', _legacy_tool_reveals_pass),
+    _ProjectionPass(
+        'tool_availability_deltas', _tool_availability_deltas_pass, consumes=frozenset({ToolAvailabilityDeltaPart})
+    ),
+    _ProjectionPass(
+        'local_tool_search',
+        _local_tool_search_pass,
+        consumes=frozenset({NativeToolSearchCallPart, NativeToolSearchReturnPart}),
+    ),
+    _ProjectionPass('request_scoped_tail', _request_scoped_tail_pass, reads=frozenset({SystemPromptPart})),
+    _ProjectionPass('system_voice', _system_voice_pass, consumes=frozenset({SystemPromptPart})),
+    _ProjectionPass('tool_result_order', _tool_result_order_pass),
+    _ProjectionPass('rendered_tool_call_ids', _tool_call_ids_pass),
+)
+"""The passes `Model.prepare_messages` runs, in order.
+
+`tests/test_projection_passes.py` checks the declarations against what each pass does, and that no pass drops a kind a
+later pass reads.
+"""
 
 
 # TODO(v3): remove `RetryPromptPart`
