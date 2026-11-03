@@ -8,7 +8,7 @@ call kills the command's process group, and how sandboxd shuts down with a comma
 Only the Kubernetes side is stood in for: each claim starts its own `sandboxd` process with its own
 root directory, the way each claimed pod runs one, and deleting the claim stops it with SIGTERM, as
 the kubelet stops a deleted pod, and removes the directory. Claims, warm pools and
-`kubectl port-forward` need a cluster: `test_live_cluster.py` runs against one.
+`kubectl port-forward` need a cluster: `tests/harness/kubernetes_sandbox/test_kubernetes_live.py` runs against one.
 
 Run with `make integration-kubernetes` after building sandboxd from a release tag:
 

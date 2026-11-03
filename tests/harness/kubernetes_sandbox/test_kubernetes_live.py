@@ -1,16 +1,20 @@
 """`KubernetesSandbox` against a real cluster: the agent-sandbox controller, its SDK, and `kubectl`.
 
-`test_live_sandboxd.py` checks sandboxd itself, with the cluster stood in for. This file runs the
-conformance rules end to end on a kind cluster, and checks what only a cluster can answer: claims
+The live tier, like every sandbox provider's `*_live.py`: `sandbox-live-nightly.yml` runs it daily
+on the newest agent-sandbox release's controller and sandboxd from agent-sandbox's `main`, so a
+change upstream shows here before a release. Pull requests run `test_live_sandboxd.py` instead, which
+checks sandboxd itself at the oldest release the docs support, with the cluster stood in for.
+
+This file runs the conformance rules end to end on a kind cluster, and checks what only a cluster can answer: claims
 from a warm pool and their expiry, the SDK deleting a claim whose creation was cancelled, a
 `kubectl port-forward` that dies, a pod the controller recreates, connection configs, and the
 examples on the docs page.
 
 Run with `make integration-kubernetes-cluster`, which needs Docker, kind and kubectl: it creates the
 `pydantic-ai-live` cluster with `cluster/up.sh`, writes its credentials to its own kubeconfig, and
-runs these tests with `KUBECONFIG` pointing there. They create and delete claims, so they refuse any
-cluster whose context is not `kind-pydantic-ai-live`. Without it they skip, unless
-`KUBERNETES_CLUSTER_REQUIRE_LIVE` is set (CI does), where they fail instead.
+runs these tests with `KUBECONFIG` pointing there and `PYDANTIC_AI_HARNESS_KUBERNETES_LIVE=1`. They
+create and delete claims, so they refuse any cluster whose context is not `kind-pydantic-ai-live`.
+Without both they skip, unless `KUBERNETES_REQUIRE_LIVE` is set (CI does), where they fail instead.
 
 The in-cluster connections need the pod network, which only Linux can route to kind's pods: CI adds
 the route and sets `KUBERNETES_POD_NETWORK=1`.
@@ -18,6 +22,7 @@ the route and sets `KUBERNETES_POD_NETWORK=1`.
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import shutil
@@ -59,7 +64,17 @@ def _current_context() -> str | None:
     return result.stdout.strip() if result.returncode == 0 else None
 
 
-ON_TEST_CLUSTER = _current_context() == CONTEXT
+pytestmark = pytest.mark.kubernetes_live
+
+
+@functools.cache
+def _missing_live_tier() -> str | None:
+    """Why the live tier cannot run here, or `None`. Asked lazily so collecting this file runs no `kubectl`."""
+    if os.getenv('PYDANTIC_AI_HARNESS_KUBERNETES_LIVE') != '1':
+        return 'requires PYDANTIC_AI_HARNESS_KUBERNETES_LIVE=1'
+    if _current_context() != CONTEXT:
+        return f'requires the kind cluster from `cluster/up.sh` as the current context of KUBECONFIG ({CONTEXT})'
+    return None
 
 
 @pytest.fixture
@@ -69,15 +84,15 @@ def anyio_backend() -> str:
 
 
 def _skip_or_fail(reason: str) -> None:
-    if os.getenv('KUBERNETES_CLUSTER_REQUIRE_LIVE'):
-        pytest.fail(f'KUBERNETES_CLUSTER_REQUIRE_LIVE is set, but the tests cannot run: they {reason}.')
+    if os.getenv('KUBERNETES_REQUIRE_LIVE', '').lower() in {'1', 'true', 'yes'}:
+        pytest.fail(f'KUBERNETES_REQUIRE_LIVE is set, but the live tier {reason}.')
     pytest.skip(reason)
 
 
 @pytest.fixture(autouse=True)
 def _require_cluster() -> Iterator[None]:
-    if not ON_TEST_CLUSTER:
-        _skip_or_fail(f'need the kind cluster from `cluster/up.sh` as the current context of KUBECONFIG ({CONTEXT})')
+    if reason := _missing_live_tier():
+        _skip_or_fail(reason)
     before = _claims_now()
     yield
     # A test that failed part way leaves its claims behind; they would hold warm sandboxes from later tests.
@@ -89,7 +104,7 @@ def _require_cluster() -> Iterator[None]:
 def pod_network() -> None:
     """Skip a test that connects to pod IPs unless this host can route to them."""
     if os.getenv('KUBERNETES_POD_NETWORK') != '1':
-        _skip_or_fail('need the pod network routed to this host (KUBERNETES_POD_NETWORK=1)')
+        _skip_or_fail('requires the pod network routed to this host (KUBERNETES_POD_NETWORK=1)')
 
 
 def _claims_now() -> set[str]:

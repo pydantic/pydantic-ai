@@ -118,9 +118,9 @@ integration-kubernetes: ## Run the harness Kubernetes sandbox tests against real
 KUBERNETES_LIVE_KUBECONFIG ?= $(HOME)/.kube/pydantic-ai-live
 
 .PHONY: integration-kubernetes-cluster
-integration-kubernetes-cluster: ## Run the harness Kubernetes sandbox tests on a kind cluster it creates or reuses (needs Docker, kind and kubectl; delete it with `kind delete cluster --name pydantic-ai-live`)
-	KUBECONFIG="$(KUBERNETES_LIVE_KUBECONFIG)" src/pydantic_ai_harness/integration_tests/kubernetes/cluster/up.sh
-	KUBECONFIG="$(KUBERNETES_LIVE_KUBECONFIG)" uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/kubernetes/test_live_cluster.py
+integration-kubernetes-cluster: ## Run the harness Kubernetes sandbox live tier on a kind cluster it creates or reuses, with agent-sandbox's newest release and staging sandboxd (needs Docker, kind and kubectl; delete it with `kind delete cluster --name pydantic-ai-live`)
+	KUBECONFIG="$(KUBERNETES_LIVE_KUBECONFIG)" tests/harness/kubernetes_sandbox/cluster/up.sh
+	KUBECONFIG="$(KUBERNETES_LIVE_KUBECONFIG)" PYDANTIC_AI_HARNESS_KUBERNETES_LIVE=1 uv run --all-packages --all-extras --no-extra mcp-tasks pytest -m kubernetes_live tests/harness/kubernetes_sandbox
 
 .PHONY: update-examples
 update-examples: ## Update documentation examples

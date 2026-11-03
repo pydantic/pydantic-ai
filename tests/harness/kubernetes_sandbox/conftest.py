@@ -1,7 +1,8 @@
 """Shared fixtures for `KubernetesSandbox` tests.
 
 Every test here runs against `fake_sandboxd`: a fake agent-sandbox SDK whose claims are in-process
-sandboxd servers running host commands. The same conformance suite runs against real sandboxd in
+sandboxd servers running host commands, except `test_kubernetes_live.py`, the live tier on a kind
+cluster. The same conformance suite also runs against real sandboxd, without a cluster, in
 `src/pydantic_ai_harness/integration_tests/kubernetes` (`make integration-kubernetes`).
 """
 
@@ -15,7 +16,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 _HAS_SDK = all(importlib.util.find_spec(name) is not None for name in ('k8s_agent_sandbox', 'grpc'))
-collect_ignore = [] if _HAS_SDK else ['test_conformance.py', 'test_kubernetes_sandbox.py']
+collect_ignore = [] if _HAS_SDK else ['test_conformance.py', 'test_kubernetes_live.py', 'test_kubernetes_sandbox.py']
 
 if TYPE_CHECKING or _HAS_SDK:  # pragma: no branch - the SDK-installed and slim jobs take opposite branches
     from .fake_sandboxd import FakeCluster
