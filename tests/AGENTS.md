@@ -318,7 +318,7 @@ A refactor of a streamed response (`StreamedResponse._get_event_iterator`, `__ai
 uv run python -m tests.refactor_capture "$(git merge-base HEAD upstream/main)" <test nodes>
 ```
 
-Select one or two test nodes that reach each changed line, not whole files. The command exits non-zero when a test's records differ or only one side has them; put its summary in the PR. Check that the summary's per-target counts include the requests your change builds: a request sent through a mocked SDK client is recorded only when `SDK_MOCKS` in that module lists the mock. The module docstring says what it records and normalizes.
+Select one or two test nodes that reach each changed line, not whole files. The command exits non-zero when a test's records differ or only one side has them; put its summary in the PR. Check that the summary's per-target counts include the requests your change builds: a request sent through a mocked SDK client is recorded only when `SDK_MOCKS` in `tests/refactor_capture.py` lists the mock's method. The module docstring says what it records and normalizes.
 
 ## Directory Structure
 

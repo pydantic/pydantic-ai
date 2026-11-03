@@ -27,7 +27,7 @@ with try_import() as imports_successful:
 pytest_plugins = ['pytester']
 
 pytestmark = [
-    pytest.mark.skipif(not imports_successful(), reason='httpx, openai or anthropic not installed'),
+    pytest.mark.skipif(not imports_successful(), reason='`httpx`, `groq` or `anthropic` not installed'),
     # A capture of this session would record the streams of the sessions these tests run inside it.
     pytest.mark.skipif(
         "config.getoption('--refactor-capture', None) is not None", reason='runs inside a refactor capture'

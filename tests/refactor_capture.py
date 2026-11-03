@@ -28,7 +28,7 @@ omitted argument included. When a capture starts, it runs an agent over a Groq m
 Anthropic model on `httpx2`, and stops the run if either request wasn't recorded, so an SDK that moves to an HTTP client
 the capture doesn't wrap fails loudly, as Anthropic's did moving from `httpx` to `httpx2`. Once collection has imported
 the tests, a listed mock method that's gone stops the run too. Other transports, like botocore for Bedrock, and client
-methods a test patches by hand escape it.
+methods a test patches by hand, like the `generate_content` Google's tests patch on a model's client, escape it.
 
 Each test starts with `random` seeded from its node id, so a test that draws from it draws the same values on both
 sides. Lines are written per `pytest-xdist` worker when each test ends. Generated tool call ids, UUIDs, object addresses,
