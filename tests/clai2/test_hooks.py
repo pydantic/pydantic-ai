@@ -610,7 +610,25 @@ async def test_a_program_changed_since_its_approval_does_not_run(
         await note_agent(plugin, written).run('hello')
     assert not (repo / 'second').exists() and written == []
     shown = ' '.join(output.getvalue().split())  # The console wraps the long temporary path.
-    assert 'mark.sh changed since you approved it; run /plugins enable project_hooks' in shown
+    assert 'mark.sh is not as you approved it; run /plugins enable project_hooks' in shown
+
+
+async def test_enabling_again_approves_a_program_changed_while_loaded(tmp_path: Path) -> None:
+    """`/plugins enable project_hooks` approves the program as it is now, in the session that refused it."""
+    repo = repository(tmp_path, 'repo', {'turn_end': [{'command': ['./mark.sh']}]})
+    write_program(repo / 'mark.sh', 'first')
+    store = SettingsStore(tmp_path / 'config.db')
+    loader = project_loader(store, repo, io.StringIO())
+    await loader.load_all()
+    await loader.command(['enable', PROJECT_HOOKS])
+    write_program(repo / 'mark.sh', 'second')
+    await loader.fire(TurnEnd(text='hello', outcome='completed'))
+    assert not (repo / 'second').exists()
+
+    await loader.command(['enable', PROJECT_HOOKS])
+    await loader.fire(TurnEnd(text='hello', outcome='completed'))
+    await loader.close('exit')
+    assert (repo / 'second').exists()
 
 
 async def test_a_program_approval_saved_without_its_contents_is_asked_again(tmp_path: Path) -> None:

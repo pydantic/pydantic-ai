@@ -138,10 +138,10 @@ class HooksPlugin(Plugin[HooksSettings, DepsT]):
         # The approval of a project's table is saved with your settings, which every repository shares:
         # it runs only while the session's project file declares that very table.
         self.active = self.root is None or _approved(host.workspace, settings)
-        programs = settings.project_programs()
-        store = None if not programs or host.settings_database is None else SettingsStore(host.settings_database)
-        # The contents `/plugins enable` approved for each project program; `None`, where it approved none, never matches.
-        self.programs = {str(path): None if store is None else store.approved_sha256(path) for path in programs}
+        self.programs = {str(path) for path in settings.project_programs()}
+        """Project files this table runs as programs, which run only with the contents `/plugins enable` approved."""
+        database = host.settings_database
+        self.approvals = None if not self.programs or database is None else SettingsStore(database)
 
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
         before, after = self.table('before_tool'), self.table('after_tool')
@@ -228,15 +228,20 @@ class HooksPlugin(Plugin[HooksSettings, DepsT]):
     async def _changed(self, argv: str | list[str], event: HookEvent) -> HookRun | None:
         """The refusal of a project program whose bytes are not the ones approved, or `None` to run it.
 
-        Like an argument the OS cannot take, it stops a `before_tool` call, so editing a guard does not skip it.
+        The approval is read each time, so `/plugins enable` takes effect at once. Like an argument the OS
+        cannot take, a refusal stops a `before_tool` call, so editing a guard does not skip it.
         """
         if isinstance(argv, str) or argv[0] not in self.programs:
             return None
-        if await anyio.to_thread.run_sync(file_sha256, Path(argv[0])) == self.programs[argv[0]]:
+        program = Path(argv[0])
+        approved = (
+            None if self.approvals is None else await anyio.to_thread.run_sync(self.approvals.approved_sha256, program)
+        )
+        if approved is not None and await anyio.to_thread.run_sync(file_sha256, program) == approved:
             return None
         return HookRun(
             outcome='blocked' if event == 'before_tool' else 'failed',
-            stderr=f'{argv[0]} changed since you approved it; run /plugins enable {PROJECT_HOOKS} to approve it as it is now.',
+            stderr=f'{program} is not as you approved it; run /plugins enable {PROJECT_HOOKS} to approve it as it is now.',
         )
 
     def _argv(self, argv: list[str], args: Mapping[str, object]) -> list[str]:

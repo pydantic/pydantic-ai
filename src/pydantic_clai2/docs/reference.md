@@ -433,8 +433,8 @@ listed as the project plugin `project_hooks` and is off until
 `/plugins enable project_hooks`; unlike a plugin's declaration, any change to
 the table, or to the program a list command names by a path, such as
 `["./scripts/check.sh"]` (a string command is approved as written),
-turns it off until you enable it again (such a program that changes while CLAI
-runs does not start), and removing the table stops
+turns it off until you enable it again (CLAI checks such a program each time it
+starts it), and removing the table stops
 its commands (the listing keeps `project_hooks` until you remove it).
 
 The project file is read-only from inside CLAI. `/set KEY VALUE` writes your user
