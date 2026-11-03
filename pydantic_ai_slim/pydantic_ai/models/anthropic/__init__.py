@@ -2593,12 +2593,23 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     f'`{tool.__class__.__name__}` is not supported by `AnthropicModel`. If it should be, please file an issue.'
                 )
 
+        self._set_web_tool_callers(tools, model_request_parameters, model_settings, code_execution_in_open_turn)
+        return tools, mcp_servers, beta_features
+
+    def _set_web_tool_callers(
+        self,
+        tools: list[BetaToolUnionParam],
+        model_request_parameters: ModelRequestParameters,
+        model_settings: AnthropicModelSettings,
+        code_execution_in_open_turn: bool,
+    ) -> None:
+        """Set `allowed_callers` on the mapped web tools from `anthropic_web_tools_allowed_callers` or citations."""
         # `extra_body['tools']` replaces these tools on the wire, so neither the setting nor citations change their
-        # callers. That keeps `_get_enabled_server_tool_names`, which rebuilds the tools through this method, filtering
-        # as if both were unset.
+        # callers. That keeps `_get_enabled_server_tool_names`, which rebuilds the tools through `_add_native_tools`,
+        # filtering as if both were unset.
         extra_body = model_settings.get('extra_body')
         if _is_str_mapping(extra_body) and 'tools' in extra_body:
-            return tools, mcp_servers, beta_features
+            return
         if (allowed_callers := model_settings.get('anthropic_web_tools_allowed_callers')) is not None:
             for web_tool in tools:
                 match web_tool:
@@ -2618,7 +2629,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             route_cited_web_tools_direct(
                 tools, citations_included(model_settings, model_request_parameters), code_execution_in_open_turn
             )
-        return tools, mcp_servers, beta_features
 
     def _tool_choice_declarations(
         self,
