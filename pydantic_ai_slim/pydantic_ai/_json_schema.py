@@ -14,7 +14,7 @@ from .exceptions import UserError
 JsonSchema = dict[str, Any]
 _JsonSchemaNode: TypeAlias = JsonSchema | bool
 
-MAX_INLINED_SCHEMA_NODES = 10_000
+MAX_INLINED_SCHEMA_NODES = 50_000
 """The most schema nodes a JSON schema may expand to once every `$ref` in it is inlined."""
 
 
