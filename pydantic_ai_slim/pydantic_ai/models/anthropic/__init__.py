@@ -920,7 +920,7 @@ class _PreparedMessagesCreate:
 MESSAGE_THREADS_BETA = 'message-threads-2026-08-12'
 
 # The fields a thread keeps from its create request (`system`, `tools`) or requires unchanged on every request.
-# ponytail: `fallbacks` is fixed too, add it once pydantic-ai sends it.
+# `fallbacks` is fixed for a thread too; add it here once pydantic-ai sends it.
 _THREAD_FIXED_PARAMS = (
     'system',
     'tools',
@@ -958,8 +958,9 @@ def _thread_key(fingerprint: str, history: Sequence[ModelMessage]) -> str:
 
     The thread holds that history as it was sent, so if a history processor or the application changed it since,
     the key no longer matches and a new thread is started with the history as it is now.
-    ponytail: digests the whole history once per request, fine next to mapping it; edits to the response itself
-    aren't caught (only the history before it is digested), add its parts once a response can be digested as sent (see `history_digest` in `openai.py`).
+    This digests the whole history once per request, which costs about as much as mapping it. Edits to the response
+    itself aren't caught, as only the history before it is digested; its parts can be added once a response can be
+    digested as sent (see `history_digest` in `openai.py`).
     """
     hasher = hashlib.sha256(fingerprint.encode())
     hasher.update(ModelMessagesTypeAdapter.dump_json([_as_sent(m) for m in history], exclude_none=True))
@@ -970,7 +971,7 @@ def _as_sent(message: ModelMessage) -> ModelMessage:
     """`message` without the application-only `metadata` fields, which are never sent and may not serialize to JSON.
 
     A request's `instructions` are left out too: the fingerprint's `system` covers them.
-    ponytail: mirrors `_without_application_metadata` in `openai.py`; share it if maintainers prefer.
+    This mirrors `_without_application_metadata` in `openai.py`; the two could share one helper.
     """
     if isinstance(message, ModelRequest):
         parts = [_part_as_sent(part) for part in message.parts]
@@ -1865,7 +1866,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         fingerprint = _thread_fingerprint(params, prepared.initial_betas | {MESSAGE_THREADS_BETA})
         if continuation := _thread_continuation(self, messages, fingerprint):
             previous_message_id, new_messages = continuation
-            # ponytail: maps the new messages a second time, a slice of `prepared.anthropic_messages` would avoid it
+            # This maps the new messages a second time. A slice of `prepared.anthropic_messages` would avoid that
             # once the mapping can say where each history message starts.
             new_prepared = await self._prepare_messages_create(new_messages, model_settings, model_request_parameters)
             try:
