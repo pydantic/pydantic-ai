@@ -191,9 +191,8 @@ def _cell(value: object) -> object:
         return {str(key): _cell(item) for key, item in value.items()}  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
     if isinstance(value, (list, tuple)):
         return [_cell(item) for item in value]  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
-    isoformat = getattr(value, 'isoformat', None)
-    if callable(isoformat):
-        return isoformat()
+    if isinstance(value, date):  # also `datetime`
+        return value.isoformat()
     return str(value)
 
 
