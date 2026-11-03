@@ -524,7 +524,7 @@ class ConversationStore(ABC):
         changes, and `None` clears it. An update doesn't change the conversation's
         [`revision`][pydantic_ai.conversation.Conversation.revision], so it never makes a save of the
         conversation conflict, and a save never undoes it: an agent can keep the title current while
-        the conversation goes on. Of two updates at once, the last one written wins.
+        the conversation goes on. Of two updates to the same field at once, the last one written wins.
 
         Args:
             conversation_id: The conversation to update.
@@ -541,18 +541,17 @@ class ConversationStore(ABC):
                 [`write_details`][pydantic_ai.conversation_store.ConversationStore.write_details].
         """
         while (record := await self._read_record(conversation_id, scope=scope)) is not None:
-            updated = dataclasses.replace(
+            try:
+                await self.write_details(
+                    conversation_id, expected_revision=record.revision, title=title, metadata=metadata
+                )
+            except ConversationConflict:
+                continue  # Saved or replaced since it was read: check its scope again.
+            return dataclasses.replace(
                 record,
                 title=record.title if isinstance(title, Unset) else title,
                 metadata=record.metadata if isinstance(metadata, Unset) else metadata,
             )
-            try:
-                await self.write_details(
-                    conversation_id, expected_revision=record.revision, title=updated.title, metadata=updated.metadata
-                )
-            except ConversationConflict:
-                continue  # Saved or replaced since it was read: check its scope again.
-            return updated
         raise UserError(f'Conversation {conversation_id!r} is not in the store.')
 
     async def delete(self, conversation_id: str, *, scope: str | None = None) -> None:
@@ -637,11 +636,16 @@ class ConversationStore(ABC):
         raise NotImplementedError
 
     async def write_details(
-        self, conversation_id: str, *, expected_revision: str, title: str | None, metadata: dict[str, Any] | None
+        self,
+        conversation_id: str,
+        *,
+        expected_revision: str,
+        title: str | None | Unset = UNSET,
+        metadata: dict[str, Any] | None | Unset = UNSET,
     ) -> None:
-        """Replace the record's `title` and `metadata`, keeping its `revision` and `updated_at`.
+        """Replace the record's `title` or `metadata`, or both, keeping its `revision` and `updated_at`.
 
-        A backend that implements this keeps a stored record's `title` and `metadata` when
+        Only the fields passed are written, so a concurrent update of the other one isn't undone. A backend that implements this keeps a stored record's `title` and `metadata` when
         [`write_record`][pydantic_ai.conversation_store.ConversationStore.write_record] replaces it, so a
         save that read the record before an update doesn't undo it. The default raises
         `NotImplementedError`, for backends written before conversations had titles.
@@ -716,13 +720,20 @@ class InMemoryConversationStore(ConversationStore):
         self._records[record.conversation_id] = deepcopy(record)
 
     async def write_details(
-        self, conversation_id: str, *, expected_revision: str, title: str | None, metadata: dict[str, Any] | None
+        self,
+        conversation_id: str,
+        *,
+        expected_revision: str,
+        title: str | None | Unset = UNSET,
+        metadata: dict[str, Any] | None | Unset = UNSET,
     ) -> None:
         stored = self._records.get(conversation_id)
         if stored is None or stored.revision != expected_revision:
             raise ConversationConflict(conversation_id)
-        stored.title = title
-        stored.metadata = deepcopy(metadata)
+        if not isinstance(title, Unset):
+            stored.title = title
+        if not isinstance(metadata, Unset):
+            stored.metadata = deepcopy(metadata)
 
     async def delete_record(self, conversation_id: str, *, expected_revision: str) -> None:
         stored = self._records.get(conversation_id)

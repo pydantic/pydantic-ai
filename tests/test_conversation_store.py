@@ -969,6 +969,22 @@ async def test_an_update_racing_a_save_applies_to_the_saved_conversation() -> No
     assert (updated.title, updated.revision) == ('Greetings', conversation.revision)
 
 
+async def test_an_update_keeps_a_field_another_update_changed_since_it_read_the_record() -> None:
+    store = _RecordRacingStore()
+    conversation = Conversation()
+    await store.save(conversation)
+
+    async def pin() -> None:
+        await store.update(conversation.conversation_id, metadata={'pinned': True})
+
+    store.race = pin
+    await store.update(conversation.conversation_id, title='Greetings')
+
+    record = await store.read_record(conversation.conversation_id)
+    assert record is not None
+    assert (record.title, record.metadata) == ('Greetings', {'pinned': True})
+
+
 async def test_updating_a_conversation_the_store_does_not_have_or_another_scope_s_raises() -> None:
     store = InMemoryConversationStore()
     conversation = Conversation()
@@ -1012,7 +1028,6 @@ async def test_a_save_keeps_a_title_on_a_backend_that_stores_records_as_given() 
     record = await store.read_record(conversation.conversation_id)
     assert record is not None
     await store.write_record(dataclasses.replace(record, title='Set elsewhere'), expected_revision=record.revision)
-    conversation.revision = record.revision
 
     await store.save(conversation)
 
