@@ -378,6 +378,9 @@ class ModelResponsePartsManager:
         If `vendor_part_id` is None, updates the latest matching ToolCallPart (or ToolCallPartDelta)
         if any. Otherwise, a new part (or delta) may be created.
 
+        A streamed response's `_get_event_iterator` can use `handle_tool_call_delta_events` instead, which yields
+        the event, so there is no `None` to check.
+
         Args:
             vendor_part_id: The ID the vendor uses for this tool call.
                 If None, the latest matching tool call may be updated.
