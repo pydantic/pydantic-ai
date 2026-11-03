@@ -4498,6 +4498,24 @@ class TestKeepUserMessages:
         assert result[-1] is messages[-1]
         assert estimate_token_count(result[1:], len) == 3
 
+    async def test_compacting_its_own_output_again_doesnt_call_the_summarizer(self):
+        """With `keep_tokens`, a prefix of only the summary and kept copies adds nothing, so it isn't summarized again."""
+        prompts: list[str] = []
+        comp = SummarizingCompaction(
+            model=_recording_summarizer(prompts),
+            max_tokens=2,
+            keep_tokens=1,
+            keep_messages=3,
+            keep_user_messages=True,
+            bridge_prefix=False,
+            tokenizer=len,
+        )
+        messages: list[ModelMessage] = [_user('xx'), _assistant('x')]
+        first = await comp.compact(messages, _make_ctx(messages))
+        second = await comp.compact(first, _make_ctx(first))
+        assert len(prompts) == 1
+        assert second is first
+
     async def test_retained_user_cannot_displace_the_token_tail(self):
         comp = SummarizingCompaction(
             model='test:m',

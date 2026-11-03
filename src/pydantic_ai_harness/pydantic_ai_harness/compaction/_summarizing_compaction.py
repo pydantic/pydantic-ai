@@ -926,18 +926,22 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             ]
             if not user_parts:
                 continue
-            kept: list[ModelRequestPart] = []
-            for part in user_parts:
-                if _is_kept_user_part(part):
-                    # Already a retained copy, merged into a later request: keep it as it is.
-                    kept.append(part)
-                elif isinstance(part.content, str):
-                    kept.append(_mark_kept(replace(part, content=self._truncate(part.content))))
-                else:
-                    bounded, _ = self._bound_sequence(part.content)
-                    kept.append(_mark_kept(replace(part, content=bounded)))
-            out.append(replace(msg, parts=kept))
+            if len(user_parts) == len(msg.parts) and all(_is_kept_user_part(part) for part in user_parts):
+                # An earlier retained copy, as it was stored: kept as the same message, which tells the `keep_tokens`
+                # early exit there's nothing new to summarize.
+                out.append(msg)
+            else:
+                out.append(replace(msg, parts=[self._kept_user_part(part) for part in user_parts]))
         return out
+
+    def _kept_user_part(self, part: UserPromptPart) -> ModelRequestPart:
+        """*part* as a marked, size-bounded retained copy; an earlier copy, merged into a later request, as it is."""
+        if _is_kept_user_part(part):
+            return part
+        if isinstance(part.content, str):
+            return _mark_kept(replace(part, content=self._truncate(part.content)))
+        bounded, _ = self._bound_sequence(part.content)
+        return _mark_kept(replace(part, content=bounded))
 
     def _truncate(self, text: str, max_chars: int | None = None) -> str:
         limit = self.keep_user_messages_max_chars if max_chars is None else max_chars
