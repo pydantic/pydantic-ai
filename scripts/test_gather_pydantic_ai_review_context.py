@@ -1,6 +1,7 @@
-"""Regression tests for CI Review file assignments."""
+"""Regression tests for the review-context gather scripts."""
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -8,6 +9,16 @@ import pytest
 from typing_extensions import TypedDict
 
 SCRIPT = Path(__file__).with_name('gather-pydantic-ai-review-context.sh')
+DOUWEBOT_SCRIPT = Path(__file__).with_name('gather-review-context.sh')
+# Answers the gatherer's GitHub calls for a PR with no comments, threads or linked issues.
+FAKE_GH = """#!/usr/bin/env bash
+case "$*" in
+  *graphql*) echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}}' ;;
+  *--jq*) ;;
+  'pr view'*) echo '{"baseRefName":"main"}' ;;
+  *) echo '[]' ;;
+esac
+"""
 
 
 class FileChange(TypedDict):
@@ -142,3 +153,82 @@ def test_existing_size_thresholds_select_delegate_count(tmp_path: Path, weights:
     output_dir = _partition(tmp_path, files)
 
     assert int((output_dir / 'delegate-count.txt').read_text(encoding='utf-8')) == expected_delegates
+
+
+def _git(repo: Path, env: dict[str, str], *args: str) -> None:
+    subprocess.run(['git', *args], cwd=repo, env=env, check=True, capture_output=True)
+
+
+def _douwebot_python_diff(tmp_path: Path, *, gitattributes: str, in_ci: bool) -> tuple[Path, str]:
+    """Gather douwebot's context for a PR that changes one of two methods; return the head and its diff."""
+    head = tmp_path / 'head'
+    head.mkdir()
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    (bin_dir / 'gh').write_text(FAKE_GH, encoding='utf-8')
+    (bin_dir / 'gh').chmod(0o755)
+    env = {key: value for key, value in os.environ.items() if key != 'GITHUB_ACTIONS'} | {
+        'PATH': f'{bin_dir}{os.pathsep}{os.environ["PATH"]}',
+        'GIT_CONFIG_GLOBAL': os.devnull,
+        'GIT_CONFIG_NOSYSTEM': '1',
+        'GIT_AUTHOR_NAME': 'test',
+        'GIT_AUTHOR_EMAIL': 'test@example.com',
+        'GIT_COMMITTER_NAME': 'test',
+        'GIT_COMMITTER_EMAIL': 'test@example.com',
+        # The gatherer fetches the base branch from GitHub; serve it from the head repository.
+        'GIT_CONFIG_COUNT': '1',
+        'GIT_CONFIG_KEY_0': f'url.{head}.insteadOf',
+        'GIT_CONFIG_VALUE_0': 'https://github.com/owner/repo.git',
+    }
+    module = head / 'family.py'
+    module.write_text(
+        'class Model:\n'
+        '    def first(self):\n'
+        "        marker = 'first'\n"
+        '        return marker, 1, 2, 3\n'
+        '\n'
+        '\n'
+        '\n'
+        '\n'
+        '    def second(self):\n'
+        '        return 2\n',
+        encoding='utf-8',
+    )
+    _git(head, env, 'init', '-q', '-b', 'main')
+    _git(head, env, 'add', '.')
+    _git(head, env, 'commit', '-qm', 'base')
+    _git(head, env, 'checkout', '-qb', 'pr')
+    module.write_text(module.read_text(encoding='utf-8').replace('return 2', 'return 3'), encoding='utf-8')
+    (head / '.gitattributes').write_text(gitattributes, encoding='utf-8')
+    _git(head, env, 'add', '.')
+    _git(head, env, 'commit', '-qm', 'pr')
+
+    work = tmp_path / 'work'
+    work.mkdir()
+    result = subprocess.run(
+        ['bash', str(DOUWEBOT_SCRIPT), '1', 'owner/repo'],
+        cwd=work,
+        env=env | {'PR_HEAD_DIR': str(head)} | ({'GITHUB_ACTIONS': 'true'} if in_ci else {}),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    return head, (work / '.github/.review-context/diff/family.py.diff').read_text(encoding='utf-8')
+
+
+def test_douwebot_diff_in_ci_ignores_a_pr_marking_python_as_binary(tmp_path: Path):
+    """In CI, a PR's `*.py -diff` cannot hide its Python changes, and the hunk stops at the changed method."""
+    _, diff = _douwebot_python_diff(tmp_path, gitattributes='*.py -diff\n', in_ci=True)
+
+    assert 'Binary files' not in diff
+    assert 'return 3' in diff
+    assert "marker = 'first'" not in diff
+
+
+def test_douwebot_diff_outside_ci_leaves_repository_attributes_untouched(tmp_path: Path):
+    """A local run gets the same Python hunks without writing the repository's `info/attributes`."""
+    head, diff = _douwebot_python_diff(tmp_path, gitattributes='', in_ci=False)
+
+    assert 'return 3' in diff
+    assert "marker = 'first'" not in diff
+    assert not (head / '.git' / 'info' / 'attributes').exists()

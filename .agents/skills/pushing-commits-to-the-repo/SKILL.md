@@ -567,7 +567,8 @@ maintainers run them, not something this repo can show you.
   runs when the job was cancelled. A failed `douwebot` run comments saying so and invites a
   re-apply. A completed douwebot review posts a formal `APPROVE` or `REQUEST_CHANGES` verdict;
   inline findings arrive in separate `COMMENTED` reviews. An incomplete run or a moved head may
-  have no verdict. Read the run conclusion and the captured-head reviews, as step 3 requires.
+  have no verdict. A head that already has douwebot findings is not reviewed again: the run comments with a link
+  to the earlier review instead. Read the run conclusion and the captured-head reviews, as step 3 requires.
 - **Wait for a pydanty run.** It adds `pydanty:is-working` when it starts. Poll every 15 minutes for
   up to 2 hours 30 minutes. Never push to the branch and never touch a thread while
   `pydanty:is-working` is set. `pydanty:review-branch` reports either a review, `pydanty:reviewed`

@@ -191,10 +191,18 @@ fi
 echo "  - Per-file diffs (excluding generated files)"
 mkdir -p "$CTX/diff"
 # Without the `python` driver, -W extends a Python hunk to its whole top-level
-# class. A PR's `.gitattributes` still takes precedence over this file, and
-# --no-ext-diff/--no-textconv keep it from selecting a command.
+# class. A PR's `.gitattributes` takes precedence over `core.attributesFile`, so
+# in CI the attribute also goes in the checkout's `info/attributes`, which
+# outranks it: a PR cannot mark `*.py` as `-diff` and hide its Python changes.
+# Local runs leave the developer's repository untouched. --no-ext-diff and
+# --no-textconv keep a `.gitattributes` from selecting a command.
 PY_ATTRIBUTES=$(mktemp)
 echo '*.py diff=python' > "$PY_ATTRIBUTES"
+if [ "${GITHUB_ACTIONS:-}" = true ]; then
+  INFO_ATTRIBUTES=$(git -C "$PR_HEAD_DIR" rev-parse --path-format=absolute --git-path info/attributes)
+  mkdir -p "$(dirname "$INFO_ATTRIBUTES")"
+  cp "$PY_ATTRIBUTES" "$INFO_ATTRIBUTES"
+fi
 if [ -n "$MERGE_BASE" ]; then
   # -W (--function-context) shows the full function body around each change,
   # so the reviewer can see the function signature and surrounding logic without

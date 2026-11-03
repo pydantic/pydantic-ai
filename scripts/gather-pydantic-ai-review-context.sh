@@ -271,8 +271,10 @@ fi
 echo "  - Per-file diffs (excluding generated files)"
 mkdir -p "$CTX/diff"
 # Without the `python` driver, -W extends a Python hunk to its whole top-level
-# class. A PR's `.gitattributes` still takes precedence over this file, and
-# --no-ext-diff/--no-textconv keep it from selecting a command.
+# class. A PR's `.gitattributes` still takes precedence over this file. The
+# callers run the PR's own copy of this script, so the PR controls this diff
+# either way. --no-ext-diff and --no-textconv keep a `.gitattributes` from
+# selecting a command.
 PY_ATTRIBUTES=$(mktemp)
 track_tmp "$PY_ATTRIBUTES"
 echo '*.py diff=python' > "$PY_ATTRIBUTES"

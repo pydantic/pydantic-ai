@@ -236,13 +236,57 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           NEEDS_CATEGORY_CLASSIFY_OUTPUTS_CATEGORY: ${{ needs.category-classify.outputs.category }}
 
+  # A head that already has douwebot findings can never pass `review_gates.py`
+  # `douwebot_approval`, so reviewing it again buys no gate value. A head with a
+  # clean approval, an incomplete review or a failed run is reviewed again.
+  # The earlier findings are not passed to a re-run: they would anchor it.
+  prior-findings:
+    name: Earlier douwebot findings on this head
+    if: github.event.action == 'labeled' && (github.event.label.name == 'douwebot' || github.event.label.name == 'douwebot:review-agent-config')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      review_url: ${{ steps.find.outputs.review_url }}
+    steps:
+      - id: find
+        # Mirrors `douwebot_approval`: an inline comment on a marked review, or
+        # body text beyond the verdict line, is a finding.
+        run: |
+          set -euo pipefail
+          gh api --paginate --slurp "repos/${REPO}/pulls/${PR_NUMBER}/reviews?per_page=100" > "$RUNNER_TEMP/reviews.json"
+          gh api --paginate --slurp "repos/${REPO}/pulls/${PR_NUMBER}/comments?per_page=100" > "$RUNNER_TEMP/comments.json"
+          REVIEW_URL=$(jq -nr --arg head "$HEAD_SHA" \
+            --slurpfile reviews "$RUNNER_TEMP/reviews.json" --slurpfile comments "$RUNNER_TEMP/comments.json" '
+            [$comments[0][][].pull_request_review_id] as $commented
+            | [$reviews[0][][]
+                | select(.user.login == "github-actions[bot]" and .user.type == "Bot" and .commit_id == $head)
+                | (.body // "") as $body
+                | select($body | test("\n\n<!-- douwebot:review run=[1-9][0-9]* head=" + $head + " -->\\z"))
+                | ($body | sub("\n\n<!-- douwebot:review run=[0-9]+ head=[a-f0-9]{40} -->\\z"; "")) as $verdict
+                | select($verdict | startswith("Review incomplete.") | not)
+                | select(.id as $id | any($commented[]; . == $id) or ($verdict != "No blocking findings." and $verdict != "Blocking findings are recorded inline."))
+                | .html_url]
+            | first // empty')
+          echo "review_url=${REVIEW_URL}" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+
   review:
     name: douwebot
-    # No `needs:`. The labelling jobs above run only on opened/synchronize events,
+    # Its only `needs:` is `prior-findings`, and it runs even when that check
+    # fails. The labelling jobs above run only on opened/synchronize events,
     # so on label events they never run — depending on them bought nothing but a way
     # for an unrelated labeller failure to suppress a requested review. The two
     # review labels are the only triggers.
-    if: github.event.action == 'labeled' && (github.event.label.name == 'douwebot' || github.event.label.name == 'douwebot:review-agent-config')
+    needs: prior-findings
+    if: >-
+      !cancelled() && needs.prior-findings.outputs.review_url == ''
+      && github.event.action == 'labeled' && (github.event.label.name == 'douwebot' || github.event.label.name == 'douwebot:review-agent-config')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -583,8 +627,8 @@ jobs:
 
   publish-review:
     name: Publish douwebot review
-    needs: review
-    if: always() && needs.review.result != 'skipped'
+    needs: [prior-findings, review]
+    if: always() && (needs.review.result != 'skipped' || needs.prior-findings.outputs.review_url != '')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -612,6 +656,15 @@ jobs:
         run: gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/douwebot" --method DELETE 2>/dev/null || true
         env:
           GH_TOKEN: ${{ github.token }}
+
+      - name: Report skipped review
+        if: needs.prior-findings.outputs.review_url != ''
+        run: |
+          gh pr comment "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --body \
+            "\`douwebot\` did not review this head again: [an earlier review](${REVIEW_URL}) left findings on it, so this head cannot get a clean douwebot approval. Push a commit that addresses them, then request a new review."
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVIEW_URL: ${{ needs.prior-findings.outputs.review_url }}
 
       # Without this, a review that crashed and a review that found nothing look
       # identical from the PR: the label is gone either way and no comment lands.
