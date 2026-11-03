@@ -909,8 +909,15 @@ class BinaryContent:
 
     @property
     def is_document(self) -> bool:
-        """Return `True` if the media type is a document type: any that is not audio, image or video."""
-        return not (self.is_audio or self.is_image or self.is_video)
+        """Return `True` if the media type is a document type.
+
+        A known document type is one, and so is any other media type that isn't audio, image, video or text-like:
+        text-like content outside the known types (JSON, YAML, XML, ...) is left to the model adapter, which
+        inlines it as text where the API has no file part.
+        """
+        return self.media_type in _document_format_lookup or not (
+            self.is_audio or self.is_image or self.is_video or _utils.is_text_like_media_type(self.media_type)
+        )
 
     @property
     def format(self) -> str:
@@ -1268,7 +1275,8 @@ def _document_format(media_type: str) -> str:
 
     `_document_format_lookup` holds the formats model APIs expect for the types they name (Bedrock's `format`, the
     `filename` OpenAI reads the type from); any other media type is looked up in `mimetypes`, so a document of any
-    type can be sent, and a model that doesn't read it rejects it.
+    type can be sent, and a model that doesn't read it rejects it. `_mime_types` registers the stdlib's own table
+    before the OS mime files and the Windows registry, so where several extensions are known its wins.
     """
     if format := _document_format_lookup.get(media_type):
         return format

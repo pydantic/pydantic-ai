@@ -438,6 +438,7 @@ def test_binary_content_video(media_type: str, format: str):
         ('application/vnd.oasis.opendocument.text', 'odt'),
         # Known only to `mimetypes`
         ('application/zip', 'zip'),
+        ('application/octet-stream', 'bin'),
     ],
 )
 def test_binary_content_document(media_type: str, format: str):
@@ -516,6 +517,8 @@ _url_formats = [
         'pptx',
         id='pptx',
     ),
+    pytest.param(DocumentUrl('foobar.ods'), 'application/vnd.oasis.opendocument.spreadsheet', 'ods', id='ods'),
+    pytest.param(DocumentUrl('foobar.odp'), 'application/vnd.oasis.opendocument.presentation', 'odp', id='odp'),
     # Known only to `mimetypes`
     pytest.param(DocumentUrl('foobar.py'), 'text/x-python', 'py', id='py'),
 ]
@@ -546,6 +549,13 @@ def test_binary_content_unknown_media_type():
     assert binary_content.is_document
     with pytest.raises(ValueError, match='Unknown document media type: application/custom'):
         binary_content.format
+
+
+def test_binary_content_text_like_is_not_a_document():
+    """Text-like content outside the known document types is left to the model adapter, which inlines it as text."""
+    json_content = BinaryContent(data=b'{}', media_type='application/json')
+    assert json_content.is_document is False
+    assert json_content.format == 'json'
 
 
 def test_binary_content_is_methods():
