@@ -662,8 +662,8 @@ class EgressPolicy:
         When the host needs resolving, this is first asked without
         `resolved_addresses`, and a refusal then stands without a lookup. An
         override that decides on `resolved_addresses` should return `None` while
-        they are empty and `needs_resolution(request)` is true, and decide on the
-        second call.
+        they are empty, `resolution_failed` is false and `needs_resolution(request)`
+        is true, and decide on the second call.
         """
         if request.url == _BLANK_PAGE:
             return None

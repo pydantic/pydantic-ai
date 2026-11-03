@@ -493,9 +493,10 @@ An override that narrows what `refuse` allows should override `describe` too:
 fields.
 
 A host that needs resolving is asked about twice: first without
-`resolved_addresses`, where a refusal stands without a lookup, then with them.
-An override that decides on the addresses should return `None` while they are
-empty and `needs_resolution(request)` is true.
+`resolved_addresses`, where a refusal stands without a lookup, then with the
+lookup's result. An override that decides on the addresses should return `None`
+while they are empty, `resolution_failed` is false and
+`needs_resolution(request)` is true.
 
 Neither policy is a general security boundary. Microsoft's own playwright-mcp
 disclaims its origin filter the same way. A page can still signal outward through
