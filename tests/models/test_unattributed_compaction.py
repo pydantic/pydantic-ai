@@ -41,6 +41,7 @@ from pydantic_ai.models.test import TestModel
 
 from .._inline_snapshot import snapshot
 from ..conftest import RequestCapture, try_import
+from .conftest import json_objects
 
 with try_import() as openai_available:
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
@@ -734,7 +735,7 @@ async def test_anthropic_reads_the_summary(
             'content': [{'type': 'text', 'text': FRAMED}, {'type': 'text', 'text': QUESTION}],
         },
     ]
-    assert body['system'][-1]['text'] == lookalike_note_announcement(system_role=False, sealed=True)
+    assert json_objects(body['system'])[-1]['text'] == lookalike_note_announcement(system_role=False, sealed=True)
 
 
 @pytest.mark.parametrize('include_content', [True, False])
