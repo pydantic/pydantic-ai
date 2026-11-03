@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from .approval_reviewer import ApprovalReviewer
     from .artifact_scanning import ArtifactScanner
     from .ask_user import AskUser
+    from .azure_durable_task import AzureDurableTaskDurability
     from .background_tools import BackgroundTools
     from .boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
     from .boxlite_sandbox import BoxLiteSandbox, BoxLiteSandboxBackend
@@ -58,7 +59,9 @@ if TYPE_CHECKING:
     from .macroscope import Macroscope
     from .memory import Memory
     from .modal_sandbox import ModalSandbox, ModalSandboxBackend
+    from .opensandbox_sandbox import OpenSandbox, OpenSandboxBackend
     from .ordinal import Ordinal
+    from .permissions import Permissions
     from .pgtask import PGTaskDurability
     from .planning import Planning
     from .posthog import PostHog
@@ -91,6 +94,7 @@ __all__ = [
     'ApprovalReviewer',
     'ArtifactScanner',
     'AskUser',
+    'AzureDurableTaskDurability',
     'BackgroundTools',
     'BoxdSandbox',
     'BoxdSandboxBackend',
@@ -137,11 +141,14 @@ __all__ = [
     'Memory',
     'ModalSandbox',
     'ModalSandboxBackend',
+    'OpenSandbox',
+    'OpenSandboxBackend',
     'Ordinal',
     'OutputBlocked',
     'OutputGuardrail',
     'OutputGuardrailFunc',
     'PGTaskDurability',
+    'Permissions',
     'Planning',
     'PostHog',
     'PromptInjectionDefender',
@@ -186,6 +193,7 @@ _CAPABILITY_EXPORTS = {
     'Advisor': 'advisor',
     'ApprovalReviewer': 'approval_reviewer',
     'AskUser': 'ask_user',
+    'AzureDurableTaskDurability': 'azure_durable_task',
     'BackgroundTools': 'background_tools',
     'BoxdSandbox': 'boxd_sandbox',
     'BoxLiteSandbox': 'boxlite_sandbox',
@@ -216,8 +224,10 @@ _CAPABILITY_EXPORTS = {
     'ManagedPrompt': 'logfire',
     'Memory': 'memory',
     'ModalSandbox': 'modal_sandbox',
+    'OpenSandbox': 'opensandbox_sandbox',
     'Ordinal': 'ordinal',
     'PGTaskDurability': 'pgtask',
+    'Permissions': 'permissions',
     'Planning': 'planning',
     'PostHog': 'posthog',
     'PromptInjectionDefender': 'prompt_injection_defender',
@@ -263,6 +273,7 @@ _CONSTANT_EXPORTS = {
     'E2BSandboxBackend': 'e2b_sandbox',
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
     'ModalSandboxBackend': 'modal_sandbox',
+    'OpenSandboxBackend': 'opensandbox_sandbox',
     'READ_ONLY_TOOL_NAMES': 'filesystem',
     'SmolSandboxBackend': 'smol_sandbox',
     'SpritesSandboxBackend': 'sprites_sandbox',

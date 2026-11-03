@@ -4,7 +4,7 @@ Delegate open-ended web tasks to an autonomous
 [browser-use](https://github.com/browser-use/browser-use) agent. The capability
 adds one tool, `browse_web`: the host agent hands over a self-contained
 natural-language goal, browser-use drives a real Chromium with its own
-perception-action loop (indexed DOM, screenshots, planning, self-healing), and
+perception-action loop (indexed DOM, screenshots, planning, recovery from failed actions), and
 the tool returns a text result.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/browser_use/)
@@ -47,7 +47,7 @@ stuck on dynamic pages.
 
 ## The solution
 
-browser-use already ships an agent tuned for exactly that loop: it indexes the
+browser-use runs that loop as an agent: it indexes the
 live DOM into numbered elements, feeds the model page state (optionally with
 screenshots), plans, detects loops, and recovers from failed actions.
 `BrowserUse` integrates it the way the harness integrates other agents (see
@@ -113,12 +113,23 @@ content leaves your own provider stack.
 Two cost knobs to know about:
 
 - `use_vision` (default `True`) sends a screenshot with every step, which
-  makes the sub-agent markedly better on visual layouts but adds image tokens
+  makes the sub-agent better on visual layouts but adds image tokens
   on each of its model calls. Use `'auto'` to follow the model's declared
   vision support, or `False` for text-heavy tasks on a budget.
 - browser-use runs a **judge** model call at the end of each task by default,
   evaluating the result. Disable it with
   `BrowserAgentSettings(use_judge=False)` if that extra call matters.
+
+Every browser model call backed by a Pydantic AI model -- the host run's model,
+a Pydantic AI model or model name passed as `llm`, and any `*_llm` in
+`BrowserAgentSettings` -- counts toward the host run's usage and is bounded by
+its `UsageLimits`, the same as the host's own requests. When a limit is
+reached, the browser agent stops at its next step and `browse_web` raises
+`UsageLimitExceeded`, ending the host run, rather than browser-use swallowing
+the error and carrying on. The default `request_limit` of 50 now covers
+browsing too, so raise it for long browsing tasks or a large `max_steps`. A
+browser-use chat model such as `ChatAnthropic` or `ChatBrowserUse` is called by
+browser-use directly, so its calls are neither counted nor bounded.
 
 ## Agent settings
 
@@ -431,7 +442,7 @@ An agent gets one of the two, so the choice is made up front:
 | Who decides each action | the host model | the browser-use sub-agent |
 | Page addressing | CSS selectors, `aria-ref` handles, coordinates | indexed DOM elements |
 | Cost profile | one host-model call per action | one sub-agent call per step, plus the delegation |
-| Determinism | high | lower; self-healing LLM loop |
+| Determinism | high | lower; LLM loop that retries failed actions |
 | Best for | known, repeatable flows | fuzzy goals on unknown or changing pages |
 
 If your flow is fully known, `PlaywrightBrowser` is cheaper and more

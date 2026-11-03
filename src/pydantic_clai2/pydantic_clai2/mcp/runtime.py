@@ -337,7 +337,7 @@ class MCPServers:
 
     def _build(self, entry: ServerEntry) -> 'MCPToolset[None]':
         from pydantic_ai.mcp import MCPToolset
-        from pydantic_clai2.mcp._client import SSETransport, StdioTransport, StreamableHttpTransport, http_client
+        from pydantic_clai2.mcp.client import SSETransport, StdioTransport, StreamableHttpTransport, http_client
 
         server = entry.server
         transport: StdioTransport | StreamableHttpTransport | SSETransport

@@ -31,6 +31,7 @@ from collections.abc import Mapping, Sequence
 from typing import Literal
 
 import anyio
+import anyio.to_thread
 
 from pydantic_ai.workspaces import (
     CommandResult,
@@ -45,7 +46,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai.workspaces._telemetry import lifecycle_span
-from pydantic_ai_harness._workspace_provider import check_timeout, command_argv, stop_shielded
+from pydantic_ai_harness._workspace_provider import check_provider, check_timeout, command_argv, stop_shielded
 
 __all__ = ('DockerSandboxBackend', 'remove_container')
 
@@ -197,7 +198,7 @@ def resolve_executable(executable: str) -> str:
 
 async def remove_container(name: str, *, executable: str = 'docker') -> None:
     """Remove a container this capability created, with its anonymous volumes; a missing one is fine."""
-    executable = resolve_executable(executable)
+    executable = await anyio.to_thread.run_sync(resolve_executable, executable)
     runner = _runner()
     if await _owned_state(runner, executable, name, WorkspaceError) == 'missing':
         return
@@ -246,8 +247,8 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
     ):
         if (image is None) == (ref is None):
             raise ValueError('pass exactly one of `image`, to create a container, or `ref`, to attach to one')
-        if ref is not None and ref.provider != PROVIDER:
-            raise ValueError(f'unsupported workspace provider {ref.provider!r}; expected {PROVIDER!r}')
+        if ref is not None:
+            check_provider(ref, PROVIDER)
         if image is not None and (not image or image.startswith('-')):
             raise ValueError(f'image must be an image reference, got {image!r}')
         if working_dir is not None and not posixpath.isabs(working_dir):

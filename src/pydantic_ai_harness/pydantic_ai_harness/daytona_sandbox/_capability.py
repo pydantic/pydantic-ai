@@ -7,12 +7,16 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai.workspaces._telemetry import lifecycle_span
 from pydantic_ai_harness._workspace import innermost_backend
-from pydantic_ai_harness._workspace_provider import check_integer, check_working_dir
+from pydantic_ai_harness._workspace_provider import (
+    check_integer,
+    check_provider,
+    check_working_dir,
+    reject_defer_loading,
+)
 from pydantic_ai_harness.daytona_sandbox._backend import DaytonaSandboxBackend, destroy_sandbox
 
 if TYPE_CHECKING:
@@ -75,12 +79,7 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
     layered on top. Nothing is read from the host."""
 
     def __post_init__(self) -> None:
-        if self.defer_loading:
-            # Core picks the run's workspace from the always-on capabilities only.
-            raise UserError(
-                '`DaytonaSandbox` does not support `defer_loading=True`: '
-                'the workspace is selected before deferred capabilities load.'
-            )
+        reject_defer_loading('DaytonaSandbox', self.defer_loading)
         # Checked here rather than at the first workspace operation, so a bad value fails where it is written.
         check_working_dir(self.working_dir)
         check_integer('auto_stop_interval', self.auto_stop_interval, minimum=0, optional=True)
@@ -94,8 +93,7 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
 
         A sandbox that no longer exists is already gone, so destroying it returns quietly.
         """
-        if ref.provider != 'daytona':
-            raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'daytona'")
+        check_provider(ref, 'daytona')
         with lifecycle_span('destroy', ref):
             await destroy_sandbox(self.client, ref.id)
 

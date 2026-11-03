@@ -33,7 +33,6 @@ from typing import TYPE_CHECKING
 import anyio
 import anyio.lowlevel
 
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
@@ -51,8 +50,10 @@ from pydantic_ai.workspaces._telemetry import lifecycle_span
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env_types,
+    check_provider,
     check_timeout,
     command_argv,
+    require_asyncio,
     running_on_asyncio,
     safe_credential_reason,
     stop_shielded,
@@ -117,12 +118,9 @@ _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 _OUTPUT_PREVIEW_CHARS = 64 * 1024
 
 
-def _require_asyncio() -> None:
-    """Refuse an operation off asyncio before it reaches the E2B SDK, which needs a running asyncio loop."""
-    if not running_on_asyncio():
-        # Its HTTP and RPC calls run under `asyncio.wait_for`, which raises 'no running event loop'
-        # on Trio; E2B's own error wrapping can even report that as a sandbox timeout.
-        raise UserError('E2B needs the asyncio event loop: the E2B SDK runs every request on asyncio.')
+# Checked before an operation reaches the SDK: its HTTP and RPC calls run under `asyncio.wait_for`, which
+# raises 'no running event loop' on Trio, and E2B's own error wrapping can even report that as a sandbox timeout.
+_ASYNCIO_ONLY = 'E2B needs the asyncio event loop: the E2B SDK runs every request on asyncio.'
 
 
 def _path_error(error: Exception, path: str) -> OSError | None:
@@ -257,8 +255,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
     ) -> None:
-        if ref is not None and ref.provider != 'e2b':
-            raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'e2b'")
+        if ref is not None:
+            check_provider(ref, 'e2b')
         if sandbox is not None and ref is not None:
             raise ValueError('pass either `sandbox` or `ref`, not both')
         check_env_types(env)
@@ -312,7 +310,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
     async def _sandbox_for_operation(self) -> e2b.AsyncSandbox:
         """`get_sandbox()` for the backend's own operations, which all make E2B requests."""
         # Also for a sandbox the caller passed in: `get_sandbox()` returns that one on Trio too.
-        _require_asyncio()
+        require_asyncio(_ASYNCIO_ONLY)
         return await self.get_sandbox()
 
     async def _acquire_detached(self) -> e2b.AsyncSandbox:
@@ -325,7 +323,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         async with self._lock:
             if (sandbox := self._sandbox) is None:
                 # Checked here, not in `get_sandbox`: a sandbox the caller passed in is returned as is.
-                _require_asyncio()
+                require_asyncio(_ASYNCIO_ONLY)
                 ref = self._ref
                 with lifecycle_span('create' if ref is None else 'attach', self):
                     sandbox = await self._attach(ref.id) if ref is not None else await self._create()
@@ -731,7 +729,7 @@ async def kill_sandbox(sandbox_id: str) -> None:
     A sandbox that is already gone returns quietly (E2B's kill answers `False`); rejected
     credentials raise `WorkspaceUnavailableError`, like any other operation.
     """
-    _require_asyncio()
+    require_asyncio(_ASYNCIO_ONLY)
     try:
         await e2b.AsyncSandbox.kill(sandbox_id)
     except e2b.AuthenticationException as error:

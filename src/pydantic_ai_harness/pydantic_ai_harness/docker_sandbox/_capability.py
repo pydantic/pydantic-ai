@@ -6,11 +6,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai.workspaces._telemetry import lifecycle_span
-from pydantic_ai_harness._workspace_provider import check_working_dir
+from pydantic_ai_harness._workspace_provider import check_provider, check_working_dir, reject_defer_loading
 from pydantic_ai_harness.docker_sandbox._backend import (
     PROVIDER,
     DockerSandboxBackend,
@@ -66,11 +65,7 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
     _executable_path: str = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        if self.defer_loading:
-            raise UserError(
-                '`DockerSandbox` does not support `defer_loading=True`: '
-                'the workspace is selected before deferred capabilities load.'
-            )
+        reject_defer_loading('DockerSandbox', self.defer_loading)
         check_working_dir(self.working_dir)
         self._executable_path = resolve_executable(self.executable)
 
@@ -82,8 +77,7 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
 
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Remove a container and its anonymous volumes, whether it is running or not."""
-        if ref.provider != PROVIDER:
-            raise ValueError(f'unsupported workspace provider {ref.provider!r}; expected {PROVIDER!r}')
+        check_provider(ref, PROVIDER)
         with lifecycle_span('destroy', ref):
             await remove_container(ref.id, executable=self._executable_path)
 
