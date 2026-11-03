@@ -4670,11 +4670,14 @@ class _ProjectionPass:
 
     name: str
     run: Callable[[Model, _Projection], _Projection]
+    reads: frozenset[_PartKind] = frozenset()
+    """The part kinds whose presence changes this pass's output, besides the ones it consumes. Only kinds some pass
+    consumes or drops need listing: every other kind stays in the history throughout."""
     consumes: frozenset[_PartKind] = frozenset()
-    """The part kinds whose presence changes this pass's output, so no earlier pass may drop them."""
+    """The part kinds this pass reads and renders as other parts, so what they carry stays in the history. A later pass
+    sees the rendered parts, or the kind itself on a model whose gate keeps it."""
     drops: frozenset[_PartKind] = frozenset()
-    """The part kinds this pass can leave out of its output, rendered as other parts or dropped outright. A pass
-    whose gate keeps a kind on some models still lists it."""
+    """The part kinds this pass leaves out of the history with nothing in their place, so no later pass may read them."""
 
 
 def _drop_capability_loads_pass(model: Model, projection: _Projection) -> _Projection:
@@ -4825,57 +4828,51 @@ _PROJECTION_PASSES: tuple[_ProjectionPass, ...] = (
     _ProjectionPass(
         'instruction_state',
         _instruction_state_pass,
-        consumes=frozenset({InstructionDeltaPart, InstructionBaselinePart, CapabilityLoadDeltaPart, CompactionPart}),
-        drops=frozenset({InstructionDeltaPart, InstructionBaselinePart}),
+        reads=frozenset({CapabilityLoadDeltaPart}),
+        consumes=frozenset({InstructionDeltaPart, InstructionBaselinePart}),
     ),
-    _ProjectionPass('system_prompt_contexts', _system_prompt_contexts_pass, consumes=frozenset({SystemPromptPart})),
-    _ProjectionPass(
-        'model_settings_deltas',
-        _model_settings_deltas_pass,
-        consumes=frozenset({ModelSettingsDeltaPart}),
-        drops=frozenset({ModelSettingsDeltaPart}),
-    ),
-    _ProjectionPass('speech', _speech_pass, consumes=frozenset({SpeechPart}), drops=frozenset({SpeechPart})),
-    _ProjectionPass('authored', _authored_pass, consumes=frozenset({SystemPromptPart})),
+    _ProjectionPass('system_prompt_contexts', _system_prompt_contexts_pass, reads=frozenset({SystemPromptPart})),
+    _ProjectionPass('model_settings_deltas', _model_settings_deltas_pass, drops=frozenset({ModelSettingsDeltaPart})),
+    _ProjectionPass('speech', _speech_pass, consumes=frozenset({SpeechPart})),
+    _ProjectionPass('authored', _authored_pass, reads=frozenset({SystemPromptPart})),
     _ProjectionPass(
         'retry_feedback',
         _retry_feedback_pass,
+        reads=frozenset({SystemPromptPart}),
         consumes=frozenset({RetryFeedbackPart, RetryPromptPart}),  # pyright: ignore[reportDeprecated]
-        drops=frozenset({RetryFeedbackPart, RetryPromptPart}),  # pyright: ignore[reportDeprecated]
     ),
     _ProjectionPass('unsupported_tool_return_files', _unsupported_tool_return_files_pass),
-    _ProjectionPass('tool_results_first', _tool_results_first_pass),
+    _ProjectionPass('tool_results_first', _tool_results_first_pass, reads=frozenset({SystemPromptPart})),
     _ProjectionPass('tool_call_ids', _tool_call_ids_pass),
     _ProjectionPass(
         'lookalike_notes',
         _lookalike_notes_pass,
-        consumes=frozenset({CapabilityPart, ThinkingPart}),
-        drops=frozenset({CapabilityPart}),
+        reads=frozenset({SystemPromptPart}),
+        consumes=frozenset({CapabilityPart}),
     ),
-    _ProjectionPass('superseded_request_scoped_prompts', _superseded_request_scoped_prompts_pass),
-    _ProjectionPass('legacy_tool_reveals', _legacy_tool_reveals_pass, consumes=frozenset({ToolSearchCallPart})),
     _ProjectionPass(
-        'tool_availability_deltas',
-        _tool_availability_deltas_pass,
-        consumes=frozenset({ToolAvailabilityDeltaPart}),
-        drops=frozenset({ToolAvailabilityDeltaPart}),
+        'superseded_request_scoped_prompts',
+        _superseded_request_scoped_prompts_pass,
+        reads=frozenset({SystemPromptPart, RetryFeedbackPart}),
+    ),
+    _ProjectionPass('legacy_tool_reveals', _legacy_tool_reveals_pass),
+    _ProjectionPass(
+        'tool_availability_deltas', _tool_availability_deltas_pass, consumes=frozenset({ToolAvailabilityDeltaPart})
     ),
     _ProjectionPass(
         'local_tool_search',
         _local_tool_search_pass,
         consumes=frozenset({NativeToolSearchCallPart, NativeToolSearchReturnPart}),
-        drops=frozenset({NativeToolSearchCallPart, NativeToolSearchReturnPart}),
     ),
-    _ProjectionPass('request_scoped_tail', _request_scoped_tail_pass),
+    _ProjectionPass('request_scoped_tail', _request_scoped_tail_pass, reads=frozenset({SystemPromptPart})),
     _ProjectionPass('system_voice', _system_voice_pass, consumes=frozenset({SystemPromptPart})),
     _ProjectionPass('tool_result_order', _tool_result_order_pass),
     _ProjectionPass('rendered_tool_call_ids', _tool_call_ids_pass),
 )
 """The passes `Model.prepare_messages` runs, in order.
 
-Each pass declares the part kinds it reads (`consumes`) and the ones it can leave out of the history (`drops`), so
-`tests/test_projection_passes.py` can check that no pass drops a kind a later pass reads, and that a pass drops no
-kind it doesn't declare.
+`tests/test_projection_passes.py` checks the declarations against what each pass does, and that no pass drops a kind a
+later pass reads.
 """
 
 
