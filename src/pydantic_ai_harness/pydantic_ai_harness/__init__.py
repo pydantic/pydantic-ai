@@ -59,6 +59,7 @@ if TYPE_CHECKING:
     from .memory import Memory
     from .modal_sandbox import ModalSandbox, ModalSandboxBackend
     from .ordinal import Ordinal
+    from .permissions import Permissions
     from .pgtask import PGTaskDurability
     from .pixeltable import Pixeltable
     from .planning import Planning
@@ -143,6 +144,7 @@ __all__ = [
     'OutputGuardrail',
     'OutputGuardrailFunc',
     'PGTaskDurability',
+    'Permissions',
     'Pixeltable',
     'Planning',
     'PostHog',
@@ -220,6 +222,7 @@ _CAPABILITY_EXPORTS = {
     'ModalSandbox': 'modal_sandbox',
     'Ordinal': 'ordinal',
     'PGTaskDurability': 'pgtask',
+    'Permissions': 'permissions',
     'Pixeltable': 'pixeltable',
     'Planning': 'planning',
     'PostHog': 'posthog',

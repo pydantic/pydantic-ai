@@ -273,8 +273,8 @@ async def test_a_relative_path_saved_before_anchoring_is_refused_until_approved_
     assert [plugin.path for plugin in store.plugins()] == [str(trusted / 'plugins' / 'helper.py')]
 
 
-@pytest.mark.parametrize('field', ['repo_context_walk_up_root', 'repo_context_autoload_symlink_roots'])
+@pytest.mark.parametrize('field', ['repo_context_walk_up_roots', 'repo_context_autoload_symlink_roots'])
 def test_repo_context_boundaries_are_user_only(tmp_path: Path, field: str) -> None:
-    write(tmp_path, {field: '/' if field.endswith('walk_up_root') else ['/']})
+    write(tmp_path, {field: ['/']})
     with pytest.raises(ValueError, match=rf'`{field}` is user-only and cannot be set in a project file'):
         load_project_settings(tmp_path)

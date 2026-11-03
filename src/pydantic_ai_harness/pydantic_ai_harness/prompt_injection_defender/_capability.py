@@ -29,7 +29,7 @@ _DEFAULT_BLOCKED_MESSAGE = (
     '(risk: {risk_level}). Do not retry this call; continue without this content and '
     'tell the user the tool result was blocked.'
 )
-"""Default replacement text for a withheld result. Instructs the model not to retry the call."""
+"""Default replacement text for a withheld result."""
 
 _METADATA_KEY = 'prompt_injection'
 """Diagnostics key on a withheld result's `ToolReturn.metadata`."""
@@ -46,17 +46,17 @@ return value and additional content. May be sync or async. Raising fails the run
 """
 
 
-def _findings(verdict: DefenseResult) -> bool:
-    """Whether the defender's pattern detection matched anything."""
-    return bool(verdict.detections) or bool(verdict.fields_sanitized)
-
-
 def _flagged(verdict: DefenseResult) -> bool:
     """Whether a verdict is worth reporting to `on_detection`.
 
     `risk_level` starts at `'medium'`, so only an escalated level counts on its own.
     """
-    return (not verdict.allowed) or _findings(verdict) or verdict.risk_level in _ESCALATED_RISKS
+    return (
+        not verdict.allowed
+        or bool(verdict.detections)
+        or bool(verdict.fields_sanitized)
+        or verdict.risk_level in _ESCALATED_RISKS
+    )
 
 
 def _diagnostics(verdict: DefenseResult) -> dict[str, object]:
@@ -81,13 +81,13 @@ def _payload(value: object) -> object:
 class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
     """Classify tool results for indirect prompt injection and withhold the risky ones.
 
-    Tool results (emails, tickets, documents, MCP payloads) are a primary channel for
-    indirect prompt injection: instructions planted in third-party data that redirect the
-    agent. This capability classifies each locally executed tool result with
-    `stackone-defender` after the tool returns. A result passes through unchanged unless
-    the defense rejects it. With `block_high_risk=True`, the built-in defense rejects
-    detected high or critical risk results, which are replaced with `blocked_message` so
-    their content never reaches the model. Every flagged verdict is reported through
+    Indirect prompt injection is instructions planted in third-party data, such as emails,
+    tickets, documents, and MCP payloads, that redirect the agent. This capability
+    classifies each locally executed tool result with `stackone-defender` after the tool
+    returns. A result passes through unchanged unless the defense rejects it. With
+    `block_high_risk=True`, the built-in defense rejects detected high or critical risk
+    results, which are replaced with `blocked_message` so their content never reaches the
+    model. Every flagged verdict is reported through
     `on_detection`, and a withheld result carries a diagnostics summary on
     `ToolReturn.metadata` (not visible to the model).
 

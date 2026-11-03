@@ -21,7 +21,7 @@ FIRST_USE_MODULES = (
     'pydantic_clai2.models.github_copilot',
     'pydantic_clai2.ui.menus.model_menu',
     'pydantic_ai.mcp',
-    'pydantic_clai2.mcp._client',
+    'pydantic_clai2.mcp.client',
 )
 """Every turn loads `model_settings` and the model's provider module, usually OpenAI or Anthropic; the rest serve
 model resolution, `/login`, the model menus, and the first turn or sign-in with an MCP server (FastMCP and the MCP SDK)."""

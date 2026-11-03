@@ -9,7 +9,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset
-from pydantic_ai_harness._mcp import credential, one_connection, per_run_connection, prefixed_toolset, read_only_toolset
+from pydantic_ai_harness._mcp import credential, hosted_toolset, one_connection, prefixed_toolset, read_only_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
@@ -65,16 +65,12 @@ class Linear(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
         """Return the Linear tools."""
-        if self.client is not None:
-            toolset: AbstractToolset[AgentDepsT] = MCPToolset(
-                self.client, id=self.id or _ID, include_instructions=self.include_instructions
-            )
-            if self.read_only:
-                toolset = read_only_toolset(toolset)
-        elif callable(self.auth):
-            toolset = per_run_connection(self.auth, self._connect, id=self.id or _ID)
-        else:
-            toolset = self._connect(self.auth)
+        toolset = hosted_toolset(
+            self.client, self.auth, self._connect, id=self.id or _ID, include_instructions=self.include_instructions
+        )
+        # Without `client`, `read_only` picks Linear's read-only endpoint instead.
+        if self.read_only and self.client is not None:
+            toolset = read_only_toolset(toolset)
         return prefixed_toolset(toolset, self.tool_prefix)
 
     def _connect(self, auth: str | None) -> MCPToolset[AgentDepsT]:
