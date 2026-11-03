@@ -569,15 +569,15 @@ def _map_usage(response: V2ChatResponse, provider: str, provider_url: str, model
 def _map_cohere_usage(u: CohereUsage, provider: str, provider_url: str, model: str) -> usage.RequestUsage:
     """Map usage shared by chat responses and message-end stream events."""
     details: dict[str, int] = {}
-    if u.billed_units is not None:
-        if u.billed_units.input_tokens:  # pragma: no branch
-            details['input_tokens'] = int(u.billed_units.input_tokens)
-        if u.billed_units.output_tokens:
-            details['output_tokens'] = int(u.billed_units.output_tokens)
-        if u.billed_units.search_units:  # pragma: no cover
-            details['search_units'] = int(u.billed_units.search_units)
-        if u.billed_units.classifications:  # pragma: no cover
-            details['classifications'] = int(u.billed_units.classifications)
+    if billed_units := u.billed_units:
+        for key, value in (
+            ('input_tokens', billed_units.input_tokens),
+            ('output_tokens', billed_units.output_tokens),
+            ('search_units', billed_units.search_units),
+            ('classifications', billed_units.classifications),
+        ):
+            if value:
+                details[key] = int(value)
 
     usage_data: dict[str, object] = u.model_dump(exclude_none=True)
     # Cohere SDK usage counts are typed as floats, while genai-prices extracts integer token fields.
@@ -619,27 +619,32 @@ class CohereStreamedResponse(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with _map_api_errors(self._model_name):
             async for event in self._response:
-                if isinstance(event, MessageStartV2ChatStreamResponse):
+                for part_event in self._map_event(event):
+                    yield part_event
+
+    def _map_event(self, event: V2ChatStreamResponse) -> Iterator[ModelResponseStreamEvent]:
+        match event:
+            case MessageStartV2ChatStreamResponse():
+                # The SDK can parse the terminal [DONE] sentinel as a message-start with an empty ID.
+                if event.id:
                     self.provider_response_id = event.id
-                elif isinstance(event, ContentDeltaV2ChatStreamResponse):
-                    for part_event in self._handle_content_delta(event):
-                        yield part_event
-
-                elif isinstance(event, ToolCallStartV2ChatStreamResponse | ToolCallDeltaV2ChatStreamResponse):
-                    for part_event in self._handle_tool_call(event):
-                        yield part_event
-
-                elif isinstance(event, MessageEndV2ChatStreamResponse):
-                    if event.delta:
-                        if raw_finish_reason := event.delta.finish_reason:
-                            self.finish_reason, self.provider_details = _map_finish_reason(raw_finish_reason)
-                        if event.delta.usage:
-                            self._add_usage(
-                                _map_cohere_usage(
-                                    event.delta.usage, self._provider_name, self._provider_url, self._model_name
-                                ),
-                                reported=True,
-                            )
+            case ContentDeltaV2ChatStreamResponse():
+                yield from self._handle_content_delta(event)
+            case ToolCallStartV2ChatStreamResponse() | ToolCallDeltaV2ChatStreamResponse():
+                yield from self._handle_tool_call(event)
+            case MessageEndV2ChatStreamResponse():
+                if event.delta:
+                    if raw_finish_reason := event.delta.finish_reason:
+                        self.finish_reason, self.provider_details = _map_finish_reason(raw_finish_reason)
+                    if event.delta.usage:
+                        self._add_usage(
+                            _map_cohere_usage(
+                                event.delta.usage, self._provider_name, self._provider_url, self._model_name
+                            ),
+                            reported=True,
+                        )
+            case _:
+                pass
 
     def _handle_content_delta(self, event: ContentDeltaV2ChatStreamResponse) -> Iterator[ModelResponseStreamEvent]:
         if event.delta and event.delta.message and event.delta.message.content:
