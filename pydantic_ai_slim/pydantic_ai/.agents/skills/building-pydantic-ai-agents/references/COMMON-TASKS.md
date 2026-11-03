@@ -7,6 +7,7 @@ Prefer the narrower task-family guides below so the agent loads only the materia
 - [AGENTS-CORE.md](./AGENTS-CORE.md) — agent creation, output, deps, specs, models, run methods
 - [CAPABILITIES-AND-HOOKS.md](./CAPABILITIES-AND-HOOKS.md) — `Thinking`, prompt caching, `WebSearch`, `Hooks`, custom capabilities
 - [ON-DEMAND-CAPABILITIES.md](./ON-DEMAND-CAPABILITIES.md) — progressive disclosure, deferred capabilities, capabilities on demand, `load_capability`
+- [REALTIME.md](./REALTIME.md) — voice agents, speech-to-speech sessions, audio streaming, and browser voice transports; read before realtime work starts
 - [TOOLS-CORE.md](./TOOLS-CORE.md) — `@agent.tool`, `Tool`, toolsets, MCP, common search tools
 - [NATIVE-TOOLS.md](./NATIVE-TOOLS.md) — provider-native tools like `WebSearchTool` and `CodeExecutionTool`
 - [TOOLS-ADVANCED.md](./TOOLS-ADVANCED.md) — approval, retries, `ToolReturn`, timeouts, validators, tool search, and tool-level deferred loading
