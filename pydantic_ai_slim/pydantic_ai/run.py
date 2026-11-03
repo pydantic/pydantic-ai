@@ -183,9 +183,13 @@ def _filter_serialized(data: Mapping[str, Any], info: SerializationInfo) -> dict
             else {key for key, spec in exclude.items() if not isinstance(spec, (set, dict))}
         )
         data = {key: value for key, value in data.items() if key not in dropped}
+    return _apply_nested_specs(data, info)
 
+
+def _apply_nested_specs(data: Mapping[str, Any], info: SerializationInfo) -> dict[str, Any]:
+    """Apply each key's nested `include`/`exclude` spec to the value of a key `data` still has."""
     filtered = dict(data)
-    for spec, keep in ((include, True), (exclude, False)):
+    for spec, keep in ((info.include, True), (info.exclude, False)):
         if not isinstance(spec, Mapping):
             continue
         for key, sub_spec in cast('Mapping[Any, Any]', spec).items():
@@ -864,6 +868,26 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         return f'<{type(self).__name__} result={result_repr} usage={self.usage}>'
 
 
+def _from_legacy_shape(data: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    """The public shape of an `AgentRunResult` serialized with its private fields, `_state` among them.
+
+    Serialized before the public shape existed, when every private field was exposed directly,
+    `GraphAgentState`'s run-local scratch included; that scratch is dropped here. Public keys still
+    win, so a payload carrying both reads as the public one.
+    """
+    restored: dict[str, Any] = {
+        'new_message_index': data.get('_new_message_index', 0),
+        'output_tool_name': data.get('_output_tool_name'),
+        'traceparent': data.get('_traceparent_value'),
+    }
+    if 'message_history' in state:
+        restored['messages'] = state['message_history']
+    for key in _STATE_KEYS:
+        if key in state:
+            restored[key] = state[key]
+    return {**restored, **{key: item for key, item in data.items() if not key.startswith('_')}}
+
+
 @dataclasses.dataclass
 class AgentRunResult(Generic[OutputDataT]):
     """The final result of an agent run."""
@@ -922,21 +946,7 @@ class AgentRunResult(Generic[OutputDataT]):
         data = cast('dict[str, Any]', value)
 
         if isinstance(legacy_state := data.get('_state'), dict):
-            # Serialized before this shape existed, when every private field was exposed directly,
-            # `GraphAgentState`'s run-local scratch included; that scratch is dropped here. Public
-            # keys still win, so a payload carrying both reads as the public one.
-            state = cast('dict[str, Any]', legacy_state)
-            restored: dict[str, Any] = {
-                'new_message_index': data.get('_new_message_index', 0),
-                'output_tool_name': data.get('_output_tool_name'),
-                'traceparent': data.get('_traceparent_value'),
-            }
-            if 'message_history' in state:
-                restored['messages'] = state['message_history']
-            for key in _STATE_KEYS:
-                if key in state:
-                    restored[key] = state[key]
-            data = {**restored, **{key: item for key, item in data.items() if not key.startswith('_')}}
+            data = _from_legacy_shape(data, cast('dict[str, Any]', legacy_state))
 
         state_data: dict[str, Any] = {}
         if 'messages' in data:
