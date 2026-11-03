@@ -168,7 +168,7 @@ jobs:
       - name: Classify PR with Claude Code
         if: steps.check-label.outputs.has_label == 'false'
         id: classify
-        uses: anthropics/claude-code-action@aa8a7738e48bf30a40ee499ce818bef081c5ab5e # v1.0.257
+        uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1.0.262
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ github.token }}
@@ -236,13 +236,59 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           NEEDS_CATEGORY_CLASSIFY_OUTPUTS_CATEGORY: ${{ needs.category-classify.outputs.category }}
 
+  # A head that already has douwebot findings can never pass `review_gates.py`
+  # `douwebot_approval`, so reviewing it again buys no gate value. A head with a
+  # clean approval, an incomplete review or a failed run is reviewed again. An
+  # incomplete review is reviewed again to complete its coverage, even when its
+  # findings already keep that head from passing the gate.
+  prior-findings:
+    name: Earlier douwebot findings on this head
+    if: github.event.action == 'labeled' && (github.event.label.name == 'douwebot' || github.event.label.name == 'douwebot:review-agent-config')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      review_url: ${{ steps.find.outputs.review_url }}
+    steps:
+      - name: Find a douwebot review with findings on this head
+        id: find
+        # Mirrors `douwebot_approval`: an inline comment on a marked review, or
+        # body text beyond the verdict line, is a finding.
+        run: |
+          set -euo pipefail
+          gh api --paginate --slurp "repos/${REPO}/pulls/${PR_NUMBER}/reviews?per_page=100" > "$RUNNER_TEMP/reviews.json"
+          gh api --paginate --slurp "repos/${REPO}/pulls/${PR_NUMBER}/comments?per_page=100" > "$RUNNER_TEMP/comments.json"
+          REVIEW_URL=$(jq -nr --arg head "$HEAD_SHA" \
+            --slurpfile reviews "$RUNNER_TEMP/reviews.json" --slurpfile comments "$RUNNER_TEMP/comments.json" '
+            [$comments[0][][].pull_request_review_id] as $commented
+            | [$reviews[0][][]
+                | select(.user.login == "github-actions[bot]" and .user.type == "Bot" and .commit_id == $head)
+                | (.body // "") as $body
+                | select($body | test("\n\n<!-- douwebot:review run=[1-9][0-9]* head=" + $head + " -->\\z"))
+                | ($body | sub("\n\n<!-- douwebot:review run=[0-9]+ head=[a-f0-9]{40} -->\\z"; "")) as $verdict
+                | select($verdict | startswith("Review incomplete.") | not)
+                | select(.id as $id | any($commented[]; . == $id) or ($verdict != "No blocking findings." and $verdict != "Blocking findings are recorded inline."))
+                | .html_url]
+            | first // empty')
+          echo "review_url=${REVIEW_URL}" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+
   review:
     name: douwebot
-    # No `needs:`. The labelling jobs above run only on opened/synchronize events,
+    # Its only `needs:` is `prior-findings`, and it runs even when that check
+    # fails. The labelling jobs above run only on opened/synchronize events,
     # so on label events they never run — depending on them bought nothing but a way
     # for an unrelated labeller failure to suppress a requested review. The two
     # review labels are the only triggers.
-    if: github.event.action == 'labeled' && (github.event.label.name == 'douwebot' || github.event.label.name == 'douwebot:review-agent-config')
+    needs: prior-findings
+    if: >-
+      !cancelled() && needs.prior-findings.outputs.review_url == ''
+      && github.event.action == 'labeled' && (github.event.label.name == 'douwebot' || github.event.label.name == 'douwebot:review-agent-config')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -432,7 +478,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
 
       - id: review
-        uses: anthropics/claude-code-action@aa8a7738e48bf30a40ee499ce818bef081c5ab5e # v1.0.257
+        uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1.0.262
         env:
           # Native tracing exports from Claude itself, retaining subprocess credential scrubbing.
           # https://code.claude.com/docs/en/monitoring-usage#traces-beta
@@ -498,12 +544,13 @@ jobs:
             - Assess design and behavior choices against issue guidance and repository standards. Use your judgment when those sources support a choice; do not ask a maintainer to confirm it.
             - Any line of code that violates the concrete guidelines/rules laid out in the relevant `AGENTS.md` file(s): the top-level guidelines apply to all changes, while directory-specific guidelines affect only the changes in that directory.
             - Anything else that the responsibilities you are assigned in `AGENTS.md` suggest that you should be calling out: use your best judgment.
+            - A new test file or test that belongs in an existing file. Before accepting any new test file or test, search `pr-head/tests/` for an existing file that covers the same concern.
 
             Generally, the priority in terms of "crucial to get right" and "what to focus on first in a new PR" is public API > concepts and behavior > documentation > tests > code style.
             If the PR has high level problems that will likely require significant changes at lower levels, hold off on looking for or commenting on lower level problems until the higher level problems are addressed, so that the PR author (and your context window) don't get overwhelmed.
 
-            Note that while another agent (Devin) is responsible for thoroughly reviewing the implementation for bugs, security issues, and edge cases,
-            _you_ are responsible for catching every violation of the repository's standards and guidelines listed in the `AGENTS.md` and `agent_docs/*.md` files.
+            _You_ are responsible for catching every violation of the repository's standards and guidelines listed in the `AGENTS.md` and `agent_docs/*.md` files.
+            You also own the bugs, edge cases and behavior changes you can establish by reading the diff and the code. pydanty is the reviewer that runs code, on a maintainer's request.
             Do not focus exclusively on high-level concerns: by the time the author has addressed every blocking comment you've left over multiple rounds of review, the PR should be ready to merge.
 
             # Gathering context
@@ -519,6 +566,10 @@ jobs:
 
             The diff is split into per-file diffs under `.github/.review-context/diff/` (excluding `uv.lock` and cassettes), that you can read on demand and in parallel.
             The diffs include function-level context (`git diff -W`), so you can see the full function/method being modified without needing to read the source file separately.
+            A Python hunk covers its enclosing function or method, not the whole class.
+            When a hunk changes a method of a class in a sibling family, read the full class from `pr-head/` to see its sibling methods.
+            The sibling families are `models/`, `providers/`, `profiles/`, `toolsets/`, `native_tools/`, `capabilities/`, `embeddings/`, `images/`, `realtime/`, `ui/` and `durable_exec/` under `pydantic_ai_slim/pydantic_ai/`;
+            under `src/pydantic_ai_harness/pydantic_ai_harness/`, the `*_sandbox/` and `ssh_workspace/` backends and every directory with an `_operation_backend.py`; and `src/pydantic_clai2/pydantic_clai2/builtin_plugins/`.
             Each commentable line in the diff is prefixed with its source line number: `NL:<number>` for new or context lines, `OL:<number>` for deleted lines.
             For newly added files, the diff contains the complete file contents — do not re-read these from disk.
             The diff file paths are listed in the third column of `changed-files.txt`.
@@ -578,8 +629,8 @@ jobs:
 
   publish-review:
     name: Publish douwebot review
-    needs: review
-    if: always() && needs.review.result != 'skipped'
+    needs: [prior-findings, review]
+    if: always() && (needs.review.result != 'skipped' || needs.prior-findings.outputs.review_url != '')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -607,6 +658,15 @@ jobs:
         run: gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/douwebot" --method DELETE 2>/dev/null || true
         env:
           GH_TOKEN: ${{ github.token }}
+
+      - name: Report skipped review
+        if: needs.prior-findings.outputs.review_url != ''
+        run: |
+          gh pr comment "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --body \
+            "\`douwebot\` did not review this head again: [an earlier review](${REVIEW_URL}) left findings on it, and any finding, optional ones included, keeps a head from a clean douwebot approval. Push a new commit, then request a new review."
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVIEW_URL: ${{ needs.prior-findings.outputs.review_url }}
 
       # Without this, a review that crashed and a review that found nothing look
       # identical from the PR: the label is gone either way and no comment lands.

@@ -25,6 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal, NotRequired, assert_never
 
+import pydantic
 from typing_extensions import TypedDict
 
 from . import messages as _messages
@@ -73,6 +74,7 @@ class ToolSearchMatch(TypedDict):
     """
 
 
+@pydantic.with_config(extra='allow')
 class ToolSearchArgs(TypedDict):
     """Typed arguments for a tool-search call.
 
@@ -95,6 +97,7 @@ class ToolSearchArgs(TypedDict):
     """
 
 
+@pydantic.with_config(extra='allow')
 class ToolSearchReturnContent(TypedDict):
     """Typed return value of the framework-managed tool-search builtin.
 

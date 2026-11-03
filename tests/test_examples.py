@@ -128,7 +128,9 @@ class ExamplesConfig(BaseExamplesConfig):
         return config
 
 
-RUNNABLE_HARNESS_PAGES = frozenset({'artifact-scanning.md', 'detect-loops.md', 'memory.md'})
+RUNNABLE_HARNESS_PAGES = frozenset(
+    {'artifact-scanning.md', 'azure-durable-task.md', 'detect-loops.md', 'memory.md', 'permissions.md'}
+)
 """`docs/harness` pages whose examples run here; the rest are skipped until they are made runnable."""
 
 
@@ -183,6 +185,8 @@ def find_filter_examples() -> Iterable[ParameterSet]:
                 if path == Path('docs/workspace.md') or title == 'mcp_client_sampling.py'
                 else []
             )
+            if _is_harness_page(ex.path) and ex.path.name == 'azure-durable-task.md':
+                marks.append(pytest.mark.skipif(find_spec('durabletask') is None, reason='durabletask not installed'))
             if title in _MOVES_CACHE_PREFIX:
                 marks.append(pytest.mark.moves_cache_prefix(reason=_MOVES_CACHE_PREFIX[title]))
             yield pytest.param(ex, id=test_id, marks=marks)
@@ -831,6 +835,9 @@ class MockMCPServer(AbstractToolset[Any]):
 
 
 text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
+    # docs/models/openai.md
+    'Triage the open tickets.': 'The open tickets are triaged.',
+    'Draft the replies.': 'The replies are drafted.',
     # docs/capabilities/thinking.md
     'Plan the database migration.': 'Export, recreate the schema, import, then verify row counts.',
     'Now check the plan for anything that could lose data.': 'Take a backup before the import.',
