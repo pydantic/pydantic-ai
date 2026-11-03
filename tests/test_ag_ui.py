@@ -11947,7 +11947,7 @@ async def test_conversation_store_rejects_a_resume_for_a_call_not_pending():
     assert deleted == []
     assert [event.message for event in events if isinstance(event, RunErrorEvent)] == snapshot(
         [
-            "The request answers 1 tool call(s) that `message_history` is not waiting on: 'del-2'. With `manage_message_history='server'`, an approval or denial can only answer a tool call that is still pending at the end of the stored history. If the conversation changed since the client loaded it, reload it from the server."
+            "The request answers 1 tool call(s) that `message_history` is not waiting on: 'del-2'. With `manage_message_history='server'`, an approval, denial or deferred tool result can only answer a tool call that is still pending at the end of the stored history. If the conversation changed since the client loaded it, reload it from the server."
         ]
     )
 
