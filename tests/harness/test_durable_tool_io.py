@@ -221,11 +221,11 @@ class _YouClient:
 
 
 class _KeenableClient:
-    async def search(self, query: str) -> list[dict[str, Any]]:
+    async def search(self, query: str, *, max_results: int) -> list[dict[str, object]]:
         _requests['keenable.search'] += 1
         return [{'url': 'https://a.dev', 'title': 'A', 'snippet': 'excerpt'}]
 
-    async def fetch(self, url: str) -> dict[str, Any]:
+    async def fetch(self, url: str) -> dict[str, object]:
         _requests['keenable.fetch'] += 1
         return {'url': url, 'title': 'A', 'content': 'body'}
 

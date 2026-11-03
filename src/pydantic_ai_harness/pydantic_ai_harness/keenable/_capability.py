@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING
 
@@ -13,6 +13,7 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest, retry_as_result
 from pydantic_ai_harness.keenable._toolset import (
+    KEENABLE_MAX_RESULTS,
     HttpKeenableClient,
     KeenableClient,
     KeenableSearchOperations,
@@ -60,28 +61,28 @@ class KeenableSearch(AbstractCapability[AgentDepsT]):
     request again.
     """
 
-    num_results: int = 5
-    """Number of results `web_search` returns per query.
+    _: KW_ONLY
 
-    Keenable returns a fixed-size result set, so this is applied locally: the
-    response is trimmed to the first `num_results` entries.
+    num_results: int = 5
+    """Number of results `web_search` returns per query, from 1 to 50.
+
+    Sent to Keenable as `max_results`, the API's own limit.
     """
 
     max_snippet_chars: int = 500
     """Maximum characters of excerpt `web_search` returns per result.
 
-    Keenable returns whole-page text on every result, an order of magnitude
-    more than the snippet a typical search API returns, so leaving this
-    unbounded would spend the context window on pages the agent has not chosen
-    to read yet. `get_page` is how the agent opts into a full page.
+    Keenable's snippets run to thousands of characters, far more than the
+    excerpt a typical search API returns, so leaving this unbounded would spend
+    the context window on pages the agent has not chosen to read yet.
+    `get_page` is how the agent opts into a full page.
     """
 
     max_page_chars: int = 10_000
     """Maximum characters of page text `get_page` returns.
 
     Longer pages are truncated and marked, so the model can tell that the page
-    continued past what it was shown. The marker counts against this budget,
-    which is a ceiling on everything `get_page` returns.
+    continued past what it was shown. The marker counts against this budget.
     """
 
     guidance: str | None = None
@@ -108,7 +109,7 @@ class KeenableSearch(AbstractCapability[AgentDepsT]):
 
     def __post_init__(self) -> None:
         """Validate the output budgets, so a bad one fails here and not mid-run."""
-        validated_budget('num_results', self.num_results)
+        validated_budget('num_results', self.num_results, limit=KEENABLE_MAX_RESULTS)
         validated_budget('max_snippet_chars', self.max_snippet_chars)
         validated_budget('max_page_chars', self.max_page_chars)
 
