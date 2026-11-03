@@ -383,6 +383,12 @@ nodes per stream module, head:
 nodes per request target, head:
   POST http://127.0.0.1:PORT/v1/upload: 2
   tests.models.mock_openai.MockOpenAI.chat_completions_create: 1
+nodes that sent no request, head: 5
+  test_streams.py::test_fails_mid_stream
+  test_streams.py::test_fallback_peeks_the_first_event
+  test_streams.py::test_no_stream
+  test_streams.py::test_subclass_defined_after_the_capture_started
+  test_streams.py::test_text
 only in base: 0, only in head: 0, differing: 0
 nodes: base 7, head 6
 records: base 7, head 6
@@ -394,6 +400,11 @@ nodes per stream module, head:
 nodes per request target, head:
   POST http://127.0.0.1:PORT/v1/upload: 2
   tests.models.mock_openai.MockOpenAI.chat_completions_create: 1
+nodes that sent no request, head: 4
+  test_streams.py::test_fallback_peeks_the_first_event
+  test_streams.py::test_no_stream
+  test_streams.py::test_subclass_defined_after_the_capture_started
+  test_streams.py::test_text
 only in base: 1, only in head: 0, differing: 4
   only in base: test_streams.py::test_fails_mid_stream
   differing: test_requests.py::test_json_over_httpx
@@ -401,6 +412,27 @@ only in base: 1, only in head: 0, differing: 4
   differing: test_streams.py::test_fallback_peeks_the_first_event
   differing: test_streams.py::test_text
 """)
+
+
+def test_compare_names_the_nodes_that_sent_no_request(
+    run: RunCapture, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    """A selected node that sent no request is listed, whether it recorded a stream or nothing, without failing."""
+    base, head = tmp_path / 'base', tmp_path / 'head'
+    for capture_dir in (base, head):
+        run(capture_dir, '-k', 'test_text or no_stream or json').assert_outcomes(passed=3, deselected=5)
+    (head / SOURCE_FILE).write_text(json.dumps({'pydantic_ai': f'{head}/pydantic_ai/__init__.py'}))
+    capsys.readouterr()
+
+    assert compare(base, head) == 0
+    assert capsys.readouterr().out.splitlines()[-4:] == snapshot(
+        [
+            'nodes that sent no request, head: 2',
+            '  test_streams.py::test_no_stream',
+            '  test_streams.py::test_text',
+            'only in base: 0, only in head: 0, differing: 0',
+        ]
+    )
 
 
 def test_normalized_replaces_values_that_change_between_runs():

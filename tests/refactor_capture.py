@@ -31,15 +31,16 @@ the tests, a listed mock method that's gone stops the run too. Other transports,
 methods a test patches by hand, like the `generate_content` Google's tests patch on a model's client, escape it.
 
 Each test starts with `random` seeded from its node id, so a test that draws from it draws the same values on both
-sides. Lines are written per `pytest-xdist` worker when each test ends. Generated tool call ids, UUIDs, object addresses,
+sides. Lines, and the id of each test node run, are written per `pytest-xdist` worker when each test ends. Generated
+tool call ids, UUIDs, object addresses,
 timestamps within a day of the capture, history digests (which hash those timestamps), attempt durations, local server
 ports and multipart boundaries are normalized, so two runs of the same code compare equal.
 
 The comparison lists the test nodes whose records differ or that only one capture has, and exits non-zero if there
 are any. It refuses two captures that imported `pydantic_ai` from the same file, since the base run then didn't load
 the base commit, and a capture that recorded nothing, since it proves nothing. It also counts the nodes whose streams
-reach each module that defines a `StreamedResponse` subclass, and the nodes that send to each request target, so the
-capture's reach over the changed code shows.
+reach each module that defines a `StreamedResponse` subclass and the nodes that send to each request target, and names
+the selected nodes that sent no request, so the capture's reach over the changed code shows.
 """
 
 from __future__ import annotations
@@ -80,6 +81,7 @@ from pydantic_ai.providers.groq import GroqProvider
 
 CAPTURE_OPTION = '--refactor-capture'
 SOURCE_FILE = 'source.json'
+NODES_SUFFIX = '.nodes'
 GENERATED_VALUES = [
     (re.compile(r' at 0x[0-9a-f]+'), ' at 0x?'),
     (re.compile(r'pyd_ai_[0-9a-f]{32}'), 'pyd_ai_ID'),
@@ -137,7 +139,7 @@ class RefactorCapture:
     def pytest_configure(self) -> None:
         # Workers start once the controller has checked, and another worker may already have written by then.
         if 'PYTEST_XDIST_WORKER' not in os.environ:
-            if any(self.capture_dir.glob('*.jsonl')):
+            if any(self.capture_dir.glob('*.jsonl')) or any(self.capture_dir.glob(f'*{NODES_SUFFIX}')):
                 raise pytest.UsageError(f'`{self.capture_dir}` already holds a capture; a second would be appended.')
             self.capture_dir.mkdir(parents=True, exist_ok=True)
             (self.capture_dir / SOURCE_FILE).write_text(json.dumps({'pydantic_ai': pydantic_ai.__file__}))
@@ -171,7 +173,7 @@ class RefactorCapture:
             return (yield)
         finally:
             self.node = None
-            self.write()
+            self.write(item.nodeid)
 
     def install(self) -> None:
         """Wrap `__aiter__` on `StreamedResponse` and every subclass that overrides it, now and when one is defined.
@@ -247,12 +249,14 @@ class RefactorCapture:
                 'would miss requests. Update `tests/refactor_capture.py` to the HTTP client the SDK sends with now.'
             )
 
-    def write(self) -> None:
-        """Append the records so far, with the response each stream builds now, to this worker's file."""
+    def write(self, node: str) -> None:
+        """Append `node` and the records so far, with the response each stream builds now, to this worker's files."""
+        worker = os.environ.get('PYTEST_XDIST_WORKER', 'main')
+        with open(self.capture_dir / f'{worker}{NODES_SUFFIX}', 'a', encoding='utf-8') as f:
+            f.write(f'{node}\n')
         if self.records:
             for record, stream in self._streams:
                 record['response'] = normalized(stream.get())
-            worker = os.environ.get('PYTEST_XDIST_WORKER', 'main')
             with open(self.capture_dir / f'{worker}.jsonl', 'a', encoding='utf-8') as f:
                 f.writelines(json.dumps(record) + '\n' for record in self.records)
             self.clear()
@@ -398,8 +402,8 @@ def compare(base_dir: Path, head_dir: Path) -> int:
             file=sys.stderr,
         )
         return 2
-    head_nodes = [[json.loads(line) for line in lines] for lines in head.values()]
-    head_records = [record for records in head_nodes for record in records]
+    head_nodes = {node: [json.loads(line) for line in lines] for node, lines in head.items()}
+    head_records = [record for records in head_nodes.values() for record in records]
     print(f'nodes: base {len(base)}, head {len(head)}')
     print(f'records: base {sum(map(len, base.values()))}, head {len(head_records)}')
     print(f'stream events: head {sum(len(record["events"]) for record in head_records if record["kind"] == "stream")}')
@@ -407,13 +411,20 @@ def compare(base_dir: Path, head_dir: Path) -> int:
 
     modules: Counter[str] = Counter()
     targets: Counter[str] = Counter()
-    for records in head_nodes:
+    for records in head_nodes.values():
         modules.update({module for record in records for module in record.get('modules', [])})
         targets.update({record['target'] for record in records if record['kind'] == 'request'})
     for label, counts in (('stream module', modules), ('request target', targets)):
         print(f'nodes per {label}, head:')
         for name, count in sorted(counts.items()):
             print(f'  {name}: {count}')
+    ran = {node for path in head_dir.glob(f'*{NODES_SUFFIX}') for node in path.read_text().splitlines()}
+    requesting = {
+        node for node, records in head_nodes.items() if any(record['kind'] == 'request' for record in records)
+    }
+    print(f'nodes that sent no request, head: {len(ran - requesting)}')
+    for node in sorted(ran - requesting):
+        print(f'  {node}')
 
     only_base = sorted(base.keys() - head.keys())
     only_head = sorted(head.keys() - base.keys())
