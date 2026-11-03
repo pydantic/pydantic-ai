@@ -396,7 +396,9 @@ class ProcessPlugins(Generic[DepsT]):
             approval = declared.get(name)
             if approval is None or approval.factory != pinned.factory or pinned.factory not in APPROVED_AS_WRITTEN:
                 continue
-            if name not in self.staged and not (same_plugin(approval, pinned) and self.approved(name, approval)):
+            if name not in self.staged and not (
+                same_plugin(approval, pinned) and self.contents_approved(name, approval)
+            ):
                 declared[name] = pinned
         for shipped in (project, self.builtin):
             for name in shipped.keys() - declared.keys():
@@ -463,7 +465,7 @@ class ProcessPlugins(Generic[DepsT]):
         path = Path(declaration.path)
         return [] if path.is_relative_to(self.plugins_dir) else [path]
 
-    def approved(self, name: str, declaration: PluginSettings) -> bool:
+    def contents_approved(self, name: str, declaration: PluginSettings) -> bool:
         """Whether each of the declaration's `project_files` still has the contents `/plugins enable` approved."""
         files = self.project_files(name, declaration)
         return all(self.store.approved_sha256(path) == file_sha256(path) for path in files)

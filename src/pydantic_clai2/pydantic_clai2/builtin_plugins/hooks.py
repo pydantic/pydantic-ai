@@ -141,7 +141,7 @@ class HooksPlugin(Plugin[HooksSettings, DepsT]):
         self.programs = {str(path) for path in settings.project_programs()}
         """Project files this table runs as programs, which run only with the contents `/plugins enable` approved."""
         database = host.settings_database
-        self.approvals = None if not self.programs or database is None else SettingsStore(database)
+        self.store = None if not self.programs or database is None else SettingsStore(database)
 
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
         before, after = self.table('before_tool'), self.table('after_tool')
@@ -219,13 +219,13 @@ class HooksPlugin(Plugin[HooksSettings, DepsT]):
             else nullcontext(INVALID_SPAN)
         )
         with span_context as span:
-            done = await self._changed(argv, event) or await self._spawn(
+            done = await self._refusal(argv, event) or await self._spawn(
                 argv, payload, cwd=workspace, timeout=command.timeout, event=event
             )
             self._report(span, event, shown, done, tool=tool, timeout=command.timeout, content=content)
         return done
 
-    async def _changed(self, argv: str | list[str], event: HookEvent) -> HookRun | None:
+    async def _refusal(self, argv: str | list[str], event: HookEvent) -> HookRun | None:
         """The refusal of a project program whose bytes are not the ones approved, or `None` to run it.
 
         The approval is read each time, so `/plugins enable` takes effect at once. Like an argument the OS
@@ -234,9 +234,7 @@ class HooksPlugin(Plugin[HooksSettings, DepsT]):
         if isinstance(argv, str) or argv[0] not in self.programs:
             return None
         program = Path(argv[0])
-        approved = (
-            None if self.approvals is None else await anyio.to_thread.run_sync(self.approvals.approved_sha256, program)
-        )
+        approved = None if self.store is None else await anyio.to_thread.run_sync(self.store.approved_sha256, program)
         if approved is not None and await anyio.to_thread.run_sync(file_sha256, program) == approved:
             return None
         return HookRun(
