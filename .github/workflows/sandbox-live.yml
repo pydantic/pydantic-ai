@@ -118,11 +118,18 @@ jobs:
       # cloud provider's guide has a Temporal worker example, which the docs-example test runs;
       # `code-mode` and `coder` are what the provider test modules import at collection.
       # Docker has no extra: it drives the `docker` CLI that GitHub's Ubuntu runners ship with.
+      #
+      # Kubernetes upgrades its SDK past the lock: agent-sandbox ships breaking changes in patch
+      # releases, and users get them with `<2`. The upgrade still honours `exclude-newer`, because
+      # the test step below holds every provider's secrets.
       - run: |
           provider_extra=(--extra "$PROVIDER")
           [ "$PROVIDER" != docker ] || provider_extra=()
-          uv sync --locked --package pydantic-ai-harness --group dev \
+          resolution=(--locked)
+          [ "$PROVIDER" != kubernetes ] || resolution=(--upgrade-package k8s-agent-sandbox)
+          uv sync "${resolution[@]}" --package pydantic-ai-harness --group dev \
             "${provider_extra[@]}" --extra temporal --extra code-mode --extra coder
+          [ "$PROVIDER" != kubernetes ] || uv pip show k8s-agent-sandbox | grep '^Version'
         env:
           PROVIDER: ${{ matrix.provider }}
 

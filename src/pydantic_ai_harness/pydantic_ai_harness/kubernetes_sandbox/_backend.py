@@ -80,6 +80,14 @@ ConnectionMode = Literal['port-forward', 'in-cluster-service', 'in-cluster-pod-i
 """How the client reaches a sandbox's sandboxd: a `kubectl port-forward` to the pod (from outside the
 cluster), or directly from inside the cluster through the sandbox's Service or its pod IP."""
 
+_IN_CLUSTER_MODES: dict[str, Literal['in-cluster-service', 'in-cluster-pod-ip']] = {
+    'in-cluster-service': 'in-cluster-service',
+    'in-cluster-pod-ip': 'in-cluster-pod-ip',
+}
+"""Our in-cluster mode names to `SandboxdInClusterConnectionConfig.mode`'s. They match today, but the
+SDK renamed its values once (v1.0.6), and our names are public API: a rename upstream changes only
+this map, and the values' type, which the SDK's own `Literal` must accept, makes type checking catch it."""
+
 if TYPE_CHECKING:
     from typing import TypeAlias
 
@@ -126,7 +134,7 @@ def _client(connection: Connection) -> AsyncSandboxClient[AsyncSandbox]:
     if connection == 'port-forward':
         config = SandboxdPodTunnelConnectionConfig()
     elif isinstance(connection, str):
-        config = SandboxdInClusterConnectionConfig(mode=connection)
+        config = SandboxdInClusterConnectionConfig(mode=_IN_CLUSTER_MODES[connection])
     else:
         config = connection
     # `cleanup=False`: by default the SDK deletes the claims it created when the interpreter exits,
