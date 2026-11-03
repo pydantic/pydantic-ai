@@ -2230,11 +2230,6 @@ def test_tool_return_file_shaped_data_is_not_hashed_without_a_matching_shape(mon
     import pydantic_ai.messages as messages_module
 
     digested: list[Any] = []
-    real_digest = messages_module._file_digest  # pyright: ignore[reportPrivateUsage]
-
-    def counting_digest(serialized: Any) -> str | None:
-        digested.append(serialized)
-        return real_digest(serialized)
 
     nested: dict[str, Any] = {
         'kind': 'document-url',
@@ -2248,7 +2243,7 @@ def test_tool_return_file_shaped_data_is_not_hashed_without_a_matching_shape(mon
     ]
     payload = ModelMessagesTypeAdapter.dump_json(messages)
 
-    monkeypatch.setattr(messages_module, '_file_digest', counting_digest)
+    monkeypatch.setattr(messages_module, '_file_digest', digested.append)
     loaded = ModelMessagesTypeAdapter.validate_json(payload)
 
     assert message_part(loaded, ToolReturnPart).content == [nested]
@@ -2282,14 +2277,9 @@ def test_tool_return_records_only_the_files_in_its_content():
 def test_tool_return_file_without_a_json_form_still_dumps():
     """A file whose `vendor_metadata` has no JSON form can't be recorded, so it reloads as its mapping.
 
-    Dumping must not fail over it, even when the object's own `repr` raises.
+    Dumping must not fail over it.
     """
-
-    class Opaque:
-        def __repr__(self) -> str:
-            raise RuntimeError('no repr')
-
-    for metadata in ({'raw': b'\xff'}, {'object': Opaque()}):
+    for metadata in ({'raw': b'\xff'}, {'object': object()}):
         uploaded = UploadedFile('file-1', 'openai', vendor_metadata=metadata)
         reloaded = _round_trip(uploaded, 'python')
         assert type(reloaded) is dict

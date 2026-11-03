@@ -1283,23 +1283,15 @@ class _OwnSerializer:
 
     def __init__(self) -> None:
         self._serializers: dict[type, pydantic_core.SchemaSerializer] = {}
-        self._building: set[type] = set()
 
     def __get__(self, instance: object, owner: type) -> pydantic_core.SchemaSerializer:
         if (serializer := self._serializers.get(owner)) is not None:
             return serializer
-        if owner in self._building:
-            # Asked while building this class's own schema: it has no serializer of its own yet.
-            raise AttributeError('__pydantic_serializer__')
-        self._building.add(owner)
-        try:
-            # The same bytes encoding as `ModelMessagesTypeAdapter`, so a history dumps the same either way.
-            # `TypeAdapter` takes no config for a dataclass, so the config goes to the serializer itself.
-            serializer = self._serializers[owner] = pydantic_core.SchemaSerializer(
-                pydantic.TypeAdapter(owner).core_schema, pydantic_core.core_schema.CoreConfig(ser_json_bytes='base64')
-            )
-        finally:
-            self._building.discard(owner)
+        # The same bytes encoding as `ModelMessagesTypeAdapter`, so a history dumps the same either way.
+        # `TypeAdapter` takes no config for a dataclass, so the config goes to the serializer itself.
+        serializer = self._serializers[owner] = pydantic_core.SchemaSerializer(
+            pydantic.TypeAdapter(owner).core_schema, pydantic_core.core_schema.CoreConfig(ser_json_bytes='base64')
+        )
         return serializer
 
 
