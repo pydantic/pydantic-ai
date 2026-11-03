@@ -22,7 +22,15 @@ from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from . import _utils, messages as _messages
 from ._cancel import current_run_clock
 from ._context_size import context_tokens
-from ._enqueue import EnqueueContent, EnqueueGuard, PendingMessage, PendingMessagePriority, PendingMessageQueue
+from ._enqueue import (
+    EnqueueContent,
+    EnqueueGuard,
+    PendingMessage,
+    PendingMessagePriority,
+    PendingMessageQueue,
+    remove_pending,
+    reprioritize_pending,
+)
 from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import UserError
 
@@ -1054,10 +1062,14 @@ class RunContext(Generic[RunContextAgentDepsT]):
             [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] is emitted for it.
 
         Raises:
-            UserError: If this `RunContext` isn't backed by a running agent's queue, or it runs inside a
-                durable execution unit, where the change would be lost on replay.
+            UserError: If this `RunContext` has no pending-message queue (e.g. the synthetic context from
+                `Agent.system_prompt_parts`), or it runs inside a durable execution unit, where the change
+                would be lost on replay.
         """
-        return self._live_queue('withdraw').withdraw(enqueue_id)
+        queue = self._changeable_queue('withdraw')
+        if isinstance(queue, PendingMessageQueue):
+            return queue.withdraw(enqueue_id)
+        return remove_pending(queue, enqueue_id)  # a hand-built context's list, which nothing drains
 
     def reprioritize(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
         """Change when a message queued with [`enqueue`][pydantic_ai.tools.RunContext.enqueue] is delivered.
@@ -1079,20 +1091,24 @@ class RunContext(Generic[RunContextAgentDepsT]):
             or never queued in this run.
 
         Raises:
-            UserError: If this `RunContext` isn't backed by a running agent's queue, or it runs inside a
-                durable execution unit, where the change would be lost on replay.
+            UserError: If this `RunContext` has no pending-message queue (e.g. the synthetic context from
+                `Agent.system_prompt_parts`), or it runs inside a durable execution unit, where the change
+                would be lost on replay.
         """
-        return self._live_queue('reprioritize').reprioritize(enqueue_id, priority)
+        queue = self._changeable_queue('reprioritize')
+        if isinstance(queue, PendingMessageQueue):
+            return queue.reprioritize(enqueue_id, priority)
+        return reprioritize_pending(queue, enqueue_id, priority)  # a hand-built context's list, which nothing drains
 
-    def _live_queue(self, method: Literal['withdraw', 'reprioritize']) -> PendingMessageQueue:
+    def _changeable_queue(self, method: Literal['withdraw', 'reprioritize']) -> list[PendingMessage]:
         queue = self.pending_messages
-        if isinstance(queue, EnqueueGuard):
-            raise queue.change_error(method)
-        if not isinstance(queue, PendingMessageQueue):
+        if queue is None:
             raise UserError(
                 f'`{method}` is only available during an agent run (from tools, capability hooks, or '
                 f'`AgentRun.{method}`). This `RunContext` has no pending-message queue to change.'
             )
+        if isinstance(queue, EnqueueGuard):
+            raise queue.change_error(method)
         return queue
 
     def load_capability(self, capability: str | AbstractCapability[RunContextAgentDepsT]) -> bool:

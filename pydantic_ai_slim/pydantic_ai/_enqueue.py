@@ -246,24 +246,12 @@ class PendingMessageQueue(list[PendingMessage]):
         A closed queue can hold messages a run left early didn't deliver; they're out of reach too.
         """
         with self._lock:
-            if self._closed:
-                return False
-            for index, pending in enumerate(self):
-                if pending.enqueue_id == enqueue_id:
-                    del self[index]
-                    return True
-            return False
+            return not self._closed and remove_pending(self, enqueue_id)
 
     def reprioritize(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
         """Give the queued message `enqueue_id` a new priority, keeping its place, or return `False` if it isn't queued."""
         with self._lock:
-            if self._closed:
-                return False
-            for pending in self:
-                if pending.enqueue_id == enqueue_id:
-                    pending.priority = priority
-                    return True
-            return False
+            return not self._closed and reprioritize_pending(self, enqueue_id, priority)
 
     def append_capability_load(self, capability_id: str, records: Sequence[CapabilityLoadRecord]) -> bool:
         """Queue the records of a load of `capability_id`, delivered together with the next model request.
@@ -327,6 +315,24 @@ class PendingMessageQueue(list[PendingMessage]):
         selected = [pending for pending in self if pending.priority == priority]
         self[:] = [pending for pending in self if pending.priority != priority]
         return selected
+
+
+def remove_pending(messages: list[PendingMessage], enqueue_id: str) -> bool:
+    """Remove the message `enqueue_id` from `messages`, returning whether it was there. The caller handles locking."""
+    for index, pending in enumerate(messages):
+        if pending.enqueue_id == enqueue_id:
+            del messages[index]
+            return True
+    return False
+
+
+def reprioritize_pending(messages: list[PendingMessage], enqueue_id: str, priority: PendingMessagePriority) -> bool:
+    """Give the message `enqueue_id` in `messages` a new priority, returning whether it was there. The caller handles locking."""
+    for pending in messages:
+        if pending.enqueue_id == enqueue_id:
+            pending.priority = priority
+            return True
+    return False
 
 
 class EnqueueGuard(list[PendingMessage]):

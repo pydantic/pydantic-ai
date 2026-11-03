@@ -2681,7 +2681,12 @@ async def test_tool_content_promoted_back_goes_next_to_the_tool_result():
 
     tool_request = result.all_messages()[2]
     assert isinstance(tool_request, ModelRequest)
-    assert [type(part).__name__ for part in tool_request.parts] == ['ToolReturnPart', 'UserPromptPart']
+    assert tool_request.parts == snapshot(
+        [
+            ToolReturnPart(tool_name='work', content='worked', tool_call_id='call-1', timestamp=IsDatetime()),
+            UserPromptPart(content='note', timestamp=IsDatetime()),
+        ]
+    )
     assert len(result.all_messages()) == 4
 
 
@@ -2756,26 +2761,43 @@ def test_queue_change_does_not_race_pending_message_drain(method: str):
         assert change_future.result(timeout=5) is False
 
 
+def test_run_context_queue_changes_work_on_a_hand_built_context():
+    """A tool unit-tested with a hand-built `RunContext(pending_messages=[])` can withdraw and reprioritize, as it can enqueue.
+
+    A unit test: this is the context users build by hand to test a tool outside a run.
+    """
+    pending_messages: list[PendingMessage] = []
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), pending_messages=pending_messages)
+    kept = ctx.enqueue('kept')
+    dropped = ctx.enqueue('dropped')
+    assert kept is not None and dropped is not None
+
+    assert ctx.withdraw(dropped) is True
+    assert ctx.withdraw(dropped) is False
+    assert ctx.reprioritize(kept, 'when_idle') is True
+    assert ctx.reprioritize(dropped, 'asap') is False
+    assert [(pending.enqueue_id, pending.priority) for pending in pending_messages] == [(kept, 'when_idle')]
+
+
 @pytest.mark.parametrize('method', ['withdraw', 'reprioritize'])
 @pytest.mark.parametrize(
     'pending_messages, match',
     [
         (None, r'^`{method}` is only available during an agent run'),
-        ([], r'^`{method}` is only available during an agent run'),
         (
             EnqueueGuard('activity', 'workflow'),
             r'^`ctx\.{method}\(\)` is not supported inside a durable activity.*change to the queued message would be lost',
         ),
     ],
-    ids=['no-queue', 'plain-list', 'durable-unit'],
+    ids=['no-queue', 'durable-unit'],
 )
 def test_run_context_queue_changes_need_a_live_queue(
     method: str, pending_messages: list[PendingMessage] | None, match: str
 ):
-    """Without the run's queue there's nothing to change, and inside a durable unit a change would be lost on replay.
+    """Without a queue there's nothing to change, and inside a durable unit a change would be lost on replay.
 
-    A unit test: the durable-unit path is also covered end to end in the Prefect suite; the other two
-    contexts are only built by hand.
+    A unit test: the durable-unit path is also covered end to end in the Prefect, Temporal and DBOS
+    suites; a context without a queue is only built by hand.
     """
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), pending_messages=pending_messages)
 
