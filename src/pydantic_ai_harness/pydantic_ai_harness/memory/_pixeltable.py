@@ -9,6 +9,7 @@ table lock and affected-row counts.
 from __future__ import annotations
 
 import functools
+import hashlib
 import threading
 import uuid
 from collections.abc import Callable
@@ -37,6 +38,8 @@ except ImportError as _import_error:
     ) from _import_error
 
 _KIND_FILE = 'file'
+# A deleted file keeps its row as a marker naming the deleting operation, so a retry can tell its delete landed.
+_KIND_DELETED = 'deleted'
 _KIND_OP = 'op'
 _OP_PREFIX = '__op__/'
 
@@ -61,6 +64,11 @@ def _receipt_path(operation: MemoryOperation) -> str:
     if len(operation.id) > _MAX_OPERATION_ID_CHARS:
         raise ValueError(f'operation id exceeds {_MAX_OPERATION_ID_CHARS} characters')
     return f'{_OP_PREFIX}{operation.id}'
+
+
+def _operation_version(operation: MemoryOperation) -> str:
+    """The version a write with `operation` produces: the same for every attempt, and unique to the operation."""
+    return hashlib.sha256(operation.id.encode()).hexdigest()[:32]
 
 
 _T = TypeVar('_T')
@@ -104,11 +112,13 @@ class PixeltableMemoryStore:
     compare-and-set on the file row. Operation receipts live in the same table
     under `__op__/`, so paths whose first segment is `__op__` are reserved.
     Pixeltable has no multi-statement transaction, so a receipt is written as
-    pending before its mutation and completed after it. The next mutation of a
-    file settles receipts a crash left pending on it: a write is completed if the
-    file holds its version, and anything else is dropped, so the retry runs
-    compare-and-set like a fresh call. Compare-and-set holds across processes;
-    exact replay after a crash assumes one writing process per table.
+    pending before its mutation and completed after it, and is never deleted.
+    Every attempt of one operation writes the same version, derived from the
+    operation id, so one receipt matches whichever attempt lands. A deleted
+    file keeps its row as a marker naming the deleting operation, so a delete
+    stays visible after the fact like a write's version does. The next mutation
+    of a file completes the pending receipts whose mutation is visible there;
+    any other stays pending for its operation's next attempt.
 
     An uninterrupted write with a new operation id creates three table versions
     (pending receipt, apply write, complete receipt). Receipts are retained for
@@ -266,52 +276,56 @@ class PixeltableMemoryStore:
             )
         return metadata['has_default_idxs']
 
-    def _file_state(self, t: pxt.Table, path: str) -> tuple[str | None, str | None]:
-        """The file's version and the operation id that last wrote it, or `(None, None)` if absent."""
-        query = t.where((t.path == path) & (t.kind == _KIND_FILE)).select(t.version, t.last_operation_id)
+    def _file_row(self, t: pxt.Table, path: str) -> dict[str, Any] | None:
+        """The row for `path`: a file, a deleted-file marker, or `None` if the path was never written."""
+        query = t.where((t.path == path) & ((t.kind == _KIND_FILE) | (t.kind == _KIND_DELETED))).select(
+            t.kind, t.version, t.last_operation_id, t.existed
+        )
         assert isinstance(query, pxt.Query)
         rows = query.collect()
-        if len(rows) == 0:
-            return None, None
-        return str(rows[0]['version']), rows[0]['last_operation_id']
+        return rows[0] if rows else None
 
-    def _landed(self, t: pxt.Table, path: str, version: str | None, existed: bool) -> bool:
-        """Whether a pending receipt's mutation is visible in the file.
+    def _settled(
+        self, row: dict[str, Any] | None, operation_id: str, version: str | None, existed: bool
+    ) -> bool | None:
+        """Whether the file existed before a pending receipt's mutation, or `None` if `row` does not show it landed.
 
-        A write landed if the file holds its version. A delete of an existing file leaves only an
-        absence, which another writer's delete also produces, so it never counts as landed: the
-        retry finds the file gone and reports that instead of replaying.
+        A write landed if the row holds its version, and the row records whether the file existed. A delete landed
+        if the row is the deleted-file marker its operation left, or if the receipt was recorded with no file to
+        delete.
         """
-        if version is None:
-            return not existed
-        return self._file_state(t, path)[0] == version
+        if version is not None:
+            return bool(row['existed']) if row is not None and str(row['version']) == version else None
+        if row is not None and row['kind'] == _KIND_DELETED and row['last_operation_id'] == operation_id:
+            return True
+        return False if not existed else None
 
-    def _receipt(self, t: pxt.Table, receipt_path: str, file_path: str, version: str | None) -> Expr:
-        """Match one pending receipt exactly, so a writer only settles the receipt it wrote."""
-        return (t.path == receipt_path) & (t.content == file_path) & (t.version == version)
+    def _complete(self, t: pxt.Table, receipt_path: str, file_path: str, version: str | None, existed: bool) -> None:
+        """Mark one pending receipt done, recording whether the file existed before its mutation."""
+        where = (t.path == receipt_path) & (t.content == file_path) & (t.version == version)
+        t.update({'content': None, 'existed': existed}, where=where)
 
     def _settle_path(self, t: pxt.Table, path: str) -> None:
-        """Settle receipts a crashed writer left pending on `path`, before another mutation moves it.
+        """Complete receipts whose mutation of `path` landed, before another mutation moves the file.
 
-        A pending receipt names its file in `content`. A receipt whose mutation `_landed` is completed;
-        any other is dropped, so a retry applies it under compare-and-set like a fresh call.
+        A pending receipt names its file in `content`. One whose mutation has not landed stays pending for its
+        operation's next attempt.
         """
         query = t.where((t.kind == _KIND_OP) & (t.content == path)).select(t.path, t.version, t.existed)
         assert isinstance(query, pxt.Query)
-        for row in query.collect():
-            version = None if row['version'] is None else str(row['version'])
-            receipt = self._receipt(t, str(row['path']), path, version)
-            if self._landed(t, path, version, bool(row['existed'])):
-                t.update({'content': None}, where=receipt)
-            else:
-                t.delete(where=receipt)
+        receipts = query.collect()
+        if len(receipts) == 0:
+            return
+        row = self._file_row(t, path)
+        for receipt in receipts:
+            receipt_path = str(receipt['path'])
+            version = None if receipt['version'] is None else str(receipt['version'])
+            existed = self._settled(row, receipt_path.removeprefix(_OP_PREFIX), version, bool(receipt['existed']))
+            if existed is not None:
+                self._complete(t, receipt_path, path, version, existed)
 
     def _lookup_operation(self, t: pxt.Table, operation: MemoryOperation) -> MemoryMutation | None:
-        """Return the receipt for `operation`, or `None` if it is missing or its mutation has not landed.
-
-        A pending receipt is left in place here: its writer may still be running, and only a mutation of
-        its file (`_settle_path`) can drop it.
-        """
+        """Return the receipt for `operation`, or `None` if it is missing or its mutation has not landed."""
         receipt_path = _receipt_path(operation)
         query = t.where(t.path == receipt_path).select(t.fingerprint, t.version, t.existed, t.content)
         assert isinstance(query, pxt.Query)
@@ -322,27 +336,25 @@ class PixeltableMemoryStore:
         if row['fingerprint'] != operation.fingerprint:
             raise MemoryOperationConflictError(f'operation id {operation.id!r} was reused with different arguments')
         version = None if row['version'] is None else str(row['version'])
-        pending = row['content']
-        if pending is not None:
-            if not self._landed(t, pending, version, bool(row['existed'])):
+        existed = bool(row['existed'])
+        if (pending := row['content']) is not None:
+            settled = self._settled(self._file_row(t, pending), operation.id, version, existed)
+            if settled is None:
                 return None
-            t.update({'content': None}, where=self._receipt(t, receipt_path, pending, version))
-        return MemoryMutation(version=version, replayed=True, existed=bool(row['existed']))
+            existed = settled
+            self._complete(t, receipt_path, pending, version, existed)
+        return MemoryMutation(version=version, replayed=True, existed=existed)
 
-    def _apply(
-        self, t: pxt.Table, path: str, content: str | None, expected: str | None, values: dict[str, object]
-    ) -> None:
-        if expected is None:
-            if content is not None:
-                _insert_rows(t, [{'path': path, **values, 'fingerprint': None, 'existed': None}])
+    def _apply(self, t: pxt.Table, path: str, row: dict[str, Any] | None, values: dict[str, object]) -> None:
+        """Write `values` to `path` under compare-and-set on `row`, the row the caller checked."""
+        deleting = values['kind'] == _KIND_DELETED
+        if row is None or (deleting and row['kind'] == _KIND_DELETED):
+            if not deleting:
+                _insert_rows(t, [{'path': path, **values, 'fingerprint': None}])
             return
-        where = (t.path == path) & (t.kind == _KIND_FILE) & (t.version == expected)
-        if content is None:
-            changed = t.delete(where=where).row_count_stats.del_rows
-        else:
-            changed = t.update(values, where=where).row_count_stats.upd_rows
-        if changed != 1:
-            action = 'deleted' if content is None else 'written'
+        where = (t.path == path) & (t.kind == row['kind']) & (t.version == row['version'])
+        if t.update(values, where=where).row_count_stats.upd_rows != 1:
+            action = 'deleted' if deleting else 'written'
             raise MemoryConflictError(f'memory path {path!r} changed before it could be {action}')
 
     def _read_sync(self, path: str, max_chars: int) -> MemoryFile | None:
@@ -380,31 +392,28 @@ class PixeltableMemoryStore:
         _check_store_path(path)
         t = self._ensure_table()
         self._settle_path(t, path)
-        current, last_operation_id = self._file_state(t, path)
-        if operation is not None:
-            if (receipt := self._lookup_operation(t, operation)) is not None:
-                return receipt
-            if last_operation_id == operation.id:
-                # The write landed but its receipt was lost (a concurrent writer dropped it, then this writer
-                # stopped before restoring it). The file row records the operation id with the content, and a
-                # retry repeats the original `expected_version`, so `existed` is computed as the original was.
-                return MemoryMutation(version=current, replayed=True, existed=expected_version is not None)
+        row = self._file_row(t, path)
+        current = str(row['version']) if row is not None and row['kind'] == _KIND_FILE else None
+        if operation is not None and (receipt := self._lookup_operation(t, operation)) is not None:
+            return receipt
         if current != expected_version:
             action = 'deleted' if content is None else 'written'
             raise MemoryConflictError(f'memory path {path!r} changed before it could be {action}')
-        mutation = MemoryMutation(
-            version=None if content is None else uuid.uuid4().hex,
-            replayed=False,
-            existed=expected_version is not None,
-        )
+        if content is None:
+            version = None
+        else:
+            version = uuid.uuid4().hex if operation is None else _operation_version(operation)
+        mutation = MemoryMutation(version=version, replayed=False, existed=expected_version is not None)
         values: dict[str, object] = {
-            'kind': _KIND_FILE,
+            'kind': _KIND_FILE if content is not None else _KIND_DELETED,
             'content': content,
-            'version': mutation.version,
+            # A deleted-file marker gets a fresh version too, so recreating the file is compare-and-set as well.
+            'version': mutation.version or uuid.uuid4().hex,
             'last_operation_id': None if operation is None else operation.id,
+            'existed': mutation.existed,
         }
         if operation is None:
-            self._apply(t, path, content, expected_version, values)
+            self._apply(t, path, row, values)
             return mutation
 
         receipt_path = _receipt_path(operation)
@@ -417,26 +426,22 @@ class PixeltableMemoryStore:
             'fingerprint': operation.fingerprint,
             'existed': mutation.existed,
         }
-        # Pending first, so a crash before completion is settled by the next mutation of `path`.
+        # Pending first, so the next mutation of `path` completes it if this writer stops after applying. Receipts
+        # are never deleted: an earlier attempt of this operation may have left one, and since every attempt writes
+        # the same version, that receipt matches whichever attempt lands.
         try:
             _insert_rows(t, [receipt_row])
         except MemoryConflictError:
-            # A peer with the same operation id recorded its receipt first; replay it if it landed.
+            if (receipt := self._lookup_operation(t, operation)) is not None:
+                return receipt
+        try:
+            self._apply(t, path, row, values)
+        except MemoryConflictError:
+            # Another attempt of this operation may have landed first; report it rather than a conflict.
             if (receipt := self._lookup_operation(t, operation)) is not None:
                 return receipt
             raise
-        pending = self._receipt(t, receipt_path, path, mutation.version)
-        try:
-            self._apply(t, path, content, expected_version, values)
-        except MemoryConflictError:
-            t.delete(where=pending)
-            raise
-        if t.update({'content': None}, where=pending).row_count_stats.upd_rows == 0:
-            # A peer running the same operation id dropped our pending receipt before we applied; restore it.
-            try:
-                _insert_rows(t, [{**receipt_row, 'content': None}])
-            except MemoryConflictError:  # pragma: lax no cover - a same-id peer recorded a receipt in between
-                pass
+        self._complete(t, receipt_path, path, mutation.version, mutation.existed)
         return mutation
 
     def _file_rows(self, t: pxt.Table, where: Expr, limit: int, content_chars: int = 0) -> list[dict[str, Any]]:

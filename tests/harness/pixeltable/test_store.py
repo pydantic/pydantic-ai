@@ -251,19 +251,22 @@ class TestPixeltableMemoryStoreRecovery:
         assert replay == MemoryMutation(version=file.version, replayed=True, existed=True)
         assert file.content == 'next'
 
-    async def test_delete_that_landed_is_not_replayed(
+    async def test_delete_that_landed_is_replayed_after_the_file_is_recreated(
         self, store: PixeltableMemoryStore, table_name: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # Absence cannot tell this delete from another writer's, so the retry finds the file gone instead.
         base = await store.write('a.md', 'base', expected_version=None)
         operation = MemoryOperation(id='crash-after-delete', fingerprint='delete:a.md')
         _intercept(monkeypatch, store.table, 'update', receipt=True, around=_crash)
         with pytest.raises(RuntimeError, match='crashed'):
             await store.delete('a.md', expected_version=base.version, operation=operation)
+        other = PixeltableMemoryStore(table_name=table_name)
+        await other.write('a.md', 'other', expected_version=None)
 
-        restarted = PixeltableMemoryStore(table_name=table_name)
-        assert await restarted.get_operation(operation) is None
-        assert await restarted.read('a.md', max_chars=10) is None
+        # The deleted-file marker named the operation, so the retry replays instead of deleting 'other'.
+        assert await other.get_operation(operation) == MemoryMutation(version=None, replayed=True, existed=True)
+        file = await other.read('a.md', max_chars=10)
+        assert file is not None
+        assert file.content == 'other'
 
     async def test_mutation_that_never_landed_is_applied_by_the_retry(
         self, store: PixeltableMemoryStore, table_name: str, monkeypatch: pytest.MonkeyPatch
@@ -283,7 +286,7 @@ class TestPixeltableMemoryStoreRecovery:
             version=retried.version, replayed=True, existed=False
         )
 
-    async def test_pending_receipt_is_dropped_once_another_writer_moves_the_path(
+    async def test_retry_applies_a_mutation_that_never_landed_after_another_writer(
         self, store: PixeltableMemoryStore, table_name: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         operation = MemoryOperation(id='crash-then-other-writer', fingerprint='write:a.md:hello')
@@ -291,23 +294,15 @@ class TestPixeltableMemoryStoreRecovery:
         with pytest.raises(RuntimeError, match='crashed'):
             await store.write('a.md', 'hello', expected_version=None, operation=operation)
         other = PixeltableMemoryStore(table_name=table_name)
-        await other.write('a.md', 'other', expected_version=None)
+        moved = await other.write('a.md', 'other', expected_version=None)
 
+        # `Memory` retries against the version it reads now, reusing the receipt the crashed attempt left.
         assert await other.get_operation(operation) is None
-        with pytest.raises(MemoryConflictError, match='changed before it could be written'):
-            await other.write('a.md', 'hello', expected_version=None, operation=operation)
-        file = await other.read('a.md', max_chars=10)
-        assert file is not None
-        assert file.content == 'other'
-
-    async def test_write_with_a_lost_receipt_is_replayed_from_the_file_row(self, store: PixeltableMemoryStore) -> None:
-        operation = MemoryOperation(id='run-1:call-1', fingerprint='write:notes/main.md:one')
-        first = await store.write('notes/main.md', 'one', expected_version=None, operation=operation)
-        table = store.table
-        table.delete(where=table.path == f'__op__/{operation.id}')
-        # The retry repeats the original call; the file row records the operation id, so it is not applied again.
-        replay = await store.write('notes/main.md', 'one', expected_version=None, operation=operation)
-        assert replay == MemoryMutation(version=first.version, replayed=True, existed=False)
+        retried = await other.write('a.md', 'other+hello', expected_version=moved.version, operation=operation)
+        assert not retried.replayed
+        assert await other.get_operation(operation) == MemoryMutation(
+            version=retried.version, replayed=True, existed=True
+        )
 
     async def test_landed_mutation_is_replayed_after_another_writer(
         self, store: PixeltableMemoryStore, table_name: str, monkeypatch: pytest.MonkeyPatch
@@ -333,7 +328,7 @@ class TestPixeltableMemoryStoreRaces:
         [
             ('create', 'insert', 'Duplicate primary key'),
             ('write', 'update', 'changed before it could be written'),
-            ('delete', 'delete', 'changed before it could be deleted'),
+            ('delete', 'update', 'changed before it could be deleted'),
         ],
     )
     async def test_mutation_race_without_operation_is_conflict(
@@ -387,7 +382,28 @@ class TestPixeltableMemoryStoreRaces:
         replay = await store.write('a.md', 'hello', expected_version=None, operation=operation)
         assert replay == MemoryMutation(version=landed[0].version, replayed=True, existed=False)
 
-    async def test_peer_that_has_not_landed_is_a_conflict(
+    async def test_conflict_with_a_landed_peer_of_the_same_operation_is_replayed(
+        self, store: PixeltableMemoryStore, table_name: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        base = await store.write('a.md', 'base', expected_version=None)
+        operation = MemoryOperation(id='shared-op', fingerprint='write:a.md:next')
+        peer = PixeltableMemoryStore(table_name=table_name)
+        landed: list[MemoryMutation] = []
+
+        def peer_lands_first(call: Callable[[], object]) -> object:
+            landed.append(
+                anyio.from_thread.run(
+                    partial(peer.write, 'a.md', 'next', expected_version=base.version, operation=operation)
+                )
+            )
+            return call()
+
+        _intercept(monkeypatch, store.table, 'update', receipt=False, around=peer_lands_first)
+        # Our compare-and-set fails because the peer's write landed; that is this operation's result, not a conflict.
+        replay = await store.write('a.md', 'next', expected_version=base.version, operation=operation)
+        assert replay == MemoryMutation(version=landed[0].version, replayed=True, existed=True)
+
+    async def test_receipt_of_a_crashed_peer_is_reused(
         self, store: PixeltableMemoryStore, table_name: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         operation = MemoryOperation(id='shared-op', fingerprint='write:a.md:hello')
@@ -397,16 +413,35 @@ class TestPixeltableMemoryStoreRaces:
             _intercept(monkeypatch, peer.table, 'insert', receipt=False, around=_crash)
             with pytest.raises(RuntimeError, match='crashed'):
                 anyio.from_thread.run(partial(peer.write, 'a.md', 'hello', expected_version=None, operation=operation))
-            # Our receipt insert now collides with the peer's; the peer's write never landed, so it is dropped.
             return call()
 
         _intercept(monkeypatch, store.table, 'insert', receipt=True, around=peer_crashes_after_its_receipt)
-        with pytest.raises(MemoryConflictError, match='Duplicate primary key'):
-            await store.write('a.md', 'hello', expected_version=None, operation=operation)
-        assert await store.get_operation(operation) is None
-        assert not (await store.write('a.md', 'hello', expected_version=None, operation=operation)).replayed
+        written = await store.write('a.md', 'hello', expected_version=None, operation=operation)
+        assert not written.replayed
+        assert await store.get_operation(operation) == MemoryMutation(
+            version=written.version, replayed=True, existed=False
+        )
 
-    async def test_conflict_withdraws_the_pending_receipt(
+    async def test_peer_crashing_mid_flight_leaves_the_receipt_ours_completes(
+        self, store: PixeltableMemoryStore, table_name: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        operation = MemoryOperation(id='shared-op', fingerprint='write:a.md:hello')
+        peer = PixeltableMemoryStore(table_name=table_name)
+
+        def peer_runs_then_crashes(call: Callable[[], object]) -> object:
+            _intercept(monkeypatch, peer.table, 'insert', receipt=False, around=_crash)
+            with pytest.raises(RuntimeError, match='crashed'):
+                anyio.from_thread.run(partial(peer.write, 'a.md', 'hello', expected_version=None, operation=operation))
+            return call()
+
+        _intercept(monkeypatch, store.table, 'insert', receipt=False, around=peer_runs_then_crashes)
+        written = await store.write('a.md', 'hello', expected_version=None, operation=operation)
+        # Both attempts share one receipt and one version, so our landed write completes it.
+        assert await store.get_operation(operation) == MemoryMutation(
+            version=written.version, replayed=True, existed=False
+        )
+
+    async def test_conflict_is_not_recorded_as_done(
         self, store: PixeltableMemoryStore, table_name: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         operation = MemoryOperation(id='conflicted', fingerprint='write:a.md:hello')
@@ -439,21 +474,28 @@ class TestPixeltableMemoryStoreRaces:
             version=written.version, replayed=True, existed=False
         )
 
-    async def test_receipt_dropped_by_another_writer_is_restored(
+    async def test_in_flight_receipt_survives_another_writer_and_a_crash(
         self, store: PixeltableMemoryStore, table_name: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         base = await store.write('a.md', 'base', expected_version=None)
-        operation = MemoryOperation(id='restored', fingerprint='write:a.md:x')
+        operation = MemoryOperation(id='in-flight', fingerprint='write:a.md:x')
         other = PixeltableMemoryStore(table_name=table_name)
 
-        def stale_writer_settles_first(call: Callable[[], object]) -> object:
-            # Its mutation drops our pending receipt, then fails compare-and-set on a stale version.
+        def stale_writer_runs_first(call: Callable[[], object]) -> object:
+            # Its mutation finds our receipt pending and not landed, and must leave it for us.
             with pytest.raises(MemoryConflictError):
                 anyio.from_thread.run(partial(other.write, 'a.md', 'other', expected_version='stale'))
             return call()
 
-        _intercept(monkeypatch, store.table, 'update', receipt=False, around=stale_writer_settles_first)
-        written = await store.write('a.md', 'x', expected_version=base.version, operation=operation)
-        assert await store.get_operation(operation) == MemoryMutation(
-            version=written.version, replayed=True, existed=True
+        _intercept(monkeypatch, store.table, 'update', receipt=False, around=stale_writer_runs_first)
+        _intercept(monkeypatch, store.table, 'update', receipt=True, around=_crash)
+        with pytest.raises(RuntimeError, match='crashed'):
+            await store.write('a.md', 'x', expected_version=base.version, operation=operation)
+        landed = await other.read('a.md', max_chars=10)
+        assert landed is not None
+        await other.write('a.md', 'x+y', expected_version=landed.version)
+
+        # The later write completed our landed receipt, so a retry replays it instead of appending again.
+        assert await other.get_operation(operation) == MemoryMutation(
+            version=landed.version, replayed=True, existed=True
         )

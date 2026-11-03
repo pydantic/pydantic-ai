@@ -106,13 +106,14 @@ recalls it in a second run without the first run's chat history.
   mutation instead of applying it twice. Paths are limited to 255 characters and operation ids to
   248; the `__op__` path root is reserved.
 - Pixeltable has no multi-statement transaction, so a receipt is recorded as pending before its
-  mutation and completed after it. After a crash, the next mutation of that file settles the
-  receipt first: a write is replayed if the file holds its version, and anything else is dropped,
-  so the retry runs compare-and-set like a fresh call. A delete interrupted that way is reported
-  as not found on retry rather than replayed. `FileStore` settles receipts the same way.
-- Compare-and-set holds across processes. Exact replay after a crash assumes one process writes a
-  given table at a time; with several writing processes, a crash can still lose or misattribute a
-  receipt.
+  mutation and completed after it, and receipts are never deleted. Every attempt of one operation
+  writes the same version, so its receipt matches whichever attempt lands. Deleting a file keeps
+  an empty marker row that names the deleting operation. The next mutation of a file completes
+  the pending receipts whose write or delete is visible there; any other waits for its
+  operation's next attempt.
+- Compare-and-set and replay hold with several writers, in one process or several, and with a
+  crash between any two table operations: an operation is applied at most once, and its retry
+  replays it.
 - It does not implement `MetadataMemoryStore`, so `Memory(write_metadata=...)` raises `UserError`.
 - `search_memory` uses the same lexical scoring and prefix isolation as the other stores.
 - `store.table` supports queries, joins, and computed columns; filter to `kind == 'file'` for memory
