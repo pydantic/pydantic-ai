@@ -45,14 +45,6 @@ def _create(server: FakeOpenSandbox, working_dir: str, **kwargs: Any) -> OpenSan
     return OpenSandboxBackend(image='fake-image', connection=server.connection, working_dir=working_dir, **kwargs)
 
 
-@pytest.fixture
-def fast_clock(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Advance the backend's clock a second on every read, so its two-second wait for a kill to show ends at once."""
-    ticks = itertools.count()
-    monkeypatch.setattr(f'{_MODULE}.time', types.SimpleNamespace(monotonic=lambda: float(next(ticks))))
-    monkeypatch.setattr(f'{_MODULE}._GONE_POLL_INTERVAL', 0)
-
-
 async def _wait_for(path: Path) -> None:
     """Wait for a command to create `path`: the signal it reached the point a test acts on."""
     with anyio.fail_after(5):
@@ -129,7 +121,6 @@ class TestCommands:
         with pytest.raises(WorkspaceUnavailableError, match=r'execd older than 1\.1\.1'):
             await _create(server, working_dir).run(['true'])
 
-    @pytest.mark.usefixtures('fast_clock')
     async def test_a_command_that_kills_its_wrapper_cannot_run(self, server: FakeOpenSandbox, working_dir: str) -> None:
         """Only a dying sandbox normally kills the wrapper; on a live one the command's result is lost."""
         with pytest.raises(WorkspaceError, match='could not run the command'):
@@ -317,16 +308,16 @@ class TestLifecycle:
         with pytest.raises(WorkspaceUnavailableError, match='no longer exists'):
             await attached.run(['true'])
 
-    async def test_a_kill_during_a_command_waits_for_the_server_to_catch_up(
-        self, server: FakeOpenSandbox, working_dir: str, monkeypatch: pytest.MonkeyPatch
+    async def test_a_kill_the_server_has_not_reported_yet_is_unavailable_on_the_next_operation(
+        self, server: FakeOpenSandbox, working_dir: str
     ) -> None:
-        """The broken stream precedes the control plane changing from `Running` to `Stopping`."""
-        monkeypatch.setattr(f'{_MODULE}._GONE_POLL_INTERVAL', 0)
+        """The broken stream precedes the control plane changing from `Running` to `Stopping`; the backend asks
+        once instead of waiting for it, so the first failure stays transient."""
         backend = _create(server, working_dir)
         started = Path(working_dir, 'started')
 
         async def run_until_killed() -> None:
-            with pytest.raises(WorkspaceUnavailableError, match='no longer exists'):
+            with pytest.raises(SandboxConnectionException):
                 await backend.run(['sh', '-c', f'touch {started}; exec sleep 300'])
 
         async with anyio.create_task_group() as group:
@@ -337,7 +328,10 @@ class TestLifecycle:
             server.stale_running_queries = 1
             await server.kill(backend.ref.id)
         assert backend.ref is not None
-        assert server.requests.count(f'GET /v1/sandboxes/{backend.ref.id}') == 2
+        state = f'GET /v1/sandboxes/{backend.ref.id}'
+        assert server.requests.count(state) == 1
+        with pytest.raises(WorkspaceUnavailableError, match='no longer exists'):
+            await backend.run(['true'])
 
     async def test_a_sandbox_the_sdk_killed_after_a_failed_create_is_not_recorded(
         self, server: FakeOpenSandbox, working_dir: str
@@ -371,7 +365,7 @@ class TestWorkingDir:
     ) -> None:
         """execd refuses a missing working directory; the sandbox is fine, so the error is the command's.
 
-        Only a broken stream waits for the server to catch up with a kill: this asks for the sandbox's state once.
+        The backend asks for the sandbox's state once.
         """
         backend = _create(server, f'{working_dir}/project')
         await backend.run(['rm', '-r', f'{working_dir}/project'])
@@ -410,11 +404,10 @@ class TestServerErrors:
         with pytest.raises(SandboxApiException):
             await OpenSandbox[None](connection=server.connection).destroy(backend.ref)
 
-    @pytest.mark.usefixtures('fast_clock')
     async def test_a_broken_stream_on_a_running_sandbox_stays_transient(
         self, server: FakeOpenSandbox, working_dir: str
     ) -> None:
-        """The backend waits its two seconds for a kill to show, then lets the failure propagate."""
+        """The server still reports the sandbox running, so the failure propagates for a retry."""
         backend = _create(server, working_dir)
         started = Path(working_dir, 'started')
 
