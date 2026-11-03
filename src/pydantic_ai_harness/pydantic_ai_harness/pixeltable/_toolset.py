@@ -122,10 +122,11 @@ def _where_value(name: str, info: pxt.ColumnMetadata, raw_value: WhereValue) -> 
     type_ = info['type_']
     if _computed_on_read(name, info):
         raise ModelRetry(f'Column {name!r} is computed on read; these tools do not run it.')
-    if raw_value is None:
-        return None
+    # Even an IS NULL filter on an on-read-validated media column opens every file before filtering.
     if _is_skipped_type(type_) or _is_media_type(type_):
         raise ModelRetry(f'Column {name!r} does not support equality filters. Call describe_table.')
+    if raw_value is None:
+        return None
     base = column_base(type_)
     expected = _WHERE_VALUE_TYPES.get(base)
     if expected is not None and (
@@ -322,8 +323,8 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
             table: Pixeltable table path.
             columns: Columns to return. Omit to skip media, array, and binary
                 columns. Explicit media, array, binary, and unstored computed or iterator columns are rejected.
-            where: Equality filters mapping column name to value. Media, array, and
-                binary columns reject non-null filters; `None` matches null rows.
+            where: Equality filters mapping column name to value; `None` matches null rows.
+                Media, array, and binary columns reject filters.
             limit: Maximum rows to return, capped by the capability.
 
         Returns:

@@ -338,18 +338,20 @@ class TestPixeltableToolsetQuery:
         with pytest.raises(ModelRetry, match="Cannot filter 'data'"):
             tools.query_table(f'{catalog}.blobs', where={'data': [1, 2]})  # pyright: ignore[reportArgumentType]
 
-    def test_media_and_null_filters(self, catalog: str, assets_path: Path) -> None:
-        # Media columns never match an equality filter; None is still an IS NULL filter.
-        note_file = assets_path / 'dummy.pdf'
-        docs = create_table(
-            f'{catalog}.docs', {'title': pxt.String, 'note': pxt.String | None, 'doc': pxt.Document | None}
-        )
-        insert_rows(docs, [{'title': 'a', 'note': None, 'doc': str(note_file)}, {'title': 'b', 'note': 'n'}])
+    @pytest.mark.parametrize('value', ['x', None])
+    def test_media_filters_are_rejected(self, catalog: str, value: str | None) -> None:
+        # Even IS NULL opens every file of an on-read-validated media column before filtering.
+        create_table(f'{catalog}.docs', {'title': pxt.String, 'doc': pxt.Document | None})
         tools = _tools([f'{catalog}.docs'])
         with pytest.raises(ModelRetry, match='equality filters'):
-            tools.query_table(f'{catalog}.docs', where={'doc': 'x'})
-        assert tools.query_table(f'{catalog}.docs', columns=['title'], where={'doc': None})['rows'] == [{'title': 'b'}]
-        assert tools.query_table(f'{catalog}.docs', columns=['title'], where={'note': None})['rows'] == [{'title': 'a'}]
+            tools.query_table(f'{catalog}.docs', where={'doc': value})
+
+    def test_none_filter_matches_null_rows(self, catalog: str) -> None:
+        notes = create_table(f'{catalog}.notes', {'title': pxt.String, 'note': pxt.String | None})
+        insert_rows(notes, [{'title': 'a', 'note': None}, {'title': 'b', 'note': 'n'}])
+        tools = _tools([f'{catalog}.notes'])
+        result = tools.query_table(f'{catalog}.notes', columns=['title'], where={'note': None})
+        assert result['rows'] == [{'title': 'a'}]
 
     def test_where_parses_iso_timestamp_date_and_uuid(self, catalog: str) -> None:
         # JSON has no timestamp, date, or UUID; unparsed strings would match nothing.

@@ -85,8 +85,8 @@ recalls it in a second run without the first run's chat history.
 - Default projections skip media, array, binary, unstored computed columns, and unstored iterator
   outputs, including indexed media in similarity search. Explicit projections reject the same
   columns: media because it exposes local file paths, and unstored computed or iterator columns
-  because they rerun their functions (possibly model calls) on read. Filters reject unstored
-  computed or iterator columns too.
+  because they rerun their functions (possibly model calls) on read. Filters reject the same
+  columns, including `None` filters on media, which would open every file before filtering.
 - `query_table` and `similarity_search` return `{"table", "rows", "truncated"}`, bounded by `max_rows`
   (default 20) and `max_chars` (default 8000). Oversized strings end in `...`; other oversized values
   become `null`, and `truncated` reports applied bounds. A cap below the minimal result envelope
