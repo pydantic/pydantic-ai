@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+from collections.abc import Callable
 from typing import overload
 
 from pydantic_ai import ModelProfile
@@ -43,7 +44,7 @@ class CerebrasProvider(_OpenAISDKProvider):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        prefix_to_profile = {
+        prefix_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
             'llama': meta_model_profile,
             'qwen': qwen_model_profile,
             'gpt-oss': harmony_model_profile,
