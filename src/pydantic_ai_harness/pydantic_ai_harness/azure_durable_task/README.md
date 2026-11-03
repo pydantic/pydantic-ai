@@ -347,3 +347,28 @@ bridge cleanup runs late and workers may log `Task was destroyed but it is pendi
 This is fixed upstream in [microsoft/durabletask-python#300](https://github.com/microsoft/durabletask-python/pull/300)
 and [microsoft/durabletask-python#303](https://github.com/microsoft/durabletask-python/pull/303);
 the minimum pin will move to the release that includes them.
+
+### Evaluate SDK 1.13
+
+SDK 1.13.0 includes these fixes. To evaluate it from a repository checkout, use a Python 3.11+
+development environment with the Harness Azure Durable Task extra and pytest installed.
+Start the v0.0.9 emulator from [Run locally](#run-locally); this regression uses a local model
+and needs no provider credentials. From the repository root, run:
+
+```powershell
+$env:AZURE_DURABLE_TASK_REQUIRE_LIVE = '1'
+uv run --no-sync --with "durabletask==1.13.0" --with "durabletask-azuremanaged==1.13.0" python -m pytest src\pydantic_ai_harness\integration_tests\azure_durable_task\test_live_dispatch_cleanup.py -q -rs
+```
+
+`--with` selects both SDK versions for this command without changing the project's requirements,
+lockfile or 1.12 test adapter. Your configured package feeds and package-age policy must permit
+both 1.13 packages. If your proxy has not yet mirrored them, resolution fails before testing;
+wait for feed availability.
+Verification with locally built official release-source wheels is separate from published-wheel
+verification.
+
+The test defaults to `localhost:8080` and task hub `default`; set
+`AZURE_DURABLE_TASK_TEST_ENDPOINT` and `AZURE_DURABLE_TASK_TEST_TASKHUB` for another emulator.
+`AZURE_DURABLE_TASK_REQUIRE_LIVE=1` makes an unavailable emulator fail instead of skip.
+The cleanup cases skip explicitly when either SDK is older than 1.13, including the locked 1.12
+environment. They do not import the version-checked 1.12 in-process test adapter.
