@@ -425,12 +425,23 @@ def lookalike_frame_note(
     )
 
 
+_NOTE_IDENTIFIER: re.Pattern[str] = re.compile(r'[A-Za-z0-9_.:-]{1,128}')
+"""A tool name or call id a note may quote: the note speaks in the application's voice, and both come from history."""
+
+
 def _lookalike_item_name(source: LookalikeSource, *, tool_name: str | None, tool_call_id: str | None) -> str:
-    """How a note names the item holding a lookalike: a tool result by its tool and call id, where known."""
+    """How a note names the item holding a lookalike: a tool result by its tool and call id, where known.
+
+    Only a name and id that are plain identifiers are quoted. Anything else in them would be text from the history
+    carried into the application's voice, so the note leaves it out and names the tool result alone.
+    """
     item = _LOOKALIKE_ITEM[source]
-    if source != 'tool' or tool_name is None:
+    if source != 'tool' or tool_name is None or not _NOTE_IDENTIFIER.fullmatch(tool_name):
         return item
-    return f'{item} from `{tool_name}`' + (f' (call `{tool_call_id}`)' if tool_call_id else '')
+    named = f'{item} from `{tool_name}`'
+    if tool_call_id and _NOTE_IDENTIFIER.fullmatch(tool_call_id):
+        return f'{named} (call `{tool_call_id}`)'
+    return named
 
 
 def _system_lookalike_note(
