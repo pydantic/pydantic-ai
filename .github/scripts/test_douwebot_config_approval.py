@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 import yaml
+from publish_douwebot_review import Finding, ReviewResult, publication
 
 WORKFLOW = Path(__file__).parent.parent / 'workflows' / 'bots.yml'
 APPROVAL_LABEL = 'douwebot:review-agent-config'
@@ -262,18 +263,25 @@ def test_reapplication_is_a_new_first_attempt_request(tmp_path: Path):
 
 
 REVIEWED_HEAD = 'a' * 40
+FINDING = Finding(path='a.py', line=1, side='RIGHT', body='Rename this.')
 
 
 def _douwebot_review(
-    review_id: int, state: str, verdict: str, *, head: str = REVIEWED_HEAD, login: str = 'github-actions[bot]'
+    review_id: int,
+    state: str,
+    result: ReviewResult,
+    *,
+    head: str = REVIEWED_HEAD,
+    inline: bool = True,
 ) -> dict[str, Any]:
+    """A review as the trusted publisher posts it, so the skip filter follows the publisher's wording."""
     return {
         'id': review_id,
-        'user': {'login': login, 'type': 'Bot' if login.endswith('[bot]') else 'User'},
+        'user': {'login': 'github-actions[bot]', 'type': 'Bot'},
         'commit_id': REVIEWED_HEAD,
         'state': state,
         'html_url': f'review-{review_id}',
-        'body': f'{verdict}\n\n<!-- douwebot:review run=7 head={head} -->',
+        'body': json.loads(publication(result, head, 7, inline=inline))['body'],
     }
 
 
@@ -281,37 +289,79 @@ def _douwebot_review(
 @pytest.mark.parametrize(
     ('review', 'commented', 'expected'),
     [
-        pytest.param(_douwebot_review(1, 'APPROVED', 'No blocking findings.'), False, '', id='clean-approval'),
-        pytest.param(_douwebot_review(2, 'APPROVED', 'No blocking findings.'), True, 'review-2', id='optional-inline'),
         pytest.param(
-            _douwebot_review(3, 'APPROVED', 'No blocking findings.\n\nConsider X.'), False, 'review-3', id='discussion'
+            _douwebot_review(1, 'APPROVED', ReviewResult(verdict='APPROVE', comments=[], discussion='')),
+            False,
+            '',
+            id='clean-approval',
         ),
         pytest.param(
-            _douwebot_review(4, 'CHANGES_REQUESTED', 'Blocking findings are recorded inline.'),
+            _douwebot_review(2, 'APPROVED', ReviewResult(verdict='APPROVE', comments=[FINDING], discussion='')),
+            True,
+            'review-2',
+            id='optional-inline',
+        ),
+        pytest.param(
+            _douwebot_review(3, 'APPROVED', ReviewResult(verdict='APPROVE', comments=[], discussion='Consider X.')),
+            False,
+            'review-3',
+            id='discussion',
+        ),
+        pytest.param(
+            _douwebot_review(
+                4, 'CHANGES_REQUESTED', ReviewResult(verdict='REQUEST_CHANGES', comments=[], discussion='')
+            ),
             False,
             '',
             id='request-changes-without-findings-on-head',
         ),
         pytest.param(
-            _douwebot_review(5, 'COMMENTED', 'Review incomplete.\n\nCould not read X.'), True, '', id='incomplete'
+            _douwebot_review(
+                5, 'COMMENTED', ReviewResult(verdict='INCOMPLETE', comments=[FINDING], discussion='Could not read X.')
+            ),
+            True,
+            '',
+            id='incomplete',
         ),
         pytest.param(
-            _douwebot_review(6, 'DISMISSED', 'Blocking findings are recorded inline.'), True, 'review-6', id='dismissed'
+            _douwebot_review(
+                6, 'DISMISSED', ReviewResult(verdict='REQUEST_CHANGES', comments=[FINDING], discussion='')
+            ),
+            True,
+            'review-6',
+            id='dismissed',
         ),
         pytest.param(
-            _douwebot_review(7, 'CHANGES_REQUESTED', 'Blocking findings are recorded below.\n\n### `a.py:1`'),
+            _douwebot_review(
+                7,
+                'CHANGES_REQUESTED',
+                ReviewResult(verdict='REQUEST_CHANGES', comments=[FINDING], discussion=''),
+                inline=False,
+            ),
             False,
             'review-7',
             id='body-findings-after-422',
         ),
         pytest.param(
-            _douwebot_review(8, 'CHANGES_REQUESTED', 'Blocking findings are recorded inline.', head='b' * 40),
+            _douwebot_review(
+                8,
+                'CHANGES_REQUESTED',
+                ReviewResult(verdict='REQUEST_CHANGES', comments=[FINDING], discussion=''),
+                head='b' * 40,
+            ),
             True,
             '',
             id='another-head',
         ),
         pytest.param(
-            _douwebot_review(9, 'CHANGES_REQUESTED', 'Please rename this.', login='maintainer'),
+            {
+                'id': 9,
+                'user': {'login': 'maintainer', 'type': 'User'},
+                'commit_id': REVIEWED_HEAD,
+                'state': 'CHANGES_REQUESTED',
+                'html_url': 'review-9',
+                'body': 'Please rename this.',
+            },
             True,
             '',
             id='human-review',
