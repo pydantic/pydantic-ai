@@ -13,7 +13,7 @@ def error_message(error: BaseException) -> str:
     """
     from pydantic_ai.exceptions import ModelRateLimitError
     from pydantic_ai.providers.openai_codex import CredentialsRefreshError
-    from pydantic_clai2.models._retry_after import retry_after_message
+    from pydantic_clai2.models.retry_after import retry_after_message
 
     if isinstance(error, BaseExceptionGroup):
         group = cast('BaseExceptionGroup[BaseException]', error)

@@ -140,6 +140,8 @@ export function sessionApi(id: string | null) {
     removeQueued: (id: string) => call<void>('DELETE', `${base}/queue/${encodeURIComponent(id)}`),
     /** Send a queued prompt to the running turn now; `steered: false` leaves it queued. */
     steerQueued: (id: string) => call<{ steered: boolean }>('POST', `${base}/queue/${encodeURIComponent(id)}/steer`),
+    /** Drop the turn `runId` started and every later one, then send `text` with that prompt's images in its place. */
+    rewind: (runId: string, text: string) => call<void>('POST', `${base}/rewind/${encodeURIComponent(runId)}`, { text }),
     interrupt: () => call<{ interrupted: boolean }>('POST', `${base}/interrupt`),
     /** One of the images a prompt in this session's transcript lists, as a `data:` URL; fetched once per page. */
     image: (id: string) => image(base, id),

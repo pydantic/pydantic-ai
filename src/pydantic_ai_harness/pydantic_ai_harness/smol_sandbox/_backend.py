@@ -37,7 +37,6 @@ from typing import TYPE_CHECKING, TypeVar, cast
 
 import anyio
 
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     SupportsCommands,
@@ -52,9 +51,10 @@ from pydantic_ai_harness._workspace_provider import (
     EXEC_SCRIPT,
     absolute_path,
     check_env,
+    check_provider,
     check_timeout,
     command_argv,
-    running_on_asyncio,
+    require_asyncio,
 )
 
 if TYPE_CHECKING:
@@ -122,18 +122,13 @@ def check_ref(ref: WorkspaceRef) -> None:
     For refs from message history and for deletion: `connect` opens any VM of this OS user by name, so
     such a ref could otherwise reach a VM made by another tool, with host mounts or network.
     """
-    _check_provider(ref)
+    check_provider(ref, 'smol')
     if _NAME.fullmatch(ref.id) is None:
         raise ValueError(
             f'SmolSandbox only uses VMs it created, named {_NAME_PREFIX!r} and 32 hex digits, got {ref.id!r}. '
             'To use another VM, pass `workspace=SmolSandboxBackend(sandbox=machine)` to the run; '
             "`workspace='new'` starts a fresh VM."
         )
-
-
-def _check_provider(ref: WorkspaceRef) -> None:
-    if ref.provider != 'smol':
-        raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'smol'")
 
 
 def start_lifecycle(machine_id: str, work: Callable[[], Awaitable[_T]]) -> asyncio.Task[_T]:
@@ -258,7 +253,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
         env: Mapping[str, str] | None = None,
     ) -> None:
         if ref is not None:
-            _check_provider(ref)
+            check_provider(ref, 'smol')
         if sandbox is not None and ref is not None:
             raise ValueError('pass either `sandbox` or `ref`, not both')
         check_env(env)
@@ -296,8 +291,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
         return self._sandbox
 
     async def _vm(self) -> smol.Machine:
-        if not running_on_asyncio():
-            raise UserError(ASYNCIO_ONLY)
+        require_asyncio(ASYNCIO_ONLY)
         if self._machine is not None:
             return self._machine
         task = self._acquisition
