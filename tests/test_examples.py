@@ -875,6 +875,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Now redesign its auth layer.': 'Start from the threat model: who can mint a token, and what it is scoped to.',
     'hello': 'Hello! How can I help you today?',
     'What time is it?': 'The current time is 3:45 PM.',
+    "What is today's date?": 'Today is January 2, 2032.',
     "What's Jane's contact info?": 'You can reach Jane at jane@example.com or 555-123-4567.',
     'Say hi!': "Bonjour ! Comment puis-je vous aider aujourd'hui ?",
     'first run': 'Response to first run.',
