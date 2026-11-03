@@ -682,6 +682,8 @@ A short-circuiting wrapper skips `before_*`, including policy hooks. Put mandato
 
     Cancellation is terminal: a hook may observe it and clean up, but returning a result to recover the run does not work. The run re-asserts the cancellation at the next step boundary.
 
+    Under an `anyio` cancellation, such as an `anyio.fail_after()` deadline around the run, cleanup that awaits in `on_run_error`, `after_run`, or after `handler()` in `wrap_run` or `wrap_node_run` is cut at its next `await`. Run cleanup that must finish inside `anyio.CancelScope(shield=True)`. Bound shielded cleanup that does I/O with `anyio.move_on_after(..., shield=True)` instead, so a hung call can't hang the run indefinitely.
+
 ### Node hooks
 
 | Hook | Signature | Purpose |
@@ -832,7 +834,7 @@ wrap_model_request(handler)              once per step
               └─ success → after_model_request ────┴─ RetryModelRequest → next attempt
 ```
 
-Everything that depends on which model serves the request runs per attempt: `prepare_model_request`, the model's own message preparation, and token counting for [`UsageLimits.count_tokens_before_request`][pydantic_ai.usage.UsageLimits.count_tokens_before_request]. Each attempt starts from the request `before_model_request` produced, so an attempt never inherits preparation done for a different model. Put per-model work like compaction or context-window fitting in `prepare_model_request`, and work that should happen once per step, like a history processor or an injected message, in `before_model_request`. Changes made in `prepare_model_request` shape the request that is sent but are not persisted to message history.
+Everything that depends on which model serves the request runs per attempt: `prepare_model_request`, the model's own message preparation, and token counting for [`UsageLimits.count_tokens_before_request`][pydantic_ai.usage.UsageLimits.count_tokens_before_request]. Each attempt starts from the request `before_model_request` produced, so an attempt never inherits preparation done for a different model. Put per-model work like compaction or context-window fitting in `prepare_model_request`, and work that should happen once per step, like a history processor or an injected message, in `before_model_request`. Changes `prepare_model_request` makes to `request_context` shape the request that is sent for that attempt and are not persisted to message history. Changes made through [`RunContext.messages`][pydantic_ai.tools.RunContext.messages], the run's persistent history, do persist and are not rolled back for a further attempt: use them for state that doesn't depend on the attempt, such as a record later turns should reuse.
 
 A response that was rejected never reaches history, but its tokens and cost still count toward the run's usage and its token and cost limits. `usage.requests` counts the step once. A streamed request can be re-attempted only while the stream is being opened: raising `RetryModelRequest` from `after_model_request` on a streamed request raises [`UserError`][pydantic_ai.exceptions.UserError], because the response has already been streamed. A step can make at most 100 attempts, after which a `UserError` is raised.
 

@@ -12,7 +12,12 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_renamed
-from pydantic_ai_harness._workspace_provider import check_integer, check_working_dir
+from pydantic_ai_harness._workspace_provider import (
+    check_integer,
+    check_provider,
+    check_working_dir,
+    reject_defer_loading,
+)
 from pydantic_ai_harness.modal_sandbox._backend import (
     DEFAULT_APP_NAME,
     DEFAULT_SANDBOX_TIMEOUT,
@@ -231,11 +236,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
                 raise UserError('Pass `working_dir` only; `workdir` is its deprecated name.')
             warn_argument_renamed('ModalSandbox', 'workdir', 'working_dir')
             working_dir = workdir
-        if defer_loading:
-            raise UserError(
-                '`ModalSandbox` does not support `defer_loading=True`: '
-                'the workspace is selected before deferred capabilities load.'
-            )
+        reject_defer_loading('ModalSandbox', defer_loading)
         # Checked here rather than when the backend first creates a sandbox, so a bad value fails
         # where it is written instead of at the first workspace operation of some later run.
         if type(sandbox_timeout) is not int or not MIN_SANDBOX_TIMEOUT <= sandbox_timeout <= MAX_SANDBOX_TIMEOUT:
@@ -307,8 +308,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
 
         A sandbox that no longer exists is already gone, so destroying it returns quietly.
         """
-        if ref.provider != 'modal':
-            raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'modal'")
+        check_provider(ref, 'modal')
         await terminate_sandbox(ref.id)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:

@@ -275,7 +275,7 @@ Custom evaluators must:
 2. Inherit from `Evaluator`
 3. Be passed to both `to_file()` and `from_file()`
 
-[Function evaluators](../evaluators/custom.md#function-evaluators) can't be serialized: `to_file()` raises an error for a dataset that uses one.
+[Function evaluators](../evaluators/custom.md#saving-function-evaluators) are saved under the function's name and passed in the same `custom_evaluator_types` list as classes. Only a plain function defined with `def` can be saved: a lambda, bound method, `functools.partial` or other callable has no name that identifies it, so `to_file()` raises an error for a dataset that uses one.
 
 ### Complete Example
 

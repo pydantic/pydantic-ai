@@ -193,6 +193,62 @@ class TestFileSystemEvents:
             )
         ]
 
+    async def test_prefixed_tools_emit_events(self, tmp_path: Path) -> None:
+        """Two `FileSystem`s, each under its own prefix, both emit their events (#9879)."""
+        (tmp_path / 'wiki').mkdir()
+        (tmp_path / 'wiki' / 'page.md').write_text('wiki\n')
+        (tmp_path / 'notes').mkdir()
+        events: list[AgentStreamEvent] = []
+
+        async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                events.append(event)
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if not _has_tool_result(messages):
+                yield {
+                    0: DeltaToolCall(name='wiki_read_file', json_args='{"path":"wiki/page.md"}', tool_call_id='call_1'),
+                    1: DeltaToolCall(
+                        name='notes_write_file',
+                        json_args='{"path":"notes/new.md","content":"hi"}',
+                        tool_call_id='call_2',
+                    ),
+                }
+            else:
+                yield 'done'
+
+        agent = Agent(
+            FunctionModel(stream_function=stream),
+            deps_type=type(None),
+            capabilities=[
+                FileSystem[None](id='wiki_files').prefix_tools('wiki'),
+                FileSystem[None](id='notes_files').prefix_tools('notes'),
+            ],
+        )
+        await agent.run('go', event_stream_handler=handler, workspace=LocalWorkspaceBackend(tmp_path))
+
+        assert (tmp_path / 'notes' / 'new.md').read_text() == 'hi'
+        # The two calls run concurrently, so their events can arrive in either order.
+        emitted = [event for event in events if isinstance(event, (FileReadEvent, FileWrittenEvent))]
+        assert sorted(emitted, key=lambda event: event.tool_call_id or '') == [
+            FileReadEvent(
+                path='wiki/page.md',
+                root_dir=_root(tmp_path),
+                content_hash=_hash('wiki\n'),
+                capability_id='wiki_files',
+                tool_call_id='call_1',
+                tool_name='read_file',
+            ),
+            FileWrittenEvent(
+                path='notes/new.md',
+                root_dir=_root(tmp_path),
+                content_hash=_hash('hi'),
+                capability_id='notes_files',
+                tool_call_id='call_2',
+                tool_name='write_file',
+            ),
+        ]
+
     async def test_binary_read_emits_raw_content_hash(self, tmp_path: Path) -> None:
         content = b'hello\x00world'
         (tmp_path / 'binary.bin').write_bytes(content)

@@ -6,7 +6,6 @@ both streams to files that are downloaded once it exits.
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import errno
 import logging
@@ -20,7 +19,6 @@ from typing import TYPE_CHECKING, Literal
 import anyio
 import anyio.lowlevel
 
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
@@ -35,9 +33,12 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
+    check_env_types,
+    check_provider,
     check_timeout,
     command_argv,
     command_deadline,
+    require_asyncio,
     run_to_completion,
     running_on_asyncio,
     safe_credential_reason,
@@ -82,9 +83,7 @@ _OUTPUT_PREVIEW_BYTES = 64 * 1024
 logger = logging.getLogger(__name__)
 
 
-def _require_asyncio() -> None:
-    if not running_on_asyncio():
-        raise UserError('Daytona needs the asyncio event loop: the Daytona SDK runs its calls on asyncio tasks.')
+_ASYNCIO_ONLY = 'Daytona needs the asyncio event loop: the Daytona SDK runs its calls on asyncio tasks.'
 
 
 def _new_client() -> AsyncDaytona:
@@ -106,7 +105,7 @@ async def destroy_sandbox(client: AsyncDaytona | None, sandbox_id: str) -> None:
     Raises:
         UserError: The event loop is not asyncio.
     """
-    _require_asyncio()
+    require_asyncio(_ASYNCIO_ONLY)
     if not sandbox_id.strip():
         raise ValueError('Daytona workspace ref id cannot be empty')
     owned: AsyncDaytona | None = None
@@ -218,20 +217,11 @@ async def _mapped_errors(
         raise translated from error
 
 
-async def _close_client(client: AsyncDaytona) -> None:
-    await client.close()
-    # `close()` cancels the SDK's event connection task without waiting for it. On a loop that is not
-    # drained afterwards, such as `Agent.run_sync`'s, the task then never closes its connection.
-    connecting = getattr(getattr(client, '_event_dispatcher', None), '_connect_task', None)
-    if connecting is not None:
-        await asyncio.wait([connecting])
-
-
 async def _close_quietly(client: AsyncDaytona) -> None:
     """Close an API client, bounded and shielded; a failure is logged, not raised."""
     with anyio.move_on_after(_TEARDOWN_TIMEOUT, shield=True) as deadline:
         try:
-            await _close_client(client)
+            await client.close()
         except Exception as error:
             logger.warning('Could not close the Daytona API client: %r', error)
     if deadline.cancelled_caught:
@@ -437,14 +427,13 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
     ) -> None:
-        if ref is not None and ref.provider != 'daytona':
-            raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'daytona'")
-        if ref is not None and not ref.id.strip():
-            raise ValueError('Daytona workspace ref id cannot be empty')
+        if ref is not None:
+            check_provider(ref, 'daytona')
+            if not ref.id.strip():
+                raise ValueError('Daytona workspace ref id cannot be empty')
         if sandbox is not None and ref is not None:
             raise ValueError('pass either `sandbox` or `ref`, not both')
-        if env is not None and any(type(key) is not str or type(value) is not str for key, value in env.items()):
-            raise TypeError('env keys and values must be strings')
+        check_env_types(env)
         self._ref = ref if sandbox is None else WorkspaceRef(provider='daytona', id=sandbox.id)
         self._sandbox = sandbox
         self._client = client
@@ -479,7 +468,7 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         Attaching by `ref` to a sandbox that no longer exists raises `WorkspaceUnavailableError`; it
         does not create a replacement.
         """
-        _require_asyncio()
+        require_asyncio(_ASYNCIO_ONLY)
         async with self._lock:
             if (sandbox := self._sandbox) is None:
                 sandbox = await self._acquire_locked()
