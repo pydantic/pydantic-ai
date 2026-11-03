@@ -3183,6 +3183,55 @@ class TestPublicPath:
         ]
         assert _summary_text(sent[-1]) == 'the summary'
 
+    async def test_retries_field_absorbs_tool_call_imitations(self):
+        """`retries` raises the summary budget so consecutive tool-call imitations don't kill the run.
+
+        The summary agent is toolless, so an emitted call is an unknown tool, which burns core's
+        retry budget in one strike; at the default of 1 the second imitation raises
+        `UnexpectedModelBehavior` that escapes and kills the parent run, naming a tool the
+        summarizer never declared. The transcript it reads is full of calls to imitate, so a weak
+        summarizer model needs the budget raised from outside.
+        """
+        responses = iter(
+            [
+                ModelResponse(parts=[ToolCallPart('lookup', {'query': 'x'}, tool_call_id='s1')]),
+                ModelResponse(parts=[ToolCallPart('lookup', {'query': 'y'}, tool_call_id='s2')]),
+                ModelResponse(parts=[ToolCallPart('lookup', {'query': 'z'}, tool_call_id='s3')]),
+                ModelResponse(parts=[TextPart(content='the summary')]),
+            ]
+        )
+        summarizer_calls = 0
+
+        def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal summarizer_calls
+            summarizer_calls += 1
+            return next(responses)
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='ok')])
+
+        history: list[ModelMessage] = []
+        for i in range(5):
+            history += [_user(f'q{i}'), _assistant(f'a{i}')]
+        agent = Agent(
+            FunctionModel(respond),
+            capabilities=[
+                SummarizingCompaction(
+                    FunctionModel(summarize),
+                    max_messages=4,
+                    keep_messages=1,
+                    preserve_first_user_message=False,
+                    retries=3,
+                )
+            ],
+        )
+
+        result = await agent.run('next', message_history=history)
+
+        assert result.output == 'ok'
+        # The imitations were retried within the raised budget, not fatal.
+        assert summarizer_calls == 4
+
     async def test_persistently_empty_summary_raises_instead_of_replacing_history(self):
         def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(parts=[TextPart(content=' \n')])
