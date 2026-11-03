@@ -25,7 +25,10 @@ def is_provider_valid(messages: list[ModelMessage]) -> bool:
     1. Every `ToolCallPart` has a matching `ToolReturnPart` later in the
        conversation, and
     2. Every tool return resolves a currently-open tool call (no orphans,
-       duplicates, or out-of-order returns).
+       duplicates, or out-of-order returns), and
+    3. No response reuses a `tool_call_id` that is still open, or twice
+       within itself: a later return can only answer the newest call, so the
+       earlier one is left dangling.
 
     A retry that answers a call is that call's `ToolReturnPart` carrying
     `outcome='retried'`, so it settles the pairing like any other return. A
@@ -42,9 +45,13 @@ def is_provider_valid(messages: list[ModelMessage]) -> bool:
     open_calls: set[str] = set()
     for msg in messages:
         if isinstance(msg, ModelResponse):
-            for part in msg.parts:
-                if isinstance(part, ToolCallPart):
-                    open_calls.add(part.tool_call_id)
+            call_ids = [part.tool_call_id for part in msg.parts if isinstance(part, ToolCallPart)]
+            # Repeating an ID within one response makes the two calls indistinguishable, and reusing
+            # one that is still open leaves the earlier call unanswerable: the later result answers
+            # this call instead. Either way the pairing a provider will reconstruct is not this one.
+            if len(call_ids) != len(set(call_ids)) or open_calls.intersection(call_ids):
+                return False
+            open_calls.update(call_ids)
         else:
             for part in msg.parts:
                 if isinstance(part, ToolReturnPart):

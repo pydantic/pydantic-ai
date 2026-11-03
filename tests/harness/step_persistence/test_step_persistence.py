@@ -172,6 +172,47 @@ class TestIsProviderValid:
         ]
         assert is_provider_valid(messages) is False
 
+    def test_reused_tool_call_id_answering_an_earlier_open_call_is_invalid(self) -> None:
+        """A call reusing the ID of a still-open call leaves that earlier call unanswerable.
+
+        The single return answers the newest call, so the history keeps a dangling tool call even
+        though every `tool_call_id` appears to be settled.
+        """
+        messages: list[ModelMessage] = [
+            ModelResponse(parts=[ToolCallPart(tool_name='add', args={}, tool_call_id='c1')]),
+            ModelResponse(parts=[ToolCallPart(tool_name='add', args={}, tool_call_id='c1')]),
+            ModelRequest(parts=[ToolReturnPart(tool_name='add', content=1, tool_call_id='c1')]),
+        ]
+        assert is_provider_valid(messages) is False
+
+    def test_reused_tool_call_id_answered_per_response_is_valid(self) -> None:
+        """Each response's call is answered before the ID is reused, so nothing dangles."""
+        messages: list[ModelMessage] = [
+            ModelResponse(parts=[ToolCallPart(tool_name='add', args={}, tool_call_id='c1')]),
+            ModelRequest(parts=[ToolReturnPart(tool_name='add', content=1, tool_call_id='c1')]),
+            ModelResponse(parts=[ToolCallPart(tool_name='add', args={}, tool_call_id='c1')]),
+            ModelRequest(parts=[ToolReturnPart(tool_name='add', content=2, tool_call_id='c1')]),
+        ]
+        assert is_provider_valid(messages) is True
+
+    def test_duplicate_tool_call_id_in_one_response_is_invalid(self) -> None:
+        """A response repeating a call ID sends two calls no provider can tell apart."""
+        messages: list[ModelMessage] = [
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='add', args={}, tool_call_id='c1'),
+                    ToolCallPart(tool_name='add', args={}, tool_call_id='c1'),
+                ]
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(tool_name='add', content=1, tool_call_id='c1'),
+                    ToolReturnPart(tool_name='add', content=2, tool_call_id='c1'),
+                ]
+            ),
+        ]
+        assert is_provider_valid(messages) is False
+
     def test_out_of_order_tool_return_is_invalid(self) -> None:
         """Return appearing before its call in a later response -> reject."""
         messages: list[ModelMessage] = [
