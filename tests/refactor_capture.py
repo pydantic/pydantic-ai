@@ -14,7 +14,8 @@ library code is the only difference.
 Each stream is one JSON line of kind `stream`: the events its `__aiter__` hands the consumer, `PartEndEvent`s and
 `FinalResultEvent`s included, the error iteration raised if any, and the response `get()` builds once the test ends.
 The capture wraps `__aiter__` on `StreamedResponse` and on every subclass that overrides it, whether the subclass is
-defined before the capture starts or after. A stream whose `__aiter__` iterates other streams, like the continuation
+defined before the capture starts or after; one that overrides `__init_subclass__` without calling `super()`, or
+assigns `__aiter__` once it's defined, escapes it. A stream whose `__aiter__` iterates other streams, like the continuation
 composite in `models/_continuation.py`, is recorded once itself and once for each stream it iterates. When a capture
 starts, it runs an agent over a streamed canary response and stops the run if that stream wasn't recorded, so a
 consumer that stops iterating through `__aiter__` fails loudly instead of recording nothing.
@@ -75,8 +76,11 @@ class RefactorCapture:
         self.capture_dir = capture_dir
         self.node: str | None = None
         self.records: list[tuple[dict[str, object], StreamedResponse]] = []
-        # The recording iterator handed out for each stream, by `id`; `records` keeps the stream alive meanwhile.
-        self._iterators: dict[int, AsyncIterator[ModelResponseStreamEvent]] = {}
+        # Per stream, by `id`: the iterator `__aiter__` first returned and the recording that wraps it. `records` keeps
+        # the stream alive meanwhile, so its `id` isn't reused.
+        self._iterators: dict[
+            int, tuple[AsyncIterator[ModelResponseStreamEvent], AsyncIterator[ModelResponseStreamEvent]]
+        ] = {}
         self._monkeypatch = pytest.MonkeyPatch()
 
     def pytest_configure(self) -> None:
@@ -150,10 +154,11 @@ class RefactorCapture:
 
         def recording_aiter(stream: StreamedResponse) -> AsyncIterator[ModelResponseStreamEvent]:
             iterator = original(stream)
-            # An override that calls `super().__aiter__()` gets back the iterator that call already recorded.
-            if id(stream) not in self._iterators:
-                self._iterators[id(stream)] = self._recorded(stream, iterator)
-            return self._iterators[id(stream)]
+            if (recording := self._iterators.get(id(stream))) is None:
+                recording = self._iterators[id(stream)] = (iterator, self._recorded(stream, iterator))
+            # Anything else already reads through the recording: an override's `super().__aiter__()` result, or the
+            # peeking stream `request_stream_until_first_event` stores over it.
+            return recording[1] if iterator is recording[0] else iterator
 
         self._monkeypatch.setattr(cls, '__aiter__', recording_aiter)
 
@@ -274,13 +279,16 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover
     with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
         tar.extractall(out / 'base-src', filter='data')
 
+    failed = False
     for side, sources in (('base', [out / 'base-src' / root for root in roots]), ('head', [])):
         pythonpath = os.pathsep.join([*map(str, sources), *filter(None, [os.environ.get('PYTHONPATH')])])
         env = os.environ | {CAPTURE_DIR_ENV: str(out / side), 'PYTHONPATH': pythonpath}
         code = subprocess.run([sys.executable, '-m', 'pytest', *args.pytest_args], cwd=repo, env=env).returncode
         print(f'{side} capture: pytest exited {code}')
+        failed = failed or code != 0
     print(f'captures: {out}')
-    return compare(out / 'base', out / 'head')
+    # Tests that fail alike on both sides compare equal, but they don't prove the refactor.
+    return compare(out / 'base', out / 'head') or int(failed)
 
 
 if __name__ == '__main__':
