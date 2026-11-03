@@ -22,6 +22,16 @@ is written: what `transform()` adds to a copy is not counted.
 """
 
 
+class InlinedSchemaTooLargeError(UserError):
+    """A schema whose `$ref`s expand past `MAX_INLINED_SCHEMA_VALUES` once inlined, with `subject` naming it."""
+
+    def __init__(self, subject: str):
+        super().__init__(
+            f'{subject} is too large: its `$ref`s expand to more than {MAX_INLINED_SCHEMA_VALUES:,} JSON values. '
+            'Refer to large definitions from fewer places.'
+        )
+
+
 @dataclass
 class InlinedValues:
     """A count of the JSON values that inlining `$ref`s copies into a schema, which stops at `MAX_INLINED_SCHEMA_VALUES`.
@@ -51,10 +61,7 @@ class InlinedValues:
         """Count `values` more JSON values, as another copy of a definition counted before adds."""
         self.count += values
         if self.count > MAX_INLINED_SCHEMA_VALUES:
-            raise UserError(
-                f'{self.subject} is too large: its `$ref`s expand to more than {MAX_INLINED_SCHEMA_VALUES:,} JSON '
-                'values. Refer to large definitions from fewer places.'
-            )
+            raise InlinedSchemaTooLargeError(self.subject)
 
 
 def resolve_json_pointer(schema: JsonSchema, ref: str) -> JsonSchema | None:
