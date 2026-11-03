@@ -188,7 +188,7 @@ On a timeout or cancellation, the command and the processes it started are stopp
 
 Each command is a request to the sandbox that takes about a fifth of a second, and file operations run as commands, so reading or writing a large file takes several seconds per MiB. Keep large data out of the workspace or fetch it from inside the sandbox.
 
-A sandbox that is gone raises `WorkspaceUnavailableError`. The backend asks the server once, without waiting: a sandbox destroyed mid-command can still be reported as running for a moment, so that command fails with the SDK's connection error, and the next operation raises `WorkspaceUnavailableError`. A command whose working directory has been deleted raises `WorkspaceError`. Other errors from the server, such as an image it can't pull, are raised as the SDK reports them.
+A sandbox that is gone, or destroyed mid-command, raises `WorkspaceUnavailableError`. A command whose working directory has been deleted raises `WorkspaceError`. Other errors from the server, such as an image it can't pull, are raised as the SDK reports them.
 
 The OpenSandbox SDK runs on asyncio only, so under Trio the capability raises `UserError`.
 

@@ -28,6 +28,7 @@ import logging
 import posixpath
 import secrets
 import shlex
+import time
 from collections.abc import AsyncGenerator, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from datetime import timedelta
@@ -122,6 +123,9 @@ _CREATE_READY_TIMEOUT = timedelta(seconds=120)
 """How long a new sandbox may take to answer after the server created it, image pull included."""
 
 _GONE_STATES = frozenset({'Stopping', 'Deleting', 'Terminated', 'Failed'})
+_GONE_SETTLE = 2.0
+"""How long a broken command waits for the server to stop reporting a killed sandbox as running."""
+_GONE_POLL_INTERVAL = 0.1
 
 _CREATE_TAG = 'pydantic-ai-create'
 """Metadata key a new sandbox is tagged with, to find it when its create response is lost."""
@@ -516,7 +520,10 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
     async def _translate(self, sandbox: Sandbox, error: SandboxException) -> Exception:
         """A gone sandbox is unavailable and a request execd refused is the command's error; the rest stays transient."""
         try:
-            await self._raise_if_gone(sandbox)
+            # Only a broken stream waits for the server to catch up with a kill.
+            await self._raise_if_gone(
+                sandbox, settle=_GONE_SETTLE if isinstance(error, SandboxConnectionException) else 0
+            )
         except WorkspaceUnavailableError as gone:
             return gone
         if isinstance(error, SandboxApiException) and error.status_code == 400:
@@ -525,19 +532,25 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
             return WorkspaceError(f'OpenSandbox refused the command: {error}')
         return error
 
-    async def _raise_if_gone(self, sandbox: Sandbox) -> None:
-        """Raise `WorkspaceUnavailableError` if the server reports the sandbox gone or going.
+    async def _raise_if_gone(self, sandbox: Sandbox, *, settle: float = _GONE_SETTLE) -> None:
+        """Raise `WorkspaceUnavailableError` if the sandbox is gone or going.
 
-        It asks once. A sandbox killed mid-command can still be reported as running for a moment, so that failure
-        stays transient and the next operation finds the sandbox gone.
+        A killed sandbox breaks the command stream before the server stops reporting it as running, so a running
+        sandbox is asked again for up to `settle` seconds before the failure is taken as transient.
         """
-        try:
-            info = await sandbox.get_info()
-        except SandboxApiException as error:
-            if error.status_code == 404:
-                raise _unavailable(sandbox.id) from error
-            return
-        except SandboxConnectionException:
-            return
-        if info.status.state in _GONE_STATES:
-            raise _unavailable(sandbox.id)
+        # Not `move_on_after`: with no settle time the sandbox must still be asked once.
+        deadline = time.monotonic() + settle
+        while True:
+            try:
+                info = await sandbox.get_info()
+            except SandboxApiException as error:
+                if error.status_code == 404:
+                    raise _unavailable(sandbox.id) from error
+                return
+            except SandboxConnectionException:
+                return
+            if info.status.state in _GONE_STATES:
+                raise _unavailable(sandbox.id)
+            if time.monotonic() >= deadline:
+                return
+            await anyio.sleep(_GONE_POLL_INTERVAL)
