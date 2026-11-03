@@ -104,11 +104,11 @@ class _KernelClock:
 
     now: float = 0.0
     racing: bool = False
-    """Whether each reading finds a second gone, so every deadline, the interrupt's grace included, soon passes."""
+    """Whether each reading jumps past any deadline, so the next check finds it passed, the interrupt's grace included."""
 
     def monotonic(self) -> float:
         if self.racing:
-            self.now += 1
+            self.now += 1_000
         return self.now
 
 
