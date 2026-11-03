@@ -119,7 +119,7 @@ def operation_span(operation: Operation, workspace: WorkspaceBackend) -> Generat
             yield span
         finally:
             # Read at the end: a lazy backend creates its sandbox during its first operation.
-            _record_ref(span, workspace.ref)
+            _record_ref(span, workspace)
 
 
 @contextmanager
@@ -131,11 +131,11 @@ def lifecycle_span(action: Lifecycle, workspace: WorkspaceBackend | WorkspaceRef
     """
     with _span(action) as span:
         # A failed create may drop the ref it had allocated; the span still names that sandbox.
-        entry_ref = _ref_of(workspace)
+        entry_ref = _ref_of(workspace) if span.is_recording() else None
         try:
             yield span
         finally:
-            _record_ref(span, _ref_of(workspace) or entry_ref)
+            _record_ref(span, workspace, entry_ref)
 
 
 @contextmanager
@@ -152,8 +152,9 @@ def _ref_of(workspace: WorkspaceBackend | WorkspaceRef) -> WorkspaceRef | None:
     return workspace if isinstance(workspace, WorkspaceRef) else workspace.ref
 
 
-def _record_ref(span: Span, ref: WorkspaceRef | None) -> None:
-    if span.is_recording() and ref is not None:
+def _record_ref(span: Span, workspace: WorkspaceBackend | WorkspaceRef, fallback: WorkspaceRef | None = None) -> None:
+    # The ref is read only when tracing: an untraced call never touches it.
+    if span.is_recording() and (ref := _ref_of(workspace) or fallback) is not None:
         span.set_attribute('pydantic_ai.workspace.provider', ref.provider)
         span.set_attribute('pydantic_ai.workspace.id', ref.id)
 
