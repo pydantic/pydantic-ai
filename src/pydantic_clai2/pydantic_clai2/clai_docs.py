@@ -51,6 +51,7 @@ _HARNESS_DOCS = (
     'logfire_mcp',
     'notion',
     'ordinal',
+    'permissions',
     'posthog',
     'pylon',
     'repo_context',

@@ -14,8 +14,8 @@ import type {
   StatusInfo,
   TaskEntry,
   ThemeInfo,
+  TurnSummary,
   UpdateInfo,
-  Usage,
   UsageReport,
 } from './protocol'
 
@@ -31,16 +31,6 @@ export interface NoticeEntry {
   forks: ForkEntry[] | null
   /** A background `/fork` that ended; `text` is its answer, why it failed, or empty when it was cancelled. */
   fork: ForkEntry | null
-}
-
-export interface TurnSummary {
-  id: string
-  kind: 'turn'
-  outcome: 'completed' | 'failed' | 'cancelled'
-  error: string | null
-  usage: Usage | null
-  /** Seconds the turn took, as this page saw it; `null` when it started before the page connected. */
-  seconds: number | null
 }
 
 export type Entry = Item | NoticeEntry | TurnSummary

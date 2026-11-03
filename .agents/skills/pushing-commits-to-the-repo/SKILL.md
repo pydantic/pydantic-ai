@@ -58,6 +58,18 @@ A human approval does not substitute for douwebot.
 `PR Review Gates` enforces M/L/XL against the recomputed size and exactly one matching label.
 Size S remains a manual judgment; review enforcement skips merge groups after admission.
 
+A merge-queue removal posts no comment and leaves the PR open. Detect it as a new `removed_from_merge_queue` event in `gh api --paginate repos/pydantic/pydantic-ai/issues/<number>/timeline` while the PR is still open; a merge logs the same event.
+Diagnose the failed jobs of the PR's newest `merge_group` run (`head_branch` `gh-readonly-queue/main/pr-<number>-<sha>`) as step 2 of "After you push — the loop" requires.
+After diagnosing, post a PR comment that names each failed job and its cause, with evidence: your fix commit, a known flake, or a failure already on `main`.
+
+Re-enqueue the PR yourself when all of these hold:
+
+- A maintainer enqueued it, or you enqueued it under [Flake fixes](#flake-fixes).
+- Since that enqueue, the PR changed only by merging `main` without conflicts, or by commits that meet the Flake fixes conditions.
+- Its current head meets the merge bar again.
+
+Otherwise, once the current head meets the merge bar again, comment that the PR is ready to re-enqueue.
+
 ### Flake fixes
 
 A flake fix makes a nondeterministic test failure deterministic.
@@ -74,7 +86,6 @@ All of these must hold:
 - The diff loosens no assertion: no wider tolerance, longer timeout or weaker matcher.
 
 If any condition fails, hand the PR to a maintainer.
-If the merge queue removes the PR for a failure outside its diff, add it back once.
 
 ## When you open the PR
 
@@ -382,9 +393,9 @@ if the head changes, capture the new SHA and restart the loop.
    Its success certifies every job it contains, coverage included. Do not inspect individual jobs
    or their logs to reconfirm a success. Don't idle. If it fails, diagnose: fix if the failure is
    yours; if it's a known flake or pre-existing on main, say so with evidence.
-   When a flake fails your CI, ask the person driving you whether to start a separate worktree and task to fix it.
+   When a flake fails your CI, fix it in this PR if this PR caused it, or if this PR is labeled `size: S` or `size: M`.
+   Otherwise, ask the person driving you whether to start a separate worktree and task to fix it.
    Recommend yes.
-   Do not fix the flake in this PR.
 3. **Meet the merge bar on the captured SHA.**
    - **`CI Review`:** do not wait for it unless explicitly requested. On same-repository PRs, it runs
      when a user with write access approves the current head, when someone adds the `final-review`

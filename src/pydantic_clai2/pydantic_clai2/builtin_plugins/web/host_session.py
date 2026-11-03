@@ -66,6 +66,10 @@ class HostSession:
         return False
 
     @property
+    def busy(self) -> bool:
+        return False
+
+    @property
     def queued(self) -> int:
         return 0
 
