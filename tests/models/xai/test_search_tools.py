@@ -158,6 +158,29 @@ async def test_xai_thinking_false_with_non_always_on_profile_is_dropped(allow_mo
     assert 'reasoning_effort' not in kwargs[0]
 
 
+@pytest.mark.parametrize(
+    'model_name, sealed',
+    [
+        ('grok-4.3', True),
+        ('grok-4.3-latest', True),
+        ('grok-4.5', True),
+        ('grok-4.5-latest', True),
+        ('grok-4.6', True),
+        ('grok-4.7', True),
+        # Grok 4.20 measured worse with the sealed rendering, so it keeps plain `<system>` blocks.
+        ('grok-4.20', False),
+        ('grok-4.20-0309-reasoning', False),
+        ('grok-4', False),
+        ('grok-latest', False),
+    ],
+)
+def test_grok_model_profile_sealed_system_blocks(model_name: str, sealed: bool) -> None:
+    """Grok 4.3 through 4.7 get the sealed `<system>` rendering; Grok 4.20 and other ids don't."""
+    profile = grok_model_profile(model_name)
+    assert profile is not None
+    assert profile.get('needs_sealed_system_blocks', False) is sealed
+
+
 def test_grok_model_profile_builtin_tools() -> None:
     grok4_profile = grok_model_profile('grok-4-fast-non-reasoning')
     assert grok4_profile is not None

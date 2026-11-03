@@ -768,7 +768,8 @@ def test_model_profile_sonnet_5_5():
     thinking block replayed after the `system` prompt changes (with an explicit
     `prefix_mismatch_behavior` of `'error'`). It also rejects `thinking: {'type': 'disabled'}` in favor of
     `{'type': 'between_tools'}`, which turns thinking off and, like disabled thinking on Opus 5, returns a 400 for
-    `xhigh` and `max` effort; live on the Anthropic API and on Bedrock.
+    `xhigh` and `max` effort; live on the Anthropic API and on Bedrock. It also gets the sealed `<system>` rendering,
+    which measured better than the native role.
     """
     profile = anthropic_model_profile('claude-sonnet-5-5')
     sonnet_5 = anthropic_model_profile('claude-sonnet-5')
@@ -780,6 +781,7 @@ def test_model_profile_sonnet_5_5():
         'anthropic_binds_thinking_blocks': True,
         'anthropic_disallows_top_effort_when_thinking_disabled': True,
         'anthropic_disables_thinking_with_between_tools': True,
+        'needs_sealed_system_blocks': True,
     }
 
 

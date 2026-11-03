@@ -25,7 +25,6 @@ _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
     'claude-mythos-5',
     'claude-opus-4-8',
     'claude-opus-5',
-    'claude-sonnet-5-5',
 )
 """Models that honor a `{'role': 'system'}` entry inside the Messages API's `messages` array.
 
@@ -37,18 +36,17 @@ restriction the top-level prompt set, it refuses every time where Opus 5 complie
 a plain formatting instruction the `<system>`-tagged fallback actually lands more often than the
 entry does. So Sonnet 5 is deliberately absent, and a 200 is not evidence for adding a model here.
 
-`claude-sonnet-5-5` is published as supported and stays in although, asked to lift a restriction the
-top-level prompt set, it refuses every time. It refuses the `<system>`-tagged fallback every time too,
-so the entry costs nothing measurable and keeps the instruction's operator authority.
+`claude-sonnet-5-5` is published as supported but is deliberately absent: it credited the native entry to the user
+when asked who said what, and with the sealed `<system>` rendering (`needs_sealed_system_blocks`) it attributed the
+application's instructions correctly and followed steering after a tool result more reliably.
 
 `claude-mythos-5` is published as supported but isn't reachable with our credentials.
 
 `claude-haiku-5-5` is published as supported and honors the entry, but is deliberately absent: it gets the sealed
-`<system>` rendering instead (`needs_sealed_system_blocks`), which measured equal or better on every cell. With the
-entry it tracked instruction changes 158/176 times (sealed: 64/64), followed a genuine change next to a tool's
-lookalike 4–5/16 times (16/16) and next to a user's 1–2/16 (11/16), and followed a request-scoped prompt 30/48 times
-(64/64), at +1.4% cost per cached conversation with the prefix unchanged. The unsealed fallback was worse than the
-entry on instruction history (112/176), so it's the sealed one or neither.
+`<system>` rendering instead (`needs_sealed_system_blocks`), which measured equal or better on every cell
+(instruction changes, a genuine change next to a lookalike, request-scoped prompts), at +1.4% cost per cached
+conversation with the prefix unchanged. The unsealed fallback was worse than the entry on instruction history, so
+it's the sealed one or neither.
 
 It lives here rather than beside `AnthropicProvider` so `OpenRouterProvider` can share it without the `anthropic`
 SDK. It's a fact about Anthropic's API, not the model family, so `anthropic_model_profile()` doesn't apply it: the
@@ -513,9 +511,9 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     # thinking off, and accepts it live on the Anthropic API and Bedrock.
     disables_thinking_with_between_tools = model_name.startswith('claude-sonnet-5-5')
     distrusts_system_after_tool_result = model_name.startswith('claude-haiku-5-5')
-    # Measured on the Anthropic API, where neither gets a mid-conversation system role (Haiku 5.5 is left out of
-    # `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES` for this): see the field's docstring.
-    needs_sealed_system_blocks = model_name.startswith(('claude-sonnet-4-6', 'claude-haiku-5-5'))
+    # Measured on the Anthropic API, where none gets a mid-conversation system role (Sonnet 5.5 and Haiku 5.5 are left
+    # out of `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES` for this): see the field's docstring.
+    needs_sealed_system_blocks = model_name.startswith(('claude-sonnet-4-6', 'claude-sonnet-5-5', 'claude-haiku-5-5'))
 
     # The 5.1 generation, Opus 5.5, and Sonnet 5.5 reject a forced `tool_choice` (`any`/`tool`) outright, unlike
     # other Anthropic models which only reject forcing alongside extended thinking. Anthropic's

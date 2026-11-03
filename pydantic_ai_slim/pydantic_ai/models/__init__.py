@@ -2066,7 +2066,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """
         inline_system = self.profile.get('supports_inline_system_prompts', False)
         # With a system role, a tool's note goes right after the tool results even where the API takes it ahead of
-        # them: there GPT-6 Luna followed a genuine change in the same turn 44/72 times, after them 40/40.
+        # them: a genuine change in the same turn was followed more reliably with the note after them.
         precede_tool_results = self._lookalike_notes_precede_tool_results and not inline_system
         expanded = _with_capability_parts_rendered(authored, request)
         # A tool or file note names the application's own mid-conversation system message in the same request, unless
@@ -2520,8 +2520,8 @@ def _system_prompts_after_user_words(parts: list[ModelRequestPart], *, leading: 
     """Move a request's own mid-conversation system prompts to right after its last user prompt, notes left in place.
 
     For a profile with `needs_sealed_system_blocks`: Claude Sonnet 4.6 followed a sealed block after the user's words
-    16/16 times where it ignored one ahead of them (steering after a tool result, and a user lookalike next to a
-    genuine change); the sealed announcement says such a block applies to the reply to those words. `leading` is the
+    where it ignored one ahead of them (steering after a tool result, and a user lookalike next to a genuine
+    change); the sealed announcement says such a block applies to the reply to those words. `leading` is the
     standing prompt's length in the first request, which stays where it is.
     """
     last_user = max(
@@ -4345,9 +4345,8 @@ def _system_prompts_before_notes(parts: list[ModelRequestPart]) -> list[ModelReq
     """Move the request's own mid-conversation system prompts ahead of its first lookalike note.
 
     Without a system role, they become `<system>` blocks in the same user turn as a note and the text it describes.
-    Ahead of both, they still read as the application's: after them, Claude Sonnet 5.5 on Bedrock followed a genuine
-    change 0/8 times, ahead of them 7/8. That holds for a tool's note that names them too: Kimi K2.5 followed the
-    genuine change 28/32 times with it ahead of the note, 15/32 with the note first.
+    Ahead of both, they still read as the application's: after them, a genuine change was often missed. That holds
+    for a tool's note that names them too: the genuine change was followed more often with it ahead of the note.
     """
     first_note = next((i for i, p in enumerate(parts) if isinstance(p, _FrameworkNote)), None)
     if first_note is None:

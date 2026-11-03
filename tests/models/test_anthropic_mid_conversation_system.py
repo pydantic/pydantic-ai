@@ -1265,7 +1265,7 @@ def test_tool_results_end_before_a_system_entry(model_name: str, ends_tool_resul
     The rendering is asserted offline because the cassette matcher ignores request bodies; the recorded
     `test_haiku_follows_a_withdrawn_instruction_after_a_tool_result` below covers the API and the model.
     """
-    profile = with_native_system_role if model_name == 'claude-haiku-5-5' else None
+    profile = with_native_system_role if model_name in ('claude-haiku-5-5', 'claude-sonnet-5-5') else None
     assert _map(_tool_loop(SystemPromptPart('S')), model_name, profile)[-2:] == (
         [
             {'role': 'user', 'content': [_TOOL_RESULT, {'text': END_OF_TOOL_RESULTS_TEXT, 'type': 'text'}]},
