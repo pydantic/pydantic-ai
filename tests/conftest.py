@@ -76,6 +76,12 @@ from .function_model_prefix import RequestRecorder, check_function_model_prefix_
 with suppress(ImportError):
     import pandas  # pyright: ignore[reportUnusedImport] # noqa: F401
 
+# `openai` reads `aiohttp` package metadata at import (`openai/_vendor/httpx_aiohttp/transport.py`), a disk
+# read the detector reports when the first import happens inside an async test:
+# https://github.com/pydantic/pydantic-ai/issues/7660.
+with suppress(ImportError):
+    import openai  # pyright: ignore[reportUnusedImport] # noqa: F401
+
 T = TypeVar('T')
 
 # Like `try_import` for a whole directory: these suites need their workspace member installed, which
