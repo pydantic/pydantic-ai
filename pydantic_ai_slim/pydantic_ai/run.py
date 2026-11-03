@@ -24,14 +24,11 @@ from . import (
     messages as _messages,
     usage as _usage,
 )
+from ._compaction_requests import RequestedCompaction
 from ._conversation_marks import mark_stored
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._instrumentation import current_otel_traceparent
-from ._run_context import (
-    CustomEventT,
-    RequestedCompaction,
-    no_workspace,
-)
+from ._run_context import CustomEventT, no_workspace
 from .capabilities._pending_messages import drain_pending_messages_at_end
 from .conversation import Conversation
 from .output import OutputDataT
