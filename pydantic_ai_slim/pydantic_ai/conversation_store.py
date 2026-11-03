@@ -180,8 +180,10 @@ class ConversationStore(ABC):
     Pass `scope=` to the methods that read or change a stored conversation to keep it to its owner: a
     conversation saved with another scope is treated as one the store doesn't have.
 
-    A backend implements the five storage primitives below; the store works out which messages are new,
-    where a history branches, and what a fork shares.
+    A backend implements the five storage primitives below, plus the optional
+    [`write_details`][pydantic_ai.conversation_store.ConversationStore.write_details] to support
+    [`update`][pydantic_ai.conversation_store.ConversationStore.update]; the store works out which
+    messages are new, where a history branches, and what a fork shares.
     """
 
     async def load(
@@ -518,7 +520,8 @@ class ConversationStore(ABC):
         """Change a conversation's title or metadata.
 
         These are its record's [`title`][pydantic_ai.conversation_store.ConversationRecord.title] and
-        [`metadata`][pydantic_ai.conversation_store.ConversationRecord.metadata]. Only what's passed changes, and `None` clears it. An update doesn't change the conversation's
+        [`metadata`][pydantic_ai.conversation_store.ConversationRecord.metadata]. Only what's passed
+        changes, and `None` clears it. An update doesn't change the conversation's
         [`revision`][pydantic_ai.conversation.Conversation.revision], so it never makes a save of the
         conversation conflict, and a save never undoes it: an agent can keep the title current while
         the conversation goes on. Of two updates at once, the last one written wins.
