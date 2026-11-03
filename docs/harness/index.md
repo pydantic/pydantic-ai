@@ -140,6 +140,7 @@ The workspace the agent acts in: the files it edits and the commands it runs, lo
 | [boxd Sandbox](boxd-sandbox.md) | Harness | Commands and files in an isolated [boxd](https://boxd.sh) cloud machine |
 | [Smol Sandbox](smol-sandbox.md) | Harness | Commands and files in a [smolvm](https://github.com/smol-machines/smolvm) microVM on your own machine; no cloud account |
 | [BoxLite Sandbox](boxlite-sandbox.md) | Harness | Commands and files in a [BoxLite](https://github.com/boxlite-ai/boxlite) micro-VM on your own machine, with an optional egress allow-list; no cloud account |
+| [OpenSandbox](opensandbox-sandbox.md) | Harness | Commands and files in a sandbox on your own [OpenSandbox](https://open-sandbox.ai) server, on Docker or Kubernetes |
 | [Docker Sandbox](docker-sandbox.md) | Harness | Commands and files in a local [Docker](https://www.docker.com/) or Podman container |
 | [SSH Workspace](ssh-workspace.md) | Harness | Commands and files on a remote host over your `ssh` client; no isolation |
 | [Bubblewrap Sandbox](bubblewrap-sandbox.md) | Harness | Wraps another workspace capability so its commands run in a Linux [bubblewrap](https://github.com/containers/bubblewrap) sandbox on that workspace's host |
@@ -224,6 +225,7 @@ What the agent knows and remembers, loaded when relevant instead of carried in e
 | Capability | Package | What it does |
 |---|---|---|
 | [Memory](memory.md) | Harness | A persistent, namespaced notebook: bounded prompt injection, on-demand search; in-memory/file/Postgres stores |
+| [Pixeltable](pixeltable.md) | Harness | Read-only, allowlisted tools over Pixeltable tables and embedding indexes, plus a Pixeltable `MemoryStore` |
 | [Conversation Search](conversation-search.md) | Harness | BM25 search over stored history, including turns compaction dropped |
 | [Skills](skills.md) | Harness | Load [Agent Skill](../capabilities/on-demand.md) (`SKILL.md`) instructions on demand |
 | [Repo Context](repo-context.md) | Harness | Start runs oriented: `AGENTS.md`/`CLAUDE.md` + repository structure |
@@ -262,10 +264,11 @@ Outside the loop: how runs persist, survive failures, and get observed and confi
 
 | Capability | Package | What it does |
 |---|---|---|
-| [Durable execution](../durable_execution/overview.md) | Core | Runs that survive restarts and failures, on eight engines: [Temporal](../durable_execution/temporal.md), [DBOS](../durable_execution/dbos.md), [Prefect](../durable_execution/prefect.md), [Restate](../durable_execution/restate.md), [Airflow](../durable_execution/airflow.md), and the three Harness engines in the next rows. See the [workspace guide](../workspace.md#durable-execution) for Coder, Shell, and FileSystem |
+| [Durable execution](../durable_execution/overview.md) | Core | Runs that survive restarts and failures, on nine engines: [Temporal](../durable_execution/temporal.md), [DBOS](../durable_execution/dbos.md), [Prefect](../durable_execution/prefect.md), [Restate](../durable_execution/restate.md), [Airflow](../durable_execution/airflow.md), and the four Harness engines in the next rows. See the [workspace guide](../workspace.md#durable-execution) for Coder, Shell, and FileSystem |
 | [AWS Lambda durability](aws-lambda.md) | Harness | Checkpoint model requests and tool calls into AWS Lambda durable function steps |
 | [Absurd durability](absurd.md) | Harness | Checkpoint model requests, MCP calls, and tool calls into Absurd steps on PostgreSQL |
 | [pgtask durability](pgtask.md) | Harness | Checkpoint model requests, MCP calls, and tool calls into pgtask steps on PostgreSQL |
+| [Azure Durable Task durability](azure-durable-task.md) | Harness | Run model requests, tool calls and durable operations as activities in Durable Task Scheduler orchestrations |
 | [Render Workflows](render-workflows.md) | Harness | Run model requests and tool calls as chained task runs with separate retries, timeouts, and compute settings; retrying the task that runs the agent can repeat completed work |
 | [Step Persistence](step-persistence.md) | Harness | Save, restore, resume (`continue_run`), and fork (`fork_run`) runs; file/SQLite/Mongo backends |
 | [Model Fallback](../capabilities/model-fallback.md) | Core | Fall back to other models when a model request fails or its response is rejected, within the run's own request step |

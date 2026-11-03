@@ -85,7 +85,7 @@ directories are skipped.
 
 ### 2. Asset inventory (off by default)
 
-Set `expose_inventory_tool=True` to expose `inventory_agent_context()`, which reports where the repo's CE assets live -- the `.claude`/`.agents`/`.codex`/`.grok` roots and, within each, the `skills/` (`SKILL.md`), `agents/` (`.md`), and `settings.json` (hooks) it contains. It returns a structured `AgentContextInventory`; it locates assets and does not parse them.
+Set `expose_inventory_tool=True` to expose `inventory_agent_context()`, which reports where the repo's coding-assistant assets live -- the `.claude`/`.agents`/`.codex`/`.grok` roots and, within each, the `skills/` (`SKILL.md`), `agents/` (`.md`), and `settings.json` (hooks) it contains. It returns a structured `AgentContextInventory`; it locates assets and does not parse them.
 
 Rename the tool with `inventory_tool_name`, or scope which roots it scans with `asset_roots`.
 Skill discovery goes at most eight directories deep.

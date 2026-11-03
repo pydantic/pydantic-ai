@@ -237,6 +237,9 @@ class AnthropicModelProfile(ModelProfile, total=False):
     land. When True, `AnthropicModel` ends that user turn with a short text block saying the tool results end
     there and the system message comes from the application. Measured live, that block took Haiku 5.5 from 12 to
     64 of 64 runs following a rule change; Sonnet 5.5 and Opus 5.5 followed it without the block.
+
+    It only applies when the native entry is used, which Haiku 5.5's default profile doesn't: that sends it the sealed
+    `<system>` rendering instead (`needs_sealed_system_blocks`).
     """
 
     anthropic_accepts_file_and_container_ids: bool

@@ -177,24 +177,13 @@ def _request_part_text(part: ModelRequestPart) -> list[str]:
             # and a kind's note aren't counted.
             return [capability_part_text(part)]
         case SpeechPart():
-            # A realtime turn arrives as spoken audio plus a transcript. Count the transcript -- the
-            # words the provider bills against the window -- not the binary audio, which has no
-            # character-count meaning (as with `FilePart`).
-            #
-            # `SpeechPart` is the last member of the union today, but it is kept as its own case so
-            # `case _` stays a real branch at runtime rather than dead code -- see the `case _` comment.
+            # Count the transcript the provider bills against the window, not the binary audio.
+            # Its own case keeps `case _` a real runtime branch.
             return [part.transcript or '']
         case _:  # pragma: no cover - reachable only on a pydantic-ai release newer than this one
-            # A part pydantic-ai added after this was written. Skip rather than guess at its payload:
-            # this runs on every request to decide whether to compact, so an unrecognised part must
-            # not take the run down -- which is exactly what the old `str(part.content)` fallback did
-            # once a part without `content` existed (#577).
-            #
-            # `assert_never` sits under `TYPE_CHECKING` rather than in the case body on purpose. It
-            # still makes the match exhaustive at type-check time, so a new upstream part fails
-            # `make typecheck` and becomes a decision we make; but unlike the usual runtime form it
-            # cannot re-crash a user who upgrades pydantic-ai ahead of us, which is the failure this
-            # change exists to remove.
+            # A part type newer than this code: skip it, since this runs on every request.
+            # `assert_never` under `TYPE_CHECKING` keeps the match exhaustive for pyright
+            # without crashing at runtime on a newer pydantic-ai.
             if TYPE_CHECKING:
                 assert_never(part)
             return []
@@ -347,7 +336,7 @@ def estimate_message_tokens(
     """
     counts = [
         max(
-            _estimate_segments(segments, tokenizer),
+            _count_segments(segments, tokenizer),
             message.usage.output_tokens if isinstance(message, ModelResponse) else 0,
         )
         for message, segments in zip(messages, _message_segments(messages))
@@ -362,12 +351,6 @@ def estimate_message_tokens(
         shares[0] += span - sum(shares)
         counts[start:end] = shares
     return counts
-
-
-def _estimate_segments(segments: Sequence[str], tokenizer: Callable[[str], int] | None) -> int:
-    if tokenizer is not None:
-        return sum(tokenizer(s) for s in segments)
-    return sum(len(s) for s in segments) // CHARS_PER_TOKEN
 
 
 def _reported_input_tokens(message: ModelMessage) -> int:
