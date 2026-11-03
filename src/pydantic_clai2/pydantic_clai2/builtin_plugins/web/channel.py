@@ -34,8 +34,8 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     dump,
     fork_entry,
     fork_notice,
+    history_entries,
     history_images,
-    history_items,
     queued_item,
     usage_info,
     usage_report,
@@ -43,8 +43,10 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     user_item,
 )
 from pydantic_clai2.builtin_plugins.web.workers import Workers, task_entry
-from pydantic_clai2.commands import is_command_input
+from pydantic_clai2.commands import expand_bare_command, is_command_input
+from pydantic_clai2.config import PERMISSION_MODES, PERMISSIONS_SETTING as PERMISSIONS, PermissionMode
 from pydantic_clai2.plugins import CommandEnd, ForkEnd, LiveSession, TurnOutcome
+from pydantic_clai2.runtime.rewind import rewind_points
 from pydantic_clai2.ui.prompt.prompt_queue import NOT_QUEUED
 from pydantic_clai2.ui.rendering.usage_report import session_usage
 
@@ -119,7 +121,7 @@ class SessionChannel:
 
     def snapshot(self) -> Snapshot:
         conversation = self.session.conversation
-        items = history_items(conversation.messages, image_ids=self._image_ids)
+        items = history_entries(conversation.messages, image_ids=self._image_ids)
         self._image_ids.keep([*self._prompt_images, *history_images(conversation.messages)])
         if self.running:
             items += self._turn.items.values()
@@ -161,7 +163,15 @@ class SessionChannel:
             run=None if self._usage is None else usage_info(self._usage),
             code_mode=self._switch(CODE_MODE),
             speculation=self._switch(SPECULATION),
+            permissions=self._permissions(),
         )
+
+    def _permissions(self) -> PermissionMode | None:
+        try:
+            mode = self.session.setting(PERMISSIONS)
+        except KeyError:
+            return None
+        return next((known for known in PERMISSION_MODES if known == mode), None)
 
     def _switch(self, key: str) -> bool | None:
         try:
@@ -220,7 +230,7 @@ class SessionChannel:
         self._turn.apply(message)
         self.publish(message)
 
-    def run_started(self, prompt: str | Sequence[UserContent] | None) -> None:
+    def run_started(self, prompt: str | Sequence[UserContent] | None, *, run_id: str | None = None) -> None:
         """A run of the held conversation started; a run woken by a finished task has no prompt to show."""
         self.running = True
         self._usage = None
@@ -230,7 +240,7 @@ class SessionChannel:
         if prompt is not None:
             part = UserPromptPart(prompt)
             self._prompt_images = user_images(part)
-            item = user_item(part, id=f'prompt{time.monotonic_ns()}', image_ids=self._image_ids)
+            item = user_item(part, id=f'prompt{time.monotonic_ns()}', image_ids=self._image_ids, run_id=run_id)
         self.publish(TurnStarted(item=item))
         self.publish_status()
 
@@ -327,6 +337,37 @@ class SessionChannel:
             return False
         self.session.remove_queued(input_id)
         return True
+
+    async def rewind(self, run_id: str, text: str) -> None:
+        """Drop the turn `run_id` started and every later one, then send `text` with that prompt's images in its place.
+
+        As the terminal's rewind, files and tool side effects are not undone.
+        """
+        if self.session.busy:
+            raise RuntimeError('Wait for the running turn, command, or queued input to end.')
+        conversation = self.session.conversation
+        messages = conversation.messages
+        point = next(
+            (
+                point
+                for point in rewind_points(messages)
+                if not point.reason and messages[point.message_index].run_id == run_id
+            ),
+            None,
+        )
+        if point is None:
+            raise LookupError('That prompt can no longer be edited: it left the conversation or predates a compaction.')
+        text = _entered(text, images=point.images)
+        if is_command_input(expand_bare_command(text)):
+            raise ValueError('Send a prompt in its place, not a /command.')
+        await conversation.commit_messages(messages[: point.message_index])
+        try:
+            self.session.send_input(text, images=point.images)
+        except (ValueError, RuntimeError):
+            await conversation.commit_messages(messages)
+            raise
+        finally:
+            self.service.hub.publish_session(self.snapshot(), session=self.id)
 
     def switch(self, key: Switch, on: bool) -> None:
         """Flip a run switch as `/set` typed at the prompt does; a running turn keeps the tools it started with."""
