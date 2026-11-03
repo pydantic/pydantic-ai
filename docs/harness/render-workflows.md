@@ -171,8 +171,8 @@ updated task still runs. These settings are fixed when tasks register and cannot
 For task configuration, see [Task options and tool opt-out](#task-options-and-tool-opt-out).
 
 A failed chained task run can retry while the entry task run waits. Retrying the entry task run restarts
-`agent.run(...)`, so model and tool calls that already finished may run again. There is no checkpoint resume or replay
-of completed steps. The Render SDK also does not let this integration assign stable idempotency keys to chained calls.
+`agent.run(...)`, so model and tool calls that already finished may run again. The Render SDK also does not let this
+integration assign stable idempotency keys to chained calls.
 Either kind of retry can repeat an external action performed before its result was recorded; use application-level
 idempotency keys or deduplication for writes and API requests that must not happen twice.
 
