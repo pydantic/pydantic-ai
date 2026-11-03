@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-from ..messages import Authority, _lower_authority  # pyright: ignore[reportPrivateUsage]
+from typing import Final
+
+from ..messages import Authority
 from .workspace import Workspace, WrapperWorkspace
 
 __all__ = ('AuthorityWorkspace',)
+
+_AUTHORITY_RANK: Final[dict[Authority, int]] = {'none': 0, 'user': 1, 'operator': 2}
 
 
 class AuthorityWorkspace(WrapperWorkspace):
@@ -25,7 +29,8 @@ class AuthorityWorkspace(WrapperWorkspace):
 
     @property
     def authority(self) -> Authority:
-        return _lower_authority(self._authority, super().authority)
+        inner = super().authority
+        return self._authority if _AUTHORITY_RANK[self._authority] < _AUTHORITY_RANK[inner] else inner
 
     def durable_policy(self) -> tuple[object, ...]:
         return (self._authority,)

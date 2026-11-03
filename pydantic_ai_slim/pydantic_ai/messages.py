@@ -23,7 +23,6 @@ from typing import (
     Annotated,
     Any,
     ClassVar,
-    Final,
     Generic,
     Literal,
     NotRequired,
@@ -4385,12 +4384,6 @@ Authority: TypeAlias = Literal['operator', 'user', 'none']
 A [`Workspace`][pydantic_ai.workspaces.Workspace]'s [`authority`][pydantic_ai.workspaces.Workspace.authority] is
 the authority of the files in it.
 """
-
-_AUTHORITY_RANK: Final[dict[Authority, int]] = {'none': 0, 'user': 1, 'operator': 2}
-
-
-def _lower_authority(a: Authority, b: Authority) -> Authority:
-    return a if _AUTHORITY_RANK[a] <= _AUTHORITY_RANK[b] else b
 
 
 def _model_request_part_discriminator(v: Any) -> str | None:
