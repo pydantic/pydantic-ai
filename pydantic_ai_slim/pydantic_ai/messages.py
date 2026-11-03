@@ -5855,8 +5855,8 @@ class _MessageSanitizer:
 
         if self.reserved_metadata_messages:
             warnings.warn(
-                f'Framework-reserved `__pydantic_ai__` metadata was dropped from {len(self.reserved_metadata_messages)} '
-                f'client-submitted message(s). Pydantic AI and its capabilities keep state there that they act on, '
+                f'Framework-reserved `__pydantic_ai__` metadata was dropped from '
+                f'{len(self.reserved_metadata_messages)} client-submitted message(s). Pydantic AI and its capabilities keep state there that they act on, '
                 f'so it is not accepted from untrusted clients. Your own metadata keys are kept. Pass history that '
                 f'should keep this state as trusted server-side `message_history` instead.',
                 UserWarning,
@@ -5865,8 +5865,8 @@ class _MessageSanitizer:
 
         if self.stripped_text_metadata:
             warnings.warn(
-                f'`TextContent.metadata` was dropped from {len(self.stripped_text_metadata)} client-submitted user prompt '
-                f'item(s). Metadata is never sent to the model, but application code and capabilities read it to '
+                f'`TextContent.metadata` was dropped from {len(self.stripped_text_metadata)} client-submitted user '
+                f'prompt item(s). Metadata is never sent to the model, but application code and capabilities read it to '
                 f'recognize content they added themselves, so it is not accepted from untrusted clients. Pass '
                 f'history that carries your own metadata as trusted server-side `message_history` instead.',
                 UserWarning,
@@ -6418,20 +6418,16 @@ def _chain_provider_details(
     """Combine two `ThinkingPartDelta`s' `provider_details`, `new` applying on top of `existing`."""
     if callable(new):
         if callable(existing):
-            existing_fn = existing
-            new_fn = new
 
             def chained_both(d: dict[str, Any] | None) -> dict[str, Any]:
-                return new_fn(existing_fn(d))
+                return new(existing(d))
 
             return chained_both
         return new  # pragma: no cover
     if callable(existing):
-        existing_fn = existing
-        new_dict = new
 
         def chained_dict(d: dict[str, Any] | None) -> dict[str, Any]:
-            return {**existing_fn(d), **new_dict}
+            return {**existing(d), **new}
 
         return chained_dict
     existing_dict = existing if isinstance(existing, dict) else {}
