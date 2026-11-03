@@ -1104,6 +1104,7 @@ The temperature in London on 1st January 2022 was 30°C.\
                 instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'lookalike_kinds': []}},
             ),
             ModelResponse(
                 parts=[

@@ -57,6 +57,8 @@ from .. import _utils
 from .._canonical_system import accepts_stateless_artifact
 from .._capability_parts import (
     LookalikeNaming,
+    capability_frame_tag,
+    registered_kind_tags,
     render_capability_part,
     render_capability_parts,
 )
@@ -69,13 +71,16 @@ from .._file_input import (
 )
 from .._framing import (
     CONVERSATION_SUMMARY_TAG,
+    CORE_DATA_TAGS,
     FRAME_SEAL,
     SYSTEM_TAG,
     LookalikeSource,
+    comparable_text,
     frame,
     in_second_model_prompt,
     lookalike_frame_note,
     lookalike_note_announcement,
+    lookalike_scan_tags,
     lookalike_tags,
     neutralize_tags,
 )
@@ -159,6 +164,7 @@ from ..messages import (
     _render_append_parts,  # pyright: ignore[reportPrivateUsage]
     _render_system_prompt_context,  # pyright: ignore[reportPrivateUsage]
     _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
+    _retry_feedback_text,  # pyright: ignore[reportPrivateUsage]
     _StatelessArtifactPredicate,  # pyright: ignore[reportPrivateUsage]
     _tagged_append_parts,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
@@ -1808,6 +1814,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 which differs only for a corpus mixing capability-gated and standalone deferred tools.
                 Framework callers pass it.
         """
+        # Before any pass copies a request, so the decision lands on the requests the caller holds.
+        stamp_lookalike_decisions(messages)
         inline_system = self.profile.get('supports_inline_system_prompts', False)
         messages = _drop_capability_load_deltas(messages)
         if _has_instruction_state(messages):
@@ -2020,13 +2028,19 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         first_request_index = next((i for i, m in enumerate(messages) if isinstance(m, ModelRequest)), None)
         new_messages: list[ModelMessage] = []
         changed = False
+        kind_tags: set[str] = set()
         for index, (message, original) in enumerate(zip(messages, authored)):
             if not isinstance(message, ModelRequest):
                 new_messages.append(message)
                 continue
             assert isinstance(original, ModelRequest)
+            # Fixed by the history up to and including this request and by the decision stored on it, so neither a later
+            # kind in history nor a kind a process imports later changes this request's bytes.
             parts, frame_at = self._request_with_lookalike_notes(
-                original, message, first_request=index == first_request_index
+                original,
+                message,
+                first_request=index == first_request_index,
+                data_tags=_request_scan_tags(original, kind_tags),
             )
             frame_at = self._frame_index_with_thinking(parts, frame_at, following=messages[index + 1 : index + 2])
             if frame_at is not None and pending_announcement:
@@ -2048,6 +2062,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         request: ModelRequest,
         *,
         first_request: bool,
+        data_tags: Sequence[str],
     ) -> tuple[list[ModelRequestPart], int | None]:
         """`request`'s parts with lookalike notes added, and where the announcement goes if this request carries it.
 
@@ -2062,13 +2077,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         Each [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] is rendered here, in place: its system parts are
         the application's, its framed body is a frame to announce, and the lookalike notes for its body name the
-        author its source gives (`render_capability_part`).
+        author its source gives (`render_capability_part`). `data_tags` are the data frames text in the request is
+        checked for (`lookalike_scan_tags`).
         """
         inline_system = self.profile.get('supports_inline_system_prompts', False)
         # With a system role, a tool's note goes right after the tool results even where the API takes it ahead of
         # them: a genuine change in the same turn was followed more reliably with the note after them.
         precede_tool_results = self._lookalike_notes_precede_tool_results and not inline_system
-        expanded = _with_capability_parts_rendered(authored, request)
+        expanded = _with_capability_parts_rendered(authored, request, data_tags)
         # A tool or file note names the application's own mid-conversation system message in the same request, unless
         # the user's text there has a lookalike too, which "the other <system> block" would no longer pick out.
         # A capability part is never among the standing prompt the first request opens with, so neither is what it
@@ -4390,7 +4406,7 @@ _LookalikeSources: TypeAlias = list[tuple[LookalikeSource, list[str]]]
 
 
 def _with_capability_parts_rendered(
-    authored: ModelRequest, request: ModelRequest
+    authored: ModelRequest, request: ModelRequest, data_tags: Sequence[str]
 ) -> list[tuple[ModelRequestPart, _LookalikeSources, ModelRequestPart]]:
     """Each of `request`'s parts with its authored form and its lookalikes, and every capability part rendered in place.
 
@@ -4400,17 +4416,17 @@ def _with_capability_parts_rendered(
     expanded: list[tuple[ModelRequestPart, _LookalikeSources, ModelRequestPart]] = []
     for original, part in zip(authored.parts, request.parts):
         if isinstance(part, CapabilityPart):
-            expanded.extend(_rendered_capability_part(part))
+            expanded.extend(_rendered_capability_part(part, data_tags))
         else:
-            expanded.append((original, _lookalike_sources(original), part))
+            expanded.append((original, _lookalike_sources(original, data_tags), part))
     return expanded
 
 
 def _rendered_capability_part(
-    part: CapabilityPart,
+    part: CapabilityPart, data_tags: Sequence[str]
 ) -> list[tuple[ModelRequestPart, _LookalikeSources, ModelRequestPart]]:
     """The parts `part` renders as, each with its lookalikes, the way `_with_capability_parts_rendered` lists them."""
-    rendering = render_capability_part(part)
+    rendering = render_capability_part(part, data_tags=data_tags)
     if rendering.body is None:
         return [(new, [], new) for new in rendering.parts]
     body = _RenderedCapabilityBody(
@@ -4424,21 +4440,113 @@ def _rendered_capability_part(
     return rendered
 
 
-def _lookalike_sources(part: ModelRequestPart) -> list[tuple[LookalikeSource, list[str]]]:
-    """Who wrote the text in `part` that resembles a framework frame, with the system-voice tags it opens.
+def _lookalike_sources(part: ModelRequestPart, data_tags: Sequence[str]) -> list[tuple[LookalikeSource, list[str]]]:
+    """Who wrote the text in `part` that resembles a framework frame, with the frame tags it opens.
 
     A user prompt's text and its text files are checked separately, so each gets a note naming its author. A tool
-    result is checked whole, its text files included. Text files are read as UTF-8; other files have no text to check.
+    result is checked whole, its text files included. Retry feedback is checked for the text it quotes, and a
+    compaction summary for the summarizer's text, not for the frame core puts around either. Text files are read as
+    UTF-8; other files have no text to check. Each text is checked for the system-voice tags and for `data_tags`.
     """
     # TODO(v3): remove `RetryPromptPart`
     if isinstance(part, RetryPromptPart) and part.tool_name is not None:  # pyright: ignore[reportDeprecated]
         part = _translate_legacy_retry_part(part)
     found: dict[LookalikeSource, list[str]] = {}
     for source, text in _lookalike_texts(part):
-        if text is not None and (tags := lookalike_tags(text)):
+        if text is not None and (tags := lookalike_tags(text, data_tags)):
             known = found.setdefault(source, [])
             known.extend(tag for tag in tags if tag not in known)
     return list(found.items())
+
+
+LOOKALIKE_KINDS_KEY = 'lookalike_kinds'
+"""The key under a request's reserved metadata namespace for the capability part kinds its text was found to imitate."""
+
+
+def stamp_lookalike_decisions(messages: Sequence[ModelMessage]) -> None:
+    """Decide, once, which capability part kinds the text in each request imitates, and store it on the request.
+
+    The kinds a process knows (`registered_kind_tags`) depend on which modules it has imported, so a request is checked
+    against them the first time it's rendered, and the kinds found are kept in its reserved metadata
+    (`stored_lookalike_kinds`). Every later render, in any process, reads that decision instead of checking again, so an
+    earlier request's notes, and its bytes, never change when a process imports another kind. A request with no text
+    that could open a tag needs no decision and keeps its metadata as it is.
+    """
+    if in_second_model_prompt():
+        # A transcript for a judge or summarizer gets no notes, so there's nothing to decide.
+        return
+    registered: set[str] | None = None
+    for message in messages:
+        if (
+            not isinstance(message, ModelRequest)
+            or stored_lookalike_kinds(message) is not None
+            or not _may_imitate_a_frame(message)
+        ):
+            continue
+        if registered is None:
+            registered = registered_kind_tags()
+        metadata = message.metadata or {}
+        namespace = metadata.get(_PYDANTIC_AI_METADATA_KEY)
+        message.metadata = {
+            **metadata,
+            _PYDANTIC_AI_METADATA_KEY: {
+                **(namespace if _utils.is_str_dict(namespace) else {}),
+                LOOKALIKE_KINDS_KEY: _matched_kinds(message, registered),
+            },
+        }
+
+
+def _request_scan_tags(request: ModelRequest, kind_tags: set[str]) -> tuple[str, ...]:
+    """The data tags `request`'s text is checked for, adding its own kinds to `kind_tags`, the history's so far.
+
+    Core's tags, the kinds in the history up to and including `request`, and the kinds its stored decision found
+    (`stamp_lookalike_decisions`); a request that has none, rendered outside an agent run, is checked against the
+    kinds registered now.
+    """
+    kind_tags.update(capability_frame_tag(part) for part in request.parts if isinstance(part, CapabilityPart))
+    decided = stored_lookalike_kinds(request)
+    if decided is None:
+        decided = _matched_kinds(request, registered_kind_tags())
+    return lookalike_scan_tags(kind_tags.union(decided))
+
+
+def stored_lookalike_kinds(request: ModelRequest) -> list[str] | None:
+    """The kinds `stamp_lookalike_decisions` found `request`'s text imitating, or `None` when it hasn't decided."""
+    namespace = (request.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+    if not _utils.is_str_dict(namespace):
+        return None
+    kinds = namespace.get(LOOKALIKE_KINDS_KEY)
+    if not isinstance(kinds, list):
+        return None
+    return [kind for kind in cast('list[object]', kinds) if isinstance(kind, str)]
+
+
+def _matched_kinds(request: ModelRequest, registered: set[str]) -> list[str]:
+    """The capability part kinds' tags among `registered` that text in `request` opens or closes, sorted."""
+    kind_tags = lookalike_scan_tags(registered)
+    found: set[str] = set()
+    for _, sources, _ in _with_capability_parts_rendered(request, request, kind_tags):
+        for _, tags in sources:
+            found.update(tags)
+    return sorted(found & (set(registered) - set(CORE_DATA_TAGS)))
+
+
+def _may_imitate_a_frame(request: ModelRequest) -> bool:
+    """Whether any text in `request` from someone other than the application has a `<`, as a model reads it."""
+    for part in request.parts:
+        texts = (
+            [text for _, text in _lookalike_texts(part)]
+            if not isinstance(part, CapabilityPart)
+            else [_text_of(item) or _text_file_content(item) for item in _capability_part_items(part)]
+        )
+        if any(text is not None and '<' in comparable_text(text) for text in texts):
+            return True
+    return False
+
+
+def _capability_part_items(part: CapabilityPart) -> list[object]:
+    content = part.model_content()
+    return [content] if isinstance(content, str) else list(content) if isinstance(content, list) else [content]
 
 
 def _lookalike_texts(part: ModelRequestPart) -> Iterator[tuple[LookalikeSource, str | None]]:
@@ -4453,6 +4561,10 @@ def _lookalike_texts(part: ModelRequestPart) -> Iterator[tuple[LookalikeSource, 
         for item in part.content_items(mode='str', wrap_if_error=False):
             text = _text_file_content(item)
             yield 'tool', _text_of(item) if text is None else text
+    elif isinstance(part, RetryFeedbackPart):
+        yield 'retry', _retry_feedback_text(part)
+    elif isinstance(part, CompactionPart):
+        yield 'summary', part.content
 
 
 def _text_of(item: object) -> str | None:

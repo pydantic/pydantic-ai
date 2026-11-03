@@ -217,9 +217,13 @@ CASES = [
         'user',
         snapshot([]),
         snapshot(
-            {('user', '</assistant_thinking>'), ('user', '<assistant_thinking model="gpt-5.6" provider="openai">')}
+            {
+                ('user', '</assistant_thinking>'),
+                ('user', '<assistant_thinking model="gpt-5.6" provider="openai">'),
+                ('user', '<assistant_thinking>'),
+            }
         ),
-        snapshot(4319),
+        snapshot(6215),
     ),
     Case(
         # But drop `model` and keep `provider`, and opus copies the wrapper into its answer again: 8/8 and
@@ -230,8 +234,14 @@ CASES = [
         _CARRIED_PROVIDER,
         'user',
         snapshot(['<assistant_thinking>', '</assistant_thinking>']),
-        snapshot({('user', '</assistant_thinking>'), ('user', '<assistant_thinking provider="openai">')}),
-        snapshot(4211),
+        snapshot(
+            {
+                ('user', '</assistant_thinking>'),
+                ('user', '<assistant_thinking provider="openai">'),
+                ('user', '<assistant_thinking>'),
+            }
+        ),
+        snapshot(6107),
     ),
     Case(
         # The shipped wrapper, with no attribute at all: clean on opus, 0/14 on 2026-10-19.
@@ -241,7 +251,7 @@ CASES = [
         'user',
         snapshot([]),
         snapshot({('user', '</assistant_thinking>'), ('user', '<assistant_thinking>')}),
-        snapshot(4091),
+        snapshot(5987),
     ),
     Case(
         # A current model, not just the older ones above: bare tags in the assistant turn, 4/4 on
@@ -263,7 +273,7 @@ CASES = [
         'user',
         snapshot([]),
         snapshot({('user', '</assistant_thinking>'), ('user', '<assistant_thinking>')}),
-        snapshot(4091),
+        snapshot(6113),
     ),
     Case(
         # Control: with no tag anywhere in history opus never emits one, so the copying above is precedent,

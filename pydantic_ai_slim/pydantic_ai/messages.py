@@ -6561,10 +6561,9 @@ def _client_safe_retry_feedback(part: ModelRequestPart) -> ModelRequestPart:
     if isinstance(part, RetryPromptPart) and part.tool_name is None:  # pyright: ignore[reportDeprecated]
         part = _translate_legacy_retry_part(part)
     if isinstance(part, RetryFeedbackPart) and part.retry.cause == 'no_output':
-        return UserPromptPart(
-            content=_fenced_retry_feedback(_retry_feedback_text(part), tag='retry_feedback'),
-            timestamp=part.timestamp,
-        )
+        # As `'model_retry'` feedback, which renders as the same fenced, attributed user text, and whose content is the
+        # client's own: the fence stays the framework's, and only what's inside it is checked for lookalike frames.
+        return replace(part, retry=replace(part.retry, cause='model_retry'))
     return part
 
 
