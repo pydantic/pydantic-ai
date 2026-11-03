@@ -998,7 +998,7 @@ async def test_a_cancelled_run_carries_its_conversation() -> None:
     @agent.tool
     def stop(ctx: RunContext) -> str:
         ctx.cancel()
-        return 'unreachable'  # pragma: no cover
+        return 'stopped'
 
     with pytest.raises(RunCancelled) as exc_info:
         await agent.run('Stop')
