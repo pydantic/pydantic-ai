@@ -5856,7 +5856,8 @@ class _MessageSanitizer:
         if self.reserved_metadata_messages:
             warnings.warn(
                 f'Framework-reserved `__pydantic_ai__` metadata was dropped from '
-                f'{len(self.reserved_metadata_messages)} client-submitted message(s). Pydantic AI and its capabilities keep state there that they act on, '
+                f'{len(self.reserved_metadata_messages)} client-submitted message(s). '
+                f'Pydantic AI and its capabilities keep state there that they act on, '
                 f'so it is not accepted from untrusted clients. Your own metadata keys are kept. Pass history that '
                 f'should keep this state as trusted server-side `message_history` instead.',
                 UserWarning,
@@ -5866,8 +5867,8 @@ class _MessageSanitizer:
         if self.stripped_text_metadata:
             warnings.warn(
                 f'`TextContent.metadata` was dropped from {len(self.stripped_text_metadata)} client-submitted user '
-                f'prompt item(s). Metadata is never sent to the model, but application code and capabilities read it to '
-                f'recognize content they added themselves, so it is not accepted from untrusted clients. Pass '
+                f'prompt item(s). Metadata is never sent to the model, but application code and capabilities read it '
+                f'to recognize content they added themselves, so it is not accepted from untrusted clients. Pass '
                 f'history that carries your own metadata as trusted server-side `message_history` instead.',
                 UserWarning,
                 stacklevel=4,
