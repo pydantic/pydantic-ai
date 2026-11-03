@@ -8,7 +8,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Generic, LiteralString, TypeVar, cast
+from typing import Any, Generic, Literal, LiteralString, TypeVar, cast
 
 import pytest
 from pydantic import ConfigDict, TypeAdapter, ValidationError
@@ -1134,7 +1134,17 @@ def test_enqueue_from_a_capability_stamps_its_id() -> None:
     assert part.capability_id is not None and part.capability_id.startswith('<reporter:')
 
 
-def _run_with_ceiling(ceiling: Authority, *parts: Any) -> tuple[list[ModelMessage], list[ModelMessage]]:
+@dataclass
+class _UserCeilingReporter(Reporter):
+    authority = 'user'
+
+
+@dataclass
+class _NoAuthorityReporter(Reporter):
+    authority = 'none'
+
+
+def _run_with_ceiling(ceiling: Literal['user', 'none'], *parts: Any) -> tuple[list[ModelMessage], list[ModelMessage]]:
     """A run whose capability enqueues `parts` under `ceiling`: its history, and the request the model was sent."""
     received: list[list[ModelMessage]] = []
 
@@ -1142,7 +1152,7 @@ def _run_with_ceiling(ceiling: Authority, *parts: Any) -> tuple[list[ModelMessag
         received.append(messages)
         return ModelResponse(parts=[TextPart('Done.')])
 
-    reporter = Reporter(list(parts), id='plugin', authority=ceiling)
+    reporter = {'user': _UserCeilingReporter, 'none': _NoAuthorityReporter}[ceiling](list(parts), id='plugin')
     agent = Agent(FunctionModel(respond, profile=INLINE), capabilities=[reporter])
     result = agent.run_sync('Run the tests.')
     return result.all_messages(), received[-1]
