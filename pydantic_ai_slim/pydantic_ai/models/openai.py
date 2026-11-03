@@ -1950,6 +1950,14 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """
         return _map_provider_details(response.choices[0])
 
+    def _first_choice(self, response: chat.ChatCompletion) -> chat_completion.Choice:
+        """The completion's first choice, or a `ModelEmptyResponseError` if it has none."""
+        if not response.choices:
+            raise ModelEmptyResponseError(
+                self.model_name, f'Empty response from {self.system} chat completions endpoint: no choices'
+            )
+        return response.choices[0]
+
     def _process_response(  # noqa: C901
         self, response: chat.ChatCompletion | str, *, include_raw_annotations: bool = False
     ) -> ModelResponse:
@@ -1991,11 +1999,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 body=response.model_dump(warnings=False),
             ) from e
 
-        if not response.choices:
-            raise ModelEmptyResponseError(
-                self.model_name, f'Empty response from {self.system} chat completions endpoint: no choices'
-            )
-        choice = response.choices[0]
+        choice = self._first_choice(response)
         finish_reason = self._map_finish_reason(choice.finish_reason)
         if missing_finish_reason:
             # Restore the missing value after validation, so it's not reported as the provider's.
