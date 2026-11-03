@@ -2697,6 +2697,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _root_capability=ctx.deps.root_capability,
             _metadata_getter=lambda: ctx.state.metadata,
             _event_stream_buffer_getter=lambda: ctx.state.event_stream_buffer,
+            _max_tokens_getter=lambda: ctx.state.last_max_tokens,
         )
 
     async def _make_request(
@@ -4040,6 +4041,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 )
                 raise ToolRetryError(m)
             except ToolRetryError as e:
+                _raise_if_cut_off_output(self.model_response, e, max_tokens=ctx.state.last_max_tokens)
                 ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e, feedback=e.tool_retry)
                 self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
 
@@ -4375,6 +4377,24 @@ async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Dep
     ctx.deps.model = model
     ctx.deps.model_id = model_id
     ctx.deps.model_selected_for_step = ctx.state.run_step
+
+
+def _raise_if_cut_off_output(
+    response: _messages.ModelResponse, error: ToolRetryError, *, max_tokens: int | None
+) -> None:
+    """Raise instead of retrying when the token limit cut off text output that then failed validation.
+
+    Re-prompting the model with the same limit would only run into it again.
+    """
+    if (
+        response.finish_reason == 'length'
+        and isinstance(error.tool_retry, _messages.RetryFeedbackPart)
+        and error.tool_retry.retry.cause == 'validation_error'
+    ):
+        # Chained to the `ValidationError`, as in `run_stream()`.
+        raise exceptions.UnexpectedModelBehavior(_output.truncated_output_message(max_tokens)) from (
+            error.__cause__ or error
+        )
 
 
 def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:

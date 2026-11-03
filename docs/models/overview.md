@@ -744,7 +744,9 @@ print(result.output)
     the token limit mid-thinking), and an empty or thinking-only response with a `'content_filter'` finish
     reason raises [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. Other empty or thinking-only
     responses are re-prompted, up to the output retry limit. Non-empty responses are handled normally
-    regardless of finish reason — a tool call truncated mid-arguments is re-prompted like any other
+    regardless of finish reason, except that [`NativeOutput`][pydantic_ai.output.NativeOutput] or
+    [`PromptedOutput`][pydantic_ai.output.PromptedOutput] text cut off at `'length'` that fails validation
+    raises `UnexpectedModelBehavior` right away — a tool call truncated mid-arguments is re-prompted like any other
     invalid-arguments failure, and only once its retry budget is exhausted does it surface as
     [`IncompleteToolCall`][pydantic_ai.exceptions.IncompleteToolCall] (a subclass of
     `UnexpectedModelBehavior`).

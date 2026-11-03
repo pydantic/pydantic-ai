@@ -4846,6 +4846,73 @@ def test_thinking_only_response_with_finish_reason_length():
         agent.run_sync('Hello')
 
 
+class _City(BaseModel):
+    name: str
+    population: int
+
+
+@pytest.mark.parametrize('output_type', [NativeOutput(_City), PromptedOutput(_City)], ids=['native', 'prompted'])
+def test_truncated_structured_output_raises_without_retry(output_type: NativeOutput[_City] | PromptedOutput[_City]):
+    """Text output the token limit cut off fails validation again on a retry with the same limit, so it isn't retried."""
+    calls = 0
+
+    def truncated(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        return ModelResponse(parts=[TextPart('{"name": "Paris", "popu')], finish_reason='length')
+
+    agent = Agent(FunctionModel(truncated), output_type=output_type, retries=3)
+
+    with pytest.raises(
+        UnexpectedModelBehavior,
+        match=r'Model token limit \(10\) exceeded while generating structured output, resulting in output that failed validation\.',
+    ):
+        agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
+    assert calls == 1
+
+    with pytest.raises(UnexpectedModelBehavior, match=r'Model token limit \(provider default\) exceeded'):
+        agent.run_sync('Hello')
+
+
+def test_structured_output_that_validates_is_accepted_despite_finish_reason_length():
+    def complete(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('{"name": "Paris", "population": 2}')], finish_reason='length')
+
+    agent = Agent(FunctionModel(complete), output_type=NativeOutput(_City))
+    assert agent.run_sync('Hello').output == _City(name='Paris', population=2)
+
+
+def test_output_validator_retry_with_finish_reason_length_is_retried():
+    """Only a validation failure is blamed on the token limit: an output validator's `ModelRetry` is still retried."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        population = 2 if len(messages) == 1 else 3
+        return ModelResponse(
+            parts=[TextPart(f'{{"name": "Paris", "population": {population}}}')], finish_reason='length'
+        )
+
+    agent = Agent(FunctionModel(respond), output_type=NativeOutput(_City))
+
+    @agent.output_validator
+    def check(output: _City) -> _City:
+        if output.population < 3:
+            raise ModelRetry('Population is too small.')
+        return output
+
+    assert agent.run_sync('Hello').output == _City(name='Paris', population=3)
+
+
+def test_truncated_text_output_is_returned():
+    """Plain text has no shape to validate, so text the token limit cut off is the output; `finish_reason` says so."""
+
+    def truncated(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('The capital of France is Pa')], finish_reason='length')
+
+    result = Agent(FunctionModel(truncated)).run_sync('Hello')
+    assert result.output == 'The capital of France is Pa'
+    assert result.response.finish_reason == 'length'
+
+
 def test_model_requests_blocked(env: TestEnv):
     try:
         env.set('GEMINI_API_KEY', 'foobar')

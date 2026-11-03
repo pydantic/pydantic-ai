@@ -123,6 +123,15 @@ def _isinstance_maybe_generic(value: Any, type_: type[Any]) -> bool:
         return origin is not None and isinstance(value, origin)
 
 
+def truncated_output_message(max_tokens: int | None) -> str:
+    """The error message for text output that the token limit cut off, which then failed validation."""
+    return (
+        f'Model token limit ({max_tokens or "provider default"}) exceeded while generating structured output, '
+        'resulting in output that failed validation. Increase the `max_tokens` model setting, or simplify the prompt '
+        'to result in a shorter response that will fit within the limit.'
+    )
+
+
 def build_retried_tool_return(
     error: ValidationError | ModelRetry,
     *,
