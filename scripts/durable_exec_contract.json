@@ -6166,7 +6166,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::TemporalDurability._resolve_temporal_tool_config",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::restore_telemetry_mcp_url_ids",
         "src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda/_operation_backend.py::AWSLambdaOperationConfig.__init__.resolve_tool",
-        "src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/_capability.py::AzureDurableTaskDurability.__init__.resolve_options"
+        "src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/_capability.py::_opted_out_by_metadata"
       ]
     },
     "ToolDefinition.name": {
@@ -6645,7 +6645,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::_FunctionCallTransport.dump",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::_MCPCallTransport.dump",
         "src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda/_operation_backend.py::AWSLambdaOperationConfig.__init__.resolve_tool",
-        "src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/_capability.py::AzureDurableTaskDurability.__init__.resolve_options",
+        "src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/_capability.py::_opted_out_by_metadata",
         "src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/_transports.py::function_transport.dump",
         "src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/_transports.py::mcp_transport.dump",
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_compat.py::prepare_function_call_params",
@@ -6835,7 +6835,7 @@
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_function_toolset.py::temporalize_function_toolset.call_tool_operation",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::_FunctionCallTransport.dump",
-        "src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/_capability.py::AzureDurableTaskDurability.__init__.resolve_options",
+        "src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/_capability.py::_resolve_options",
         "src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/_transports.py::function_transport.dump",
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_compat.py::function_tool_original_name"
       ]
