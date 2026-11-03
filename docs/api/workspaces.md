@@ -6,7 +6,7 @@
             - Workspace
             - WrapperWorkspace
             - ReadOnlyWorkspace
-            - UntrustedWorkspace
+            - AuthorityWorkspace
             - LocalWorkspaceBackend
             - UnavailableWorkspace
             - WorkspaceRef

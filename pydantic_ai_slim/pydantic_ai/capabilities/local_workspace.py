@@ -5,10 +5,11 @@ from dataclasses import KW_ONLY, dataclass
 from pathlib import Path
 
 from pydantic_ai._run_context import AgentDepsT, RunContext
+from pydantic_ai.messages import Authority
 from pydantic_ai.workspaces import (
+    AuthorityWorkspace,
     LocalWorkspaceBackend,
     ReadOnlyWorkspace,
-    UntrustedWorkspace,
     Workspace,
     WorkspaceBackend,
     WorkspaceRef,
@@ -42,9 +43,10 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
     read_only: bool = False
     """Whether to wrap the workspace in a [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace]."""
 
-    trusted: bool = True
-    """Whether the operator controls the directory's files; `False` wraps the workspace in an
-    [`UntrustedWorkspace`][pydantic_ai.workspaces.UntrustedWorkspace]."""
+    authority: Authority = 'operator'
+    """The [authority][pydantic_ai.messages.Authority] of the directory's files: `'user'` for the user's own files,
+    `'none'` for files nobody on the application's side wrote. Anything below `'operator'` wraps the workspace in an
+    [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace]."""
 
     env: Mapping[str, str] | None = None
     """Environment variables for every command, on top of `PATH`, `HOME`, `LANG`, `LC_ALL` and `LC_CTYPE`.
@@ -63,7 +65,7 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         # The later configuration replaces the earlier one whole, so
-        # an `env` (and its secrets), `read_only` or `trusted` stated only on the replaced one never carries over.
+        # an `env` (and its secrets), `read_only` or `authority` stated only on the replaced one never carries over.
         return capabilities[-1]
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
@@ -74,6 +76,6 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
         workspace: WorkspaceBackend = backend
         if self.read_only:
             workspace = ReadOnlyWorkspace(Workspace(workspace))
-        if not self.trusted:
-            workspace = UntrustedWorkspace(Workspace(workspace))
+        if self.authority != 'operator':
+            workspace = AuthorityWorkspace(Workspace(workspace), authority=self.authority)
         return workspace
