@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import Literal, TypeVar
+from typing import Literal, TypeAlias, TypeVar
 
 from .messages import ModelMessage, ModelRequest, ModelResponse
 
@@ -53,33 +53,7 @@ def _align(
     part object in common. View items that are neither, in a run between two that are, stand in for the originals
     missing between those two: they're a substitution if any are missing, and an insertion if none are.
     """
-    index = {id(item): position for position, item in enumerate(originals)}
-    part_index = (
-        {id(part): position for position, item in enumerate(originals) for part in parts_of(item)}
-        if parts_of is not None
-        else {}
-    )
-    matched: list[tuple[int, Literal['same', 'copy']] | None] = []
-    last = -1
-    for item in view:
-        position = index.get(id(item))
-        kind: Literal['same', 'copy'] = 'same'
-        if position is None and parts_of is not None:
-            kind = 'copy'
-            position = next(
-                (
-                    shared
-                    for part in parts_of(item)
-                    if (shared := part_index.get(id(part))) is not None and shared > last
-                ),
-                None,
-            )
-        if position is not None and position > last:
-            matched.append((position, kind))
-            last = position
-        else:
-            matched.append(None)
-
+    matched = _match(originals, view, parts_of)
     aligned: list[_Aligned] = []
     previous = -1
     position = 0
@@ -90,15 +64,64 @@ def _align(
             previous = original
             position += 1
             continue
-        run_end = position
-        while run_end < len(view) and matched[run_end] is None:
-            run_end += 1
-        following_match = matched[run_end] if run_end < len(view) else None
-        following = len(originals) if following_match is None else following_match[0]
-        gap = _Aligned('substitute' if following > previous + 1 else 'insert', previous + 1, following)
+        run_end = _unmatched_run_end(matched, position)
+        gap = _gap(matched, run_end, previous, len(originals))
         aligned.extend(gap for _ in range(position, run_end))
         position = run_end
     return aligned
+
+
+_Match: TypeAlias = tuple[int, Literal['same', 'copy']] | None
+
+
+def _match(originals: Sequence[T], view: Sequence[T], parts_of: Callable[[T], Sequence[object]] | None) -> list[_Match]:
+    """For each view item, in order, the original it is (`'same'`) or copies (`'copy'`), or `None`."""
+    index = {id(item): position for position, item in enumerate(originals)}
+    part_index = (
+        {id(part): position for position, item in enumerate(originals) for part in parts_of(item)}
+        if parts_of is not None
+        else {}
+    )
+    matched: list[_Match] = []
+    last = -1
+    for item in view:
+        match = _match_item(item, index, part_index, parts_of, last)
+        matched.append(match)
+        if match is not None:
+            last = match[0]
+    return matched
+
+
+def _match_item(
+    item: T,
+    index: dict[int, int],
+    part_index: dict[int, int],
+    parts_of: Callable[[T], Sequence[object]] | None,
+    last: int,
+) -> _Match:
+    """The original after `last` that `item` is, or copies by holding one of its parts, or `None`."""
+    if (position := index.get(id(item))) is not None:
+        return (position, 'same') if position > last else None
+    if parts_of is None:
+        return None
+    shared = (part_index.get(id(part)) for part in parts_of(item))
+    position = next((found for found in shared if found is not None and found > last), None)
+    return None if position is None else (position, 'copy')
+
+
+def _unmatched_run_end(matched: Sequence[_Match], start: int) -> int:
+    """Where the run of unmatched view items starting at `start` ends."""
+    end = start
+    while end < len(matched) and matched[end] is None:
+        end += 1
+    return end
+
+
+def _gap(matched: Sequence[_Match], run_end: int, previous: int, originals: int) -> _Aligned:
+    """What a run of unmatched view items between `previous` and the match at `run_end` stands for."""
+    following_match = matched[run_end] if run_end < len(matched) else None
+    following = originals if following_match is None else following_match[0]
+    return _Aligned('substitute' if following > previous + 1 else 'insert', previous + 1, following)
 
 
 def _without_insertions(original: ModelMessage, copy: ModelMessage) -> ModelMessage:

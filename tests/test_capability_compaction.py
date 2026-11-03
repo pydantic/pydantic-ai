@@ -49,6 +49,7 @@ from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelContextWindowExceededError,
     ModelRetry,
+    RetryModelRequest,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
@@ -791,6 +792,26 @@ async def test_context_overflow_is_compacted_and_retried_on_the_same_model():
     assert result.all_messages()[0] == ModelRequest(parts=[CompactionPart(content='summarize for primary')])
     # The overflow isn't a failed attempt of its own: the retry is part of the same attempt.
     assert result.response.failed_attempts is None
+
+
+async def test_retry_request_from_the_resent_overflow_attempt_makes_another_attempt():
+    """A `RetryModelRequest` the compacted resend raises is the attempt loop's, not an error for the hooks."""
+    calls: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('m')
+        if len(calls) == 1:
+            raise ModelContextWindowExceededError('m', 'context_length_exceeded')
+        if len(calls) == 2:
+            raise RetryModelRequest()
+        return ModelResponse(parts=[TextPart('done')])
+
+    summarize = Summarize()
+    result = await Agent(FunctionModel(respond), capabilities=[summarize]).run('hi')
+    assert result.output == 'done'
+    assert calls == ['m', 'm', 'm']
+    # A compaction for an overflow isn't a pending request, so the next attempt isn't compacted again.
+    assert [request.reason for request in summarize.calls] == ['context_overflow']
 
 
 async def test_context_overflow_twice_raises_the_overflow():
