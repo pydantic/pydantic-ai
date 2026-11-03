@@ -142,6 +142,20 @@ def _unavailable(sandbox_id: str) -> WorkspaceUnavailableError:
     )
 
 
+def _connection_config(connection: ConnectionConfig | None) -> ConnectionConfig:
+    """Return `connection`, or one read from the environment that keeps an `https://` domain on every request.
+
+    The SDK applies the scheme in `OPEN_SANDBOX_DOMAIN` to the management API only; command and file requests use
+    `ConnectionConfig.protocol`, which defaults to `http`. A `connection` the caller passes is used as given.
+    """
+    if connection is not None:
+        return connection
+    config = ConnectionConfig()
+    if config.get_base_url().startswith('https://'):
+        return ConnectionConfig(protocol='https')
+    return config
+
+
 @contextmanager
 def _api_errors(context: str) -> Generator[None]:
     """Translate permanent API refusals; leave transient SDK failures unchanged."""
@@ -161,7 +175,7 @@ def _api_errors(context: str) -> Generator[None]:
 async def destroy_sandbox(sandbox_id: str, connection: ConnectionConfig | None = None) -> None:
     """Kill a sandbox by ID without connecting to it; one that is already gone returns quietly."""
     require_asyncio(_ASYNCIO_ONLY)
-    manager = await SandboxManager.create(connection_config=connection or ConnectionConfig())
+    manager = await SandboxManager.create(connection_config=_connection_config(connection))
     try:
         with _api_errors(f'Could not destroy OpenSandbox sandbox {sandbox_id!r}'):
             try:
@@ -335,7 +349,7 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
                         network_policy=None if self._allow_internet_access else NetworkPolicy(defaultAction='deny'),
                         secure_access=self._secure_access,
                         metadata={_CREATE_TAG: tag},
-                        connection_config=self._connection,
+                        connection_config=_connection_config(self._connection),
                     )
             except SandboxException:
                 await self._find_created(tag)
@@ -357,7 +371,7 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
         leaves the original error alone.
         """
         try:
-            manager = await SandboxManager.create(connection_config=self._connection or ConnectionConfig())
+            manager = await SandboxManager.create(connection_config=_connection_config(self._connection))
             try:
                 found = await manager.list_sandbox_infos(SandboxFilter(metadata={_CREATE_TAG: tag}))
             finally:
@@ -376,7 +390,7 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
     async def _attach(self, sandbox_id: str) -> Sandbox:
         with _api_errors(f'Could not attach to OpenSandbox sandbox {sandbox_id!r}'):
             try:
-                sandbox = await Sandbox.connect(sandbox_id, connection_config=self._connection)
+                sandbox = await Sandbox.connect(sandbox_id, connection_config=_connection_config(self._connection))
             except SandboxApiException as error:
                 if error.status_code == 404:
                     raise _unavailable(sandbox_id) from error

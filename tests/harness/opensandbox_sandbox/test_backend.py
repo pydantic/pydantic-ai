@@ -508,6 +508,40 @@ class TestSandboxTimeout:
         assert (await backend.run(['echo', 'ok'])).stdout == 'ok\n'
 
 
+class TestServerScheme:
+    @pytest.mark.parametrize(
+        ('domain', 'scheme'),
+        [
+            pytest.param(f'https://{DOMAIN}', 'https', id='https'),
+            pytest.param(f'http://{DOMAIN}', 'http', id='http'),
+            pytest.param(DOMAIN, 'http', id='no-scheme'),
+        ],
+    )
+    async def test_the_environment_domain_scheme_covers_command_requests(
+        self, server: FakeOpenSandbox, monkeypatch: pytest.MonkeyPatch, working_dir: str, domain: str, scheme: str
+    ) -> None:
+        """The SDK applies the domain's scheme to the management API only, and sends command and file requests
+        with `ConnectionConfig.protocol`; without a `connection`, an `https://` domain must reach both."""
+        schemes: set[str] = set()
+
+        class Recording(fake_opensandbox.OwnedTransport):
+            async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+                schemes.add(request.url.scheme)
+                return await super().handle_async_request(request)
+
+        def transport(**_: object) -> Recording:
+            return Recording(server)
+
+        monkeypatch.setattr(httpx, 'AsyncHTTPTransport', transport)
+        monkeypatch.setenv('OPEN_SANDBOX_DOMAIN', domain)
+        monkeypatch.setenv('OPEN_SANDBOX_API_KEY', fake_opensandbox.API_KEY)
+        backend = OpenSandboxBackend(image='fake-image', working_dir=working_dir)
+        assert (await backend.run(['echo', 'ok'])).stdout == 'ok\n'
+        await backend.aclose()
+        assert any(request.endswith('/command') for request in server.requests)
+        assert schemes == {scheme}
+
+
 class TestTransport:
     async def test_get_sandbox_returns_a_handle_that_stays_open(
         self, server: FakeOpenSandbox, owned_connection: ConnectionConfig, working_dir: str

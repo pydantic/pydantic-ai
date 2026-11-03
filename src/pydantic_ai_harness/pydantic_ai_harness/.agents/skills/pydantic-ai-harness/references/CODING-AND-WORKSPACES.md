@@ -459,6 +459,10 @@ your own OpenSandbox server, which runs it as a Docker container or a Kubernetes
 - The server is found through `OPEN_SANDBOX_DOMAIN` (default `localhost:8080`) and `OPEN_SANDBOX_API_KEY` if it
   needs one, or `connection=ConnectionConfig(...)`; on Kubernetes without the ingress gateway,
   `ConnectionConfig(use_server_proxy=True)`. It needs execd 1.1.1 or later (the server's `execd_image`).
+- Plain `http` is unencrypted and carries the API key, commands, file contents and `env`: use an `https://`
+  domain off loopback or a trusted network. Without `connection`, an `https://` `OPEN_SANDBOX_DOMAIN` covers
+  command and file requests too; a `ConnectionConfig` you pass needs `protocol='https'`, because the SDK sends
+  command and file requests with `protocol`, not the domain's scheme.
 - The first operation creates the sandbox; the image needs a POSIX `sh`. Without `image` the capability only
   attaches and destroys by ref. The ref is `WorkspaceRef(provider='opensandbox', id=<sandbox id>)`; the sandbox
   outlives the run: `await OpenSandbox().destroy(ref)`, or `sandbox_timeout=` to have the server delete it

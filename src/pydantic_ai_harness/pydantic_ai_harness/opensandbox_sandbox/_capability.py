@@ -71,8 +71,9 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
 
     connection: ConnectionConfig | None = field(default=None, repr=False)
     """The `opensandbox.config.ConnectionConfig` for your server. When `None`, each run reads
-    `OPEN_SANDBOX_DOMAIN` and `OPEN_SANDBOX_API_KEY`. On Kubernetes without the ingress gateway, pass
-    `ConnectionConfig(use_server_proxy=True)`."""
+    `OPEN_SANDBOX_DOMAIN` and `OPEN_SANDBOX_API_KEY`, and an `https://` domain applies to command and file
+    requests too. A config you pass is used as given: set `protocol='https'` on it for an encrypted connection.
+    On Kubernetes without the ingress gateway, pass `ConnectionConfig(use_server_proxy=True)`."""
 
     resource: Mapping[str, str] | None = None
     """Resource limits for a new sandbox, such as `{'cpu': '500m', 'memory': '1Gi'}`; `None` keeps the SDK's
