@@ -4562,8 +4562,35 @@ class ModelSource:
         return 'none'
 
 
+@dataclass(frozen=True)
+class CapabilitySource:
+    """A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] whose source was lowered to its capability's authority ceiling.
+
+    When a capability whose [`authority`][pydantic_ai.capabilities.AbstractCapability.authority] is below
+    `'operator'` enqueues a part whose source has more authority than that, `ctx.enqueue` stores this source in its
+    place, so the history says which capability wrote the content and with how much authority. A note about content
+    with `'none'` authority names the capability as its author.
+    """
+
+    capability_id: str
+    """The id of the capability that enqueued the part."""
+
+    _: KW_ONLY
+
+    authority: Authority
+    """The capability's authority ceiling, which the part's content carries."""
+
+    source_kind: Literal['capability'] = 'capability'
+    """Source type identifier, used as a discriminator."""
+
+    @property
+    def _author(self) -> _ContentAuthor:
+        """Who wrote content from this source, for the lookalike note: the user's, or the capability's like a model's."""
+        return 'application' if self.authority == 'operator' else 'user' if self.authority == 'user' else 'model'
+
+
 CapabilityPartSource = Annotated[
-    OperatorSource | WorkspaceSource | ToolResultSource | UserSource | ModelSource,
+    OperatorSource | WorkspaceSource | ToolResultSource | UserSource | ModelSource | CapabilitySource,
     pydantic.Discriminator('source_kind'),
 ]
 """Where a [`CapabilityPart`][pydantic_ai.messages.CapabilityPart]'s content came from, which gives it its [`Authority`][pydantic_ai.messages.Authority].
@@ -4571,7 +4598,8 @@ CapabilityPartSource = Annotated[
 An [`OperatorSource`][pydantic_ai.messages.OperatorSource], and a [`WorkspaceSource`][pydantic_ai.messages.WorkspaceSource]
 from a workspace the operator controls, have `'operator'` authority, a [`UserSource`][pydantic_ai.messages.UserSource]
 has `'user'`, and a [`ToolResultSource`][pydantic_ai.messages.ToolResultSource],
-[`ModelSource`][pydantic_ai.messages.ModelSource] or any other `WorkspaceSource` has `'none'`.
+[`ModelSource`][pydantic_ai.messages.ModelSource] or any other `WorkspaceSource` has `'none'`. A
+[`CapabilitySource`][pydantic_ai.messages.CapabilitySource] has its capability's authority ceiling.
 """
 
 

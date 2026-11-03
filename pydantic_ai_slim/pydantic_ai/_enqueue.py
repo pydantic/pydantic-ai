@@ -17,8 +17,10 @@ from ._utils import fill_run_metadata
 from ._uuid import uuid7
 from .exceptions import UserError
 from .messages import (
+    Authority,
     CapabilityLoadDeltaPart,
     CapabilityPart,
+    CapabilitySource,
     CompactionPart,
     EnqueuedMessagesEvent,
     InstructionBaselinePart,
@@ -37,6 +39,7 @@ from .messages import (
     ToolReturnPart,
     ToolSearchReturnPart,
     UserPromptPart,
+    _lower_authority,  # pyright: ignore[reportPrivateUsage]
 )
 
 if TYPE_CHECKING:
@@ -155,13 +158,26 @@ def _check_operator_voice(messages: Sequence[ModelMessage]) -> None:
                 )
 
 
-def stamp_capability_parts(messages: Sequence[ModelMessage], capability_id: str) -> None:
-    """Attribute every [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] in `messages` with no `capability_id` yet to `capability_id`, in place."""
+def stamp_capability_parts(messages: Sequence[ModelMessage], capability_id: str, ceiling: Authority) -> None:
+    """Attribute every [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] in `messages` to the capability that enqueued it, in place.
+
+    A part with no `capability_id` yet gets `capability_id`, and a part whose source has more authority than the
+    capability's `ceiling` gets a [`CapabilitySource`][pydantic_ai.messages.CapabilitySource] with that authority
+    instead, so the history says who wrote it and with how much authority.
+    """
     for message in messages:
         if isinstance(message, ModelRequest):
             for part in message.parts:
-                if isinstance(part, CapabilityPart) and part.capability_id is None:
-                    part.capability_id = capability_id
+                if isinstance(part, CapabilityPart):
+                    _stamp_capability_part(part, capability_id, ceiling)
+
+
+def _stamp_capability_part(part: CapabilityPart, capability_id: str, ceiling: Authority) -> None:
+    """Attribute `part` to the capability `capability_id` and lower its source to `ceiling`, in place."""
+    if part.capability_id is None:
+        part.capability_id = capability_id
+    if _lower_authority(part.source.authority, ceiling) != part.source.authority:
+        part.source = CapabilitySource(capability_id, authority=ceiling)
 
 
 def hand_built_capability_speech(messages: Sequence[ModelMessage]) -> str | None:

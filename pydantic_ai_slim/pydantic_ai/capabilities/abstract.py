@@ -23,6 +23,7 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    Authority,
     CapabilityInstructionSource,
     ModelResponse,
     ToolCallPart,
@@ -297,6 +298,17 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     [`description`][pydantic_ai.capabilities.AbstractCapability.description] or
     [`get_description`][pydantic_ai.capabilities.AbstractCapability.get_description]
     override is optional and only adds routing context to the load catalog.
+    """
+
+    authority: Authority = 'operator'
+    """The most [authority][pydantic_ai.messages.Authority] what this capability enqueues can carry.
+
+    A [capability part](../capabilities/custom.md#capability-parts) it enqueues whose source has more authority
+    than this is stored with a [`CapabilitySource`][pydantic_ai.messages.CapabilitySource] naming this capability
+    and this authority instead, so it reaches the model with no more than that. It only ever lowers a part's
+    authority: `'user'` puts what the capability says in the user's turn, labelled as attached on the user's behalf,
+    and `'none'` frames it as data with a note naming the capability. Set it on a capability whose content you
+    don't fully control, such as one built from a plugin or another team's code.
     """
 
     @classmethod

@@ -23,6 +23,7 @@ from .messages import (
     BinaryContent,
     CapabilityPart,
     CapabilityPartSource,
+    CapabilitySource,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -200,6 +201,8 @@ def _author_phrase(source: CapabilityPartSource) -> str | None:
         return f'the `{source.tool_name}` tool'
     if isinstance(source, ModelSource):
         return f'the {source.author}'
+    if isinstance(source, CapabilitySource):
+        return f'the `{source.capability_id}` capability'
     return 'the user'
 
 
@@ -211,6 +214,8 @@ def _lookalike_naming(source: CapabilityPartSource, tag: str) -> LookalikeNaming
             naming['tool_call_id'] = source.tool_call_id
     elif isinstance(source, ModelSource):
         naming['model_name'] = source.author
+    elif isinstance(source, CapabilitySource):
+        naming['model_name'] = f'`{source.capability_id}` capability'
     return naming
 
 

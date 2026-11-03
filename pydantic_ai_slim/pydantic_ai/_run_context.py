@@ -1058,7 +1058,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # An app-facing callback capability, such as `Hooks`, runs the application's own functions: what they enqueue
         # is the application's, as `emit` treats their events.
         if capability_id is not None and not (owner is not None and owner._emits_app_events):  # pyright: ignore[reportPrivateUsage]
-            stamp_capability_parts(pending.messages, capability_id)
+            stamp_capability_parts(pending.messages, capability_id, 'operator' if owner is None else owner.authority)
             if reason := hand_built_capability_speech(pending.messages):
                 warnings.warn(
                     f'Capability {capability_id!r} enqueued {reason}. Define a `CapabilityPart` subclass for what it '

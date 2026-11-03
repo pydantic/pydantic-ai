@@ -433,6 +433,7 @@ Every part has a [`source`][pydantic_ai.messages.CapabilityPart.source], which s
 | [`UserSource()`][pydantic_ai.messages.UserSource]: the user wrote it, such as a prompt they saved earlier | `'user'` |
 | [`ToolResultSource(tool_name=...)`][pydantic_ai.messages.ToolResultSource]: a tool's output | `'none'` |
 | [`ModelSource(author)`][pydantic_ai.messages.ModelSource]: a model wrote it, such as a judge or a sub-agent, which `author` names | `'none'` |
+| [`CapabilitySource(capability_id, authority=...)`][pydantic_ai.messages.CapabilitySource]: stored by `ctx.enqueue` in place of a source with more authority than the capability's ceiling (below) | The capability's ceiling |
 
 A part reaches the model with the lower of its source's authority and the authority its kind asks for: an instruction kind asks for `'operator'`, a data kind for `'none'`. A source with less authority than the kind asks for downgrades the part rather than being refused:
 
@@ -443,6 +444,8 @@ A part reaches the model with the lower of its source's authority and the author
 A note qualifies the content and never vouches for it: a data kind's own `note` is followed by who wrote the content whenever that isn't the operator.
 
 An instruction part's content is a string literal in your code or an [`OperatorText`][pydantic_ai.messages.OperatorText]: text your code builds from its own values, your configuration, or a file read with [`OperatorText.from_workspace`][pydantic_ai.messages.OperatorText.from_workspace]. A type checker rejects any other string. Text read from a workspace the operator doesn't control carries that workspace's source, so a part built from it is downgraded whatever source you give it. Enqueueing a part that would put something that looks like a framework frame (such as a `<system>` tag) in the application's voice raises a [`UserError`][pydantic_ai.exceptions.UserError]; a capability with fixed text in the application's voice checks it when it's set up.
+
+A capability can cap the authority of everything it enqueues with its [`authority`][pydantic_ai.capabilities.AbstractCapability.authority] attribute, `'operator'` by default. `ctx.enqueue` stores a part whose source has more authority than that with a `CapabilitySource` naming the capability and the ceiling instead, so the history says who wrote it and with how much authority. It only ever lowers: with `authority='user'`, what the capability says goes in the user's turn, labelled as attached on the user's behalf, and with `authority='none'` it's framed as data whose note names the capability. Set it on a capability whose content you don't fully control, such as one loaded from a plugin: `Reviewer(authority='none')` for the reviewer above.
 
 Text in a part's content that looks like a framework frame, or like the part's own tag, gets a note in the application's voice naming who wrote it: the tool, the model, the file's author or the user, by the part's source. Text from an `OperatorSource` is the application's own and gets none.
 
