@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import shlex
+import threading
 from collections.abc import AsyncIterator
 
 import pytest
@@ -368,6 +369,15 @@ async def test_attached_sandbox_without_working_dir_is_unavailable(workspace_har
     )
     with pytest.raises(WorkspaceUnavailableError, match='is unavailable in the sandbox'):
         await attached.working_dir()
+
+
+async def test_own_client_is_built_off_the_event_loop(
+    workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The fake stands in for the SDK constructor, whose read of package metadata the detector cannot see here.
+    use_host_credentials(workspace_harness, monkeypatch)
+    await RenderSandboxBackend(working_dir=str(workspace_harness.root)).working_dir()
+    assert threading.get_ident() not in workspace_harness.opening_threads
 
 
 async def test_each_operation_opens_and_closes_its_own_client(

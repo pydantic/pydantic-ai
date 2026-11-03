@@ -21,6 +21,7 @@ from importlib.resources import files
 from typing import Any, cast
 
 import anyio
+import anyio.to_thread
 from render import RenderAsync
 from render.client.errors import ClientError
 from render.sandbox import SandboxExecEvent, SandboxExecExit
@@ -162,7 +163,8 @@ async def client_scope(client: RenderAsync | None) -> AsyncGenerator[RenderAsync
     if client is not None:
         yield client
         return
-    opened = open_client()
+    # The SDK's constructor reads package metadata from disk for its User-Agent.
+    opened = await anyio.to_thread.run_sync(open_client)
     try:
         yield opened
     finally:

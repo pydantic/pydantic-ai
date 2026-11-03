@@ -509,6 +509,12 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
         (func, 'exa_py/utils.py', '_get_package_version')
         for func in ('os.stat', 'os.listdir', 'os.path.abspath', 'io.TextIOWrapper.read')
     ),
+    # Render's SDK touches its local file on the event loop while downloading, with no public API that avoids it.
+    # Only the live tier reaches this code; the deterministic tier replaces `copy_from`.
+    ('os.stat', 'render/experimental/sandbox/files.py', 'resolve_file_dest'),
+    ('os.path.abspath', 'render/experimental/sandbox/files.py', ('parent_dir', '__init__')),
+    ('io.BufferedWriter.write', 'render/experimental/sandbox/files.py', 'write'),
+    ('os.remove', 'render/experimental/sandbox/files.py', '__exit__'),
     ('os.stat', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
     ('os.listdir', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
     ('io.TextIOWrapper.read', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),

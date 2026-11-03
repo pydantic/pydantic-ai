@@ -18,6 +18,7 @@ import shlex
 import shutil
 import signal
 import sys
+import threading
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import redirect_stdout, suppress
 from dataclasses import dataclass, field
@@ -89,6 +90,7 @@ class WorkspaceHarness:
     # Called inside an in-process file helper run with a scoped monkeypatch and the helper's action.
     helper_fault: Callable[[pytest.MonkeyPatch, str], None] | None = None
     opened_clients: list[RenderAsync] = field(default_factory=list[RenderAsync])
+    opening_threads: list[int] = field(default_factory=list[int])
     # Run user commands under the shipped supervisor in a child interpreter, as Render does.
     supervised: bool = False
     supervisors: list[tuple[str, dict[str, Any], asyncio.subprocess.Process]] = field(
@@ -173,6 +175,7 @@ def use_host_credentials(harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPa
         client = RenderAsync(token='test-only', owner_id='tea-test')
         harness.install(client)
         harness.opened_clients.append(client)
+        harness.opening_threads.append(threading.get_ident())
         return client
 
     monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands.RenderAsync', open_client)
