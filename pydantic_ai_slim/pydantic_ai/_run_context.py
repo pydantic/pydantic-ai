@@ -11,7 +11,7 @@ from contextvars import ContextVar
 from dataclasses import field
 from datetime import datetime
 from functools import wraps
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, overload
+from typing import TYPE_CHECKING, Any, Generic, TypeAlias, overload
 
 import anyio
 from opentelemetry.trace import NoOpTracer, Tracer
@@ -28,6 +28,7 @@ from ._enqueue import (
     PendingMessage,
     PendingMessagePriority,
     PendingMessageQueue,
+    QueueChangeMethod,
     remove_pending,
     set_pending_priority,
 )
@@ -1100,7 +1101,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
             return queue.set_enqueue_priority(enqueue_id, priority)
         return set_pending_priority(queue, enqueue_id, priority)  # a hand-built context's list, which nothing drains
 
-    def _changeable_queue(self, method: Literal['dequeue', 'set_enqueue_priority']) -> list[PendingMessage]:
+    def _changeable_queue(self, method: QueueChangeMethod) -> list[PendingMessage]:
         queue = self.pending_messages
         if queue is None:
             raise UserError(

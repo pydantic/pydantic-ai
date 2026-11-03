@@ -52,6 +52,9 @@ PendingMessagePriority: TypeAlias = Literal['asap', 'when_idle']
     any `'asap'` messages. Doesn't interrupt in-flight work.
 """
 
+QueueChangeMethod: TypeAlias = Literal['dequeue', 'set_enqueue_priority']
+"""The methods that change a queued message, named in their errors."""
+
 
 EnqueueContent: TypeAlias = 'UserContent | ModelRequestPart | ModelMessage'
 """A single item accepted by [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue]
@@ -353,7 +356,7 @@ class EnqueueGuard(list[PendingMessage]):
     def append(self, pending: PendingMessage) -> None:
         raise self._error('enqueue', 'the enqueued messages would be dropped', 'Enqueue messages')
 
-    def change_error(self, method: str) -> UserError:
+    def change_error(self, method: QueueChangeMethod) -> UserError:
         """The error for `ctx.<method>()`, a change to a queued message, inside the durable unit."""
         return self._error(method, 'the change to the queued message would be lost', 'Change queued messages')
 
