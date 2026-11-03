@@ -18,7 +18,7 @@ from collections.abc import Mapping
 from contextlib import AbstractAsyncContextManager
 from functools import partial
 from importlib.resources import files
-from tempfile import mkdtemp
+from tempfile import gettempdir
 from uuid import uuid4
 
 import anyio
@@ -305,9 +305,11 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
 
     async def _copy(self, client: RenderAsync, sandbox_id: str, remote: str, data: bytes | None, size: int) -> bytes:
         """Download `remote` (`data` is `None`) or upload `data` to it through a local staging file."""
-        directory = await anyio.to_thread.run_sync(partial(mkdtemp, prefix='render-pydantic-'))
+        # Named before any await, so cleanup knows it even if cancellation lands while it is being made.
+        directory = anyio.Path(await anyio.to_thread.run_sync(gettempdir)) / f'render-pydantic-{uuid4().hex}'
         try:
-            local = anyio.Path(directory) / 'data'
+            await directory.mkdir(mode=0o700)
+            local = directory / 'data'
             if data is not None:
                 await local.write_bytes(data)
             # The public SDK has per-connection timeouts but no total file deadline.
