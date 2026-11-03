@@ -16,12 +16,33 @@ Agentic Workflow.
 | Checkpoint every model/tool step on AWS Lambda durable functions | `AWSLambdaDurability` |
 | Checkpoint every model/tool step in Postgres with Absurd | `AbsurdDurability` |
 | Checkpoint every model/tool step in Postgres with pgtask | `PGTaskDurability` |
+| Run agent operations as activities in native Azure Durable Task orchestrators | `AzureDurableTaskDurability` and `run_durable` (`pydantic_ai_harness.azure_durable_task`, `[azure-durable-task]`) |
 | Use or evaluate Render Workflows for background agents with separate model/tool retries, timeouts, and compute | [`RenderWorkflows`](#renderworkflows); retrying the entry task run restarts the agent |
 | Edit, version, and roll out the system prompt from Logfire without redeploying | `ManagedPrompt` |
 | Let the agent write new capabilities that load on the next run | `CapabilityCreation` |
 | Define the agent in YAML/JSON with harness capabilities | `Agent.from_file(..., custom_capability_types=[...])` |
 | Use the agent inside Zed or another ACP editor | `pydantic_ai_harness.experimental.acp` |
 | Run the agent headless on GitHub issues/PRs/schedules | the gh-aw `pydantic-ai` engine |
+
+## AzureDurableTaskDurability
+
+Attach `AzureDurableTaskDurability()` to a named agent. Retrieve the bound copy with
+`AzureDurableTaskDurability.from_agent(agent)` and enter its `register(worker)` context
+before starting the native SDK worker; exit after the worker stops and drains.
+Register your own orchestrator and call
+`yield from run_durable(ctx, lambda: agent.run(prompt))`. Start, inspect and signal runs
+through the SDK client. Dependencies must be JSON-serializable and are reconstructed
+using `deps_type`.
+
+Handle `DeferredToolRequests` in your orchestrator: wait for an external event and resume
+with full message history, cumulative usage and `DeferredToolResults`. Publish a fresh event
+name per pause in the custom status, and send decisions to the event the reviewer saw, keyed by tool-call ID.
+Orchestrator-side code must be deterministic and I/O-free. Tool effects must be idempotent.
+Set native retry policies with `model_options`, `tool_options`, `event_options` and `capability_options`.
+`resolve_tool_options` returns a native policy, `None` to keep `tool_options`, or `False`
+to run a function tool inline. Function tools can also opt out with
+`metadata={'azure_durable_task': False}`. Inline tools must be deterministic and I/O-free.
+See [Azure Durable Task](https://pydantic.dev/docs/ai/harness/azure-durable-task/).
 
 ## StepPersistence
 

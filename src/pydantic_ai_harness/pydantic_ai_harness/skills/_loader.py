@@ -12,8 +12,8 @@ from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from pydantic_ai.workspaces import FileEntry, Workspace
-from pydantic_ai_harness._workspace import workspace_path
+from pydantic_ai.workspaces import Workspace
+from pydantic_ai_harness._workspace import stat_or_none, workspace_path
 from pydantic_ai_harness.artifact_scanning import ArtifactScanResult
 
 # Imported with the module rather than on first parse: a durable engine such as Temporal parses skills in
@@ -274,15 +274,8 @@ def _normalize_name(name: str) -> str:
     return unicodedata.normalize('NFKC', name)
 
 
-async def _stat(workspace: Workspace, path: str) -> FileEntry | None:
-    try:
-        return await workspace.stat(path)
-    except (FileNotFoundError, NotADirectoryError):
-        return None
-
-
 async def _is_file(workspace: Workspace, path: str) -> bool:
-    entry = await _stat(workspace, path)
+    entry = await stat_or_none(workspace, path)
     return entry is not None and not entry.is_dir
 
 
@@ -311,7 +304,7 @@ async def _libraries(
         if library in seen:
             continue
         seen.add(library)
-        entry = await _stat(workspace, library)
+        entry = await stat_or_none(workspace, library)
         if entry is None:
             if missing_directories == 'skip':
                 continue
