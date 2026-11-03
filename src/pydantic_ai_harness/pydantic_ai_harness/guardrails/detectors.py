@@ -55,7 +55,7 @@ _PEM_BODY = (
     rf'(?:[A-Za-z0-9+/=\s\\]*?-----END[^-\n]*PRIVATE KEY(?: BLOCK)?-----'
     rf'|(?:\s|\\+n)*(?:[A-Za-z0-9+/=]+(?:{_NEWLINE})?)+)'
 )
-"""What follows a PEM block's header lines: its body up to the END marker or, without one, its body lines."""
+"""What follows a PEM block's BEGIN line and any header lines: its body when it runs straight to an END marker, or else its body lines alone."""
 
 DEFAULT_SECRET_PATTERNS: Mapping[str, str] = {
     # Vendor key bodies are base64url, whose alphabet includes `_`. A class that
