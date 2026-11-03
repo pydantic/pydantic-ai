@@ -37,7 +37,6 @@ from typing import TYPE_CHECKING, Literal, TypeVar, get_args
 
 import anyio
 
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     SupportsCommands,
@@ -53,10 +52,11 @@ from pydantic_ai_harness._workspace_provider import (
     EXEC_SCRIPT,
     absolute_path,
     check_env_types,
+    check_provider,
     check_timeout,
     command_argv,
+    require_asyncio,
     run_to_completion,
-    running_on_asyncio,
 )
 
 
@@ -80,13 +80,16 @@ ConnectionMode = Literal['port-forward', 'in-cluster-service', 'in-cluster-pod-i
 """How the client reaches a sandbox's sandboxd: a `kubectl port-forward` to the pod (from outside the
 cluster), or directly from inside the cluster through the sandbox's Service or its pod IP."""
 
-_IN_CLUSTER_MODES: dict[str, Literal['in-cluster-service', 'in-cluster-pod-ip']] = {
+_InClusterMode = Literal['in-cluster-service', 'in-cluster-pod-ip']
+
+_IN_CLUSTER_MODES: dict[_InClusterMode, _InClusterMode] = {
     'in-cluster-service': 'in-cluster-service',
     'in-cluster-pod-ip': 'in-cluster-pod-ip',
 }
 """Our in-cluster mode names to `SandboxdInClusterConnectionConfig.mode`'s. They match today, but the
 SDK renamed its values once (v1.0.6), and our names are public API: a rename upstream changes only
-this map, and the values' type, which the SDK's own `Literal` must accept, makes type checking catch it."""
+this map's values. The keys are checked against our modes, and the values against the SDK's own
+`Literal` where `_client` passes them, so type checking catches a rename on either side."""
 
 if TYPE_CHECKING:
     from typing import TypeAlias
@@ -119,8 +122,7 @@ def connection_problem(connection: object) -> str | None:
 
 def parse_ref(ref: WorkspaceRef) -> tuple[str, str]:
     """Split a `kubernetes` ref id, `<namespace>/<claim name>`."""
-    if ref.provider != PROVIDER:
-        raise ValueError(f'unsupported workspace provider {ref.provider!r}; expected {PROVIDER!r}')
+    check_provider(ref, PROVIDER)
     namespace, separator, claim_name = ref.id.partition('/')
     if not separator or not namespace or not claim_name or '/' in claim_name:
         raise ValueError(f'a {PROVIDER!r} workspace ref id is `<namespace>/<claim name>`, got {ref.id!r}')
@@ -164,8 +166,8 @@ async def _run_on_sandbox(
     from k8s_agent_sandbox.models import ProcessExitEvent
 
     commands = sandbox.commands
-    if commands is None:  # pragma: no cover - the SDK clears it on close, and the backend detaches its handle first
-        raise RuntimeError('The SDK has closed this sandbox handle')
+    # The SDK clears `commands` on close, and the backend detaches its handle before closing it.
+    assert commands is not None
     stdout = bytearray()
     stderr = bytearray()
     exit_code: int | None = None
@@ -204,12 +206,8 @@ async def _run_on_sandbox(
     )
 
 
-def _require_asyncio() -> None:
-    # The SDK runs on `kubernetes_asyncio`, `grpc.aio` and asyncio subprocesses.
-    if not running_on_asyncio():
-        raise UserError(
-            '`KubernetesSandboxBackend` needs asyncio: the agent-sandbox SDK and `grpc.aio` do not run on Trio.'
-        )
+# The SDK runs on `kubernetes_asyncio`, `grpc.aio` and asyncio subprocesses.
+_ASYNCIO_ONLY = '`KubernetesSandboxBackend` needs asyncio: the agent-sandbox SDK and `grpc.aio` do not run on Trio.'
 
 
 _T = TypeVar('_T')
@@ -305,7 +303,7 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
 
         The handle's connection belongs to this backend: after `aclose()`, call this again.
         """
-        _require_asyncio()
+        require_asyncio(_ASYNCIO_ONLY)
         async with self._lock:
             return await self._acquire()
 
@@ -320,7 +318,7 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
         check_timeout(timeout)
         check_env_types(env)
         argv = command_argv(command, shell)
-        _require_asyncio()
+        require_asyncio(_ASYNCIO_ONLY)
         # `commands.start()` runs one string under sandboxd's `/bin/sh -c`. Each argument goes in its
         # own environment variable, which the script moves into its positional parameters and unsets,
         # so each is still one `execve` string under Linux's 128 KiB limit per string, as it would
@@ -452,7 +450,7 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
 async def destroy_sandbox(ref: WorkspaceRef) -> None:
     """Delete the claim a ref names, and with it the sandbox; a claim that is already gone returns quietly."""
     namespace, claim_name = parse_ref(ref)
-    _require_asyncio()
+    require_asyncio(_ASYNCIO_ONLY)
     client = _client('port-forward')  # Talks only to the API server, so the connection is never used.
     try:
         # Workaround: `AsyncSandboxClient.delete_sandbox` logs and swallows every error, so a failed

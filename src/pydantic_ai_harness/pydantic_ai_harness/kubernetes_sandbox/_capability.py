@@ -11,7 +11,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness._workspace import innermost_backend
-from pydantic_ai_harness._workspace_provider import check_integer, check_working_dir
+from pydantic_ai_harness._workspace_provider import check_integer, check_working_dir, reject_defer_loading
 from pydantic_ai_harness.kubernetes_sandbox._backend import (
     DEFAULT_SANDBOX_TIMEOUT,
     PROVIDER,
@@ -79,12 +79,7 @@ class KubernetesSandbox(AbstractCapability[AgentDepsT]):
     """Environment variables every command gets, on top of the container's own; a command's `env` is layered on top."""
 
     def __post_init__(self) -> None:
-        if self.defer_loading:
-            # Core picks the run's workspace from the always-on capabilities only.
-            raise UserError(
-                '`KubernetesSandbox` does not support `defer_loading=True`: '
-                'the workspace is selected before deferred capabilities load.'
-            )
+        reject_defer_loading('KubernetesSandbox', self.defer_loading)
         # Checked here rather than at the first workspace operation, so a bad value fails where it is written.
         check_integer('sandbox_timeout', self.sandbox_timeout, optional=True)
         check_working_dir(self.working_dir)
