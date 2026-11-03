@@ -55,18 +55,19 @@ def _loads(messages: Sequence[ModelMessage]) -> dict[str, _Load]:
 
     A load is the model's `load_capability` exchange or a `CapabilityLoadDeltaPart`. A model's load reveals its
     tools in a `ToolAvailabilityDeltaPart` with its call's `tool_call_id`, and a load from code in the one right
-    after its delta.
+    after its delta with the same `tool_call_id`: that of the tool call it was made in, or `None`. A load
+    without tools leaves no reveal, so adjacency alone would credit it with someone else's.
     """
     exchanges = LoadExchanges()
     loads: dict[str, _Load] = {}
     calls: dict[str, str] = {}
     """The capability each completed `load_capability` call loaded, by its `tool_call_id`."""
     for message in post_compaction_window(messages):
-        from_code: list[str] = []
+        from_code: CapabilityLoadDeltaPart | None = None
         for part in message.parts:
             if isinstance(part, ToolAvailabilityDeltaPart):
-                if from_code:
-                    owner = from_code[-1]
+                if from_code is not None and part.tool_call_id == from_code.tool_call_id:
+                    owner = from_code.loaded[-1]
                 else:
                     owner = calls.get(part.tool_call_id) if part.tool_call_id is not None else None
                 if owner is not None:
@@ -77,7 +78,7 @@ def _loads(messages: Sequence[ModelMessage]) -> dict[str, _Load]:
                 loads[capability_id] = _Load(capability_id, None)
                 if isinstance(part, LoadCapabilityReturnPart):
                     calls[part.tool_call_id] = capability_id
-            from_code = list(part.loaded) if isinstance(part, CapabilityLoadDeltaPart) else []
+            from_code = part if isinstance(part, CapabilityLoadDeltaPart) and part.loaded else None
     return loads
 
 

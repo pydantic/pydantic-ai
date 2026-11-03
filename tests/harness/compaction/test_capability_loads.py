@@ -499,6 +499,32 @@ class TestCapabilityLoadsAcrossCompaction:
             ]
         )
 
+    @pytest.mark.parametrize('load_call_id', [pytest.param(None, id='before-request'), pytest.param('tool', id='tool')])
+    async def test_a_reveal_after_a_toolless_load_from_code_is_not_the_loads(self, load_call_id: str | None) -> None:
+        # A load from code without tools leaves only its delta, so the reveal right after it is someone else's.
+        original: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('Weather in Athens?')]),
+            ModelResponse(parts=[TextPart('Sunny.')]),
+            ModelRequest(
+                parts=[
+                    CapabilityLoadDeltaPart(loaded=['style'], tool_call_id=load_call_id),
+                    ToolAvailabilityDeltaPart(tools_added=['found'], tool_call_id='search'),
+                ]
+            ),
+            ModelRequest(parts=[UserPromptPart('And in Oslo?')]),
+        ]
+        compacted = [original[0], original[-1]]
+
+        result = keep_capability_loads(original, compacted, kept_from=1, deferred_ids={'style'})
+
+        assert _shape(result) == snapshot(
+            [
+                "request: user 'Weather in Athens?'",
+                "request: load ['style']",
+                "request: user 'And in Oslo?'",
+            ]
+        )
+
     async def test_compact_now_records_loads_without_a_run(self) -> None:
         history = await _first_turn_history()
         next_prompt = ModelRequest(parts=[UserPromptPart('And in Oslo?')])
