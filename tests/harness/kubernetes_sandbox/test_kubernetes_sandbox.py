@@ -14,6 +14,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     WorkspaceError,
     WorkspaceOutputLimitError,
@@ -35,6 +36,7 @@ with try_import() as imports_successful:
     )
 
     from pydantic_ai_harness import KubernetesSandbox, KubernetesSandboxBackend
+    from pydantic_ai_harness.kubernetes_sandbox import _backend
 
     from .fake_sandboxd import FakeCluster, FakeSandboxd
 
@@ -431,18 +433,21 @@ async def test_a_stream_without_an_exit_event_is_an_error(cluster: FakeCluster) 
 async def test_a_timeout_keeps_the_output_so_far(cluster: FakeCluster) -> None:
     backend = KubernetesSandboxBackend(warm_pool='pool')
     with pytest.raises(WorkspaceTimeoutError) as info:
-        await backend.run('echo before; sleep 30', shell=True, timeout=0.5)
+        await backend.run('echo before; sleep 30', shell=True, timeout=0.1)
     assert info.value.stdout == 'before\n'
     await backend.aclose()
 
 
 @asyncio_only
-async def test_output_past_the_limit_stops_the_command(cluster: FakeCluster) -> None:
+async def test_output_past_the_limit_stops_the_command(cluster: FakeCluster, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A small cap proves the same behavior without streaming 10 MiB through the fake.
+    monkeypatch.setattr(_backend, '_MAX_OUTPUT_BYTES', 4096)
+    monkeypatch.setattr(_backend, '_OUTPUT_PREVIEW_BYTES', 1024)
     backend = KubernetesSandboxBackend(warm_pool='pool')
     with pytest.raises(WorkspaceOutputLimitError, match='exceeded the 10 MiB limit') as caught:
-        await backend.run('head -c 11000000 /dev/zero | tr "\\0" x; sleep 30', shell=True)
-    assert caught.value.limit == 10 * 1024 * 1024
-    assert caught.value.stdout == 'x' * 64 * 1024 and caught.value.stderr == ''
+        await backend.run('head -c 5000 /dev/zero | tr "\\0" x; sleep 30', shell=True)
+    assert caught.value.limit == 4096
+    assert caught.value.stdout == 'x' * 1024 and caught.value.stderr == ''
     await backend.aclose()
 
 
@@ -475,9 +480,13 @@ def test_capability_arguments_are_checked() -> None:
     assert KubernetesSandbox(warm_pool='pool', sandbox_timeout=None).sandbox_timeout is None
 
 
+def _ctx() -> RunContext[None]:
+    return RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-1')
+
+
 def test_get_workspace_only_takes_kubernetes_refs() -> None:
     capability = KubernetesSandbox(warm_pool='pool', namespace='agents')
-    ctx = RunContext(deps=None, model=TestModel(), usage=None, run_id='run-1')  # type: ignore[arg-type]
+    ctx = _ctx()
     assert capability.get_workspace(ctx, ref=WorkspaceRef(provider='modal', id='sb')) is None
     backend = capability.get_workspace(ctx, ref=None)
     assert isinstance(backend, KubernetesSandboxBackend) and backend.ref is None
@@ -499,7 +508,9 @@ async def test_a_run_keeps_its_connection_open_and_closes_it_at_the_end(cluster:
     # One client for the whole run, closed when the run ended; the sandbox keeps running.
     [client] = cluster.clients
     assert client.closed and result.output and 'hi' in result.output
-    await capability.destroy(result.workspace.ref)  # type: ignore[arg-type]
+    ref = result.workspace.ref
+    assert ref is not None
+    await capability.destroy(ref)
 
 
 @asyncio_only
@@ -523,7 +534,7 @@ async def test_a_cancelled_run_still_closes_its_connection(cluster: FakeCluster)
 
 @asyncio_only
 async def test_a_backend_outside_a_run_closes_after_each_operation(cluster: FakeCluster) -> None:
-    ctx = RunContext(deps=None, model=TestModel(), usage=None, run_id='run-1')  # type: ignore[arg-type]
+    ctx = _ctx()
     backend = KubernetesSandbox(warm_pool='pool').get_workspace(ctx, ref=None)
     assert isinstance(backend, KubernetesSandboxBackend)
     await backend.run(['true'])
