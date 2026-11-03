@@ -78,15 +78,11 @@ from .._cancel import (
     provide_run_deadline,
     take_run_binding,
 )
+from .._compaction_requests import RequestedCompaction
 from .._deferred_capabilities import registered_loaded_capability_ids
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
-from .._run_context import (
-    RealtimeEventBuffer,
-    RequestedCompaction,
-    dispatch_event_stream,
-    set_current_run_context,
-)
+from .._run_context import RealtimeEventBuffer, dispatch_event_stream, set_current_run_context
 from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import (

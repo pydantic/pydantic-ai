@@ -15,10 +15,9 @@ from pydantic_core import PydanticCustomError, PydanticSerializationError, to_js
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai._agent_graph import build_validation_context
 from pydantic_ai._cancel import RunCancellation
+from pydantic_ai._compaction_requests import CompactionRequests, RequestedCompaction
 from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai._run_context import (
-    CompactionRequests,
-    RequestedCompaction,
     ToolNamePath,
     with_tool_name_path,
     without_tool_name_path,
