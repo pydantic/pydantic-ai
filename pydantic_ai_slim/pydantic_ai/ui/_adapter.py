@@ -629,9 +629,9 @@ def _reject_answers_for_calls_not_pending(turn: _ServerHeldTurn, deferred_tool_r
         raise UserError(
             f'The request answers {len(not_pending)} tool call(s) that `message_history` is not waiting on: '
             f'{", ".join(repr(tool_call_id) for tool_call_id in not_pending)}. With '
-            f"`manage_message_history='server'`, an approval, denial or deferred tool result can only answer a tool call that is "
-            f'still pending at the end of the stored history. If the conversation changed since the client '
-            f'loaded it, reload it from the server.'
+            f"`manage_message_history='server'`, an approval, denial or deferred tool result can only answer a "
+            f'tool call that is still pending at the end of the stored history. If the conversation changed since '
+            f'the client loaded it, reload it from the server.'
         )
 
 
