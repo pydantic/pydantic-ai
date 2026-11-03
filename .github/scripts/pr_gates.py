@@ -12,9 +12,10 @@ import subprocess
 import sys
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from pathlib import PurePosixPath
 from typing import Literal, Protocol, TypeVar, assert_never
 
-from check_api_compatibility import Allowlist
+from check_api_compatibility import WAIVERS, read_waiver
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 ALLOWLIST = '.github/api-compatibility-allowlist.json'
@@ -84,15 +85,19 @@ def _paths(files: Iterable[ChangedFile]) -> set[str]:
 def compatibility_waiver(github: GitHub, *, base_sha: str, head_sha: str) -> Verdict:
     """Require `compatibility impact` on a PR that adds an API compatibility waiver."""
     verdict = Verdict()
-    if ALLOWLIST not in _paths(github.changed_files()):
-        verdict.summary.append(f'`{ALLOWLIST}` is unchanged.')
+    paths = sorted(
+        path for path in _paths(github.changed_files()) if PurePosixPath(path).parent == PurePosixPath(WAIVERS)
+    )
+    if not paths:
+        verdict.summary.append(f'`{WAIVERS}` is unchanged.')
         return verdict
 
     merge_base = github.merge_base(base_sha, head_sha)
     try:
-        added = _waivers(github.file_text(ALLOWLIST, head_sha)) - _waivers(github.file_text(ALLOWLIST, merge_base))
-    except ValidationError as error:
-        verdict.failures.append(f'Cannot read `{ALLOWLIST}`: {error.error_count()} validation error(s).')
+        existing = _waivers(github, paths, merge_base) | _legacy_waivers(github, merge_base)
+        added = _waivers(github, paths, head_sha) - existing
+    except ValueError as error:
+        verdict.failures.append(f'Cannot read a waiver: {error}')
         return verdict
 
     if not added:
@@ -107,10 +112,36 @@ def compatibility_waiver(github: GitHub, *, base_sha: str, head_sha: str) -> Ver
     return verdict
 
 
-def _waivers(text: str | None) -> set[tuple[str, str]]:
-    if text is None:
+def _waivers(github: GitHub, paths: Iterable[str], ref: str) -> set[tuple[str, str]]:
+    """The `(against, fingerprint)` of each waiver among `paths` that exists at `ref`."""
+    waivers: set[tuple[str, str]] = set()
+    for path in paths:
+        if (text := github.file_text(path, ref)) is not None:
+            fingerprint, waiver = read_waiver(PurePosixPath(path), text)
+            waivers.add((waiver.against, fingerprint))
+    return waivers
+
+
+class _LegacyWaiver(BaseModel):
+    against: str
+    fingerprint: str
+
+
+class _LegacyAllowlist(BaseModel):
+    allowed_breakages: list[_LegacyWaiver] = []
+
+
+def _legacy_waivers(github: GitHub, ref: str) -> set[tuple[str, str]]:
+    """The `(against, fingerprint)` of each waiver that `ALLOWLIST` still lists at `ref`.
+
+    Before waivers moved to their own files, `allowed_breakages` held them all; moving one out adds no waiver.
+    Transitional: only the PR that moved them has a merge base still listing any, so remove this once it merges.
+    """
+    if (text := github.file_text(ALLOWLIST, ref)) is None:
         return set()
-    return {(waiver.against, waiver.fingerprint) for waiver in Allowlist.model_validate_json(text).allowed_breakages}
+    return {
+        (waiver.against, waiver.fingerprint) for waiver in _LegacyAllowlist.model_validate_json(text).allowed_breakages
+    }
 
 
 _FILE_PAGES = TypeAdapter(list[list[ChangedFile]])

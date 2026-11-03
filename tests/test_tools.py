@@ -19,6 +19,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
+    CapabilityLoadDeltaPart,
     EndStrategy,
     ExternalToolset,
     FunctionToolset,
@@ -318,6 +319,54 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
     )
 
 
+def google_style_docstring_keyword_args(query: str, *, limit: int = 5) -> str:  # pragma: no cover
+    """Search the index.
+
+    Args:
+        query: The search query.
+
+    Keyword Args:
+        limit: The maximum number of results.
+    """
+    return query
+
+
+def numpy_style_docstring_other_parameters(query: str, limit: int = 5) -> str:  # pragma: no cover
+    """Search the index.
+
+    Parameters
+    ----------
+    query : str
+        The search query.
+
+    Other Parameters
+    ----------------
+    limit : int
+        The maximum number of results.
+    """
+    return query
+
+
+@pytest.mark.parametrize('tool', [google_style_docstring_keyword_args, numpy_style_docstring_other_parameters])
+def test_docstring_other_parameter_sections(tool: Callable[..., str]):
+    agent = Agent(FunctionModel(get_json_schema))
+    agent.tool_plain(require_parameter_descriptions=True)(tool)
+
+    result = agent.run_sync('Hello')
+    json_schema = json.loads(result.output)
+    assert json_schema['parameters_json_schema'] == snapshot(
+        {
+            'properties': {
+                'query': {'description': 'The search query.', 'type': 'string'},
+                'limit': {'default': 5, 'description': 'The maximum number of results.', 'type': 'integer'},
+            },
+            'required': ['query'],
+            'type': 'object',
+            'additionalProperties': False,
+        }
+    )
+
+
 def test_google_style_with_returns():
     agent = Agent(FunctionModel(get_json_schema))
 
@@ -605,6 +654,37 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'return_schema': None,
             'include_return_schema': None,
             'capability_id': None,
+        }
+    )
+
+
+def google_style_docstring_var_args(foo: int, *args: str, **kwargs: int) -> str:  # pragma: no cover
+    """Do foobar stuff.
+
+    Args:
+        foo: The foo thing.
+        *args: The extra things.
+        **kwargs: The extra options.
+    """
+    return f'{foo} {args} {kwargs}'
+
+
+def test_docstring_google_var_args():
+    """Google style documents `*args` and `**kwargs` with their stars, which must not hide the descriptions."""
+    agent = Agent(FunctionModel(get_json_schema))
+    agent.tool_plain(require_parameter_descriptions=True)(google_style_docstring_var_args)
+
+    result = agent.run_sync('')
+    json_schema = json.loads(result.output)
+    assert json_schema['parameters_json_schema'] == snapshot(
+        {
+            'additionalProperties': {'type': 'integer'},
+            'properties': {
+                'foo': {'description': 'The foo thing.', 'type': 'integer'},
+                'args': {'description': 'The extra things.', 'items': {'type': 'string'}, 'type': 'array'},
+            },
+            'required': ['foo', 'args'],
+            'type': 'object',
         }
     )
 
@@ -5178,7 +5258,15 @@ def test_include_return_schema_via_capability():
     tool_parts = [
         p
         for p in request.parts
-        if not isinstance(p, (ToolAvailabilityDeltaPart, InstructionBaselinePart, ModelSettingsDeltaPart))
+        if not isinstance(
+            p,
+            (
+                ToolAvailabilityDeltaPart,
+                CapabilityLoadDeltaPart,
+                InstructionBaselinePart,
+                ModelSettingsDeltaPart,
+            ),
+        )
     ]
     assert any('Return schema' in str(p.content) for p in tool_parts) or True  # TestModel may not inject
 

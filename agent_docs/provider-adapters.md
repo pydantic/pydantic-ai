@@ -31,7 +31,7 @@ Paths are relative to `pydantic_ai_slim/pydantic_ai/`.
 
 ### Gate a capability on a profile flag
 
-- Where a capability is used, read only a profile flag or the adapter's own declaration, such as `_unsupported_file_inputs`. Never check the transport, the model name, the provider name or the `base_url` there. The transport is the client class, or the client's own mode, such as `genai.Client.vertexai` behind `GoogleModel._is_google_cloud`. — A use-site check keeps the fact out of the profile, so a user's `profile=` can't override it and every other use site needs its own copy.
+- Where a capability is used, read only a profile flag or the adapter's own declaration, such as `_unsupported_file_inputs`. Never check the transport, the model name, the provider name or the `base_url` there. The transport is the client class, or the client's own mode, such as `genai.Client.vertexai` behind `GoogleModel._is_google_cloud`. — A use-site check keeps the fact out of the profile, so a user's `profile=` can't override it and every other use site needs its own copy. `models/AGENTS.md` names the one host-based default that falls back to the `base_url` after the profile flag.
 - A gate decides whether to send a feature. A branch that sends the same feature in each transport's own wire form is mapping, not a gate, and may branch on the transport: Vertex takes the service tier as headers, the Gemini API as a request field.
 - Set each flag where its fact lives:
   - a model-family fact in the family's `*_model_profile()` in `profiles/`;

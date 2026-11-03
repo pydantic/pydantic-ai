@@ -154,7 +154,7 @@ async def model_request(
     model_instance = _prepare_model(model, instrument)
     check_resumable(model_instance, messages)
     mrp = _ensure_instruction_parts(messages, model_request_parameters or models.ModelRequestParameters())
-    deadline = start_request_deadline(model_instance, model_settings)
+    deadline = start_request_deadline(model_instance, model_settings, stream=False)
     with enforce_request_deadline(deadline):
         return await model_instance.request(
             _prepare_messages_carrying_a_retry(model_instance, messages, mrp),
