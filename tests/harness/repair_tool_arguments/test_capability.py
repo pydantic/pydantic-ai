@@ -17,6 +17,7 @@ from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
+from tests.conftest import IsStr
 
 
 def model_for(respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse]) -> FunctionModel:
@@ -172,6 +173,73 @@ class TestRepairToolArguments:
         spans = [span for span in capfire.exporter.exported_spans_as_dict() if span['name'] == 'repair_tool_arguments']
         assert len(spans) == int(isinstance(arguments, str) and arguments.endswith(',}'))
         assert 'secret' not in str(spans)
+
+    @pytest.mark.parametrize(
+        ('stream', 'item_id'),
+        [(False, 'fc_1'), (False, None), (True, None)],
+        ids=['run', 'run-no-item-id', 'run_stream'],
+    )
+    async def test_repaired_arguments_are_written_back_to_history(self, stream: bool, item_id: str | None) -> None:
+        """The repaired arguments replace the malformed ones in history, so later requests replay what ran."""
+        malformed = '{"value": "secret",}'
+        replayed: list[ToolCallPart] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[ToolCallPart('echo', malformed, tool_call_id='call-1', id=item_id, provider_name='openai')]
+                )
+            replayed.extend(part for message in messages for part in message.parts if isinstance(part, ToolCallPart))
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(model_for(respond), capabilities=[RepairToolArguments()])
+
+        @agent.tool_plain
+        def echo(value: str) -> str:
+            return value
+
+        if stream:
+            async with agent.run_stream('Echo') as result:
+                await result.get_output()
+            history = result.all_messages()
+        else:
+            history = (await agent.run('Echo')).all_messages()
+
+        calls = [part for message in history for part in message.parts if isinstance(part, ToolCallPart)]
+        assert calls == replayed
+        if stream:
+            # `FunctionModel` streams carry no provider identity, so there's nowhere to keep the original.
+            assert calls == [ToolCallPart('echo', '{"value": "secret"}', tool_call_id=IsStr())]
+        else:
+            assert calls == [
+                ToolCallPart(
+                    'echo',
+                    '{"value": "secret"}',
+                    tool_call_id='call-1',
+                    provider_name='openai',
+                    provider_details={'original_args': malformed}
+                    | ({'original_id': item_id} if item_id is not None else {}),
+                )
+            ]
+
+    @pytest.mark.parametrize('arguments', ['{"value": "secret"}', {'value': 'secret'}])
+    async def test_valid_arguments_are_left_as_they_are(self, arguments: str | dict[str, str]) -> None:
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[ToolCallPart('echo', arguments, tool_call_id='call-1', id='fc_1', provider_name='openai')]
+                )
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(model_for(respond), capabilities=[RepairToolArguments()])
+
+        @agent.tool_plain
+        def echo(value: str) -> str:
+            return value
+
+        result = await agent.run('Echo')
+        calls = [part for message in result.all_messages() for part in message.parts if isinstance(part, ToolCallPart)]
+        assert calls == [ToolCallPart('echo', arguments, tool_call_id='call-1', id='fc_1', provider_name='openai')]
 
 
 @pytest.mark.parametrize('module', ['pydantic_ai_harness.repair_tool_arguments', 'pydantic_ai_harness.coder'])
