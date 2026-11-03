@@ -545,8 +545,8 @@ def test_document_url_invalid():
 
 def test_binary_content_unknown_media_type():
     binary_content = BinaryContent(data=b'Hello, world!', media_type='application/custom')
-    # Any media type that isn't audio, image or video is a document, even one no extension is known for
-    assert binary_content.is_document
+    # No extension is known for it, so it is no document: the model adapter refuses it as it did before
+    assert binary_content.is_document is False
     with pytest.raises(ValueError, match='Unknown document media type: application/custom'):
         binary_content.format
 

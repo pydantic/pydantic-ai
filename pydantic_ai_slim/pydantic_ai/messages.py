@@ -911,13 +911,16 @@ class BinaryContent:
     def is_document(self) -> bool:
         """Return `True` if the media type is a document type.
 
-        A known document type is one, and so is any other media type that isn't audio, image, video or text-like:
-        text-like content outside the known types (JSON, YAML, XML, ...) is left to the model adapter, which
-        inlines it as text where the API has no file part.
+        A known document type is one, and so is any other media type that `mimetypes` knows a file extension for
+        and that isn't audio, image, video or text-like. Text-like content outside the known types (JSON, YAML,
+        XML, ...) is left to the model adapter, which inlines it as text where the API has no file part, and so is
+        a media type no extension is known for.
         """
-        return self.media_type in _document_format_lookup or not (
-            self.is_audio or self.is_image or self.is_video or _utils.is_text_like_media_type(self.media_type)
-        )
+        if self.media_type in _document_format_lookup:
+            return True
+        if self.is_audio or self.is_image or self.is_video or _utils.is_text_like_media_type(self.media_type):
+            return False
+        return _mime_types.guess_extension(self.media_type) is not None
 
     @property
     def format(self) -> str:

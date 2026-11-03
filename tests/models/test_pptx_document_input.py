@@ -1,7 +1,8 @@
 """A `.pptx` sent as `BinaryContent` through OpenAI.
 
 A `.pptx` has no entry in Pydantic AI's document format table: `BinaryContent.is_document` holds because the
-media type is neither audio, image nor video, and `.format` is the extension `mimetypes` knows the type by.
+media type is neither audio, image, video nor text-like and `mimetypes` knows an extension for it, which is what
+`.format` gives.
 Cassette tests, because what each API does with the file is the point: the Responses API reads it, and Chat
 Completions, whose `file` part takes PDFs only, rejects it with its own error.
 """
