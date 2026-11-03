@@ -434,6 +434,10 @@ def test_binary_content_video(media_type: str, format: str):
         ('text/html', 'html'),
         ('text/markdown', 'md'),
         ('application/vnd.ms-excel', 'xls'),
+        ('application/vnd.openxmlformats-officedocument.presentationml.presentation', 'pptx'),
+        ('application/vnd.oasis.opendocument.text', 'odt'),
+        # Known only to `mimetypes`
+        ('application/zip', 'zip'),
     ],
 )
 def test_binary_content_document(media_type: str, format: str):
@@ -506,6 +510,14 @@ _url_formats = [
     ),
     pytest.param(DocumentUrl('foobar.html'), 'text/html', 'html', id='html'),
     pytest.param(DocumentUrl('foobar.xls'), 'application/vnd.ms-excel', 'xls', id='xls'),
+    pytest.param(
+        DocumentUrl('foobar.pptx'),
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        'pptx',
+        id='pptx',
+    ),
+    # Known only to `mimetypes`
+    pytest.param(DocumentUrl('foobar.py'), 'text/x-python', 'py', id='py'),
 ]
 if sys.version_info > (3, 11):  # pragma: no branch
     # This solves an issue with MIMEType on MacOS + python < 3.12. mimetypes.py added the text/markdown in 3.12, but on
@@ -524,13 +536,15 @@ def test_document_url_invalid():
     with pytest.raises(ValueError, match=re.escape('Could not infer media type from document URL: foobar.potato')):
         DocumentUrl('foobar.potato').media_type
 
-    with pytest.raises(ValueError, match='Unknown document media type: text/x-python'):
-        DocumentUrl('foobar.py').format
+    with pytest.raises(ValueError, match='Unknown document media type: application/custom'):
+        DocumentUrl('foobar', media_type='application/custom').format
 
 
 def test_binary_content_unknown_media_type():
-    with pytest.raises(ValueError, match='Unknown media type: application/custom'):
-        binary_content = BinaryContent(data=b'Hello, world!', media_type='application/custom')
+    binary_content = BinaryContent(data=b'Hello, world!', media_type='application/custom')
+    # Any media type that isn't audio, image or video is a document, even one no extension is known for
+    assert binary_content.is_document
+    with pytest.raises(ValueError, match='Unknown document media type: application/custom'):
         binary_content.format
 
 

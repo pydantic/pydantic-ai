@@ -26,10 +26,7 @@ SendableFile = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
 
 
 def unsupported_file_input(item: SendableFile, profile: ModelProfile) -> str | None:
-    """What `item` is that the model cannot read, such as `'audio files'`, or `None` when it can be sent.
-
-    Binary content that is neither an image, audio, video nor a document is left to the model adapter.
-    """
+    """What `item` is that the model cannot read, such as `'audio files'`, or `None` when it can be sent."""
     if isinstance(item, ImageUrl) or (isinstance(item, BinaryContent) and item.is_image):
         return None if profile.get('supports_image_input', True) else 'images'
     if isinstance(item, AudioUrl) or (isinstance(item, BinaryContent) and item.is_audio):

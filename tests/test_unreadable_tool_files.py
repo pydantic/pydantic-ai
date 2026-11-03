@@ -128,7 +128,8 @@ async def test_tool_file_the_model_cannot_read_is_sent_as_a_note():
     result = await agent.run('Get the file.')
 
     [request] = sent
-    # An image is read, and JSON is no kind of file the flags judge, so both are left to the model adapter.
+    # An image is read, and JSON is a document of no known media type, which only `supports_document_input`
+    # judges, so both are left to the model adapter.
     assert tool_returns(request)[0].content == ['Recorded:', MEMO_NOTE, image, data]
     assert tool_returns(result.all_messages())[0].content == ['Recorded:', MEMO, image, data]
 

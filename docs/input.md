@@ -89,7 +89,7 @@ print(result.output)
 #> This document is the technical report introducing Gemini 1.5, Google's latest large language model...
 ```
 
-The supported document formats vary by model.
+Which document formats are supported varies by model. A document of any media type can be sent: the request carries the media type, and the file extension it implies (such as `pdf` or `pptx`) where the API wants one, so a model that can't read a format rejects it. The media types a model's [profile](models/overview.md#inspecting-a-models-profile) says it reads are listed in [`supported_document_media_types`][pydantic_ai.profiles.ModelProfile.supported_document_media_types].
 
 You can also use [`BinaryContent`][pydantic_ai.BinaryContent] to pass document data directly:
 
