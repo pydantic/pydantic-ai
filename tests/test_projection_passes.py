@@ -237,8 +237,9 @@ async def _code_loaded_capability_across_instruction_windows() -> list[ModelMess
         capability = Capability[None](
             id='counter', defer_loading=True, description='Counting.', instructions='Count carefully.'
         )
-        agent = Agent[None, str](
+        agent = Agent(
             FunctionModel(model_fn, profile=ModelProfile(supports_inline_system_prompts=True)),
+            deps_type=type(None),
             instructions=instructions,
             capabilities=[capability],
         )
