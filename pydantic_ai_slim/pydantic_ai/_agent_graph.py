@@ -3688,10 +3688,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         await self._compact_attempt(ctx, run_context, request_context, prepared, compaction)
         if compaction.error is None:
             compaction.restore(request_context, prepared)
-            await self._finish_attempt(ctx, run_context, request_context, prepared)
+            await self._prepare_attempt(ctx, run_context, request_context, prepared)
         return request_context, attempt_model, compaction, prepared
 
-    async def _finish_attempt(
+    async def _prepare_attempt(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         run_context: RunContext[DepsT],
@@ -3977,7 +3977,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         compaction.discard(request_context)
         compaction.take(retry)
         compaction.restore(request_context, prepared)
-        await self._finish_attempt(ctx, run_context, request_context, prepared)
+        await self._prepare_attempt(ctx, run_context, request_context, prepared)
         return True
 
     async def _open_stream(
