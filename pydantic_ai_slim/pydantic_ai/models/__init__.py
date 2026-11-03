@@ -112,6 +112,7 @@ from .._unsupported_settings import SUPPRESSED_WARNINGS, warn_unsupported_settin
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
+    _LOOKALIKE_KINDS_KEY,  # pyright: ignore[reportPrivateUsage]
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     STANDING_PROMPT_PLANTED_KEY,
     BaseToolCallPart,
@@ -1814,8 +1815,6 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 which differs only for a corpus mixing capability-gated and standalone deferred tools.
                 Framework callers pass it.
         """
-        # Before any pass copies a request, so the decision lands on the requests the caller holds.
-        stamp_lookalike_decisions(messages)
         inline_system = self.profile.get('supports_inline_system_prompts', False)
         messages = _drop_capability_load_deltas(messages)
         if _has_instruction_state(messages):
@@ -4459,26 +4458,25 @@ def _lookalike_sources(part: ModelRequestPart, data_tags: Sequence[str]) -> list
     return list(found.items())
 
 
-LOOKALIKE_KINDS_KEY = 'lookalike_kinds'
-"""The key under a request's reserved metadata namespace for the capability part kinds its text was found to imitate."""
+def stamp_lookalike_decisions(messages: Sequence[ModelMessage], *, run_id: str) -> None:
+    """Decide, once, which capability part kinds the text in each of this run's requests imitates, and store it there.
 
+    The agent run calls this on its history before each model request. The kinds a process knows
+    (`registered_kind_tags`) depend on which modules it has imported, so a request is checked against them once, and the
+    kinds found are kept in its reserved metadata (`stored_lookalike_kinds`). Every later render, in any process, reads
+    that decision instead of checking again, so an earlier request's notes, and its bytes, never change when a process
+    imports another kind.
 
-def stamp_lookalike_decisions(messages: Sequence[ModelMessage]) -> None:
-    """Decide, once, which capability part kinds the text in each request imitates, and store it on the request.
-
-    The kinds a process knows (`registered_kind_tags`) depend on which modules it has imported, so a request is checked
-    against them the first time it's rendered, and the kinds found are kept in its reserved metadata
-    (`stored_lookalike_kinds`). Every later render, in any process, reads that decision instead of checking again, so an
-    earlier request's notes, and its bytes, never change when a process imports another kind. A request with no text
-    that could open a tag needs no decision and keeps its metadata as it is.
+    Only requests the run `run_id` made are stamped, never the caller's: a history passed in keeps its objects as they
+    were. A request without a decision, such as one from before this was stored or one a UI client sent back without
+    the reserved metadata, is checked against the kinds registered when it's rendered. A request with no text that
+    could open a tag needs no decision and keeps its metadata as it is.
     """
-    if in_second_model_prompt():
-        # A transcript for a judge or summarizer gets no notes, so there's nothing to decide.
-        return
     registered: set[str] | None = None
     for message in messages:
         if (
             not isinstance(message, ModelRequest)
+            or message.run_id != run_id
             or stored_lookalike_kinds(message) is not None
             or not _may_imitate_a_frame(message)
         ):
@@ -4491,7 +4489,7 @@ def stamp_lookalike_decisions(messages: Sequence[ModelMessage]) -> None:
             **metadata,
             _PYDANTIC_AI_METADATA_KEY: {
                 **(namespace if _utils.is_str_dict(namespace) else {}),
-                LOOKALIKE_KINDS_KEY: _matched_kinds(message, registered),
+                _LOOKALIKE_KINDS_KEY: _matched_kinds(message, registered),
             },
         }
 
@@ -4515,7 +4513,7 @@ def stored_lookalike_kinds(request: ModelRequest) -> list[str] | None:
     namespace = (request.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
     if not _utils.is_str_dict(namespace):
         return None
-    kinds = namespace.get(LOOKALIKE_KINDS_KEY)
+    kinds = namespace.get(_LOOKALIKE_KINDS_KEY)
     if not isinstance(kinds, list):
         return None
     return [kind for kind in cast('list[object]', kinds) if isinstance(kind, str)]

@@ -3100,6 +3100,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     run_id=ctx.state.run_id,
                     conversation_id=ctx.state.conversation_id,
                 )
+            # Decided once, on the history this run records, so a later render in any process reads the same decision.
+            models.stamp_lookalike_decisions(ctx.state.message_history, run_id=ctx.state.run_id)
 
             # Loads a `before_model_request` hook made from code go on this request, ahead of the instructions
             # resolved below, so the request states the capabilities' instructions as after any other load.

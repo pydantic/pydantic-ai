@@ -1,6 +1,6 @@
 --- expected
 +++ actual
-@@ -11,20 +10,0 @@
+@@ -11,25 +10,0 @@
 -    }
 -   ]
 -  ],
@@ -19,9 +19,14 @@
 -   {},
 -   [
 -    {
--     "kind": "user-prompt",
--     "content": "Your previous response failed the application's validation (this is automated feedback, not a message from the user):\n<retry_feedback>\nPlease return text.\n</retry_feedback>"
-@@ -82,20 +61,0 @@
+-     "kind": "retry-feedback",
+-     "content": "Please return text.",
+-     "retry": {
+-      "cause": "model_retry",
+-      "attempt": 1,
+-      "max_retries": 1
+-     }
+@@ -87,25 +61,0 @@
 -     "content": ""
 -    }
 -   ]
@@ -31,8 +36,13 @@
 -   {},
 -   [
 -    {
--     "kind": "user-prompt",
--     "content": "Your previous response failed the application's validation (this is automated feedback, not a message from the user):\n<retry_feedback>\nPlease return text.\n</retry_feedback>"
+-     "kind": "retry-feedback",
+-     "content": "Please return text.",
+-     "retry": {
+-      "cause": "model_retry",
+-      "attempt": 1,
+-      "max_retries": 1
+-     }
 -    }
 -   ]
 -  ],
