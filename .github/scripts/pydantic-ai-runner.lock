@@ -1161,6 +1161,7 @@ requires-dist = [
     { name = "jupyter-client", marker = "extra == 'ipython'", specifier = ">=8.6.3" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=4.31.0" },
     { name = "modal", marker = "extra == 'modal'", specifier = ">=1.5.2" },
+    { name = "opensandbox", marker = "extra == 'opensandbox'", specifier = ">=1.1.1,<2" },
     { name = "pgtask", marker = "extra == 'pgtask'", specifier = ">=0.2.0,<1" },
     { name = "playwright", marker = "extra == 'playwright'", specifier = ">=1.61.0" },
     { name = "pydantic-ai-slim", editable = "../../pydantic_ai_slim" },
@@ -1199,7 +1200,7 @@ requires-dist = [
     { name = "stackone-defender", extras = ["onnx"], marker = "python_full_version >= '3.11' and python_full_version < '3.15' and extra == 'prompt-injection-defender-ml'", specifier = ">=0.7.3,<0.8" },
     { name = "youdotcom", marker = "extra == 'youdotcom'", specifier = ">=3.1.2,<3.2" },
 ]
-provides-extras = ["absurd", "acp", "anthropic", "aws-lambda", "boxd", "boxlite", "browser-use", "cli", "code-mode", "codemode", "coder", "day-ai", "daytona", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "ipython", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "ordinal", "pgtask", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "render", "repair-tool-arguments", "researcher", "skills", "slack", "smol", "sprites", "stackone", "temporal", "youdotcom"]
+provides-extras = ["absurd", "acp", "anthropic", "aws-lambda", "boxd", "boxlite", "browser-use", "cli", "code-mode", "codemode", "coder", "day-ai", "daytona", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "ipython", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "opensandbox", "ordinal", "pgtask", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "render", "repair-tool-arguments", "researcher", "skills", "slack", "smol", "sprites", "stackone", "temporal", "youdotcom"]
 
 [[package]]
 name = "pydantic-ai-slim"

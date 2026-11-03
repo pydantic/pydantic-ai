@@ -127,6 +127,7 @@ _ALLOWED_CLASSNAME_HEADINGS = {
     'Linear',
     'LocalStack',
     'Notion',
+    'OpenSandbox',
     'PostHog',
     'StackOne',
 }
@@ -161,6 +162,7 @@ _CAPABILITY_PAGE_META = {
     'memory.md': ('memory', 'Memory'),
     'modal-sandbox.md': ('modal_sandbox', 'Modal Sandbox'),
     'docker-sandbox.md': ('docker_sandbox', 'Docker Sandbox'),
+    'opensandbox-sandbox.md': ('opensandbox_sandbox', 'OpenSandbox'),
     'e2b-sandbox.md': ('e2b_sandbox', 'E2B Sandbox'),
     'sprites-sandbox.md': ('sprites_sandbox', 'Sprites Sandbox'),
     'daytona-sandbox.md': ('daytona_sandbox', 'Daytona Sandbox'),
