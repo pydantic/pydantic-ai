@@ -161,7 +161,21 @@ def _add_context_span_exporter() -> _ContextInMemorySpanExporter | SpanTreeRecor
     # `add_span_processor` method will be present.
     # Checked before the cache lookup so a provider we are going to reject never becomes a cache key.
     if not hasattr(provider, 'add_span_processor'):
-        return _unsupported_provider_error(tracer_provider, provider)
+        if isinstance(tracer_provider, ProxyTracerProvider):
+            required_call = (
+                'logfire.configure(...)' if _LOGFIRE_IS_INSTALLED else 'opentelemetry.trace.set_tracer_provider(...)'
+            )
+            return SpanTreeRecordingError(
+                f'To make use of the `span_tree` in an evaluator, you need to call `{required_call}` before running an'
+                f' evaluation.'
+                f' For more information, refer to the documentation at https://pydantic.dev/docs/ai/evals/evaluators/span-based/.'
+            )
+        # Custom TracerProvider (e.g. ddtrace) without add_span_processor - degrade gracefully.
+        return SpanTreeRecordingError(
+            f'The current TracerProvider ({type(provider).__qualname__}) does not support'
+            f' `add_span_processor`, so span tree recording is not available.'
+            f' Evaluation will still work, but `span_tree` will not be populated in evaluator results.'
+        )
 
     cache_id = id(provider)
 
@@ -220,22 +234,3 @@ def _add_context_span_exporter() -> _ContextInMemorySpanExporter | SpanTreeRecor
         provider.add_span_processor(processor)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
         _context_in_memory_providers[cache_id] = (stored, exporter)
         return exporter
-
-
-def _unsupported_provider_error(tracer_provider: TracerProvider, provider: TracerProvider) -> SpanTreeRecordingError:
-    if isinstance(tracer_provider, ProxyTracerProvider):
-        required_call = (
-            'logfire.configure(...)' if _LOGFIRE_IS_INSTALLED else 'opentelemetry.trace.set_tracer_provider(...)'
-        )
-        return SpanTreeRecordingError(
-            f'To make use of the `span_tree` in an evaluator, you need to call `{required_call}` before running an'
-            f' evaluation.'
-            f' For more information, refer to the documentation at https://pydantic.dev/docs/ai/evals/evaluators/span-based/.'
-        )
-    else:
-        # Custom TracerProvider (e.g. ddtrace) without add_span_processor - degrade gracefully.
-        return SpanTreeRecordingError(
-            f'The current TracerProvider ({type(provider).__qualname__}) does not support'
-            f' `add_span_processor`, so span tree recording is not available.'
-            f' Evaluation will still work, but `span_tree` will not be populated in evaluator results.'
-        )

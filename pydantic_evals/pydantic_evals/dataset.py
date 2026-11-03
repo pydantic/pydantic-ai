@@ -1242,9 +1242,18 @@ async def _run_task_and_evaluators(
             case_span.set_attribute('metrics', scoring_context.metrics)
             case_span.set_attribute('attributes', scoring_context.attributes)
 
-            evaluator_outputs, evaluator_failures = await _run_case_evaluators(
-                case.evaluators + dataset_evaluators, scoring_context, retry_evaluators
-            )
+            evaluators = case.evaluators + dataset_evaluators
+            evaluator_outputs: list[EvaluationResult] = []
+            evaluator_failures: list[EvaluatorFailure] = []
+            if evaluators:
+                evaluator_outputs_by_task = await task_group_gather(
+                    [lambda ev=ev: run_evaluator(ev, scoring_context, retry_evaluators) for ev in evaluators]
+                )
+                for outputs in evaluator_outputs_by_task:
+                    if isinstance(outputs, EvaluatorFailure):
+                        evaluator_failures.append(outputs)
+                        continue
+                    evaluator_outputs.extend(outputs)
 
             assertions, scores, labels = _group_evaluator_outputs_by_type(evaluator_outputs)
             case_span.set_attribute('assertions', _evaluation_results_adapter.dump_python(assertions))
@@ -1301,25 +1310,6 @@ async def _run_task_and_evaluators(
 
     assert result is not None
     return result
-
-
-async def _run_case_evaluators(
-    evaluators: list[Evaluator[InputsT, OutputT, MetadataT]],
-    scoring_context: EvaluatorContext[InputsT, OutputT, MetadataT],
-    retry_evaluators: RetryConfig | None,
-) -> tuple[list[EvaluationResult], list[EvaluatorFailure]]:
-    evaluator_outputs: list[EvaluationResult] = []
-    evaluator_failures: list[EvaluatorFailure] = []
-    if evaluators:
-        evaluator_outputs_by_task = await task_group_gather(
-            [lambda ev=ev: run_evaluator(ev, scoring_context, retry_evaluators) for ev in evaluators]
-        )
-        for outputs in evaluator_outputs_by_task:
-            if isinstance(outputs, EvaluatorFailure):
-                evaluator_failures.append(outputs)
-            else:
-                evaluator_outputs.extend(outputs)
-    return evaluator_outputs, evaluator_failures
 
 
 _evaluation_results_adapter = TypeAdapter(Mapping[str, EvaluationResult])
