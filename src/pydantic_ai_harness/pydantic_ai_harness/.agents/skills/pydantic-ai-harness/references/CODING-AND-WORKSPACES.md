@@ -468,10 +468,11 @@ your own OpenSandbox server, which runs it as a Docker container or a Kubernetes
 - `allow_internet_access=True` leaves network access to the server. `False` requests deny-all egress for a new
   sandbox only: it needs the server's egress sidecar and `dns+nft` mode for packet-level enforcement; the default
   `dns` mode only filters DNS lookups. Server-level allow/deny overrides still apply. asyncio only.
-- `secure_access=True` requests per-sandbox endpoint authentication on creation. It requires Kubernetes with an
-  ingress gateway; Docker rejects it. The SDK sends endpoint tokens automatically, including on attachment,
-  which does not change existing protection. The default is `False`: management API keys alone do not protect
-  direct sandbox endpoints, so restrict unsecured endpoints to trusted callers.
+- `secure_access=True` turns on OpenSandbox's per-sandbox token check at the ingress gateway for a new sandbox.
+  It requires Kubernetes with an ingress gateway; Docker rejects it. The SDK sends the token automatically,
+  including on attachment, which does not change the setting. It is not a security boundary: only gateway and
+  server-proxy traffic is checked, pods reached directly bypass it, and the management API key can fetch the
+  token. Restrict sandbox endpoints to trusted callers with network policy either way.
 
 ## Remote hosts and bubblewrap
 

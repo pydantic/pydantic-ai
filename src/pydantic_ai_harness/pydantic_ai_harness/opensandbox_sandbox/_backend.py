@@ -197,8 +197,9 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
             SDK's default of one CPU and 2 GiB.
         allow_internet_access: Whether a new sandbox keeps the server's network policy. `False` requests deny-all
             egress; blocking direct IP connections requires the server's `dns+nft` egress mode. Ignored on attach.
-        secure_access: Require the gateway's per-sandbox token for new sandbox endpoints. Requires Kubernetes
-            with an ingress gateway; Docker rejects `True`. Ignored on attach.
+        secure_access: Turn on OpenSandbox's per-sandbox token check at the ingress gateway for a new sandbox.
+            Requires Kubernetes with an ingress gateway; Docker rejects `True`. Ignored on attach. Not a security
+            boundary: callers that reach the pod directly bypass it.
         sandbox_timeout: Seconds a sandbox may go unused before the server deletes it, files included. Every
             operation renews it as it starts, so a single command must finish within it. `None` keeps it until it
             is destroyed.

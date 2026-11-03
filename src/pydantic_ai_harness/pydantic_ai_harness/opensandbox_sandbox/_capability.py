@@ -86,10 +86,13 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
     """
 
     secure_access: bool = False
-    """Require the gateway's per-sandbox token for new sandbox endpoints.
+    """Turn on OpenSandbox's per-sandbox token check at the ingress gateway for a new sandbox.
 
     Requires Kubernetes with an ingress gateway; Docker rejects `True`. The SDK sends the token automatically,
     including when attaching to a secured sandbox. Does not change the setting of an attached sandbox.
+
+    Not a security boundary: the server enforces it only on gateway and server-proxy traffic, so callers that
+    reach the pod directly bypass it, and anyone with the management API key can fetch the token.
     """
 
     sandbox_timeout: int | None = None
