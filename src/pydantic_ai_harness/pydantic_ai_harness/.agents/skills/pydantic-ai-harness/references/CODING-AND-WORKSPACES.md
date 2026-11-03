@@ -459,24 +459,24 @@ your own OpenSandbox server, which runs it as a Docker container or a Kubernetes
 - The server is found through `OPEN_SANDBOX_DOMAIN` (default `localhost:8080`) and `OPEN_SANDBOX_API_KEY` if it
   needs one, or `connection=ConnectionConfig(...)`; on Kubernetes without the ingress gateway,
   `ConnectionConfig(use_server_proxy=True)`. It needs execd 1.1.1 or later (the server's `execd_image`).
-- Plain `http` is unencrypted and carries the API key, commands, file contents and `env`: use an `https://`
-  domain off loopback or a trusted network. Without `connection`, an `https://` `OPEN_SANDBOX_DOMAIN` covers
-  command and file requests too; a `ConnectionConfig` you pass needs `protocol='https'`, because the SDK sends
-  command and file requests with `protocol`, not the domain's scheme.
+- Requests use plain HTTP unless the domain starts with `https://`. Without `connection`, an `https://`
+  `OPEN_SANDBOX_DOMAIN` sends every request over HTTPS. A `ConnectionConfig` you pass is used as given; it needs
+  both an `https://` domain and `protocol='https'`, because the SDK sends command and file requests with
+  `protocol`. Command and file requests carry commands, file contents and `env` values.
 - The first operation creates the sandbox; the image needs a POSIX `sh`. Without `image` the capability only
   attaches and destroys by ref. The ref is `WorkspaceRef(provider='opensandbox', id=<sandbox id>)`; the sandbox
   outlives the run: `await OpenSandbox().destroy(ref)`, or `sandbox_timeout=` to have the server delete it
   after that many idle seconds (renewed by use; a single command must finish within it).
 - `resource={'cpu': '500m', 'memory': '1Gi'}` sizes a new sandbox (default one CPU, 2 GiB).
 - Each command takes about 0.2 s and file operations run as commands, so large files are slow (seconds per MiB).
-- `allow_internet_access=True` leaves network access to the server. `False` requests deny-all egress for a new
-  sandbox only: it needs the server's egress sidecar and `dns+nft` mode for packet-level enforcement; the default
-  `dns` mode only filters DNS lookups. Server-level allow/deny overrides still apply. asyncio only.
-- `secure_access=True` turns on OpenSandbox's per-sandbox token check at the ingress gateway for a new sandbox.
-  It requires Kubernetes with an ingress gateway; Docker rejects it. The SDK sends the token automatically,
-  including on attachment, which does not change the setting. It is not a security boundary: only gateway and
-  server-proxy traffic is checked, pods reached directly bypass it, and the management API key can fetch the
-  token. Restrict sandbox endpoints to trusted callers with network policy either way.
+- `allow_internet_access=False` asks the server for a deny-all egress policy on a new sandbox; the default
+  sends none, so the server's configuration applies. The server's egress sidecar enforces it: its default `dns`
+  mode filters DNS lookups only, and `dns+nft` also blocks direct IP connections. asyncio only.
+- `secure_access=True` asks the server to turn on Secure Access for a new sandbox (Kubernetes with the ingress
+  gateway; Docker rejects it). The gateway and server proxy then require the sandbox's token, which the SDK
+  fetches with the server API key and sends automatically. Requests that reach the pod directly are not checked.
+- Without the server proxy, the SDK does not send the server API key to a sandbox's endpoint; the endpoint checks
+  only what the server configures for it. Attaching never changes `allow_internet_access` or `secure_access`.
 
 ## Remote hosts and bubblewrap
 

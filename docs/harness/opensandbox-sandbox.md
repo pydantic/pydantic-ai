@@ -30,7 +30,7 @@ uvx opensandbox-server
 
 The capability needs execd 1.1.1 or later, the server's in-sandbox command service: set `execd_image = "opensandbox/execd:release-1.2.0"` under `[runtime]` in `~/.sandbox.toml`. Older versions drop the line breaks from command output, so the first operation raises `WorkspaceUnavailableError` saying so.
 
-The capability finds the server through `OPEN_SANDBOX_DOMAIN` (default `localhost:8080`), and sends `OPEN_SANDBOX_API_KEY` if your server requires a key. For Kubernetes, see [Run on Kubernetes](#run-on-kubernetes). Requests are unencrypted unless the domain starts with `https://`, such as `OPEN_SANDBOX_DOMAIN=https://sandbox.example.com`; see [Security model](#security-model).
+The capability finds the server through `OPEN_SANDBOX_DOMAIN` (default `localhost:8080`), and sends `OPEN_SANDBOX_API_KEY` if your server requires a key. For Kubernetes, see [Run on Kubernetes](#run-on-kubernetes). Requests use plain HTTP unless the domain starts with `https://`, such as `OPEN_SANDBOX_DOMAIN=https://sandbox.example.com`.
 
 ## Quick start
 
@@ -136,21 +136,21 @@ sandbox = OpenSandbox(
 )
 ```
 
-This example uses plain HTTP inside the cluster. For a server reached from outside it, put TLS in front of the server and pass `ConnectionConfig(domain='https://opensandbox.example.com', protocol='https', use_server_proxy=True)`.
+This example connects over plain HTTP inside the cluster. To connect over HTTPS, put the server behind TLS and pass `ConnectionConfig(domain='https://opensandbox.example.com', protocol='https', use_server_proxy=True)`: the SDK uses the domain's scheme for the server's API and `protocol` for command and file requests, so a config needs both.
 
 Each sandbox asks for one CPU and 2 GiB unless you pass `resource`. A pod that can't be scheduled leaves the create waiting; the SDK gives up after its 30-second request timeout while the server may still finish it, so the backend finds the sandbox by a tag it set and keeps its ref, and the next operation attaches to it.
 
 ## Endpoint authentication
 
-On Kubernetes with the server's ingress gateway enabled (`[ingress]` with `mode = "gateway"`), pass `OpenSandbox(image='python:3.13-slim', secure_access=True)` to turn on OpenSandbox's Secure Access for a new sandbox. The gateway and the server proxy then reject requests to the sandbox's endpoints that lack its per-sandbox token. The SDK fetches and sends the token automatically, including when attaching to a secured sandbox. The setting only applies when creating a sandbox; attaching does not change it. The default is `False`, and Docker rejects `True`.
+`OpenSandbox(image='python:3.13-slim', secure_access=True)` asks the server to turn on [Secure Access](https://github.com/opensandbox-group/OpenSandbox/blob/main/docs/guides/secure-access.md) when it creates the sandbox. It needs Kubernetes with the server's ingress gateway (`[ingress]` with `mode = "gateway"`); Docker rejects it. The default is `False`.
 
-Secure Access is not a security boundary. This capability passes the flag to the server, and the server does the checking; Pydantic AI does not verify that it is enforced. The check covers only traffic through the gateway and the server proxy: anything that can reach a sandbox pod directly inside the cluster bypasses it, so restrict pod traffic with a Kubernetes network policy. Anyone with the management API key can fetch the token. It does not isolate the sandbox or limit what its commands can do; see [Security model](#security-model). See [OpenSandbox Secure Access](https://github.com/opensandbox-group/OpenSandbox/blob/main/docs/guides/secure-access.md) for gateway configuration and how it differs from execd's own access token.
+With it on, the gateway and the server proxy reject requests to the sandbox's endpoints that lack its token. The SDK fetches the token from the server's API, using the server API key, and sends it with every command and file request, including after attaching. Requests that reach the pod without passing through the gateway or proxy, such as from elsewhere in the cluster, are not checked. Attaching never changes the setting.
 
 ## Network access
 
-`allow_internet_access=True` (the default) leaves network access to the server's configuration. Pass `OpenSandbox(image='python:3.13-slim', allow_internet_access=False)` to request deny-all egress for a new sandbox. It does not change the policy when attaching to an existing sandbox.
+`OpenSandbox(image='python:3.13-slim', allow_internet_access=False)` asks the server to create the sandbox with a deny-all egress policy. The default, `True`, sends no policy, so the server's own configuration applies. Attaching never changes a sandbox's policy.
 
-Deny-all requires the server's egress sidecar. For packet-level enforcement, including direct IP connections, configure the server with:
+The server enforces the policy with its egress sidecar. To block direct IP connections as well as DNS lookups, configure the server with:
 
 ```toml
 [egress]
@@ -158,7 +158,7 @@ image = "opensandbox/egress:v1.1.7"
 mode = "dns+nft"
 ```
 
-The default `dns` mode only filters DNS lookups; it does not block direct IP connections. Server-level allow/deny overrides still apply. See [OpenSandbox egress configuration](https://github.com/opensandbox-group/OpenSandbox/blob/main/server/configuration.md#egress) for runtime requirements and configuration.
+In the default `dns` mode the sidecar filters DNS lookups only, so a command can still connect to an IP address directly. Server-level allow and deny rules apply in both modes. See [OpenSandbox egress configuration](https://github.com/opensandbox-group/OpenSandbox/blob/main/server/configuration.md#egress) for runtime requirements and configuration.
 
 ## Clean up
 
@@ -201,14 +201,12 @@ Set `sandbox_timeout` above the longest gap between workspace operations, includ
 
 ## Security model
 
-The sandbox's isolation is the server's runtime: a Docker container shares the host's kernel, and a Kubernetes pod shares its node's, unless the server is configured with a secure runtime such as gVisor or Kata Containers. Inside, commands run as the image's user, usually `root`.
+The sandbox's isolation is the server's runtime: a Docker container shares the host's kernel, and a Kubernetes pod shares its node's, unless the server is configured with a secure runtime such as gVisor or Kata Containers. Inside, commands run as the image's user, usually `root`. The capability passes `allow_internet_access` and `secure_access` to the server when it creates a sandbox, and the server applies them.
 
-- `allow_internet_access=False` requests deny-all egress for new sandboxes. Enforcement depends on the server's egress configuration; see [Network access](#network-access).
-- With network access enabled, a Docker-backed sandbox can reach services on its host and LAN, including the OpenSandbox API if it is exposed there. To restrict that access, use `allow_internet_access=False` with `dns+nft`, or a server-side network policy that blocks those destinations.
-- Requests to the server and to each sandbox's endpoints carry the API key, commands, file contents and `env` values. Plain `http` is unencrypted: use it only on loopback or a network you trust, and an `https://` domain otherwise. Without a `connection`, an `https://` domain in `OPEN_SANDBOX_DOMAIN` covers command and file requests too. A `ConnectionConfig` you pass is used as given, and the SDK sends command and file requests with its `protocol`, not the domain's scheme, so set `protocol='https'` on it.
-- Set `api_key` under `[server]` and authenticate clients with `OPEN_SANDBOX_API_KEY`. Keep the key out of the sandbox's `env`: it grants access to every sandbox on that server.
-- The management API key does not protect a sandbox's own endpoints. Keep them reachable only by trusted callers, with network policy or firewall rules on Docker and Kubernetes alike. On a Kubernetes gateway, `secure_access=True` adds a token check to gateway and proxy traffic, but it is not a substitute for restricting network access; see [Endpoint authentication](#endpoint-authentication).
-- `env` values are sent to the server with every command.
+- With the default `allow_internet_access=True`, a Docker-backed sandbox can reach its host and LAN, including the OpenSandbox server if it listens there. `False` on a server in `dns+nft` mode blocks that; see [Network access](#network-access).
+- Requests to the server's API carry the server API key. Command and file requests carry commands, file contents and `env` values. Over plain `http` all of them are unencrypted. Without a `connection`, an `https://` domain in `OPEN_SANDBOX_DOMAIN` sends every request over HTTPS. A `ConnectionConfig` you pass is used as given, so set both an `https://` domain and `protocol='https'` on it; see [Run on Kubernetes](#run-on-kubernetes).
+- The server API key, set as `api_key` under `[server]`, controls every sandbox on that server and can fetch their Secure Access tokens. Keep it out of the sandbox's `env`.
+- Without the server proxy, command and file requests go straight to the sandbox's endpoint, and the SDK does not send the server API key there. The endpoint checks only what the server configures for it, such as Secure Access at a Kubernetes gateway; see [Endpoint authentication](#endpoint-authentication). With `use_server_proxy=True`, they go through the server, which checks the API key.
 - `image` is pulled by tag; pin a digest, such as `python:3.13-slim@sha256:...`, to get the same image every time.
 
 ## Configuration
@@ -218,10 +216,10 @@ The sandbox's isolation is the server's runtime: a Docker container shares the h
 | Option | What it does |
 | --- | --- |
 | `image` | Image for a new sandbox, such as `'python:3.13-slim'`. Default: `None`, which only attaches to and destroys sandboxes by ref. |
-| `connection` | The SDK's `ConnectionConfig` for your server. Default: `None`, which reads `OPEN_SANDBOX_DOMAIN` and `OPEN_SANDBOX_API_KEY`. Set `protocol='https'` on it for an encrypted connection; see [Security model](#security-model). |
+| `connection` | The SDK's `ConnectionConfig` for your server. Default: `None`, which reads `OPEN_SANDBOX_DOMAIN` and `OPEN_SANDBOX_API_KEY`. A config you pass is used as given; see [Security model](#security-model) for HTTPS. |
 | `resource` | Resource limits for a new sandbox, such as `{'cpu': '500m', 'memory': '1Gi'}`. Default: `None`, one CPU and 2 GiB. |
-| `allow_internet_access` | Default: `True`, which keeps the server's network configuration. `False` requests deny-all egress for new sandboxes; see [Network access](#network-access) for server requirements. |
-| `secure_access` | Default: `False`. `True` turns on OpenSandbox's per-sandbox token check at the ingress gateway for a new sandbox on Kubernetes. Not a security boundary; see [Endpoint authentication](#endpoint-authentication). Docker rejects `True`; attaching does not change it. |
+| `allow_internet_access` | Default: `True`, which sends no policy, so the server's configuration applies. `False` asks the server for deny-all egress on a new sandbox; see [Network access](#network-access). |
+| `secure_access` | Default: `False`. `True` asks the server to make its Kubernetes ingress gateway and proxy require a token for a new sandbox's endpoints; see [Endpoint authentication](#endpoint-authentication). Docker rejects `True`. |
 | `sandbox_timeout` | Seconds a sandbox may go unused before the server deletes it, files included; every operation renews it, and a single command must finish within it. Default: `None`, kept until destroyed. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against, created on first use if missing. Default: `/workspace`; `None` uses the image's own. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox, and `env` is kept out of the capability's `repr`, but the agent's commands can read it. |
