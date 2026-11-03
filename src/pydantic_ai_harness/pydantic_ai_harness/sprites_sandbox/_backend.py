@@ -85,6 +85,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai.workspaces._telemetry import lifecycle_span
 from pydantic_ai.workspaces.workspace import _ShellFilesystem  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
@@ -501,53 +502,54 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             return sandbox
 
         async def acquire() -> AsyncSprite:
-            with anyio.move_on_after(_ACQUIRE_TIMEOUT):
-                if ref is not None:
-                    try:
-                        sandbox = await client.get_sprite(ref.id)
-                    except NotFoundError as error:
-                        if self._uncertain_create:
-                            # A 404 during eventual visibility is not proof that creation failed.
-                            raise NetworkError(f'Sprite {ref.id!r} may still be becoming visible') from error
-                        raise
-                else:
-                    try:
-                        sandbox = await client.create_sprite(self._new_sprite_name, runtime=self._runtime)
-                    except (NetworkError, TimeoutError, SpriteError) as error:
-                        if isinstance(error, SpriteError) and not (
-                            isinstance(error, NetworkError) or '(status 409)' in str(error)
-                        ):
-                            raise
-                        # The create may have committed even if lookup is not yet visible. Keep its
-                        # preallocated name for failure hooks and use lookup only on future attempts.
-                        self._ref = WorkspaceRef(provider='sprites', id=self._new_sprite_name)
-                        self._uncertain_create = True
+            with lifecycle_span('create' if ref is None else 'attach', self):
+                with anyio.move_on_after(_ACQUIRE_TIMEOUT):
+                    if ref is not None:
                         try:
-                            sandbox = await client.get_sprite(self._new_sprite_name)
-                        except (NotFoundError, NetworkError, TimeoutError):
-                            raise error from None
-                    # Logged as soon as it exists: a Sprite persists until deleted, whatever ends the run later.
-                    logger.info('Created Sprite %s', sandbox.name)
-                # Recorded as soon as the SDK returns, so a cancelled caller still leaves it named.
-                self._sandbox = sandbox
-                self._ref = WorkspaceRef(provider='sprites', id=sandbox.name)
-                self._uncertain_create = False
-                self._attached_name = sandbox.name
-                self._unfetched = False
-                _lookups.record(_LookupCache.key(client, sandbox.name))
-                return sandbox
-            # Only our own bound lands here; an SDK `TimeoutError` propagates as raised. A stalled
-            # control plane is a transport failure, which propagates for a retry;
-            # `WorkspaceTimeoutError` is reserved for command deadlines.
-            if ref is None:
-                # A timed-out create may have committed; a subsequent call must only look it up.
-                self._ref = WorkspaceRef(provider='sprites', id=self._new_sprite_name)
-                self._uncertain_create = True
-            action = 'creation' if ref is None else 'connection'
-            raise TimeoutError(
-                f'Sprite {action} did not complete within {_ACQUIRE_TIMEOUT:g}s; '
-                'the Sprites control plane may be unreachable.'
-            )
+                            sandbox = await client.get_sprite(ref.id)
+                        except NotFoundError as error:
+                            if self._uncertain_create:
+                                # A 404 during eventual visibility is not proof that creation failed.
+                                raise NetworkError(f'Sprite {ref.id!r} may still be becoming visible') from error
+                            raise
+                    else:
+                        try:
+                            sandbox = await client.create_sprite(self._new_sprite_name, runtime=self._runtime)
+                        except (NetworkError, TimeoutError, SpriteError) as error:
+                            if isinstance(error, SpriteError) and not (
+                                isinstance(error, NetworkError) or '(status 409)' in str(error)
+                            ):
+                                raise
+                            # The create may have committed even if lookup is not yet visible. Keep its
+                            # preallocated name for failure hooks and use lookup only on future attempts.
+                            self._ref = WorkspaceRef(provider='sprites', id=self._new_sprite_name)
+                            self._uncertain_create = True
+                            try:
+                                sandbox = await client.get_sprite(self._new_sprite_name)
+                            except (NotFoundError, NetworkError, TimeoutError):
+                                raise error from None
+                        # Logged as soon as it exists: a Sprite persists until deleted, whatever ends the run later.
+                        logger.info('Created Sprite %s', sandbox.name)
+                    # Recorded as soon as the SDK returns, so a cancelled caller still leaves it named.
+                    self._sandbox = sandbox
+                    self._ref = WorkspaceRef(provider='sprites', id=sandbox.name)
+                    self._uncertain_create = False
+                    self._attached_name = sandbox.name
+                    self._unfetched = False
+                    _lookups.record(_LookupCache.key(client, sandbox.name))
+                    return sandbox
+                # Only our own bound lands here; an SDK `TimeoutError` propagates as raised. A stalled
+                # control plane is a transport failure, which propagates for a retry;
+                # `WorkspaceTimeoutError` is reserved for command deadlines.
+                if ref is None:
+                    # A timed-out create may have committed; a subsequent call must only look it up.
+                    self._ref = WorkspaceRef(provider='sprites', id=self._new_sprite_name)
+                    self._uncertain_create = True
+                action = 'creation' if ref is None else 'connection'
+                raise TimeoutError(
+                    f'Sprite {action} did not complete within {_ACQUIRE_TIMEOUT:g}s; '
+                    'the Sprites control plane may be unreachable.'
+                )
 
         try:
             # Creation runs to completion even if the caller is cancelled, so a Sprite that

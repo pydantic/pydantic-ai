@@ -9,6 +9,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai.workspaces._telemetry import lifecycle_span
 from pydantic_ai_harness._workspace_provider import check_working_dir
 from pydantic_ai_harness.docker_sandbox._backend import (
     PROVIDER,
@@ -83,7 +84,8 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
         """Remove a container and its anonymous volumes, whether it is running or not."""
         if ref.provider != PROVIDER:
             raise ValueError(f'unsupported workspace provider {ref.provider!r}; expected {PROVIDER!r}')
-        await remove_container(ref.id, executable=self._executable_path)
+        with lifecycle_span('destroy', ref):
+            await remove_container(ref.id, executable=self._executable_path)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build the backend for this run. No I/O here: it creates or attaches on first use."""

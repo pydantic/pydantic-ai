@@ -16,7 +16,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace, WorkspaceTimeoutError
 
 from .conftest import try_import
-from .workspace_fakes import FakeWorkspace, RunOnlyWorkspaceBackend
+from .workspace_fakes import RunOnlyWorkspaceBackend
 
 with try_import() as otel_sdk_installed:
     # `opentelemetry-sdk` arrives with the `logfire` extra, so it is not importable in the slim install.
@@ -144,33 +144,6 @@ async def test_shell_filesystem_commands_are_traced_without_their_text(tmp_path:
     )
     assert not any(key.startswith('process.command') for span in spans for key in span)
     assert all(data[:100] not in str(span.attributes) for span in exporter.get_finished_spans())
-
-
-async def test_the_call_that_creates_the_environment_says_so(tmp_path: Path) -> None:
-    """A lazy backend's first call carries the creation time, so its span says the environment was created."""
-    instrumentation, exporter = instrumented(include_content=False)
-    agent = Agent(TestModel(call_tools=['look']), capabilities=[instrumentation])
-
-    @agent.tool
-    async def look(ctx: RunContext[Any]) -> str:
-        await ctx.workspace.exists('a.txt')
-        await ctx.workspace.exists('b.txt')
-        return 'done'
-
-    result = await agent.run('go', workspace=FakeWorkspace('lazy'))
-    # Attaching to the environment by its ref later is not a creation.
-    await agent.run('go', workspace=FakeWorkspace('lazy', ref=result.workspace.ref))
-
-    assert [
-        (span['logfire.msg'], span.get('pydantic_ai.workspace.created')) for span in workspace_spans(exporter, tmp_path)
-    ] == snapshot(
-        [
-            ('workspace exists (sandbox created)', True),
-            ('workspace exists', None),
-            ('workspace exists', None),
-            ('workspace exists', None),
-        ]
-    )
 
 
 async def test_a_script_shows_its_first_line(tmp_path: Path) -> None:

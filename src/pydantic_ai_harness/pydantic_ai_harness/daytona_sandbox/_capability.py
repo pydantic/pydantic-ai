@@ -10,6 +10,7 @@ from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai.workspaces._telemetry import lifecycle_span
 from pydantic_ai_harness._workspace import innermost_backend
 from pydantic_ai_harness._workspace_provider import check_integer, check_working_dir
 from pydantic_ai_harness.daytona_sandbox._backend import DaytonaSandboxBackend, destroy_sandbox
@@ -95,7 +96,8 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
         """
         if ref.provider != 'daytona':
             raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'daytona'")
-        await destroy_sandbox(self.client, ref.id)
+        with lifecycle_span('destroy', ref):
+            await destroy_sandbox(self.client, ref.id)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build the backend for this run. No I/O here: it attaches or creates on first use."""

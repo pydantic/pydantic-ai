@@ -45,6 +45,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai.workspaces._telemetry import lifecycle_span
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_timeout,
@@ -321,25 +322,26 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
                 return sandbox  # pragma: no cover
             await _import_modal()
             ref = self._ref
-            if ref is not None:
-                sandbox = await self._attach(ref.id)
-            else:
-                sandbox = await self._create()
-                # Logged at creation, so the ID survives whatever later ends the run.
-                logger.info('Created Modal sandbox %s', sandbox.object_id)
-                if not self._waiters:
-                    # Every caller was cancelled while Modal created it, so no `finally` or error hook
-                    # saw a ref to terminate; this log is the only record of a sandbox that bills. A
-                    # caller still counted here resumes only after the ref below is recorded, as nothing
-                    # in between awaits, so its own cleanup finds it.
-                    logger.warning(
-                        'Created Modal sandbox %s after every caller waiting for it was cancelled; it keeps '
-                        'running until its `sandbox_timeout` ends it unless you terminate it with '
-                        "`ModalSandbox().destroy(WorkspaceRef(provider='modal', id=...))`",
-                        sandbox.object_id,
-                    )
-            self._sandbox = sandbox
-            self._ref = WorkspaceRef(provider='modal', id=sandbox.object_id)
+            with lifecycle_span('create' if ref is None else 'attach', self):
+                if ref is not None:
+                    sandbox = await self._attach(ref.id)
+                else:
+                    sandbox = await self._create()
+                    # Logged at creation, so the ID survives whatever later ends the run.
+                    logger.info('Created Modal sandbox %s', sandbox.object_id)
+                    if not self._waiters:
+                        # Every caller was cancelled while Modal created it, so no `finally` or error hook
+                        # saw a ref to terminate; this log is the only record of a sandbox that bills. A
+                        # caller still counted here resumes only after the ref below is recorded, as nothing
+                        # in between awaits, so its own cleanup finds it.
+                        logger.warning(
+                            'Created Modal sandbox %s after every caller waiting for it was cancelled; it keeps '
+                            'running until its `sandbox_timeout` ends it unless you terminate it with '
+                            "`ModalSandbox().destroy(WorkspaceRef(provider='modal', id=...))`",
+                            sandbox.object_id,
+                        )
+                self._sandbox = sandbox
+                self._ref = WorkspaceRef(provider='modal', id=sandbox.object_id)
             return sandbox
 
     @property

@@ -17,12 +17,15 @@ from opentelemetry.trace import INVALID_SPAN, NoOpTracer, Span, Tracer
 from opentelemetry.util.types import AttributeValue
 
 from .._instrumentation import record_uncaught_errors
+from ..messages import WorkspaceRef
 from .protocol import WorkspaceBackend, WorkspaceCommand
 
 __all__ = (
+    'Lifecycle',
     'Operation',
     'Step',
     'command_span',
+    'lifecycle_span',
     'operation_span',
     'publish_workspace_telemetry',
     'set_command',
@@ -43,6 +46,8 @@ Operation: TypeAlias = Literal[
     'exists',
     'realpath',
 ]
+Lifecycle: TypeAlias = Literal['create', 'attach', 'destroy']
+"""What a backend does to its environment, apart from the facade's operations."""
 Step: TypeAlias = Literal[
     'probe',
     'read_chunk',
@@ -115,7 +120,6 @@ def operation_span(
     if _in_operation.get():
         yield INVALID_SPAN
         return
-    unattached = workspace.ref is None
     message = f'workspace {operation}'
     if subject is not None and (telemetry := _telemetry.get()) is not None and telemetry.include_content:
         message += f': {_one_line(subject)}'
@@ -124,12 +128,23 @@ def operation_span(
             yield span
         finally:
             # Read at the end: a lazy backend creates its sandbox during its first operation.
-            if span.is_recording() and (ref := workspace.ref) is not None:
-                span.set_attribute('pydantic_ai.workspace.provider', ref.provider)
-                span.set_attribute('pydantic_ai.workspace.id', ref.id)
-                if unattached:
-                    span.set_attribute('pydantic_ai.workspace.created', True)
-                    span.set_attribute('logfire.msg', f'{message} (sandbox created)')
+            _record_ref(span, workspace.ref)
+
+
+@contextmanager
+def lifecycle_span(action: Lifecycle, workspace: WorkspaceBackend | WorkspaceRef) -> Generator[Span]:
+    """Open a `workspace create`, `attach` or `destroy` span around a backend's call to its provider.
+
+    It opens even inside an operation's span: a lazy backend creates or attaches during its first
+    operation, and this span is what separates that time from the operation's own.
+    """
+    with _span(action, f'workspace {action}') as span:
+        # A failed create may drop the ref it had allocated; the span still names that sandbox.
+        entry_ref = _ref_of(workspace)
+        try:
+            yield span
+        finally:
+            _record_ref(span, _ref_of(workspace) or entry_ref)
 
 
 @contextmanager
@@ -140,6 +155,16 @@ def command_span(step: Step) -> Generator[Span]:
         yield span
 
 
+def _ref_of(workspace: WorkspaceBackend | WorkspaceRef) -> WorkspaceRef | None:
+    return workspace if isinstance(workspace, WorkspaceRef) else workspace.ref
+
+
+def _record_ref(span: Span, ref: WorkspaceRef | None) -> None:
+    if span.is_recording() and ref is not None:
+        span.set_attribute('pydantic_ai.workspace.provider', ref.provider)
+        span.set_attribute('pydantic_ai.workspace.id', ref.id)
+
+
 def _one_line(subject: WorkspaceCommand) -> str:
     text = subject if isinstance(subject, str) else shlex.join(subject)
     first, newline, _ = text.strip().partition('\n')
@@ -147,7 +172,7 @@ def _one_line(subject: WorkspaceCommand) -> str:
 
 
 @contextmanager
-def _span(operation: Operation, message: str) -> Generator[Span]:
+def _span(operation: Operation | Lifecycle, message: str) -> Generator[Span]:
     if (telemetry := _telemetry.get()) is None:
         yield INVALID_SPAN
         return

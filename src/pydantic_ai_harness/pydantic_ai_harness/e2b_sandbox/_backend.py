@@ -47,6 +47,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai.workspaces._telemetry import lifecycle_span
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env_types,
@@ -326,14 +327,15 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                 # Checked here, not in `get_sandbox`: a sandbox the caller passed in is returned as is.
                 _require_asyncio()
                 ref = self._ref
-                sandbox = await self._attach(ref.id) if ref is not None else await self._create()
-                if ref is None:
-                    # Recorded at creation, so the id can be found whatever ends the run before it is stored.
-                    logger.info('Created E2B sandbox %s', sandbox.sandbox_id)
-                # Record the new sandbox before setup, so a failed mkdir still leaves
-                # a ref the caller can use to clean up the billed sandbox.
-                self._sandbox = sandbox
-                self._ref = WorkspaceRef(provider='e2b', id=sandbox.sandbox_id)
+                with lifecycle_span('create' if ref is None else 'attach', self):
+                    sandbox = await self._attach(ref.id) if ref is not None else await self._create()
+                    if ref is None:
+                        # Recorded at creation, so the id can be found whatever ends the run before it is stored.
+                        logger.info('Created E2B sandbox %s', sandbox.sandbox_id)
+                    # Record the new sandbox before setup, so a failed mkdir still leaves
+                    # a ref the caller can use to clean up the billed sandbox.
+                    self._sandbox = sandbox
+                    self._ref = WorkspaceRef(provider='e2b', id=sandbox.sandbox_id)
                 self._working_dir_pending = ref is None and self._working_dir is not None
             if self._working_dir_pending:
                 assert self._working_dir is not None
