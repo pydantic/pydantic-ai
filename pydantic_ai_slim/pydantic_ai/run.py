@@ -11,7 +11,7 @@ import anyio
 from pydantic import ConfigDict, GetJsonSchemaHandler, TypeAdapter, model_serializer, model_validator, with_config
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import CoreSchema
-from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
+from pydantic_core.core_schema import IncExCall, SerializationInfo, SerializerFunctionWrapHandler
 from typing_extensions import TypedDict
 
 from pydantic_graph import BaseNode, End, EndMarker, ErrorMarker, GraphRun, GraphRunContext, GraphTaskRequest, JoinItem
@@ -183,13 +183,13 @@ def _filter_serialized(data: Mapping[str, Any], info: SerializationInfo) -> dict
             else {key for key, spec in exclude.items() if not isinstance(spec, (set, dict))}
         )
         data = {key: value for key, value in data.items() if key not in dropped}
-    return _apply_nested_specs(data, info)
+    return _apply_nested_specs(data, include, exclude)
 
 
-def _apply_nested_specs(data: Mapping[str, Any], info: SerializationInfo) -> dict[str, Any]:
+def _apply_nested_specs(data: Mapping[str, Any], include: IncExCall, exclude: IncExCall) -> dict[str, Any]:
     """Apply each key's nested `include`/`exclude` spec to the value of a key `data` still has."""
     filtered = dict(data)
-    for spec, keep in ((info.include, True), (info.exclude, False)):
+    for spec, keep in ((include, True), (exclude, False)):
         if not isinstance(spec, Mapping):
             continue
         for key, sub_spec in cast('Mapping[Any, Any]', spec).items():

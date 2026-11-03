@@ -219,5 +219,7 @@ def _embedding_cost(result: EmbeddingResult) -> Decimal | None:
         # The cost of this provider/model is unknown, which is common.
         return cost
     except Exception as e:
-        warnings.warn(f'Failed to get cost from response: {type(e).__name__}: {e}', CostCalculationFailedWarning)
+        warnings.warn(
+            f'Failed to get cost from response: {type(e).__name__}: {e}', CostCalculationFailedWarning, stacklevel=2
+        )
         return cost
