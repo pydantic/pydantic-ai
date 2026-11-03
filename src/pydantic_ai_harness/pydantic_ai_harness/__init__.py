@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from .approval_reviewer import ApprovalReviewer
     from .artifact_scanning import ArtifactScanner
     from .ask_user import AskUser
+    from .azure_durable_task import AzureDurableTaskDurability
     from .background_tools import BackgroundTools
     from .boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
     from .boxlite_sandbox import BoxLiteSandbox, BoxLiteSandboxBackend
@@ -93,6 +94,7 @@ __all__ = [
     'ApprovalReviewer',
     'ArtifactScanner',
     'AskUser',
+    'AzureDurableTaskDurability',
     'BackgroundTools',
     'BoxdSandbox',
     'BoxdSandboxBackend',
@@ -191,6 +193,7 @@ _CAPABILITY_EXPORTS = {
     'Advisor': 'advisor',
     'ApprovalReviewer': 'approval_reviewer',
     'AskUser': 'ask_user',
+    'AzureDurableTaskDurability': 'azure_durable_task',
     'BackgroundTools': 'background_tools',
     'BoxdSandbox': 'boxd_sandbox',
     'BoxLiteSandbox': 'boxlite_sandbox',
