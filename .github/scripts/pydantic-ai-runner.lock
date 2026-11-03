@@ -17,6 +17,8 @@ boxd = "2026-10-27T23:56:00Z"
 boxlite = "2026-10-18T01:35:01Z"
 cassetter = false
 certifi = "2026-10-20T02:25:00Z"
+durabletask = "2026-11-02T22:34:00Z"
+durabletask-azuremanaged = "2026-11-02T22:34:00Z"
 genai-prices = false
 listentome = false
 logfire = false
@@ -1159,8 +1161,8 @@ requires-dist = [
     { name = "boxlite", marker = "(python_full_version < '3.15' and platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'boxlite') or (python_full_version < '3.15' and platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'boxlite') or (python_full_version < '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'boxlite')", specifier = ">=0.10.7,<0.11" },
     { name = "browser-use", marker = "python_full_version >= '3.11' and extra == 'browser-use'", specifier = ">=0.13.6,<0.14" },
     { name = "daytona", marker = "extra == 'daytona'", specifier = ">=0.223.1,<1" },
-    { name = "durabletask", marker = "extra == 'azure-durable-task'", specifier = ">=1.12.0,<2" },
-    { name = "durabletask-azuremanaged", marker = "extra == 'azure-durable-task'", specifier = ">=1.11.0,<2" },
+    { name = "durabletask", marker = "extra == 'azure-durable-task'", specifier = ">=1.13.0,<2" },
+    { name = "durabletask-azuremanaged", marker = "extra == 'azure-durable-task'", specifier = ">=1.13.0,<2" },
     { name = "e2b", marker = "extra == 'e2b'", specifier = ">=2.48.0" },
     { name = "exa-py", marker = "extra == 'exa'", specifier = ">=2.16.0" },
     { name = "fastmcp", marker = "extra == 'stackone'", specifier = ">=3.4.5,<4" },

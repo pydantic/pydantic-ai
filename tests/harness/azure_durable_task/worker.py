@@ -88,10 +88,7 @@ class InMemoryWorker(worker.TaskHubGrpcWorker):
         events = [self.event(orchestratorStarted=pb.OrchestratorStartedEvent()), *record.new_events]
         record.new_events.clear()
         executor = OrchestrationExecutor(self._registry, self._logger, data_converter=self._data_converter)
-        try:
-            result = executor.execute(instance_id, record.history, events)
-        finally:
-            executor.close()
+        result = executor.execute(instance_id, record.history, events)
         record.history.extend(events)
         record.custom_status = result.encoded_custom_status
         for action in result.actions:

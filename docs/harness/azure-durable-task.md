@@ -269,13 +269,3 @@ and do no I/O. MCP and dynamic tools always run as activities.
 
 `name=` sets the activity name prefix (the agent's `name` by default), `models=` registers extra models
 by ID for `agent.run(model=...)`, and `event_stream_handler=` runs a handler as activities.
-
-## Known limitation
-
-`durabletask` 1.12.0 doesn't close the orchestrator generator a dispatch leaves suspended, so the
-agent run inside it isn't cleaned up when the dispatch ends. Agent runs stay reachable after garbage
-collection too, so each dispatch leaves its run, including its message history and open spans, in
-worker memory, and its `finally` blocks don't run. This is fixed upstream in
-[microsoft/durabletask-python#300](https://github.com/microsoft/durabletask-python/pull/300)
-and [microsoft/durabletask-python#303](https://github.com/microsoft/durabletask-python/pull/303);
-the minimum `durabletask` version will move to the release that includes them.

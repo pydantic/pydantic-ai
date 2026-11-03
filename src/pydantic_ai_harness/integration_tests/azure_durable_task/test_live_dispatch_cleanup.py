@@ -1,11 +1,10 @@
-"""Verify SDK 1.13 dispatch teardown through the public capability and a real scheduler."""
+"""Verify dispatch teardown through the public capability and a real scheduler."""
 
 from __future__ import annotations
 
 import asyncio
 import os
 from collections.abc import Generator
-from importlib.metadata import version
 from threading import Lock
 from uuid import uuid4
 
@@ -14,17 +13,11 @@ import pytest
 from durabletask import task
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
-from packaging.version import Version
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability, run_durable
-
-pytestmark = pytest.mark.skipif(
-    any(Version(version(package)) < Version('1.13.0') for package in ('durabletask', 'durabletask-azuremanaged')),
-    reason='Dispatch cleanup requires durabletask and durabletask-azuremanaged >=1.13.0',
-)
 
 
 @pytest.mark.parametrize('cancel_during_teardown', [False, True])

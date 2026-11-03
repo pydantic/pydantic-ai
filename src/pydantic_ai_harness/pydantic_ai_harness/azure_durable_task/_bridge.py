@@ -158,8 +158,6 @@ class _TrampolineLoop(asyncio.BaseEventLoop):
                     continue
                 waiting = self.next_task()
                 try:
-                    # durabletask 1.12.0 leaves suspended dispatch generators open, delaying cleanup.
-                    # Upstream fixes: microsoft/durabletask-python#300 and microsoft/durabletask-python#303.
                     yield waiting
                 except Exception:
                     # Feed the SDK task's failure back into the async task that owns the operation.
