@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import suppress
 from threading import Event, Lock
@@ -39,6 +39,17 @@ def _html_response(html: str, *, content_type: str = 'text/html; charset=utf-8')
         headers={'content-type': content_type},
         request=httpx2.Request('GET', 'https://example.com'),
     )
+
+
+class _RecordingExecutor(ThreadPoolExecutor):
+    def __init__(self):
+        super().__init__()
+        self.submitted: list[Future[Any]] = []
+
+    def submit(self, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Future[Any]:
+        future = super().submit(fn, *args, **kwargs)
+        self.submitted.append(future)
+        return future
 
 
 class TestWebFetchLocalTool:
@@ -721,16 +732,6 @@ class TestWebFetchLocalTool:
         only sync work the tool submits.
         """
 
-        class RecordingExecutor(ThreadPoolExecutor):
-            def __init__(self):
-                super().__init__()
-                self.submitted: list[Future[Any]] = []
-
-            def submit(self, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Future[Any]:
-                future = super().submit(fn, *args, **kwargs)
-                self.submitted.append(future)
-                return future
-
         html = '<html><head><title>Threaded</title></head><body><p>Content</p></body></html>'
         with (
             patch(
@@ -738,7 +739,7 @@ class TestWebFetchLocalTool:
                 new_callable=AsyncMock,
                 return_value=_html_response(html),
             ),
-            RecordingExecutor() as executor,
+            _RecordingExecutor() as executor,
             using_thread_executor(executor),
         ):
             tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
@@ -909,6 +910,77 @@ class TestWebFetchLocalTool:
 
         assert isinstance(result, dict)
         assert result['content'] == '[[[[]]]]'
+
+    async def test_json_output_matches_full_formatting_at_every_length(self):
+        """Every `max_content_length` returns the same content as indenting the whole document, then truncating."""
+        body = '{"a": [[1, 2.5], {"b": "line\\nbreak", "c": []}], "d": {}, "e": null, "f": "\u00e9t\u00e9"}'
+        formatted = f'```json\n{json.dumps(json.loads(body), indent=2)}\n```'
+
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download',
+            new_callable=AsyncMock,
+            return_value=_html_response(body, content_type='application/json'),
+        ):
+            for max_content_length in [*range(len(formatted) + 2), None]:
+                tool = WebFetchLocalTool(max_content_length=max_content_length, allow_local_urls=False, timeout=30)
+                result = await tool('https://example.com')
+
+                assert isinstance(result, dict)
+                if max_content_length is None or len(formatted) <= max_content_length:
+                    assert result['content'] == formatted
+                else:
+                    assert result['content'] == formatted[:max_content_length] + '\n\n[Content truncated]'
+
+    @pytest.mark.parametrize('max_content_length', [1_000, 10_000])
+    async def test_json_formatting_stops_at_max_content_length(
+        self, monkeypatch: pytest.MonkeyPatch, max_content_length: int
+    ):
+        """Indenting stops once the content is longer than `max_content_length` rather than covering the whole document.
+
+        Indentation grows with nesting depth, so the indented document can be many times the size of
+        the body. The encoder is wrapped to count the characters it produces.
+        """
+        produced: list[int] = []
+
+        class CountingEncoder(json.JSONEncoder):
+            def iterencode(self, o: object, _one_shot: bool = False) -> Iterator[str]:
+                for chunk in super().iterencode(o, _one_shot):
+                    produced.append(len(chunk))
+                    yield chunk
+
+        body = json.dumps([[[[[i]]]] for i in range(5_000)])
+        monkeypatch.setattr(json, 'JSONEncoder', CountingEncoder)
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download',
+            new_callable=AsyncMock,
+            return_value=_html_response(body, content_type='application/json'),
+        ):
+            tool = WebFetchLocalTool(max_content_length=max_content_length, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com')
+
+        assert isinstance(result, dict)
+        assert len(result['content']) == max_content_length + len('\n\n[Content truncated]')
+        assert sum(produced) < max_content_length + 100
+
+    async def test_json_parsing_and_formatting_run_in_worker_thread(self):
+        """Parsing and indenting a JSON body run through the sync-function executor, not on the event loop."""
+        body = '{"key": "value"}'
+        with (
+            patch(
+                'pydantic_ai.common_tools.web_fetch.safe_download',
+                new_callable=AsyncMock,
+                return_value=_html_response(body, content_type='application/json'),
+            ),
+            _RecordingExecutor() as executor,
+            using_thread_executor(executor),
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com')
+
+        formatted = '```json\n{\n  "key": "value"\n}\n```'
+        assert isinstance(result, dict)
+        assert result['content'] == formatted
+        assert [future.result() for future in executor.submitted] == [body, formatted]
 
 
 _CONVERTER_PARITY_CASES = [

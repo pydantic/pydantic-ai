@@ -6,6 +6,7 @@ HTTP requests and the `markdownify` library for HTML-to-markdown conversion.
 
 from __future__ import annotations
 
+import io
 import json
 import re
 from collections.abc import Callable
@@ -199,13 +200,9 @@ class WebFetchLocalTool:
                 except ModelRetry as e:
                     raise ModelRetry(f'Failed to convert {url}: {e}') from e
             elif media_type == 'application/json':
-                try:
-                    parsed = json.loads(text)
-                    content = f'```json\n{json.dumps(parsed, indent=2)}\n```'
-                except (json.JSONDecodeError, ValueError, RecursionError):
-                    # A document nested deeper than the interpreter's recursion limit is returned
-                    # as-is, like any other body that doesn't parse.
-                    content = text
+                # Indentation grows with nesting depth, so the formatted document can be far larger
+                # than the body: format it in a worker thread, and only as much as will be returned.
+                content = await run_in_executor(_format_json, text, self.max_content_length)
             else:
                 content = text
         else:
@@ -227,6 +224,28 @@ def _decode_text(response: httpx2.Response) -> str:
     instead of failing inside the codec with whatever it happens to raise.
     """
     return response.content.decode(response.encoding or 'utf-8', errors='replace')
+
+
+def _format_json(text: str, max_length: int | None) -> str:
+    """Pretty-print a JSON body in a code block, stopping once the result is longer than `max_length`.
+
+    A stopped result ends in a value or bracket rather than indentation, so stripping its ends keeps
+    it longer than `max_length`, and truncating it gives the same content as truncating the whole
+    document. A body that doesn't parse, or is nested deeper than the interpreter's recursion limit,
+    is returned as-is.
+    """
+    try:
+        parsed = json.loads(text)
+        content = io.StringIO()
+        content.write('```json\n')
+        for chunk in json.JSONEncoder(indent=2).iterencode(parsed):
+            content.write(chunk)
+            if max_length is not None and content.tell() > max_length and not chunk.endswith((' ', '\n')):
+                return content.getvalue()
+        content.write('\n```')
+        return content.getvalue()
+    except (json.JSONDecodeError, ValueError, RecursionError):
+        return text
 
 
 class _HTMLMarkupBudget(HTMLParser):
