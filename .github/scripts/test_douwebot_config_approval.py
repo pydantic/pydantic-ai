@@ -290,7 +290,7 @@ def _douwebot_review(
             _douwebot_review(4, 'CHANGES_REQUESTED', 'Blocking findings are recorded inline.'),
             False,
             '',
-            id='earlier-head-findings-only',
+            id='request-changes-without-findings-on-head',
         ),
         pytest.param(
             _douwebot_review(5, 'COMMENTED', 'Review incomplete.\n\nCould not read X.'), True, '', id='incomplete'
