@@ -45,6 +45,7 @@ from pydantic_ai.native_tools import (
     WebFetchTool,
     WebSearchTool,
 )
+from pydantic_ai.profiles import ModelProfile
 
 from ..._inline_snapshot import snapshot
 from ...cassette_utils import single_request_body
@@ -375,6 +376,22 @@ async def test_anthropic_citations_web_tool_callers_by_client(
 
     [body] = bodies
     assert body['tools'] == tools
+
+
+def test_anthropic_cited_web_tools_direct_provider_profile_wins():
+    """A provider's own `model_profile()` value wins over the default `AnthropicModel` sets by client class.
+
+    Checked on the resolved profile rather than a request, since this is profile resolution alone;
+    `test_anthropic_citations_web_tool_callers_by_client` pins what each flag value sends.
+    """
+
+    class KeepsDefaultWebToolCallersProvider(AnthropicProvider):
+        @staticmethod
+        def model_profile(model_name: str) -> ModelProfile | None:
+            return AnthropicModelProfile(anthropic_calls_cited_web_tools_directly=False)
+
+    model = AnthropicModel('claude-sonnet-4-6', provider=KeepsDefaultWebToolCallersProvider(api_key='x'))
+    assert model.profile.get('anthropic_calls_cited_web_tools_directly') is False
 
 
 _FETCH_PROMPT = 'Use web fetch to read https://ai.pydantic.dev and say in one sentence what Pydantic AI is.'
