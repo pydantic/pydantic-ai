@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 
 from pydantic_ai._deferred_capabilities import LoadExchanges
+from pydantic_ai._instructions import settle_loads
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
     CapabilityLoadDeltaPart,
@@ -135,10 +136,11 @@ def _recorded_exchange(loads: Sequence[_Load]) -> list[ModelMessage]:
         )
         if load.tools:
             results.append(ToolAvailabilityDeltaPart(tools_added=list(load.tools), tool_call_id=tool_call_id))
-    return [
-        ModelResponse(parts=calls, metadata={RECORDED_LOAD_METADATA_KEY: True}),
-        ModelRequest(parts=results),
-    ]
+    request = ModelRequest(parts=results)
+    # Settled, so core delivers each capability's current instructions after the latest message, as a change,
+    # rather than restoring them on this record as it does for a load whose statement a UI client dropped.
+    settle_loads(request, [load.capability_id for load in loads])
+    return [ModelResponse(parts=calls, metadata={RECORDED_LOAD_METADATA_KEY: True}), request]
 
 
 def _unloaded_note(capability_ids: Sequence[str]) -> ModelRequest:

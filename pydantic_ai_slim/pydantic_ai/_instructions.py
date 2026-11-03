@@ -8,9 +8,10 @@ from typing import Generic, TypeGuard
 
 from pydantic_ai._deferred_capabilities import LoadCapabilityReturnPart, LoadExchanges
 from pydantic_ai._run_context import AgentDepsT, RunContext
-from pydantic_ai._utils import dataclasses_no_defaults_repr
+from pydantic_ai._utils import dataclasses_no_defaults_repr, is_str_dict
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     CapabilityInstructionSource,
     CompactionPart,
     InstructionBaselinePart,
@@ -484,7 +485,12 @@ class LoadedInstructionValues:
             else:
                 for capability_id in loaded.observe(part):
                     # A model's load is stated on the request holding its return. A load from code isn't anchored yet.
-                    if isinstance(part, LoadCapabilityReturnPart) and loaded.values[capability_id] is None:
+                    # A load the framework already settled has nothing missing, even when its instructions were empty.
+                    if (
+                        isinstance(part, LoadCapabilityReturnPart)
+                        and loaded.values[capability_id] is None
+                        and capability_id not in settled_loads(messages[index])
+                    ):
                         loaded._unstated[capability_id] = index
         return loaded
 
@@ -492,7 +498,7 @@ class LoadedInstructionValues:
         """The index of the message holding `capability_id`'s load, if nothing has stated its instructions since.
 
         That message is where they're stated: the request after the load. A load return from an earlier version,
-        which states them itself, has none.
+        which states them itself, has none, and neither has a load the framework settled (see `settle_loads`).
         """
         return self._unstated.get(capability_id)
 
@@ -621,26 +627,79 @@ def update_loaded_instruction_history(
     nothing or it is no longer configured, unless it's in `keep_without_parts`: a capability that's eager
     again, whose instructions are back in the prefix.
     """
-    current = _loaded_texts(parts)
+    changes, restored, settled = _loaded_instruction_changes(
+        messages, _loaded_texts(parts), targets, keep_without_parts=keep_without_parts
+    )
+    for index, statements in restored.items():
+        _restore_statements(messages, history, index, statements)
+    for target in targets:
+        if changes:
+            target.parts = [*target.parts, *changes]
+        if settled:
+            settle_loads(target, settled)
+
+
+def _loaded_instruction_changes(
+    messages: Sequence[ModelMessage],
+    current: dict[str, str | None],
+    targets: Sequence[ModelRequest],
+    *,
+    keep_without_parts: Collection[str],
+) -> tuple[list[InstructionDeltaPart], dict[int, list[InstructionDeltaPart]], list[str]]:
+    """What `update_loaded_instruction_history` records, given each loaded block's `current` text.
+
+    The changes for `targets`, the statements to restore on earlier requests by their index in `messages`, and the
+    capabilities whose loads `targets` hold and so settle.
+    """
     loaded = LoadedInstructionValues.of(messages)
     changes: list[InstructionDeltaPart] = []
     restored: dict[int, list[InstructionDeltaPart]] = {}
+    settled: list[str] = []
     for capability_id, previous in loaded.values.items():
+        index = loaded.unstated_load_index(capability_id)
+        on_target = index is not None and any(messages[index] is target for target in targets)
+        if on_target:
+            settled.append(capability_id)
         if capability_id not in current and capability_id in keep_without_parts:
             continue
         if (content := current.get(capability_id)) == previous:
             continue
         change = _instruction_change(loaded_instruction_id(capability_id), previous, content)
-        index = loaded.unstated_load_index(capability_id)
-        if index is not None and not any(messages[index] is target for target in targets):
+        if index is not None and not on_target:
             restored.setdefault(index, []).append(change)
         else:
             changes.append(change)
-    for index, statements in restored.items():
-        _restore_statements(messages, history, index, statements)
-    if changes:
-        for target in targets:
-            target.parts = [*target.parts, *changes]
+    return changes, restored, settled
+
+
+def settle_loads(request: ModelRequest, capability_ids: Collection[str]) -> None:
+    """Record that `request` settles the statement of the loads of `capability_ids` it holds.
+
+    The framework settles a load on the request holding it when it states the capability's instructions there, or
+    finds they resolved to nothing. A compaction that records a load again settles the recorded copy: the statement
+    the original load had is delivered after the latest message, as for any other change. Only an unsettled load
+    with no statement, which a UI client's history has, gets its statement restored on the request holding it.
+
+    The record is framework state in `metadata['__pydantic_ai__']`, which the model never receives and
+    [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] drops from a client's history, so a client can't
+    claim it.
+    """
+    metadata = dict(request.metadata or {})
+    namespace = metadata.get(_PYDANTIC_AI_METADATA_KEY)
+    namespace = dict(namespace) if is_str_dict(namespace) else {}
+    namespace[_SETTLED_LOADS_KEY] = list(dict.fromkeys([*settled_loads(request), *capability_ids]))
+    metadata[_PYDANTIC_AI_METADATA_KEY] = namespace
+    request.metadata = metadata
+
+
+def settled_loads(message: ModelMessage) -> set[str]:
+    """The capabilities whose loads `message` settles, as `settle_loads` recorded them."""
+    namespace = (message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+    settled = namespace.get(_SETTLED_LOADS_KEY) if is_str_dict(namespace) else None
+    return {item for item in settled if isinstance(item, str)} if isinstance(settled, list) else set()
+
+
+_SETTLED_LOADS_KEY = 'settled_loads'
 
 
 def _restore_statements(
