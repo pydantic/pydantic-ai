@@ -1081,8 +1081,8 @@ the messages whose [`run_id`][pydantic_ai.messages.ModelRequest.run_id] equals
 
 !!! warning "History processors replace the message history"
     History processors replace the message history in the state with the processed messages, including the new user prompt part.
-    Later requests in the same run start from the processed messages, so a processor sees its own earlier output, not the original history.
     This means that if you want to keep the original message history, you need to make a copy of it.
+    Later requests in the same run start from the processed messages, so a processor sees its own earlier output, not the original history.
 
     When using deferred tools, preserve their
     [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] entries, or the
