@@ -1,22 +1,27 @@
-"""Shared plumbing for capabilities that ask a second model one question about a tool call.
+"""Shared plumbing for capabilities that ask a second model to judge an agent's tool calls or run.
 
 `ToolCallJudge` and `ApprovalReviewer` build the same prompt, read the same provider confidence, and
 claim their request on the run's usage the same way. They differ only in what an answer does.
+`TrajectoryJudge` shares the transcript line rendering and the claim-offset limits.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import AbstractContextManager
 from dataclasses import replace
 from typing import Any, Literal, TypeAlias
 
+from opentelemetry.trace import Span
 from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai._framing import neutralize_tags
 from pydantic_ai.messages import (
     ModelMessage,
+    ModelRequestPart,
+    ModelResponsePart,
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryFeedbackPart,
@@ -115,44 +120,49 @@ def _render_transcript(messages: Sequence[ModelMessage]) -> str:
                 text = user_prompt_text(part)
                 if text:
                     lines.append(f'user: {text}')
-            elif isinstance(part, ToolReturnPart):
-                lines.append(
-                    f'retry ({part.tool_name}): {part.model_response_str(wrap_if_error=False)}'
-                    if part.outcome == 'retried'
-                    else f'tool {part.tool_name} returned: {part.model_response_str()}'
-                )
-            elif isinstance(part, NativeToolReturnPart):
-                lines.append(f'native tool {part.tool_name} returned: {part.model_response_str()}')
-            elif isinstance(part, RetryFeedbackPart):
-                lines.append(f'retry (output): {part.model_response()}')
-            # TODO(v3): remove RetryPromptPart
-            elif isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
-                # A hand-built history passed as `message_history` can still hold one; the model
-                # translates it only when the request goes out.
-                lines.append(f'retry ({part.tool_name or "output"}): {part.model_response()}')
-            elif isinstance(part, TextPart):
-                if part.content:
-                    lines.append(f'assistant: {part.content}')
-            elif isinstance(part, ToolCallPart):
-                lines.append(f'assistant called tool {part.tool_name} with {part.args_as_json_str()}')
-            elif isinstance(part, NativeToolCallPart):
-                lines.append(f'assistant called native tool {part.tool_name} with {part.args_as_json_str()}')
-            elif isinstance(part, SpeechPart) and part.transcript:
-                lines.append(f'{part.speaker}: {part.transcript}')
+            elif (line := render_part(part)) is not None:
+                lines.append(line)
     return '\n'.join(lines)
+
+
+def render_part(part: ModelRequestPart | ModelResponsePart) -> str | None:
+    """Render a part other than a user prompt as one transcript line, or `None` for a part the judge doesn't see.
+
+    User prompts are left to the caller, which decides where their lines go.
+    """
+    if isinstance(part, ToolReturnPart):
+        if part.outcome == 'retried':
+            return f'retry ({part.tool_name}): {part.model_response_str(wrap_if_error=False)}'
+        return f'tool {part.tool_name} returned: {part.model_response_str()}'
+    if isinstance(part, NativeToolReturnPart):
+        return f'native tool {part.tool_name} returned: {part.model_response_str()}'
+    if isinstance(part, RetryFeedbackPart):
+        return f'retry (output): {part.model_response()}'
+    # TODO(v3): remove RetryPromptPart
+    if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+        # A hand-built history passed as `message_history` can still hold one; the model
+        # translates it only when the request goes out.
+        return f'retry ({part.tool_name or "output"}): {part.model_response()}'
+    if isinstance(part, TextPart):
+        return f'assistant: {part.content}' if part.content else None
+    if isinstance(part, ToolCallPart):
+        return f'assistant called tool {part.tool_name} with {part.args_as_json_str()}'
+    if isinstance(part, NativeToolCallPart):
+        return f'assistant called native tool {part.tool_name} with {part.args_as_json_str()}'
+    if isinstance(part, SpeechPart) and part.transcript:
+        return f'{part.speaker}: {part.transcript}'
+    return None
 
 
 def claim_request(ctx: RunContext[Any]) -> None:
     """Claim one request on the shared usage before awaiting the second model, or refuse it.
 
-    Sibling tool calls are executed concurrently and a nested run records its spend only once the
-    response is in, so without a claim every judgement in a parallel batch passes preflight against
-    the same `usage.requests` and the batch bills past the run's `request_limit`. Claiming here is
-    atomic against siblings: the hook chain reaches this point without yielding the event loop.
-    A claim the budget cannot fit raises the same `UsageLimitExceeded` the nested run's own
-    preflight would have raised. The caller releases the claim once the nested run returns.
-    Mirrors `pydantic_ai_harness.trajectory_judge`'s launch claim, in the shape a synchronously
-    awaited judgement needs.
+    A nested run records its spend only once the response is in, so without a claim every judgement
+    in a parallel batch of tool calls passes preflight against the same `usage.requests` and the
+    batch bills past the run's `request_limit`. The hook chain reaches this point without yielding
+    the event loop, so the check and the claim are atomic against siblings. A claim the budget
+    cannot fit raises the same `UsageLimitExceeded` the nested run's own preflight would have
+    raised. The caller releases the claim once the nested run returns.
     """
     if ctx.usage_limits is not None:
         ctx.usage_limits.check_before_request(ctx.usage)
@@ -183,3 +193,39 @@ def claimed_request_limits(limits: UsageLimits | None) -> UsageLimits:
     limit too, as the nested run would otherwise apply the default one to the shared usage.
     """
     return replace(limits or UsageLimits(), request_limit=None)
+
+
+def judge_span(
+    ctx: RunContext[Any], name: str, prefix: str, call: ToolCallPart, args: dict[str, Any]
+) -> AbstractContextManager[Span]:
+    """Open the span for judging one call; its arguments are recorded only when the run traces content."""
+    attributes = {f'{prefix}.tool': call.tool_name, f'{prefix}.tool_call_id': call.tool_call_id}
+    if ctx.trace_include_content:
+        attributes[f'{prefix}.arguments'] = json.dumps(args, default=str)
+    return ctx.tracer.start_as_current_span(name, attributes=attributes)
+
+
+async def ask_claimed(
+    ctx: RunContext[Any],
+    span: Span,
+    prefix: str,
+    ask: Callable[[], Awaitable[tuple[JudgeAnswer, float | None]]],
+) -> tuple[JudgeAnswer | None, float | None]:
+    """Await `ask` under a `claim_request` claim and record its outcome on `span`.
+
+    Returns the answer and confidence, or `(None, None)` when the claim or the model failed.
+    """
+    try:
+        claim_request(ctx)
+        try:
+            answer, confidence = await ask()
+        finally:
+            ctx.usage.requests -= 1
+    except Exception as error:
+        if span.is_recording():
+            span.set_attribute(f'{prefix}.model_result', 'error')
+            span.set_attribute(f'{prefix}.error.type', type(error).__name__)
+        return None, None
+    if span.is_recording():
+        span.set_attribute(f'{prefix}.model_result', answer)
+    return answer, confidence

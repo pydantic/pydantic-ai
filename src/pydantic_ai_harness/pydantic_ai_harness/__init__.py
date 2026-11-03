@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from .approval_reviewer import ApprovalReviewer
     from .artifact_scanning import ArtifactScanner
     from .ask_user import AskUser
+    from .azure_durable_task import AzureDurableTaskDurability
     from .background_tools import BackgroundTools
     from .boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
     from .boxlite_sandbox import BoxLiteSandbox, BoxLiteSandboxBackend
@@ -58,8 +59,11 @@ if TYPE_CHECKING:
     from .macroscope import Macroscope
     from .memory import Memory
     from .modal_sandbox import ModalSandbox, ModalSandboxBackend
+    from .opensandbox_sandbox import OpenSandbox, OpenSandboxBackend
     from .ordinal import Ordinal
+    from .permissions import Permissions
     from .pgtask import PGTaskDurability
+    from .pixeltable import Pixeltable
     from .planning import Planning
     from .posthog import PostHog
     from .prompt_injection_defender import PromptInjectionDefender
@@ -91,6 +95,7 @@ __all__ = [
     'ApprovalReviewer',
     'ArtifactScanner',
     'AskUser',
+    'AzureDurableTaskDurability',
     'BackgroundTools',
     'BoxdSandbox',
     'BoxdSandboxBackend',
@@ -137,11 +142,15 @@ __all__ = [
     'Memory',
     'ModalSandbox',
     'ModalSandboxBackend',
+    'OpenSandbox',
+    'OpenSandboxBackend',
     'Ordinal',
     'OutputBlocked',
     'OutputGuardrail',
     'OutputGuardrailFunc',
     'PGTaskDurability',
+    'Permissions',
+    'Pixeltable',
     'Planning',
     'PostHog',
     'PromptInjectionDefender',
@@ -187,6 +196,7 @@ _LAZY_EXPORTS = {
     'ApprovalReviewer': 'approval_reviewer',
     'ArtifactScanner': 'artifact_scanning',
     'AskUser': 'ask_user',
+    'AzureDurableTaskDurability': 'azure_durable_task',
     'BackgroundTools': 'background_tools',
     'BoxdSandbox': 'boxd_sandbox',
     'BoxdSandboxBackend': 'boxd_sandbox',
@@ -231,11 +241,15 @@ _LAZY_EXPORTS = {
     'Memory': 'memory',
     'ModalSandbox': 'modal_sandbox',
     'ModalSandboxBackend': 'modal_sandbox',
+    'OpenSandbox': 'opensandbox_sandbox',
+    'OpenSandboxBackend': 'opensandbox_sandbox',
     'Ordinal': 'ordinal',
     'OutputBlocked': 'guardrails',
     'OutputGuardrail': 'guardrails',
     'OutputGuardrailFunc': 'guardrails',
     'PGTaskDurability': 'pgtask',
+    'Permissions': 'permissions',
+    'Pixeltable': 'pixeltable',
     'Planning': 'planning',
     'PostHog': 'posthog',
     'PromptInjectionDefender': 'prompt_injection_defender',
