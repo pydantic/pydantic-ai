@@ -116,11 +116,10 @@ def operation_span(
         yield INVALID_SPAN
         return
     unattached = workspace.ref is None
-    with _span(operation) as span:
-        message = f'workspace {operation}'
-        if subject is not None and (telemetry := _telemetry.get()) is not None and telemetry.include_content:
-            message += f': {_one_line(subject)}'
-        span.set_attribute('logfire.msg', message)
+    message = f'workspace {operation}'
+    if subject is not None and (telemetry := _telemetry.get()) is not None and telemetry.include_content:
+        message += f': {_one_line(subject)}'
+    with _span(operation, message) as span:
         try:
             yield span
         finally:
@@ -136,9 +135,8 @@ def operation_span(
 @contextmanager
 def command_span(step: Step) -> Generator[Span]:
     """Open a `workspace run` span for a shell-filesystem command, recording its `step` but never its text, which can carry file contents."""
-    with _span('run') as span:
+    with _span('run', f'workspace run ({step})') as span:
         span.set_attribute('pydantic_ai.workspace.command.step', step)
-        span.set_attribute('logfire.msg', f'workspace run ({step})')
         yield span
 
 
@@ -149,12 +147,16 @@ def _one_line(subject: WorkspaceCommand) -> str:
 
 
 @contextmanager
-def _span(operation: Operation) -> Generator[Span]:
+def _span(operation: Operation, message: str) -> Generator[Span]:
     if (telemetry := _telemetry.get()) is None:
         yield INVALID_SPAN
         return
+    # The message is set at the start, so Logfire's console and pending spans show it too.
     with telemetry.tracer.start_as_current_span(
-        f'workspace {operation}', record_exception=False, set_status_on_exception=False
+        f'workspace {operation}',
+        attributes={'logfire.msg': message},
+        record_exception=False,
+        set_status_on_exception=False,
     ) as span:
         token = _in_operation.set(True)
         try:
