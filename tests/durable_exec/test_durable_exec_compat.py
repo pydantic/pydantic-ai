@@ -73,6 +73,8 @@ from pydantic_ai.exceptions import RunCancelled, RunTimedOut
 from pydantic_ai.messages import (
     BinaryContent,
     CapabilityEvent,
+    CapabilityLoadDeltaEvent,
+    CapabilityLoadDeltaPart,
     CompactionEndEvent,
     CompactionPart,
     CompactionStartEvent,
@@ -1013,6 +1015,7 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
         ToolReturnPart('tool', 'result', tool_call_id='call'),
         RetryFeedbackPart('retry', retry=RetryInfo('model_retry')),
         ToolAvailabilityDeltaPart(),
+        CapabilityLoadDeltaPart(loaded=['refunds'], tool_call_id='call'),
         ModelSettingsDeltaPart(settings={'thinking': 'high'}),
         InstructionDeltaPart(id=None, content='delta'),
         InstructionBaselinePart(instructions=[InstructionPart('baseline')]),
@@ -1047,6 +1050,7 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
         FunctionToolCallEvent(part=ToolCallPart('tool', tool_call_id='call')),
         FunctionToolResultEvent(part=ToolReturnPart('tool', 'result', tool_call_id='call')),
         ToolAvailabilityDeltaEvent(part=ToolAvailabilityDeltaPart()),
+        CapabilityLoadDeltaEvent(part=CapabilityLoadDeltaPart(loaded=['refunds'])),
         ModelSettingsDeltaEvent(part=ModelSettingsDeltaPart(settings={'thinking': 'high'})),
         CompactionStartEvent(
             reason='manual', focus='decisions', model_name='m', provider_name='p', messages_before=4, cancelled=True

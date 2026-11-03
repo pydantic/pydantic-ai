@@ -49,7 +49,6 @@ from typing import TYPE_CHECKING, Literal, TypeVar
 import anyio
 import anyio.lowlevel
 
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
@@ -67,9 +66,11 @@ from pydantic_ai.workspaces.workspace import _ShellFilesystem  # pyright: ignore
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env,
+    check_provider,
     check_timeout,
     command_argv,
     command_deadline,
+    require_asyncio,
     run_to_completion,
     running_on_asyncio,
 )
@@ -112,16 +113,12 @@ _OUTPUT_PREVIEW_BYTES = 64 * 1024
 logger = logging.getLogger(__name__)
 
 
-def _require_asyncio() -> None:
-    """Raise `UserError` unless the caller runs on asyncio, which the SDK's gRPC channels need."""
-    if not running_on_asyncio():
-        raise UserError('boxd needs the asyncio event loop: the boxd SDK runs its calls on gRPC asyncio channels.')
+_ASYNCIO_ONLY = 'boxd needs the asyncio event loop: the boxd SDK runs its calls on gRPC asyncio channels.'
 
 
 def _check_ref(ref: WorkspaceRef) -> None:
     """Raise `ValueError` unless `ref` names a boxd machine."""
-    if ref.provider != 'boxd':
-        raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'boxd'")
+    check_provider(ref, 'boxd')
     if not ref.id.strip():
         raise ValueError('boxd workspace ref id cannot be empty')
 
@@ -181,7 +178,7 @@ async def destroy_machine(client: AsyncBoxd | None, machine_id: str) -> None:
         ValueError: The machine is not isolated, so it is not one `BoxdSandbox` created.
         TimeoutError: boxd did not answer in time.
     """
-    _require_asyncio()
+    require_asyncio(_ASYNCIO_ONLY)
     if not machine_id.strip():
         raise ValueError('boxd workspace ref id cannot be empty')
     owned: AsyncBoxd | None = None
@@ -499,7 +496,7 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
 
     async def _acquire(self) -> tuple[AsyncBoxd, str]:
         """The API client and the id of a machine that is ready for commands, creating or attaching on first use."""
-        _require_asyncio()
+        require_asyncio(_ASYNCIO_ONLY)
         async with self._lock:
             if self._client is None:
                 self._client = _new_client()

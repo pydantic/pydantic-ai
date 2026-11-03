@@ -200,6 +200,7 @@ from .conftest import (
     legacy_retry_prompt_part,
     message,
     message_part,
+    no_leaked_tasks,
 )
 from .continuation_utils import ScriptedContinuationModel, scripted_response
 
@@ -217,6 +218,7 @@ requires_mistral = pytest.mark.skipif(MistralProvider is None, reason='mistral n
 READINESS_WAIT_TIMEOUT = 10
 
 
+@pytest.mark.usefixtures('young_gc')
 def test_run_sync_replaces_closed_event_loop(closed_event_loop: asyncio.AbstractEventLoop):
     """`run_sync` must replace a closed thread-current event loop.
 
@@ -236,6 +238,7 @@ def test_run_sync_replaces_closed_event_loop(closed_event_loop: asyncio.Abstract
     assert not asyncio.all_tasks(replacement_loop)
 
 
+@pytest.mark.usefixtures('young_gc')
 def test_run_sync_creates_missing_event_loop(missing_event_loop: asyncio.AbstractEventLoop):
     """`run_sync` must create and install an event loop when the thread has none.
 
@@ -4584,6 +4587,9 @@ def test_failed_run_history_is_resumable():
         with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 1"):
             agent.run_sync('Hello')
 
+    response = messages[-2]
+    assert isinstance(response, ModelResponse)
+
     result = agent.run_sync('Never mind.', message_history=messages)
     assert result.output == 'success'
     assert seen_by_model[-1][-1] == snapshot(
@@ -4594,7 +4600,7 @@ def test_failed_run_history_is_resumable():
                     content='The tool call was interrupted before a result was produced.',
                     tool_call_id='call_foobar',
                     metadata={'pydantic_ai_synthesized_tool_return': True},
-                    timestamp=IsNow(tz=UTC),
+                    timestamp=response.timestamp,
                     outcome='interrupted',
                 ),
                 UserPromptPart(content='Never mind.', timestamp=IsNow(tz=UTC)),
@@ -10479,20 +10485,17 @@ async def test_parallel_tool_exception_cancels_sibling_tasks():
             raise
         return 'done'  # pragma: no cover
 
-    tasks_before = asyncio.all_tasks()
-    with pytest.raises(RuntimeError, match='boom'):
-        await agent.run('call tools')
+    with no_leaked_tasks():
+        with pytest.raises(RuntimeError, match='boom'):
+            await agent.run('call tools')
 
-    # Give the event loop a moment to process cancellations.
-    await asyncio.sleep(0)
+        # Give the event loop a moment to process cancellations.
+        await asyncio.sleep(0)
 
-    # The slow tool must have started (confirming both tasks ran in parallel).
-    assert slow_tool_started.is_set(), 'slow_tool never started — not running in parallel'
-    # The slow tool must have been cancelled when fast_failing_tool raised.
-    assert slow_tool_cancelled.is_set(), 'slow_tool was not cancelled after RuntimeError'
-    # No new asyncio tasks should be left over from this run.
-    leaked = asyncio.all_tasks() - tasks_before
-    assert not leaked, f'Orphaned tasks remain: {leaked}'
+        # The slow tool must have started (confirming both tasks ran in parallel).
+        assert slow_tool_started.is_set(), 'slow_tool never started — not running in parallel'
+        # The slow tool must have been cancelled when fast_failing_tool raised.
+        assert slow_tool_cancelled.is_set(), 'slow_tool was not cancelled after RuntimeError'
 
 
 async def test_parallel_tool_outer_cancellation_only_cancels_pending_tool_tasks():
@@ -10544,8 +10547,8 @@ async def test_parallel_tool_outer_cancellation_only_cancels_pending_tool_tasks(
 async def test_wrap_run_readiness_wait_cancels_wrapper_task_on_outer_cancellation():
     """Outer cancellation while waiting for `wrap_run` readiness should clean up the wrapper task.
 
-    Target boundary: `Agent.iter()` creates `_wrap_task` and `_ready_waiter`, then waits for
-    `asyncio.wait({_ready_waiter, _wrap_task}, return_when=asyncio.FIRST_COMPLETED)`.
+    Target boundary: `Agent.iter()` creates `_wrap.task` and `_ready_waiter`, then waits for
+    `asyncio.wait({_ready_waiter, _wrap.task}, return_when=asyncio.FIRST_COMPLETED)`.
     The test should cancel the parent task while that wait is pending, then assert the
     capability's `wrap_run` cleanup has completed before cancellation returns.
     """
@@ -10581,7 +10584,7 @@ async def test_run_handoff_survives_absorbed_cancellation():
     durable step inside `before_run` can swallow the injected `CancelledError` and return
     normally. `_do_run` then proceeds to `await _run_done`, which the cancelled caller never
     sets on the drain path — so unless the handoff cleanup unblocks it before draining
-    `_wrap_task`, the run task deadlocks forever. Here a `before_run` that absorbs one
+    `_wrap.task`, the run task deadlocks forever. Here a `before_run` that absorbs one
     cancellation simulates that survivor condition without a Temporal dependency.
     """
 
@@ -10622,7 +10625,7 @@ async def test_streaming_handoff_survives_absorbed_cancellation():
     completing — the documented behavior of Temporal's cooperative activity cancellation, as
     routed through `model.request_stream` — `_streaming_handler` is left parked on
     `stream_done.wait()`. Unless the handoff cleanup sets `stream_done` before draining
-    `wrap_task`, the run task deadlocks. `SwallowOneCancelModel` reproduces that at the
+    `wrap.task`, the run task deadlocks. `SwallowOneCancelModel` reproduces that at the
     `request_stream` await boundary.
     """
 
@@ -13196,6 +13199,11 @@ async def test_raise_content_filter_error_capability_streaming():
         ),
         ({'block_reason': 'SAFETY'}, "Content filter triggered. Block reason: 'SAFETY'"),
         ({'refusal': 'I cannot comply.'}, "Content filter triggered. Refusal: 'I cannot comply.'"),
+        (
+            {'finish_reason': 'refusal', 'refusal': 'I cannot comply.'},
+            "Content filter triggered. Finish reason: 'refusal'. Refusal: 'I cannot comply.'",
+        ),
+        ({}, 'Content filter triggered.'),
     ],
 )
 async def test_raise_content_filter_error_capability_message_from_provider_details(

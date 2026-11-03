@@ -4,16 +4,21 @@
 they work outside Git too: each file's diff runs from its content before the first call in scope to
 its content on disk now, so a file edited three times shows one diff. That earlier content is
 replayed from the calls (see `_before`), with the file's last commit as the starting point the
-calls cannot give. `Uncommitted` and `Branch vs base` run Git in the session's workspace. The
-payloads are mirrored by `web-ui/src/protocol.ts`.
+calls cannot give. In Git, they also list, without a diff, the files changed otherwise since the
+scope began, such as by a shell command (see `_other_changes`). `Uncommitted` and `Branch vs base`
+run Git in the session's workspace; `Uncommitted` lists untracked files as added, as `git status`
+does. The payloads are mirrored by `web-ui/src/protocol.ts`.
 """
 
 import difflib
 import os
 import posixpath
+import shutil
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Literal
 
 from anyio import fail_after, run_process, to_thread
@@ -76,10 +81,14 @@ async def session_changes(
     """
     if scope == 'uncommitted' or scope == 'branch':
         return await _git_changes(workspace, scope=scope, diffs=diffs)
-    calls, turns = _file_calls(messages)
+    calls, starts = _file_calls(messages)
     committed = await _committed(workspace, list(dict.fromkeys(_shown_path(call.path, workspace) for call in calls)))
-    last_turn = turns if scope == 'turn' else None
-    return await to_thread.run_sync(lambda: _tool_changes(calls, workspace, committed, turn=last_turn, diffs=diffs))
+    last_turn = len(starts) if scope == 'turn' else None
+    files = await to_thread.run_sync(lambda: _tool_changes(calls, workspace, committed, turn=last_turn, diffs=diffs))
+    if starts:
+        called = {_shown_path(call.path, workspace) for call in calls if last_turn is None or call.turn == last_turn}
+        files += await _other_changes(workspace, starts[-1 if last_turn else 0], called)
+    return _listed(Changes(scope='session' if last_turn is None else 'turn'), files)
 
 
 # The session's own file tools.
@@ -97,27 +106,28 @@ class _FileCall:
     """An edit's `(old_text, new_text)` pairs, in order."""
 
 
-def _file_calls(messages: Sequence[ModelMessage]) -> tuple[list[_FileCall], int]:
-    """Each successful `write_file` and `edit_file` call in `messages`, in order, and the number of turns.
+def _file_calls(messages: Sequence[ModelMessage]) -> tuple[list[_FileCall], list[datetime]]:
+    """Each successful `write_file` and `edit_file` call in `messages`, in order, and when each turn started.
 
     A turn starts at each prompt the user typed, numbered from 1; steering a running turn starts none.
     """
-    turn = 0
+    starts: list[datetime] = []
     pending: dict[str, _FileCall] = {}
     found: list[_FileCall] = []
     for message in messages:
         if isinstance(message, ModelRequest):
-            if not (message.metadata or {}).get(STEERING) and any(is_typed_prompt(part) for part in message.parts):
-                turn += 1
+            prompt = next((part for part in message.parts if is_typed_prompt(part)), None)
+            if prompt is not None and not (message.metadata or {}).get(STEERING):
+                starts.append(prompt.timestamp)
             for part in message.parts:
                 if isinstance(part, ToolReturnPart) and part.outcome == 'success':
                     if (call := pending.pop(part.tool_call_id, None)) is not None:
                         found.append(call)
             continue
         for part in message.parts:
-            if isinstance(part, ToolCallPart) and (call := _file_call(part, turn)) is not None:
+            if isinstance(part, ToolCallPart) and (call := _file_call(part, len(starts))) is not None:
                 pending[part.tool_call_id] = call
-    return found, turn
+    return found, starts
 
 
 def _file_call(part: ToolCallPart, turn: int) -> _FileCall | None:
@@ -149,7 +159,7 @@ _Content = str | None | _Unknown
 
 def _tool_changes(
     calls: list[_FileCall], workspace: Path, committed: dict[str, str], *, turn: int | None, diffs: bool
-) -> Changes:
+) -> list[FileChange]:
     """The files `calls` changed, all of them, or only those of `turn`; `committed` has their last commit's content."""
     by_path: dict[str, list[_FileCall]] = {}
     for call in calls:
@@ -172,7 +182,39 @@ def _tool_changes(
             files.append(_undiffed(path, 'D' if now is None else 'M', note))
         elif (change := _file_change(path, before, now, diffs=diffs)) is not None:
             files.append(change)
-    return _listed(Changes(scope='session' if turn is None else 'turn'), files)
+    return files
+
+
+async def _other_changes(workspace: Path, since: datetime, called: set[str]) -> list[FileChange]:
+    """The files Git sees changed in `workspace`, other than those `called`, that were modified since `since`.
+
+    Their earlier content is not known, so they have no diff; a file deleted this way is not seen.
+    """
+    try:
+        untracked = await _git(workspace, 'ls-files', '-z', '--others', '--exclude-standard')
+    except (_GitError, OSError):
+        return []
+    try:
+        listing = await _git(workspace, 'diff', '--name-status', '-z', '--no-renames', '--relative', 'HEAD')
+    except _GitError:
+        # No commits yet.
+        listing = ''
+    fields = listing.split('\0')
+    statuses: dict[str, FileStatus] = {
+        path: 'A' if letter == 'A' else 'M' for letter, path in zip(fields[::2], fields[1::2])
+    }
+    statuses.update(dict.fromkeys(filter(None, untracked.split('\0')), 'A'))
+    cutoff = since.timestamp()
+
+    def modified(path: str) -> bool:
+        try:
+            return (workspace / path).stat().st_mtime >= cutoff
+        except OSError:
+            return False
+
+    note = 'Changed outside the file tools, as by a shell command, so it has no diff here; see Uncommitted.'
+    paths = await to_thread.run_sync(lambda: [path for path in statuses if path not in called and modified(path)])
+    return [_undiffed(path, statuses[path], note) for path in paths]
 
 
 def _listed(changes: Changes, files: list[FileChange]) -> Changes:
@@ -351,19 +393,23 @@ class _GitError(Exception):
     """A Git command failed; its message is what Git printed."""
 
 
-async def _git(workspace: Path, *args: str) -> str:
-    return (await _run_git(workspace, *args)).decode(errors='replace')
+async def _git(workspace: Path, *args: str, index: Path | None = None) -> str:
+    return (await _run_git(workspace, *args, index=index)).decode(errors='replace')
 
 
-async def _run_git(workspace: Path, *args: str, input: bytes | None = None) -> bytes:
-    """What Git printed for `args` in `workspace`; `_GitError` with its message when it fails or takes too long."""
+async def _run_git(workspace: Path, *args: str, input: bytes | None = None, index: Path | None = None) -> bytes:
+    """What Git printed for `args` in `workspace`; `_GitError` with its message when it fails or takes too long.
+
+    With `index`, Git uses that index file instead of the repository's own.
+    """
     command = ['git', '--no-optional-locks', '-c', 'core.quotepath=off', *args]
+    # In English, so a missing repository can be told by its message.
+    env = {**os.environ, 'LC_ALL': 'C'}
+    if index is not None:
+        env['GIT_INDEX_FILE'] = str(index)
     try:
         with fail_after(GIT_TIMEOUT):
-            # In English, so a missing repository can be told by its message.
-            result = await run_process(
-                command, input=input, cwd=workspace, env={**os.environ, 'LC_ALL': 'C'}, check=False
-            )
+            result = await run_process(command, input=input, cwd=workspace, env=env, check=False)
     except TimeoutError:
         raise _GitError(f'git {args[0]} took longer than {GIT_TIMEOUT} seconds') from None
     if result.returncode != 0:
@@ -393,11 +439,30 @@ async def _git_changes(workspace: Path, *, scope: Literal['uncommitted', 'branch
             if base is None:
                 return Changes(scope=scope, note='No base branch found: neither origin/HEAD nor main or master.')
             against = (await _git(workspace, 'merge-base', 'HEAD', base)).strip()
-        listing = await _git(workspace, 'diff', '--raw', '--numstat', '-z', *options, against)
-        patch = await _git(workspace, 'diff', *options, against) if diffs else None
+            listing = await _git(workspace, 'diff', '--raw', '--numstat', '-z', *options, against)
+            patch = await _git(workspace, 'diff', *options, against) if diffs else None
+        else:
+            listing, patch = await _uncommitted(workspace, options, diffs=diffs)
     except _GitError as exc:
         return Changes(scope=scope, base=base, note=f'Git could not compare: {exc}')
     return _listed(Changes(scope=scope, base=base), _git_files(listing, patch))
+
+
+async def _uncommitted(workspace: Path, options: tuple[str, ...], *, diffs: bool) -> tuple[str, str | None]:
+    """`git diff HEAD`'s listing and patch, with each untracked file that is not ignored as added.
+
+    Git diffs those only once the index has them, so a copy of the index marks them to be added
+    (`git add --intent-to-add`), leaving the repository's own index untouched.
+    """
+    own = workspace / (await _git(workspace, 'rev-parse', '--git-path', 'index')).strip()
+    with TemporaryDirectory() as folder:
+        index = Path(folder) / 'index'
+        if own.exists():
+            await to_thread.run_sync(shutil.copyfile, own, index)
+        await _git(workspace, 'add', '--intent-to-add', '--', ':/', index=index)
+        listing = await _git(workspace, 'diff', '--raw', '--numstat', '-z', *options, 'HEAD', index=index)
+        patch = await _git(workspace, 'diff', *options, 'HEAD', index=index) if diffs else None
+    return listing, patch
 
 
 async def _base(workspace: Path) -> str | None:

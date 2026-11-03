@@ -30,7 +30,7 @@ with try_import() as imports_successful:
     from hypothesis import HealthCheck, settings
     from hypothesis.stateful import (
         RuleBasedStateMachine,
-        run_state_machine_as_test,  # pyright: ignore[reportUnknownVariableType]
+        run_state_machine_as_test,
     )
 
     from ._elevenlabs_agents import ElevenLabsAgentsMachine, ElevenLabsAgentsOptions, ElevenLabsAgentsSimulation

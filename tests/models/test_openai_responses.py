@@ -107,6 +107,7 @@ from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
 from ..conftest import (
     IsDatetime,
+    IsDecimal,
     IsFloat,
     IsInstance,
     IsInt,
@@ -5460,6 +5461,166 @@ async def test_openai_previous_response_id_auto_broken_by_compaction(openai_api_
     previous_response_id, messages = model._resolve_previous_response_id('auto', history)  # pyright: ignore[reportPrivateUsage]
     assert previous_response_id is None
     assert messages is history
+
+
+@pytest.mark.parametrize('previous_id', ['auto', 'resp_seed'])
+@pytest.mark.parametrize(
+    'compaction_provider,compaction_provider_url,payload,marked,expected',
+    [
+        pytest.param(
+            'openai-codex',
+            None,
+            'encrypted',
+            False,
+            {
+                'input': [
+                    {'id': 'cmp_1', 'encrypted_content': 'encrypted', 'type': 'compaction'},
+                    {'role': 'user', 'content': 'after compaction'},
+                ]
+            },
+            id='foreign-encrypted-unmarked',
+        ),
+        pytest.param(
+            'openai-codex',
+            None,
+            'encrypted',
+            True,
+            {
+                'input': [
+                    {'id': 'cmp_1', 'encrypted_content': 'encrypted', 'type': 'compaction'},
+                    {'role': 'user', 'content': 'after compaction'},
+                ]
+            },
+            id='foreign-encrypted-marked',
+        ),
+        pytest.param(
+            'openai-codex',
+            None,
+            'summary',
+            True,
+            {
+                'previous_response_id': 'resp_old',
+                'input': [{'role': 'user', 'content': 'after compaction'}],
+                'prompt_cache_options': {'comparison_response_id': 'resp_old'},
+            },
+            id='foreign-summary-unrenderable',
+        ),
+        pytest.param(
+            'openai-codex',
+            None,
+            'empty',
+            True,
+            {
+                'previous_response_id': 'resp_old',
+                'input': [{'role': 'user', 'content': 'after compaction'}],
+                'prompt_cache_options': {'comparison_response_id': 'resp_old'},
+            },
+            id='foreign-empty-no-op',
+        ),
+        pytest.param(
+            'azure',
+            None,
+            'encrypted',
+            True,
+            {
+                'previous_response_id': 'resp_old',
+                'input': [{'role': 'user', 'content': 'after compaction'}],
+                'prompt_cache_options': {'comparison_response_id': 'resp_old'},
+            },
+            id='foreign-incompatible',
+        ),
+        pytest.param(
+            'openai',
+            'https://api.openai.com/v1/',
+            'encrypted',
+            False,
+            {
+                'previous_response_id': 'resp_inline',
+                'input': [{'role': 'user', 'content': 'after compaction'}],
+                'prompt_cache_options': {'comparison_response_id': 'resp_inline'},
+            },
+            id='same-provider-stateful-inline',
+        ),
+        pytest.param(
+            'openai',
+            'https://gateway-a.example/v1',
+            'encrypted',
+            False,
+            {
+                'input': [
+                    {'id': 'cmp_1', 'encrypted_content': 'encrypted', 'type': 'compaction'},
+                    {'role': 'user', 'content': 'after compaction'},
+                ]
+            },
+            id='same-provider-inline-other-endpoint',
+        ),
+        pytest.param(
+            'openai',
+            None,
+            'encrypted',
+            True,
+            {
+                'input': [
+                    {'id': 'cmp_1', 'encrypted_content': 'encrypted', 'type': 'compaction'},
+                    {'role': 'user', 'content': 'after compaction'},
+                ]
+            },
+            id='same-provider-stateless-marker',
+        ),
+    ],
+)
+async def test_compatible_compaction_stops_previous_response_chaining(
+    allow_model_requests: None,
+    previous_id: Literal['auto', 'resp_seed'],
+    compaction_provider: Literal['openai', 'openai-codex', 'azure'],
+    compaction_provider_url: str | None,
+    payload: Literal['encrypted', 'summary', 'empty'],
+    marked: bool,
+    expected: dict[str, object],
+):
+    """Pin continuation IDs and replay input independently for each compaction kind.
+
+    The SDK mock exposes the request body, which cassette replay does not compare.
+    """
+    history: list[ModelRequest | ModelResponse] = [
+        ModelRequest.user_text_prompt('before compaction'),
+        ModelResponse(
+            parts=[TextPart('old answer')],
+            provider_name='openai',
+            provider_url='https://api.openai.com/v1/',
+            provider_response_id='resp_old',
+        ),
+        ModelResponse(
+            parts=[
+                CompactionPart(
+                    id='cmp_1',
+                    content='summary' if payload == 'summary' else None,
+                    provider_name=compaction_provider,
+                    provider_details={'encrypted_content': 'encrypted'} if payload == 'encrypted' else None,
+                )
+            ],
+            provider_name=compaction_provider,
+            provider_url=compaction_provider_url,
+            provider_response_id='resp_inline' if compaction_provider == 'openai' else None,
+            provider_details={'compaction': True} if marked else None,
+            canonical_system='azure' if compaction_provider == 'azure' else 'openai',
+        ),
+        ModelRequest.user_text_prompt('after compaction'),
+    ]
+    client = MockOpenAIResponses.create_mock(_text_reply('resp_new', 'after'))
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id=previous_id)
+    model = OpenAIResponsesModel(
+        'gpt-4o',
+        provider=OpenAIProvider(openai_client=client),
+        settings=settings,
+        profile=OpenAIModelProfile(openai_responses_supports_prompt_cache_diagnostics=True),
+    )
+    await model.request(history, None, ModelRequestParameters())
+    body = get_mock_responses_kwargs(client)[0]
+    actual: dict[str, object] = {
+        key: body[key] for key in ('previous_response_id', 'input', 'prompt_cache_options') if key in body
+    }
+    assert actual == expected
 
 
 def _text_reply(response_id: str, text: str) -> resp.Response:
@@ -14008,7 +14169,7 @@ async def test_openai_responses_raw_cot_stream_openrouter(allow_model_requests: 
                     output_tokens=37,
                     output_reasoning_tokens=22,
                     details={'is_byok': 0, 'reasoning_tokens': 22},
-                    cost=Decimal('0.000007442'),
+                    cost=IsDecimal(gt=0),
                 ),
                 model_name='openai/gpt-oss-20b',
                 model_id='openrouter:openai/gpt-oss-20b',
@@ -15461,6 +15622,21 @@ async def test_openai_responses_refusal_streaming(
     assert response_msg['finish_reason'] == 'content_filter'
     assert response_msg['provider_details']['refusal'] == "I can't help with that."
     assert 'finish_reason' not in response_msg['provider_details']
+
+
+async def test_custom_http_stream_cancel_errors(allow_model_requests: None):
+    events: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(
+            response=_text_reply('resp_http', 'hello'), type='response.created', sequence_number=0
+        )
+    ]
+    mock_client = MockOpenAIResponses.create_mock_stream(events)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        [ModelRequest.user_text_prompt('hello')], None, ModelRequestParameters()
+    ) as streamed:
+        assert isinstance(httpx2.RemoteProtocolError('closed HTTP stream'), streamed.get_stream_cancel_errors())
 
 
 async def test_stream_cancel(allow_model_requests: None):

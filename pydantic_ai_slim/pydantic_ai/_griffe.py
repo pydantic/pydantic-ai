@@ -2,15 +2,14 @@ from __future__ import annotations as _annotations
 
 import re
 from collections.abc import Callable
-from inspect import Signature
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal
 
 from griffe import (
     Docstring,
     DocstringSectionKind,
+    DocstringSectionParameters,
     GoogleOptions,
     NumpyOptions,
-    Object as GriffeObject,
     SphinxOptions,
 )
 
@@ -22,7 +21,6 @@ DocstringStyle = Literal['google', 'numpy', 'sphinx']
 
 def doc_descriptions(
     func: Callable[..., Any],
-    sig: Signature,
     *,
     docstring_format: DocstringFormat,
 ) -> tuple[str | None, dict[str, str]]:
@@ -43,9 +41,6 @@ def doc_descriptions(
     if doc is None:
         return None, {}
 
-    # see https://github.com/mkdocstrings/griffe/issues/293
-    parent = cast(GriffeObject, sig)
-
     docstring_style = _infer_docstring_style(doc) if docstring_format == 'auto' else docstring_format
     # `warnings=False` stops griffe logging about docstrings it can't fully parse; that is the author's
     # business, not something to surface every time a tool is built.
@@ -59,14 +54,18 @@ def doc_descriptions(
         doc,
         lineno=1,
         parser=docstring_style,
-        parent=parent,
         parser_options=parser_options,
     )
     sections = docstring.parse()
 
-    params = {}
-    if parameters := next((p for p in sections if p.kind == DocstringSectionKind.parameters), None):
-        params = {p.name: p.description for p in parameters.value}
+    # Google `Keyword Args:` and `Other Parameters:` sections, and numpy `Other Parameters`, parse to a subclass of
+    # the parameters section (see https://www.sphinx-doc.org/en/master/usage/extensions/napoleon.html#docstring-sections).
+    # A parameter described in more than one section keeps its first description.
+    params: dict[str, str] = {}
+    for section in sections:
+        if isinstance(section, DocstringSectionParameters):
+            for param in section.value:
+                params.setdefault(param.name.lstrip('*'), param.description)
 
     main_desc = ''
     if main := next((p for p in sections if p.kind == DocstringSectionKind.text), None):

@@ -175,10 +175,11 @@ Default for a test that asserts an outbound field: take the capture fixture and 
 
 #### Blocking-call detection
 - `blockbuster` (autouse) raises `BlockingError` when a scanned library frame blocks inside the event loop.
-- Scanned packages are `pydantic_ai`, `pydantic_graph`, `pydantic_evals`, and `clai`.
+- Scanned packages are `pydantic_ai`, `pydantic_ai_harness`, `pydantic_graph`, `pydantic_evals`, and `clai`.
 - Test-only and third-party stacks are ignored. User callbacks remain covered while a scanned library frame is below them.
 - Fix blocking calls by offloading with `anyio.to_thread.run_sync`.
 - Add legitimate blocking calls to `BLOCKBUSTER_EXEMPTIONS` in `tests/conftest.py` with a reason.
+- List a test double that serves a remote service from local files, processes, or SQLite in `BLOCKBUSTER_TEST_DOUBLES`. That exempts every frame in the file, and the code calling it stays checked.
 - Override `blockbuster_excluded_modules` when one integration module intentionally provides synchronous APIs.
 - Override `blockbuster_enabled` at the narrowest test or integration-module boundary that intentionally performs blocking work.
 - Use the narrowest module or test boundary. Do not replace the autouse `blockbuster` fixture.
@@ -249,6 +250,7 @@ Available to every test under `tests/models/`. See "Asserting what goes out on t
 - `IsFloat()` - any float
 - `IsList()` - any list
 - `IsInstance(SomeClass)` - instance of class
+- `no_leaked_tasks()` - context manager that fails if a task started inside the block is still running at its end
 
 ### Additional helpers
 - `IsSameStr()` - asserts same string value across multiple uses in one assertion
@@ -272,7 +274,7 @@ Available to every test under `tests/models/`. See "Asserting what goes out on t
 - Test MCP against real `tests.mcp_server` instance, not mocks — extend test server with helper tools to expose runtime context (instructions, client info, session state)
 - Remove stale test docstrings, comments, and historical provider bug notes when behavior changes
 - Prefer `instructions=` over `system_prompt=` when the test doesn't specifically need the system-prompt code path — `instructions=` is the canonical entry point for non-system-prompt-specific behavior (cacheable prefix, persona priming, format guidance), and reserving `system_prompt=` for tests that exercise the system-prompt machinery keeps intent legible
-- Test async behavior directly, following [Async & Concurrency](../agent_docs/concurrency.md) — assert the cancellation, the ordering, or the cleanup itself rather than the output it happens to produce, order steps with `Event`s instead of sleeps, and diff `asyncio.all_tasks()` to prove nothing leaked
+- Test async behavior directly, following [Async & Concurrency](../agent_docs/concurrency.md) — assert the cancellation, the ordering, or the cleanup itself rather than the output it happens to produce, order steps with `Event`s instead of sleeps, and prove nothing leaked by asserting the tasks the code under test owns are done
 - Never reference line numbers in test docstrings or comments (`lines 872-873`, `L42`, `line 100`) — they go stale on the next edit to the referenced file. Describe the condition or behavior instead
 - When testing prompt caching, assert prefix stability, not just a cache hit — `cache_read_tokens > 0` only proves that some prefix was reused, not that the prefix you intended stayed stable as history grows; pin it by asserting the cacheable region (serialized leading blocks up to the breakpoint) is byte-identical across consecutive requests and/or that the cache read covers the full prior prefix, since a per-request injection or serialization that moves with history length silently busts the cache with no error
 - When you deprecate a public symbol (add `@deprecated`), add a test asserting the warning fires — a `pytest.warns(PydanticAIDeprecationWarning, match=...)` block whose `match` pins both the symbol name and the migration guidance — so the deprecation is protected against accidental removal or a message rewrite, and any executable docstring/doc example that constructs the symbol is marked `{test="skip"}` (it would otherwise fail under `filterwarnings=["error"]`)

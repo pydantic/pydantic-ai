@@ -307,8 +307,8 @@ substring; at most 1,000 lines / 50,000 chars per call). Default with no `bands`
 
 With `FileSystem` on the agent and the default `WorkspaceStore()` (no `workspace=` of its own),
 `read_tool_result` is left out (`unless_tool_kind=READ_FILE_KIND`) and the marker reads
-`... Read it with read_file(path='<handle>').]`, naming the tool as it is called in the run (keep
-`FileSystem` under its own names for now: a renamed `FileSystem` tool can't be called yet, #10927). `read_file` calls on paths under `.pydantic-ai-harness/tool-output/`
+`... Read it with read_file(path='<handle>').]`, naming the tool as it is called in the run
+(`fs_read_file` under `FileSystem().prefix_tools('fs')`). `read_file` calls on paths under `.pydantic-ai-harness/tool-output/`
 are not reduced, so a spill read is never re-spilled. `read_file` has no `from_end`. Scripted tests
 should pick the reader by kind (`READ_FILE_KIND`, `READ_TOOL_RESULT_KIND`), not by name.
 
