@@ -5,6 +5,7 @@ They test the capture tooling rather than model behavior, so no recording applie
 
 from __future__ import annotations
 
+import importlib
 import json
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -17,14 +18,21 @@ from inline_snapshot import snapshot
 import pydantic_ai
 from pydantic_ai.models import StreamedResponse
 
-from .refactor_capture import CAPTURE_OPTION, SOURCE_FILE, RefactorCapture, compare, normalized
+from .conftest import try_import
+
+with try_import() as imports_successful:
+    from . import refactor_capture
+    from .refactor_capture import CAPTURE_OPTION, SDK_MOCKS, SOURCE_FILE, RefactorCapture, compare, normalized
 
 pytest_plugins = ['pytester']
 
-# A capture of this session would record the streams of the sessions these tests run inside it.
-pytestmark = pytest.mark.skipif(
-    f'config.getoption({CAPTURE_OPTION!r}, None) is not None', reason='runs inside a refactor capture'
-)
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='httpx, openai or anthropic not installed'),
+    # A capture of this session would record the streams of the sessions these tests run inside it.
+    pytest.mark.skipif(
+        "config.getoption('--refactor-capture', None) is not None", reason='runs inside a refactor capture'
+    ),
+]
 
 RunCapture: TypeAlias = Callable[..., pytest.RunResult]
 
@@ -102,15 +110,54 @@ def test_no_stream():
     pass
 """
 
+REQUESTS = """
+import asyncio
+import random
+
+import httpx
+import httpx2
+from openai.types.chat import ChatCompletionMessage
+
+from pydantic_ai import Agent
+from pydantic_ai.models import override_allow_model_requests
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+from tests.models.mock_openai import MockOpenAI, completion_message
+
+
+async def post(http, **content):
+    async with http.AsyncClient(transport=http.MockTransport(lambda request: http.Response(200))) as client:
+        await client.post('http://127.0.0.1:8123/v1/upload', **content)
+
+
+def test_json_over_httpx():
+    asyncio.run(post(httpx, json=dict(text={text!r}, pick=random.randrange(1000))))
+
+
+def test_multipart_over_httpx2():
+    asyncio.run(post(httpx2, files=dict(file=('notes.txt', b'notes'))))
+
+
+def test_sdk_mock():
+    client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='world', role='assistant')))
+    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=client)))
+    with override_allow_model_requests(True):
+        agent.run_sync({text!r})
+"""
+
 
 @pytest.fixture
 def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunCapture:
-    """Capture an in-process pytest session over `STREAMS`, streaming `text`, into `capture_dir`, as `main` does."""
+    """Capture an in-process pytest session over `STREAMS` and `REQUESTS`, carrying `text`, into `capture_dir`.
+
+    It runs as `main` runs each side.
+    """
     monkeypatch.setenv('PYTEST_DISABLE_PLUGIN_AUTOLOAD', '1')
     monkeypatch.delenv('PYTEST_XDIST_WORKER', raising=False)
 
     def run(capture_dir: Path, *args: str, text: str = 'hello') -> pytest.RunResult:
-        pytester.makepyfile(test_streams=STREAMS.format(text=text))
+        pytester.makepyfile(test_streams=STREAMS.format(text=text), test_requests=REQUESTS.format(text=text))
         return pytester.runpytest_inprocess(
             '-p', 'no:cacheprovider', '-p', 'tests.refactor_capture', f'{CAPTURE_OPTION}={capture_dir}', *args
         )
@@ -119,10 +166,11 @@ def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunCaptur
 
 
 def test_capture_records_each_stream_per_test(run: RunCapture, tmp_path: Path):
-    run(tmp_path).assert_outcomes(passed=5)
+    run(tmp_path).assert_outcomes(passed=8)
 
     assert json.loads((tmp_path / SOURCE_FILE).read_text()) == {'pydantic_ai': pydantic_ai.__file__}
-    records = [json.loads(line) for line in (tmp_path / 'main.jsonl').read_text().splitlines()]
+    lines = (tmp_path / 'main.jsonl').read_text().splitlines()
+    records = [record for line in lines if (record := json.loads(line))['kind'] == 'stream']
     assert [
         (
             record['node'],
@@ -183,6 +231,49 @@ def test_capture_records_each_stream_per_test(run: RunCapture, tmp_path: Path):
     )
 
 
+def test_capture_records_each_request_per_test(run: RunCapture, tmp_path: Path):
+    """A request sent over `httpx` or `httpx2` is recorded with its body, and a call on an SDK mock with its arguments.
+
+    `random` is seeded per test, so the value `test_json_over_httpx` draws is the same in every capture.
+    """
+    run(tmp_path).assert_outcomes(passed=8)
+
+    lines = (tmp_path / 'main.jsonl').read_text().splitlines()
+    records = [record for line in lines if (record := json.loads(line))['kind'] == 'request']
+    assert [
+        (record['node'], record['target'], record.get('body'), record.get('kwargs', {}).get('messages'))
+        for record in records
+    ] == snapshot(
+        [
+            (
+                'test_requests.py::test_json_over_httpx',
+                'POST http://127.0.0.1:PORT/v1/upload',
+                {'text': 'hello', 'pick': 534},
+                None,
+            ),
+            (
+                'test_requests.py::test_multipart_over_httpx2',
+                'POST http://127.0.0.1:PORT/v1/upload',
+                """\
+--BOUNDARY\r
+Content-Disposition: form-data; name="file"; filename="notes.txt"\r
+Content-Type: text/plain\r
+\r
+notes\r
+--BOUNDARY--\r
+""",
+                None,
+            ),
+            (
+                'test_requests.py::test_sdk_mock',
+                'tests.models.mock_openai.MockOpenAI.chat_completions_create',
+                None,
+                [{'role': 'user', 'content': 'hello'}],
+            ),
+        ]
+    )
+
+
 def test_capture_needs_the_plugin_and_its_directory(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch):
     """Each half of `-p tests.refactor_capture --refactor-capture=DIR` without the other stops the run."""
     monkeypatch.setenv('PYTEST_DISABLE_PLUGIN_AUTOLOAD', '1')
@@ -204,14 +295,49 @@ def test_capture_stops_the_run_when_it_misses_the_canary_stream(tmp_path: Path):
     """
     unwrapped = StreamedResponse.__aiter__
     with pytest.raises(pytest.UsageError, match='was not recorded'):
-        RefactorCapture(tmp_path).check_hook()
+        RefactorCapture(tmp_path).check_stream_hook()
     assert StreamedResponse.__aiter__ is unwrapped
+
+
+def test_capture_stops_the_run_when_it_misses_a_canary_request(tmp_path: Path):
+    """A canary request the capture doesn't see fails the run instead of the capture recording nothing.
+
+    The capture's `send` wrappers aren't installed, standing in for SDKs that moved to an HTTP client they don't reach.
+    """
+    with pytest.raises(
+        pytest.UsageError,
+        match='with `GroqModel` over `httpx` and `AnthropicModel` over `httpx2` was not recorded',
+    ):
+        RefactorCapture(tmp_path).check_request_hook()
+
+
+def test_capture_stops_the_run_when_a_listed_mock_is_gone(
+    run: RunCapture, pytester: pytest.Pytester, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """`SDK_MOCKS` entries whose module the collected tests didn't import are skipped, and one that's gone stops the run."""
+    pytester.makepyfile(unimported_mock='class MockClient:\n    def create(self):\n        pass\n')
+    monkeypatch.setattr(
+        refactor_capture,
+        'SDK_MOCKS',
+        [('unimported_mock', 'MockClient', ('create',)), ('gone_mock', 'MockClient', ('create',))],
+    )
+
+    result = run(tmp_path)
+    assert result.ret == pytest.ExitCode.USAGE_ERROR
+    result.stderr.fnmatch_lines(['*`SDK_MOCKS` lists `gone_mock.MockClient.create`, which is gone*'])
+
+
+def test_sdk_mocks_exist():
+    """Each method `SDK_MOCKS` lists exists, so renaming one fails here rather than when a capture starts."""
+    for module_name, class_name, method_names in SDK_MOCKS:
+        mock = getattr(importlib.import_module(module_name), class_name)
+        assert [name for name in method_names if name not in vars(mock)] == [], f'{module_name}.{class_name}'
 
 
 def test_capture_refuses_to_append_to_an_earlier_capture(
     run: RunCapture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    run(tmp_path).assert_outcomes(passed=5)
+    run(tmp_path).assert_outcomes(passed=8)
 
     result = run(tmp_path)
     assert result.ret == pytest.ExitCode.USAGE_ERROR
@@ -219,15 +345,15 @@ def test_capture_refuses_to_append_to_an_earlier_capture(
 
     # `pytest-xdist` workers write alongside the controller, which made the check.
     monkeypatch.setenv('PYTEST_XDIST_WORKER', 'gw0')
-    run(tmp_path).assert_outcomes(passed=5)
+    run(tmp_path).assert_outcomes(passed=8)
     assert sorted(path.name for path in tmp_path.glob('*.jsonl')) == ['gw0.jsonl', 'main.jsonl']
 
 
-def test_compare_flags_a_changed_event(run: RunCapture, tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+def test_compare_flags_a_changed_event_or_request(run: RunCapture, tmp_path: Path, capsys: pytest.CaptureFixture[str]):
     base, same, changed = tmp_path / 'base', tmp_path / 'same', tmp_path / 'changed'
-    run(base).assert_outcomes(passed=5)
-    run(same).assert_outcomes(passed=5)
-    run(changed, '-k', 'not fails', text='goodbye').assert_outcomes(passed=4, deselected=1)
+    run(base).assert_outcomes(passed=8)
+    run(same).assert_outcomes(passed=8)
+    run(changed, '-k', 'not fails', text='goodbye').assert_outcomes(passed=7, deselected=1)
     capsys.readouterr()
 
     assert compare(base, tmp_path / 'missing') == 2
@@ -235,7 +361,7 @@ def test_compare_flags_a_changed_event(run: RunCapture, tmp_path: Path, capsys: 
     assert compare(base, same) == 2
     assert capsys.readouterr().err.startswith('Both captures imported `pydantic_ai` from the same file')
     nothing = tmp_path / 'nothing'
-    run(nothing, '-k', 'no_stream').assert_outcomes(passed=1, deselected=4)
+    run(nothing, '-k', 'no_stream').assert_outcomes(passed=1, deselected=7)
     (nothing / SOURCE_FILE).write_text(json.dumps({'pydantic_ai': f'{nothing}/pydantic_ai/__init__.py'}))
     assert compare(base, nothing) == 2
     assert capsys.readouterr().err.startswith('Nothing recorded in')
@@ -247,21 +373,31 @@ def test_compare_flags_a_changed_event(run: RunCapture, tmp_path: Path, capsys: 
     assert compare(base, same) == 0
     assert compare(base, changed) == 1
     assert capsys.readouterr().out == snapshot("""\
-nodes: base 4, head 4
-records: base 4, head 4
+nodes: base 7, head 7
+records: base 7, head 7
 stream events: head 11
+requests: head 3
 nodes per stream module, head:
   pydantic_ai.models.function: 3
   test_streams: 1
+nodes per request target, head:
+  POST http://127.0.0.1:PORT/v1/upload: 2
+  tests.models.mock_openai.MockOpenAI.chat_completions_create: 1
 only in base: 0, only in head: 0, differing: 0
-nodes: base 4, head 3
-records: base 4, head 3
+nodes: base 7, head 6
+records: base 7, head 6
 stream events: head 9
+requests: head 3
 nodes per stream module, head:
   pydantic_ai.models.function: 2
   test_streams: 1
-only in base: 1, only in head: 0, differing: 2
+nodes per request target, head:
+  POST http://127.0.0.1:PORT/v1/upload: 2
+  tests.models.mock_openai.MockOpenAI.chat_completions_create: 1
+only in base: 1, only in head: 0, differing: 4
   only in base: test_streams.py::test_fails_mid_stream
+  differing: test_requests.py::test_json_over_httpx
+  differing: test_requests.py::test_sdk_mock
   differing: test_streams.py::test_fallback_peeks_the_first_event
   differing: test_streams.py::test_text
 """)
@@ -281,6 +417,7 @@ def test_normalized_replaces_values_that_change_between_runs():
             'history_digest': '0' * 64,
             'duration': timedelta(seconds=1.5),
             'url': 'http://127.0.0.1:8123/v1',
+            'multipart': '--0123456789abcdef0123456789abcdef--',
         }
     ) == snapshot(
         {
@@ -294,5 +431,6 @@ def test_normalized_replaces_values_that_change_between_runs():
             'history_digest': 'DIGEST',
             'duration': 'DURATION',
             'url': 'http://127.0.0.1:PORT/v1',
+            'multipart': '--BOUNDARY--',
         }
     )
