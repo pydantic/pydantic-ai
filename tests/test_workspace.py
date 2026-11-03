@@ -69,6 +69,10 @@ from .workspace_fakes import (
     WorkspaceCapability,
 )
 
+pytestmark = [
+    pytest.mark.skipif(os.name != 'posix', reason='`LocalWorkspaceBackend` only supports POSIX platforms'),
+]
+
 
 @pytest.mark.parametrize('timeout', [-1, 0, math.nan, math.inf, '5'])
 async def test_facade_rejects_invalid_timeout_before_backend(timeout: Any) -> None:
