@@ -56,9 +56,8 @@ except ImportError as _import_error:  # pragma: no cover
         'pip install "pydantic-ai-harness[code-mode]" or "pydantic-ai-harness[dynamic-workflow]"'
     ) from _import_error
 
-# Dispatch callback: given the sandbox function name and keyword arguments,
-# perform the host-side work (tool call or sub-agent run) and return the result.
 DispatchFn = Callable[[str, dict[str, Any]], Coroutine[Any, Any, Any]]
+"""Given a sandbox function name and its keyword arguments, do the host-side work (a tool call or sub-agent run)."""
 
 _T = TypeVar('_T')
 _Args = TypeVarTuple('_Args')
