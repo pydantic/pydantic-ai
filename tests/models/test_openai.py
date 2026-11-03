@@ -76,6 +76,10 @@ from pydantic_ai.native_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
+from pydantic_ai.profiles.stepfun import stepfun_model_profile
+from pydantic_ai.profiles.tencent import tencent_model_profile
+from pydantic_ai.profiles.xiaomi import xiaomi_model_profile
+from pydantic_ai.providers import Provider
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import Tool, ToolDefinition
@@ -134,11 +138,16 @@ with try_import() as imports_successful:
     from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAISystemPromptRole
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.cerebras import CerebrasProvider
+    from pydantic_ai.providers.fireworks import FireworksProvider
     from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
     from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.nebius import NebiusProvider
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
+    from pydantic_ai.providers.together import TogetherProvider
+    from pydantic_ai.providers.vercel import VercelProvider
     from pydantic_ai.providers.zai import ZaiProvider
 
     MockChatCompletion = chat.ChatCompletion | Exception
@@ -8102,3 +8111,127 @@ async def test_non_json_response_body_raises_model_api_error(
 
     assert isinstance(exc_info.value.__cause__, cause)
     assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+@pytest.mark.parametrize(
+    ('provider', 'model_name', 'supports_thinking'),
+    [
+        pytest.param(
+            OllamaProvider(base_url='http://localhost:11434/v1', api_key='test'),
+            'nemotron-3-super',
+            True,
+            id='nemotron-ollama',
+        ),
+        pytest.param(TogetherProvider(api_key='test'), 'thinkingmachines/inkling', True, id='inkling-together'),
+        pytest.param(TogetherProvider(api_key='test'), 'nvidia/nemotron-3-ultra', True, id='nemotron-together'),
+        pytest.param(
+            FireworksProvider(api_key='test'),
+            'accounts/fireworks/models/nemotron-3-ultra',
+            True,
+            id='nemotron-fireworks',
+        ),
+        pytest.param(
+            FireworksProvider(api_key='test'), 'accounts/fireworks/models/inkling', True, id='inkling-fireworks'
+        ),
+        pytest.param(NebiusProvider(api_key='test'), 'nvidia/nemotron-3-ultra', True, id='nemotron-nebius'),
+        pytest.param(VercelProvider(api_key='test'), 'nvidia/nemotron-3-ultra', True, id='nemotron-vercel'),
+        pytest.param(
+            OpenAICompatibleProvider(name='generic', base_url='https://example.invalid/v1', api_key='test'),
+            'nvidia/nemotron-3-ultra',
+            True,
+            id='nemotron-openai-compatible',
+        ),
+        pytest.param(
+            OpenAICompatibleProvider(name='generic', base_url='https://example.invalid/v1', api_key='test'),
+            'thinkingmachines/inkling',
+            True,
+            id='inkling-openai-compatible',
+        ),
+        pytest.param(
+            OpenAICompatibleProvider(name='generic', base_url='https://example.invalid/v1', api_key='test'),
+            'inclusionai/ling-3',
+            True,
+            id='ling-openai-compatible',
+        ),
+        pytest.param(
+            OllamaProvider(base_url='http://localhost:11434/v1', api_key='test'),
+            'unknown-model',
+            False,
+            id='unknown-ollama',
+        ),
+        pytest.param(
+            OpenAICompatibleProvider(name='generic', base_url='https://example.invalid/v1', api_key='test'),
+            'unknown-vendor/model',
+            False,
+            id='unknown-openai-compatible',
+        ),
+    ],
+)
+def test_parameterized_family_profile_resolution_matrix(provider: Provider, model_name: str, supports_thinking: bool):
+    """Gateway dispatch resolves thinking-capable profiles for the Nemotron, Inkling and Ling families; unknown models keep the generic one."""
+    profile = provider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('supports_thinking', False) is supports_thinking
+
+
+@pytest.mark.parametrize(
+    ('profile_func', 'model_name'),
+    [
+        pytest.param(xiaomi_model_profile, 'mimo-v2.6', id='mimo'),
+        pytest.param(stepfun_model_profile, 'step-5', id='step'),
+        pytest.param(tencent_model_profile, 'hy3', id='hy3'),
+    ],
+)
+def test_unwired_family_profiles_declare_thinking(profile_func: Callable[[str], ModelProfile | None], model_name: str):
+    """Families whose vendor slugs are not yet verified on any gateway still declare hybrid thinking."""
+    assert profile_func(model_name) == ModelProfile(supports_thinking=True)
+
+
+@pytest.mark.vcr(ignore_hosts=['request-capture.invalid'])
+async def test_agent_forwards_thinking_for_nemotron_on_ollama(allow_model_requests: None):
+    """`nemotron-3-super` on Ollama resolves a thinking-capable profile, so `thinking` reaches the wire as `reasoning_effort`."""
+    request_bodies: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        request_bodies.append(json.loads(request.read()))
+        return httpx2.Response(
+            200,
+            json=completion_message(ChatCompletionMessage(content='hello', role='assistant')).model_dump(mode='json'),
+        )
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://request-capture.invalid/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        agent = Agent(OpenAIChatModel('nemotron-3-super', provider=OllamaProvider(openai_client=openai_client)))
+        result = await agent.run('Hello', model_settings=ModelSettings(thinking='high'))
+
+    assert result.output == snapshot('hello')
+    assert request_bodies[0]['reasoning_effort'] == 'high'
+
+
+@pytest.mark.vcr(ignore_hosts=['request-capture.invalid'])
+async def test_agent_forwards_thinking_for_inkling_on_together(allow_model_requests: None):
+    """`thinkingmachines/inkling` on Together resolves a thinking-capable profile, so `thinking` reaches the wire as `reasoning_effort`."""
+    request_bodies: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        request_bodies.append(json.loads(request.read()))
+        return httpx2.Response(
+            200,
+            json=completion_message(ChatCompletionMessage(content='hello', role='assistant')).model_dump(mode='json'),
+        )
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://request-capture.invalid/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        agent = Agent(
+            OpenAIChatModel('thinkingmachines/inkling', provider=TogetherProvider(openai_client=openai_client))
+        )
+        result = await agent.run('Hello', model_settings=ModelSettings(thinking='high'))
+
+    assert result.output == snapshot('hello')
+    assert request_bodies[0]['reasoning_effort'] == 'high'

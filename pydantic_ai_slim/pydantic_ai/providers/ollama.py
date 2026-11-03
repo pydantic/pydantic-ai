@@ -11,6 +11,7 @@ from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.nvidia import nvidia_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 
@@ -54,6 +55,7 @@ class OllamaProvider(_OpenAISDKProvider):
             'mistral': mistral_model_profile,
             'command': cohere_model_profile,
             'gpt-oss': harmony_model_profile,
+            'nemotron': nvidia_model_profile,
         }
 
         model_name = model_name.lower()

@@ -14,6 +14,7 @@ from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.groq import groq_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.nvidia import nvidia_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 
 try:
@@ -57,6 +58,7 @@ class VercelProvider(_OpenAISDKProvider):
             'openai': openai_model_profile,
             'vertex': google_model_profile,
             'xai': grok_model_profile,
+            'nvidia': nvidia_model_profile,
         }
 
         profile = None

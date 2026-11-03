@@ -10,8 +10,10 @@ from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.nvidia import nvidia_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.thinkingmachines import thinkingmachines_model_profile
 
 try:
     from openai import AsyncOpenAI
@@ -50,6 +52,8 @@ class TogetherProvider(_OpenAISDKProvider):
             'qwen': qwen_model_profile,
             'meta-llama': meta_model_profile,
             'mistralai': mistral_model_profile,
+            'nvidia': nvidia_model_profile,
+            'thinkingmachines': thinkingmachines_model_profile,
         }
 
         profile = None

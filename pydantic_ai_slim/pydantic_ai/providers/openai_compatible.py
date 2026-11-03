@@ -14,11 +14,14 @@ from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.groq import groq_model_profile
+from pydantic_ai.profiles.inclusionai import inclusionai_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
+from pydantic_ai.profiles.nvidia import nvidia_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.thinkingmachines import thinkingmachines_model_profile
 
 try:
     from openai import AsyncOpenAI
@@ -71,6 +74,9 @@ def _vendor_prefixed_model_profile(model_name: str) -> ModelProfile:
         'moonshotai': moonshotai_model_profile,
         'x-ai': grok_model_profile,
         'qwen': qwen_model_profile,
+        'nvidia': nvidia_model_profile,
+        'thinkingmachines': thinkingmachines_model_profile,
+        'inclusionai': inclusionai_model_profile,
     }
     profile = None
     if '/' in model_name:

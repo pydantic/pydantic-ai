@@ -10,8 +10,10 @@ from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.nvidia import nvidia_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.thinkingmachines import thinkingmachines_model_profile
 
 try:
     from openai import AsyncOpenAI
@@ -51,6 +53,8 @@ class FireworksProvider(_OpenAISDKProvider):
             'deepseek': deepseek_model_profile,
             'mistral': mistral_model_profile,
             'gemma': google_model_profile,
+            'nemotron': nvidia_model_profile,
+            'inkling': thinkingmachines_model_profile,
         }
 
         prefix = 'accounts/fireworks/models/'

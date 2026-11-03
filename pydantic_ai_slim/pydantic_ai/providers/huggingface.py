@@ -11,9 +11,11 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
+from pydantic_ai.profiles.inclusionai import inclusionai_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
+from pydantic_ai.profiles.nvidia import nvidia_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 
 try:
@@ -69,6 +71,8 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
             'meta-llama': meta_model_profile,
             'mistralai': mistral_model_profile,
             'moonshotai': moonshotai_model_profile,
+            'inclusionai': inclusionai_model_profile,
+            'nvidia': nvidia_model_profile,
         }
 
         profile: ModelProfile | None = None
