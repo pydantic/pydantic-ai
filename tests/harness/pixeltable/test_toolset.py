@@ -19,7 +19,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai_harness.pixeltable import PixeltableToolset
 
-    from .support import DIM, create_table, get_table, insert_rows, tiny_embed, tiny_image_embed
+    from .support import DIM, WORD_ITERATIONS, create_table, get_table, insert_rows, tiny_embed, tiny_image_embed, words
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='pixeltable not installed')
 
@@ -394,6 +394,20 @@ class TestPixeltableToolsetQuery:
         # A filter would run the column for every row (and crash pixeltable with an AssertionError).
         with pytest.raises(ModelRetry, match='computed on read'):
             tools.query_table(f'{catalog}.chunks', where={'virtual': 0})
+
+    def test_unstored_iterator_outputs_are_not_run(self, catalog: str) -> None:
+        # An unstored iterator output is not a computed column, but reading it reruns the iterator.
+        other = get_table(f'{catalog}.other')
+        pxt.create_view(f'{catalog}.words', other, iterator=words(other.text))
+        tools = _tools([f'{catalog}.words'])
+        WORD_ITERATIONS.clear()
+        rows = tools.query_table(f'{catalog}.words', where={'pos': 1})['rows']
+        assert rows == [{'pos': 1, 'word': 'handbook', 'text': 'secret handbook'}]
+        with pytest.raises(ModelRetry, match='computed on read'):
+            tools.query_table(f'{catalog}.words', columns=['shout'])
+        with pytest.raises(ModelRetry, match='computed on read'):
+            tools.query_table(f'{catalog}.words', where={'shout': 'SECRET'})
+        assert WORD_ITERATIONS == []
 
 
 class TestPixeltableToolsetSimilarity:

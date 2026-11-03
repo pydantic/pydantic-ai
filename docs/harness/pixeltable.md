@@ -83,8 +83,9 @@ recalls it in a second run without the first run's chat history.
   memory tables. Allowed views expose their base table's columns. Version handles (`'dir.tbl:3'`)
   are refused because they expose deleted rows and dropped columns.
 - Default projections skip media, array, binary, and unstored computed columns, including indexed
-  media in similarity search. Unstored computed columns rerun their functions (possibly model calls)
-  on read, so explicit projections and filters reject them. Explicit media projections are rejected
+  media in similarity search. Unstored computed columns and unstored iterator outputs rerun their
+  functions (possibly model calls) on read, so default projections skip them and explicit
+  projections and filters reject them. Explicit media projections are rejected
   because they expose local file paths. Explicit array and binary projections are also rejected.
 - `query_table` and `similarity_search` return `{"table", "rows", "truncated"}`, bounded by `max_rows`
   (default 20) and `max_chars` (default 8000). Oversized strings end in `...`; other oversized values

@@ -1,7 +1,7 @@
 """Read-only Pixeltable catalog tools for a Pydantic AI agent.
 
-Unstored computed columns rerun their functions on every read, so projections and
-filters naming them are rejected. Version handles (`'dir.tbl:3'`) expose old rows
+Unstored computed columns and unstored iterator outputs rerun their functions on every
+read, so projections and filters naming them are rejected. Version handles (`'dir.tbl:3'`) expose old rows
 and columns, so paths containing `:` are refused.
 """
 
@@ -56,7 +56,7 @@ class ColumnDescription(TypedDict):
     type: str
     is_computed: bool
     is_stored: bool
-    """`False` for a computed column that reruns its function (possibly a model call) on every read."""
+    """`False` for a computed column or iterator output that reruns its function (possibly a model call) on every read."""
 
 
 class IndexDescription(TypedDict):
@@ -96,9 +96,46 @@ _WHERE_PARSERS: dict[str, Callable[[str], object]] = {
 }
 
 
-def _computed_on_read(info: pxt.ColumnMetadata) -> bool:
-    # An unstored computed column reruns its function, possibly a paid or side-effecting UDF, on every read.
-    return info['is_computed'] and not info['is_stored']
+def _computed_on_read(name: str, info: pxt.ColumnMetadata) -> bool:
+    # An unstored computed column reruns its function, possibly a paid or side-effecting UDF, on every read, and an
+    # unstored iterator output reruns the iterator. A view's `pos` is unstored too, but is the row's own index.
+    return not info['is_stored'] and (info['is_computed'] or name != 'pos')
+
+
+def _check_projection(path: str, name: str, info: pxt.ColumnMetadata | None) -> None:
+    """Raise `ModelRetry` unless column `name` of `path` can be returned to the model."""
+    if info is None:
+        raise ModelRetry(f'Unknown column {name!r} on {path!r}. Call describe_table.')
+    if _computed_on_read(name, info):
+        raise ModelRetry(f'Column {name!r} is computed on read; these tools do not run it.')
+    if _is_skipped_type(info['type_']):
+        raise ModelRetry(f'Column {name!r} has an array or binary type; choose a stored scalar column.')
+    if _is_media_type(info['type_']):
+        raise ModelRetry(f'Media column {name!r} exposes a local file path; use a safe application URL instead.')
+
+
+def _where_value(name: str, info: pxt.ColumnMetadata, raw_value: WhereValue) -> object:
+    """Check a `where` value against column `name` and convert it to the value Pixeltable compares."""
+    type_ = info['type_']
+    if _computed_on_read(name, info):
+        raise ModelRetry(f'Column {name!r} is computed on read; these tools do not run it.')
+    if raw_value is None:
+        return None
+    if _is_skipped_type(type_) or _is_media_type(type_):
+        raise ModelRetry(f'Column {name!r} does not support equality filters. Call describe_table.')
+    base = column_base(type_)
+    expected = _WHERE_VALUE_TYPES.get(base)
+    if expected is not None and (
+        not isinstance(raw_value, expected) or (isinstance(raw_value, bool) and base != 'Bool')
+    ):
+        raise ModelRetry(f'where value for {name!r} must be {base}, got {type(raw_value).__name__}')
+    parse = _WHERE_PARSERS.get(base)
+    if parse is None or not isinstance(raw_value, str):
+        return raw_value
+    try:
+        return parse(raw_value)
+    except ValueError as exc:
+        raise ModelRetry(f'where value for {name!r} must be an ISO-format {base}: {exc}') from exc
 
 
 def _norm(path: str) -> str:
@@ -275,7 +312,7 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
         Args:
             table: Pixeltable table path.
             columns: Columns to return. Omit to skip media, array, and binary
-                columns. Explicit media, array, binary, and unstored computed columns are rejected.
+                columns. Explicit media, array, binary, and unstored computed or iterator columns are rejected.
             where: Equality filters mapping column name to value. Media, array, and
                 binary columns reject non-null filters; `None` matches null rows.
             limit: Maximum rows to return, capped by the capability.
@@ -309,7 +346,7 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
             column: Column with an embedding index.
             columns: Extra columns to return with the match and score. Omit to return the
                 default columns; indexed media is never returned. Explicit media, array, binary,
-                and unstored computed columns are rejected.
+                and unstored computed or iterator columns are rejected.
             limit: Maximum rows to return, capped by the capability.
             idx: Embedding index name. Required when the column has more than one index.
 
@@ -363,7 +400,7 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
         columns: list[str] = []
         for name, info in metadata['columns'].items():
             type_ = info['type_']
-            if _is_media_type(type_) or _is_skipped_type(type_) or _computed_on_read(info):
+            if _is_media_type(type_) or _is_skipped_type(type_) or _computed_on_read(name, info):
                 continue
             columns.append(name)
         return columns
@@ -384,17 +421,7 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
         for name in names:
             if name in named:
                 continue
-            if name not in column_md:
-                raise ModelRetry(f'Unknown column {name!r} on {path!r}. Call describe_table.')
-            if _computed_on_read(column_md[name]):
-                raise ModelRetry(f'Column {name!r} is computed on read; these tools do not run it.')
-            type_ = column_md[name]['type_']
-            if _is_skipped_type(type_):
-                raise ModelRetry(f'Column {name!r} has an array or binary type; choose a stored scalar column.')
-            if _is_media_type(type_):
-                raise ModelRetry(
-                    f'Media column {name!r} exposes a local file path; use a safe application URL instead.'
-                )
+            _check_projection(path, name, column_md.get(name))
             items.append(t[name])
         if not items and not named:
             raise ModelRetry('No selectable columns. Name a non-array column, or describe_table.')
@@ -410,27 +437,7 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
         for name, raw_value in where.items():
             if name not in column_md:
                 raise ModelRetry(f'Unknown column {name!r} in where. Call describe_table.')
-            info = column_md[name]
-            type_ = info['type_']
-            if _computed_on_read(info):
-                raise ModelRetry(f'Column {name!r} is computed on read; these tools do not run it.')
-            if raw_value is not None and (_is_skipped_type(type_) or _is_media_type(type_)):
-                raise ModelRetry(f'Column {name!r} does not support equality filters. Call describe_table.')
-            base = column_base(type_)
-            expected = _WHERE_VALUE_TYPES.get(base)
-            if (
-                raw_value is not None
-                and expected is not None
-                and (not isinstance(raw_value, expected) or (isinstance(raw_value, bool) and base != 'Bool'))
-            ):
-                raise ModelRetry(f'where value for {name!r} must be {base}, got {type(raw_value).__name__}')
-            value: object = raw_value
-            parse = _WHERE_PARSERS.get(base)
-            if parse is not None and isinstance(raw_value, str):
-                try:
-                    value = parse(raw_value)
-                except ValueError as exc:
-                    raise ModelRetry(f'where value for {name!r} must be an ISO-format {base}: {exc}') from exc
+            value = _where_value(name, column_md[name], raw_value)
             try:
                 clause = t[name] == value
                 pred = clause if pred is None else pred & clause

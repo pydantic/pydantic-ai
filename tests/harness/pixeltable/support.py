@@ -8,6 +8,9 @@ from __future__ import annotations
 import hashlib
 import math
 from collections.abc import Callable
+from typing import Any
+
+from typing_extensions import TypedDict
 
 from tests.conftest import try_import
 
@@ -43,3 +46,28 @@ with try_import():
     def tiny_image_embed(image: Image.Image) -> pxt.Array[(8,), pxt.Float]:
         """Local image embedding for catalog behavior tests."""
         return np.array([1, 0, 0, 0, 0, 0, 0, 0], dtype=np.float32)  # pyright: ignore[reportReturnType]
+
+    WORD_ITERATIONS: list[str] = []
+
+    class Word(TypedDict):
+        word: str
+        shout: str
+
+    @pxt.iterator(unstored_cols=['shout'])  # pyright: ignore[reportUnknownMemberType]
+    class words(pxt.PxtIterator[Word]):
+        """Split text into words; `shout` is an unstored output, so reading it runs the iterator again."""
+
+        def __init__(self, text: str) -> None:
+            WORD_ITERATIONS.append(text)
+            self.items = text.split()
+            self.index = 0
+
+        def __next__(self) -> Word:
+            if self.index >= len(self.items):
+                raise StopIteration
+            word = self.items[self.index]
+            self.index += 1
+            return {'word': word, 'shout': word.upper()}
+
+        def seek(self, pos: int, **kwargs: Any) -> None:
+            self.index = pos

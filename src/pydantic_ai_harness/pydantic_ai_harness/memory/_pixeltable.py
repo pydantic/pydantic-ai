@@ -105,6 +105,20 @@ _NULLABLE_COLUMNS = frozenset({'content', 'version', 'last_operation_id', 'finge
 _PATH_INDEX = 'path_lookup_idx'
 
 
+def _column_problem(name: str, expected: str, info: pxt.ColumnMetadata | None) -> str | None:
+    """Why the column the store needs as `name` does not fit, or `None` if it does."""
+    if info is None:
+        return f'column {name!r} is missing'
+    if info['is_computed']:
+        return f'column {name!r} is computed; the store writes it directly'
+    type_ = info['type_']
+    if type_.removesuffix(' | None') != expected:
+        return f'column {name!r} has type {type_!r}, expected {expected!r}'
+    if name in _NULLABLE_COLUMNS and not type_.endswith(' | None'):
+        return f'column {name!r} is not nullable; the store writes None to it'
+    return None
+
+
 class PixeltableMemoryStore:
     """Pydantic AI Harness `MemoryStore` persisted in a Pixeltable table.
 
@@ -251,20 +265,11 @@ class PixeltableMemoryStore:
         if metadata['kind'] != 'table':
             raise ValueError(f'{self._table_name!r} is a {metadata["kind"]}; the memory store needs a writable table')
         columns = metadata['columns']
-        problems: list[str] = []
-        for name, expected in _SCHEMA_COLUMNS.items():
-            info = columns.get(name)
-            if info is None:
-                problems.append(f'column {name!r} is missing')
-                continue
-            if info['is_computed']:
-                problems.append(f'column {name!r} is computed; the store writes it directly')
-                continue
-            type_ = info['type_']
-            if type_.removesuffix(' | None') != expected:
-                problems.append(f'column {name!r} has type {type_!r}, expected {expected!r}')
-            elif name in _NULLABLE_COLUMNS and not type_.endswith(' | None'):
-                problems.append(f'column {name!r} is not nullable; the store writes None to it')
+        problems = [
+            problem
+            for name, expected in _SCHEMA_COLUMNS.items()
+            if (problem := _column_problem(name, expected, columns.get(name))) is not None
+        ]
         for name, info in columns.items():
             if name not in _SCHEMA_COLUMNS and not info['is_computed'] and not info['type_'].endswith(' | None'):
                 problems.append(f'column {name!r} is not nullable, and inserts never set it')
@@ -415,7 +420,18 @@ class PixeltableMemoryStore:
         if operation is None:
             self._apply(t, path, row, values)
             return mutation
+        return self._apply_with_receipt(t, path, row, values, mutation, operation)
 
+    def _apply_with_receipt(
+        self,
+        t: pxt.Table,
+        path: str,
+        row: dict[str, Any] | None,
+        values: dict[str, object],
+        mutation: MemoryMutation,
+        operation: MemoryOperation,
+    ) -> MemoryMutation:
+        """Apply `values` between a pending receipt for `operation` and its completion."""
         receipt_path = _receipt_path(operation)
         receipt_row: dict[str, object] = {
             'path': receipt_path,
