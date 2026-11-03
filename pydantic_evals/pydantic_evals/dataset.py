@@ -328,14 +328,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         Returns:
             A report containing the results of the evaluation.
         """
-        if repeat < 1:
-            raise ValueError(f'repeat must be >= 1, got {repeat}')
-        if max_concurrency is not None and max_concurrency < 1:
-            raise ValueError(f'max_concurrency must be >= 1, got {max_concurrency}')
-        if task_timeout is not None and (
-            isinstance(task_timeout, bool) or not math.isfinite(task_timeout) or task_timeout <= 0
-        ):
-            raise ValueError(f'`task_timeout` must be a finite number of seconds greater than 0, got {task_timeout!r}')
+        _check_evaluate_arguments(repeat, max_concurrency, task_timeout)
 
         task_name = task_name or get_unwrapped_function_name(task)
         name = name or task_name
@@ -403,13 +396,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                     for case, report_name, source_name in tasks_to_run
                 ]
             )
-            cases: list[ReportCase] = []
-            failures: list[ReportCaseFailure] = []
-            for item in cases_and_failures:
-                if isinstance(item, ReportCase):
-                    cases.append(item)
-                else:
-                    failures.append(item)
+            cases, failures = _split_cases_and_failures(cases_and_failures)
             report = EvaluationReport(
                 name=name,
                 cases=cases,
@@ -1158,6 +1145,30 @@ def _set_experiment_span_attributes(
         )
 
 
+def _check_evaluate_arguments(repeat: int, max_concurrency: int | None, task_timeout: float | None) -> None:
+    if repeat < 1:
+        raise ValueError(f'repeat must be >= 1, got {repeat}')
+    if max_concurrency is not None and max_concurrency < 1:
+        raise ValueError(f'max_concurrency must be >= 1, got {max_concurrency}')
+    if task_timeout is not None and (
+        isinstance(task_timeout, bool) or not math.isfinite(task_timeout) or task_timeout <= 0
+    ):
+        raise ValueError(f'`task_timeout` must be a finite number of seconds greater than 0, got {task_timeout!r}')
+
+
+def _split_cases_and_failures(
+    cases_and_failures: Sequence[ReportCase | ReportCaseFailure],
+) -> tuple[list[ReportCase], list[ReportCaseFailure]]:
+    cases: list[ReportCase] = []
+    failures: list[ReportCaseFailure] = []
+    for item in cases_and_failures:
+        if isinstance(item, ReportCase):
+            cases.append(item)
+        else:
+            failures.append(item)
+    return cases, failures
+
+
 async def _run_task_and_evaluators(
     task: Callable[[InputsT], Awaitable[OutputT]] | Callable[[InputsT], OutputT],
     case: Case[InputsT, OutputT, MetadataT],
@@ -1231,18 +1242,9 @@ async def _run_task_and_evaluators(
             case_span.set_attribute('metrics', scoring_context.metrics)
             case_span.set_attribute('attributes', scoring_context.attributes)
 
-            evaluators = case.evaluators + dataset_evaluators
-            evaluator_outputs: list[EvaluationResult] = []
-            evaluator_failures: list[EvaluatorFailure] = []
-            if evaluators:
-                evaluator_outputs_by_task = await task_group_gather(
-                    [lambda ev=ev: run_evaluator(ev, scoring_context, retry_evaluators) for ev in evaluators]
-                )
-                for outputs in evaluator_outputs_by_task:
-                    if isinstance(outputs, EvaluatorFailure):
-                        evaluator_failures.append(outputs)
-                    else:
-                        evaluator_outputs.extend(outputs)
+            evaluator_outputs, evaluator_failures = await _run_case_evaluators(
+                case.evaluators + dataset_evaluators, scoring_context, retry_evaluators
+            )
 
             assertions, scores, labels = _group_evaluator_outputs_by_type(evaluator_outputs)
             case_span.set_attribute('assertions', _evaluation_results_adapter.dump_python(assertions))
@@ -1299,6 +1301,25 @@ async def _run_task_and_evaluators(
 
     assert result is not None
     return result
+
+
+async def _run_case_evaluators(
+    evaluators: list[Evaluator[InputsT, OutputT, MetadataT]],
+    scoring_context: EvaluatorContext[InputsT, OutputT, MetadataT],
+    retry_evaluators: RetryConfig | None,
+) -> tuple[list[EvaluationResult], list[EvaluatorFailure]]:
+    evaluator_outputs: list[EvaluationResult] = []
+    evaluator_failures: list[EvaluatorFailure] = []
+    if evaluators:
+        evaluator_outputs_by_task = await task_group_gather(
+            [lambda ev=ev: run_evaluator(ev, scoring_context, retry_evaluators) for ev in evaluators]
+        )
+        for outputs in evaluator_outputs_by_task:
+            if isinstance(outputs, EvaluatorFailure):
+                evaluator_failures.append(outputs)
+            else:
+                evaluator_outputs.extend(outputs)
+    return evaluator_outputs, evaluator_failures
 
 
 _evaluation_results_adapter = TypeAdapter(Mapping[str, EvaluationResult])
