@@ -2,10 +2,13 @@
 
 In a module of its own: building a durable operation for a hook takes a while, and a Temporal workflow imports its
 module again in the sandbox for every run, so an agent with one makes every workflow defined beside it slower.
+The test runs on a time-skipping environment so that this real bootstrap time never consumes the workflow's
+execution deadline.
 """
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from datetime import timedelta
 from typing import Any
 
@@ -21,9 +24,10 @@ from pydantic_ai.models.test import TestModel
 try:
     from temporalio import workflow
     from temporalio.client import Client
+    from temporalio.testing import WorkflowEnvironment
     from temporalio.worker import Worker
 
-    from pydantic_ai.durable_exec.temporal import AgentPlugin, TemporalDurability
+    from pydantic_ai.durable_exec.temporal import AgentPlugin, PydanticAIPlugin, TemporalDurability
 
     from ._shared import BASE_ACTIVITY_CONFIG, TASK_QUEUE
 except ImportError:  # pragma: lax no cover
@@ -69,15 +73,22 @@ class DurableHookRerouteWorkflow:
         return (await _reroute_agent.run(prompt)).output
 
 
-async def test_durability_hook_running_as_an_activity_can_reroute_the_request(client: Client):
+@pytest.fixture(scope='module')
+async def time_skipping_client() -> AsyncIterator[Client]:
+    """A client whose environment skips time, so real bootstrap time on slow runners cannot consume the deadline."""
+    async with await WorkflowEnvironment.start_time_skipping(plugins=[PydanticAIPlugin()]) as env:
+        yield env.client
+
+
+async def test_durability_hook_running_as_an_activity_can_reroute_the_request(time_skipping_client: Client):
     """A `RetryModelRequest` a durable capability hook raises in its activity reaches the attempt loop as itself."""
     async with Worker(
-        client,
+        time_skipping_client,
         task_queue=TASK_QUEUE,
         workflows=[DurableHookRerouteWorkflow],
         plugins=[AgentPlugin(_reroute_agent)],
     ):
-        output = await client.execute_workflow(
+        output = await time_skipping_client.execute_workflow(
             DurableHookRerouteWorkflow.run,
             args=['Hello'],
             id=DurableHookRerouteWorkflow.__name__,
