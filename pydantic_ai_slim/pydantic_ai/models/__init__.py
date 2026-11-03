@@ -14,7 +14,17 @@ import time
 import uuid
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Generator, Iterable, Mapping, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Callable,
+    Collection,
+    Generator,
+    Iterable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
 from copy import copy
 from dataclasses import dataclass, field, fields, is_dataclass, replace
@@ -47,7 +57,6 @@ from .. import _utils
 from .._canonical_system import accepts_stateless_artifact
 from .._capability_parts import (
     LookalikeNaming,
-    RenderedCapabilityPart,
     render_capability_part,
     render_capability_parts,
 )
@@ -1931,9 +1940,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         if in_second_model_prompt():
             return render_capability_parts(messages)
         inline_system = self.profile.get('supports_inline_system_prompts', False)
-        announce = inline_system and self._announces_lookalike_notes
+        pending_announcement = inline_system and self._announces_lookalike_notes
         first_request_index = next((i for i, m in enumerate(messages) if isinstance(m, ModelRequest)), None)
-        announced = False
         new_messages: list[ModelMessage] = []
         changed = False
         for index, (message, original) in enumerate(zip(messages, authored)):
@@ -1941,25 +1949,18 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 new_messages.append(message)
                 continue
             assert isinstance(original, ModelRequest)
-            response = messages[index + 1] if index + 1 < len(messages) else None
-            carries_thinking = isinstance(response, ModelResponse) and any(
-                isinstance(part, ThinkingPart) and self._carries_thinking_in_user_turn(response, part)
-                for part in response.parts
-            )
             parts, frame_at = self._request_with_lookalike_notes(
                 original, message, first_request=index == first_request_index
             )
-            if frame_at is None and carries_thinking:
-                frame_at = len(parts)
-            if frame_at is not None:
-                if announce and not announced:
-                    announced = True
-                    announcement = _FrameworkNote(
-                        content=lookalike_note_announcement(system_role=True),
-                        timestamp=message.timestamp or _utils.now_utc(),
-                    )
-                    parts.insert(frame_at, announcement)
-            if len(parts) != len(message.parts) or any(new is not old for new, old in zip(parts, message.parts)):
+            frame_at = self._frame_index_with_thinking(parts, frame_at, following=messages[index + 1 : index + 2])
+            if frame_at is not None and pending_announcement:
+                pending_announcement = False
+                announcement = _FrameworkNote(
+                    content=lookalike_note_announcement(system_role=True),
+                    timestamp=message.timestamp or _utils.now_utc(),
+                )
+                parts.insert(frame_at, announcement)
+            if _parts_changed(parts, message.parts):
                 message = replace(message, parts=parts)
                 changed = True
             new_messages.append(message)
@@ -1991,104 +1992,175 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         # With a system role, a tool's note goes right after the tool results even where the API takes it ahead of
         # them: there GPT-6 Luna followed a genuine change in the same turn 44/72 times, after them 40/40.
         precede_tool_results = self._lookalike_notes_precede_tool_results and not inline_system
-        expanded, capability_bodies = _with_capability_parts_rendered(authored, request)
+        expanded = _with_capability_parts_rendered(authored, request)
         # A tool or file note names the application's own mid-conversation system message in the same request, unless
         # the user's text there has a lookalike too, which "the other <system> block" would no longer pick out.
         # A capability part is never among the standing prompt the first request opens with, so neither is what it
         # renders as.
-        leading = (
-            next((i for i, p in enumerate(request.parts) if not isinstance(p, SystemPromptPart)), len(request.parts))
-            if first_request
-            else 0
-        )
-        # A capability part's note about its framed content is the application's, but changes no instruction.
-        capability_notes = {id(rendering.note) for rendering in capability_bodies.values()}
-        has_genuine = any(
-            isinstance(part, SystemPromptPart) and id(part) not in capability_notes for _, _, part in expanded[leading:]
-        )
-        user_lookalike = any(source == 'user' for _, sources, _ in expanded for source, _ in sources)
-        genuine_change = has_genuine and not user_lookalike
-        sealed = self._seals_system_blocks
+        leading = _leading_system_prompt_count(request) if first_request else 0
+        has_genuine = any(_is_genuine_system_prompt(part) for _, _, part in expanded[leading:])
+        genuine_change = has_genuine and not _has_user_lookalike([sources for _, sources, _ in expanded])
         parts: list[ModelRequestPart] = []
         framed: list[ModelRequestPart] = []
         tool_notes: list[SystemPromptPart] = []
         for original, sources, part in expanded:
             if _is_tool_result_part(part):
-                for _, tags in sources:
-                    tool_notes.append(
-                        _FrameworkNote(
-                            content=lookalike_frame_note(
-                                'tool',
-                                preceding=not precede_tool_results,
-                                tags=tags,
-                                system_role=inline_system,
-                                genuine_change=genuine_change,
-                                tool_name=part.tool_name,
-                                tool_call_id=part.tool_call_id,
-                            ),
-                            timestamp=request.timestamp or _utils.now_utc(),
-                        )
+                tool_notes.extend(
+                    self._tool_lookalike_notes(
+                        request, part, sources, preceding=not precede_tool_results, genuine_change=genuine_change
                     )
-                if self._relocates_tool_files and isinstance(part, ToolReturnPart) and part.files:
+                )
+                if self._moves_tool_files(part):
                     framed.append(part)
                 parts.append(part)
                 continue
-            if (
-                (
-                    isinstance(original, RetryFeedbackPart | RetryPromptPart)  # pyright: ignore[reportDeprecated]
-                    and isinstance(part, UserPromptPart)
-                )
-                or isinstance(part, CompactionPart)
-                # A capability part's frame.
-                or id(part) in capability_bodies
-            ):
+            if _is_user_channel_frame(original, part):
                 framed.append(part)
-            # Adapters that send system messages after the turn put the note after its item, and so does one that
-            # would otherwise join the first request's standing system prompt.
-            after = inline_system and (
-                self._system_entries_follow_user_turn
-                or (first_request and all(isinstance(p, SystemPromptPart) for p in parts))
+            after = self._lookalike_notes_follow_item(parts, first_request=first_request)
+            notes = self._item_lookalike_notes(
+                request,
+                sources,
+                preceding=after,
+                has_genuine=has_genuine,
+                genuine_change=genuine_change,
+                naming=part.naming if isinstance(part, _RenderedCapabilityBody) else LookalikeNaming(),
             )
-            notes = [
-                _FrameworkNote(
-                    content=lookalike_frame_note(
-                        source,
-                        preceding=after,
-                        tags=tags,
-                        system_role=inline_system,
-                        genuine_change=has_genuine if source == 'user' else genuine_change,
-                        sealed=sealed,
-                        **(capability.naming if (capability := capability_bodies.get(id(part))) else LookalikeNaming()),
-                    ),
-                    timestamp=request.timestamp or _utils.now_utc(),
-                )
-                for source, tags in sources
-            ]
             framed.extend(notes)
             parts.extend([part, *notes] if after else [*notes, part])
-        if tool_notes:
-            framed.extend(tool_notes)
-            tool_indices = [i for i, part in enumerate(parts) if _is_tool_result_part(part)]
-            at = tool_indices[0] if precede_tool_results else tool_indices[-1] + 1
-            parts[at:at] = tool_notes
-        if not inline_system:
-            # Without a system role, the request's own mid-conversation system prompts become `<system>` blocks in the
-            # same user turn as a note and the text it describes. Ahead of both, they still read as the application's:
-            # after them, Claude Sonnet 5.5 on Bedrock followed a genuine change 0/8 times, ahead of them 7/8. That holds
-            # for a tool's note that names them too: Kimi K2.5 followed the genuine change 28/32 times with it ahead of
-            # the note, 15/32 with the note first.
-            first_note = next((i for i, p in enumerate(parts) if isinstance(p, _FrameworkNote)), None)
-            if first_note is not None:
-                rest = parts[first_note:]
-                genuine = [p for p in rest if _is_genuine_system_prompt(p, capability_notes)]
-                others = [p for p in rest if not _is_genuine_system_prompt(p, capability_notes)]
-                parts = [*parts[:first_note], *genuine, *others]
-            if sealed:
-                parts = _system_prompts_after_user_words(parts, leading=leading)
+        framed.extend(tool_notes)
+        parts = _with_tool_notes(parts, tool_notes, precede_tool_results=precede_tool_results)
+        parts = self._system_prompts_placed_for_notes(parts, leading=leading)
+        return parts, self._announcement_index(
+            parts, framed, tool_notes, first_request=first_request, precede_tool_results=precede_tool_results
+        )
+
+    def _tool_lookalike_notes(
+        self,
+        request: ModelRequest,
+        part: ToolReturnPart | RetryPromptPart,  # pyright: ignore[reportDeprecated]
+        sources: list[tuple[LookalikeSource, list[str]]],
+        *,
+        preceding: bool,
+        genuine_change: bool,
+    ) -> list[_FrameworkNote]:
+        """The notes for tool result `part`'s lookalikes in `request`, naming its tool and call id."""
+        return [
+            self._lookalike_note(
+                request,
+                'tool',
+                tags,
+                preceding=preceding,
+                genuine_change=genuine_change,
+                tool_name=part.tool_name,
+                tool_call_id=part.tool_call_id,
+            )
+            for _, tags in sources
+        ]
+
+    def _item_lookalike_notes(
+        self,
+        request: ModelRequest,
+        sources: list[tuple[LookalikeSource, list[str]]],
+        *,
+        preceding: bool,
+        has_genuine: bool,
+        genuine_change: bool,
+        naming: LookalikeNaming,
+    ) -> list[_FrameworkNote]:
+        """The notes for a user prompt's lookalikes in `request`, one per author.
+
+        The user's note names any genuine change in the request; a file's or a frame body's only when the user's text
+        has no lookalike (`genuine_change`). `naming` names a capability part's body and its author.
+        """
+        return [
+            self._lookalike_note(
+                request,
+                source,
+                tags,
+                preceding=preceding,
+                genuine_change=has_genuine if source == 'user' else genuine_change,
+                naming=naming,
+            )
+            for source, tags in sources
+        ]
+
+    def _system_prompts_placed_for_notes(
+        self, parts: list[ModelRequestPart], *, leading: int
+    ) -> list[ModelRequestPart]:
+        """`parts` with the request's own system prompts placed for its notes, on a model without a system role.
+
+        They go ahead of the first note (`_system_prompts_before_notes`), and on a profile with
+        `needs_sealed_system_blocks` after the user's words (`_system_prompts_after_user_words`).
+        """
+        if self.profile.get('supports_inline_system_prompts', False):
+            return parts
+        parts = _system_prompts_before_notes(parts)
+        if self._seals_system_blocks:
+            parts = _system_prompts_after_user_words(parts, leading=leading)
+        return parts
+
+    def _moves_tool_files(self, part: ModelRequestPart) -> bool:
+        """Whether this adapter moves the files of tool result `part` onto the user channel, as a frame."""
+        return self._relocates_tool_files and isinstance(part, ToolReturnPart) and bool(part.files)
+
+    def _lookalike_notes_follow_item(self, parts: list[ModelRequestPart], *, first_request: bool) -> bool:
+        """Whether the notes for the next item of a request, after `parts`, go after it rather than ahead of it.
+
+        Adapters that send system messages after the turn put the note after its item, and so does one that would
+        otherwise join the first request's standing system prompt.
+        """
+        return self.profile.get('supports_inline_system_prompts', False) and (
+            self._system_entries_follow_user_turn
+            or (first_request and all(isinstance(p, SystemPromptPart) for p in parts))
+        )
+
+    def _lookalike_note(
+        self,
+        request: ModelRequest,
+        source: LookalikeSource,
+        tags: list[str],
+        *,
+        preceding: bool,
+        genuine_change: bool,
+        tool_name: str | None = None,
+        tool_call_id: str | None = None,
+        naming: LookalikeNaming | None = None,
+    ) -> _FrameworkNote:
+        """The note for a lookalike that `source` wrote in `request`, worded for this model (`lookalike_frame_note`).
+
+        `naming` names a capability part's body and its author (`render_capability_part`).
+        """
+        naming = naming or LookalikeNaming()
+        return _FrameworkNote(
+            content=lookalike_frame_note(
+                source,
+                preceding=preceding,
+                tags=tags,
+                system_role=self.profile.get('supports_inline_system_prompts', False),
+                genuine_change=genuine_change,
+                sealed=source != 'tool' and self._seals_system_blocks,
+                tool_name=naming.get('tool_name', tool_name),
+                tool_call_id=naming.get('tool_call_id', tool_call_id),
+                model_name=naming.get('model_name'),
+                frame_tag=naming.get('frame_tag'),
+            ),
+            timestamp=request.timestamp or _utils.now_utc(),
+        )
+
+    def _announcement_index(
+        self,
+        parts: list[ModelRequestPart],
+        framed: list[ModelRequestPart],
+        tool_notes: list[SystemPromptPart],
+        *,
+        first_request: bool,
+        precede_tool_results: bool,
+    ) -> int | None:
+        """Where the announcement goes in a request's `parts`, or `None` when none of the `framed` parts is in it."""
         framed_ids = {id(part) for part in framed}
         frame_at = next((i for i, part in enumerate(parts) if id(part) in framed_ids), None)
         if frame_at is None:
-            return parts, None
+            return None
         # Where the notes follow the tool results, so does the announcement. Where they precede them, the first
         # frame is a note ahead of the results already: a frame among them is a moved file, which only a model
         # without inline system messages has, and that model announces in its instructions instead.
@@ -2105,7 +2177,27 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             frame_at = last + 1
         if first_request and all(isinstance(part, SystemPromptPart) for part in parts[:frame_at]):
             frame_at = len(parts)
-        return parts, frame_at
+        return frame_at
+
+    def _frame_index_with_thinking(
+        self, parts: list[ModelRequestPart], frame_at: int | None, *, following: list[ModelMessage]
+    ) -> int | None:
+        """`frame_at`, or the end of a request's `parts` when only its reply's reasoning frames the user turn.
+
+        `following` is the message after the request, if any: reasoning in it that this adapter replays in a user turn
+        is a frame there.
+        """
+        if frame_at is not None:
+            return frame_at
+        carries_thinking = any(
+            isinstance(response, ModelResponse)
+            and any(
+                isinstance(part, ThinkingPart) and self._carries_thinking_in_user_turn(response, part)
+                for part in response.parts
+            )
+            for response in following
+        )
+        return len(parts) if carries_thinking else None
 
     def _carries_thinking_in_user_turn(self, message: ModelResponse, part: ThinkingPart) -> bool:
         """Whether this adapter replays `part` of `message` as an `<assistant_thinking>` frame in a user turn.
@@ -4135,14 +4227,86 @@ def _tool_results_first(
     return (new_authored, new_messages) if changed else (authored, messages)
 
 
-def _is_genuine_system_prompt(part: ModelRequestPart, capability_notes: set[int]) -> bool:
-    """Whether `part` is one of the application's own system prompts, not a framework note about another part.
+def _parts_changed(parts: Sequence[ModelRequestPart], original: Sequence[ModelRequestPart]) -> bool:
+    """Whether `parts` differs from `original` in length or in any part's identity."""
+    return len(parts) != len(original) or any(new is not old for new, old in zip(parts, original))
 
-    A capability part's note, in `capability_notes` by identity, stays with the content it's about.
+
+def _leading_system_prompt_count(request: ModelRequest) -> int:
+    """How many `SystemPromptPart`s `request` opens with."""
+    return next((i for i, p in enumerate(request.parts) if not isinstance(p, SystemPromptPart)), len(request.parts))
+
+
+def _has_user_lookalike(all_sources: list[list[tuple[LookalikeSource, list[str]]]]) -> bool:
+    """Whether any part's lookalike text was written by the user."""
+    return any(source == 'user' for sources in all_sources for source, _ in sources)
+
+
+def _with_tool_notes(
+    parts: list[ModelRequestPart], tool_notes: list[SystemPromptPart], *, precede_tool_results: bool
+) -> list[ModelRequestPart]:
+    """`parts` with the tool results' `tool_notes` ahead of the first result or after the last one."""
+    if not tool_notes:
+        return parts
+    tool_indices = [i for i, part in enumerate(parts) if _is_tool_result_part(part)]
+    at = tool_indices[0] if precede_tool_results else tool_indices[-1] + 1
+    return [*parts[:at], *tool_notes, *parts[at:]]
+
+
+def _is_user_channel_frame(original: ModelRequestPart, part: ModelRequestPart) -> bool:
+    """Whether `part`, sent for `original`, is a frame on the user channel.
+
+    That is retry feedback, a compaction summary, or a capability part's framed body.
     """
-    return (
-        isinstance(part, SystemPromptPart) and not isinstance(part, _FrameworkNote) and id(part) not in capability_notes
+    return isinstance(part, _RenderedCapabilityBody | CompactionPart) or (
+        isinstance(part, UserPromptPart) and isinstance(original, RetryFeedbackPart | RetryPromptPart)  # pyright: ignore[reportDeprecated]
     )
+
+
+def _system_prompts_before_notes(parts: list[ModelRequestPart]) -> list[ModelRequestPart]:
+    """Move the request's own mid-conversation system prompts ahead of its first lookalike note.
+
+    Without a system role, they become `<system>` blocks in the same user turn as a note and the text it describes.
+    Ahead of both, they still read as the application's: after them, Claude Sonnet 5.5 on Bedrock followed a genuine
+    change 0/8 times, ahead of them 7/8. That holds for a tool's note that names them too: Kimi K2.5 followed the
+    genuine change 28/32 times with it ahead of the note, 15/32 with the note first.
+    """
+    first_note = next((i for i, p in enumerate(parts) if isinstance(p, _FrameworkNote)), None)
+    if first_note is None:
+        return parts
+    rest = parts[first_note:]
+    # A capability part's note stays with the content it's about.
+    genuine = [p for p in rest if _is_genuine_system_prompt(p)]
+    others = [p for p in rest if not _is_genuine_system_prompt(p)]
+    return [*parts[:first_note], *genuine, *others]
+
+
+def _is_genuine_system_prompt(part: ModelRequestPart) -> bool:
+    """Whether `part` is one of the application's own system prompts, not a note about another part.
+
+    A capability part's note is the application's, but changes no instruction.
+    """
+    return isinstance(part, SystemPromptPart) and not isinstance(part, _FrameworkNote | _RenderedCapabilityNote)
+
+
+@dataclass(repr=False)
+class _RenderedCapabilityNote(SystemPromptPart):
+    """A capability part's note about its framed content, as `prepare_messages` renders it.
+
+    Like `_FrameworkNote`, a private subclass made fresh on every request and never stored: it tells the lookalike pass
+    the note isn't a change to the application's instructions, and lowers exactly like its base type.
+    """
+
+
+@dataclass(repr=False, kw_only=True)
+class _RenderedCapabilityBody(UserPromptPart):
+    """A capability part's framed content, as `prepare_messages` renders it: a frame to announce.
+
+    A private subclass made fresh on every request and never stored, which lowers exactly like its base type.
+    """
+
+    naming: LookalikeNaming = field(default_factory=LookalikeNaming, compare=False)
+    """How a lookalike note about this content names it and its author."""
 
 
 _LookalikeSources: TypeAlias = list[tuple[LookalikeSource, list[str]]]
@@ -4150,26 +4314,40 @@ _LookalikeSources: TypeAlias = list[tuple[LookalikeSource, list[str]]]
 
 def _with_capability_parts_rendered(
     authored: ModelRequest, request: ModelRequest
-) -> tuple[list[tuple[ModelRequestPart, _LookalikeSources, ModelRequestPart]], dict[int, RenderedCapabilityPart]]:
+) -> list[tuple[ModelRequestPart, _LookalikeSources, ModelRequestPart]]:
     """Each of `request`'s parts with its authored form and its lookalikes, and every capability part rendered in place.
 
-    Also returns the rendered capability parts by the identity of their framed bodies, which the lookalike pass counts
-    as frames and names in its notes. They stay within that pass: nothing about a rendered part goes in its metadata.
+    A capability part's framed body and its note are private part subclasses (`_RenderedCapabilityBody`,
+    `_RenderedCapabilityNote`) that carry what the lookalike pass needs as typed fields, within this pass only.
     """
     expanded: list[tuple[ModelRequestPart, _LookalikeSources, ModelRequestPart]] = []
-    bodies: dict[int, RenderedCapabilityPart] = {}
     for original, part in zip(authored.parts, request.parts):
-        if not isinstance(part, CapabilityPart):
+        if isinstance(part, CapabilityPart):
+            expanded.extend(_rendered_capability_part(part))
+        else:
             expanded.append((original, _lookalike_sources(original), part))
-            continue
-        rendering = render_capability_part(part)
-        if rendering.body is not None:
-            bodies[id(rendering.body)] = rendering
-        expanded.extend((new, rendering.lookalikes if new is rendering.body else [], new) for new in rendering.parts)
-    return expanded, bodies
+    return expanded
 
 
-def _lookalike_sources(part: ModelRequestPart) -> _LookalikeSources:
+def _rendered_capability_part(
+    part: CapabilityPart,
+) -> list[tuple[ModelRequestPart, _LookalikeSources, ModelRequestPart]]:
+    """The parts `part` renders as, each with its lookalikes, the way `_with_capability_parts_rendered` lists them."""
+    rendering = render_capability_part(part)
+    if rendering.body is None:
+        return [(new, [], new) for new in rendering.parts]
+    body = _RenderedCapabilityBody(
+        content=rendering.body.content, timestamp=rendering.body.timestamp, naming=rendering.naming
+    )
+    rendered: list[tuple[ModelRequestPart, _LookalikeSources, ModelRequestPart]] = []
+    if rendering.note is not None:
+        note = _RenderedCapabilityNote(content=rendering.note.content, timestamp=rendering.note.timestamp)
+        rendered.append((note, [], note))
+    rendered.append((body, rendering.lookalikes, body))
+    return rendered
+
+
+def _lookalike_sources(part: ModelRequestPart) -> list[tuple[LookalikeSource, list[str]]]:
     """Who wrote the text in `part` that resembles a framework frame, with the system-voice tags it opens.
 
     A user prompt's text and its text files are checked separately, so each gets a note naming its author. A tool
@@ -4179,21 +4357,25 @@ def _lookalike_sources(part: ModelRequestPart) -> _LookalikeSources:
     if isinstance(part, RetryPromptPart) and part.tool_name is not None:  # pyright: ignore[reportDeprecated]
         part = _translate_legacy_retry_part(part)
     found: dict[LookalikeSource, list[str]] = {}
-
-    def check(source: LookalikeSource, text: str | None) -> None:
+    for source, text in _lookalike_texts(part):
         if text is not None and (tags := lookalike_tags(text)):
-            found.setdefault(source, []).extend(tag for tag in tags if tag not in found.get(source, ()))
+            known = found.setdefault(source, [])
+            known.extend(tag for tag in tags if tag not in known)
+    return list(found.items())
 
+
+def _lookalike_texts(part: ModelRequestPart) -> Iterator[tuple[LookalikeSource, str | None]]:
+    """The texts in `part` to check for lookalike frames, each with its author, in the order their notes go."""
     if isinstance(part, UserPromptPart):
         items: Sequence[UserContent] = [part.content] if isinstance(part.content, str) else part.content
         for item in items:
-            check('user', _text_of(item))
+            yield 'user', _text_of(item)
         for item in items:
-            check('file', _text_file_content(item))
+            yield 'file', _text_file_content(item)
     elif isinstance(part, ToolReturnPart):
         for item in part.content_items(mode='str', wrap_if_error=False):
-            check('tool', _text_of(item) if (text := _text_file_content(item)) is None else text)
-    return list(found.items())
+            text = _text_file_content(item)
+            yield 'tool', _text_of(item) if text is None else text
 
 
 def _text_of(item: object) -> str | None:

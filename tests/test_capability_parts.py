@@ -831,8 +831,9 @@ def test_agent_renders_on_an_inline_profile() -> None:
     [messages] = received_messages(INLINE, report(), nudge())
     request = messages[-1]
     assert isinstance(request, ModelRequest)
-    assert [type(part).__name__ for part in request.parts] == snapshot(
-        ['UserPromptPart', 'SystemPromptPart', 'UserPromptPart', 'SystemPromptPart']
+    # The adapter gets parts it already maps: the rendered ones are private subclasses made for this request only.
+    assert [part.part_kind for part in request.parts] == snapshot(
+        ['user-prompt', 'system-prompt', 'user-prompt', 'system-prompt']
     )
     assert isinstance(note := request.parts[1], SystemPromptPart)
     assert note.content.startswith('The accompanying <task_output task_id="t1">')
