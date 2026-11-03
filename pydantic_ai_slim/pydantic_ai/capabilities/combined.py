@@ -295,13 +295,13 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         )
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> CombinedCapability[AgentDepsT]:
-        new_caps = [capability.for_agent(agent) for capability in self.capabilities]
+        new_caps = [capability._keep_authority(capability.for_agent(agent)) for capability in self.capabilities]
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
         return self._rebound(new_caps)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        new_caps = await gather(*(c.for_run(ctx) for c in self.capabilities))
+        new_caps = await gather(*(c._for_run_keeping_authority(ctx) for c in self.capabilities))
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
         return self._rebound(new_caps)
@@ -1214,7 +1214,11 @@ def bind_capabilities_tier(
         if is_deferred_group(capability):
             # Each child of a deferred group binds in its own tier, as it would outside the group.
             return bind_capabilities_tier(capability, agent, innermost=innermost)
-        return capability.for_agent(agent) if is_innermost(capability) == innermost else capability
+        return (
+            capability._keep_authority(capability.for_agent(agent))  # pyright: ignore[reportPrivateUsage]
+            if is_innermost(capability) == innermost
+            else capability
+        )
 
     branches = combined.capabilities
     new_caps = [bind(c) for c in branches]

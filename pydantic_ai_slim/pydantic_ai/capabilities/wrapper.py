@@ -234,7 +234,7 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         return self.wrapped._emits_app_events
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
-        new_wrapped = self.wrapped.for_agent(agent)
+        new_wrapped = self.wrapped._keep_authority(self.wrapped.for_agent(agent))
         if new_wrapped is self.wrapped:
             return self
         new_self = replace_no_init(self, wrapped=new_wrapped)
@@ -242,7 +242,7 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         return new_self
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        new_wrapped = await self.wrapped.for_run(ctx)
+        new_wrapped = await self.wrapped._for_run_keeping_authority(ctx)
         if new_wrapped is self.wrapped:
             return self
         new_self = replace_no_init(self, wrapped=new_wrapped)

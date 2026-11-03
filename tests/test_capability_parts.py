@@ -1221,6 +1221,68 @@ def test_a_lowered_source_loads_in_a_process_without_the_kind() -> None:
     assert prepared_bytes(INLINE, loaded) == prepared_bytes(INLINE, history)
 
 
+def _sources_by_capability(capabilities: list[AbstractCapability[Any]]) -> dict[str | None, Any]:
+    """The source each capability's enqueued nudge was stored with, by capability id, after one run."""
+    agent = Agent(
+        FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('Done.')]), profile=INLINE), capabilities=capabilities
+    )
+    history = agent.run_sync('Run the tests.').all_messages()
+    loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(history))
+    assert loaded == history
+    assert prepared_bytes(INLINE, loaded) == prepared_bytes(INLINE, history)
+    return {
+        part.capability_id: part.source
+        for message in loaded
+        for part in getattr(message, 'parts', [])
+        if isinstance(part, NudgePart)
+    }
+
+
+def test_with_authority_lowers_one_instance_of_a_class() -> None:
+    trusted = Reporter([nudge()], id='trusted')
+    untrusted = Reporter([nudge()], id='untrusted').with_authority('none')
+    assert trusted.authority == untrusted.authority == 'operator'
+    assert _sources_by_capability([trusted, untrusted]) == {
+        'trusted': OperatorSource(),
+        'untrusted': CapabilitySource('untrusted', authority='none'),
+    }
+
+
+def test_with_authority_never_raises_authority() -> None:
+    raised = _NoAuthorityReporter([nudge()], id='plugin').with_authority('operator')
+    lowered_twice = Reporter([nudge()], id='twice').with_authority('user').with_authority('operator')
+    assert _sources_by_capability([raised, lowered_twice]) == {
+        'plugin': CapabilitySource('plugin', authority='none'),
+        'twice': CapabilitySource('twice', authority='user'),
+    }
+
+
+@dataclass
+class _FreshPerRunReporter(Reporter):
+    async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        # A fresh instance through the constructor, which knows nothing of `with_authority`.
+        return replace(self)
+
+
+def test_with_authority_survives_a_fresh_instance_from_for_run() -> None:
+    reporter = _FreshPerRunReporter([nudge()], id='fresh').with_authority('user')
+    assert _sources_by_capability([reporter]) == {'fresh': CapabilitySource('fresh', authority='user')}
+
+
+@dataclass
+class _SingletonReporter(Reporter):
+    id: str | None = 'singleton'
+
+
+@pytest.mark.parametrize('lowered_first', [True, False])
+def test_merged_capabilities_keep_the_lowest_authority(lowered_first: bool) -> None:
+    lowered = _SingletonReporter(parts=[nudge()]).with_authority('none')
+    # Lowered less, so taking the later value, as other fields merge, would raise it back in one of the orders.
+    less = _SingletonReporter(parts=[nudge()]).with_authority('user')
+    capabilities: list[AbstractCapability[Any]] = [lowered, less] if lowered_first else [less, lowered]
+    assert _sources_by_capability(capabilities) == {'singleton': CapabilitySource('singleton', authority='none')}
+
+
 def test_enqueue_keeps_a_preset_capability_id() -> None:
     agent = Agent(
         FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('Done.')])),
