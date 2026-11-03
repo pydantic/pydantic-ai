@@ -2348,7 +2348,12 @@ def test_fireworks_llama():
 def test_fireworks_unprofiled():
     profile = FireworksProvider.model_profile('accounts/fireworks/models/kimi-k3')
     assert _normalize(profile) == snapshot(
-        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'supports_json_schema_output': True}
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'supports_thinking': True,
+            'supports_json_schema_output': True,
+        }
     )
 
 

@@ -6,6 +6,7 @@ from typing import overload
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 
@@ -41,6 +42,9 @@ class AlibabaProvider(_OpenAISDKProvider):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         base_profile = qwen_model_profile(model_name)
+        if model_name.lower().startswith('kimi'):
+            # DashScope also serves Kimi models: add the Moonshot family facts on top of the Qwen ones.
+            base_profile = merge_profile(base_profile, moonshotai_model_profile(model_name))
 
         # Wrap/merge into OpenAIModelProfile.
         # Alibaba's compatible-mode Chat Completions API rejects OpenAI `type:file` content parts,

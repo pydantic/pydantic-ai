@@ -8,6 +8,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
+from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.zai import zai_model_profile
@@ -48,10 +49,11 @@ class CerebrasProvider(_OpenAISDKProvider):
             'qwen': qwen_model_profile,
             'gpt-oss': harmony_model_profile,
             'zai': zai_model_profile,
+            'kimi': moonshotai_model_profile,
         }
 
         # Reasoning models that support the cerebras_disable_reasoning setting
-        reasoning_prefixes = ('zai', 'gpt-oss')
+        reasoning_prefixes = ('zai', 'gpt-oss', 'kimi')
 
         profile = None
         model_name_lower = model_name.lower()
@@ -63,7 +65,8 @@ class CerebrasProvider(_OpenAISDKProvider):
         is_reasoning = model_name_lower.startswith(reasoning_prefixes)
         # gpt-oss reasons unconditionally on Cerebras: `disable_reasoning=True` is rejected with a 400,
         # so `thinking=False` sends its lowest effort instead. zai-glm-4.7 can still disable.
-        is_always_on_reasoning = model_name_lower.startswith('gpt-oss')
+        # Kimi models are the same: reasoning effort is configurable, but reasoning itself cannot be turned off.
+        is_always_on_reasoning = model_name_lower.startswith(('gpt-oss', 'kimi'))
         # GLM requires prior reasoning to be replayed inside `<think>...</think>` tags in the assistant
         # message content, not in a separate `reasoning` field; gpt-oss follows Harmony rules and keeps `'auto'`.
         # https://inference-docs.cerebras.ai/capabilities/reasoning

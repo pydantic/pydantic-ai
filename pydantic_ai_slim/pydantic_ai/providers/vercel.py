@@ -14,6 +14,7 @@ from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.groq import groq_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 
 try:
@@ -54,6 +55,7 @@ class VercelProvider(_OpenAISDKProvider):
             'deepseek': deepseek_model_profile,
             'groq': groq_model_profile,
             'mistral': mistral_model_profile,
+            'moonshotai': moonshotai_model_profile,
             'openai': openai_model_profile,
             'vertex': google_model_profile,
             'xai': grok_model_profile,
@@ -62,6 +64,11 @@ class VercelProvider(_OpenAISDKProvider):
         profile = None
 
         if '/' not in model_name:
+            if model_name.lower().startswith('kimi'):
+                return merge_profile(
+                    OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+                    moonshotai_model_profile(model_name),
+                )
             return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer)
 
         provider, model_name = model_name.split('/', 1)

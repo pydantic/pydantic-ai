@@ -23,6 +23,8 @@ with try_import() as imports_successful:
 
     from pydantic_ai.providers.vercel import VercelProvider
 
+    from ._kimi_request_capture import capture_request_body
+
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -148,3 +150,17 @@ def test_vercel_provider_unknown_provider():
     profile = provider.model_profile('unknown/gpt-4')
     assert profile is not None
     assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+
+
+def test_kimi_ids_resolve_moonshot_profile_and_emit_reasoning():
+    provider = VercelProvider(api_key='api-key')
+    for model_name in ('moonshotai/kimi-k3', 'moonshotai/kimi-k3.1-pro', 'kimi-k2.7-code'):
+        profile = provider.model_profile(model_name)
+        assert profile is not None
+        assert profile.get('supports_thinking') is True
+
+    body = capture_request_body(
+        lambda http_client: VercelProvider(api_key='api-key', http_client=http_client),
+        'moonshotai/kimi-k3',
+    )
+    assert body.get('reasoning_effort') == 'medium'

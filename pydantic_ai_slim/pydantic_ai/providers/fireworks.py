@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+import re
 from typing import overload
 
 from pydantic_ai import ModelProfile
@@ -10,6 +11,7 @@ from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 
@@ -25,6 +27,8 @@ else:
         AsyncHTTPClient as _OpenAIHTTPClient,
         _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
+
+_KIMI_DOT_VERSION_RE = re.compile(r'(kimi-k\d+)p(\d+)')
 
 
 class FireworksProvider(_OpenAISDKProvider):
@@ -45,19 +49,29 @@ class FireworksProvider(_OpenAISDKProvider):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         model_name = model_name.lower()
+        # Fireworks lists Kimi versions with `p` in place of the dot (`kimi-k2p6`); normalize to the
+        # dotted spelling the Moonshot family profile matches.
+        model_name = _KIMI_DOT_VERSION_RE.sub(r'\g<1>.\g<2>', model_name)
         prefix_to_profile = {
             'llama': meta_model_profile,
             'qwen': qwen_model_profile,
             'deepseek': deepseek_model_profile,
             'mistral': mistral_model_profile,
             'gemma': google_model_profile,
+            'kimi': moonshotai_model_profile,
         }
 
-        prefix = 'accounts/fireworks/models/'
+        wrapped = False
+        for wrapper in ('accounts/fireworks/models/', 'routers/'):
+            if model_name.startswith(wrapper):
+                model_name = model_name[len(wrapper) :]
+                wrapped = True
+                break
 
         profile = None
-        if model_name.startswith(prefix):
-            model_name = model_name[len(prefix) :]
+        # Fireworks ids are canonically wrapped; unwrapped ids are only routed for Kimi, which
+        # Fireworks also serves without the `accounts/fireworks/models/` prefix.
+        if wrapped or model_name.startswith('kimi'):
             for provider, profile_func in prefix_to_profile.items():
                 if model_name.startswith(provider):
                     profile = profile_func(model_name)

@@ -19,6 +19,8 @@ with try_import() as imports_successful:
 
     from pydantic_ai.providers.fireworks import FireworksProvider
 
+    from ._kimi_request_capture import capture_request_body
+
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -111,3 +113,21 @@ def test_fireworks_mixed_case_model_name_profile_flags():
     deepseek_mixed_path = provider.model_profile('Accounts/Fireworks/Models/DeepSeek-R1')
     assert deepseek_mixed_path is not None
     assert deepseek_mixed_path.get('supports_thinking') is True
+
+
+def test_fireworks_kimi_spellings_normalize_to_moonshot_profile_and_emit_reasoning():
+    provider = FireworksProvider(api_key='api-key')
+    for model_name in ('accounts/fireworks/models/kimi-k2p6', 'kimi-k2p6', 'routers/kimi-k3-fast'):
+        profile = provider.model_profile(model_name)
+        assert profile is not None
+        assert profile.get('supports_thinking') is True
+        assert profile.get('ignore_streamed_leading_whitespace') is True
+
+    bare_profile = provider.model_profile('some-unrelated-model')
+    assert bare_profile.get('supports_thinking', False) is False
+
+    body = capture_request_body(
+        lambda http_client: FireworksProvider(api_key='api-key', http_client=http_client),
+        'kimi-k2p6',
+    )
+    assert body.get('reasoning_effort') == 'medium'
