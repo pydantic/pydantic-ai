@@ -7,7 +7,10 @@ from typing import Any
 
 import pytest
 
-from pydantic_ai._json_schema import JsonSchemaTransformer
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, Tool, UserError
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchema, JsonSchemaTransformer
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.profiles.meta import meta_model_profile
 
 
 class _PassthroughTransformer(JsonSchemaTransformer):
@@ -124,3 +127,91 @@ def test_simplify_nullable_union_with_boolean_member():
     schema = {'anyOf': [True, {'type': 'null'}]}
     result = _PassthroughTransformer(schema, simplify_nullable_unions=True).walk()
     assert result == {'anyOf': [True, {'type': 'null'}]}
+
+
+_VALUE_LIMIT = 1_000
+"""The limit these tests patch in, so their schemas stay small."""
+
+
+def _doubling_chain(levels: int) -> JsonSchema:
+    """A schema whose definitions each refer to the one below twice, so inlining it doubles per level."""
+    defs: dict[str, Any] = {'D0': {'type': 'string'}}
+    for i in range(1, levels + 1):
+        ref = {'$ref': f'#/$defs/D{i - 1}'}
+        defs[f'D{i}'] = {'type': 'object', 'properties': {'a': ref, 'b': ref}}
+    return {'type': 'object', 'properties': {'x': {'$ref': f'#/$defs/D{levels}'}}, '$defs': defs}
+
+
+def test_inlining_past_the_value_limit_is_refused_before_the_request(monkeypatch: pytest.MonkeyPatch):
+    """A tool schema that would only grow past the limit once inlined is refused while the request is prepared.
+
+    `FunctionModel` rather than VCR: the profiles that inline `$defs` are served by many providers, and the limit is
+    reached while preparing the request, before any provider is involved.
+    """
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])  # pragma: no cover
+
+    def look_up(**kwargs: Any) -> str:
+        return 'found'  # pragma: no cover
+
+    monkeypatch.setattr('pydantic_ai._json_schema.MAX_INLINED_SCHEMA_VALUES', _VALUE_LIMIT, raising=False)
+    # Over 2 ** levels JSON values once inlined, from a schema of a few dozen.
+    schema = _doubling_chain(_VALUE_LIMIT.bit_length())
+    tool = Tool.from_schema(look_up, name='look_up', description=None, json_schema=schema)
+    agent = Agent(FunctionModel(model_function, profile=meta_model_profile('llama-3.3-70b')), tools=[tool])
+
+    with pytest.raises(UserError, match=f'expand to more than {_VALUE_LIMIT:,} JSON values'):
+        agent.run_sync('look it up')
+
+
+def test_inlining_counts_every_value_of_every_copy(monkeypatch: pytest.MonkeyPatch):
+    """The count is what inlining adds: every value in a definition, at each site it is copied to, walked or not."""
+    pet = {'type': 'object', 'properties': {'kind': {'enum': ['cat', 'dog']}}}
+    schema = {
+        'type': 'object',
+        'properties': {name: {'$ref': '#/$defs/Pet'} for name in ('a', 'b', 'c')},
+        '$defs': {'Pet': pet},
+    }
+    # Three copies of `Pet`, of 7 JSON values each: the object, its `type` and `properties`, and `kind` with its
+    # `enum` list of two.
+    monkeypatch.setattr('pydantic_ai._json_schema.MAX_INLINED_SCHEMA_VALUES', 21, raising=False)
+
+    assert InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()['properties'] == {'a': pet, 'b': pet, 'c': pet}
+
+    monkeypatch.setattr('pydantic_ai._json_schema.MAX_INLINED_SCHEMA_VALUES', 20, raising=False)
+
+    with pytest.raises(UserError, match='expand to more than 20 JSON values'):
+        InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
+
+
+def test_a_schema_walked_without_inlining_is_not_limited(monkeypatch: pytest.MonkeyPatch):
+    """Without inlining, each definition is walked once and a `$ref` stays a `$ref`, so nothing expands."""
+    monkeypatch.setattr('pydantic_ai._json_schema.MAX_INLINED_SCHEMA_VALUES', _VALUE_LIMIT, raising=False)
+    schema = _doubling_chain(_VALUE_LIMIT.bit_length())
+
+    assert _PassthroughTransformer(deepcopy(schema)).walk() == schema
+
+
+def test_inlining_counts_array_items_and_union_members(monkeypatch: pytest.MonkeyPatch):
+    """Array items and union members in an inlined definition count once per copy, like its other values."""
+    pets = {
+        'type': 'array',
+        'prefixItems': [{'type': 'string'}],
+        'items': {'anyOf': [{'type': 'integer'}, {'type': 'null'}]},
+    }
+    schema = {
+        'type': 'object',
+        'properties': {name: {'$ref': '#/$defs/Pets'} for name in ('a', 'b')},
+        '$defs': {'Pets': pets},
+    }
+    # Two copies of `Pets`, of 11 JSON values each: the array, its `type`, `prefixItems` with its one schema of two
+    # values, and `items` with its `anyOf` list of two schemas of two values each.
+    monkeypatch.setattr('pydantic_ai._json_schema.MAX_INLINED_SCHEMA_VALUES', 22, raising=False)
+
+    assert InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()['properties'] == {'a': pets, 'b': pets}
+
+    monkeypatch.setattr('pydantic_ai._json_schema.MAX_INLINED_SCHEMA_VALUES', 21, raising=False)
+
+    with pytest.raises(UserError, match='expand to more than 21 JSON values'):
+        InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
