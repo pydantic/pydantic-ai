@@ -5964,7 +5964,7 @@ class TestHarnessData:
         assert tagged.endswith(guidance + '.')
 
     async def test_a_turn_kept_by_an_earlier_release_is_summarized_again(self) -> None:
-        """Earlier releases marked a kept turn only on its request's metadata, which is no longer read.
+        """Releases before 2.60 marked a kept turn only on its request's metadata, which is no longer read.
 
         The next compaction treats such a turn like any other: its harness data is summarized as data, and its user
         text is summarized and kept again, now as a marked copy.
