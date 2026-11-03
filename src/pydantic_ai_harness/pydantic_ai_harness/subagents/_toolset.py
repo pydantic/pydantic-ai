@@ -703,8 +703,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         owner = DelegationTasks.current()
         if owner is not None and agent_name in owner.agents:
             return owner.agents[agent_name]
-        # Read only when agents can be created: a durable activity's context may not carry `run_id`.
-        created = self._created.get(ctx.run_id or '', {}) if self._dynamic_agents is not None else {}
+        created = self._created_agents(ctx)
         sub_agent = self._agents.get(agent_name) or created.get(agent_name)
         if sub_agent is None:
             names = [*self._agents, *self._remote, *created]
@@ -886,10 +885,13 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             await owner.notify(record, event)
         return event
 
-    def _telemetry(self, ctx: RunContext[AgentDepsT]) -> TaskTelemetry:
+    def _created_agents(self, ctx: RunContext[AgentDepsT]) -> dict[str, SubAgent[AgentDepsT]]:
+        """The sub-agents this run created with `create_agent`."""
         # Read only when agents can be created: a durable activity's context may not carry `run_id`.
-        created = self._created.get(ctx.run_id or '', {}) if self._dynamic_agents is not None else {}
-        return TaskTelemetry.of(ctx, model_named=frozenset(created))
+        return self._created.get(ctx.run_id or '', {}) if self._dynamic_agents is not None else {}
+
+    def _telemetry(self, ctx: RunContext[AgentDepsT]) -> TaskTelemetry:
+        return TaskTelemetry.of(ctx, model_named=frozenset(self._created_agents(ctx)))
 
     def _owner(self) -> DelegationTasks:
         owner = DelegationTasks.current()
