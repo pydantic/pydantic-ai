@@ -83,7 +83,7 @@ _MAX_HTML_TEXT_SCAN_COST = 5_000_000_000
 _MAX_CONCURRENT_HTML_CONVERSIONS = 4
 _HTML_CONVERSION_LIMITER: RunVar[anyio.Semaphore] = RunVar('_HTML_CONVERSION_LIMITER')
 # With no `max_content_length`, JSON whose indented form passes this many characters is returned as
-# fetched. Indenting a 20 MB array of small objects to this length takes ~1.7 s and ~43 MiB.
+# fetched, so formatting work is bounded by this length rather than by nesting depth times body size.
 _MAX_JSON_FORMATTED_LENGTH = 20_000_000
 
 
