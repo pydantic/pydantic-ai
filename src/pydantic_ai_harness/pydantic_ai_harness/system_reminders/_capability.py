@@ -28,6 +28,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai_harness._message_text import user_prompt_text
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_ignored, warn_default_changed
 from pydantic_ai_harness.system_reminders._events import ReminderFiredEvent
@@ -644,22 +645,10 @@ def _first_user_text(messages: Sequence[ModelMessage]) -> str | None:
         if isinstance(msg, ModelRequest):
             for part in msg.parts:
                 if isinstance(part, UserPromptPart) and not _is_reminder_data(part):
-                    text = _prompt_text(part.content)
+                    text = user_prompt_text(part)
                     if text:
                         return text
     return None
-
-
-def _prompt_text(content: str | Sequence[object]) -> str:
-    if isinstance(content, str):
-        return content
-    texts: list[str] = []
-    for item in content:
-        if isinstance(item, str):
-            texts.append(item)
-        elif isinstance(item, TextContent):
-            texts.append(item.content)
-    return ' '.join(texts)
 
 
 def _build_compact_transcript(messages: Sequence[ModelMessage], max_messages: int) -> str:
@@ -700,7 +689,7 @@ def _recent_texts(messages: Sequence[ModelMessage], max_messages: int) -> list[s
     for msg in messages:
         for part in msg.parts:
             if isinstance(part, UserPromptPart) and not _is_reminder_data(part):
-                text = _prompt_text(part.content)
+                text = user_prompt_text(part)
                 if text:
                     fragments.append(_quote('message', text, role='user'))
             elif isinstance(part, TextPart) and part.content:
