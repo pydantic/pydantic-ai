@@ -342,6 +342,22 @@ async def test_missing_attachment_does_not_create_replacement(workspace_harness:
     assert backend.ref == WorkspaceRef(provider='render', id='missing')
 
 
+@pytest.mark.parametrize('attached', [False, True])
+async def test_default_working_dir_is_the_home_directory(workspace_harness: WorkspaceHarness, attached: bool) -> None:
+    """Without `working_dir`, commands start in the sandbox's home directory, also on an attached sandbox."""
+    home = workspace_harness.root / 'home'
+    home.mkdir()
+    owned = workspace_harness.backend(working_dir=None, env={'HOME': str(home)})
+    await owned.working_dir()
+    backend = (
+        RenderSandboxBackend(client=workspace_harness.client, ref=owned.ref, env={'HOME': str(home)})
+        if attached
+        else owned
+    )
+    assert await backend.working_dir() == str(home.resolve())
+    assert (await backend.run('pwd -P', shell=True)).stdout == f'{home.resolve()}\n'
+
+
 async def test_attached_sandbox_without_working_dir_is_unavailable(workspace_harness: WorkspaceHarness) -> None:
     owned = workspace_harness.backend()
     await owned.working_dir()

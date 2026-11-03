@@ -34,7 +34,7 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 
 A new sandbox can reach the internet; pass `allow_internet_access=False` to block it. It lives for 1 hour; pass up to `sandbox_timeout=86400` for longer.
 
-Commands start in `/workspace`, which is created on a new sandbox. Pass `working_dir=` for another absolute directory.
+Commands start in the sandbox's home directory. Pass `working_dir=` for another absolute directory, created on a new sandbox.
 
 ## Choose the tools
 
@@ -168,7 +168,7 @@ To keep results, read them through `ctx.workspace` in `after_run` before calling
 | `client` | A `render.RenderAsync` you own; it is never closed for you. Default: `None`, which reads `RENDER_API_KEY` and `RENDER_WORKSPACE_ID`. |
 | `allow_internet_access` | Whether a new sandbox can reach the internet. Default: `True`. |
 | `sandbox_timeout` | Seconds a new sandbox lives before Render terminates it, at most `86_400`. Default: `3_600`. |
-| `working_dir` | Absolute directory commands start in and relative paths resolve from. Default: `/workspace`, created on a new sandbox. |
+| `working_dir` | Absolute directory commands start in and relative paths resolve from, created on a new sandbox. Default: `None`, the sandbox's home directory. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment is passed. |
 
 `RenderSandbox` needs asyncio; on Trio it raises `UserError`.

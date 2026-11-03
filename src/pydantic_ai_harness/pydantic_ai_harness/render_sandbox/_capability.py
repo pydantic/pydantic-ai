@@ -14,7 +14,6 @@ from pydantic_ai_harness._workspace_provider import check_provider, check_workin
 
 from ._backend import (
     DEFAULT_SANDBOX_TIMEOUT,
-    DEFAULT_WORKING_DIR,
     RenderSandboxBackend,
     check_sandbox_timeout,
     terminate_sandbox,
@@ -45,10 +44,10 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
     sandbox_timeout: int = DEFAULT_SANDBOX_TIMEOUT
     """Seconds a newly created sandbox lives before Render terminates it, up to 86400."""
 
-    working_dir: str = DEFAULT_WORKING_DIR
+    working_dir: str | None = None
     """Absolute directory commands start in and relative paths resolve against.
 
-    Created on a new sandbox; an attached sandbox must already have it.
+    Created on a new sandbox; an attached sandbox must already have it. `None` uses the sandbox's home directory.
     """
 
     env: Mapping[str, str] | None = field(default=None, repr=False)

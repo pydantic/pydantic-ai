@@ -62,7 +62,6 @@ from ._commands import client_scope, prepare_command, run_command
 logger = logging.getLogger(__name__)
 
 DEFAULT_SANDBOX_TIMEOUT = 3_600
-DEFAULT_WORKING_DIR = '/workspace'
 _READINESS_TIMEOUT = 60.0
 _OPERATION_TIMEOUT = 30.0
 # Render allows 100 API requests a minute; readiness polling stays well under that.
@@ -99,7 +98,7 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         allow_internet_access: Whether a newly created sandbox may reach the internet.
         sandbox_timeout: Seconds a newly created sandbox lives before Render terminates it, 1 to 86400.
         working_dir: Absolute directory commands start in and relative paths resolve against. Created on a
-            new sandbox; an attached sandbox must already have it.
+            new sandbox; an attached sandbox must already have it. `None` uses the sandbox's home directory.
         env: Environment variables every command gets; per-command `env` is layered on top. Nothing is
             read from the host environment.
     """
@@ -111,7 +110,7 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         ref: WorkspaceRef | None = None,
         allow_internet_access: bool = True,
         sandbox_timeout: int = DEFAULT_SANDBOX_TIMEOUT,
-        working_dir: str = DEFAULT_WORKING_DIR,
+        working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
     ) -> None:
         if ref is not None:
@@ -179,11 +178,8 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
                         if sandbox.status in ('errored', 'terminated'):
                             raise WorkspaceUnavailableError(f'Render sandbox is {sandbox.status}')
                         await asyncio.sleep(_POLL_INTERVAL)
-                path = shlex.quote(self._working_dir)
-                prepare = f'mkdir -p -- {path} && ' if self._working_dir_pending else ''
                 resolve = prepare_command(
-                    command_argv(f'{prepare}cd -- {path} && pwd -P', shell=True),
-                    working_dir='/',
+                    command_argv(self._resolve_script(), shell=True), working_dir='/', env=self._env
                 )
                 result = await run_command(
                     client, self._ref.id, resolve, timeout=_OPERATION_TIMEOUT, stop_client=self._client
@@ -196,12 +192,25 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
                 raise WorkspaceUnavailableError('Render sandbox is missing or access was rejected') from error
             except TimeoutError as error:
                 raise TimeoutError('Render sandbox readiness exceeded its deadline') from error
-            cwd = result.stdout.rstrip('\n')
-            if result.exit_code != 0 or not cwd.startswith('/') or '\n' in cwd:
-                raise WorkspaceUnavailableError(f'working_dir {self._working_dir!r} is unavailable in the sandbox')
+            self._resolved_working_dir = self._canonical_dir(result)
             self._working_dir_pending = False
-            self._resolved_working_dir = posixpath.normpath(cwd)
             return self._resolved_working_dir
+
+    def _resolve_script(self) -> str:
+        """Shell that prints the canonical working directory, making a configured one on a new sandbox."""
+        if self._working_dir is None:
+            return 'cd && pwd -P'
+        path = shlex.quote(self._working_dir)
+        prepare = f'mkdir -p -- {path} && ' if self._working_dir_pending else ''
+        return f'{prepare}cd -- {path} && pwd -P'
+
+    def _canonical_dir(self, result: CommandResult) -> str:
+        """The directory `_resolve_script` printed, or `WorkspaceUnavailableError` if it printed none."""
+        cwd = result.stdout.rstrip('\n')
+        if result.exit_code != 0 or not cwd.startswith('/') or '\n' in cwd:
+            wanted = 'the home directory' if self._working_dir is None else f'working_dir {self._working_dir!r}'
+            raise WorkspaceUnavailableError(f'{wanted} is unavailable in the sandbox')
+        return posixpath.normpath(cwd)
 
     async def working_dir(self) -> str:
         async with self._operation() as client:
@@ -221,7 +230,9 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         check_env(env)
         values = {**self._env, **(env or {})}
         # Checked against the configured directory first, so a command too large to send creates no sandbox.
-        prepare_command(argv, working_dir=self._working_dir, env=values, timeout=timeout)
+        prepare_command(
+            argv, working_dir=self._resolved_working_dir or self._working_dir or '/', env=values, timeout=timeout
+        )
         async with self._operation() as client:
             return await self._run(client, argv, values, timeout)
 

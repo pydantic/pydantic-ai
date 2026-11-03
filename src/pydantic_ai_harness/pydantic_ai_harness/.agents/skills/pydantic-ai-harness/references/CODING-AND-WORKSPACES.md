@@ -283,7 +283,7 @@ Parameters: `denied_commands` (default `rm`, `rmdir`, `mkfs`, `dd`, `format`, `s
 | Extra | `[modal]` | `[e2b]` | `[render]` | `[sprites]` | `[daytona]` | `[boxd]` |
 | Credentials | `modal token new`, or `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` | `E2B_API_KEY` | `RENDER_API_KEY` + `RENDER_WORKSPACE_ID` | `SPRITE_TOKEN` | `DAYTONA_API_KEY` | `BOXD_API_KEY` |
 | Lifetime | `sandbox_timeout=86_400` (10 to 86,400), optional `idle_timeout`; then terminated | `sandbox_timeout=3_600` (Pro: up to 86,400); then **paused**, resumed on attach | `sandbox_timeout=3_600` (up to 86,400); then terminated | Unlimited: sleeps when idle, persists until deleted | Unlimited: stopped after `auto_stop_interval` idle minutes (default 15), started again on attach; archived after 7 days stopped, never deleted | Unlimited: suspended, then hibernated, when idle (organization defaults; `auto_suspend_timeout` seconds), woken by the next command; a stopped machine is started on attach; no delete timer unless the organization sets one |
-| Default cwd / user | `/root`, `root` | `/home/user`, `user` | `/workspace` (created) | `/home/sprite`, `sprite` | `/home/daytona`, `daytona` | `/home/boxd`, `boxd` |
+| Default cwd / user | `/root`, `root` | `/home/user`, `user` | home directory, `root` | `/home/sprite`, `sprite` | `/home/daytona`, `daytona` | `/home/boxd`, `boxd` |
 | `rg` preinstalled | Yes | No | Not documented | No | Yes | Yes |
 | New-sandbox options | `image`, `app_name`, `create_app_if_missing` | `template`, `allow_internet_access` | `allow_internet_access`, `client` | `runtime`, `client` | `snapshot`, `auto_stop_interval`, `allow_internet_access`, `client` | `org`, `snapshot`, `vcpu`, `auto_suspend_timeout`, `client` |
 
