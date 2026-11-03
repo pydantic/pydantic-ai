@@ -276,7 +276,7 @@ _NOTE_ANNOUNCEMENT: Final = (
 FRAME_SEAL: Final = 'pydantic-ai'
 """The `seal` attribute value of the `<system>` blocks on a model whose profile sets `needs_sealed_system_blocks`.
 
-It's fixed and public: it marks a block as the application's for a model that only follows sealed ones. A copy of it in
+It's fixed and public: it marks a block as the application's for a model that follows sealed ones better. A copy of it in
 text from a user, a tool or a file is still a `<system>` lookalike and gets a note (`lookalike_frame_note`).
 """
 
