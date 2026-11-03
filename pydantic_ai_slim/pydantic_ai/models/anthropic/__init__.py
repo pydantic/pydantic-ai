@@ -1009,6 +1009,15 @@ class _Thread:
         return params
 
 
+def _with_thread(
+    params: _MessageCreateParams, betas: set[str], thread: _Thread | None
+) -> tuple[_MessageCreateParams, set[str]]:
+    """`params` and `betas` for a request sent in `thread`, or unchanged when it's sent without one."""
+    if thread is None:
+        return params, betas
+    return thread.apply(params), betas | {MESSAGE_THREADS_BETA}
+
+
 @dataclass
 class _ThreadRecord:
     """Set by `_messages_create` to the fingerprint of the thread its request was sent in, if any."""
@@ -1722,7 +1731,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         prompt cache it reads) stays the same.
 
         With `thread_record`, the request uses a message thread when `anthropic_thread` is set (see
-        `_thread_attempt`), and the record gets the fingerprint to stamp on the response when it did.
+        `_first_attempt`), and the record gets the fingerprint to stamp on the response when it did.
         """
         prepared = await self._prepare_messages_create(
             messages, model_settings, model_request_parameters, compaction=compaction
@@ -1738,12 +1747,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             thread: _Thread | None = None,
         ) -> BetaMessage | AnthropicEventStream:
             max_tokens = prepared.max_tokens
-            params = self._messages_create_params(
-                messages, model_settings, prepared, container_param, thinking, thinking_override
+            params, betas = _with_thread(
+                self._messages_create_params(
+                    messages, model_settings, prepared, container_param, thinking, thinking_override
+                ),
+                betas,
+                thread,
             )
-            if thread is not None:
-                params = thread.apply(params)
-                betas = betas | {MESSAGE_THREADS_BETA}
 
             async def send(stream: bool) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
                 return await client.beta.messages.create(
@@ -1791,11 +1801,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         retry_container = prepared.container
         with map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
-                if thread_record is not None and model_settings.get('anthropic_thread') and compaction is None:
-                    return await self._thread_attempt(
-                        messages, model_settings, model_request_parameters, prepared, create, thread_record
-                    )
-                return await create(prepared.container, initial_thinking, initial_betas, initial_thinking_override)
+                return await self._first_attempt(
+                    messages, model_settings, model_request_parameters, prepared, create, thread_record, compaction
+                )
             except APIStatusError as error:
                 if (
                     is_expired_container_error(error)
@@ -1826,21 +1834,24 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             warn_stale_thinking_block_recovery(self.model_name)
             return result
 
-    async def _thread_attempt(
+    async def _first_attempt(
         self,
         messages: list[ModelMessage],
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
         prepared: _PreparedMessagesCreate,
         create: Callable[..., Awaitable[BetaMessage | AnthropicEventStream]],
-        thread_record: _ThreadRecord,
+        thread_record: _ThreadRecord | None,
+        compaction: BetaCompactionConfigParam | None,
     ) -> BetaMessage | AnthropicEventStream:
-        """Send the first attempt of a request in a message thread: a continue request when possible, else a create.
+        """Send the first attempt of a request, in a message thread when `anthropic_thread` is set.
 
-        A continue request needs the most recent response in the history to have been stored in a thread whose
-        fixed fields match this request's. A continue request that the API can't serve is replayed as a create
-        request with the full conversation. The recovery retries in `_messages_create` send no thread, as they
-        change fixed fields, so a response is only stamped with the fingerprint of a thread request that succeeded.
+        In a thread it's a continue request when possible, else a create. A continue request needs the most recent
+        response in the history to have been stored in a thread whose fixed fields match this request's. A continue
+        request that the API can't serve is replayed as a create request with the full conversation. The recovery
+        retries in `_messages_create` send no thread, as they change fixed fields, so a response is only stamped with
+        the fingerprint of a thread request that succeeded. A compaction request samples no reply, so it never uses
+        a thread.
         """
         initial = (
             prepared.container,
@@ -1848,6 +1859,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             prepared.initial_betas,
             prepared.initial_thinking_override,
         )
+        if thread_record is None or not model_settings.get('anthropic_thread') or compaction is not None:
+            return await create(*initial)
         params = self._messages_create_params(messages, model_settings, prepared, *initial[:2], initial[3])
         fingerprint = _thread_fingerprint(params, prepared.initial_betas | {MESSAGE_THREADS_BETA})
         if continuation := _thread_continuation(self, messages, fingerprint):
