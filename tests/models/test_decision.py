@@ -1724,14 +1724,16 @@ def _doubling_definitions(combine: Literal['properties', 'anyOf']) -> dict[str, 
     }
 
 
-@pytest.mark.parametrize('combine', ['properties', 'anyOf'])
 async def test_arguments_past_the_value_limit_are_not_filled(
-    allow_model_requests: None, combine: Literal['properties', 'anyOf'], monkeypatch: pytest.MonkeyPatch
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
 ):
-    """Arguments whose `$ref`s expand past the limit make the route unfillable, before a fill is asked for."""
+    """Arguments whose `$ref`s expand past the limit make the route unfillable, before a fill is asked for.
+
+    Only as `properties`: as `anyOf`, the field is one no fill could answer anyway, limit or not.
+    """
     monkeypatch.setattr('pydantic_ai._json_schema.MAX_INLINED_SCHEMA_VALUES', _VALUE_LIMIT, raising=False)
     tool = Tool.from_schema(
-        look_up, name='look_up', description='Look the order up.', json_schema=_doubling_definitions(combine)
+        look_up, name='look_up', description='Look the order up.', json_schema=_doubling_definitions('properties')
     )
     model = RoutingDecisionModel({'Triage': 0.1, 'look_up': 0.9})
 
