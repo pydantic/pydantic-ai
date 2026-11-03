@@ -141,7 +141,7 @@ def _openai_responses(client: Any) -> Model:
 
 
 def _anthropic(client: Any) -> Model:
-    return AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key='x', http_client=client))
+    return AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key='x', http_client=client))
 
 
 def _google(client: Any) -> Model:
@@ -727,13 +727,14 @@ async def test_anthropic_reads_the_summary(
     # A summary the application wrote doesn't switch on Anthropic's server-side compaction.
     assert 'context_management' not in body
     assert 'compact-2026-01-12' not in request_capture.headers[0].get('anthropic-beta', '')
+    # Sonnet 5.5 gets the sealed `<system>` rendering, so the announcement ends the top-level system prompt.
     assert body['messages'] == [
         {
             'role': 'user',
             'content': [{'type': 'text', 'text': FRAMED}, {'type': 'text', 'text': QUESTION}],
         },
-        {'role': 'system', 'content': [{'type': 'text', 'text': ANNOUNCEMENT}]},
     ]
+    assert body['system'][-1]['text'] == lookalike_note_announcement(system_role=False, sealed=True)
 
 
 @pytest.mark.parametrize('include_content', [True, False])
