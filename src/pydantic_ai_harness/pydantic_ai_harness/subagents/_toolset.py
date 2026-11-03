@@ -14,7 +14,6 @@ from typing import Any, Generic, TypeVar
 from uuid import uuid4
 
 import anyio
-from typing_extensions import TypeIs
 
 from pydantic_ai import AgentStreamEvent, CapabilityEvent
 from pydantic_ai.agent import AbstractAgent, AgentRunResult, EventStreamHandler
@@ -43,6 +42,7 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
+from pydantic_ai_harness._models import is_request_response_model
 from pydantic_ai_harness._sub_agent_output import (
     ServingModelRecorder,
     cancel_pending_output,
@@ -162,11 +162,6 @@ def _vetoed_reply(what: str, event: ParentMessage | AgentCreatedEvent) -> str:
 
 
 _EventT = TypeVar('_EventT', bound=CapabilityEvent)
-
-
-def _is_request_response_model(model: object) -> TypeIs[Model]:
-    """Narrow a model without losing its provider client type."""
-    return isinstance(model, Model)
 
 
 # Signals that must always reach the parent run, even when a delegate has
@@ -708,8 +703,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         owner = DelegationTasks.current()
         if owner is not None and agent_name in owner.agents:
             return owner.agents[agent_name]
-        # Read only when agents can be created: a durable activity's context may not carry `run_id`.
-        created = self._created.get(ctx.run_id or '', {}) if self._dynamic_agents is not None else {}
+        created = self._created_agents(ctx)
         sub_agent = self._agents.get(agent_name) or created.get(agent_name)
         if sub_agent is None:
             names = [*self._agents, *self._remote, *created]
@@ -891,10 +885,13 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             await owner.notify(record, event)
         return event
 
-    def _telemetry(self, ctx: RunContext[AgentDepsT]) -> TaskTelemetry:
+    def _created_agents(self, ctx: RunContext[AgentDepsT]) -> dict[str, SubAgent[AgentDepsT]]:
+        """The sub-agents this run created with `create_agent`."""
         # Read only when agents can be created: a durable activity's context may not carry `run_id`.
-        created = self._created.get(ctx.run_id or '', {}) if self._dynamic_agents is not None else {}
-        return TaskTelemetry.of(ctx, model_named=frozenset(created))
+        return self._created.get(ctx.run_id or '', {}) if self._dynamic_agents is not None else {}
+
+    def _telemetry(self, ctx: RunContext[AgentDepsT]) -> TaskTelemetry:
+        return TaskTelemetry.of(ctx, model_named=frozenset(self._created_agents(ctx)))
 
     def _owner(self) -> DelegationTasks:
         owner = DelegationTasks.current()
@@ -1227,7 +1224,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         # back to `None` so the sub-agent uses its own default rather than being handed a
         # model it cannot run with.
         ctx_model = ctx.model
-        return (ctx_model if _is_request_response_model(ctx_model) else None), None
+        return (ctx_model if is_request_response_model(ctx_model) else None), None
 
     async def _stream_child(
         self,

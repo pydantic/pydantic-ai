@@ -3414,7 +3414,7 @@ def prepare_return_schemas(
 
 
 def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestParameters) -> FinalResultEvent | None:
-    """Return an appropriate FinalResultEvent if `e` corresponds to a part that will produce a final result."""
+    """Return an appropriate FinalResultEvent if `e` corresponds to a part that could produce a final result."""
     if isinstance(e, PartStartEvent):
         new_part = e.part
         if (isinstance(new_part, TextPart) and params.allow_text_output) or (
