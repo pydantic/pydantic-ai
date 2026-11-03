@@ -462,6 +462,10 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one Exa agent configuration per id; two that differ need their own ids and PrefixTools',
         lambda cls: (cls(effort=None), cls(system_prompt='Be thorough.')),
     ),
+    'Pixeltable': Narrows(
+        'one Pixeltable catalog configuration per id, and its table allowlist is an access boundary',
+        lambda cls: (cls(tables=['app']), cls(tables=['app.docs'])),
+    ),
     'ExaSearch': Narrows(
         'one Exa search configuration per id, and its domain lists are an access boundary',
         lambda cls: (cls(include_domains=['a.dev']), cls(include_domains=['b.dev'])),

@@ -63,6 +63,7 @@ if TYPE_CHECKING:
     from .ordinal import Ordinal
     from .permissions import Permissions
     from .pgtask import PGTaskDurability
+    from .pixeltable import Pixeltable
     from .planning import Planning
     from .posthog import PostHog
     from .prompt_injection_defender import PromptInjectionDefender
@@ -149,6 +150,7 @@ __all__ = [
     'OutputGuardrailFunc',
     'PGTaskDurability',
     'Permissions',
+    'Pixeltable',
     'Planning',
     'PostHog',
     'PromptInjectionDefender',
@@ -228,6 +230,7 @@ _CAPABILITY_EXPORTS = {
     'Ordinal': 'ordinal',
     'PGTaskDurability': 'pgtask',
     'Permissions': 'permissions',
+    'Pixeltable': 'pixeltable',
     'Planning': 'planning',
     'PostHog': 'posthog',
     'PromptInjectionDefender': 'prompt_injection_defender',

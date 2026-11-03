@@ -161,6 +161,7 @@ _CAPABILITY_PAGE_META = {
     'smart-search.md': ('smart_search', 'Smart Search'),
     'managed-prompt.md': ('logfire', 'Managed Prompt'),
     'memory.md': ('memory', 'Memory'),
+    'pixeltable.md': ('pixeltable', 'Pixeltable'),
     'modal-sandbox.md': ('modal_sandbox', 'Modal Sandbox'),
     'docker-sandbox.md': ('docker_sandbox', 'Docker Sandbox'),
     'opensandbox-sandbox.md': ('opensandbox_sandbox', 'OpenSandbox'),
