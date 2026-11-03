@@ -1323,7 +1323,11 @@
     },
     "durable_unit_scope": {
       "engines": [
-        "durable_exec"
+        "azure_durable_task",
+        "dbos",
+        "durable_exec",
+        "prefect",
+        "temporal"
       ],
       "kinds": [
         "annotation_only",
@@ -1331,7 +1335,12 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/__init__.py::<module>",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_operation_backend.py::<module>"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_operation_backend.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_model.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::<module>",
+        "src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/_operation_backend.py::<module>"
       ]
     },
     "get_current_run_context": {

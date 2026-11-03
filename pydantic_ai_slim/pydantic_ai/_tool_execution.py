@@ -1311,6 +1311,26 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
     stream as each task completes.
     """
 
+    def _pick_winner(
+        self,
+        executable_indices: list[int],
+        output_results: dict[int, _OutputCallResult[NodeRunEndT]],
+        function_parts: dict[int, _FunctionCallParts],
+    ) -> None:
+        """Make the first valid output by emission order the final result.
+
+        A function call that submitted an output with `RunContext.submit_output` counts as an output.
+        """
+        for i in executable_indices:
+            if self.call_kinds[i] == 'output':
+                r = output_results.get(i)
+                if r is not None and r.final_result is not None:
+                    self.final_result = r.final_result
+            elif i in function_parts:
+                self._take_submission(self.tool_calls[i], function_parts[i][0])
+            if self.final_result is not None:
+                return
+
     async def _run_strategy(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:  # noqa: C901
         externally_won_id = self.final_result.tool_call_id if self.final_result is not None else None
 
@@ -1408,18 +1428,8 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                     await cancel_and_drain(*tasks)
                     raise
 
-            # Pick the winner: first valid output by emission order (or the streamed-in result), counting a
-            # function call that submitted an output with `RunContext.submit_output` as an output.
             if self.final_result is None:
-                for i in executable_indices:
-                    if self.call_kinds[i] == 'output':
-                        r = output_results.get(i)
-                        if r is not None and r.final_result is not None:
-                            self.final_result = r.final_result
-                    elif i in function_parts:
-                        self._take_submission(self.tool_calls[i], function_parts[i][0])
-                    if self.final_result is not None:
-                        break
+                self._pick_winner(executable_indices, output_results, function_parts)
 
             # If no output produced a valid result but one hit max retries, surface that error.
             if self.final_result is None:

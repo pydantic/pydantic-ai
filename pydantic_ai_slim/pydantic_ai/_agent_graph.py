@@ -2559,35 +2559,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     model_response = wrap.task.result()
                 except exceptions.SkipModelRequest as e:
                     model_response = e.response
-            except _OutputSubmitted:
+            except (_OutputSubmitted, exceptions.ModelRetry) as e:
                 self._did_stream = True
-                self._end_with_submitted_output(ctx)
-                # No request was sent, so the consumer gets an empty stream, as for a retry below.
-                empty_sr = CompletedStreamedResponse(
-                    _messages.ModelResponse(parts=[]),
-                    model_request_parameters=wrap_request_context.model_request_parameters,
-                )
-                agent_stream = self._build_agent_stream(ctx, empty_sr, wrap_request_context.model_request_parameters)
-                try:
-                    yield agent_stream
-                finally:
-                    await agent_stream.aclose_events()
-                return
-            except exceptions.ModelRetry as e:
-                self._did_stream = True
-                # No response is committed, so the step is not counted in `usage.requests`.
-                run_context = build_run_context(ctx)
-                await self._build_retry_node(ctx, e)
+                await self._end_step_without_response(ctx, e)
                 # Must still yield from @asynccontextmanager — yield an empty stream
-                dummy_sr = CompletedStreamedResponse(
-                    _messages.ModelResponse(parts=[]),
-                    model_request_parameters=wrap_request_context.model_request_parameters,
-                )
-                agent_stream = self._build_agent_stream(ctx, dummy_sr, wrap_request_context.model_request_parameters)
-                try:
+                async with self._empty_agent_stream(ctx, wrap_request_context.model_request_parameters) as agent_stream:
                     yield agent_stream
-                finally:
-                    await agent_stream.aclose_events()
                 return
             except Exception as error:
                 if error is not handoff.open_error:
@@ -2732,6 +2709,37 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # a stream that failed before producing anything doesn't.
             _usage_attribution.record_request(ctx.state.usage)
         ctx.state.message_history.append(recorded)
+
+    async def _end_step_without_response(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        error: _OutputSubmitted | exceptions.ModelRetry,
+    ) -> None:
+        """End a streamed step whose request a model request hook stopped before it was sent.
+
+        A hook either submitted the run's output or raised `ModelRetry`. No response is committed, so the
+        step is not counted in `usage.requests`.
+        """
+        if isinstance(error, _OutputSubmitted):
+            self._end_with_submitted_output(ctx)
+        else:
+            await self._build_retry_node(ctx, error)
+
+    @staticmethod
+    @asynccontextmanager
+    async def _empty_agent_stream(
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
+        model_request_parameters: models.ModelRequestParameters,
+    ) -> AsyncIterator[result.AgentStream[DepsT, T]]:
+        """An agent stream with no events, for a streamed step that ends without a response."""
+        empty_sr = CompletedStreamedResponse(
+            _messages.ModelResponse(parts=[]), model_request_parameters=model_request_parameters
+        )
+        agent_stream = ModelRequestNode._build_agent_stream(ctx, empty_sr, model_request_parameters)
+        try:
+            yield agent_stream
+        finally:
+            await agent_stream.aclose_events()
 
     @staticmethod
     def _build_agent_stream(
@@ -3962,21 +3970,6 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     'Resume it by running the agent with this message history and no new prompt.'
                 )
 
-            if (submission := ctx.deps.run_submission) is not None and submission.status == 'accepted':
-                # Submitted outside a tool call, such as from `after_model_request`: it counts as an output tool
-                # call at the start of the response, so `end_strategy` decides what happens to the response's tool
-                # calls, and none is left unanswered.
-                submitted = result.FinalResult(cast(NodeRunEndT, submission.output))
-                if tool_calls := [
-                    part for part in self.model_response.parts if isinstance(part, _messages.ToolCallPart)
-                ]:
-                    async with aclosing(self._handle_tool_calls(ctx, tool_calls, submitted=submitted)) as events:
-                        async for event in events:
-                            yield event
-                else:
-                    self._next_node = self._handle_final_result(ctx, submitted, [])
-                return
-
             is_empty = not self.model_response.parts
             # A `TextPart` with empty content carries no text output; adapters preserve such parts
             # (e.g. when a gateway returns a text item with `text: null`) so their IDs round-trip.
@@ -4136,7 +4129,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
 
         try:
-            async with aclosing(_run_stream()) as events:
+            async with aclosing(self._events_for_response(ctx, _run_stream)) as events:
                 async for event in events:
                     self.model_response.workspace_ref = ctx.deps.workspace_ref
                     yield event
@@ -4149,6 +4142,36 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             self._stream_error = e
             ctx.deps.failed_tool_nodes[id(self)] = self
             raise
+
+    def _events_for_response(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        handle_response: Callable[[], AsyncGenerator[_messages.AgentStreamEvent, None]],
+    ) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
+        """Handle the response, unless output was submitted outside a tool call, which ends the run instead.
+
+        A suspended response is always left to `handle_response`, which ends the run on it or refuses it.
+        """
+        submission = ctx.deps.run_submission
+        if self.model_response.state == 'suspended' or submission is None or submission.status != 'accepted':
+            return handle_response()
+        return self._end_with_run_submission(ctx, submission.output)
+
+    async def _end_with_run_submission(
+        self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]], output: Any
+    ) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
+        """End the run with output submitted outside a tool call, such as from `after_model_request`.
+
+        It counts as an output tool call at the start of the response, so `end_strategy` decides what happens
+        to the response's tool calls, and none is left unanswered.
+        """
+        submitted = result.FinalResult(cast(NodeRunEndT, output))
+        if tool_calls := [part for part in self.model_response.parts if isinstance(part, _messages.ToolCallPart)]:
+            async with aclosing(self._handle_tool_calls(ctx, tool_calls, submitted=submitted)) as events:
+                async for event in events:
+                    yield event
+        else:
+            self._next_node = self._handle_final_result(ctx, submitted, [])
 
     async def _handle_tool_calls(
         self,
