@@ -5,14 +5,18 @@ from pathlib import Path
 
 import json_repair
 import pytest
+from inline_snapshot import snapshot
 from logfire.testing import CaptureLogfire
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ThinkingPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileSystem
@@ -240,6 +244,44 @@ class TestRepairToolArguments:
         result = await agent.run('Echo')
         calls = [part for message in result.all_messages() for part in message.parts if isinstance(part, ToolCallPart)]
         assert calls == [ToolCallPart('echo', arguments, tool_call_id='call-1', id='fc_1', provider_name='openai')]
+
+    async def test_written_back_call_replays_to_openai_responses_without_its_item_id(self) -> None:
+        """OpenAI Responses replays its stored copy of a call sent with its item ID, so the repaired one is sent without.
+
+        The live probe on #12029 found this shape accepted: no `id`, the same `call_id`, after its reasoning item.
+        """
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[
+                        ThinkingPart('', id='rs_1', signature='encrypted', provider_name='openai'),
+                        ToolCallPart(
+                            'echo', '{"value": "secret",}', tool_call_id='call-1', id='fc_1', provider_name='openai'
+                        ),
+                    ],
+                    provider_name='openai',
+                )
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(model_for(respond), capabilities=[RepairToolArguments()])
+
+        @agent.tool_plain
+        def echo(value: str) -> str:
+            return value
+
+        history = (await agent.run('Echo')).all_messages()
+        model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='not-used'))
+        _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+            history, OpenAIResponsesModelSettings(), ModelRequestParameters()
+        )
+        replayed = [item for item in items if item.get('type') in ('reasoning', 'function_call')]
+        assert replayed == snapshot(
+            [
+                {'id': 'rs_1', 'summary': [], 'encrypted_content': 'encrypted', 'type': 'reasoning'},
+                {'name': 'echo', 'arguments': '{"value":"secret"}', 'call_id': 'call-1', 'type': 'function_call'},
+            ]
+        )
 
 
 @pytest.mark.parametrize('module', ['pydantic_ai_harness.repair_tool_arguments', 'pydantic_ai_harness.coder'])
