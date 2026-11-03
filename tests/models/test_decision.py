@@ -1707,7 +1707,7 @@ def _doubling_definitions(combine: Literal['properties', 'anyOf']) -> dict[str, 
 
     As `properties`, every level doubles the fields; as `anyOf`, it doubles the options of a single field.
     """
-    defs: dict[str, Any] = {'D0': {'type': 'string'}}
+    defs: dict[str, Any] = {'D0': {'type': 'boolean'}}
     levels = MAX_INLINED_SCHEMA_NODES.bit_length()
     for i in range(1, levels + 1):
         ref = {'$ref': f'#/$defs/D{i - 1}'}
@@ -1737,6 +1737,29 @@ async def test_arguments_past_the_node_limit_are_not_filled(
     assert [list(request.questions) for request in model.requests] == snapshot(
         [['Triage.urgent', 'Triage.action', 'route']]
     )
+
+
+@pytest.mark.parametrize('combine', ['properties', 'anyOf'])
+async def test_an_output_type_past_the_node_limit_is_refused(
+    allow_model_requests: None, combine: Literal['properties', 'anyOf']
+):
+    """Alone, an output type whose `$ref`s expand past the limit is refused before a request is sent."""
+    output_tool = ToolDefinition(
+        name='final_result',
+        description='Look the order up.',
+        kind='output',
+        parameters_json_schema=_doubling_definitions(combine),
+    )
+    model = InMemoryDecisionModel()
+
+    with pytest.raises(UserError, match=f'expand to more than {MAX_INLINED_SCHEMA_NODES:,} schema nodes'):
+        await model.request(
+            [ModelRequest(parts=[UserPromptPart('Where is my order?')])],
+            None,
+            ModelRequestParameters(output_tools=[output_tool], output_mode='tool', allow_text_output=False),
+        )
+
+    assert model.requests == []
 
 
 @pytest.mark.parametrize('schema', [True, False, {'$ref': '#/$defs/Anything'}, {'$ref': '#/$defs/Nothing'}])
