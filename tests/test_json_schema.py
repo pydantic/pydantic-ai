@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 from typing_extensions import TypeAliasType
 
-from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, Tool, UserError, _json_schema
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, Tool, UserError
 from pydantic_ai._json_schema import (
     MAX_INLINED_SCHEMA_NODES,
     InlineDefsJsonSchemaTransformer,
@@ -576,11 +576,11 @@ def test_inlining_counts_every_inlined_copy(monkeypatch: pytest.MonkeyPatch):
         '$defs': {'Wide': wide},
     }
     # The root, then three copies of `Wide` and its two properties.
-    monkeypatch.setattr(_json_schema, 'MAX_INLINED_SCHEMA_NODES', 10)
+    monkeypatch.setattr('pydantic_ai._json_schema.MAX_INLINED_SCHEMA_NODES', 10)
 
     assert InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()['properties'] == {'a': wide, 'b': wide, 'c': wide}
 
-    monkeypatch.setattr(_json_schema, 'MAX_INLINED_SCHEMA_NODES', 9)
+    monkeypatch.setattr('pydantic_ai._json_schema.MAX_INLINED_SCHEMA_NODES', 9)
 
     with pytest.raises(UserError, match='expand to more than 9 schema nodes'):
         InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
