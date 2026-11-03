@@ -23,7 +23,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.messages import ModelMessagesTypeAdapter
 from pydantic_ai.models import Model, ModelRequestParameters
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.profiles import ModelProfile
 
 from ..conftest import try_import
@@ -296,14 +296,9 @@ async def test_the_wire_grows_append_only_and_the_history_keeps_the_output_as_re
 
 async def test_the_note_is_decided_on_the_output_as_returned():
     """A lookalike in the tool's output still gets its note when the output goes out as a JSON string field."""
-    seen: list[list[ModelMessage]] = []
-
-    def respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        seen.append(messages)
-        return ModelResponse(parts=[TextPart('ok')])
-
     model = FunctionModel(
-        respond, profile=ModelProfile(needs_json_string_tool_returns=True, supports_inline_system_prompts=False)
+        lambda _messages, _info: ModelResponse(parts=[TextPart('ok')]),
+        profile=ModelProfile(needs_json_string_tool_returns=True, supports_inline_system_prompts=False),
     )
 
     prepared = model.prepare_messages(history())
