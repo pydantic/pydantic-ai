@@ -51,6 +51,12 @@ a backslash and an `n` where the file had a newline. Requiring a real one left t
 private key arrives in a support chat unredacted.
 """
 
+_PEM_BODY = (
+    rf'(?:[A-Za-z0-9+/=\s\\]*?-----END[^-\n]*PRIVATE KEY(?: BLOCK)?-----'
+    rf'|(?:\s|\\+n)*(?:[A-Za-z0-9+/=]+(?:{_NEWLINE})?)+)'
+)
+"""What follows a PEM block's header lines: its body up to the END marker or, without one, its body lines."""
+
 DEFAULT_SECRET_PATTERNS: Mapping[str, str] = {
     # Vendor key bodies are base64url, whose alphabet includes `_`. A class that
     # stops at `_` redacts half a key and leaves the rest under a label saying it
@@ -84,23 +90,29 @@ DEFAULT_SECRET_PATTERNS: Mapping[str, str] = {
     # since running to the end of the input would delete whatever the user wrote
     # after the key; it starts past any blank lines, as the terminated tail does.
     #
-    # A header value stops at a line break in any of the spellings `_NEWLINE`
-    # accepts, and takes a run of backslashes in one step rather than looking
-    # ahead from each, so a run of header lines can be read only one way.
+    # The lines after BEGIN are read one of three ways, in order:
     #
-    # A block that starts with header lines is first scanned straight to its
-    # END marker, whatever its header lines hold, so a header value broken
-    # across lines does not end the match early. The scan is tried once per
-    # BEGIN marker and stops at the next one, so scans never overlap and the
-    # pattern runs in time linear in its input. A block with no END marker
-    # gains nothing from the scan: it is taken as far as its header lines and
-    # body parse.
+    # - With real line breaks and a header line first, the header section --
+    #   every line up to the first blank one -- is taken whole, so a line in it
+    #   that is not a header, or a value quoting an END marker or holding the
+    #   two characters `\n` as a path does, does not end the block. A line that
+    #   starts with a BEGIN or END marker ends the section instead.
+    # - Otherwise, each header line runs to the end of its line, or, when no
+    #   real line break follows, to the last escaped one: a key pasted with
+    #   escaped newlines is a single line, so its header lines take everything
+    #   up to that last escaped line break, END marker included. The body after
+    #   them may be empty.
+    # - With no header line, the body follows the BEGIN line.
+    #
+    # A header value is read in runs, a backslash run in one step, and a header
+    # line is never split again once read, so the pattern runs in time linear in
+    # its input.
     'private_key': (
-        rf'-----BEGIN[^-\n]*PRIVATE KEY(?: BLOCK)?-----[ \t]*{_NEWLINE}'
-        rf'(?:(?=[A-Za-z-]+: )(?:(?!-----BEGIN)[\s\S])*?-----END[^-\n]*PRIVATE KEY(?: BLOCK)?-----'
-        rf'|(?:[A-Za-z-]+: (?:[^\r\n\\]|\r(?!\n)|\\++(?!n))*{_NEWLINE})*'
-        rf'(?:[A-Za-z0-9+/=\s\\]*?-----END[^-\n]*PRIVATE KEY(?: BLOCK)?-----'
-        rf'|(?:\s|\\+n)*(?:[A-Za-z0-9+/=]+(?:{_NEWLINE})?)+))'
+        rf'-----BEGIN[^-\n]*PRIVATE KEY(?: BLOCK)?-----[ \t]*'
+        rf'(?:\r?\n(?=[A-Za-z-]+: )'
+        rf'(?:(?!-----(?:BEGIN|END))(?:(?!-----BEGIN)[^\r\n]|\r(?!\n))+\r?\n)++(?=\r?\n){_PEM_BODY}'
+        rf'|{_NEWLINE}(?:[A-Za-z-]+: (?>(?:[^\n\\]|\\++(?!n)|\\++n)*(?:\r?\n|(?<=\\n))))+(?:{_PEM_BODY})?'
+        rf'|{_NEWLINE}{_PEM_BODY})'
     ),
 }
 """Credential shapes worth redacting, in the order they are applied.
