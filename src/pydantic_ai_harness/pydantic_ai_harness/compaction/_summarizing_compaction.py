@@ -249,9 +249,9 @@ def format_transcript(
     element carrying its `cause`, so the summarizer sees the correction a rejected call or output got
     rather than taking it for one that happened. A `RetryFeedbackPart` renders as the model was shown it.
     Tool returns and retry feedback are truncated to `tool_return_max_chars` characters with the
-    shared truncation marker; `None` renders them whole. `load_capability` calls and returns are left
-    out: which capabilities are loaded is carried by those exchanges, which a compaction records again
-    after the summary, never by the summary.
+    shared truncation marker; `None` renders them whole. Load records (`load_capability` calls and
+    returns, and the deltas a load leaves) are left out: which capabilities are loaded is carried by those
+    records, which a compaction records again after the summary, never by the summary.
     """
     elements: list[str] = []
     for msg in messages:
@@ -501,8 +501,8 @@ def _without_bridge_prefix(summary: str) -> str:
 def _adds_nothing_to_summarize(message: ModelMessage, kept: Sequence[ModelMessage]) -> bool:
     """Whether summarizing *message* would add nothing the compacted history does not already hold.
 
-    That is a message kept verbatim alongside the summary, a `load_capability` exchange (left out of the
-    transcript, and recorded again when still needed), or a request made up only of system prompts (prompts
+    That is a message kept verbatim alongside the summary, a load record (left out of the transcript, and
+    recorded again when still needed), or a request made up only of system prompts (prompts
     copied into the new summary request, or a summary from an earlier release), pins (reinjected), receipts
     (replaced), and earlier summaries.
     """
@@ -750,8 +750,8 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     preserve_loaded_capabilities: bool = field(default=True, kw_only=True)
     """When `True`, a deferred capability loaded in the summarized messages stays loaded.
 
-    Core counts a capability as loaded while its `load_capability` exchange is after the latest
-    compaction, so summarizing the exchange would unload it. Each such load is recorded again after
+    Core counts a capability as loaded while the record of its load is after the latest compaction,
+    so summarizing the record would unload it. Each such load is recorded again after
     the summary instead, and the capability's tools and current instructions are sent again. When
     `False`, those capabilities are unloaded, and a note after the summary names them so the model
     can load the ones it still needs.
