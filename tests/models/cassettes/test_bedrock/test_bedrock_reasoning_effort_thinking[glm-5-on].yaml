@@ -1,0 +1,99 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/zai.glm-5/converse
+    headers:
+      amz-sdk-invocation-id:
+      - b578374f-95ba-49c9-b33b-96d31c7d54ba
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "174"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: What is 17 * 23?
+        system: []
+        inferenceConfig: {}
+        additionalModelRequestFields:
+          reasoning_effort: high
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "1225"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 28101
+        output:
+          message:
+            content:
+            - reasoningContent:
+                reasoningText:
+                  text: |-
+                    I need to calculate the product of 17 and 23.
+                    
+                    Method 1: Standard vertical multiplication.
+                       17
+                     x 23
+                     ----
+                       51  (7 * 3 = 21, carry 2; 1 * 3 = 3 + 2 = 5)
+                      340  (2 * 17: 2 * 7 = 14, write 4 carry 1; 2 * 1 = 2 + 1 = 3)
+                     ----
+                      391
+                    
+                    Method 2: Distributive property (FOIL).
+                    17 * 23 = 17 * (20 + 3)
+                    = (17 * 20) + (17 * 3)
+                    = 340 + 51
+                    = 391
+                    
+                    Method 3: Difference of squares.
+                    17 * 23.
+                    Notice that 17 = 20 - 3 and 23 = 20 + 3.
+                    This is of the form $(a-b)(a+b) = a^2 - b^2$.
+                    Here, $a=20$ and $b=3$.
+                    $17 * 23 = 20^2 - 3^2$
+                    $= 400 - 9$
+                    $= 391$
+                    
+                    Method 4: Decomposition.
+                    17 * 23 = 17 * (17 + 6) (Since 23 is 17+6)
+                    = 17^2 + 102
+                    Wait, 17^2 is 289.
+                    289 + 102 = 391.
+                    
+                    Let's try another decomposition:
+                    23 * 10 = 230
+                    23 * 7 = 161 (20*7=140, 3*7=21 -> 140+21=161)
+                    230 + 161 = 391.
+                    
+                    All methods yield 391.
+                    
+                    Double check:
+                    10 * 23 = 230
+                    7 * 23 = 161
+                    230 + 161 = 391. Correct.
+                    
+                    Final Answer seems to be 391.
+            - text: 17 * 23 = 391.
+            role: assistant
+        stopReason: end_turn
+        usage:
+          inputTokens: 13
+          outputTokens: 430
+          serverToolUsage: {}
+          totalTokens: 443
+  recorded_at: 2026-11-03T11:00:20.645265+00:00

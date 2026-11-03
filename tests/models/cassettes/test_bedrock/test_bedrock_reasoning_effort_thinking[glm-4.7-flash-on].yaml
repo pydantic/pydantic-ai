@@ -1,0 +1,239 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/zai.glm-4.7-flash/converse
+    headers:
+      amz-sdk-invocation-id:
+      - 8a3239ca-2e9f-4e0d-aea5-2bdc213419b0
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "174"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: What is 17 * 23?
+        system: []
+        inferenceConfig: {}
+        additionalModelRequestFields:
+          reasoning_effort: high
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "1775"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 3112
+        output:
+          message:
+            content:
+            - reasoningContent:
+                reasoningText:
+                  text: |-
+                    1.  **Analyze the Request:** The user wants to calculate the product of $17$ and $23$.
+                    
+                    2.  **Determine the Method:**
+                        *   Method 1: Standard multiplication algorithm.
+                        *   Method 2: Decomposition (Break apart numbers). $17 \times 20 + 17 \times 3$.
+                        *   Method 3: Using a calculator (simulation, though I shouldn't just say "the answer is...", I need to provide the answer).
+                    
+                    3.  **Execution (Method 2 - Breaking apart):**
+                        *   $17 \times 20 = 340$
+                        *   $17 \times 3 = 51$
+                        *   $340 + 51 = 391$
+                    
+                    4.  **Execution (Method 1 - Standard):**
+                        *   $7 \times 3 = 21$ (Write down 1, carry 2)
+                        *   $10 \times 3 + 2 = 32$ (Write down 32)
+                        *   Result: $321$ (Wait, let me double-check this.)
+                    
+                        *Re-calculation Method 1:*
+                        $7 \times 3 = 21$. (Last digit 1, Carry 2).
+                        $1 \times 3 = 3$. (Add Carry 2). $3 + 2 = 5$? No, the tens place is the first '1' in 17.
+                        Let's align:
+                          $17$
+                        $\times 23$
+                        -----
+                        $17 \times 3$:
+                        $7 \times 3 = 21$. (Write 1, carry 2).
+                        $1 \times 3 = 3$. $3 + 2 (\text{carry}) = 5$.
+                        First line: $51$.
+                    
+                        $17 \times 20$:
+                        $17 \times 2 = 34$. Since it's 20, add a zero. $340$.
+                    
+                        Add them:
+                          $51$
+                          $340$
+                        -----
+                        $51 + 340 = 391$.
+                    
+                    5.  **Verification:**
+                        *   $20 \times 23 = 460$.
+                        *   $3 \times 23 = 69$.
+                        *   $460 - 69 = 391$.
+                        *   Alternatively: $(20 - 3) \times 23 = 460 - 69 = 391$.
+                    
+                    6.  **Final Answer Formulation:** "The answer is 391."
+            role: assistant
+        stopReason: end_turn
+        usage:
+          inputTokens: 13
+          outputTokens: 546
+          serverToolUsage: {}
+          totalTokens: 559
+  recorded_at: 2026-11-03T10:59:49.118206+00:00
+- request:
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/zai.glm-4.7-flash/converse
+    headers:
+      amz-sdk-invocation-id:
+      - e7c41669-0eeb-4926-8d5a-b2e9d65d0aba
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "1833"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: What is 17 * 23?
+        - role: assistant
+          content:
+          - text: |-
+              <think>
+              1.  **Analyze the Request:** The user wants to calculate the product of $17$ and $23$.
+              
+              2.  **Determine the Method:**
+                  *   Method 1: Standard multiplication algorithm.
+                  *   Method 2: Decomposition (Break apart numbers). $17 \times 20 + 17 \times 3$.
+                  *   Method 3: Using a calculator (simulation, though I shouldn't just say "the answer is...", I need to provide the answer).
+              
+              3.  **Execution (Method 2 - Breaking apart):**
+                  *   $17 \times 20 = 340$
+                  *   $17 \times 3 = 51$
+                  *   $340 + 51 = 391$
+              
+              4.  **Execution (Method 1 - Standard):**
+                  *   $7 \times 3 = 21$ (Write down 1, carry 2)
+                  *   $10 \times 3 + 2 = 32$ (Write down 32)
+                  *   Result: $321$ (Wait, let me double-check this.)
+              
+                  *Re-calculation Method 1:*
+                  $7 \times 3 = 21$. (Last digit 1, Carry 2).
+                  $1 \times 3 = 3$. (Add Carry 2). $3 + 2 = 5$? No, the tens place is the first '1' in 17.
+                  Let's align:
+                    $17$
+                  $\times 23$
+                  -----
+                  $17 \times 3$:
+                  $7 \times 3 = 21$. (Write 1, carry 2).
+                  $1 \times 3 = 3$. $3 + 2 (\text{carry}) = 5$.
+                  First line: $51$.
+              
+                  $17 \times 20$:
+                  $17 \times 2 = 34$. Since it's 20, add a zero. $340$.
+              
+                  Add them:
+                    $51$
+                    $340$
+                  -----
+                  $51 + 340 = 391$.
+              
+              5.  **Verification:**
+                  *   $20 \times 23 = 460$.
+                  *   $3 \times 23 = 69$.
+                  *   $460 - 69 = 391$.
+                  *   Alternatively: $(20 - 3) \times 23 = 460 - 69 = 391$.
+              
+              6.  **Final Answer Formulation:** "The answer is 391."
+              </think>
+        - role: user
+          content:
+          - text: <system>Please return text.</system>
+        system: []
+        inferenceConfig: {}
+        additionalModelRequestFields:
+          reasoning_effort: high
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "1509"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 3151
+        output:
+          message:
+            content:
+            - reasoningContent:
+                reasoningText:
+                  text: |-
+                    The user is asking me to multiply 17 by 23.
+                    
+                    1.  **Identify the core operation:** Multiplication.
+                    2.  **Mathematical calculation:**
+                        *   $17 \times 23$
+                        *   Method 1: Long multiplication
+                            ```
+                              17
+                            x 23
+                            ----
+                             51  (3 * 17)
+                            340  (20 * 17) -> shifted one place
+                            ----
+                             391
+                        *   Method 2: Distributive property
+                            $17 \times (20 + 3)$
+                            $= 17 \times 20 + 17 \times 3$
+                            $= 340 + 51$
+                            $= 391$
+                        *   Method 3: Break down 17
+                            $(10 + 7) \times 23$
+                            $= 10 \times 23 + 7 \times 23$
+                            $= 230 + 161$
+                            $= 391$
+                    3.  **Verification:**
+                        *   Estimate: $20 \times 20 = 400$. Since one number is lower ($17 < 20$) and one is higher ($23 > 20$), it could be around 390-$400$. 391 fits.
+                        *   Reverse check: $391 / 23$.
+                            *   $23 \times 10 = 230$
+                            *   $391 - 230 = 161$
+                            *   $161 / 23$:
+                                *   $23 \times 5 = 115$
+                                *   $23 \times 7 = 161$
+                                *   $115 + 161$ (wait, wrong step. Let's just do $161 / 23$.)
+                                *   $23 \times 7 = 161$.
+                            *   So, $10 + 7 = 17$. Correct.
+                    4.  **Formulate output:** The result is 391.
+            - text: "391"
+            role: assistant
+        stopReason: end_turn
+        usage:
+          inputTokens: 24
+          outputTokens: 427
+          serverToolUsage: {}
+          totalTokens: 451
+  recorded_at: 2026-11-03T10:59:52.398796+00:00

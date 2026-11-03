@@ -1,0 +1,66 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/deepseek.v3.2/converse
+    headers:
+      amz-sdk-invocation-id:
+      - ba3c3cda-0fd7-4368-aa7d-d9819acd8472
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "174"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: What is 17 * 23?
+        system: []
+        inferenceConfig: {}
+        additionalModelRequestFields:
+          reasoning_effort: high
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "593"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 1387
+        output:
+          message:
+            content:
+            - reasoningContent:
+                reasoningText:
+                  text: |-
+                    We are asked: "What is 17 * 23?" This is a straightforward multiplication. We can compute it directly.
+                    
+                    17 * 23 = ?
+                    
+                    We can compute: 
+                    17 * 20 = 340
+                    17 * 3 = 51
+                    Sum: 340 + 51 = 391.
+                    
+                    Alternatively, using standard multiplication: 17 * 23 = 391.
+                    
+                    Thus, the answer is 391.
+            - text: The product of 17 and 23 is 391.
+            role: assistant
+        stopReason: end_turn
+        usage:
+          inputTokens: 12
+          outputTokens: 100
+          serverToolUsage: {}
+          totalTokens: 112
+  recorded_at: 2026-11-03T11:00:22.776122+00:00

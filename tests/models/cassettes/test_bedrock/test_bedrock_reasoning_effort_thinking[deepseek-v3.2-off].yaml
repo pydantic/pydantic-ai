@@ -1,0 +1,95 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/deepseek.v3.2/converse
+    headers:
+      amz-sdk-invocation-id:
+      - 76057d70-949f-49d3-a1fe-0e748ac067bd
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "174"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: What is 17 * 23?
+        system: []
+        inferenceConfig: {}
+        additionalModelRequestFields:
+          reasoning_effort: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "826"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 2924
+        output:
+          message:
+            content:
+            - text: |-
+                Let's multiply \(17 \times 23\) step by step.
+                
+                First, write it as:  
+                \[
+                17 \times 23
+                \]
+                
+                **Method 1: Direct multiplication**  
+                \[
+                17 \times 20 = 340
+                \]  
+                \[
+                17 \times 3 = 51
+                \]  
+                Add them:  
+                \[
+                340 + 51 = 391
+                \]  
+                
+                **Method 2: Another grouping**  
+                \[
+                23 \times 10 = 230
+                \]  
+                \[
+                23 \times 7 = 161
+                \]  
+                Add them:  
+                \[
+                230 + 161 = 391
+                \]  
+                
+                **Method 3: Check using the difference of squares (trick)**  
+                \[
+                17 \times 23 = (20 - 3)(20 + 3) = 20^2 - 3^2
+                \]  
+                \[
+                400 - 9 = 391
+                \]  
+                
+                All methods give the same result.
+                
+                \[
+                \boxed{391}
+                \]
+            role: assistant
+        stopReason: end_turn
+        usage:
+          inputTokens: 12
+          outputTokens: 209
+          serverToolUsage: {}
+          totalTokens: 221
+  recorded_at: 2026-11-03T11:00:25.837505+00:00
