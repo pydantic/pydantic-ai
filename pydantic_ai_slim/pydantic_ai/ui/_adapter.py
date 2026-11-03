@@ -4,7 +4,7 @@ import re
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Mapping, Sequence
-from dataclasses import KW_ONLY, Field, dataclass, replace
+from dataclasses import KW_ONLY, Field, dataclass, field, replace
 from functools import cached_property
 from http import HTTPStatus
 from typing import (
@@ -525,6 +525,11 @@ class _ServerHeldTurn:
 
     `history[:cut_at]` is the part of the stored history the run keeps as it is.
     """
+    pending: set[str] = field(default_factory=set[str])
+    """The ids of the tool calls `history` is waiting on that the new turn leaves unanswered.
+
+    Only these can be approved, denied or answered by `deferred_tool_results`.
+    """
 
 
 def _take_new_turn(
@@ -605,7 +610,29 @@ def _take_new_turn(
             kept.append(replace(message, parts=parts))
     if dropped:
         warn_dropped_tool_results(dropped, stacklevel=5)
-    return _ServerHeldTurn(history, _drop_compaction_parts(kept), cut_at)
+    return _ServerHeldTurn(history, _drop_compaction_parts(kept), cut_at, pending)
+
+
+def _reject_answers_for_calls_not_pending(turn: _ServerHeldTurn, deferred_tool_results: DeferredToolResults) -> None:
+    """Raise a `UserError` when `deferred_tool_results` answers a tool call `turn` isn't waiting on.
+
+    Under `manage_message_history='server'`, an approval, a denial or a result can only answer a tool call
+    the stored history is waiting on, so a tool call the model didn't make, or one that's already answered,
+    is never run. The whole request is rejected rather than the answer dropped: without the answer, the run
+    would have nothing to continue with.
+    """
+    if not_pending := [
+        tool_call_id
+        for tool_call_id in (*deferred_tool_results.approvals, *deferred_tool_results.calls)
+        if tool_call_id not in turn.pending
+    ]:
+        raise UserError(
+            f'The request answers {len(not_pending)} tool call(s) that `message_history` is not waiting on: '
+            f'{", ".join(repr(tool_call_id) for tool_call_id in not_pending)}. With '
+            f"`manage_message_history='server'`, an approval or denial can only answer a tool call that is "
+            f'still pending at the end of the stored history. If the conversation changed since the client '
+            f'loaded it, reload it from the server.'
+        )
 
 
 def pending_tool_calls(message_history: Sequence[ModelMessage]) -> list[ToolCallPart]:
@@ -740,7 +767,11 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
       for one persisted another way, a regenerate is always rejected and an edit is appended.
     - A client tool result is kept only if it answers a tool call that is still unanswered at the end
       of `message_history`. Others are dropped with a warning.
-    - Tool approvals still come from the request, and the new turn is sanitized as usual.
+    - A tool approval or denial from the request has to answer a tool call that is still unanswered at
+      the end of `message_history`. A request with one that doesn't, such as for a tool call the model
+      didn't make or one that was already answered, is rejected with a protocol error event, and no tool
+      runs.
+    - The new turn is sanitized as usual.
 
     See [Keeping the history on the server](https://pydantic.dev/docs/ai/integrations/ui/overview/#keeping-the-history-on-the-server).
     """
@@ -1028,6 +1059,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             stored = message_history or []
             client_messages = self._server_held_client_messages(stored)
             turn = _take_new_turn(stored, client_messages, regenerate=self._regenerates())
+            if deferred_tool_results is not None:
+                _reject_answers_for_calls_not_pending(turn, deferred_tool_results)
             message_history, frontend_messages = turn.history, turn.new_turn
         else:
             frontend_messages = self.messages
@@ -1101,9 +1134,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         """Run the agent with the protocol-specific run input and stream Pydantic AI events.
 
         A `UserError` from [`deferred_tool_results`][pydantic_ai.ui.UIAdapter.deferred_tool_results],
-        or the one [`manage_message_history='server'`][pydantic_ai.ui.UIAdapter.manage_message_history]
-        raises for a regenerate of a message `message_history` doesn't hold, is re-raised on the first
-        iteration of the returned stream rather than at the call site, so a request rejected this way
+        or one [`manage_message_history='server'`][pydantic_ai.ui.UIAdapter.manage_message_history]
+        raises for a regenerate of a message `message_history` doesn't hold or for an approval of a tool
+        call it isn't waiting on, is re-raised on the first iteration of the returned stream rather than at the call site, so a request rejected this way
         surfaces as a protocol error event on the stream. Any other exception still raises at the call
         site, and nothing else about the run input is deferred.
 
