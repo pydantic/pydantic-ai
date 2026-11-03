@@ -2470,16 +2470,7 @@ class BedrockStreamedResponse(StreamedResponse):
                             tool_id = tool_use_start['toolUseId']
                             tool_ids[index] = tool_id
                             tool_name = tool_use_start['name']
-                            if tool_use_start.get('type') == 'server_tool_use':
-                                if tool_name == 'nova_code_interpreter':  # pragma: no branch
-                                    part = NativeToolCallPart(
-                                        tool_name=CodeExecutionTool.kind,
-                                        tool_call_id=tool_id,
-                                        provider_name=self.provider_name,
-                                    )
-                                    part.otel_metadata = {'code_arg_name': 'snippet', 'code_arg_language': 'python'}
-                                    yield self._parts_manager.handle_part(vendor_part_id=index, part=part)
-                            else:
+                            if tool_use_start.get('type') != 'server_tool_use':
                                 for event in self._parts_manager.handle_tool_call_delta_events(
                                     vendor_part_id=index,
                                     tool_name=tool_name,
@@ -2487,6 +2478,14 @@ class BedrockStreamedResponse(StreamedResponse):
                                     tool_call_id=tool_id,
                                 ):
                                     yield event
+                            elif tool_name == 'nova_code_interpreter':  # pragma: no branch
+                                part = NativeToolCallPart(
+                                    tool_name=CodeExecutionTool.kind,
+                                    tool_call_id=tool_id,
+                                    provider_name=self.provider_name,
+                                )
+                                part.otel_metadata = {'code_arg_name': 'snippet', 'code_arg_language': 'python'}
+                                yield self._parts_manager.handle_part(vendor_part_id=index, part=part)
                         elif 'toolResult' in start:  # pragma: no branch
                             tool_result_start = start['toolResult']
                             tool_id = tool_result_start['toolUseId']

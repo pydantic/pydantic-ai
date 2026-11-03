@@ -6855,34 +6855,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             vendor_part_id=f'{chunk.item.id}-return', part=return_part
                         )
                     elif isinstance(chunk.item, responses.ResponseToolSearchCall):
-                        if chunk.item.execution == 'client':
-                            # Feed the final args through the tool-call delta path so the
-                            # part manager resolves its pending args; there's no paired
-                            # `tool_search_output` — the return part is produced by the
-                            # local tool runner after the stream completes.
-                            #
-                            # OpenAI Responses streaming sometimes assigns a different
-                            # `call_id` between the `output_item.added` and `output_item.done`
-                            # frames for client-executed `tool_search_call`s; the server's
-                            # log of record is the latter. Pass it through here so the
-                            # `tool_search_output` we replay on the next turn references the
-                            # call_id the API actually expects.
-                            client_call_part = _map_client_tool_search_call(chunk.item, self.provider_name)
-                            client_args_json = client_call_part.args_as_json_str()
-                            for event in self._parts_manager.handle_tool_call_delta_events(
-                                vendor_part_id=chunk.item.id,
-                                args=client_args_json,
-                                tool_call_id=client_call_part.tool_call_id,
-                            ):
-                                yield event
-                        else:
-                            call_part = _map_tool_search_call(chunk.item, self.provider_name)
-                            for event in self._parts_manager.handle_tool_call_delta_events(
-                                vendor_part_id=f'{chunk.item.id}-call',
-                                args=cast('str | dict[str, Any] | None', call_part.args),
-                                provider_details=call_part.provider_details,
-                            ):
-                                yield event
+                        for event in self._handle_tool_search_call_done(chunk.item):
+                            yield event
                     elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):
                         if chunk.item.execution == 'server':
                             call_id = _match_tool_search_output_to_call(
@@ -7177,6 +7151,37 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 **(self.provider_details or {}),
                 'last_sequence_number': self._last_sequence_number,
             }
+
+    def _handle_tool_search_call_done(
+        self, item: responses.ResponseToolSearchCall
+    ) -> Iterator[ModelResponseStreamEvent]:
+        """Complete the tool search call part `output_item.added` started with the item's final arguments."""
+        if item.execution == 'client':
+            # Feed the final args through the tool-call delta path so the
+            # part manager resolves its pending args; there's no paired
+            # `tool_search_output` — the return part is produced by the
+            # local tool runner after the stream completes.
+            #
+            # OpenAI Responses streaming sometimes assigns a different
+            # `call_id` between the `output_item.added` and `output_item.done`
+            # frames for client-executed `tool_search_call`s; the server's
+            # log of record is the latter. Pass it through here so the
+            # `tool_search_output` we replay on the next turn references the
+            # call_id the API actually expects.
+            client_call_part = _map_client_tool_search_call(item, self.provider_name)
+            client_args_json = client_call_part.args_as_json_str()
+            yield from self._parts_manager.handle_tool_call_delta_events(
+                vendor_part_id=item.id,
+                args=client_args_json,
+                tool_call_id=client_call_part.tool_call_id,
+            )
+        else:
+            call_part = _map_tool_search_call(item, self.provider_name)
+            yield from self._parts_manager.handle_tool_call_delta_events(
+                vendor_part_id=f'{item.id}-call',
+                args=cast('str | dict[str, Any] | None', call_part.args),
+                provider_details=call_part.provider_details,
+            )
 
     def _store_conversation_id(self, response: responses.Response) -> None:
         if response.conversation:
