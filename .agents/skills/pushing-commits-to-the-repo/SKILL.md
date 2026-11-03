@@ -32,8 +32,7 @@ Set the light model's effort from the PR's complexity.
 
 ## Merge bar
 
-A maintainer with merge rights (Douwe, Aditya or Mike) merges at this bar.
-Never merge the PR yourself, except a [flake fix](#flake-fixes).
+[Who merges](#who-merges) says who merges a PR that meets this bar.
 
 | Size label | Needs |
 |---|---|
@@ -58,23 +57,35 @@ A human approval does not substitute for douwebot.
 `PR Review Gates` enforces M/L/XL against the recomputed size and exactly one matching label.
 Size S remains a manual judgment; review enforcement skips merge groups after admission.
 
+### Who merges
+
+Adding a PR to the merge queue merges it.
+A maintainer with merge rights (Douwe, Aditya or Mike) merges at the merge bar.
+Merge a PR yourself only in these two cases.
+
+**A flake fix.** Once its head meets the merge bar, add it to the merge queue yourself.
+Enqueue it after the final metadata check. Skip the second-opinion choice for a flake fix.
+[Flake fixes](#flake-fixes) defines a flake fix.
+
+**A re-enqueue.** Re-enqueue a PR the merge queue removed when all of these hold:
+
+- A maintainer enqueued it, or you enqueued it as a flake fix.
+- Since that enqueue, the PR changed only by merging `main` without conflicts, or by commits that meet the [Flake fixes](#flake-fixes) conditions.
+- Its current head meets the merge bar again.
+
+In every other case, hand the PR to a maintainer.
+For a removed PR, comment that it is ready to re-enqueue once its current head meets the merge bar again.
+
+### Merge-queue removals
+
 A merge-queue removal posts no comment and leaves the PR open. Detect it as a new `removed_from_merge_queue` event in `gh api --paginate repos/pydantic/pydantic-ai/issues/<number>/timeline` while the PR is still open; a merge logs the same event.
 Diagnose the failed jobs of the PR's newest `merge_group` run (`head_branch` `gh-readonly-queue/main/pr-<number>-<sha>`) as step 2 of "After you push — the loop" requires.
 After diagnosing, post a PR comment that names each failed job and its cause, with evidence: your fix commit, a known flake, or a failure already on `main`.
-
-Re-enqueue the PR yourself when all of these hold:
-
-- A maintainer enqueued it, or you enqueued it under [Flake fixes](#flake-fixes).
-- Since that enqueue, the PR changed only by merging `main` without conflicts, or by commits that meet the Flake fixes conditions.
-- Its current head meets the merge bar again.
-
-Otherwise, once the current head meets the merge bar again, comment that the PR is ready to re-enqueue.
+[Who merges](#who-merges) says whether you re-enqueue it.
 
 ### Flake fixes
 
 A flake fix makes a nondeterministic test failure deterministic.
-Once its head meets the merge bar, add a flake fix to the merge queue yourself.
-Enqueue it after the final metadata check. Skip the second-opinion choice for a flake fix.
 The trivial-S exception does not apply: require a clean douwebot approval.
 All of these must hold:
 
@@ -187,7 +198,6 @@ Apply the merge bar, including its trivial-S exception, to required hosted revie
 Leave automatic configured CI and hosted review workflows unchanged; they may run independently.
 Do not edit workflows or triggers to implement this exception.
 Once the merge bar is met and posted comments are triaged, hand the PR diff to the maintainer driving you, or another maintainer, to inspect and merge.
-Never merge the PR yourself.
 
 ## Mechanical text/data refreshes
 
