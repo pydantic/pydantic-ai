@@ -965,6 +965,8 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                             if event := await handle_call_or_result(tasks_by_index[index], index):
                                 yield event
                 except BaseException as e:
+                    # Cancel any still-running sibling tasks so they don't become orphaned asyncio tasks
+                    # when cancellation or an exception (e.g. RuntimeError) propagates out of handle_call_or_result().
                     await cancel_and_drain(
                         *tasks_by_index.values(),
                         msg=e.args[0] if isinstance(e, asyncio.CancelledError) and len(e.args) != 0 else None,
