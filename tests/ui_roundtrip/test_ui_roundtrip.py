@@ -1025,6 +1025,8 @@ class Client(ABC):
     def sanitize(self, adapter: UIAdapter[Any, Any, Any, Any, Any], messages: list[ModelMessage]) -> list[ModelMessage]:
         with warnings.catch_warnings():
             warnings.filterwarnings('ignore', 'Parts carrying the system voice were stripped', UserWarning)
+            # `expected` is the server's own history, whose framework state a client never has to send back.
+            warnings.filterwarnings('ignore', 'Framework-reserved `__pydantic_ai__` metadata was dropped', UserWarning)
             return adapter.sanitize_messages(messages)
 
     async def turn(

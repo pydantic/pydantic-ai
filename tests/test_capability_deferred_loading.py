@@ -1155,6 +1155,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
 """,
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'settled_loads': ['refunds']}},
             ),
             ModelResponse(
                 parts=[TextPart(content='done')],
@@ -1424,6 +1425,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
 """,
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'settled_loads': ['refunds']}},
             ),
             ModelResponse(
                 parts=[
