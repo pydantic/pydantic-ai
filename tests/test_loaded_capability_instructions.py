@@ -16,6 +16,7 @@ from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, Proc
 from pydantic_ai.messages import (
     AgentInstructionSource,
     CapabilityInstructionSource,
+    CapabilityLoadDeltaPart,
     CompactionPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
@@ -120,6 +121,16 @@ def scripted_agent(
         return 'bumped'
 
     return agent
+
+
+def load_records(messages: list[ModelMessage]) -> list[CapabilityLoadDeltaPart]:
+    return [
+        part
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, CapabilityLoadDeltaPart)
+    ]
 
 
 def deltas(messages: list[ModelMessage]) -> list[InstructionDeltaPart]:
@@ -394,6 +405,8 @@ async def test_code_loaded_capability_survives_new_instruction_window():
         'Again.', deps=Counter(), message_history=first.all_messages(), instructions='Be briefer.'
     )
     assert received.instructions[-1] != received.instructions[0]
+    assert len(load_records(first.new_messages())) == 1
+    assert load_records(second.new_messages()) == []
     assert deltas(second.new_messages()) == []
     assert received.statements[-1] == loaded_change
 
