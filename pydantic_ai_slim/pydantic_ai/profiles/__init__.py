@@ -186,10 +186,13 @@ class ModelProfile(TypedDict, total=False):
     such a block names it. A `<system>` tag in text from a user, a tool or a file still gets a note when it copies
     the seal.
 
-    Set for Claude Sonnet 4.6: with plain `<system>` blocks it ignored two mid-conversation instruction changes 8/8
-    times, and followed both 16/16 times with the seal and the sentence together (either alone: 0/8). With the
-    blocks after the user's words it also followed steering after a tool result and a change next to a user
-    lookalike 16/16 times, where ahead of them it got 0/16.
+    Set for Claude Sonnet 4.6 and Claude Haiku 5.5. Sonnet 4.6, with plain `<system>` blocks, ignored two
+    mid-conversation instruction changes 8/8 times, and followed both 16/16 times with the seal and the sentence
+    together (either alone: 0/8). With the blocks after the user's words it also followed steering after a tool
+    result and a change next to a user lookalike 16/16 times, where ahead of them it got 0/16. Haiku 5.5 honors a
+    native mid-conversation system message but did as well or better on every cell measured with this rendering
+    (instruction history 158/176 native, 64/64 sealed; a genuine change next to a tool lookalike 4-5/16 and 16/16),
+    and worse with plain `<system>` blocks, so its Anthropic profile doesn't use the native role.
     """
 
     supports_request_scoped_system_prompts: bool

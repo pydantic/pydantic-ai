@@ -26,7 +26,6 @@ _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
     'claude-opus-4-8',
     'claude-opus-5',
     'claude-sonnet-5-5',
-    'claude-haiku-5-5',
 )
 """Models that honor a `{'role': 'system'}` entry inside the Messages API's `messages` array.
 
@@ -43,6 +42,13 @@ top-level prompt set, it refuses every time. It refuses the `<system>`-tagged fa
 so the entry costs nothing measurable and keeps the instruction's operator authority.
 
 `claude-mythos-5` is published as supported but isn't reachable with our credentials.
+
+`claude-haiku-5-5` is published as supported and honors the entry, but is deliberately absent: it gets the sealed
+`<system>` rendering instead (`needs_sealed_system_blocks`), which measured equal or better on every cell. With the
+entry it tracked instruction changes 158/176 times (sealed: 64/64), followed a genuine change next to a tool's
+lookalike 4–5/16 times (16/16) and next to a user's 1–2/16 (11/16), and followed a request-scoped prompt 30/48 times
+(64/64), at +1.4% cost per cached conversation with the prefix unchanged. The unsealed fallback was worse than the
+entry on instruction history (112/176), so it's the sealed one or neither.
 
 It lives here rather than beside `AnthropicProvider` so `OpenRouterProvider` can share it without the `anthropic`
 SDK. It's a fact about Anthropic's API, not the model family, so `anthropic_model_profile()` doesn't apply it: the
@@ -504,8 +510,9 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     # thinking off, and accepts it live on the Anthropic API and Bedrock.
     disables_thinking_with_between_tools = model_name.startswith('claude-sonnet-5-5')
     distrusts_system_after_tool_result = model_name.startswith('claude-haiku-5-5')
-    # Measured on the Anthropic API, where Sonnet 4.6 has no mid-conversation system role: see the field's docstring.
-    needs_sealed_system_blocks = model_name.startswith('claude-sonnet-4-6')
+    # Measured on the Anthropic API, where neither gets a mid-conversation system role (Haiku 5.5 is left out of
+    # `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES` for this): see the field's docstring.
+    needs_sealed_system_blocks = model_name.startswith(('claude-sonnet-4-6', 'claude-haiku-5-5'))
 
     # The 5.1 generation, Opus 5.5, and Sonnet 5.5 reject a forced `tool_choice` (`any`/`tool`) outright, unlike
     # other Anthropic models which only reject forcing alongside extended thinking. Anthropic's

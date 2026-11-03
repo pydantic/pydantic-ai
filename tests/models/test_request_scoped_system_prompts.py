@@ -66,7 +66,7 @@ from pydantic_ai.tools import ToolDefinition
 from tests.function_model_prefix import REQUEST_SCOPED_PROMPT_DROPPED
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsStr, RequestCapture, try_import
+from ..conftest import IsDatetime, IsStr, RequestCapture, try_import, with_native_system_role
 from .conftest import cache_breakpoints, message_shape
 
 if TYPE_CHECKING:
@@ -972,6 +972,7 @@ async def test_openrouter_message_cache_control_goes_before_the_request_scoped_p
     model = OpenRouterModel(
         'anthropic/claude-haiku-5.5',
         provider=OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client),
+        profile=with_native_system_role,
     )
     settings: OpenRouterModelSettings = {'openrouter_cache_messages': '5m'}
 
@@ -1202,6 +1203,7 @@ async def test_lasting_text_equal_to_a_reminder_keeps_the_cache_control_openrout
     model = OpenRouterModel(
         'anthropic/claude-haiku-5.5',
         provider=OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client),
+        profile=with_native_system_role,
     )
     settings: OpenRouterModelSettings = {'openrouter_cache_messages': '5m'}
 

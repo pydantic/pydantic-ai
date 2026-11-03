@@ -37,7 +37,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..._inline_snapshot import snapshot
 from ...cassette_utils import single_request_body
-from ...conftest import IsDatetime, IsStr, RequestCapture, try_import
+from ...conftest import IsDatetime, IsStr, RequestCapture, try_import, with_native_system_role
 from ..mock_openai import MockOpenAI, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
@@ -1520,6 +1520,7 @@ async def test_openrouter_cache_messages_breakpoint_on_trailing_system_message_r
     model = OpenRouterModel(
         'anthropic/claude-haiku-5.5',
         provider=OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client),
+        profile=with_native_system_role,
     )
     agent = Agent(
         model,
@@ -1567,7 +1568,7 @@ async def test_openrouter_limit_cache_points_counts_mid_conversation_system_mess
     survive the trim in the request body.
     """
     client = _done_mock_client()
-    model = OpenRouterModel('anthropic/claude-haiku-5.5', provider=OpenRouterProvider(openai_client=client))
+    model = OpenRouterModel('anthropic/claude-sonnet-5.5', provider=OpenRouterProvider(openai_client=client))
     agent = Agent(model, instructions='You are a helpful assistant.')
 
     @agent.tool_plain

@@ -17427,7 +17427,7 @@ async def test_anthropic_model_retrying_after_empty_response(allow_model_request
     agent = Agent(model=model)
 
     result = await agent.run(message_history=message_history)
-    assert result.output == snapshot('Hello! How can I help you today?')
+    assert result.output == snapshot('Hi! How can I help you today?')
     assert result.new_messages() == snapshot(
         [
             ModelRequest(
@@ -17443,17 +17443,26 @@ async def test_anthropic_model_retrying_after_empty_response(allow_model_request
                 conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='Hello! How can I help you today?')],
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        signature='CAQStwYKEAgTGAI4AUIIdGhpbmtpbmcSDE8B95amO+jBkP7vMhoMIWwBvB1VLwITosr3IjD58MONbVeM4FnRYq5NKTTMXfA8zW9O5loz/LzOUvBpJFwl7GuTHC+bXC6piLa+xYsq1AU9zYgB52YSHumvWb5V5dIDHaRenx7EKMCsYPv57OGvopBj1oDGP7LZjUOqnvQ1r5MPJNAC6ZNzGqP/CCc+Yuu4y4gJkBMJHIy12YLcov8BvHgIqvXgeS6CHuvm/5hI7YsycL4xXwe6n7uAfgsCe+aZsAwgc7MTSbeGnZZSz7hUl+/UCKw51wiHOMJf23cc62svSBllN/jWAs8XMAmMP4ZZxW/DBTvml7IL23GbORl0cB7DjQRtKpciusPm4H2dF81FPCY4kGCwOcd9UslnemjMDx8KAcoNSl5fHkO6+KbNLrv/qLIUNcTRkGECJtwUn0HdDWo6XFWTBpOTijSLuCYO8grPFc8/mIlPyzNjFGi+LiEzH8NneEKLEwO7mOCy21A3y4jU1hfiwEwh8HtYG23wGGORD3ScYNIWgghcdy+Tw9N4r5IMpoFwNivB30TOp/iNdiHTsShjBw85j06siOvG5hNe9TI4ySYkpMkYxrJa1GI24KPiF5DJz7eWZVDfnr3pOT4E9rUo+HlxT3gUbFqo2V9j+pKNhf6VWLaQKrYGRiH2JlJDqFlBicxF+rudU9RCd8X1w/CtA8xborVydxPmYidmMl0VHGNG03GoXx0D89NAWEsqpiwXZ9j8KW+fldYzt4z2qJofrPI7dnecO0tEVGvyys5orwV2L5+JXOzr4fCevGHGeuNxyoT105te+VrDljhJvmhe68VTHW4bPEBv9aMPMraMyRKcRPafwoEUxf2h/AZImELmG1PJ95QVNfS3kzbrJpSc0hRKro3etCxxT1h6g9+uclz0s05qTo8yNzTcaGcrhi/Tee58RxuPGJLMSpdVyskCq8hQ/ADUyR0rO6bH2UR951YojWW43SgZNW4SiVMgElD31vQ7yoR5IqVjdUSVvrpesATsaAIG945IOUl4Fg+xX6TYfW1c/Pd3DllV+1+m49oHbsa/AUhZPgq7fRqTGAE=',
+                        provider_name='anthropic',
+                    ),
+                    TextPart(content='Hi! How can I help you today?'),
+                ],
                 usage=RequestUsage(
-                    input_tokens=17,
-                    output_tokens=13,
+                    input_tokens=33,
+                    output_tokens=77,
                     details={
-                        'input_tokens': 17,
-                        'output_tokens': 13,
+                        'input_tokens': 33,
+                        'output_tokens': 77,
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
+                        'thinking_tokens': 64,
                     },
-                    cost=Decimal('0.0000082'),
+                    output_reasoning_tokens=64,
+                    cost=Decimal('0.0000418'),
                 ),
                 model_name='claude-haiku-5-5',
                 model_id='anthropic:claude-haiku-5-5',
@@ -17461,7 +17470,7 @@ async def test_anthropic_model_retrying_after_empty_response(allow_model_request
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_011CgNPy6iLgL2TSAET3uvs9',
+                provider_response_id='msg_011Cgf2dJM9FBjagKe12oet1',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),

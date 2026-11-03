@@ -1834,7 +1834,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             messages,
             keep_feedback=self._renders_retry_feedback,
             # Without a system role, a retry that would join the standing prompt is a `<system>` block like the rest.
-            sealed=not inline_system and self.profile.get('needs_sealed_system_blocks', False),
+            sealed=self._seals_system_blocks,
         )
         messages = _replace_unsupported_tool_return_files(messages, self.profile)
         authored, messages = _tool_results_first(authored, messages)
@@ -1927,7 +1927,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             messages = _wrap_non_leading_system_prompts(
                 messages,
                 standing_prompt_count=standing_prompt_count,
-                sealed=self.profile.get('needs_sealed_system_blocks', False),
+                sealed=self._seals_system_blocks,
             )
 
         messages = _order_tool_results_by_call(messages)
@@ -1966,6 +1966,13 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             return messages
 
         return _replace_tool_search_exchanges_with_deltas(messages, translated_call_ids)
+
+    @property
+    def _seals_system_blocks(self) -> bool:
+        """Whether this model's `<system>` blocks carry the seal: no mid-conversation system role, and the profile's `needs_sealed_system_blocks`."""
+        return not self.profile.get('supports_inline_system_prompts', False) and self.profile.get(
+            'needs_sealed_system_blocks', False
+        )
 
     @property
     def _system_entries_follow_user_turn(self) -> bool:
@@ -2076,7 +2083,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         )
         user_lookalike = any(source == 'user' for _, sources, _ in expanded for source, _ in sources)
         genuine_change = has_genuine and not user_lookalike
-        sealed = not inline_system and self.profile.get('needs_sealed_system_blocks', False)
+        sealed = self._seals_system_blocks
         parts: list[ModelRequestPart] = []
         framed: list[ModelRequestPart] = []
         tool_notes: list[SystemPromptPart] = []
@@ -2145,14 +2152,20 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             # after them, Claude Sonnet 5.5 on Bedrock followed a genuine change 0/8 times, ahead of them 7/8. That holds
             # for a tool's note that names them too: Kimi K2.5 followed the genuine change 28/32 times with it ahead of
             # the note, 15/32 with the note first.
-            note_ids = {id(n) for n in [*tool_notes, *(p for p in framed if isinstance(p, SystemPromptPart))]}
-            first_note = next((i for i, p in enumerate(parts) if id(p) in note_ids), None)
+            first_note = next((i for i, p in enumerate(parts) if isinstance(p, _FrameworkNote)), None)
             if first_note is not None:
                 rest = parts[first_note:]
-                genuine = [p for p in rest if isinstance(p, SystemPromptPart) and id(p) not in note_ids]
-                if genuine:
-                    genuine_ids = {id(p) for p in genuine}
-                    parts = [*parts[:first_note], *genuine, *(p for p in rest if id(p) not in genuine_ids)]
+                # A capability part's note stays with the content it's about.
+                genuine = [
+                    p
+                    for p in rest
+                    if isinstance(p, SystemPromptPart)
+                    and not isinstance(p, _FrameworkNote)
+                    and id(p) not in capability_notes
+                ]
+                genuine_ids = {id(p) for p in genuine}
+                others = [p for p in rest if id(p) not in genuine_ids]
+                parts = [*parts[:first_note], *genuine, *others]
             if sealed:
                 parts = _system_prompts_after_user_words(parts, leading=leading)
         framed_ids = {id(part) for part in framed}
@@ -2382,9 +2395,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             and not self.profile.get('supports_inline_system_prompts', False)
             and (parts or _first_request_has_standing_prompt(messages))
         ):
-            announcement = lookalike_note_announcement(
-                system_role=False, sealed=self.profile.get('needs_sealed_system_blocks', False)
-            )
+            announcement = lookalike_note_announcement(system_role=False, sealed=self._seals_system_blocks)
             parts = [*(parts or []), _FrameworkInstructionPart(content=announcement, dynamic=True)]
         return parts
 

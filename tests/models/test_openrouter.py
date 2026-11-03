@@ -1490,7 +1490,8 @@ _MID_CONVERSATION_HISTORY: list[ModelMessage] = [
         ('anthropic/claude-opus-5', True),
         ('anthropic/claude-opus-5.5', True),
         ('anthropic/claude-sonnet-5.5', True),
-        ('anthropic/claude-haiku-5.5', True),
+        # Kept by OpenRouter, but Haiku 5.5's profile uses the sealed `<system>` rendering instead.
+        ('anthropic/claude-haiku-5.5', False),
         ('~anthropic/claude-opus-latest', False),
         ('anthropic/claude-sonnet-5', False),
         ('anthropic/claude-opus-4.7', False),
@@ -1628,7 +1629,7 @@ async def test_openrouter_anthropic_system_message_moves_past_tool_results(allow
         ModelResponse(parts=[TextPart(content='Trouvé.')]),
     ]
     client = MockOpenAI.create_mock(_openrouter_completion('Done.'))
-    model = OpenRouterModel('anthropic/claude-haiku-5.5', provider=OpenRouterProvider(openai_client=client))
+    model = OpenRouterModel('anthropic/claude-sonnet-5.5', provider=OpenRouterProvider(openai_client=client))
 
     await Agent(model).run('Thanks.', message_history=history)
 
@@ -1649,7 +1650,7 @@ async def test_openrouter_anthropic_system_message_moves_past_tool_results(allow
 
 @pytest.mark.parametrize(
     'model_name,position',
-    [('anthropic/claude-haiku-5.5', 'preceding'), ('openai/gpt-6-luna', 'following')],
+    [('anthropic/claude-sonnet-5.5', 'preceding'), ('openai/gpt-6-luna', 'following')],
 )
 async def test_openrouter_lookalike_note_names_where_the_user_message_is(
     allow_model_requests: None, model_name: str, position: str
@@ -1680,7 +1681,7 @@ async def test_openrouter_anthropic_system_message_moves_past_effort_change(allo
     A unit test because the claim is the exact message order sent.
     """
     client = MockOpenAI.create_mock(_openrouter_completion('Shelf 41.'))
-    model = OpenRouterModel('anthropic/claude-haiku-5.5', provider=OpenRouterProvider(openai_client=client))
+    model = OpenRouterModel('anthropic/claude-sonnet-5.5', provider=OpenRouterProvider(openai_client=client))
     history: list[ModelMessage] = [
         ModelRequest(
             parts=[
@@ -1723,7 +1724,7 @@ async def test_openrouter_cache_instructions_skip_mid_conversation_system_messag
     A unit test because the claim is where the breakpoint lands in the request body.
     """
     client = MockOpenAI.create_mock(_openrouter_completion('Done.'))
-    model = OpenRouterModel('anthropic/claude-haiku-5.5', provider=OpenRouterProvider(openai_client=client))
+    model = OpenRouterModel('anthropic/claude-sonnet-5.5', provider=OpenRouterProvider(openai_client=client))
 
     await Agent(model).run(
         'Continue.',
@@ -1754,7 +1755,7 @@ async def test_openrouter_cache_messages_skip_request_scoped_system_message(allo
     because the claim is where the breakpoint lands in the request body.
     """
     client = MockOpenAI.create_mock(_openrouter_completion('Done.'))
-    model = OpenRouterModel('anthropic/claude-haiku-5.5', provider=OpenRouterProvider(openai_client=client))
+    model = OpenRouterModel('anthropic/claude-sonnet-5.5', provider=OpenRouterProvider(openai_client=client))
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Hello.')]),
         ModelResponse(parts=[TextPart(content='Hi.')]),
