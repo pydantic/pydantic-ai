@@ -806,6 +806,20 @@ def test_handle_slash_command_other():
     assert io.getvalue() == snapshot('Unknown command `/foobar`\n')
 
 
+def test_handle_slash_command_unknown_with_markup_chars():
+    """Markup characters in the user's input must be shown literally, not crash the REPL.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/12123.
+    """
+    io = StringIO()
+    assert handle_slash_command('/foo[/bar]', [], False, Console(file=io), 'default') == (None, False)
+    assert io.getvalue() == snapshot('Unknown command `/foo[/bar]`\n')
+
+    io = StringIO()
+    assert handle_slash_command('/usage-[/x]', [], False, Console(file=io), 'default') == (None, False)
+    assert io.getvalue() == snapshot('Unknown `/usage` option `/usage-[/x]`\n')
+
+
 def test_format_usage():
     usage = RunUsage(input_tokens=1521, output_tokens=326, requests=1)
     assert format_usage(usage, 1) == snapshot("""\
