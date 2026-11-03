@@ -28,6 +28,7 @@ def limit_retry_after(*, model: Model) -> None:
 
 
 async def limit_response_retry_after(response: httpx2.Response) -> None:
+    """Stop the SDK retrying a Messages API 429 whose `Retry-After` exceeds the wait budget."""
     if response.status_code != 429 or response.headers.get('x-should-retry') == 'false':
         return
     request = response.request

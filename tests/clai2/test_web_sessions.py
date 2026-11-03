@@ -33,6 +33,7 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, Transcript
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 
+from .test_live_runtimes import until
 from .test_web import HOSTS, TOKEN, QuestionModel, static_dir
 from .test_web_parts import REQUEST
 
@@ -430,6 +431,8 @@ def test_archiving_closes_an_idle_session_no_browser_shows(make_fleet: MakeFleet
         messages(socket, until=snapshot_of(b))
         fleet.post(f'/api/sessions/{b}/input', {'text': 'hi'})
         messages(socket, until=kind('turn_ended', session=b))
+        # `turn_ended` is sent as the run returns; b handles the turn's end a while longer, so it is not idle yet.
+        fleet.portal.call(until, fleet.launch.process.live, lambda: fleet.runtimes['b'].idle)
         refused = fleet.post('/api/sessions/archive', {'ids': [b]})
         assert (refused.status_code, 'is open in another live session' in refused.json()['detail']) == (400, True)
         refused = fleet.post('/api/sessions/archive', {'ids': [a]})
@@ -640,7 +643,13 @@ async def test_a_host_outside_the_loader_is_its_one_session() -> None:
     unwatch()
     assert (session.session_id, session.workspace, session.conversation) == (None, Path.cwd(), host.conversation)
     assert (session.status, session.sessions, session.tasks) == (host.status, None, None)
-    assert (session.running, session.queued, session.watchers, session.interrupt()) == (False, 0, 0, False)
+    assert (session.running, session.busy, session.queued, session.watchers, session.interrupt()) == (
+        False,
+        False,
+        0,
+        0,
+        False,
+    )
     assert (session.queue, session.steer('hi')) == ([], False), 'a bare host queues nothing and steers nothing'
     for change in (lambda: session.edit_queued('q1', 'x'), lambda: session.remove_queued('q1')):
         with pytest.raises(LookupError, match='no longer queued'):

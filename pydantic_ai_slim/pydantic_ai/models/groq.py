@@ -854,14 +854,13 @@ class GroqStreamedResponse(StreamedResponse):
 
                     # Handle the tool calls
                     for dtc in choice.delta.tool_calls or []:
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                        for event in self._parts_manager.handle_tool_call_delta_events(
                             vendor_part_id=dtc.index,
                             tool_name=dtc.function.name if dtc.function is not None else None,
                             args=dtc.function.arguments if dtc.function is not None else None,
                             tool_call_id=dtc.id,
-                        )
-                        if maybe_event is not None:
-                            yield maybe_event
+                        ):
+                            yield event
             except APIError as e:
                 # The Groq SDK tries to be helpful by raising an exception when generated tool arguments don't match the schema,
                 # but we'd rather handle it ourselves so we can tell the model to retry the tool call

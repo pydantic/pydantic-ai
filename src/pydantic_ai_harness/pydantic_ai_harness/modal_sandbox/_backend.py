@@ -152,7 +152,6 @@ def _translate(error: Exception, *, context: str, unavailable: str, path: str | 
             exc.ExecutionError,
             exc.RequestSizeError,
             exc.SandboxFilesystemError,
-            exc.FilesystemExecutionError,
         ),
     ):
         return WorkspaceError(f'{context}: {error}')
