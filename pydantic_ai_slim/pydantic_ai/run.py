@@ -24,6 +24,7 @@ from . import (
     messages as _messages,
     usage as _usage,
 )
+from ._conversation_marks import mark_stored
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._instrumentation import current_otel_traceparent
 from ._run_context import (
@@ -54,6 +55,10 @@ class _AgentRunResultData(TypedDict, Generic[OutputDataT]):
     usage: NotRequired[_usage.RunUsage]
     run_id: NotRequired[str]
     conversation_id: NotRequired[str]
+    conversation_revision: NotRequired[str | None]
+    conversation_unsaved: NotRequired[list[_messages.ModelMessage]]
+    conversation_unchecked: NotRequired[bool]
+    conversation_saved: NotRequired[bool]
     metadata: NotRequired[dict[str, Any] | None]
     traceparent: NotRequired[str | None]
 
@@ -73,6 +78,10 @@ class _AgentRunResultInput(TypedDict, Generic[OutputDataT], total=False):
     usage: _usage.RunUsage
     run_id: str
     conversation_id: str
+    conversation_revision: str | None
+    conversation_unsaved: list[_messages.ModelMessage]
+    conversation_unchecked: bool
+    conversation_saved: bool
     metadata: dict[str, Any] | None
     traceparent: str | None
 
@@ -106,7 +115,26 @@ def _output_field_schema(schema: CoreSchema) -> CoreSchema:
     return next(field['schema'] for field in schema['fields'] if field['name'] == 'output')
 
 
-_STATE_KEYS = ('usage', 'run_id', 'conversation_id', 'metadata')
+_STAMPED_FIELDS = ('timestamp', 'instructions', 'run_id', 'conversation_id')
+"""The fields a run fills in on a message it sends, when the message has them but they aren't set yet."""
+
+
+def _rewritten(message: _messages.ModelMessage, original: _messages.ModelMessage) -> bool:
+    """Whether `message` differs from `original` other than by what a run fills in on a request it sends."""
+    filled = {name: getattr(message, name, None) for name in _STAMPED_FIELDS if getattr(original, name, False) is None}
+    return message != dataclasses.replace(original, **filled)
+
+
+_STATE_KEYS = (
+    'usage',
+    'run_id',
+    'conversation_id',
+    'conversation_revision',
+    'conversation_unsaved',
+    'conversation_unchecked',
+    'conversation_saved',
+    'metadata',
+)
 """Serialized keys that live on `GraphAgentState` rather than on `AgentRunResult` itself."""
 
 
@@ -116,10 +144,17 @@ def _filtered_value(value: Any, spec: Any, *, keep: bool) -> Any:
     Filters the container rather than re-serializing it, so the value stays whatever the outer
     schema expects. That bounds what can be applied: a plain set of keys or indices, against a
     mapping or a sequence — `exclude={'metadata': {'api_key'}}` and `exclude={'messages': {0}}`,
-    the forms a caller reaches for to redact an entry or drop a message. A deeper spec, or one
-    aimed at a key whose value is neither (`usage`), would need that value re-serialized against a
-    sub-schema, so it is left alone; see `_filter_serialized`.
+    the forms a caller reaches for to redact an entry or drop a message — or the same keys mapped
+    to `True`, which Pydantic treats as that set. A deeper spec, or one aimed at a key whose value
+    is neither (`usage`), would need that value re-serialized against a sub-schema, so it is left
+    alone; see `_filter_serialized`.
     """
+    if isinstance(spec, Mapping):
+        sub_specs = cast('Mapping[Any, Any]', spec)
+        # An empty mapping names no keys, but `all()` alone would accept it as an empty key set.
+        if not (sub_specs and all(sub_spec is True for sub_spec in sub_specs.values())):
+            return value
+        spec = set(sub_specs)
     if not isinstance(spec, set):
         return value
     if isinstance(value, Mapping):
@@ -240,6 +275,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         _agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any], FinalResult[OutputDataT]
     ]
     _result_override: AgentRunResult[OutputDataT] | None = dataclasses.field(default=None, repr=False, init=False)
+    # Cached errors retain step tracebacks. Those completed frames must drop this run and
+    # bound callbacks to avoid a run -> error -> traceback -> run cycle.
     _node_error: BaseException | None = dataclasses.field(default=None, repr=False, init=False)
     """Stores the original exception from node execution, before context manager __aexit__ may transform it."""
     _last_yielded_node: _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]] | None = (
@@ -350,45 +387,49 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         Advancing goes through [`next()`][pydantic_ai.run.AgentRun.next], so capability hooks fire
         exactly as they do for [`agent.run()`][pydantic_ai.agent.AbstractAgent.run].
         """
-        if self._result_override is not None:
-            raise StopAsyncIteration
+        try:
+            if self._result_override is not None:
+                raise StopAsyncIteration
 
-        previous = self._last_yielded_node
-        if isinstance(previous, End):
-            # The run already completed; a trailing `__anext__` (e.g. the one `async for` performs
-            # after yielding `End`) must stop cleanly even if `cancel()` was requested as the final
-            # step finished — cancelling an already-finished run is a no-op.
-            raise StopAsyncIteration
+            previous = self._last_yielded_node
+            if isinstance(previous, End):
+                # The run already completed; a trailing `__anext__` (e.g. the one `async for` performs
+                # after yielding `End`) must stop cleanly even if `cancel()` was requested as the final
+                # step finished — cancelling an already-finished run is a no-op.
+                raise StopAsyncIteration
 
-        self.ctx.deps.cancellation.bind()
-        if self.ctx.deps.cancellation.cancel_requested:
-            # Honor a first-party cancellation (`cancel()` on this run, possibly from the caller's
-            # previous loop body) before yielding another node the caller would go on to run. The
-            # first node is yielded before it runs, so unlike `self.next(previous)` this boundary
-            # has no awaited step to carry the pending `task.cancel()`: yield to the scheduler so
-            # it's delivered here on every Python version (`raise_if_cancelling` only re-asserts on
-            # 3.11+, and neither path awaits).
-            await anyio.lowlevel.checkpoint()
-        _utils.raise_if_cancelling()
+            self.ctx.deps.cancellation.bind()
+            if self.ctx.deps.cancellation.cancel_requested:
+                # Honor a first-party cancellation (`cancel()` on this run, possibly from the caller's
+                # previous loop body) before yielding another node the caller would go on to run. The
+                # first node is yielded before it runs, so unlike `self.next(previous)` this boundary
+                # has no awaited step to carry the pending `task.cancel()`: yield to the scheduler so
+                # it's delivered here on every Python version (`raise_if_cancelling` only re-asserts on
+                # 3.11+, and neither path awaits).
+                await anyio.lowlevel.checkpoint()
+            _utils.raise_if_cancelling()
 
-        if previous is None:
-            # The first node hasn't run yet: yield it so the caller can inspect (or replace) it,
-            # and run it on the next iteration.
-            node = self.next_node
-        elif (current := self.next_node) is not previous:
-            # The loop body advanced the run itself, e.g. by calling `next()` on the node we just
-            # yielded. Running `previous` again here would execute it — and its hooks — a second
-            # time, so surface where the graph actually is instead.
-            node = current
-        else:
-            try:
-                node = await self.next(previous)
-            except BaseException as exc:
-                self._node_error = exc
-                raise
+            if previous is None:
+                # The first node hasn't run yet: yield it so the caller can inspect (or replace) it,
+                # and run it on the next iteration.
+                node = self.next_node
+            elif (current := self.next_node) is not previous:
+                # The loop body advanced the run itself, e.g. by calling `next()` on the node we just
+                # yielded. Running `previous` again here would execute it — and its hooks — a second
+                # time, so surface where the graph actually is instead.
+                node = current
+            else:
+                try:
+                    node = await self.next(previous)
+                except BaseException as exc:
+                    self._node_error = exc
+                    raise
 
-        self._last_yielded_node = node
-        return node
+            self._last_yielded_node = node
+            return node
+        finally:
+            # See _node_error: cached tracebacks must not retain this run or bound callbacks.
+            del self
 
     def _task_to_node(
         self, task: EndMarker[FinalResult[OutputDataT]] | JoinItem | Sequence[GraphTaskRequest]
@@ -462,12 +503,16 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         node: _agent_graph.AgentNode[AgentDepsT, Any],
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         """Execute a single graph step without firing capability hooks."""
-        task = [self._node_to_task(node)]
         try:
-            task = await self._graph_run.next(task)
-        except StopAsyncIteration:
-            pass
-        return self._task_to_node(task)
+            task = [self._node_to_task(node)]
+            try:
+                task = await self._graph_run.next(task)
+            except StopAsyncIteration:
+                pass
+            return self._task_to_node(task)
+        finally:
+            # See _node_error: cached tracebacks must not retain this run or bound callbacks.
+            del self
 
     async def _wrap_and_advance_streaming(
         self,
@@ -537,45 +582,51 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         # the previous step (manual `next()` from another task), the controller must target this
         # driver so `cancel()` interrupts the hook, not the old task. `_wrap_and_advance` re-binds
         # (idempotently) for the `run_stream()` path, which fires `before_node_run` separately.
-        self.ctx.deps.cancellation.bind()
-        run_context = _agent_graph.build_run_context(self.ctx)
-        cap = self.ctx.deps.root_capability
+        try:
+            self.ctx.deps.cancellation.bind()
+            run_context = _agent_graph.build_run_context(self.ctx)
+            cap = self.ctx.deps.root_capability
 
-        async def lifecycle(
-            lifecycle_node: _agent_graph.AgentNode[AgentDepsT, Any],
-        ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
-            lifecycle_node = await cap.before_node_run(run_context, node=lifecycle_node)
-            # A `before_node_run` hook that absorbed an external cancellation must not
-            # let the node itself start.
-            _utils.raise_if_cancelling()
-            try:
-                result = await step_fn(lifecycle_node)
-            except Exception as e:
-                if not cap._has_on_node_run_error:  # pyright: ignore[reportPrivateUsage]
-                    raise
-                result = await cap.on_node_run_error(run_context, node=lifecycle_node, error=e)
-                # The graph runner is in `ErrorMarker` state; update it to match the recovery.
+            async def lifecycle(
+                lifecycle_node: _agent_graph.AgentNode[AgentDepsT, Any],
+            ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+                # Ruff needs explicit shared cells when the outer finally deletes them.
+                nonlocal self, step_fn
+                lifecycle_node = await cap.before_node_run(run_context, node=lifecycle_node)
+                # A `before_node_run` hook that absorbed an external cancellation must not
+                # let the node itself start.
+                _utils.raise_if_cancelling()
+                try:
+                    result = await step_fn(lifecycle_node)
+                except Exception as e:
+                    if not cap._has_on_node_run_error:  # pyright: ignore[reportPrivateUsage]
+                        raise
+                    result = await cap.on_node_run_error(run_context, node=lifecycle_node, error=e)
+                    # The graph runner is in `ErrorMarker` state; update it to match the recovery.
+                    self._sync_graph_state(result)
+                # If the step or recovery absorbed an external cancellation, re-assert it before
+                # `after_node_run` fires; the step's messages are already recorded.
+                _utils.raise_if_cancelling()
+                pre_hook_result = result
+                result = await cap.after_node_run(run_context, node=lifecycle_node, result=result)
+                if result is not pre_hook_result:
+                    self._sync_graph_state(result)
+                _utils.raise_if_cancelling()
+                return result
+
+            if cap._has_wrap_node_run:  # pyright: ignore[reportPrivateUsage]
+                result = await cap.wrap_node_run(run_context, node=node, handler=lifecycle)
+            else:
+                result = await lifecycle(node)
+            # After every capability hook, `wrap_node_run` included, so a message a hook enqueued while
+            # the run was ending still gets its turn instead of being lost.
+            result = drain_pending_messages_at_end(run_context, result)
+            if not self._graph_reflects(result):
                 self._sync_graph_state(result)
-            # If the step or recovery absorbed an external cancellation, re-assert it before
-            # `after_node_run` fires; the step's messages are already recorded.
-            _utils.raise_if_cancelling()
-            pre_hook_result = result
-            result = await cap.after_node_run(run_context, node=lifecycle_node, result=result)
-            if result is not pre_hook_result:
-                self._sync_graph_state(result)
-            _utils.raise_if_cancelling()
             return result
-
-        if cap._has_wrap_node_run:  # pyright: ignore[reportPrivateUsage]
-            result = await cap.wrap_node_run(run_context, node=node, handler=lifecycle)
-        else:
-            result = await lifecycle(node)
-        # After every capability hook, `wrap_node_run` included, so a message a hook enqueued while
-        # the run was ending still gets its turn instead of being lost.
-        result = drain_pending_messages_at_end(run_context, result)
-        if not self._graph_reflects(result):
-            self._sync_graph_state(result)
-        return result
+        finally:
+            # See _node_error: cached tracebacks must not retain this run or bound callbacks.
+            del self, step_fn
 
     async def next(
         self,
@@ -655,7 +706,11 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """
         # Note: It might be nice to expose a synchronous interface for iteration, but we shouldn't do it
         # on this class, or else IDEs won't warn you if you accidentally use `for` instead of `async for` to iterate.
-        return await self._run_node_with_hooks(node, self._stream_and_advance)
+        try:
+            return await self._run_node_with_hooks(node, self._stream_and_advance)
+        finally:
+            # See _node_error: cached tracebacks must not retain this run or bound callbacks.
+            del self
 
     async def _stream_and_advance(
         self,
@@ -667,9 +722,13 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         streamed, so streaming is enabled for it here the same way `agent.run()` enables it.
         `node.stream()` applies the capability chain itself, so draining it is all that's needed.
         """
-        if self.ctx.deps.root_capability.has_wrap_run_event_stream or self.ctx.deps.root_capability.has_on_event:
-            await _agent_graph.drain_node_event_stream(node, self.ctx)
-        return await self._advance_graph(node)
+        try:
+            if self.ctx.deps.root_capability.has_wrap_run_event_stream or self.ctx.deps.root_capability.has_on_event:
+                await _agent_graph.drain_node_event_stream(node, self.ctx)
+            return await self._advance_graph(node)
+        finally:
+            # See _node_error: cached tracebacks must not retain this run or bound callbacks.
+            del self
 
     @property
     def usage(self) -> _usage.RunUsage:
@@ -922,6 +981,15 @@ class AgentRunResult(Generic[OutputDataT]):
             'metadata': self._state.metadata,
             'traceparent': self._traceparent_value,
         }
+        # Only for a run that continued a stored conversation, so other results keep their shape.
+        if self._state.conversation_revision is not None:
+            data['conversation_revision'] = self._state.conversation_revision
+        if self._state.conversation_unsaved is not None:
+            data['conversation_unsaved'] = self._state.conversation_unsaved
+        if self._state.conversation_unchecked:
+            data['conversation_unchecked'] = True
+        if self._state.conversation_saved:
+            data['conversation_saved'] = True
         if 'output' in serialized:
             # Absent when the caller filtered it out: an explicit `exclude={'output'}`, or
             # `exclude_none=True` on a `None` output. The handler applies those filters to the
@@ -1048,9 +1116,19 @@ class AgentRunResult(Generic[OutputDataT]):
         it is waiting on. The messages list and the usage are copies, so the returned conversation
         can be stored, carried into another run, and mutated without touching this result's own
         accounting.
+
+        Each access builds a new conversation. A
+        [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] advances the
+        [`revision`][pydantic_ai.conversation.Conversation.revision] of the conversation it saves,
+        so keep that one in a variable to carry into the next run or save again.
+
+        When this run continued a conversation that knows which of its messages are stored, its
+        [`new_message_index`][pydantic_ai.conversation.Conversation.new_message_index] points at
+        the messages the store doesn't have yet: the ones this run added, and any the conversation
+        hadn't saved before the run.
         """
         output = self.output
-        return Conversation(
+        conversation = Conversation(
             messages=list(self.all_messages()),
             usage=copy(self.usage),
             conversation_id=self.conversation_id,
@@ -1061,7 +1139,36 @@ class AgentRunResult(Generic[OutputDataT]):
                 if isinstance(output, DeferredToolRequests)
                 else None
             ),
+            revision=self._state.conversation_revision,
         )
+        index = self._conversation_new_message_index()
+        if index is not None and self._state.conversation_unchecked:
+            # Its store compares the messages before the index with the stored ones instead.
+            conversation.new_message_index = index
+        elif index is not None:
+            mark_stored(conversation, conversation.messages[:index])
+        return conversation
+
+    def _conversation_saved(self, revision: str) -> None:
+        """Record that a store saved this result's conversation, so its `conversation` continues from the new revision."""
+        self._state.conversation_revision = revision
+        self._state.conversation_unchecked = False
+        self._state.conversation_saved = True
+
+    def _conversation_new_message_index(self) -> int | None:
+        if self._state.conversation_saved:
+            return len(self._state.message_history)
+        unsaved = self._state.conversation_unsaved
+        if unsaved is None:
+            return None
+        # The unsaved messages the run was given come just before the ones it added, unless a capability rewrote
+        # them, in which case the store compares the whole history instead. Filling in what a request it sends
+        # lacks doesn't count as a rewrite.
+        start = self._new_message_index - len(unsaved)
+        carried = self._state.message_history[start : self._new_message_index] if start >= 0 else []
+        if len(carried) != len(unsaved) or any(map(_rewritten, carried, unsaved)):
+            return None
+        return start
 
     @property
     def timestamp(self) -> datetime:

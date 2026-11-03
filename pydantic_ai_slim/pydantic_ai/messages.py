@@ -3292,6 +3292,41 @@ class ToolAvailabilityDeltaPart:
 
 
 @dataclass(repr=False, kw_only=True)
+class CapabilityLoadDeltaPart:
+    """Records a change to the set of loaded [on-demand capabilities](../capabilities/on-demand.md) at this point, without a `load_capability` call.
+
+    Additions only, in `loaded`: unloading a capability isn't supported yet.
+
+    [`RunContext.load_capability`][pydantic_ai.tools.RunContext.load_capability] records one on the request after the
+    tool call that loaded the capability, followed by a
+    [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] revealing its tools, if it has any. A
+    load's record is the model's exchange, or else this delta: a capability the model loads through the
+    `load_capability` tool is recorded by that call and its return, as with tool search, and writes no delta. Either
+    way, the capability is loaded from the next model request on: its tools are callable, its instructions are stated,
+    and its model settings and hooks apply.
+
+    Never sent to the model: `prepare_messages` drops it, and the model sees the capability's instructions and
+    tools instead.
+    """
+
+    loaded: list[str] = field(default_factory=lambda: [])
+    """IDs of the capabilities loaded at this point in history, in load order."""
+
+    tool_call_id: str | None = None
+    """The tool call being handled when the capabilities were loaded, if any."""
+
+    part_kind: Literal['capability-load-delta'] = 'capability-load-delta'
+    """Part type identifier, used as a discriminator for deserialization."""
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        """Render the change as trace content: capability IDs aren't user content, so they're always recorded."""
+        changes = ', '.join(f'+{capability_id}' for capability_id in self.loaded)
+        return [_otel_messages.TextPart(type='text', content=f'Loaded capabilities changed: {changes}')]
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
 class ModelSettingsDeltaPart:
     """Records model settings that change from this point in the conversation onward.
 
@@ -4398,6 +4433,7 @@ ModelRequestPart = Annotated[
     | Annotated[RetryPromptPart, pydantic.Tag('retry-prompt')]  # pyright: ignore[reportDeprecated]
     | Annotated[RetryFeedbackPart, pydantic.Tag('retry-feedback')]
     | Annotated[ToolAvailabilityDeltaPart, pydantic.Tag('tool-availability-delta')]
+    | Annotated[CapabilityLoadDeltaPart, pydantic.Tag('capability-load-delta')]
     | Annotated[ModelSettingsDeltaPart, pydantic.Tag('model-settings-delta')]
     | Annotated[InstructionDeltaPart, pydantic.Tag('instruction-delta')]
     | Annotated[InstructionBaselinePart, pydantic.Tag('instruction-baseline')]
@@ -6628,7 +6664,14 @@ class PartEndEvent:
 
 @dataclass(repr=False, kw_only=True)
 class FinalResultEvent:
-    """An event indicating the response to the current model request matches the output schema and will produce a result."""
+    """An event indicating the response to the current model request matches the output schema and could produce a result.
+
+    [`Agent.run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] takes the first matching part as the final result.
+    Methods that run the agent graph to completion, like
+    [`Agent.run_stream_events`][pydantic_ai.agent.AbstractAgent.run_stream_events] and
+    [`Agent.iter`][pydantic_ai.agent.AbstractAgent.iter], can end with a different result,
+    for example from an output tool call that follows matching text.
+    """
 
     tool_name: str | None
     """The name of the output tool that was called. `None` if the result is from text content and not from a tool."""
@@ -6780,6 +6823,24 @@ class ToolAvailabilityDeltaEvent:
     """The tool availability delta part that will be recorded in message history."""
 
     event_kind: Literal['tool_availability_delta'] = 'tool_availability_delta'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class CapabilityLoadDeltaEvent:
+    """An event indicating on-demand capabilities were loaded without a `load_capability` call, carrying the recorded part.
+
+    Emitted when a request records a
+    [`CapabilityLoadDeltaPart`][pydantic_ai.messages.CapabilityLoadDeltaPart], so a UI that
+    rebuilds history from the event stream keeps it.
+    """
+
+    part: CapabilityLoadDeltaPart
+    """The capability load delta part that will be recorded in message history."""
+
+    event_kind: Literal['capability_load_delta'] = 'capability_load_delta'
     """Event type identifier, used as a discriminator."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -7085,6 +7146,7 @@ HandleResponseEvent = Annotated[
     FunctionToolCallEvent
     | FunctionToolResultEvent
     | ToolAvailabilityDeltaEvent
+    | CapabilityLoadDeltaEvent
     | ModelSettingsDeltaEvent
     | OutputToolCallEvent
     | OutputToolResultEvent

@@ -65,6 +65,19 @@ def _handshake(status: int) -> InvalidStatus:
     return InvalidStatus(Response(status, 'status', Headers()))
 
 
+async def test_fake_exec_close_without_stdin_eof_closes_the_pipe(transport: SpriteTransport) -> None:
+    """The fake owns the host pipe even when the SDK never sends EOF; no live request can test this."""
+    transport.names.add('remote')
+    socket = await transport.connect('wss://api.sprites.dev/v1/sprites/remote/exec?cmd=cat')
+    await socket.close()
+    assert socket.process.wait(timeout=1) == -signal.SIGKILL
+    assert socket.process.stdin is not None
+    try:
+        assert socket.process.stdin.closed
+    finally:
+        socket.process.stdin.close()
+
+
 class TestSpritesSandbox:
     def test_env_values_are_not_represented(self) -> None:
         secret = 'secret-environment-value-123'

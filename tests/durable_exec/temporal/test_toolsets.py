@@ -190,7 +190,7 @@ pytestmark = [
 
 
 @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
-async def test_mcp_tools_cached_across_activities(allow_model_requests: None, client: Client):
+async def test_mcp_tools_cached_across_activities(allow_model_requests: None, client: Client, complex_agent_mcp: None):
     """Verify that MCP tool caching reduces server round-trips across activities.
 
     The complex agent makes 3 model requests, each preceded by a get_tools activity.

@@ -33,6 +33,7 @@ from pydantic_clai2.ui.prompt.prompt_completion import CompletionWorker
 from pydantic_clai2.ui.prompt.prompt_surface import ENTER, LEAVE, MODES_OFF, MODES_ON, WHEEL_ROWS
 from pydantic_clai2.ui.rendering import theme
 from tests.clai2.surface_terminal import SurfaceTerminal
+from tests.conftest import no_leaked_tasks
 
 
 @asynccontextmanager
@@ -174,18 +175,17 @@ async def test_menu_suspension_preserves_draft_and_output() -> None:
 
 @pytest.mark.parametrize('menu', [False, True])
 async def test_outer_cancellation_releases_terminal_and_tasks(menu: bool) -> None:
-    before = asyncio.all_tasks()
-    with anyio.CancelScope() as scope:
-        async with editor() as (live, _, _):
-            if menu:
-                async with live.suspended():
+    with no_leaked_tasks():
+        with anyio.CancelScope() as scope:
+            async with editor() as (live, _, _):
+                if menu:
+                    async with live.suspended():
+                        scope.cancel()
+                        await anyio.sleep_forever()
+                else:
                     scope.cancel()
                     await anyio.sleep_forever()
-            else:
-                scope.cancel()
-                await anyio.sleep_forever()
-    assert scope.cancelled_caught
-    assert asyncio.all_tasks() <= before
+        assert scope.cancelled_caught
 
 
 @pytest.mark.parametrize('key', ['\x03', '\x1b'])

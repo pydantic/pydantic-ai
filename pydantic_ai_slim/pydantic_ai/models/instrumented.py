@@ -35,6 +35,7 @@ from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
 from ..messages import (
     BaseToolReturnPart,
+    CapabilityLoadDeltaPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
@@ -555,16 +556,20 @@ def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.R
     history after `prepare_messages` has already translated the part, except on a decision model,
     which is handed the part itself.
 
-    `ToolAvailabilityDeltaPart` gets `system` as the least-bad fit in a closed vocabulary, not as a
-    mirror of the wire. `Role` is `system | user | assistant | tool` and none of those means "the set
-    of tools changed", while the wire form varies by model: a real `SystemPromptPart` where there is
-    no native channel, a `role='system'` entry carrying `tool_addition` blocks on Anthropic, a
-    roleless `additional_tools` item on OpenAI Responses, a tool-search exchange where schemas are
-    withheld. `tool` is the one role that would actively mislead, being paired with
-    `tool_call_response`.
+    `ToolAvailabilityDeltaPart`, like `CapabilityLoadDeltaPart`, gets `system` as the least-bad fit in a closed
+    vocabulary, not as a mirror of the wire. `Role` is `system | user | assistant | tool` and none of those means "the
+    set of tools changed", while the wire form varies by model: a real `SystemPromptPart` where there is no native
+    channel, a `role='system'` entry carrying `tool_addition` blocks on Anthropic, a roleless `additional_tools` item on
+    OpenAI Responses, a tool-search exchange where schemas are withheld. `tool` is the one role that would actively
+    mislead, being paired with `tool_call_response`.
     """
     if isinstance(
-        part, SystemPromptPart | ToolAvailabilityDeltaPart | InstructionDeltaPart | ModelSettingsDeltaPart
+        part,
+        SystemPromptPart
+        | ToolAvailabilityDeltaPart
+        | CapabilityLoadDeltaPart
+        | InstructionDeltaPart
+        | ModelSettingsDeltaPart,
     ) or (version >= 6 and isinstance(part, RetryFeedbackPart) and _retry_feedback_speaks_for_the_harness(part)):
         return 'system'
     # TODO(v3): remove `RetryPromptPart`, still reachable here because `pydantic_ai.all_messages`

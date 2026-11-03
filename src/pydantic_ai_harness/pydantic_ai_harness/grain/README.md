@@ -229,5 +229,3 @@ from pydantic_ai_harness import Grain
 
 agent = Agent.from_file('agent.yaml', custom_capability_types=[Grain])
 ```
-
-Pass `custom_capability_types` so the loader can create `Grain` from the file.
