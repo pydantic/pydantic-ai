@@ -4,7 +4,9 @@ Validated here, apart from the plugin that runs them, so `.clai/settings.json` i
 without importing it.
 """
 
-from typing import Annotated, Literal
+import os
+from pathlib import Path
+from typing import Annotated, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -14,6 +16,13 @@ PROJECT_HOOKS = 'project_hooks'
 """The id of the declaration a project file's `hooks` table becomes, which `/plugins enable` approves."""
 
 HookEvent = Literal['before_tool', 'after_tool', 'turn_start', 'turn_end']
+
+
+def project_program(program: str, root: Path) -> str:
+    """`program` taken from the project `root` when it is a relative path, such as `./scripts/x.sh`; else as written."""
+    if ('/' in program or os.sep in program) and not Path(program).is_absolute():
+        return str(root / program)
+    return program
 
 
 class HookCommand(BaseModel):
@@ -64,3 +73,18 @@ class HooksSettings(HookTable):
     project: str | None = None
     """The folder holding `.clai` for a project's table. It runs only in sessions under that folder, since
     the approval is saved with your settings, which every repository shares."""
+
+    def project_programs(self) -> list[Path]:
+        """The files in the project that list commands run as their program, found by `project_program`."""
+        if self.project is None:
+            return []
+        root = Path(self.project)
+        programs = [
+            command.command[0]
+            for event in get_args(HookEvent)
+            for command in self.commands(event)
+            if isinstance(command.command, list)
+        ]
+        return [
+            Path(found) for program in dict.fromkeys(programs) if (found := project_program(program, root)) != program
+        ]

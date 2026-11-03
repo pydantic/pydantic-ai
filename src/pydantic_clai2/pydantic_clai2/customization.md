@@ -163,8 +163,9 @@ built-in to its defaults rather than removing it. A repository's
 just above the built-ins, and start off until the user runs /plugins enable
 NAME, so repository code never runs without that approval. Its "hooks" table
 (commands run before and after tool calls and as a turn starts and ends) is the
-project plugin project_hooks, approved the same way; any change to the table
-needs approval again. The user's own table is the settings of the built-in
+project plugin project_hooks, approved the same way; any change to the table,
+or to a program it names by a path such as ./scripts/check.sh, needs approval
+again, and so does any change to a project plugin's file. The user's own table is the settings of the built-in
 hooks plugin (pydantic_clai2.builtin_plugins.hooks). Outside a session,
 clai2 plugins add NAME module[:Class] [JSON] saves for the next startup.
 /plugins opens the management menu. Removing a drop-in disables it persistently;

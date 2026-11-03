@@ -6,7 +6,6 @@ project's `.clai/settings.json` declares, once `/plugins enable project_hooks` a
 
 import asyncio
 import errno
-import os
 import re
 import tempfile
 from collections.abc import Mapping, Sequence
@@ -25,7 +24,7 @@ from pydantic_ai.capabilities import AgentCapability, Hooks, ValidatedToolArgs
 from pydantic_ai.exceptions import SkipToolExecution
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import ToolDefinition
-from pydantic_clai2.config.hooks import PROJECT_HOOKS, HookCommand, HookEvent, HooksSettings
+from pydantic_clai2.config.hooks import PROJECT_HOOKS, HookCommand, HookEvent, HooksSettings, project_program
 from pydantic_clai2.config.project_settings import load_project_settings
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, TurnEnd, TurnStart
 from pydantic_clai2.runtime import agent_instrumentation
@@ -225,8 +224,8 @@ class HooksPlugin(Plugin[HooksSettings, DepsT]):
         A project's relative program path, such as `./scripts/x.sh`, is taken from the project root.
         """
         program, *rest = argv
-        if self.root is not None and ('/' in program or os.sep in program) and not Path(program).is_absolute():
-            program = str(self.root / program)
+        if self.root is not None:
+            program = project_program(program, self.root)
         return [program, *(fill(part, args) for part in rest)]
 
     @staticmethod

@@ -2,7 +2,7 @@
 
 import os
 import sqlite3
-from collections.abc import Generator, Iterable
+from collections.abc import Generator, Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -91,6 +91,11 @@ class SettingsStore:
             # which those builds would refuse.
             connection.execute(
                 'CREATE TABLE IF NOT EXISTS plugin_requirements (id TEXT PRIMARY KEY, requirements_json TEXT NOT NULL)'
+            )
+            # The contents `/plugins enable` approved for each project file, by absolute path, sit beside
+            # `plugins` for the same reason: builds that do not check contents never read them.
+            connection.execute(
+                'CREATE TABLE IF NOT EXISTS approved_files (path TEXT PRIMARY KEY, sha256 TEXT NOT NULL)'
             )
             # Fallback chains are their own table for the same reason: builds without chains never read it.
             connection.execute(
@@ -363,6 +368,20 @@ class SettingsStore:
         with self._connect() as connection:
             connection.execute('DELETE FROM plugins WHERE id IN (?, ?)', (current_id, stored_id))
             connection.execute('DELETE FROM plugin_requirements WHERE id IN (?, ?)', (current_id, stored_id))
+
+    def approved_sha256(self, path: Path) -> str | None:
+        """The SHA-256 of the file at `path` as `/plugins enable` last approved it, or `None` if it never did."""
+        with self._connect() as connection:
+            row = connection.execute('SELECT sha256 FROM approved_files WHERE path = ?', (str(path),)).fetchone()
+        return row[0] if row else None
+
+    def approve_files(self, digests: Mapping[Path, str]) -> None:
+        """Remember each file's SHA-256 as approved now, by its absolute path."""
+        with self._connect() as connection:
+            connection.executemany(
+                'INSERT INTO approved_files VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET sha256 = excluded.sha256',
+                [(str(path), digest) for path, digest in digests.items()],
+            )
 
     def model_settings(self, model: str) -> dict[str, JsonValue]:
         """Saved overrides for one model; empty when none."""

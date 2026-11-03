@@ -541,8 +541,12 @@ Warnings and spans show the first 1,000 characters of a command.
 A project's table is code from the repository, so it gets the same approval as
 a project's plugins. It is listed in `/plugins` as `project_hooks` (project),
 off, and runs only after `/plugins enable project_hooks`. The approval covers
-the table exactly as it is: once the file's `hooks` change, they stay off until
-you enable `project_hooks` again, and removing them stops them too. CLAI
+the table exactly as it is, and the contents of each program it names by a path,
+such as `./scripts/guard-paths.sh`: once the file's `hooks` or one of those
+programs change, they stay off until you enable `project_hooks` again, and
+removing them stops them too. It does not cover a file such a program reads, or
+a script passed to another program, as in `["python", "scripts/check.py"]`;
+make the script the command's program to have the approval cover it. CLAI
 remembers one approved project table at a time, and it runs only in sessions
 whose project file declares that very table. Headless runs use the same
 approval, so they only run a project table you already approved. A project

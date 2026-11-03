@@ -8,8 +8,11 @@ A plugin with `scope = 'process'` is built once, by the first session that loads
 live session; `on_session_start` and `on_session_end` reach it once. `LiveSessions` lists the sessions.
 """
 
+import hashlib
 import importlib
 import logging
+import os
+import stat
 from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -24,7 +27,7 @@ from termflow.tui.completion import Completion
 
 from pydantic_ai.messages import BinaryContent
 from pydantic_clai2.config import PluginSettings
-from pydantic_clai2.config.hooks import HOOKS_FACTORY
+from pydantic_clai2.config.hooks import HOOKS_FACTORY, HooksSettings
 from pydantic_clai2.config.settings_store import SettingsStore, canonical_plugin_declarations, canonical_plugin_id
 from pydantic_clai2.plugins import (
     Conversation,
@@ -91,8 +94,9 @@ RETIRED_BUILTINS: dict[str, PluginSettings] = {
 APPROVED_AS_WRITTEN = frozenset({HOOKS_FACTORY})
 """Factories whose project declaration is itself what runs, so an approval covers that declaration exactly.
 
-A saved approval (same id and factory) that differs from the project's current declaration is stale: the
-project's, switched off, takes its place until `/plugins enable` approves it again. Other project plugins keep a changed approval,
+A saved approval (same id and factory) that differs from the project's current declaration, or whose
+`project_files` no longer have the contents approved, is stale: the project's, switched off, takes its
+place until `/plugins enable` approves it again. Other project plugins keep a changed approval,
 since their settings are the user's to edit.
 """
 
@@ -344,6 +348,25 @@ class JoinedSessions:
 
 _OPENS_NONE = 'This CLAI opens no other live sessions.'
 
+_OPEN_FLAGS = os.O_RDONLY | getattr(os, 'O_BINARY', 0) | getattr(os, 'O_NONBLOCK', 0)
+"""`O_NONBLOCK` so opening a FIFO a repository ships returns at once instead of waiting for a writer."""
+
+
+def _read_regular(path: Path) -> bytes:
+    """The bytes of the regular file at `path`, through symlinks; an `OSError` for anything else."""
+    with os.fdopen(os.open(path, _OPEN_FLAGS), 'rb') as file:
+        if not stat.S_ISREG(os.fstat(file.fileno()).st_mode):
+            raise OSError(f'{path} is not a regular file')
+        return file.read()
+
+
+def _sha256(path: Path) -> str:
+    """The SHA-256 of the file's bytes, or `''` when it is not a regular file CLAI can read."""
+    try:
+        return hashlib.sha256(_read_regular(path)).hexdigest()
+    except OSError:
+        return ''
+
 
 class ProcessPlugins(Generic[DepsT]):
     """What every live session's plugins share: declarations, the change lock, imports, and process-scoped plugins.
@@ -386,8 +409,9 @@ class ProcessPlugins(Generic[DepsT]):
         for name, pinned in project.items():
             # Only an approval of this factory goes stale; a drop-in or the user's own plugin under the id stays.
             approval = declared.get(name)
-            stale = approval is not None and approval.factory == pinned.factory and not same_plugin(approval, pinned)
-            if pinned.factory in APPROVED_AS_WRITTEN and stale and name not in self.staged:
+            if approval is None or approval.factory != pinned.factory or pinned.factory not in APPROVED_AS_WRITTEN:
+                continue
+            if name not in self.staged and not (same_plugin(approval, pinned) and self.approved(name, approval)):
                 declared[name] = pinned
         for shipped in (project, self.builtin):
             for name in shipped.keys() - declared.keys():
@@ -440,8 +464,36 @@ class ProcessPlugins(Generic[DepsT]):
                 found[name] = child / '__init__.py'
         return found
 
+    def project_files(self, name: str, declaration: PluginSettings) -> list[Path]:
+        """The repository files an approval of `declaration` runs, whose contents `/plugins enable` approves.
+
+        The programs a project's `hooks` table names by path, and a file plugin's own file unless it is in
+        the plugins folder or the built-in declaration names it. Modules that file imports are not among them.
+        """
+        if declaration.factory == HOOKS_FACTORY:
+            return HooksSettings.model_validate(declaration.settings).project_programs()
+        shipped = self.builtin.get(name)
+        if declaration.path is None or (shipped is not None and shipped.path == declaration.path):
+            return []
+        path = Path(declaration.path)
+        return [] if path.is_relative_to(self.plugins_dir) else [path]
+
+    def approved(self, name: str, declaration: PluginSettings) -> bool:
+        """Whether each of the declaration's `project_files` still has the contents `/plugins enable` approved."""
+        files = self.project_files(name, declaration)
+        return all(self.store.approved_sha256(path) == _sha256(path) for path in files)
+
+    def approve(self, name: str, declaration: PluginSettings) -> None:
+        """Approve the contents the declaration's `project_files` have now."""
+        if files := self.project_files(name, declaration):
+            self.store.approve_files({path: _sha256(path) for path in files})
+
     def import_module(self, name: str, declaration: PluginSettings, *, fresh: bool) -> ModuleType:
-        """The declaration's module: a drop-in file afresh, else the installed module, reloaded when `fresh`."""
+        """The declaration's module: a drop-in file afresh, else the installed module, reloaded when `fresh`.
+
+        A project file runs only with the contents `/plugins enable` approved: its bytes are read once, so the
+        ones checked are the ones run.
+        """
         if declaration.path is not None:
             path = Path(declaration.path)
             if not path.is_absolute():
@@ -451,7 +503,15 @@ class ProcessPlugins(Generic[DepsT]):
                     f'{path} is relative, so it would load from whichever directory CLAI starts in. '
                     f'Use /plugins remove {name} and approve it again, or give it an absolute path.'
                 )
-            return import_file(name, path)
+            if not self.project_files(name, declaration):
+                return import_file(name, path, path.read_bytes())
+            source = _read_regular(path)
+            if self.store.approved_sha256(path) != hashlib.sha256(source).hexdigest():
+                raise ValueError(
+                    f'{path} is not as you approved it. Review it, then run /plugins enable {name} '
+                    'to approve it as it is now.'
+                )
+            return import_file(name, path, source)
         module = importlib.import_module(declaration.factory.partition(':')[0])
         return importlib.reload(module) if fresh else module
 

@@ -531,6 +531,67 @@ async def test_a_project_program_path_is_relative_to_the_project_root(tmp_path: 
     assert output.getvalue() == ''
 
 
+def write_program(path: Path, marker: str) -> None:
+    path.write_text(f'#!/bin/sh\ntouch {marker}\n', encoding='utf-8')
+    path.chmod(0o755)
+
+
+async def approve_and_end_turn(loader: PluginLoader[None]) -> None:
+    await loader.load_all()
+    await loader.command(['enable', PROJECT_HOOKS])
+    await loader.fire(TurnEnd(text='hello', outcome='completed'))
+    await loader.close('exit')
+
+
+@pytest.mark.parametrize('change', ['rewrite', 'symlink'])
+async def test_a_changed_project_program_waits_for_approval_again(tmp_path: Path, change: str) -> None:
+    repo = repository(tmp_path, 'repo', {'turn_end': [{'command': ['./scripts/mark.sh']}]})
+    program = repo / 'scripts' / 'mark.sh'
+    program.parent.mkdir()
+    write_program(program, 'first')
+    store = SettingsStore(tmp_path / 'config.db')
+    await approve_and_end_turn(project_loader(store, repo, io.StringIO()))
+    assert (repo / 'first').exists()
+
+    if change == 'rewrite':
+        write_program(program, 'second')
+    else:
+        write_program(tmp_path / 'elsewhere.sh', 'second')
+        program.unlink()
+        program.symlink_to(tmp_path / 'elsewhere.sh')
+    loader = project_loader(store, repo, io.StringIO())
+    await end_turn(loader)
+    assert not (repo / 'second').exists(), 'the approval covers the program as it was'
+    [entry] = [entry for entry in loader.entries() if entry.name == PROJECT_HOOKS]
+    assert entry.state == 'disabled' and entry.project
+
+    await approve_and_end_turn(project_loader(store, repo, io.StringIO()))
+    assert (repo / 'second').exists()
+
+
+async def test_a_program_approval_saved_without_its_contents_is_asked_again(tmp_path: Path) -> None:
+    """An approval saved before CLAI recorded program contents covers the table alone, so it is asked again once."""
+    repo = repository(tmp_path, 'repo', {'turn_end': [{'command': ['./mark.sh']}]})
+    write_program(repo / 'mark.sh', 'ran')
+    store = SettingsStore(tmp_path / 'config.db')
+    [declaration] = load_project_settings(repo).plugins
+    store.save_plugin(declaration.model_copy(update={'enabled': True}))
+    await end_turn(project_loader(store, repo, io.StringIO()))
+    assert not (repo / 'ran').exists()
+
+    await approve_and_end_turn(project_loader(store, repo, io.StringIO()))
+    assert (repo / 'ran').exists()
+
+
+async def test_a_program_that_is_not_a_regular_file_never_blocks_loading(tmp_path: Path) -> None:
+    repo = repository(tmp_path, 'repo', {'turn_end': [{'command': ['./mark.sh']}]})
+    os.mkfifo(repo / 'mark.sh')
+    store = SettingsStore(tmp_path / 'config.db')
+    with anyio.fail_after(5):
+        await approve_and_end_turn(project_loader(store, repo, io.StringIO()))
+        await end_turn(project_loader(store, repo, io.StringIO()))
+
+
 async def test_removing_the_project_table_stops_an_approved_one(tmp_path: Path) -> None:
     repo = repository(tmp_path, 'repo', touching('ran'))
     store = SettingsStore(tmp_path / 'config.db')

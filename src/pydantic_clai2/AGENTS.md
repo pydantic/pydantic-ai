@@ -226,6 +226,13 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   a stored approval with the same id and factory that differs from the
   project's is stale and the project's, off, replaces it. A drop-in or a user's
   own plugin under that id is never replaced.
+  `/plugins enable` also records the SHA-256 of each repository file the
+  declaration runs (`ProcessPlugins.project_files`: a file plugin's own file,
+  and the programs a `hooks` table names by path) in the store's
+  `approved_files` table, beside `plugins` so older builds never read it. An
+  `APPROVED_AS_WRITTEN` approval whose files differ is stale too, and
+  `import_module` refuses a project file whose bytes differ, executing the bytes
+  it checked.
   Default-on CLI `.env` loading is a deliberate exception to this repository-content
   trust rule: it assumes trusted launch and parent directories, without plugin
   approval. [Environment variables](docs/reference.md#environment-variables) documents the

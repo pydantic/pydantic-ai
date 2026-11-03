@@ -417,9 +417,12 @@ so a later change to the repository's declaration does not run until you
 `/plugins remove NAME` (which forgets your approval and restores the project's
 current declaration, off) and enable it again. The approval keeps the file's
 absolute path, so another repository cannot put its own file at the same
-relative path and have it run as the one you approved. An approval saved by an
-older CLAI with a relative path does not load; remove it and enable it again
-from its repository. Project declarations rank just
+relative path and have it run as the one you approved. It also keeps the
+file's contents: once the file changes, as after a pull, the plugin does not
+load until you review it and run `/plugins enable NAME` again. Modules the file
+imports are not covered. An approval saved by an older CLAI with a relative
+path does not load; remove it and enable it again from its repository. One
+saved before CLAI kept the file's contents is asked for again once. Project declarations rank just
 above the built-ins: a project may redeclare `coder` or `repo_context` with
 other options, and that replacement is also off until you enable it.
 
@@ -428,7 +431,8 @@ turn starts and ends; see
 [lifecycle hooks](../PLUGINS.md#lifecycle-hooks-commands-from-settings). It is
 listed as the project plugin `project_hooks` and is off until
 `/plugins enable project_hooks`; unlike a plugin's declaration, any change to
-the table turns it off until you enable it again, and removing the table stops
+the table, or to a program it names by a path such as `./scripts/check.sh`,
+turns it off until you enable it again, and removing the table stops
 its commands (the listing keeps `project_hooks` until you remove it).
 
 The project file is read-only from inside CLAI. `/set KEY VALUE` writes your user

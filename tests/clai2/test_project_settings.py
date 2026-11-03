@@ -273,6 +273,48 @@ async def test_a_relative_path_saved_before_anchoring_is_refused_until_approved_
     assert [plugin.path for plugin in store.plugins()] == [str(trusted / 'plugins' / 'helper.py')]
 
 
+@pytest.mark.parametrize('elsewhere', [False, True])
+async def test_a_changed_project_plugin_file_waits_for_approval_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, elsewhere: bool
+) -> None:
+    """Changing only the file's bytes ends the approval, also where another repository's session loads it."""
+    trusted = repository(tmp_path, 'trusted')
+    store = SettingsStore(tmp_path / 'config.db')
+    monkeypatch.chdir(trusted)
+    await plugin_loader(store, load_project_settings(trusted), io.StringIO()).command(['enable', 'helper'])
+    assert ran(tmp_path) == ['trusted']
+
+    (tmp_path / 'trusted.ran').unlink()
+    (trusted / 'plugins' / 'helper.py').write_text(HELPER.format(marker=str(tmp_path / 'changed.ran')))
+    launched = repository(tmp_path, 'other', declared=False) if elsewhere else trusted
+    monkeypatch.chdir(launched)
+    output = io.StringIO()
+    loader = plugin_loader(store, load_project_settings(launched), output)
+    await loader.load_all()
+    assert ran(tmp_path) == []
+    assert 'run /plugins enable helper to approve it as it is now' in output.getvalue()
+
+    await loader.command(['enable', 'helper'])
+    assert ran(tmp_path) == ['changed']
+
+
+async def test_a_plugin_approval_saved_without_its_contents_is_asked_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An approval saved before CLAI recorded file contents covers the declaration alone, so it is asked again once."""
+    trusted = repository(tmp_path, 'trusted')
+    store = SettingsStore(tmp_path / 'config.db')
+    path = str(trusted / 'plugins' / 'helper.py')
+    store.save_plugin(PluginSettings(id='helper', factory='helper', path=path))
+    monkeypatch.chdir(trusted)
+    loader = plugin_loader(store, load_project_settings(trusted), io.StringIO())
+    await loader.load_all()
+    assert ran(tmp_path) == [] and loader.entries()[0].state.startswith('enabled, failed: ValueError:')
+
+    await loader.command(['enable', 'helper'])
+    assert ran(tmp_path) == ['trusted']
+
+
 @pytest.mark.parametrize('field', ['repo_context_walk_up_roots', 'repo_context_autoload_symlink_roots'])
 def test_repo_context_boundaries_are_user_only(tmp_path: Path, field: str) -> None:
     write(tmp_path, {field: ['/']})
