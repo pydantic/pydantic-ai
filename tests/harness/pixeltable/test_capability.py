@@ -55,6 +55,11 @@ class TestPixeltableCapability:
         with pytest.raises(ValueError, match='only entry'):
             PixeltableToolset(tables=['*', 'a'], max_rows=10, max_chars=100)
 
+    def test_toolset_defaults_its_caps_like_the_capability(self) -> None:
+        # Building the toolset directly does not require repeating the capability's 20-row and 8000-char caps.
+        toolset = PixeltableToolset(tables=['a'])
+        assert sorted(toolset.tools) == ['describe_table', 'list_tables', 'query_table', 'similarity_search']
+
     def test_tables_are_normalized_sorted_and_deduplicated(self) -> None:
         assert Pixeltable(tables=['My_App/Doc_Chunks', '', 'b', 'b']).tables == ['b', 'my_app.doc_chunks']
 

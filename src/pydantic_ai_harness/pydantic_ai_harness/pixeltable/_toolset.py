@@ -32,6 +32,9 @@ ALL_TABLES = '*'
 
 
 WhereValue = str | int | float | bool | None
+
+DEFAULT_MAX_ROWS = 20
+DEFAULT_MAX_CHARS = 8000
 """A `query_table` equality-filter value; timestamps, dates, and UUIDs are ISO strings."""
 
 
@@ -254,7 +257,14 @@ def _bounded_payload(table: str, rows: list[dict[str, object]], *, has_more: boo
 class PixeltableToolset(FunctionToolset[AgentDepsT]):
     """List, describe, query, and similarity-search Pixeltable tables."""
 
-    def __init__(self, *, tables: Sequence[str], max_rows: int, max_chars: int, id: str = 'pixeltable') -> None:
+    def __init__(
+        self,
+        *,
+        tables: Sequence[str],
+        max_rows: int = DEFAULT_MAX_ROWS,
+        max_chars: int = DEFAULT_MAX_CHARS,
+        id: str = 'pixeltable',
+    ) -> None:
         super().__init__(id=id)
         self._tables = validate_config(tables, max_rows, max_chars)
         self._max_rows = max_rows

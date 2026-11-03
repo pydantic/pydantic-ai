@@ -8,7 +8,13 @@ from dataclasses import KW_ONLY, dataclass
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai_harness._combine import one_per_id
-from pydantic_ai_harness.pixeltable._toolset import ALL_TABLES, PixeltableToolset, validate_config
+from pydantic_ai_harness.pixeltable._toolset import (
+    ALL_TABLES,
+    DEFAULT_MAX_CHARS,
+    DEFAULT_MAX_ROWS,
+    PixeltableToolset,
+    validate_config,
+)
 
 _ID = 'pixeltable'
 
@@ -44,10 +50,10 @@ class Pixeltable(AbstractCapability[AgentDepsT]):
 
     _: KW_ONLY
 
-    max_rows: int = 20
+    max_rows: int = DEFAULT_MAX_ROWS
     """Hard cap on rows returned by `query_table` and `similarity_search`."""
 
-    max_chars: int = 8000
+    max_chars: int = DEFAULT_MAX_CHARS
     """Cap on serialized JSON characters for those two tools. The minimal
     `{"table", "rows", "truncated"}` envelope is always returned, even when a
     cap below its size is configured."""
