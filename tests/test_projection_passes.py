@@ -2,23 +2,24 @@
 
 Each history holds the record kinds the passes translate or drop: instruction changes, capability loads and parts,
 tool reveals, settings changes, retries, speech, request-scoped and `<context>` prompts, user text that looks like a
-frame, and thinking. Three properties are checked (#11030):
+frame, and thinking. Each is rendered for several adapters, so both `prepare_messages` and the adapters' own mapping
+are covered. Three properties are checked (#11030):
 
-- **Earlier messages are stable.** Every request a history leads to starts with the rendering of every turn the previous
-  one ended with: the messages `prepare_messages` returns up to the last response, and the provider body up to its last
-  assistant turn. The trailing request is excluded: its request-scoped prompts are meant to change.
+- **Earlier messages are stable.** Every request a history leads to starts with what the previous request settled:
+  every message `prepare_messages` returned for it, the trailing request's request-scoped prompts aside, and the
+  provider body up to its last assistant turn.
 - **Round trip.** A history dumped and loaded with `ModelMessagesTypeAdapter` renders the same request bytes.
-- **No pass drops a kind a later pass reads.** Each pass declares the part kinds it reads (`consumes`) and the ones it
-  can leave out (`drops`). The order is checked from the declarations, and the declarations are checked against what
-  each pass does.
+- **No pass drops a kind a later pass reads.** Each pass declares the part kinds it reads, the ones it consumes
+  (renders as other parts) and the ones it drops (leaves out with nothing in their place). The order is checked from
+  the declarations, and the declarations are checked against what each pass does.
 
-A property that fails on the base branch for a history here is a known finding, pinned by a strict expected failure on
-that history alone, as `tests/test_history_properties.py` does.
+A property that fails for a history here on the base branch is a known finding, pinned by a strict expected failure on
+that history, as `tests/test_history_properties.py` does.
 """
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from functools import cache
@@ -438,10 +439,25 @@ def _assert_settled_messages_kept(earlier: Rendered, later: Rendered) -> None:
     assert {**later_trailing, 'parts': later_trailing['parts'][: len(parts)]} == {**trailing, 'parts': parts}
 
 
+def _conversation(body: list[JsonValue]) -> list[JsonValue]:
+    """The body's items after the leading system ones: those carry the request's instructions, which an instruction
+    change rewrites by design, and which the cache-prefix tests cover."""
+    start = next(
+        (
+            i
+            for i, item in enumerate(body)
+            if not (isinstance(item, dict) and item.get('role') in ('system', 'developer'))
+        ),
+        len(body),
+    )
+    return body[start:]
+
+
 def _settled_body(body: list[JsonValue]) -> list[JsonValue]:
-    """The body items up to and including the last turn the model produced."""
-    last = max((i for i, item in enumerate(body) if not _is_user_side(item)), default=-1)
-    return body[: last + 1]
+    """The conversation items up to and including the last turn the model produced."""
+    conversation = _conversation(body)
+    last = max((i for i, item in enumerate(conversation) if not _is_user_side(item)), default=-1)
+    return conversation[: last + 1]
 
 
 # --- Known findings ---------------------------------------------------------------------------------------------
@@ -469,7 +485,7 @@ KNOWN_STABILITY_FINDINGS = [
 ]
 
 
-def _cases(findings: list[KnownFinding] = []) -> list[ParameterSet]:
+def _cases(findings: Sequence[KnownFinding] = ()) -> list[ParameterSet]:
     params: list[ParameterSet] = []
     for history in HISTORIES:
         for target in TARGETS:
@@ -504,7 +520,7 @@ async def test_earlier_messages_render_the_same_in_every_later_request(history_c
     for earlier, later in zip(renderings, renderings[1:]):
         _assert_settled_messages_kept(earlier, later)
         settled_body = _settled_body(earlier.body)
-        assert later.body[: len(settled_body)] == settled_body
+        assert _conversation(later.body)[: len(settled_body)] == settled_body
 
 
 # --- (b) Round trip ---------------------------------------------------------------------------------------------
@@ -556,7 +572,7 @@ def _request_part_kinds() -> set[type]:
     return {get_args(member)[0] for member in get_args(union)}
 
 
-def test_adapters_guard_every_request_kind_a_pass_drops():
+def test_adapters_refuse_every_request_kind_a_pass_removes():
     """Every request part kind a pass consumes or drops is one `_UnpreparedPart`, the adapters' one guard, refuses: a
     model called directly, without `prepare_messages`, raises for it rather than sending something else. A
     `SystemPromptPart` is the exception: every adapter maps one, and the `system_voice` pass consumes it only for
@@ -574,8 +590,7 @@ def _part_kinds(messages: list[ModelMessage]) -> set[type]:
 def _without(messages: list[ModelMessage], kind: _PartKind) -> list[ModelMessage]:
     """`messages` without their parts of `kind`, keeping a message left with none."""
     return [
-        replace(message, parts=[part for part in message.parts if not isinstance(part, kind)])  # pyright: ignore[reportArgumentType]
-        for message in messages
+        replace(message, parts=[part for part in message.parts if not isinstance(part, kind)]) for message in messages
     ]
 
 
