@@ -370,8 +370,12 @@ def test_serialization_honors_a_one_level_spec_written_as_a_mapping() -> None:
         len(adapter.dump_python(result, exclude={'messages': {0: True}})['messages']) == len(result.all_messages()) - 1
     )
 
-    # An empty mapping names no keys, so the value stays whole.
+    # An empty mapping names no keys, and `True` names the whole key, so either way the value stays whole.
     assert adapter.dump_python(result, include={'metadata': {}})['metadata'] == {'api_key': 'secret', 'tenant': 'acme'}
+    assert adapter.dump_python(result, include={'metadata': True})['metadata'] == {
+        'api_key': 'secret',
+        'tenant': 'acme',
+    }
 
 
 def test_a_filtered_out_output_is_left_out_rather_than_failing_the_dump() -> None:
