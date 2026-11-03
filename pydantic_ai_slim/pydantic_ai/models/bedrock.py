@@ -51,8 +51,6 @@ from pydantic_ai import (
     FilePart,
     FinishReason,
     ImageUrl,
-    InstructionBaselinePart,
-    InstructionDeltaPart,
     ModelMessage,
     ModelProfileSpec,
     ModelRequest,
@@ -99,10 +97,8 @@ from pydantic_ai.models import (
     _request_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
     _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
-    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
-    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
 )
@@ -1921,13 +1917,8 @@ class BedrockConverseModel(Model[BaseClient]):
                                 'content': [{'toolResult': success_result}, *colocated_media_content],
                             }
                         )
-                    elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
-                        raise _unprojected_instruction_delta_error()
-                    elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+                    elif isinstance(part, _UnpreparedPart):
                         raise _unprepared_part_error(part)
-                    elif isinstance(part, SpeechPart):  # pragma: no cover
-                        # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
-                        raise _unconverted_speech_part_error()
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
@@ -1995,7 +1986,7 @@ class BedrockConverseModel(Model[BaseClient]):
                         pass  # pragma: no cover
                     elif isinstance(item, SpeechPart):
                         # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
-                        raise _unconverted_speech_part_error()
+                        raise _unprepared_part_error(item)
                     else:
                         assert isinstance(item, ToolCallPart)
                         content.append(self._map_tool_call(item))
