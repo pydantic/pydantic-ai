@@ -663,7 +663,7 @@ jobs:
         if: needs.prior-findings.outputs.review_url != ''
         run: |
           gh pr comment "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --body \
-            "\`douwebot\` did not review this head again: [an earlier review](${REVIEW_URL}) left findings on it, so this head cannot get a clean douwebot approval. Push a commit that addresses them, then request a new review."
+            "\`douwebot\` did not review this head again: [an earlier review](${REVIEW_URL}) left findings on it, and any finding, optional ones included, keeps a head from a clean douwebot approval. Push a new commit, then request a new review."
         env:
           GH_TOKEN: ${{ github.token }}
           REVIEW_URL: ${{ needs.prior-findings.outputs.review_url }}
