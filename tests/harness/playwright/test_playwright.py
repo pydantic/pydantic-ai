@@ -1516,9 +1516,8 @@ class TestNameResolutionBlocking:
 
         class FontsFromAnywhere(toolset_module.EgressPolicy):
             def refuse(self, request: toolset_module.EgressRequest) -> str | None:
-                if request.resource_type == 'font':
-                    return toolset_module.EgressPolicy.refuse(replace(self, allowed_domains=None), request)
-                return super().refuse(request)
+                relaxed = replace(self, allowed_domains=None) if request.resource_type == 'font' else self
+                return toolset_module.EgressPolicy.refuse(relaxed, request)
 
         policy = FontsFromAnywhere(
             allowed_domains=['example.com'], allowlist_reach=frozenset(get_args(toolset_module.RequestKind))
