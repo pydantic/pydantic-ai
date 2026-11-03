@@ -177,7 +177,7 @@ class ModelProfile(TypedDict, total=False):
     """
 
     needs_sealed_system_blocks: bool
-    """Whether the model only follows the `<system>` blocks of the fallback rendering when they carry a seal. Default: `False`.
+    """Whether the model follows the fallback's `<system>` blocks better sealed and after the user's words. Default: `False`.
 
     Only meaningful where `supports_inline_system_prompts` is `False`. When `True`, `Model.prepare_messages` renders
     each mid-conversation `SystemPromptPart` as `<system seal="pydantic-ai">...</system>` after the user's words in

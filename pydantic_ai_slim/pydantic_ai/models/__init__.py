@@ -2098,7 +2098,13 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             if _is_tool_result_part(part):
                 tool_notes.extend(
                     self._tool_lookalike_notes(
-                        request, part, sources, preceding=not precede_tool_results, genuine_change=genuine_change
+                        request,
+                        part,
+                        sources,
+                        preceding=not precede_tool_results,
+                        genuine_change=genuine_change,
+                        relocated=self._moves_tool_files(part),
+                        data_tags=data_tags,
                     )
                 )
                 if self._moves_tool_files(part):
@@ -2133,8 +2139,32 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         *,
         preceding: bool,
         genuine_change: bool,
+        relocated: bool = False,
+        data_tags: Sequence[str] = (),
     ) -> list[_FrameworkNote]:
-        """The notes for tool result `part`'s lookalikes in `request`, naming its tool and call id."""
+        """The notes for tool result `part`'s lookalikes in `request`, naming its tool and call id.
+
+        Where this adapter moves the result's files onto the user channel (`relocated`), they go out in a user
+        `<tool_result>` block after the tool results and their notes, so a lookalike in a text file gets a note of its
+        own worded "following", and one in the result's own text keeps `preceding`.
+        """
+        if relocated and isinstance(part, ToolReturnPart):
+            in_text, in_files = _tool_result_lookalike_tags(part, data_tags)
+            located = [(tags, preceding) for tags in (in_text,) if tags] + [
+                (tags, False) for tags in (in_files,) if tags
+            ]
+            return [
+                self._lookalike_note(
+                    request,
+                    'tool',
+                    tags,
+                    preceding=at,
+                    genuine_change=genuine_change,
+                    tool_name=part.tool_name,
+                    tool_call_id=part.tool_call_id,
+                )
+                for tags, at in located
+            ]
         return [
             self._lookalike_note(
                 request,
@@ -2534,6 +2564,8 @@ def _is_framework_added(part: object) -> bool:
 def _system_prompts_after_user_words(parts: list[ModelRequestPart], *, leading: int) -> list[ModelRequestPart]:
     """Move a request's own mid-conversation system prompts to right after its last user prompt, notes left in place.
 
+    A note, a lookalike note or a capability part's note about its framed body, stays next to what it's about.
+
     For a profile with `needs_sealed_system_blocks`: Claude Sonnet 4.6 followed a sealed block after the user's words
     where it ignored one ahead of them (steering after a tool result, and a user lookalike next to a genuine
     change); the sealed announcement says such a block applies to the reply to those words. `leading` is the
@@ -2544,11 +2576,7 @@ def _system_prompts_after_user_words(parts: list[ModelRequestPart], *, leading: 
     )
     if last_user is None:
         return parts
-    moved = [
-        part
-        for i, part in enumerate(parts[:last_user])
-        if i >= leading and isinstance(part, SystemPromptPart) and not isinstance(part, _FrameworkNote)
-    ]
+    moved = [part for i, part in enumerate(parts[:last_user]) if i >= leading and _is_genuine_system_prompt(part)]
     if not moved:
         return parts
     kept = [part for part in parts[: last_user + 1] if not any(part is m for m in moved)]
@@ -4545,6 +4573,18 @@ def _may_imitate_a_frame(request: ModelRequest) -> bool:
 def _capability_part_items(part: CapabilityPart) -> list[object]:
     content = part.model_content()
     return [content] if isinstance(content, str) else list(content) if isinstance(content, list) else [content]
+
+
+def _tool_result_lookalike_tags(part: ToolReturnPart, data_tags: Sequence[str]) -> tuple[list[str], list[str]]:
+    """The frame tags lookalikes open in tool result `part` (`lookalike_tags`): in its own text, and in its text files."""
+    in_text: list[str] = []
+    in_files: list[str] = []
+    for item in part.content_items(mode='str', wrap_if_error=False):
+        file_text = _text_file_content(item)
+        found, text = (in_text, _text_of(item)) if file_text is None else (in_files, file_text)
+        if text is not None:
+            found.extend(tag for tag in lookalike_tags(text, data_tags) if tag not in found)
+    return in_text, in_files
 
 
 def _lookalike_texts(part: ModelRequestPart) -> Iterator[tuple[LookalikeSource, str | None]]:
