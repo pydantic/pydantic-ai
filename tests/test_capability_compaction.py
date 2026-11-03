@@ -1246,7 +1246,11 @@ async def test_capability_loads_are_recorded_again_after_the_summary():
 
 
 async def test_capability_loads_after_a_provider_compaction_end_the_kept_messages():
-    """After a provider's compaction response, the records go after the requests following it, inside the kept messages."""
+    """After a provider's compaction response, the records go after the requests following it, inside the kept messages.
+
+    A regression test for native compaction through the hook unloading deferred capabilities (#11494): the
+    capability loaded before the provider's `CompactionPart` stays loaded, and its tool is still offered.
+    """
 
     def native(request: CompactionRequest) -> CompactionResult:
         part = CompactionPart(provider_name='openai', provider_details={'encrypted_content': 'gAAA'})
