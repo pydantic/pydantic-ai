@@ -93,6 +93,7 @@ from . import (
 )
 from ._cancel import RunCancellation
 from ._capability_loads import keep_capability_loads
+from ._compaction_requests import CompactionRequests, RequestedCompaction
 from ._compaction_view import CompactionView
 from ._context_size import (
     context_input_tokens,
@@ -117,9 +118,7 @@ from ._instructions import (
 )
 from ._run_context import (
     AnchoredEvidence,
-    CompactionRequests,
     EventStreamBuffer,
-    RequestedCompaction,
     dispatch_event_stream,
     recorded_workspace_ref,
     set_current_run_context,
