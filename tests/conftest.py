@@ -500,10 +500,13 @@ def mock_vcr_aiohttp_content(mocker: MockerFixture):
     # google-genai calls `self.response_stream.content.readline()` where `self.response_stream` is a `MockClientResponse`,
     # which creates a new `MockStream` each time instead of returning the same one, resulting in the readline cursor not being respected.
     # So we turn `content` into a cached property to return the same one each time.
-    # VCR issue: https://github.com/kevin1024/vcrpy/issues/927. Once that's is resolved, we can remove this patch.
-    cached_content = cached_property(aiohttp_stubs.MockClientResponse.content.fget)  # type: ignore
-    cached_content.__set_name__(aiohttp_stubs.MockClientResponse, 'content')
-    mocker.patch('vcr.stubs.aiohttp_stubs.MockClientResponse.content', new=cached_content)
+    # VCR issue: https://github.com/kevin1024/vcrpy/issues/927. vcrpy 8.5 fixed it by setting `content` once per
+    # response, so the patch applies only to earlier versions. `--resolution lowest-direct` resolves the newest vcrpy.
+    content = vars(aiohttp_stubs.MockClientResponse).get('content')
+    if isinstance(content, property) and content.fget is not None:
+        cached_content = cached_property(content.fget)
+        cached_content.__set_name__(aiohttp_stubs.MockClientResponse, 'content')
+        mocker.patch('vcr.stubs.aiohttp_stubs.MockClientResponse.content', new=cached_content)
     mocker.patch('vcr.stubs.aiohttp_stubs.MockStream.set_exception', return_value=None)
 
 
