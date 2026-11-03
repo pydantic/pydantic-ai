@@ -18,7 +18,17 @@ from typing import Any
 import httpx2
 import pytest
 
-from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, NativeToolReturnPart, TextPart, ToolReturn
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    NativeToolReturnPart,
+    TextContent,
+    TextPart,
+    ToolReturn,
+    UserPromptPart,
+)
 from pydantic_ai.exceptions import ModelHTTPError
 
 from ...conftest import try_import
@@ -142,11 +152,15 @@ async def test_create_then_continue(allow_model_requests: None, stream: bool):
     assert all(_BETA in betas for betas in api.betas)
 
 
-async def test_continue_within_a_tool_call_loop(allow_model_requests: None):
+@pytest.mark.parametrize('stream', [False, True])
+async def test_continue_within_a_tool_call_loop(allow_model_requests: None, stream: bool):
     """Inside one run, the request answering a tool call sends only the tool result."""
-    api = _Api(replies=[{'type': 'tool_use', 'id': 'toolu_1', 'name': 'get_weather', 'input': {'city': 'Paris'}}])
+    api = _Api(
+        replies=[{'type': 'tool_use', 'id': 'toolu_1', 'name': 'get_weather', 'input': {'city': 'Paris'}}],
+        stream=stream,
+    )
     async with _model(api) as model:
-        await Agent(model, tools=[get_weather], model_settings=_SETTINGS).run('Weather in Paris?')
+        await _run(Agent(model, tools=[get_weather], model_settings=_SETTINGS), 'Weather in Paris?', [], stream)
 
     create, cont = api.bodies
     assert create['thread'] == {'type': 'create'} and create['tools']
@@ -193,6 +207,17 @@ async def test_unrelated_404_is_not_replayed(allow_model_requests: None):
         with pytest.raises(ModelHTTPError):
             await agent.run('Again', message_history=first.all_messages())
     assert len(api.bodies) == 2
+
+
+async def test_unrelated_error_on_create_is_not_resent(allow_model_requests: None):
+    """An error on a create request that isn't about threads reaches the caller, and isn't sent again unthreaded."""
+    invalid = httpx2.Response(400, json={'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'bad'}})
+    api = _Api(replies=[invalid])
+    async with _model(api) as model:
+        with pytest.raises(ModelHTTPError):
+            await Agent(model, model_settings=_SETTINGS).run('Hi')
+    [rejected] = api.bodies
+    assert rejected['thread'] == {'type': 'create'}
 
 
 async def test_changed_instructions_start_a_new_thread(allow_model_requests: None):
@@ -286,6 +311,22 @@ async def test_changed_skills_start_a_new_thread(allow_model_requests: None):
     assert api.bodies[1]['thread'] == {'type': 'create'}
 
 
+async def test_thinking_in_extra_body_is_fixed_for_the_thread(allow_model_requests: None):
+    """`thinking` passed through `extra_body` is fixed for a thread too: the same value continues, a change creates."""
+    api = _Api()
+
+    def thinking(budget: int) -> AnthropicModelSettings:
+        return {**_SETTINGS, 'extra_body': {'thinking': {'type': 'enabled', 'budget_tokens': budget}}}
+
+    async with _model(api) as model:
+        agent = Agent(model)
+        first = await agent.run('Hi', model_settings=thinking(1024))
+        second = await agent.run('Again', message_history=first.all_messages(), model_settings=thinking(1024))
+        await agent.run('More', message_history=second.all_messages(), model_settings=thinking(2048))
+
+    assert [body['thread']['type'] for body in api.bodies] == ['create', 'continue', 'create']
+
+
 async def test_unsupported_request_is_sent_without_a_thread(allow_model_requests: None):
     """A request using something threads don't support is sent again without `thread`, and isn't continued from."""
     api = _Api(replies=[_thread_error(400, 'thread_unsupported_request')])
@@ -323,6 +364,25 @@ async def test_application_metadata_is_not_digested(allow_model_requests: None):
         await agent.run('Thanks', message_history=history)
 
     assert [body['thread']['type'] for body in api.bodies] == ['create', 'continue', 'continue']
+
+
+async def test_text_content_metadata_is_not_digested(allow_model_requests: None):
+    """A prompt's `TextContent.metadata` is never sent either, so changing it doesn't stop the thread continuing."""
+    api = _Api()
+    async with _model(api) as model:
+        agent = Agent(model, model_settings=_SETTINGS)
+        first = await agent.run([TextContent('Hi', metadata={'handle': object()})])
+        history = first.all_messages()
+        first_request = history[0]
+        assert isinstance(first_request, ModelRequest)
+        prompt = first_request.parts[0]
+        assert isinstance(prompt, UserPromptPart)
+        retagged = replace(prompt, content=[TextContent('Hi', metadata={'tag': 'added later'})])
+        history[0] = replace(first_request, parts=[retagged])
+        await agent.run('Again', message_history=history)
+
+    assert [body['thread']['type'] for body in api.bodies] == ['create', 'continue']
+    assert _user_texts(api.bodies[0]) == ['Hi']
 
 
 def test_response_part_metadata_is_not_digested():
