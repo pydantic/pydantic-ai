@@ -1,5 +1,5 @@
 {
   "against": "v2.65.0",
-  "reason": "The `private_key` entry now matches PEM header values in one pass and stops at a line break in any spelling; every other entry is unchanged, and the new pattern redacts the same key material or more on the shapes tested.",
+  "reason": "The `private_key` entry now reads each PEM header line once; every other entry is unchanged, and the new pattern redacts the same key material or more on every key shape tested.",
   "pull_request": "https://github.com/pydantic/pydantic-ai/pull/12377"
 }
