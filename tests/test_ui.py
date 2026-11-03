@@ -2111,8 +2111,9 @@ async def test_conversation_store_without_protocol_saved_events_still_saves():
     )
     revisions: list[str | None] = []
 
-    async def on_complete(result: AgentRunResult[Any]) -> None:
+    async def on_complete(result: AgentRunResult[Any]) -> AsyncIterator[str]:
         revisions.append(result.conversation.revision)
+        yield '<saved>'
 
     events = [event async for event in adapter.run_stream(conversation_id='chat', on_complete=on_complete)]
 
@@ -2129,10 +2130,29 @@ async def test_conversation_store_without_protocol_saved_events_still_saves():
             '<final-result tool_name=None />',
             '</text followed_by_text=False>',
             '</response>',
+            '<saved>',
             '<run-result>ok</run-result>',
             '</stream>',
         ]
     )
+
+
+async def test_conversation_store_announces_only_a_run_it_saved():
+    """`transform_stream` on a native stream the adapter didn't run has no save to announce."""
+    agent, _ = _recording_agent()
+    store = InMemoryConversationStore()
+    run_input = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('hi')])
+    adapter = DummyUIAdapter(
+        agent=agent, run_input=run_input, manage_message_history='server', conversation_store=store
+    )
+    completed: list[AgentRunResult[Any]] = []
+
+    async with agent.run_stream_events('hi') as native:
+        events = [event async for event in adapter.transform_stream(native, on_complete=completed.append)]
+
+    assert len(completed) == 1
+    assert '<run-result>ok</run-result>' in events
+    assert await store.load(completed[0].conversation.conversation_id) is None
 
 
 @pytest.mark.parametrize('client_sends', ['everything', 'new turn only'])

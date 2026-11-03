@@ -11926,6 +11926,7 @@ async def test_conversation_store_loads_saves_and_resumes():
     )
     [saved] = [event for event in events if isinstance(event, CustomEvent)]
     entries = await store.load_entries('thread')
+    assert entries is not None
     assert saved.name == 'pydantic_ai_conversation_saved'
     assert saved.value == {'conversation_id': 'thread', 'entry_ids': [entry.id for entry in entries[2:]]}
     conversation = await store.load('thread')

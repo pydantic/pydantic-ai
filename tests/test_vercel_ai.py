@@ -14060,9 +14060,10 @@ async def test_conversation_store_loads_and_saves_each_turn():
         ['user-prompt: hi', 'text: ok', 'user-prompt: and now?', 'text: ok']
     )
     entries = await store.load_entries('chat')
+    assert entries is not None
     assert [entry.id for entry in entries] == [*_saved_entry_ids(first), *_saved_entry_ids(second)]
     # The saved entries come after the run's own chunks.
-    assert [chunk.type for chunk in second] == snapshot(
+    assert [chunk.model_dump()['type'] for chunk in second] == snapshot(
         [
             'start',
             'start-step',
@@ -14103,7 +14104,7 @@ async def test_conversation_store_regenerate_branches():
 
 async def test_conversation_store_tool_approval():
     """An approval answers the call the stored conversation is waiting on; a result for that call isn't accepted."""
-    agent, requests, deleted = server_history_agent()
+    agent, _, deleted = server_history_agent()
     store = InMemoryConversationStore()
     delete = UIMessage(id='u1', role='user', parts=[TextUIPart(text='delete a.txt')])
     await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[delete]))
