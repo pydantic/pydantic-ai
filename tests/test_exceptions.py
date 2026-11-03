@@ -34,6 +34,7 @@ from pydantic_ai.exceptions import (
     ModelServerError,
     ModelTimeoutError,
     ModelUnavailableError,
+    OutputTokenLimitExceeded,
     ToolFailedError,
     ToolRetryError,
     UnexpectedModelBehavior,
@@ -80,6 +81,7 @@ def test_tool_failed_pydantic_schema_accepts_instance() -> None:
         lambda: ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='model'),
         lambda: ModelRequestTimeout('model', 30),
         lambda: IncompleteToolCall('test'),
+        lambda: OutputTokenLimitExceeded('test'),
         lambda: ToolRetryError(ToolReturnPart(tool_name='test', content='test', outcome='retried')),
     ],
     ids=[
@@ -97,6 +99,7 @@ def test_tool_failed_pydantic_schema_accepts_instance() -> None:
         'ModelHTTPError-ModelRateLimitError',
         'ModelRequestTimeout',
         'IncompleteToolCall',
+        'OutputTokenLimitExceeded',
         'ToolRetryError',
     ],
 )
@@ -248,6 +251,7 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
             },
         ),
         (lambda: IncompleteToolCall('incomplete'), {'message': 'incomplete', 'body': None}),
+        (lambda: OutputTokenLimitExceeded('cut off'), {'message': 'cut off', 'body': None}),
     ],
     ids=[
         'ModelRetry',
@@ -276,6 +280,7 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         'ModelHTTPError-with-model-suggestion-and-hint',
         'ModelHTTPError-ModelNotFoundError-with-model-suggestion',
         'IncompleteToolCall',
+        'OutputTokenLimitExceeded',
     ],
 )
 def test_exceptions_pickle_round_trip(exc_factory: Callable[[], Exception], check_attrs: dict[str, Any]):

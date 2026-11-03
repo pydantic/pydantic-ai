@@ -97,6 +97,8 @@ for attempt in result.response.failed_attempts or []:
     #> second error None
 ```
 
+The default's [`OutputTokenLimitExceeded`](#token-limit) already rejects a cut-off response; `was_truncated` stands in here for a check of your own.
+
 When every model has failed or been rejected, `ModelFallback` raises [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] with every exception, plus a [`ResponseRejected`][pydantic_ai.models.fallback.ResponseRejected] counting any rejected responses.
 
 !!! note
@@ -154,7 +156,7 @@ A few things to know about falling back on refusals:
 
 ## Falling back when the output is cut off {#token-limit}
 
-A response that reaches the [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens] model setting, or the model's own output limit, is cut off, with a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `'length'`. Models differ in how much they write for the same request, so another one may answer within the limit. `ModelFallback` moves on from a cut-off response by default, because without it a cut-off text answer is the run's output and looks complete (see [Output cut off by the token limit](../output.md#truncated-output)). Naming [`OutputTokenLimitExceeded`][pydantic_ai.exceptions.OutputTokenLimitExceeded] in `fallback_on`, as the default does, is what turns this on, as `ContentFilterError` does for refusals.
+A response that reaches the [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens] model setting, or the model's own output limit, is cut off, with a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `'length'`. Models differ in how much they write for the same request, so another one may answer within the limit. `ModelFallback` moves on from a cut-off response by default, because without it a cut-off text answer is the run's output and looks complete. Naming [`OutputTokenLimitExceeded`][pydantic_ai.exceptions.OutputTokenLimitExceeded] in `fallback_on`, as the default does, is what turns this on, as `ContentFilterError` does for refusals.
 
 ```python {title="model_fallback_on_token_limit.py"}
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart
