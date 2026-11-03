@@ -886,7 +886,7 @@ def test_gateway_zai_glm_5_3_inline_defs():
         {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'supports_json_schema_output': True}
     )
     assert _normalize(FireworksProvider.model_profile('accounts/fireworks/models/glm-5p3')) == fireworks_expected
-    assert _normalize(FireworksProvider.model_profile('routers/glm-5p3-fast')) == fireworks_expected
+    assert _normalize(FireworksProvider.model_profile('accounts/fireworks/routers/glm-5p3-fast')) == fireworks_expected
 
     assert _normalize(OllamaProvider.model_profile('glm-5.3')) == snapshot(
         {

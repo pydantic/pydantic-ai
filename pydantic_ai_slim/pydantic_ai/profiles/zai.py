@@ -73,7 +73,7 @@ def zai_model_profile(model_name: str) -> ModelProfile | None:
     return profile
 
 
-def zai_glm_5_3_schema_profile(model_name: str) -> ModelProfile | None:
+def _glm_5_3_schema_profile(model_name: str) -> ModelProfile | None:
     """The GLM-5.3 schema fix alone, for gateways that serve GLM models under Z.AI's `glm-*` ids.
 
     GLM-5.3 stringifies nested tool arguments whose schema is a `$ref` into `$defs` wherever it's served, so its

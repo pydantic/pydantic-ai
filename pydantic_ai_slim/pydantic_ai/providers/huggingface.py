@@ -15,7 +15,7 @@ from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
-from pydantic_ai.profiles.zai import zai_glm_5_3_schema_profile
+from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 try:
     from huggingface_hub import AsyncInferenceClient
@@ -82,7 +82,7 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
                 profile = provider_to_profile[provider](model_name)
             elif provider == 'zai-org':
                 # Only GLM-5.3's schema fix: every other GLM id keeps having no profile.
-                return zai_glm_5_3_schema_profile(model_name)
+                return _glm_5_3_schema_profile(model_name)
 
         # Only recognized `provider/model` names get a profile; bare names and unknown providers
         # return `None` (no fallback overlay). Recognized providers always advertise inline system
