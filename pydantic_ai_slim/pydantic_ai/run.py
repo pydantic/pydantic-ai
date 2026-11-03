@@ -11,7 +11,7 @@ import anyio
 from pydantic import ConfigDict, GetJsonSchemaHandler, TypeAdapter, model_serializer, model_validator, with_config
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import CoreSchema
-from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
+from pydantic_core.core_schema import IncExCall, SerializationInfo, SerializerFunctionWrapHandler
 from typing_extensions import TypedDict
 
 from pydantic_graph import BaseNode, End, EndMarker, ErrorMarker, GraphRun, GraphRunContext, GraphTaskRequest, JoinItem
@@ -144,10 +144,17 @@ def _filtered_value(value: Any, spec: Any, *, keep: bool) -> Any:
     Filters the container rather than re-serializing it, so the value stays whatever the outer
     schema expects. That bounds what can be applied: a plain set of keys or indices, against a
     mapping or a sequence — `exclude={'metadata': {'api_key'}}` and `exclude={'messages': {0}}`,
-    the forms a caller reaches for to redact an entry or drop a message. A deeper spec, or one
-    aimed at a key whose value is neither (`usage`), would need that value re-serialized against a
-    sub-schema, so it is left alone; see `_filter_serialized`.
+    the forms a caller reaches for to redact an entry or drop a message — or the same keys mapped
+    to `True`, which Pydantic treats as that set. A deeper spec, or one aimed at a key whose value
+    is neither (`usage`), would need that value re-serialized against a sub-schema, so it is left
+    alone; see `_filter_serialized`.
     """
+    if isinstance(spec, Mapping):
+        sub_specs = cast('Mapping[Any, Any]', spec)
+        # An empty mapping names no keys, but `all()` alone would accept it as an empty key set.
+        if not (sub_specs and all(sub_spec is True for sub_spec in sub_specs.values())):
+            return value
+        spec = set(sub_specs)
     if not isinstance(spec, set):
         return value
     if isinstance(value, Mapping):
@@ -183,7 +190,11 @@ def _filter_serialized(data: Mapping[str, Any], info: SerializationInfo) -> dict
             else {key for key, spec in exclude.items() if not isinstance(spec, (set, dict))}
         )
         data = {key: value for key, value in data.items() if key not in dropped}
+    return _apply_nested_specs(data, include, exclude)
 
+
+def _apply_nested_specs(data: Mapping[str, Any], include: IncExCall, exclude: IncExCall) -> dict[str, Any]:
+    """Apply each key's nested `include`/`exclude` spec to the value of a key `data` still has."""
     filtered = dict(data)
     for spec, keep in ((include, True), (exclude, False)):
         if not isinstance(spec, Mapping):
@@ -864,6 +875,26 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         return f'<{type(self).__name__} result={result_repr} usage={self.usage}>'
 
 
+def _from_legacy_shape(data: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    """The public shape of an `AgentRunResult` serialized with its private fields, `_state` among them.
+
+    Serialized before the public shape existed, when every private field was exposed directly,
+    `GraphAgentState`'s run-local scratch included; that scratch is dropped here. Public keys still
+    win, so a payload carrying both reads as the public one.
+    """
+    restored: dict[str, Any] = {
+        'new_message_index': data.get('_new_message_index', 0),
+        'output_tool_name': data.get('_output_tool_name'),
+        'traceparent': data.get('_traceparent_value'),
+    }
+    if 'message_history' in state:
+        restored['messages'] = state['message_history']
+    for key in _STATE_KEYS:
+        if key in state:
+            restored[key] = state[key]
+    return {**restored, **{key: item for key, item in data.items() if not key.startswith('_')}}
+
+
 @dataclasses.dataclass
 class AgentRunResult(Generic[OutputDataT]):
     """The final result of an agent run."""
@@ -922,21 +953,7 @@ class AgentRunResult(Generic[OutputDataT]):
         data = cast('dict[str, Any]', value)
 
         if isinstance(legacy_state := data.get('_state'), dict):
-            # Serialized before this shape existed, when every private field was exposed directly,
-            # `GraphAgentState`'s run-local scratch included; that scratch is dropped here. Public
-            # keys still win, so a payload carrying both reads as the public one.
-            state = cast('dict[str, Any]', legacy_state)
-            restored: dict[str, Any] = {
-                'new_message_index': data.get('_new_message_index', 0),
-                'output_tool_name': data.get('_output_tool_name'),
-                'traceparent': data.get('_traceparent_value'),
-            }
-            if 'message_history' in state:
-                restored['messages'] = state['message_history']
-            for key in _STATE_KEYS:
-                if key in state:
-                    restored[key] = state[key]
-            data = {**restored, **{key: item for key, item in data.items() if not key.startswith('_')}}
+            data = _from_legacy_shape(data, cast('dict[str, Any]', legacy_state))
 
         state_data: dict[str, Any] = {}
         if 'messages' in data:
