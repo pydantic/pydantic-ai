@@ -23,7 +23,7 @@ from typing import Any, cast
 import anyio
 from render import RenderAsync
 from render.client.errors import ClientError
-from render.experimental.sandbox import SandboxExecEvent, SandboxExecExit
+from render.sandbox import SandboxExecEvent, SandboxExecExit
 
 from pydantic_ai.workspaces import (
     CommandResult,
@@ -105,7 +105,7 @@ class _Capture:
 
 async def _consume(client: RenderAsync, sandbox_id: str, launch: str, capture: _Capture) -> None:
     # The SDK annotates an iterator but returns an async generator, closed here if the caller stops early.
-    stream = cast(AsyncGenerator[SandboxExecEvent], client.experimental.sandboxes.exec(sandbox_id, launch))
+    stream = cast(AsyncGenerator[SandboxExecEvent], client.sandboxes.exec(sandbox_id, launch))
     sdk_exit: int | None = None
     async with aclosing(stream):
         async for event in stream:
@@ -146,10 +146,10 @@ def open_client() -> RenderAsync:
 
 
 async def close_client(client: RenderAsync) -> None:
-    # Render 1.2 exposes no close on `RenderAsync`; its pool lives on the sandbox API client.
+    # Render 1.6 exposes no close on `RenderAsync`; its pool lives on the sandbox API client.
     with anyio.move_on_after(_CLOSE_TIMEOUT, shield=True) as deadline:
         try:
-            await client.experimental.sandboxes.client.get_async_httpx_client().aclose()
+            await client.sandboxes.client.get_async_httpx_client().aclose()
         except Exception:
             logger.warning('Could not close the Render API client')
     if deadline.cancelled_caught:

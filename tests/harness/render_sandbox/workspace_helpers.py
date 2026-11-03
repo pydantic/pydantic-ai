@@ -29,7 +29,8 @@ from typing import Any
 import anyio
 import pytest
 from render import RenderAsync
-from render.experimental.sandbox import (
+from render.sandbox import (
+    NetworkPolicy,
     Sandbox,
     SandboxExecEvent,
     SandboxExecExit,
@@ -149,7 +150,7 @@ def make_workspace_harness(
     execute = stream(harness)
 
     def install(client: RenderAsync) -> None:
-        sdk = client.experimental.sandboxes
+        sdk = client.sandboxes
         monkeypatch.setattr(sdk, 'copy_to', copy_to)
         monkeypatch.setattr(sdk, 'copy_from', copy_from)
         monkeypatch.setattr(sdk, 'create', create)
@@ -177,7 +178,7 @@ def use_host_credentials(harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPa
 
 
 def client_is_closed(client: RenderAsync) -> bool:
-    return client.experimental.sandboxes.client.get_async_httpx_client().is_closed
+    return client.sandboxes.client.get_async_httpx_client().is_closed
 
 
 def lifecycle(
@@ -190,7 +191,16 @@ def lifecycle(
         if harness.create_error is not None:
             raise harness.create_error
         identifier = f'sb-{len(harness.created) + 1}'
-        sandbox = Sandbox(identifier, harness.create_status, 'starter', 'deny-all', 'oregon', 300, datetime.now(UTC))
+        sandbox = Sandbox(
+            id=identifier,
+            status=harness.create_status,
+            plan='1c-2g',
+            network_policy=NetworkPolicy(type=network_policy),
+            region='oregon',
+            timeout_seconds=300,
+            idle_timeout_seconds=900,
+            created_at=datetime.now(UTC),
+        )
         harness.create_calls[identifier] = CreateCall(timeout_seconds, network_policy)
         harness.sandbox_roots[identifier] = harness.root / identifier
         harness.sandboxes[identifier] = sandbox

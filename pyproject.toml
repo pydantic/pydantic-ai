@@ -244,6 +244,9 @@ prefect = "2026-10-21T03:46:00Z"
 # TODO(adtyavrdhn): Remove after 2026-11-03 23:56 UTC, then run `uv lock` and
 # `uv lock --script .github/scripts/pydantic-ai-runner`.
 boxd = "2026-10-27T23:56:00Z"
+# render 1.6.0 provides the stable Sandbox API used by RenderSandbox.
+# TODO(adtyavrdhn): Remove after 2026-11-06 01:06 UTC, then run `uv lock`.
+render = "2026-10-30T01:06:03Z"
 
 [dependency-groups]
 dev = [

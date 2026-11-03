@@ -24,7 +24,8 @@ with try_import() as imports_successful:
     from render import RenderAsync
     from render.client.errors import ClientError, RateLimitError
     from render.client.util import handle_httpx_exception
-    from render.experimental.sandbox import (
+    from render.sandbox import (
+        NetworkPolicy,
         Sandbox,
         SandboxExecEvent,
         SandboxExecExit,
@@ -67,7 +68,16 @@ class ScriptedSDK:
     stop_gate: asyncio.Event | None = None
 
     def sandbox(self, status: str) -> Sandbox:
-        return Sandbox('sbx-scripted', status, 'starter', 'deny-all', 'oregon', 300, datetime.now(UTC))
+        return Sandbox(
+            id='sbx-scripted',
+            status=status,
+            plan='1c-2g',
+            network_policy=NetworkPolicy(type='deny-all'),
+            region='oregon',
+            timeout_seconds=300,
+            idle_timeout_seconds=900,
+            created_at=datetime.now(UTC),
+        )
 
     def backend(self) -> RenderSandboxBackend:
         return RenderSandboxBackend(client=self.client)
@@ -148,7 +158,7 @@ def boundary(monkeypatch: pytest.MonkeyPatch) -> ScriptedSDK:
     monkeypatch.setattr('pydantic_ai_harness.render_sandbox._backend._POLL_INTERVAL', 0)
     monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands._STOP_TIMEOUT', 1)
     sdk = ScriptedSDK(RenderAsync(token='test-only', owner_id='tea-test'))
-    public_api = sdk.client.experimental.sandboxes
+    public_api = sdk.client.sandboxes
     monkeypatch.setattr(public_api, 'create', sdk.create)
     monkeypatch.setattr(public_api, 'from_id', sdk.from_id)
     monkeypatch.setattr(public_api, 'exec', sdk.exec)
@@ -356,7 +366,7 @@ async def test_create_deadline_is_not_a_terminal_workspace_error(
     async def stalled_create(**kwargs: object) -> Sandbox:
         return await asyncio.Future[Sandbox]()
 
-    monkeypatch.setattr(boundary.client.experimental.sandboxes, 'create', stalled_create)
+    monkeypatch.setattr(boundary.client.sandboxes, 'create', stalled_create)
     monkeypatch.setattr('pydantic_ai_harness.render_sandbox._backend._OPERATION_TIMEOUT', 0)
     with pytest.raises(TimeoutError):
         await boundary.backend().working_dir()
@@ -374,7 +384,7 @@ async def test_acquisition_preserves_sdk_transport_errors(
         raise original
 
     if phase == 'create':
-        monkeypatch.setattr(boundary.client.experimental.sandboxes, 'create', failing_create)
+        monkeypatch.setattr(boundary.client.sandboxes, 'create', failing_create)
     else:
         boundary.status_script = [original]
     with pytest.raises(ClientError) as caught:
@@ -389,7 +399,7 @@ async def test_client_close_failure_is_logged_without_changing_the_operation_out
     caplog: pytest.LogCaptureFixture,
     operation_fails: bool,
 ) -> None:
-    pool = owned_boundary.client.experimental.sandboxes.client.get_async_httpx_client()
+    pool = owned_boundary.client.sandboxes.client.get_async_httpx_client()
     original_close = pool.aclose
 
     async def failed_close() -> None:
@@ -411,7 +421,7 @@ async def test_client_close_failure_is_logged_without_changing_the_operation_out
 async def test_client_close_deadline_is_logged_without_holding_up_the_operation(
     owned_boundary: ScriptedSDK, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    pool = owned_boundary.client.experimental.sandboxes.client.get_async_httpx_client()
+    pool = owned_boundary.client.sandboxes.client.get_async_httpx_client()
     original_close = pool.aclose
 
     async def stalled_close() -> None:
@@ -430,7 +440,7 @@ async def test_client_close_deadline_is_logged_without_holding_up_the_operation(
 async def test_client_close_finishes_before_cancellation_propagates(
     owned_boundary: ScriptedSDK, monkeypatch: pytest.MonkeyPatch, cancellation: str
 ) -> None:
-    pool = owned_boundary.client.experimental.sandboxes.client.get_async_httpx_client()
+    pool = owned_boundary.client.sandboxes.client.get_async_httpx_client()
     original_close = pool.aclose
     started, finish, closed = asyncio.Event(), asyncio.Event(), asyncio.Event()
 

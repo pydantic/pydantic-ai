@@ -10,7 +10,7 @@ from ...conftest import try_import
 
 with try_import() as imports_successful:
     from render.client.errors import ClientError, RateLimitError, ServerError
-    from render.experimental.sandbox import SandboxNotFoundError
+    from render.sandbox import SandboxNotFoundError
 
     from pydantic_ai import Agent
     from pydantic_ai.exceptions import UserError

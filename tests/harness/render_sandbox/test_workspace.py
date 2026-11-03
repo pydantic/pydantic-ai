@@ -14,7 +14,7 @@ from ...conftest import try_import
 with try_import() as imports_successful:
     from render import RenderAsync
     from render.client.errors import ClientError, RateLimitError, ServerError
-    from render.experimental.sandbox import Sandbox, SandboxExecEvent, SandboxNotFoundError
+    from render.sandbox import Sandbox, SandboxExecEvent, SandboxNotFoundError
 
     from pydantic_ai.exceptions import UserError
     from pydantic_ai.workspaces import (
@@ -118,7 +118,7 @@ async def test_commands_run_in_the_resolved_working_dir(
     real.mkdir()
     link = workspace_harness.root / 'link'
     link.symlink_to(real)
-    sdk = workspace_harness.client.experimental.sandboxes
+    sdk = workspace_harness.client.sandboxes
     execute = sdk.exec
     launched: list[str] = []
 
@@ -162,7 +162,7 @@ async def test_readiness_failure_retains_created_ref(workspace_harness: Workspac
 async def test_readiness_retry_after_create_still_makes_working_dir(
     workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    original = workspace_harness.client.experimental.sandboxes.from_id
+    original = workspace_harness.client.sandboxes.from_id
     failures = [ServerError('status unavailable')]
 
     async def flaky(identifier: str) -> Sandbox:
@@ -170,7 +170,7 @@ async def test_readiness_retry_after_create_still_makes_working_dir(
             raise failures.pop()
         return await original(identifier)
 
-    monkeypatch.setattr(workspace_harness.client.experimental.sandboxes, 'from_id', flaky)
+    monkeypatch.setattr(workspace_harness.client.sandboxes, 'from_id', flaky)
     working_dir = workspace_harness.root / 'project'
     backend = workspace_harness.backend(working_dir=str(working_dir))
     with pytest.raises(ServerError):
@@ -186,14 +186,14 @@ async def test_readiness_polls_until_running(
     workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     statuses = ['creating', 'creating', 'running']
-    original = workspace_harness.client.experimental.sandboxes.from_id
+    original = workspace_harness.client.sandboxes.from_id
 
     async def warming(identifier: str) -> Sandbox:
         sandbox = await original(identifier)
         sandbox.status = statuses.pop(0)
         return sandbox
 
-    monkeypatch.setattr(workspace_harness.client.experimental.sandboxes, 'from_id', warming)
+    monkeypatch.setattr(workspace_harness.client.sandboxes, 'from_id', warming)
     backend = workspace_harness.backend()
     assert await backend.working_dir() == str(workspace_harness.root)
     assert statuses == []
@@ -271,7 +271,7 @@ async def test_failed_status_probe_reraises_the_stream_error(
     async def failing(identifier: str) -> Sandbox:
         raise probe_error
 
-    monkeypatch.setattr(workspace_harness.client.experimental.sandboxes, 'from_id', failing)
+    monkeypatch.setattr(workspace_harness.client.sandboxes, 'from_id', failing)
     with pytest.raises(RuntimeError) as caught:
         await backend.run(['true'])
     assert caught.value is stream_error
@@ -295,7 +295,7 @@ async def test_rate_limit_during_readiness_propagates_unchanged(
     async def limited(identifier: str) -> Sandbox:
         raise rate_limit
 
-    monkeypatch.setattr(workspace_harness.client.experimental.sandboxes, 'from_id', limited)
+    monkeypatch.setattr(workspace_harness.client.sandboxes, 'from_id', limited)
     with pytest.raises(RateLimitError) as caught:
         await backend.run(['printf', 'never sent'])
     assert caught.value is rate_limit
@@ -378,7 +378,7 @@ async def test_stop_after_cancellation_runs_on_its_own_open_client(
 
     def recording_install(client: RenderAsync) -> None:
         install(client)
-        sdk = client.experimental.sandboxes
+        sdk = client.sandboxes
         execute = sdk.exec
 
         def record(identifier: str, launch: str) -> AsyncIterator[SandboxExecEvent]:

@@ -14,7 +14,7 @@ from ...conftest import try_import
 
 with try_import() as imports_successful:
     from render.client.errors import ClientError, RateLimitError, ServerError
-    from render.experimental.sandbox import SandboxDownloadError, SandboxFileNotFoundError, SandboxNotFoundError
+    from render.sandbox import SandboxDownloadError, SandboxFileNotFoundError, SandboxNotFoundError
 
     from pydantic_ai.workspaces import (
         Workspace,

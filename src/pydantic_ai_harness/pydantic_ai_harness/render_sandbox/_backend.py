@@ -51,7 +51,7 @@ from pydantic_ai_harness._workspace_provider import (
 try:
     from render import RenderAsync
     from render.client.errors import ClientError, RateLimitError
-    from render.experimental.sandbox import SandboxDownloadError, SandboxFileNotFoundError, SandboxNotFoundError
+    from render.sandbox import SandboxDownloadError, SandboxFileNotFoundError, SandboxNotFoundError
 except ImportError as _import_error:  # pragma: no cover - exercised by the clean-import test
     raise ImportError('Install `pydantic-ai-harness[render]` to use RenderSandbox.') from _import_error
 
@@ -146,7 +146,7 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
     async def _create(self, client: RenderAsync) -> None:
         try:
             async with asyncio.timeout(_OPERATION_TIMEOUT):
-                sandbox = await client.experimental.sandboxes.create(
+                sandbox = await client.sandboxes.create(
                     timeout_seconds=self._sandbox_timeout,
                     network_policy='allow-all' if self._allow_internet_access else 'deny-all',
                 )
@@ -171,7 +171,7 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
             try:
                 async with asyncio.timeout(_READINESS_TIMEOUT):
                     while True:
-                        sandbox = await client.experimental.sandboxes.from_id(self._ref.id)
+                        sandbox = await client.sandboxes.from_id(self._ref.id)
                         if sandbox.status == 'running':
                             break
                         if sandbox.status in ('errored', 'terminated'):
@@ -242,7 +242,7 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
             # fails, raise the stream error: the command may have run, so nothing may look retryable.
             try:
                 async with asyncio.timeout(_OPERATION_TIMEOUT):
-                    sandbox = await client.experimental.sandboxes.from_id(self._ref.id)
+                    sandbox = await client.sandboxes.from_id(self._ref.id)
             except SandboxNotFoundError as status_error:
                 raise WorkspaceUnavailableError('Render sandbox is unavailable') from status_error
             except Exception as status_error:
@@ -286,9 +286,9 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
                 # Never retry an uncertain upload or hide failure with a shell fallback.
                 async with asyncio.timeout(self._deadline(size if data is None else len(data))):
                     if data is None:
-                        await client.experimental.sandboxes.copy_from(ref.id, f'{remote}/data', local)
+                        await client.sandboxes.copy_from(ref.id, f'{remote}/data', local)
                     else:
-                        await client.experimental.sandboxes.copy_to(ref.id, local, f'{remote}/data')
+                        await client.sandboxes.copy_to(ref.id, local, f'{remote}/data')
                 if data is None:
                     # Reject a changed snapshot before allocating the returned bytes.
                     if local.is_symlink() or local.stat().st_size != size:
@@ -346,7 +346,7 @@ async def terminate_sandbox(client: RenderAsync | None, sandbox_id: str) -> None
     _require_asyncio()
     async with client_scope(client) as scope:
         try:
-            await scope.experimental.sandboxes.terminate(sandbox_id)
+            await scope.sandboxes.terminate(sandbox_id)
         except SandboxNotFoundError:
             pass
         except RateLimitError:

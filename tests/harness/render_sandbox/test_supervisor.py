@@ -17,7 +17,7 @@ import pytest
 from ...conftest import try_import
 
 with try_import() as imports_successful:
-    from render.experimental.sandbox import SandboxExecExit, SandboxExecOutput
+    from render.sandbox import SandboxExecExit, SandboxExecOutput
 
     from pydantic_ai.workspaces import (
         WorkspaceError,
@@ -89,7 +89,7 @@ async def test_stop_fence_prevents_a_delayed_launch(workspace_harness: Workspace
     with pytest.raises(ConnectionError, match='start response lost'):
         await backend.run(['touch', str(sentinel)])
     assert workspace_harness.delayed is not None
-    replay = workspace_harness.client.experimental.sandboxes.exec('sb-1', workspace_harness.delayed)
+    replay = workspace_harness.client.sandboxes.exec('sb-1', workspace_harness.delayed)
     events = [event async for event in replay]
     frames = [json.loads(event.data) for event in events if isinstance(event, SandboxExecOutput)]
     assert [frame['kind'] for frame in frames] == ['fenced']
