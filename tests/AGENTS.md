@@ -180,6 +180,7 @@ Default for a test that asserts an outbound field: take the capture fixture and 
 - Fix blocking calls by offloading with `anyio.to_thread.run_sync`.
 - Add legitimate blocking calls to `BLOCKBUSTER_EXEMPTIONS` in `tests/conftest.py` with a reason.
 - List a test double that serves a remote service from local files, processes, or SQLite in `BLOCKBUSTER_TEST_DOUBLES`. That exempts every frame in the file, and the code calling it stays checked.
+- List a third-party function in `BLOCKBUSTER_LIBRARY_SETUP` only when it does one-time setup I/O whose exact blocking calls change between dependency versions, such as loading credentials. Give a reason; everything else stays call by call in `BLOCKBUSTER_EXEMPTIONS`.
 - Override `blockbuster_excluded_modules` when one integration module intentionally provides synchronous APIs.
 - Override `blockbuster_enabled` at the narrowest test or integration-module boundary that intentionally performs blocking work.
 - Use the narrowest module or test boundary. Do not replace the autouse `blockbuster` fixture.
