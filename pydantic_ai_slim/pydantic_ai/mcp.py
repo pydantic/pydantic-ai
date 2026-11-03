@@ -94,6 +94,7 @@ else:
 from . import _mcp, _utils, exceptions, messages, models
 from ._mcp_apps import MCP_APP_METADATA_KEY, MCPAppToolResult
 from ._mcp_compat import is_mcp_sdk_v2, mcp_field, mcp_optional_field, mcp_validated_field
+from ._removed_names import removed_names_getattr
 from ._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
 from .settings import ModelSettings
 
@@ -2430,3 +2431,20 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
         toolsets.append(toolset.prefixed(name))
 
     return toolsets
+
+
+_USE_MCP_TOOLSET = (
+    'use `MCPToolset`, which picks the transport from its arguments; its timeout and retry defaults differ.'
+)
+
+_REMOVED_IN_V2 = {
+    'MCPServerStdio': _USE_MCP_TOOLSET,
+    'MCPServerSSE': _USE_MCP_TOOLSET,
+    'MCPServerStreamableHTTP': _USE_MCP_TOOLSET,
+    'MCPServerHTTP': _USE_MCP_TOOLSET,
+    'load_mcp_servers': 'use `load_mcp_toolsets`.',
+}
+
+# Kept from type checkers, which would otherwise accept any name on this module.
+if not TYPE_CHECKING:  # pragma: no branch
+    __getattr__ = removed_names_getattr(__name__, _REMOVED_IN_V2)

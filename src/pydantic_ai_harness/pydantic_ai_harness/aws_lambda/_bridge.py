@@ -579,12 +579,12 @@ def _run_durable_on_agent_loop(
             )
         return bridge.consume()
     finally:
+        _active_bridge.reset(token)
         # The loop outlives the invocation, so a run abandoned by a suspension or an error escaping
         # the handler would otherwise keep running into the next warm invocation. Wait for it to
         # finish unwinding: an agent coroutine's `finally`/`__aexit__` cleanup runs during
         # cancellation, and letting that overlap the next invocation would touch shared provider
         # resources after the execution it belonged to was abandoned.
-        _active_bridge.reset(token)
         if tasks:  # pragma: no branch - only empty when scheduling itself failed
             task = tasks[0]
             finished = threading.Event()

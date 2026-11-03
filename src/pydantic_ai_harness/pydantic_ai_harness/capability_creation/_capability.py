@@ -40,14 +40,12 @@ class CapabilityCreation(AbstractCapability[AgentDepsT]):
     one `AbstractCapability` subclass that constructs with no arguments and whose
     static getters run) before it replaces `<name>.py` in `directory`; code that
     fails is kept for inspection and, while a working version exists, does not
-    replace it. Authored capabilities hold live code, so they are not
-    spec-serializable and are persisted as source rather than as a spec.
+    replace it. Authored capabilities hold live code, so they are persisted as source
+    rather than as a spec.
 
-    Activation boundary: a capability cannot be added to a live, already-executing
-    run -- pydantic-ai resolves the capability set once at the start of each run.
-    The authored capability becomes usable on the next `agent.run(...)`. The
-    integration contract is one line on the orchestrator side: thread the store's
-    active capabilities into the next run.
+    Pydantic AI resolves the capability set once at the start of each run, so an
+    authored capability becomes usable on the next run: pass the store's active
+    capabilities as `capabilities=`.
 
     ```python
     from pathlib import Path
@@ -59,7 +57,7 @@ class CapabilityCreation(AbstractCapability[AgentDepsT]):
     creation = CapabilityCreation(directory=Path('.authored'))
     agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[LocalWorkspace('.'), creation])
 
-    # Loop: each iteration injects whatever the agent has authored so far.
+    # Inject whatever the agent has authored so far.
     result = await agent.run('build a logging capability', capabilities=creation.store.load_active())
     ```
 

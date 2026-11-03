@@ -4,15 +4,11 @@ Let the model ask the user multiple-choice questions mid-run and wait for the an
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/ask_user/)
 
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
+
 ![The model calls ask_user_question with one to ten multiple-choice questions. AskUser validates them, rejecting calls outside the limits or with control characters as a retry, then hands an AskUserRequest to the answerer you supply, such as a terminal menu or a web form. The answerer returns an AskUserResponse. The model gets the picked labels keyed by header, a sentence saying the user declined or did not answer in time, or, with answerer=None, the run pauses with DeferredToolRequests until you answer in a later run.](https://pydantic.dev/docs/ai/img/harness/ask-user.svg)
 
-## The problem
-
-An agent given an ambiguous task either guesses or buries a question in its output and stops.
-Guessing wastes a run; a question in prose is only found by a person reading the whole answer.
-The model needs a way to ask a small, structured question and get the answer back as data.
-
-## The solution
+## Usage
 
 `AskUser` exposes one tool, `ask_user_question`. The model passes one to ten questions, each
 with a short `header`, the question text, two to six options (a `label` and an optional
@@ -20,9 +16,9 @@ with a short `header`, the question text, two to six options (a `label` and an o
 the call, hands it to your `answerer`, and returns the picked labels keyed by header. If the
 user declines, the model is told so and the run continues.
 
-The capability owns the schema and validation. It never prints, reads stdin, or imports a
-terminal library: the `answerer` is whatever puts the questions in front of a person, and you
-supply it. There is no default, because a capability that reads stdin is unusable from a server.
+The capability never prints, reads stdin, or imports a terminal library: the `answerer` is
+whatever puts the questions in front of a person, and you supply it. There is no default,
+because an answerer that reads stdin would not work from a server.
 
 ```python
 from pydantic_ai import Agent
@@ -52,10 +48,10 @@ An `Answerer` is one async callable: it takes an `AskUserRequest` and returns an
   with the picked option labels in `selected`: exactly one unless the question is
   `multi_select`, at least one either way, and no label twice.
 - An answerer may instead return `AskUserAnswer(header=q.header, custom_answer='My own answer')`.
-  Leave `selected` empty. Custom text must be nonblank and contain no control characters other
-  than newlines and no format characters such as zero-width spaces, joiners and bidirectional
-  overrides, so run `check_response` on text a user typed. Its length is not limited, so cap free text that
-  arrives from a client before returning it. The model receives it as a one-item list under the
+  Leave `selected` empty. Custom text must be nonblank and follow the question fields'
+  [character rules](#what-the-model-sees), with newlines allowed, so run `check_response` on text
+  a user typed. Its length is not limited, so cap free text that arrives from a client before
+  returning it. The model receives it as a one-item list under the
   question's header.
   Whether to offer text entry is up to the answerer; the model cannot request it.
 - When the user declines, return `AskUserResponse(cancelled=True)` with no answers. The tool
@@ -295,9 +291,6 @@ share it are one answerer stated twice: they become one when they agree, and the
 `UserError` when it's built if they differ. To keep two, give each its own `id` and wrap them
 in [PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/), since both register `ask_user_question`.
 To serve several UIs, pass one answerer that dispatches to them.
-
-Earlier releases declared no default `id`, so two always failed on the tool name when the run
-started. Two identical ones now become one, and two that differ fail when the agent is built.
 
 ## Tracing
 
