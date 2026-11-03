@@ -52,9 +52,10 @@ _TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES = (
 )
 """Models that accept `tool_addition` / `tool_removal` blocks on a `{'role': 'system'}` entry.
 
-The list Anthropic publishes for the `mid-conversation-tool-changes-2026-07-01` beta, and it happens
-to match `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES` — the two remain separate settings because they're
-separate features, one GA and one beta, that could diverge again. Models predating the beta reject
+The list Anthropic publishes for the `mid-conversation-tool-changes-2026-07-01` beta. It matches the published list
+for `{'role': 'system'}` entries, but not `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES`, which leaves out `claude-haiku-5-5`
+for its sealed `<system>` rendering: the two are separate features, one GA and one beta. Haiku 5.5 keeps these
+blocks, which were measured alongside that rendering. Models predating the beta reject
 the blocks with `requires a model that supports ...`, and `claude-sonnet-5` rejects them outright
 (`tool_addition/tool_removal is not supported on this model`) rather than accepting and ignoring them
 the way it does a plain system entry. Verified live per model, including `claude-haiku-5-5`, except
