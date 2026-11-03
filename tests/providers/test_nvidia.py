@@ -6,13 +6,23 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent
+from pydantic_ai import (
+    Agent,
+    ModelRequest,
+    ModelResponse,
+    RequestUsage,
+    TextPart,
+    ThinkingPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
-from ..conftest import RequestCapture, TestEnv, try_import
+from ..conftest import IsDatetime, IsStr, RequestCapture, TestEnv, try_import
 
 with try_import() as imports_successful:
     import openai
@@ -35,7 +45,9 @@ def test_nvidia_provider(env: TestEnv):
     assert provider.client.api_key == 'api-key'
 
 
-@pytest.mark.parametrize('env_base_url', [None, 'https://integrate.api.nvidia.com/v1'])
+@pytest.mark.parametrize(
+    'env_base_url', [None, 'https://integrate.api.nvidia.com/v1', 'https://integrate.api.nvidia.com/v1/']
+)
 def test_nvidia_provider_need_api_key(env_base_url: str | None, env: TestEnv) -> None:
     """Test that the hosted NVIDIA API requires an API key, including when `NVIDIA_BASE_URL` names it."""
     env.remove('NVIDIA_API_KEY')
@@ -145,7 +157,7 @@ async def test_nvidia_chat(allow_model_requests: None, nvidia_api_key: str, requ
     provider = NvidiaProvider(api_key=nvidia_api_key, http_client=request_capture.client)
     agent = Agent(OpenAIChatModel('nvidia/nemotron-3.5-super-vl-120b-a12b', provider=provider))
     result = await agent.run('What is the capital of France? Answer in one word.')
-    assert result.output == snapshot()
+    assert result.output == snapshot('Paris')
     assert request_capture.paths == ['/v1/chat/completions']
 
 
@@ -171,9 +183,95 @@ async def test_nvidia_reasoning_round_trip(
         return f'21 degrees Celsius in {city}'
 
     result = await agent.run('What is the temperature in Paris? Use the tool.')
-    assert result.all_messages() == snapshot()
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='What is the temperature in Paris? Use the tool.', timestamp=IsDatetime())
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The user wants the temperature in Paris. I should call the get_temperature tool with city "Paris".',
+                        id='reasoning_content',
+                        provider_name='nvidia',
+                    ),
+                    ToolCallPart(
+                        tool_name='get_temperature',
+                        args='{"city":"Paris"}',
+                        tool_call_id='68f08696-1d77-413f-a4a2-4f9062a9eef6',
+                    ),
+                ],
+                usage=RequestUsage(
+                    details={'reasoning_tokens': 22}, input_tokens=164, output_reasoning_tokens=22, output_tokens=32
+                ),
+                model_name='z-ai/glm-5.3-flash',
+                model_id='nvidia:z-ai/glm-5.3-flash',
+                timestamp=IsDatetime(),
+                provider_name='nvidia',
+                provider_url='https://integrate.api.nvidia.com/v1',
+                provider_details={'finish_reason': 'tool_calls', 'timestamp': IsDatetime()},
+                provider_response_id='chatcmpl-0655e9d6-9384-48c7-9324-774b568f7106',
+                finish_reason='tool_call',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_temperature',
+                        content='21 degrees Celsius in Paris',
+                        tool_call_id='68f08696-1d77-413f-a4a2-4f9062a9eef6',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The temperature in Paris is currently **21°C**. 🌤️')],
+                usage=RequestUsage(details={'reasoning_tokens': 0}, input_tokens=205, output_tokens=17),
+                model_name='z-ai/glm-5.3-flash',
+                model_id='nvidia:z-ai/glm-5.3-flash',
+                timestamp=IsDatetime(),
+                provider_name='nvidia',
+                provider_url='https://integrate.api.nvidia.com/v1',
+                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+                provider_response_id='chatcmpl-e5e79e99-e4ab-43bd-9843-8213f16764d2',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
     _, tool_result_request = request_capture.bodies('/chat/completions')
-    assert tool_result_request['messages'] == snapshot()
+    assert tool_result_request['messages'] == snapshot(
+        [
+            {'role': 'user', 'content': 'What is the temperature in Paris? Use the tool.'},
+            {
+                'role': 'assistant',
+                'reasoning_content': 'The user wants the temperature in Paris. I should call the get_temperature tool with city "Paris".',
+                'content': None,
+                'tool_calls': [
+                    {
+                        'id': '68f08696-1d77-413f-a4a2-4f9062a9eef6',
+                        'type': 'function',
+                        'function': {'name': 'get_temperature', 'arguments': '{"city":"Paris"}'},
+                    }
+                ],
+            },
+            {
+                'role': 'tool',
+                'tool_call_id': '68f08696-1d77-413f-a4a2-4f9062a9eef6',
+                'content': '21 degrees Celsius in Paris',
+            },
+        ]
+    )
 
 
 class CityLocation(BaseModel):
@@ -191,7 +289,7 @@ async def test_nvidia_nemotron_forced_tool_choice(
         OpenAIChatModel('nvidia/nemotron-3.5-super-vl-120b-a12b', provider=provider), output_type=CityLocation
     )
     result = await agent.run('The largest city in Japan.')
-    assert result.output == snapshot()
+    assert result.output == snapshot(CityLocation(city='Tokyo', country='Japan'))
     assert request_capture.body('/chat/completions')['tool_choice'] == 'required'
 
 
