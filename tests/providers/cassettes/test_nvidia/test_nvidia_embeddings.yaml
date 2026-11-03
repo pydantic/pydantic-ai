@@ -1,0 +1,51 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://integrate.api.nvidia.com/v1/embeddings
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "93"
+      content-type:
+      - application/json
+      host:
+      - integrate.api.nvidia.com
+    body:
+      type: json
+      content:
+        model: nvidia/nemotron-3.5-embed-1b
+        input:
+        - Hello, world!
+        encoding_format: base64
+  response:
+    status: 400
+    headers:
+      access-control-expose-headers:
+      - nvcf-reqid
+      connection:
+      - keep-alive
+      content-length:
+      - "123"
+      content-type:
+      - application/json
+      nvcf-error-source:
+      - upstream_status
+      nvcf-reqid:
+      - cea22db9-60dc-4ce7-ba6d-fd08763aa407
+      nvcf-status:
+      - errored
+      vary:
+      - Origin
+    body:
+      type: json
+      content:
+        object: error
+        message: "'input_type' parameter is required for asymmetric models"
+        type: invalid_request_error
+  recorded_at: 2026-11-03T06:12:01.661361+00:00

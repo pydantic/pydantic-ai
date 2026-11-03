@@ -1,0 +1,97 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://integrate.api.nvidia.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "459"
+      content-type:
+      - application/json
+      host:
+      - integrate.api.nvidia.com
+    body:
+      type: json
+      content:
+        model: nvidia/nemotron-3.5-super-vl-120b-a12b
+        stream: false
+        messages:
+        - role: user
+          content: The largest city in Japan.
+        tool_choice: required
+        tools:
+        - type: function
+          function:
+            name: final_result
+            description: The final response which ends this conversation
+            parameters:
+              properties:
+                city:
+                  type: string
+                country:
+                  type: string
+              required:
+              - city
+              - country
+              type: object
+              additionalProperties: false
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - nvcf-reqid
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      nvcf-reqid:
+      - b879dbad-ede7-495b-97f1-80b6583f30de
+      nvcf-status:
+      - fulfilled
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    body:
+      type: json
+      content:
+        id: chatcmpl-97bff0f4-c134-491a-b222-ef1c47c82210
+        choices:
+        - index: 0
+          message:
+            content: null
+            tool_calls:
+            - id: call-55a68cd6-e9ef-4b5d-af61-95acb169f8d9
+              type: function
+              function:
+                name: final_result
+                arguments: "{\"city\":\"Tokyo\",\"country\":\"Japan\"}"
+            role: assistant
+            reasoning_content: "The user asks: \"The largest city in Japan.\" Likely they want to know the largest city in Japan. We need to provide city and country. Use final_result tool with city and country. Largest city by population is Tokyo. Country: Japan. So respond via tool."
+          finish_reason: tool_calls
+          logprobs: null
+        created: 1793686320
+        model: private/nvidia/nemotron-3.5-super-120b-a12b
+        service_tier: null
+        system_fingerprint: null
+        object: chat.completion
+        usage:
+          prompt_tokens: 310
+          completion_tokens: 92
+          total_tokens: 402
+          prompt_tokens_details:
+            audio_tokens: null
+            cached_tokens: 0
+          completion_tokens_details:
+            accepted_prediction_tokens: null
+            audio_tokens: null
+            reasoning_tokens: 57
+            rejected_prediction_tokens: null
+  recorded_at: 2026-11-03T06:12:01.172270+00:00
