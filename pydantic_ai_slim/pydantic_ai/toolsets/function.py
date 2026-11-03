@@ -722,8 +722,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             defer_loading=defer_loading,
             include_return_schema=include_return_schema,
         )
-        # `requires_approval` was resolved against the toolset default above, so an explicit `False` stays.
-        self._add_tool(tool, apply_requires_approval=False)
+        self.add_tool(tool)
+        # `add_tool` applies the toolset's `requires_approval=True`; an explicit `False` passed here overrides it.
+        tool.requires_approval = requires_approval
         return tool
 
     def add_tool(self, tool: Tool[AgentDepsT]) -> None:
@@ -735,14 +736,11 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         Args:
             tool: The tool to add.
         """
-        self._add_tool(tool, apply_requires_approval=True)
-
-    def _add_tool(self, tool: Tool[AgentDepsT], *, apply_requires_approval: bool) -> None:
         if tool.name in self.tools:
             raise UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
         if tool.max_retries is None and self.max_retries is not None:
             tool.max_retries = self.max_retries
-        if apply_requires_approval and self.requires_approval:
+        if self.requires_approval:
             tool.requires_approval = True
         if self.metadata is not None:
             tool.metadata = self.metadata | (tool.metadata or {})

@@ -2138,8 +2138,18 @@ def test_toolset_requires_approval_applies_to_tool_instances(added_with: Literal
 
 
 def test_function_requires_approval_false_overrides_the_toolset_default():
-    """A function added with `requires_approval=False` keeps that value in a `requires_approval=True` toolset."""
-    toolset = FunctionToolset(requires_approval=True)
+    """A function added with `requires_approval=False` keeps that value in a `requires_approval=True` toolset.
+
+    The function still goes through `add_tool`, so a subclass that overrides it sees every tool.
+    """
+    seen: list[str] = []
+
+    class RecordingToolset(FunctionToolset[None]):
+        def add_tool(self, tool: Tool[None]) -> None:
+            seen.append(tool.name)
+            super().add_tool(tool)
+
+    toolset = RecordingToolset(requires_approval=True)
 
     @toolset.tool_plain(requires_approval=False)
     def decorated() -> str:  # pragma: no cover
@@ -2150,6 +2160,7 @@ def test_function_requires_approval_false_overrides_the_toolset_default():
 
     toolset.add_function(added, requires_approval=False)
 
+    assert seen == ['decorated', 'added']
     assert {name: tool.requires_approval for name, tool in toolset.tools.items()} == {
         'decorated': False,
         'added': False,
