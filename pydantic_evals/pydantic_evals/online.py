@@ -799,8 +799,6 @@ def _wrap_sync(
         # Extract span reference
         span_reference = _extract_span_reference(span)
 
-        # If there's a running event loop (sync function called from async context),
-        # dispatch on that loop. Otherwise, spawn a background thread with its own loop.
         _dispatch_on_running_loop_or_thread(
             _online_internal.dispatch_evaluators(sampled, context, span_reference, target, config)
         )
