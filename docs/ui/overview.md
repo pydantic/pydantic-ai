@@ -232,7 +232,7 @@ From the client's messages, the adapter then uses only the new turn: the message
 
 #### Saving to a conversation store
 
-Instead of loading and saving the history yourself, you can give the adapter a [`ConversationStore`](../persistence.md) as `conversation_store`, which implies `manage_message_history='server'`. The adapter then loads the conversation the request names (the Vercel AI chat `id` or the AG-UI `threadId`, unless you pass `conversation_id`), applies the rules above to the client's new turn, runs the agent and saves what the run added. Pass the authenticated user or tenant as `conversation_scope`: a conversation saved with another scope is treated as not found, so `dispatch_request` answers `404` before running anything, and the other run methods reject the request with a protocol error event.
+Instead of loading and saving the history yourself, you can give the adapter a [`ConversationStore`](../persistence.md) as `conversation_store`. Passing a store means the history is held on the server: `manage_message_history` is ignored, and the client's new turn follows the `'server'` rules above. The adapter then loads the conversation the request names (the Vercel AI chat `id` or the AG-UI `threadId`, unless you pass `conversation_id`), applies the rules above to the client's new turn, runs the agent and saves what the run added. Pass the authenticated user or tenant as `conversation_scope`: a conversation saved with another scope is treated as not found, so `dispatch_request` answers `404` before running anything, and the other run methods reject the request with a protocol error event.
 
 ```py {title="conversation_store_ui.py"}
 from fastapi import FastAPI

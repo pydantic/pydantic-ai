@@ -1,5 +1,0 @@
-{
-  "against": "v2.65.0",
-  "reason": "`manage_message_history` now defaults to `None`, which resolves to `'client'` without a `conversation_store`, as before, and to `'server'` with one, so an explicit `'client'` with a store can be rejected. The attribute is never `None` after construction.",
-  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/12326"
-}

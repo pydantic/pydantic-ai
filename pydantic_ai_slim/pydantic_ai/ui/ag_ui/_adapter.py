@@ -444,7 +444,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         ag_ui_version: str = DEFAULT_AG_UI_VERSION,
         preserve_file_data: bool = False,
         manage_system_prompt: Literal['server', 'client'] = 'server',
-        manage_message_history: Literal['client', 'server'] | None = None,
+        manage_message_history: Literal['client', 'server'] = 'client',
         conversation_store: ConversationStore | None = None,
         conversation_scope: str | None = None,
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),

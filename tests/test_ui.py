@@ -2040,8 +2040,7 @@ def test_manage_message_history_visible_in_base_adapter_signatures():
     dispatch_request_parameters = inspect.signature(DummyUIAdapter.dispatch_request).parameters
 
     for parameters in (from_request_parameters, dispatch_request_parameters):
-        # `None` resolves to `'server'` with a `conversation_store` and to `'client'` without one.
-        assert parameters['manage_message_history'].default is None
+        assert parameters['manage_message_history'].default == 'client'
         assert parameters['conversation_store'].default is None
         assert parameters['conversation_scope'].default is None
 

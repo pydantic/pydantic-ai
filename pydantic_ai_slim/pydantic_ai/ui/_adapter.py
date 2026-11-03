@@ -797,13 +797,13 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     to your agent.
     """
 
-    manage_message_history: Literal['client', 'server'] | None = None
+    manage_message_history: Literal['client', 'server'] = 'client'
     """Who owns the conversation history: the client's messages, or the `message_history` passed to a run method.
 
-    Defaults to `'server'` with a [`conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store],
-    which requires it, and to `'client'` otherwise. It's never `None` once the adapter is created.
+    With a [`conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store], the history is always
+    held on the server: this is set to `'server'` whatever was passed.
 
-    `'client'`: the client's messages are the conversation. A `message_history` passed to a
+    `'client'` (default): the client's messages are the conversation. A `message_history` passed to a
     run method is prepended to them unchanged, which suits server-only context such as a pinned
     preamble. If a client message's UI message id already appears in `message_history`, the adapter
     warns, because the model sees that message twice. Only a history that went through an adapter
@@ -837,8 +837,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     conversation_store: ConversationStore | None = None
     """A [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] to load and save the conversation with.
 
-    Implies [`manage_message_history='server'`][pydantic_ai.ui.UIAdapter.manage_message_history], whose
-    rules for the client's new turn it follows; passing `'client'` with a store raises a `UserError`.
+    Passing a store means the history is held on the server:
+    [`manage_message_history`][pydantic_ai.ui.UIAdapter.manage_message_history] is ignored and set to
+    `'server'`, whose rules for the client's new turn the adapter follows.
     A run method then loads the conversation the request names
     ([`conversation_id`][pydantic_ai.ui.UIAdapter.conversation_id], or the one passed to it) instead of
     taking `message_history`, runs the agent on it and the client's new turn, and saves what the run
@@ -945,14 +946,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     """
 
     def __post_init__(self) -> None:
-        if self.conversation_store is None:
-            if self.manage_message_history is None:
-                self.manage_message_history = 'client'
-        elif self.manage_message_history == 'client':
-            raise UserError(
-                "A `conversation_store` holds the history on the server: it can't be used with `manage_message_history='client'`."
-            )
-        else:
+        # A store holds the history on the server, so an explicit `'client'` can't be told from the default.
+        if self.conversation_store is not None:
             self.manage_message_history = 'server'
 
     @classmethod
@@ -962,7 +957,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         *,
         agent: AbstractAgent[AgentDepsT, OutputDataT],
         manage_system_prompt: Literal['server', 'client'] = 'server',
-        manage_message_history: Literal['client', 'server'] | None = None,
+        manage_message_history: Literal['client', 'server'] = 'client',
         conversation_store: ConversationStore | None = None,
         conversation_scope: str | None = None,
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
@@ -982,8 +977,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             agent: The agent the adapter will run.
             manage_system_prompt: Who owns the system prompt. See
                 [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
-            manage_message_history: Who owns the conversation history. Defaults to `'server'` with a
-                `conversation_store` and `'client'` otherwise. See
+            manage_message_history: Who owns the conversation history. Ignored with a `conversation_store`,
+                which always holds it on the server. See
                 [`UIAdapter.manage_message_history`][pydantic_ai.ui.UIAdapter.manage_message_history].
             conversation_store: A store to load and save the conversation with. See
                 [`UIAdapter.conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store].
@@ -1581,7 +1576,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         on_complete: OnCompleteFunc[EventT] | None = None,
         on_cancel: OnCancelFunc[EventT] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
-        manage_message_history: Literal['client', 'server'] | None = None,
+        manage_message_history: Literal['client', 'server'] = 'client',
         conversation_store: ConversationStore | None = None,
         conversation_scope: str | None = None,
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
@@ -1629,8 +1624,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 The callback receives the [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] and can optionally yield additional protocol-specific events.
             manage_system_prompt: Who owns the system prompt. See
                 [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
-            manage_message_history: Who owns the conversation history. Defaults to `'server'` with a
-                `conversation_store` and `'client'` otherwise. See
+            manage_message_history: Who owns the conversation history. Ignored with a `conversation_store`,
+                which always holds it on the server. See
                 [`UIAdapter.manage_message_history`][pydantic_ai.ui.UIAdapter.manage_message_history].
             conversation_store: A store to load and save the conversation with. See
                 [`UIAdapter.conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store].

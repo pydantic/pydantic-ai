@@ -14260,8 +14260,13 @@ async def test_conversation_store_misuse():
 
     assert VercelAIAdapter(agent, run_input).manage_message_history == 'client'
     assert VercelAIAdapter(agent, run_input, conversation_store=store).manage_message_history == 'server'
-    with pytest.raises(UserError, match="can't be used with `manage_message_history='client'`"):
-        VercelAIAdapter(agent, run_input, manage_message_history='client', conversation_store=store)
+    # A store holds the history on the server, whatever `manage_message_history` says.
+    assert (
+        VercelAIAdapter(
+            agent, run_input, manage_message_history='client', conversation_store=store
+        ).manage_message_history
+        == 'server'
+    )
     adapter = VercelAIAdapter(agent, run_input, conversation_store=store)
     with pytest.raises(UserError, match='Pass either `message_history` or a `conversation_store`, not both'):
         adapter.run_stream_native(message_history=[])
