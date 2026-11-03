@@ -144,10 +144,16 @@ def _filtered_value(value: Any, spec: Any, *, keep: bool) -> Any:
     Filters the container rather than re-serializing it, so the value stays whatever the outer
     schema expects. That bounds what can be applied: a plain set of keys or indices, against a
     mapping or a sequence — `exclude={'metadata': {'api_key'}}` and `exclude={'messages': {0}}`,
-    the forms a caller reaches for to redact an entry or drop a message. A deeper spec, or one
-    aimed at a key whose value is neither (`usage`), would need that value re-serialized against a
-    sub-schema, so it is left alone; see `_filter_serialized`.
+    the forms a caller reaches for to redact an entry or drop a message — or the same keys mapped
+    to `True`, which Pydantic treats as that set. A deeper spec, or one aimed at a key whose value
+    is neither (`usage`), would need that value re-serialized against a sub-schema, so it is left
+    alone; see `_filter_serialized`.
     """
+    if isinstance(spec, Mapping):
+        sub_specs = cast('Mapping[Any, Any]', spec)
+        if not (sub_specs and all(sub_spec is True for sub_spec in sub_specs.values())):
+            return value
+        spec = set(sub_specs)
     if not isinstance(spec, set):
         return value
     if isinstance(value, Mapping):
