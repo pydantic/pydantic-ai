@@ -891,10 +891,13 @@ def _reserve_loopback_port() -> int:
     """A loopback port that no other `bind(0)` is handed while it is in `TIME_WAIT`, but a server can still bind.
 
     Closing an accepted connection first leaves the port itself in `TIME_WAIT`: the kernel then skips it
-    when allocating a port, while a server that sets `SO_REUSEADDR` (uvicorn does) can bind it. The
-    Temporal SDK reserves its dev-server ports the same way.
+    when allocating a port, while a server that sets `SO_REUSEADDR` (uvicorn does) can bind it. Linux
+    allows that bind only if the socket that left the port in `TIME_WAIT` set `SO_REUSEADDR` too, so the
+    listener sets it, as Rust's `TcpListener::bind` does for the Temporal SDK, which reserves its
+    dev-server ports the same way.
     """
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         listener.bind(('127.0.0.1', 0))
         listener.listen()
         port: int = listener.getsockname()[1]
