@@ -569,6 +569,24 @@ async def test_a_changed_project_program_waits_for_approval_again(tmp_path: Path
     assert (repo / 'second').exists()
 
 
+@pytest.mark.parametrize('event', ['turn_end', 'before_tool'])
+async def test_a_program_changed_after_loading_does_not_run(tmp_path: Path, event: HookEvent) -> None:
+    """A guard edited mid-session stops the call, as an argument the OS cannot take does."""
+    repo = repository(tmp_path, 'repo', {event: [{'command': ['./mark.sh']}]})
+    write_program(repo / 'mark.sh', 'first')
+    [declaration] = load_project_settings(repo).plugins
+    output = io.StringIO()
+    plugin = hooks_plugin(repo, declaration.settings, output)
+    write_program(repo / 'mark.sh', 'second')
+    written: list[str] = []
+    if event == 'turn_end':
+        await plugin.dispatch(TurnEnd(text='hello', outcome='completed'))
+    else:
+        await note_agent(plugin, written).run('hello')
+    assert not (repo / 'second').exists() and written == []
+    assert 'mark.sh changed since you approved it; run /plugins enable project_hooks' in output.getvalue()
+
+
 async def test_a_program_approval_saved_without_its_contents_is_asked_again(tmp_path: Path) -> None:
     """An approval saved before CLAI recorded program contents covers the table alone, so it is asked again once."""
     repo = repository(tmp_path, 'repo', {'turn_end': [{'command': ['./mark.sh']}]})

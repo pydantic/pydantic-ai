@@ -544,7 +544,9 @@ off, and runs only after `/plugins enable project_hooks`. The approval covers
 the table exactly as it is, and the contents of each program it names by a path,
 such as `./scripts/guard-paths.sh`: once the file's `hooks` or one of those
 programs change, they stay off until you enable `project_hooks` again, and
-removing them stops them too. It does not cover a file such a program reads, or
+removing them stops them too. A program that changes while CLAI runs does not
+start: it is reported as a failed command, and a `before_tool` one stops the
+call, so editing a guard cannot skip it. The approval does not cover a file such a program reads, or
 a script passed to another program, as in `["python", "scripts/check.py"]`;
 make the script the command's program to have the approval cover it. CLAI
 remembers one approved project table at a time, and it runs only in sessions

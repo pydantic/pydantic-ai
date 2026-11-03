@@ -232,7 +232,8 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   `approved_files` table, beside `plugins` so older builds never read it. An
   `APPROVED_AS_WRITTEN` approval whose files differ is stale too, and
   `import_module` refuses a project file whose bytes differ, executing the bytes
-  it checked.
+  it checked. `HooksPlugin` hashes its programs as it loads and refuses at spawn
+  one that changed since, stopping a `before_tool` call.
   Default-on CLI `.env` loading is a deliberate exception to this repository-content
   trust rule: it assumes trusted launch and parent directories, without plugin
   approval. [Environment variables](docs/reference.md#environment-variables) documents the

@@ -26,6 +26,7 @@ from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import ToolDefinition
 from pydantic_clai2.config.hooks import PROJECT_HOOKS, HookCommand, HookEvent, HooksSettings, project_program
 from pydantic_clai2.config.project_settings import load_project_settings
+from pydantic_clai2.config.settings_store import file_sha256
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, TurnEnd, TurnStart
 from pydantic_clai2.runtime import agent_instrumentation
 from pydantic_clai2.runtime.processes import kill_process_tree
@@ -137,6 +138,8 @@ class HooksPlugin(Plugin[HooksSettings, DepsT]):
         # The approval of a project's table is saved with your settings, which every repository shares:
         # it runs only while the session's project file declares that very table.
         self.active = self.root is None or _approved(host.workspace, settings)
+        # Loading checked these programs against the approval; one that changes after that does not run.
+        self.programs = {str(path): file_sha256(path) for path in settings.project_programs()}
 
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
         before, after = self.table('before_tool'), self.table('after_tool')
@@ -214,9 +217,25 @@ class HooksPlugin(Plugin[HooksSettings, DepsT]):
             else nullcontext(INVALID_SPAN)
         )
         with span_context as span:
-            done = await self._spawn(argv, payload, cwd=workspace, timeout=command.timeout, event=event)
+            done = await self._changed(argv, event) or await self._spawn(
+                argv, payload, cwd=workspace, timeout=command.timeout, event=event
+            )
             self._report(span, event, shown, done, tool=tool, timeout=command.timeout, content=content)
         return done
+
+    async def _changed(self, argv: str | list[str], event: HookEvent) -> HookRun | None:
+        """The refusal of a project program whose bytes changed since this table loaded, or `None` to run it.
+
+        Like an argument the OS cannot take, it stops a `before_tool` call, so editing a guard does not skip it.
+        """
+        if isinstance(argv, str) or (loaded := self.programs.get(argv[0])) is None:
+            return None
+        if await anyio.to_thread.run_sync(file_sha256, Path(argv[0])) == loaded:
+            return None
+        return HookRun(
+            outcome='blocked' if event == 'before_tool' else 'failed',
+            stderr=f'{argv[0]} changed since you approved it; run /plugins enable {PROJECT_HOOKS} to approve it as it is now.',
+        )
 
     def _argv(self, argv: list[str], args: Mapping[str, object]) -> list[str]:
         """The arguments after the program with placeholders filled, so tool arguments never choose the program.

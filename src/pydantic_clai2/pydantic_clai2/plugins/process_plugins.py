@@ -11,8 +11,6 @@ live session; `on_session_start` and `on_session_end` reach it once. `LiveSessio
 import hashlib
 import importlib
 import logging
-import os
-import stat
 from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -28,7 +26,13 @@ from termflow.tui.completion import Completion
 from pydantic_ai.messages import BinaryContent
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.hooks import HOOKS_FACTORY, HooksSettings
-from pydantic_clai2.config.settings_store import SettingsStore, canonical_plugin_declarations, canonical_plugin_id
+from pydantic_clai2.config.settings_store import (
+    SettingsStore,
+    canonical_plugin_declarations,
+    canonical_plugin_id,
+    file_sha256,
+    read_regular_file,
+)
 from pydantic_clai2.plugins import (
     Conversation,
     DepsT,
@@ -348,25 +352,6 @@ class JoinedSessions:
 
 _OPENS_NONE = 'This CLAI opens no other live sessions.'
 
-_OPEN_FLAGS = os.O_RDONLY | getattr(os, 'O_BINARY', 0) | getattr(os, 'O_NONBLOCK', 0)
-"""`O_NONBLOCK` so opening a FIFO a repository ships returns at once instead of waiting for a writer."""
-
-
-def _read_regular(path: Path) -> bytes:
-    """The bytes of the regular file at `path`, through symlinks; an `OSError` for anything else."""
-    with os.fdopen(os.open(path, _OPEN_FLAGS), 'rb') as file:
-        if not stat.S_ISREG(os.fstat(file.fileno()).st_mode):
-            raise OSError(f'{path} is not a regular file')
-        return file.read()
-
-
-def _sha256(path: Path) -> str:
-    """The SHA-256 of the file's bytes, or `''` when it is not a regular file CLAI can read."""
-    try:
-        return hashlib.sha256(_read_regular(path)).hexdigest()
-    except OSError:
-        return ''
-
 
 class ProcessPlugins(Generic[DepsT]):
     """What every live session's plugins share: declarations, the change lock, imports, and process-scoped plugins.
@@ -481,12 +466,12 @@ class ProcessPlugins(Generic[DepsT]):
     def approved(self, name: str, declaration: PluginSettings) -> bool:
         """Whether each of the declaration's `project_files` still has the contents `/plugins enable` approved."""
         files = self.project_files(name, declaration)
-        return all(self.store.approved_sha256(path) == _sha256(path) for path in files)
+        return all(self.store.approved_sha256(path) == file_sha256(path) for path in files)
 
     def approve(self, name: str, declaration: PluginSettings) -> None:
         """Approve the contents the declaration's `project_files` have now."""
         if files := self.project_files(name, declaration):
-            self.store.approve_files({path: _sha256(path) for path in files})
+            self.store.approve_files({path: file_sha256(path) for path in files})
 
     def import_module(self, name: str, declaration: PluginSettings, *, fresh: bool) -> ModuleType:
         """The declaration's module: a drop-in file afresh, else the installed module, reloaded when `fresh`.
@@ -505,7 +490,7 @@ class ProcessPlugins(Generic[DepsT]):
                 )
             if not self.project_files(name, declaration):
                 return import_file(name, path, path.read_bytes())
-            source = _read_regular(path)
+            source = read_regular_file(path)
             if self.store.approved_sha256(path) != hashlib.sha256(source).hexdigest():
                 raise ValueError(
                     f'{path} is not as you approved it. Review it, then run /plugins enable {name} '

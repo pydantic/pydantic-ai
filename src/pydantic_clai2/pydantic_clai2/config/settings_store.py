@@ -1,7 +1,9 @@
 """SQLite preferences with short transactions and explicit schema ownership."""
 
+import hashlib
 import os
 import sqlite3
+import stat
 from collections.abc import Generator, Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -55,6 +57,26 @@ class StoredAccount:
     """A name the user gave it; the profile is shown when there is none."""
     plugin_login: str | None = None
     """The plugin `/login` name that signed it in, such as `claude`; `None` when CLAI keeps its credentials."""
+
+
+_OPEN_FLAGS = os.O_RDONLY | getattr(os, 'O_BINARY', 0) | getattr(os, 'O_NONBLOCK', 0)
+"""`O_NONBLOCK` so opening a FIFO a repository ships returns at once instead of waiting for a writer."""
+
+
+def read_regular_file(path: Path) -> bytes:
+    """The bytes of the regular file at `path`, through symlinks; an `OSError` for anything else."""
+    with os.fdopen(os.open(path, _OPEN_FLAGS), 'rb') as file:
+        if not stat.S_ISREG(os.fstat(file.fileno()).st_mode):
+            raise OSError(f'{path} is not a regular file')
+        return file.read()
+
+
+def file_sha256(path: Path) -> str:
+    """The SHA-256 of a file's bytes, as `approve_files` records it; `''` when it is not a regular file CLAI can read."""
+    try:
+        return hashlib.sha256(read_regular_file(path)).hexdigest()
+    except OSError:
+        return ''
 
 
 def config_dir() -> Path:
