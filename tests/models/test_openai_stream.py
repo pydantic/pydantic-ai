@@ -1,19 +1,22 @@
 from __future__ import annotations as _annotations
 
 import os
+from collections.abc import AsyncIterator
 
+import httpx2
 import pytest
 
-from pydantic_ai import ModelAPIError, ModelMessage, ModelRequest
+from pydantic_ai import Agent, ModelAPIError, ModelConnectionError, ModelMessage, ModelRequest, ModelTimeoutError
 from pydantic_ai.models import ModelRequestParameters
 
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from openai import AsyncOpenAI
     from openai.types import chat
     from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice, ChoiceDelta
 
-    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings, OpenAIResponsesModel
     from pydantic_ai.profiles.openai import OpenAIModelProfile
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -145,3 +148,53 @@ async def test_cancelled_stream_does_not_require_finish_reason(allow_model_reque
     assert response.state == 'interrupted'
     assert response.finish_reason is None
     assert response.text == 'partial'
+
+
+class _DroppedErrorBody(httpx2.AsyncByteStream):
+    """An error body cut off after its first chunk, the way a proxy can drop a 503 mid-body."""
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield b'{"error": {"mess'
+        raise self._exc
+
+
+async def _run_stream_with_dropped_error_body(model_cls: type, exc: Exception) -> ModelAPIError:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(503, headers={'content-type': 'application/json'}, stream=_DroppedErrorBody(exc))
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://openai.example/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as client:
+        agent = Agent(model_cls('gpt-5.4', provider=OpenAIProvider(openai_client=client)))
+        with pytest.raises(ModelAPIError) as exc_info:
+            async with agent.run_stream('hello') as result:
+                await result.get_output()
+    return exc_info.value
+
+
+@pytest.mark.parametrize('model_cls', [OpenAIChatModel, OpenAIResponsesModel], ids=['chat', 'responses'])
+@pytest.mark.parametrize(
+    ('exc', 'expected'),
+    [
+        pytest.param(httpx2.RemoteProtocolError('peer closed connection'), ModelConnectionError, id='connection-drop'),
+        pytest.param(httpx2.ReadTimeout('read timed out'), ModelTimeoutError, id='read-timeout'),
+    ],
+)
+async def test_error_body_transport_drop_maps_to_model_api_error(
+    allow_model_requests: None, model_cls: type, exc: Exception, expected: type[ModelAPIError]
+) -> None:
+    """A connection dropped while the OpenAI SDK reads an error body is a `ModelAPIError`, not a raw `httpx2` error.
+
+    The SDK's streamed request path awaits the error body before raising `APIStatusError`; a transport failure there
+    escapes unwrapped, so `run_stream` used to raise the raw `httpx2` error and `FallbackModel` could not fall back.
+    """
+    error = await _run_stream_with_dropped_error_body(model_cls, exc)
+
+    assert type(error) is expected
+    assert isinstance(error.__cause__, httpx2.TransportError)
