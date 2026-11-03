@@ -19,6 +19,8 @@ with try_import() as imports_successful:
 
     from pydantic_ai.providers.together import TogetherProvider
 
+    from ._kimi_request_capture import capture_request_body
+
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -102,3 +104,15 @@ def test_together_provider_model_profile(mocker: MockerFixture):
     no_slash_profile = provider.model_profile('gpt-4o-mini')
     assert no_slash_profile is not None
     assert no_slash_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+
+
+def test_kimi_k3_resolves_moonshot_profile_and_emits_reasoning():
+    provider = TogetherProvider(api_key='api-key')
+    profile = provider.model_profile('moonshotai/Kimi-K3')
+    assert profile.get('supports_thinking') is True
+
+    body = capture_request_body(
+        lambda http_client: TogetherProvider(api_key='api-key', http_client=http_client),
+        'moonshotai/Kimi-K3',
+    )
+    assert body.get('reasoning_effort') == 'medium'

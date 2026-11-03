@@ -11,8 +11,11 @@ with try_import() as imports_successful:
     import openai
 
     from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.profiles import InlineDefsJsonSchemaTransformer
     from pydantic_ai.providers import infer_provider
     from pydantic_ai.providers.alibaba import AlibabaProvider
+
+    from ._kimi_request_capture import capture_request_body
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -121,3 +124,17 @@ async def test_alibaba_document_url_input_not_supported(allow_model_requests: No
 
     with pytest.raises(UserError, match=r'alibaba.*does not support document input'):
         await agent.run(['Summarize this document', DocumentUrl(url='https://example.com/test.pdf')])
+
+
+def test_kimi_k3_merges_moonshot_family_with_qwen_provider_facts():
+    provider = AlibabaProvider(api_key='test-key')
+    profile = provider.model_profile('kimi-k3')
+    assert profile.get('supports_thinking') is True
+    assert profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
+    assert profile.get('openai_chat_supports_document_input', True) is False
+
+    body = capture_request_body(
+        lambda http_client: AlibabaProvider(api_key='test-key', http_client=http_client),
+        'kimi-k3',
+    )
+    assert body.get('reasoning_effort') == 'medium'

@@ -21,6 +21,8 @@ with try_import() as imports_successful:
     from pydantic_ai.models.cerebras import CerebrasModel
     from pydantic_ai.providers.cerebras import CerebrasProvider, zai_model_profile
 
+    from ._kimi_request_capture import capture_request_body
+
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
 
@@ -111,3 +113,17 @@ def test_infer_cerebras_model(env: TestEnv):
     model = infer_model('cerebras:llama-3.3-70b')
     assert isinstance(model, CerebrasModel)
     assert model.model_name == 'llama-3.3-70b'
+
+
+def test_kimi_k3_resolves_moonshot_profile_with_always_on_overlay():
+    provider = CerebrasProvider(api_key='api-key')
+    profile = provider.model_profile('kimi-k3')
+    assert profile.get('supports_thinking') is True
+    assert profile.get('thinking_always_enabled') is True
+    assert profile.get('ignore_streamed_leading_whitespace') is True
+
+    body = capture_request_body(
+        lambda http_client: CerebrasProvider(api_key='api-key', http_client=http_client),
+        'kimi-k3',
+    )
+    assert body.get('reasoning_effort') == 'medium'

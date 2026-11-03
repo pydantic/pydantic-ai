@@ -22,6 +22,8 @@ with try_import() as imports_successful:
 
     from pydantic_ai.providers.ollama import OllamaProvider
 
+    from ._kimi_request_capture import capture_request_body
+
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -151,3 +153,18 @@ def test_ollama_provider_model_profile(mocker: MockerFixture):
         assert openai_profile.get('openai_supports_strict_tool_definition', True) is False
     assert unknown_profile.get('supports_json_schema_output', False) is True
     assert unknown_profile.get('supports_json_object_output', False) is True
+
+
+def test_kimi_ids_resolve_moonshot_profile_preserving_reasoning_field():
+    provider = OllamaProvider(base_url='http://localhost:11434/v1/')
+    for model_name in ('kimi-k3', 'kimi-k2.7-code'):
+        profile = provider.model_profile(model_name)
+        assert profile is not None
+        assert profile.get('supports_thinking') is True
+        assert profile.get('openai_chat_thinking_field') == 'reasoning'
+
+    body = capture_request_body(
+        lambda http_client: OllamaProvider(base_url='http://localhost:11434/v1/', http_client=http_client),
+        'kimi-k3',
+    )
+    assert body.get('reasoning_effort') == 'medium'
