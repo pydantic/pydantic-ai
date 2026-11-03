@@ -80,8 +80,9 @@ Stores, all in `pydantic_ai_harness.step_persistence`, all async, all accepting
   is a prefix of at most 40 characters. It creates its tables on first use, so the role needs
   `CREATE` on the schema.
 
-File, SQLite, Mongo, and Postgres stores move `BinaryContent` and any text part of 64 KiB or more to a
-`MediaStore` (disk, same DB, same Mongo client, or same pool by default). Pass `media_store=None` to keep them
+File, SQLite, Mongo, and Postgres stores move `BinaryContent` and text parts of `media_threshold_bytes` (64 KiB)
+or more to a `MediaStore` (disk, same DB, same Mongo client, or same pool by default). `FileStepStore` moves
+`BinaryContent` of any size, since each of its snapshot files repeats the history. Pass `media_store=None` to keep them
 inline, or `media_store=S3MediaStore(...)` from `pydantic_ai_harness.media`.
 
 Reading back:
