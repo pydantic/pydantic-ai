@@ -1463,8 +1463,9 @@ class TestNameResolutionBlocking:
         assert looked_up == []
 
     async def test_a_host_outside_the_allowlist_is_not_resolved(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # The allowlist answers this by name alone, so no lookup is needed to refuse it.
-        looked_up = self._pointing_at(monkeypatch, '93.184.216.34')
+        # The allowlist answers this by name alone, so it is refused for that reason
+        # without a lookup, even though the name points at a private address.
+        looked_up = self._pointing_at(monkeypatch, '169.254.169.254')
         page = _FakePage()
         result = await _toolset(page, allowed_domains=['example.com']).navigate('https://other.example/')
         assert result == 'Error: domain not in allowed_domains: https://other.example/'

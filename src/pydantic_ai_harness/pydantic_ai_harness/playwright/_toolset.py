@@ -660,7 +660,10 @@ class EgressPolicy:
         are ordinary inline assets.
 
         When the host needs resolving, this is first asked without
-        `resolved_addresses`, and a refusal then stands without a lookup.
+        `resolved_addresses`, and a refusal then stands without a lookup. An
+        override that decides on `resolved_addresses` should return `None` while
+        they are empty and `needs_resolution(request)` is true, and decide on the
+        second call.
         """
         if request.url == _BLANK_PAGE:
             return None
@@ -1329,13 +1332,15 @@ class PlaywrightBrowserSession:
         The policy is asked once before the lookup, so a host it refuses by name
         alone is refused without one, for the same reason wherever it points.
         """
+        host = _url_host(request.url)
+        if host is None or not self.policy.needs_resolution(request):
+            return self.policy.refuse(request)
         if (reason := self.policy.refuse(request)) is not None:
             return reason
-        host = _url_host(request.url)
-        if host is not None and self.policy.needs_resolution(request):
-            addresses = await _resolve_host(host)
-            request = replace(request, resolved_addresses=addresses or (), resolution_failed=addresses is None)
-        return self.policy.refuse(request)
+        addresses = await _resolve_host(host)
+        return self.policy.refuse(
+            replace(request, resolved_addresses=addresses or (), resolution_failed=addresses is None)
+        )
 
     async def _route_guard(self, route: PlaywrightRoute, request: PlaywrightRequest) -> None:
         """Network-layer egress policy: abort what the policy refuses, pass the rest.
