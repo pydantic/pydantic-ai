@@ -11893,9 +11893,9 @@ async def test_server_message_history_rejects_an_approval_for_a_call_not_pending
     tool_call_id = "'del-1'" if case == 'already_answered' else "'del-2'"
     assert errors == [
         f'The request answers 1 tool call(s) that `message_history` is not waiting on: {tool_call_id}. With '
-        "`manage_message_history='server'`, an approval or denial can only answer a tool call that is still pending "
-        'at the end of the stored history. If the conversation changed since the client loaded it, reload it from '
-        'the server.'
+        "`manage_message_history='server'`, an approval, denial or deferred tool result can only answer a tool call "
+        'that is still pending at the end of the stored history. If the conversation changed since the client loaded '
+        'it, reload it from the server.'
     ]
 
 
