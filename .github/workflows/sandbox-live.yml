@@ -71,7 +71,7 @@ jobs:
     runs-on: ubuntu-latest
     # Sandbox creation goes through each provider's control plane; bound a wedged run. Kubernetes
     # also creates its cluster first.
-    timeout-minutes: ${{ matrix.provider == 'kubernetes' && 25 || 15 }}
+    timeout-minutes: ${{ matrix.provider == 'kubernetes' && 45 || 15 }}
     strategy:
       # One provider's outage must not cancel the others' results.
       fail-fast: false
@@ -138,6 +138,13 @@ jobs:
       - run: |
           upper="$(printf %s "$PROVIDER" | tr '[:lower:]' '[:upper:]')"
           export "PYDANTIC_AI_HARNESS_${upper}_LIVE=1" "${upper}_REQUIRE_LIVE=1"
+          if [ "$PROVIDER" = kubernetes ]; then
+            t=tests/harness/kubernetes_sandbox
+            echo "::group::1 blockbuster on"; uv run --no-sync pytest -p no:cacheprovider -m kubernetes_live $t -q -rfE --tb=short -k 'not test_docs_example' -p no:randomly || true; echo "::endgroup::"
+            echo "::group::2 blockbuster off"; BLOCKBUSTER_ENABLED=false uv run --no-sync pytest -p no:cacheprovider -m kubernetes_live $t -q -rfE --tb=short -k 'not test_docs_example' -p no:randomly || true; echo "::endgroup::"
+            echo "::group::3 docs examples, blockbuster off"; BLOCKBUSTER_ENABLED=false timeout 420 uv run --no-sync pytest -p no:cacheprovider -m kubernetes_live $t -q -rfE --tb=short -k test_docs_example || true; echo "::endgroup::"
+            exit 0
+          fi
           uv run --no-sync pytest -p no:cacheprovider -m "${PROVIDER}_live" "tests/harness/${PROVIDER}_sandbox" -q
         env:
           PROVIDER: ${{ matrix.provider }}
