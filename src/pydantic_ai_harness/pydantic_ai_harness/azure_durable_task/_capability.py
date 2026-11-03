@@ -5,6 +5,7 @@ from contextlib import AbstractContextManager, AsyncExitStack, asynccontextmanag
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from typing import Any, ClassVar, Literal
 
 from durabletask.task import RetryPolicy
@@ -104,43 +105,12 @@ class AzureDurableTaskDurability(BaseDurabilityCapability[AgentDepsT]):
         """
         super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
 
-        def resolve_options(
-            operation_id: DurableOperationId, tool: object | None, tool_name: str
-        ) -> RetryPolicy | Literal[False] | None:
-            # Keep the declared type: the `isinstance` checks below would narrow `tool` to a partially unknown generic.
-            resolver_tool: object | None = tool
-            from_metadata = (
-                isinstance(tool, ToolsetTool)
-                and tool.tool_def.metadata is not None
-                and tool.tool_def.metadata.get('azure_durable_task') is False
-            )
-            if from_metadata:
-                resolved = False
-            elif resolve_tool_options is not None:
-                static_name = tool.original_name if isinstance(tool, FunctionToolsetTool) else None
-                resolved = resolve_tool_options(operation_id, resolver_tool, static_name or tool_name)
-            else:
-                resolved = None
-            # The shared activity is registered before a concrete tool is known.
-            if tool is None and resolved is False:
-                return tool_options
-            if resolved is False and (
-                not isinstance(operation_id, ToolsetCallToolId | ToolsetValidateToolArgumentsId)
-                or operation_id.toolset_kind != 'function'
-            ):
-                source = "`metadata={'azure_durable_task': False}`" if from_metadata else '`resolve_tool_options`'
-                raise UserError(
-                    f'{source} can opt only function tools out of durable execution; '
-                    f'{tool_name!r} is an MCP or dynamic tool, so it must run as an Azure Durable Task activity.'
-                )
-            return tool_options if resolved is None else resolved
-
         self._operation_config = RoleBasedOperationConfig[RetryPolicy | None](
             model=model_options,
             tool=tool_options,
             event=event_options,
             capability=capability_options,
-            resolve_tool=resolve_options,
+            resolve_tool=partial(_resolve_options, tool_options, resolve_tool_options),
         )
         self._backend: AzureDurableTaskOperationBackend | None = None
         # AbstractAgent.deps_type erases its generic parameter; the runtime schema validates it in activities.
@@ -217,3 +187,47 @@ class AzureDurableTaskDurability(BaseDurabilityCapability[AgentDepsT]):
     def get_run_clock(self) -> Callable[[], datetime] | None:
         loop = current_loop()
         return (lambda: loop.context.current_utc_datetime.replace(tzinfo=UTC)) if loop is not None else None
+
+
+def _resolve_options(
+    tool_options: RetryPolicy | None,
+    resolve_tool_options: ToolOptionsResolver | None,
+    operation_id: DurableOperationId,
+    tool: object | None,
+    tool_name: str,
+) -> RetryPolicy | Literal[False] | None:
+    # Keep the declared type: the `isinstance` checks below would narrow `tool` to a partially unknown generic.
+    resolver_tool: object | None = tool
+    from_metadata = _opted_out_by_metadata(tool)
+    if from_metadata:
+        resolved = False
+    elif resolve_tool_options is not None:
+        static_name = tool.original_name if isinstance(tool, FunctionToolsetTool) else None
+        resolved = resolve_tool_options(operation_id, resolver_tool, static_name or tool_name)
+    else:
+        resolved = None
+    # The shared activity is registered before a concrete tool is known.
+    if tool is None and resolved is False:
+        return tool_options
+    if resolved is False and not _is_function_tool_operation(operation_id):
+        source = "`metadata={'azure_durable_task': False}`" if from_metadata else '`resolve_tool_options`'
+        raise UserError(
+            f'{source} can opt only function tools out of durable execution; '
+            f'{tool_name!r} is an MCP or dynamic tool, so it must run as an Azure Durable Task activity.'
+        )
+    return tool_options if resolved is None else resolved
+
+
+def _opted_out_by_metadata(tool: object | None) -> bool:
+    return (
+        isinstance(tool, ToolsetTool)
+        and tool.tool_def.metadata is not None
+        and tool.tool_def.metadata.get('azure_durable_task') is False
+    )
+
+
+def _is_function_tool_operation(operation_id: DurableOperationId) -> bool:
+    return (
+        isinstance(operation_id, ToolsetCallToolId | ToolsetValidateToolArgumentsId)
+        and operation_id.toolset_kind == 'function'
+    )

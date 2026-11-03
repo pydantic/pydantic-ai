@@ -166,30 +166,33 @@ class _TrampolineLoop(asyncio.BaseEventLoop):
                         raise
                     self.deliver()
         finally:
-            # Cancel and drain local async scopes without scheduling new durable work.
-            self.abandoned = True
+            self._teardown()
+
+    def _teardown(self) -> None:
+        # Cancel and drain local async scopes without scheduling new durable work.
+        self.abandoned = True
+        with self.activated():
+            tasks = asyncio.all_tasks(self)
+            for pending in tasks:
+                pending.cancel()
+        self.drain_cleanup()
+        with self.activated():
+            shutdown = self.create_task(self.shutdown_asyncgens(), name='durabletask-asyncgen-shutdown')
+        self.drain_cleanup()
+        tasks.update(asyncio.all_tasks(self))
+        tasks.add(shutdown)
+        unfinished = [pending for pending in tasks if not pending.done()]
+        if unfinished:
             with self.activated():
-                tasks = asyncio.all_tasks(self)
-                for pending in tasks:
+                for pending in unfinished:
                     pending.cancel()
             self.drain_cleanup()
-            with self.activated():
-                shutdown = self.create_task(self.shutdown_asyncgens(), name='durabletask-asyncgen-shutdown')
-            self.drain_cleanup()
-            tasks.update(asyncio.all_tasks(self))
-            tasks.add(shutdown)
-            unfinished = [pending for pending in tasks if not pending.done()]
-            if unfinished:
-                with self.activated():
-                    for pending in unfinished:
-                        pending.cancel()
-                self.drain_cleanup()
-            for pending in tasks:
-                if pending.done() and not pending.cancelled():
-                    pending.exception()
-            self.close()
-            if unfinished:
-                raise UserError('Agent cleanup awaited durable work after its orchestration was abandoned.')
+        for pending in tasks:
+            if pending.done() and not pending.cancelled():
+                pending.exception()
+        self.close()
+        if unfinished:
+            raise UserError('Agent cleanup awaited durable work after its orchestration was abandoned.')
 
 
 def run_durable(
