@@ -1293,7 +1293,11 @@ class _OwnSerializer:
             raise AttributeError('__pydantic_serializer__')
         self._building.add(owner)
         try:
-            serializer = self._serializers[owner] = pydantic.TypeAdapter(owner).serializer
+            # The same bytes encoding as `ModelMessagesTypeAdapter`, so a history dumps the same either way.
+            # `TypeAdapter` takes no config for a dataclass, so the config goes to the serializer itself.
+            serializer = self._serializers[owner] = pydantic_core.SchemaSerializer(
+                pydantic.TypeAdapter(owner).core_schema, pydantic_core.core_schema.CoreConfig(ser_json_bytes='base64')
+            )
         finally:
             self._building.discard(owner)
         return serializer
@@ -1336,11 +1340,15 @@ class _RecordsContentFiles:
         if record is None or info.field_name != self._content_field:
             return handler(value)
         record.needed = not isinstance(value, str | int | float | bool | None)
+        outer_digests = _dumped_file_digests.get()
         token = _dumped_file_digests.set(record.digests)
         try:
             return handler(value)
         finally:
             _dumped_file_digests.reset(token)
+            # A result nested in another one's content is part of that content, and so are its files.
+            if outer_digests is not None:
+                outer_digests.extend(record.digests)
 
     @pydantic.model_serializer(mode='wrap')
     def _serialize_recording_files(self, handler: pydantic.SerializerFunctionWrapHandler):
@@ -1411,9 +1419,20 @@ def _check_file_provenance(value: Any) -> Any:
         if mapping.get('force_download', False) is not False:
             return {**mapping, 'force_download': False}
         return mapping
-    if _file_digest(mapping) in record:
-        return mapping
+    # Only a mapping with no keys beyond those a dump of its kind writes can be a recorded item, so anything
+    # else is told apart without serializing and hashing it, which nested data would otherwise pay per level.
+    if record and set(mapping) <= _FILE_ITEM_KEYS.get(mapping.get('kind'), frozenset()):
+        if _file_digest(mapping) in record:
+            return mapping
     raise PydanticCustomError('unrecorded_file', 'Not a file this tool result recorded')
+
+
+_FILE_URL_ITEM_KEYS = frozenset({'url', 'force_download', 'vendor_metadata', 'kind', 'media_type', 'identifier'})
+_FILE_ITEM_KEYS: dict[Any, frozenset[str]] = {
+    **{kind: _FILE_URL_ITEM_KEYS for kind in ('image-url', 'audio-url', 'document-url', 'video-url')},
+    'uploaded-file': frozenset({'file_id', 'provider_name', 'vendor_metadata', 'kind', 'media_type', 'identifier'}),
+}
+"""The keys a dump of each recorded file kind can write; `test_file_item_keys_match_their_dumps` pins them."""
 
 
 _ToolReturnValueT = TypeVar('_ToolReturnValueT', default=Any)

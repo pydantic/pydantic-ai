@@ -72,6 +72,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._parts_manager import ModelResponsePartsManager
 from pydantic_ai.messages import (
+    _FILE_ITEM_KEYS,  # pyright: ignore[reportPrivateUsage]
     _FILE_URL_KINDS,  # pyright: ignore[reportPrivateUsage]
     _USER_CONTENT_TYPES,  # pyright: ignore[reportPrivateUsage]
     INVALID_JSON_KEY,
@@ -2199,6 +2200,59 @@ def test_tool_return_inferred_serialization_keeps_its_files():
 
     result = _ToolReturn(result=[uploaded, lookalike])
     assert TypeAdapter[Any](CallToolResult).validate_json(to_json(result)) == result
+
+
+def test_file_item_keys_match_their_dumps():
+    """The keys a recorded file item may carry are exactly those its dump writes."""
+    items: list[FileUrl | UploadedFile] = [
+        ImageUrl('https://example.com/a.png'),
+        AudioUrl('https://example.com/a.mp3'),
+        DocumentUrl('https://example.com/a.pdf'),
+        VideoUrl('https://example.com/a.mp4'),
+        UploadedFile('file-1', 'openai'),
+    ]
+    dumps = [_dumped_file(item) for item in items]
+    assert {dump['kind']: frozenset(dump) for dump in dumps} == _FILE_ITEM_KEYS
+
+
+def test_tool_return_nested_in_content_counts_toward_its_parent():
+    """A result held in another result's content is part of that content, and so are its files."""
+    uploaded = UploadedFile('file-1', 'openai')
+    content = {'nested': ToolReturnPart(tool_name='inner', content=[uploaded], tool_call_id='i')}
+
+    reloaded = _round_trip(content, 'json')
+
+    assert reloaded['nested']['content'] == [uploaded]
+
+
+def test_tool_return_file_shaped_data_is_not_hashed_without_a_matching_shape(monkeypatch: pytest.MonkeyPatch):
+    """Mappings that can't be a recorded item are told apart without digesting them, at any depth."""
+    import pydantic_ai.messages as messages_module
+
+    digested: list[Any] = []
+    real_digest = messages_module._file_digest  # pyright: ignore[reportPrivateUsage]
+
+    def counting_digest(serialized: Any) -> str | None:
+        digested.append(serialized)
+        return real_digest(serialized)
+
+    nested: dict[str, Any] = {
+        'kind': 'document-url',
+        'url': 'https://example.com/a.pdf',
+        'media_type': 'application/pdf',
+    }
+    for _ in range(50):
+        nested = {**nested, 'child': nested}
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=[nested], tool_call_id='c')])
+    ]
+    payload = ModelMessagesTypeAdapter.dump_json(messages)
+
+    monkeypatch.setattr(messages_module, '_file_digest', counting_digest)
+    loaded = ModelMessagesTypeAdapter.validate_json(payload)
+
+    assert message_part(loaded, ToolReturnPart).content == [nested]
+    assert digested == []
 
 
 def test_tool_return_records_only_the_files_in_its_content():
