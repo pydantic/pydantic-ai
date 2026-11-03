@@ -1079,16 +1079,17 @@ async def main():
         typo = agent_run.enqueue('Also rename `foo`', priority='when_idle')
         assert follow_up is not None and typo is not None
 
+        clicked = False
         node = agent_run.next_node
         while not isinstance(node, End):
-            if Agent.is_call_tools_node(node) and typo is not None:
+            if Agent.is_call_tools_node(node) and not clicked:
                 # The user pressed "send now" on one message and "remove" on the other.
                 # `False` would mean the message was no longer queued, e.g. already delivered.
                 sent_now = agent_run.reprioritize(follow_up, 'asap')
                 removed = agent_run.withdraw(typo)
                 print(sent_now, removed)
                 #> True True
-                typo = None
+                clicked = True
             node = await agent_run.next(node)
 ```
 
