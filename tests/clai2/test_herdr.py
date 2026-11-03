@@ -6,6 +6,7 @@ import json
 import socket
 import threading
 from collections.abc import Iterator
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -405,8 +406,10 @@ def server() -> Iterator[Server]:
                     with state.condition:
                         state.requests.append(request)
                         state.condition.notify_all()
+                    # The client hangs up at its request deadline, which a loaded runner can reach first.
                     if not state.empty_reply:
-                        connection.sendall((json.dumps(response) + '\n').encode())
+                        with suppress(BrokenPipeError):
+                            connection.sendall((json.dumps(response) + '\n').encode())
 
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()
@@ -426,6 +429,7 @@ def test_socket_delivery_and_release(server: Server) -> None:
     client.close()
     client.close()
     client.submit('state', 'pane.report_agent', {'state': 'working'})
+    server.wait('pane.release_agent')
     assert len(requests) == 1
     assert requests[0]['method'] == 'pane.release_agent'
     params = requests[0]['params']

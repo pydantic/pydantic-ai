@@ -119,27 +119,7 @@ class Contains(Evaluator[object, object, object]):
                 else:
                     # Cast to Any to avoid type checking issues
                     output_dict = cast(dict[Any, Any], ctx.output)  # pyright: ignore[reportUnknownMemberType]
-
-                if isinstance(self.value, dict):
-                    # Cast to Any to avoid type checking issues
-                    expected_dict = cast(dict[Any, Any], self.value)  # pyright: ignore[reportUnknownMemberType]
-                    for k in expected_dict:
-                        if k not in output_dict:
-                            k_trunc = _truncated_repr(k, max_length=30)
-                            failure_reason = f'Output does not contain expected key {k_trunc}'
-                            break
-                        elif output_dict[k] != expected_dict[k]:
-                            k_trunc = _truncated_repr(k, max_length=30)
-                            output_v_trunc = _truncated_repr(output_dict[k], max_length=100)
-                            expected_v_trunc = _truncated_repr(expected_dict[k], max_length=100)
-                            failure_reason = (
-                                f'Output has different value for key {k_trunc}: {output_v_trunc} != {expected_v_trunc}'
-                            )
-                            break
-                else:
-                    if self.value not in output_dict:
-                        output_trunc = _truncated_repr(output_dict, max_length=200)
-                        failure_reason = f'Output {output_trunc} does not contain provided value as a key'
+                failure_reason = self._dict_failure_reason(output_dict)
             elif self.value not in ctx.output:  # pyright: ignore[reportOperatorIssue]  # will be handled by except block
                 output_trunc = _truncated_repr(ctx.output, max_length=200)
                 failure_reason = f'Output {output_trunc} does not contain provided value'
@@ -147,6 +127,24 @@ class Contains(Evaluator[object, object, object]):
             failure_reason = f'Containment check failed: {e}'
 
         return EvaluationReason(value=failure_reason is None, reason=failure_reason)
+
+    def _dict_failure_reason(self, output_dict: dict[Any, Any]) -> str | None:
+        if isinstance(self.value, dict):
+            # Cast to Any to avoid type checking issues
+            expected_dict = cast(dict[Any, Any], self.value)  # pyright: ignore[reportUnknownMemberType]
+            for k in expected_dict:
+                if k not in output_dict:
+                    k_trunc = _truncated_repr(k, max_length=30)
+                    return f'Output does not contain expected key {k_trunc}'
+                elif output_dict[k] != expected_dict[k]:
+                    k_trunc = _truncated_repr(k, max_length=30)
+                    output_v_trunc = _truncated_repr(output_dict[k], max_length=100)
+                    expected_v_trunc = _truncated_repr(expected_dict[k], max_length=100)
+                    return f'Output has different value for key {k_trunc}: {output_v_trunc} != {expected_v_trunc}'
+        elif self.value not in output_dict:
+            output_trunc = _truncated_repr(output_dict, max_length=200)
+            return f'Output {output_trunc} does not contain provided value as a key'
+        return None
 
     def get_default_evaluation_name(self) -> str:
         return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()

@@ -7,7 +7,8 @@ name: Sandbox live tests
 #
 # Adding a provider adds its name to `PRESENT` and its secret below. Docker is the exception:
 # it has no extra or secret, and its live tier runs a second time against Podman in a step of
-# its own.
+# its own. OpenSandbox needs no secret either: its tier runs against a server started on this
+# runner's Docker.
 #
 # There is deliberately no `ref` input: a scheduled or manual caller runs with the cache of
 # the branch it started from (usually `main`), and checking out another ref there would run
@@ -49,7 +50,7 @@ jobs:
       # the workflow, so the matrix below starts each known provider once.
       - id: plan
         env:
-          PRESENT: '["modal", "e2b", "sprites", "daytona", "boxd", "docker"]'
+          PRESENT: '["modal", "e2b", "sprites", "daytona", "boxd", "docker", "opensandbox"]'
           REQUESTED: ${{ inputs.providers }}
         run: |
           providers="$(python3 -c '
@@ -99,6 +100,19 @@ jobs:
         env:
           PROVIDER: ${{ matrix.provider }}
 
+      # A local OpenSandbox server on the runner's Docker, without an API key; the backend needs execd
+      # 1.1.1 or later, and the server's example config pins an older one.
+      - if: matrix.provider == 'opensandbox'
+        run: |
+          server=(uvx --from opensandbox-server==1.2.0 opensandbox-server)
+          "${server[@]}" init-config "$RUNNER_TEMP/sandbox.toml" --example docker
+          sed -i 's#^execd_image = .*#execd_image = "opensandbox/execd:release-1.2.0"#' "$RUNNER_TEMP/sandbox.toml"
+          OPENSANDBOX_INSECURE_SERVER=YES nohup "${server[@]}" --config "$RUNNER_TEMP/sandbox.toml" \
+            > "$RUNNER_TEMP/opensandbox.log" 2>&1 &
+          for _ in $(seq 60); do curl -sf http://127.0.0.1:8080/health > /dev/null && exit 0; sleep 1; done
+          cat "$RUNNER_TEMP/opensandbox.log"
+          exit 1
+
       # `<NAME>_REQUIRE_LIVE` turns a missing or empty secret into a failure; without it the
       # live tests skip themselves and the job would report green having tested nothing.
       - run: |
@@ -114,6 +128,8 @@ jobs:
           SPRITE_TOKEN: ${{ secrets.SPRITE_TOKEN }}
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
           BOXD_API_KEY: ${{ secrets.BOXD_API_KEY }}
+          # The server the OpenSandbox step started; other providers ignore it.
+          OPEN_SANDBOX_DOMAIN: 127.0.0.1:8080
 
       # The runners ship Podman too, which `DockerSandbox` supports through `executable='podman'`.
       - if: matrix.provider == 'docker'

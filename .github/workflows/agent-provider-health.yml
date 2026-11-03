@@ -19,6 +19,7 @@ on:
       - Pydantic AI Stale Issues Finder
       - Pydantic AI Streaming Resilience Sweep
       - Pydantic AI UI Security Review
+      - Pydantic AI Weekly Agent Instructions Audit
     types: [completed]
   schedule:
     - cron: '13 * * * *'

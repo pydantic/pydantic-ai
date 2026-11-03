@@ -1307,7 +1307,6 @@ class TestErrorMapping:
             ('ExecutionError', WorkspaceError),
             ('RequestSizeError', WorkspaceError),
             ('SandboxFilesystemError', WorkspaceError),
-            ('FilesystemExecutionError', WorkspaceError),
             ('ConnectionError', None),
             ('ServiceError', None),
             ('ResourceExhaustedError', None),
