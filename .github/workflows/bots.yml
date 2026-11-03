@@ -498,12 +498,13 @@ jobs:
             - Assess design and behavior choices against issue guidance and repository standards. Use your judgment when those sources support a choice; do not ask a maintainer to confirm it.
             - Any line of code that violates the concrete guidelines/rules laid out in the relevant `AGENTS.md` file(s): the top-level guidelines apply to all changes, while directory-specific guidelines affect only the changes in that directory.
             - Anything else that the responsibilities you are assigned in `AGENTS.md` suggest that you should be calling out: use your best judgment.
+            - A new test file or test placed outside an existing home. Before accepting one, search `pr-head/tests/` for an existing file that covers the same concern.
 
             Generally, the priority in terms of "crucial to get right" and "what to focus on first in a new PR" is public API > concepts and behavior > documentation > tests > code style.
             If the PR has high level problems that will likely require significant changes at lower levels, hold off on looking for or commenting on lower level problems until the higher level problems are addressed, so that the PR author (and your context window) don't get overwhelmed.
 
-            Note that while another agent (Devin) is responsible for thoroughly reviewing the implementation for bugs, security issues, and edge cases,
-            _you_ are responsible for catching every violation of the repository's standards and guidelines listed in the `AGENTS.md` and `agent_docs/*.md` files.
+            _You_ are responsible for catching every violation of the repository's standards and guidelines listed in the `AGENTS.md` and `agent_docs/*.md` files.
+            You also own the bugs, edge cases and behavior changes you can establish by reading the diff and the code. pydanty is the reviewer that runs code, on a maintainer's request.
             Do not focus exclusively on high-level concerns: by the time the author has addressed every blocking comment you've left over multiple rounds of review, the PR should be ready to merge.
 
             # Gathering context
@@ -519,6 +520,10 @@ jobs:
 
             The diff is split into per-file diffs under `.github/.review-context/diff/` (excluding `uv.lock` and cassettes), that you can read on demand and in parallel.
             The diffs include function-level context (`git diff -W`), so you can see the full function/method being modified without needing to read the source file separately.
+            A Python hunk covers its enclosing function or method, not the whole class.
+            When a hunk changes a method of a class in a sibling family, read the full class from `pr-head/` to see its sibling methods.
+            The sibling families are `models/`, `providers/`, `profiles/`, `toolsets/`, `native_tools/`, `capabilities/`, `embeddings/`, `images/`, `realtime/`, `ui/` and `durable_exec/` under `pydantic_ai_slim/pydantic_ai/`;
+            the `*_sandbox/`, `ssh_workspace/`, `absurd/`, `aws_lambda/`, `pgtask/` and `render/` backends under `src/pydantic_ai_harness/pydantic_ai_harness/`; and `src/pydantic_clai2/pydantic_clai2/builtin_plugins/`.
             Each commentable line in the diff is prefixed with its source line number: `NL:<number>` for new or context lines, `OL:<number>` for deleted lines.
             For newly added files, the diff contains the complete file contents — do not re-read these from disk.
             The diff file paths are listed in the third column of `changed-files.txt`.
