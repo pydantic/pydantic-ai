@@ -129,12 +129,8 @@ def _returned_calls(request: ModelRequest, pending: dict[str, _FileCall]) -> lis
     """The calls in `pending` that `request` returns a success for, in order, each taken out of `pending`."""
     found: list[_FileCall] = []
     for part in request.parts:
-        if (
-            isinstance(part, ToolReturnPart)
-            and part.outcome == 'success'
-            and (call := pending.pop(part.tool_call_id, None)) is not None
-        ):
-            found.append(call)
+        if isinstance(part, ToolReturnPart) and part.outcome == 'success' and part.tool_call_id in pending:
+            found.append(pending.pop(part.tool_call_id))
     return found
 
 
