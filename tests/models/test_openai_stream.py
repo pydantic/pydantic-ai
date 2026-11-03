@@ -1,11 +1,16 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
+import httpx2
 import pytest
 
-from pydantic_ai import ModelAPIError, ModelMessage, ModelRequest
+from pydantic_ai import Agent, ModelAPIError, ModelConnectionError, ModelMessage, ModelRequest, ModelTimeoutError
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.fallback import FallbackModel
 
 from ..conftest import try_import
 
@@ -13,7 +18,7 @@ with try_import() as imports_successful:
     from openai.types import chat
     from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice, ChoiceDelta
 
-    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings, OpenAIResponsesModel
     from pydantic_ai.profiles.openai import OpenAIModelProfile
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -145,3 +150,117 @@ async def test_cancelled_stream_does_not_require_finish_reason(allow_model_reque
     assert response.state == 'interrupted'
     assert response.finish_reason is None
     assert response.text == 'partial'
+
+
+@asynccontextmanager
+async def _serve_incomplete_503(*, hang_before_body: bool = False) -> AsyncIterator[str]:
+    """Serve a 503 whose error body never completes.
+
+    The response advertises a `Content-Length` longer than the body it sends, so the openai SDK fails while it reads
+    the body it needs to build its status error. With `hang_before_body`, the server goes silent after the headers and
+    waits for the client read timeout instead.
+    """
+
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        # Read past the request head; its content does not matter for the failure.
+        while await reader.readline() not in (b'\r\n', b'\n', b''):
+            pass
+        body = b'{"error": {"message": "server overloaded", "type": "server_error"}}'
+        writer.write(
+            b'HTTP/1.1 503 Service Unavailable\r\n'
+            b'Content-Type: application/json\r\n'
+            b'Content-Length: ' + str(len(body) + 64).encode() + b'\r\n'
+            b'Connection: close\r\n'
+            b'\r\n'
+        )
+        await writer.drain()
+        if hang_before_body:
+            # Stay silent until the client read timeout fires while httpx waits for the body.
+            await asyncio.sleep(5)
+        else:
+            writer.write(body)
+            await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    server = await asyncio.start_server(handle, host='127.0.0.1', port=0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        yield f'http://127.0.0.1:{port}/v1'
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+@pytest.mark.parametrize('model_class', ['OpenAIChatModel', 'OpenAIResponsesModel'])
+async def test_run_stream_transport_error_during_error_body_read_raises_model_connection_error(
+    allow_model_requests: None, model_class: str
+) -> None:
+    """A transport error the SDK hits while reading a streamed error body surfaces as `ModelConnectionError`."""
+    model_classes = {
+        'OpenAIChatModel': OpenAIChatModel,
+        'OpenAIResponsesModel': OpenAIResponsesModel,
+    }
+
+    async with _serve_incomplete_503() as base_url:
+        model = model_classes[model_class]('gpt-4o', provider=OpenAIProvider(base_url=base_url, api_key='test-key'))
+        agent = Agent(model)
+        with pytest.raises(ModelConnectionError) as exc_info:
+            async with agent.run_stream('Hello'):
+                pass
+
+    assert type(exc_info.value) is ModelConnectionError
+    assert exc_info.value.model_name == 'gpt-4o'
+    assert exc_info.value.phase == 'read'
+    assert isinstance(exc_info.value.__cause__, httpx2.TransportError)
+    assert not isinstance(exc_info.value.__cause__, httpx2.TimeoutException)
+    assert str(exc_info.value.__cause__) in exc_info.value.message
+
+
+async def test_run_stream_timeout_during_error_body_read_raises_model_timeout_error(
+    allow_model_requests: None,
+) -> None:
+    """A read timeout the SDK hits while reading a streamed error body surfaces as `ModelTimeoutError`."""
+    async with _serve_incomplete_503(hang_before_body=True) as base_url:
+        async with httpx2.AsyncClient(timeout=0.5) as http_client:
+            provider = OpenAIProvider(base_url=base_url, api_key='test-key', http_client=http_client)
+            agent = Agent(OpenAIChatModel('gpt-4o', provider=provider))
+            with pytest.raises(ModelTimeoutError) as exc_info:
+                async with agent.run_stream('Hello'):
+                    pass
+
+    assert type(exc_info.value) is ModelTimeoutError
+    assert exc_info.value.model_name == 'gpt-4o'
+    assert exc_info.value.phase == 'read'
+    assert isinstance(exc_info.value.__cause__, httpx2.TimeoutException)
+    assert str(exc_info.value.__cause__) in exc_info.value.message
+
+
+async def test_fallback_model_default_config_falls_back_when_stream_open_hits_transport_error(
+    allow_model_requests: None,
+) -> None:
+    """`FallbackModel`'s default configuration falls back when opening a stream raises a mapped connection error."""
+    chunk = chat.ChatCompletionChunk(
+        id='123',
+        choices=[
+            ChunkChoice(
+                delta=ChoiceDelta(content='fallback output', role='assistant'),
+                finish_reason=None,
+                index=0,
+            )
+        ],
+        created=1704067200,
+        model='gpt-4o',
+        object='chat.completion.chunk',
+    )
+
+    async with _serve_incomplete_503() as base_url:
+        broken = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(base_url=base_url, api_key='test-key'))
+        healthy = OpenAIChatModel(
+            'gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream([chunk]))
+        )
+        agent = Agent(FallbackModel(broken, healthy))
+        async with agent.run_stream('Hello') as result:
+            output = await result.get_output()
+
+    assert output == 'fallback output'
