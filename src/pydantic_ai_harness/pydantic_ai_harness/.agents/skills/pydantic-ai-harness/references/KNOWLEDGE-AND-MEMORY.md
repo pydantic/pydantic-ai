@@ -96,8 +96,8 @@ Gotchas:
 tables, query rows, and search an embedding index. The `tables` allowlist is required, and two
 instances with different allowlists raise instead of merging. `PixeltableMemoryStore` is a separate store for
 `Memory`; neither requires the other. Install `pydantic-ai-harness[pixeltable]` on Python 3.11 to 3.14.
-Projections omit media, array, binary, and unstored computed columns by default and reject them
-when explicitly requested.
+Projections omit media, array, binary, unstored computed columns, and unstored iterator outputs by
+default and reject them when explicitly requested.
 See the [Pixeltable guide](https://pydantic.dev/docs/ai/harness/pixeltable/) for limits and examples.
 
 ### Namespaces (multi-user)

@@ -268,6 +268,22 @@ class TestPixeltableMemoryStoreRecovery:
         assert file is not None
         assert file.content == 'other'
 
+    async def test_delete_that_never_landed_is_not_replayed(
+        self, store: PixeltableMemoryStore, table_name: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        base = await store.write('a.md', 'base', expected_version=None)
+        operation = MemoryOperation(id='crash-before-delete', fingerprint='delete:a.md')
+        _intercept(monkeypatch, store.table, 'update', receipt=False, around=_crash)
+        with pytest.raises(RuntimeError, match='crashed'):
+            await store.delete('a.md', expected_version=base.version, operation=operation)
+
+        # The pending receipt names a delete of a file that still exists, so it has not landed.
+        restarted = PixeltableMemoryStore(table_name=table_name)
+        assert await restarted.get_operation(operation) is None
+        retried = await restarted.delete('a.md', expected_version=base.version, operation=operation)
+        assert retried == MemoryMutation(version=None, replayed=False, existed=True)
+        assert await restarted.read('a.md', max_chars=10) is None
+
     async def test_mutation_that_never_landed_is_applied_by_the_retry(
         self, store: PixeltableMemoryStore, table_name: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
