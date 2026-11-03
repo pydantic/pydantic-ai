@@ -261,7 +261,10 @@ since `double` moved into the sandbox.
 ## Capture Spans
 
 In an app, `logfire.configure()` plus `logfire.instrument_pydantic_ai()` traces every run; harness
-capabilities add their own spans (`memory.write`, nested tool calls under `run_code`). In tests, attach
+capabilities add their own spans (`memory.write`, nested tool calls under `run_code`). The sandbox
+capabilities add `workspace create` / `workspace attach` around acquiring the sandbox and `workspace destroy`
+from `destroy(ref)` called inside a run (after the run it is not traced); see
+[workspace spans](https://pydantic.dev/docs/ai/integrations/logfire/#workspace-spans). In tests, attach
 the core `Instrumentation` capability with an in-memory exporter:
 
 ```python
