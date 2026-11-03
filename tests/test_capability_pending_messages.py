@@ -2660,7 +2660,7 @@ async def test_run_context_withdraw_and_demote_from_a_tool():
 
 
 async def test_tool_content_promoted_back_goes_next_to_the_tool_result():
-    """Content a tool enqueued, demoted and promoted back still goes next to that tool's result."""
+    """Tool content demoted, then promoted back before the next request, still goes next to the tool's result."""
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:

@@ -166,7 +166,8 @@ class PendingMessage:
 
     Set by `from_content` for parts enqueued with `priority='asap'` during a tool call (from the tool or a
     capability hook wrapping it). Only `asap` delivery reads it, so content demoted to `when_idle` is
-    delivered as its own request, and goes next to the result again if promoted back. The step matters because a model may reuse a `tool_call_id` later, and
+    delivered as its own request, and goes next to the result again if promoted back before the request
+    carrying that result is sent. The step matters because a model may reuse a `tool_call_id` later, and
     content an earlier call enqueues late (say, from a task it started) mustn't go next to the later return.
     """
 

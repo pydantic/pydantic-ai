@@ -1066,8 +1066,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
         carries that ID. A message enqueued at `'when_idle'` and promoted to `'asap'` is delivered at the
         next model request, in its own [`ModelRequest`][pydantic_ai.messages.ModelRequest]. Content
         enqueued during a tool call and demoted to `'when_idle'` is delivered like other `'when_idle'`
-        content, as its own request, not next to that call's result; promoted back, it goes next to the
-        result again.
+        content, as its own request, not next to that call's result; promoted back before the request
+        carrying that result is sent, it goes next to the result again.
 
         Args:
             enqueue_id: The ID `enqueue` returned.

@@ -8,6 +8,7 @@ from pydantic import TypeAdapter
 from typing_extensions import TypeVar
 
 from pydantic_ai import messages as _messages
+from pydantic_ai._enqueue import EnqueueGuard
 from pydantic_ai._run_context import AnchoredEvidence, CapabilityEventT, CustomEventT, ToolNamePath
 from pydantic_ai.capabilities.abstract import select_workspace
 from pydantic_ai.exceptions import UserError
@@ -17,7 +18,6 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import Workspace, WorkspaceRef
 from pydantic_ai.workspaces.unavailable import NO_WORKSPACE, UnavailableWorkspace
 
-from .._enqueue import EnqueueGuard
 from ._toolset import DispatchSnapshots, validation_context_from_agent
 
 if TYPE_CHECKING:
