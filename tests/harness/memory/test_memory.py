@@ -2405,11 +2405,12 @@ class TestInjection:
                 parts=[
                     UserPromptPart(
                         [
-                            TextContent('UNRELATED USER CONTEXT'),
                             TextContent('<memory>\n- stale fact\n</memory>', metadata=marker),
+                            TextContent('UNRELATED USER CONTEXT'),
                         ]
                     ),
-                    UserPromptPart('ORIGINAL USER PROMPT'),
+                    # Other user text, which isn't a snapshot, whatever comes before it.
+                    UserPromptPart([TextContent('ORIGINAL USER PROMPT')]),
                 ]
             ),
             ModelResponse(parts=[TextPart('ok')]),

@@ -292,9 +292,7 @@ def _late_class_finder(
 
     def late_class(value: Any) -> type[Any] | None:
         tag = value.get(tag_field) if is_str_dict(value) else getattr(value, tag_field, None)
-        if not isinstance(tag, str) or tag in known_tags:
-            return None
-        return registry.get(tag)
+        return registry.get(tag) if isinstance(tag, str) and tag not in known_tags else None
 
     return late_class
 

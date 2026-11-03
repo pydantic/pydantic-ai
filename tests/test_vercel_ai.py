@@ -41,6 +41,7 @@ from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
+    InstructionCapabilityPart,
     InstructionDeltaPart,
     InstructionId,
     LoadCapabilityCallPart,
@@ -56,6 +57,7 @@ from pydantic_ai.messages import (
     NativeToolReturnPart,
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
+    OperatorSource,
     OutputToolCallEvent,
     OutputToolResultEvent,
     PartDeltaEvent,
@@ -12842,11 +12844,16 @@ def _model_visible(messages: Sequence[ModelMessage]) -> list[tuple[str, list[tup
     ]
 
 
+@dataclass(kw_only=True)
+class _ReminderPart(InstructionCapabilityPart, namespace='test_vercel_ai', name='reminder'):
+    pass
+
+
 class _TurnScopedReminder(AbstractCapability[object]):
     async def before_model_request(
         self, ctx: RunContext[object], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        ctx.enqueue(SystemPromptPart('Reminder: keep it short.', scope='request'))
+        ctx.enqueue(_ReminderPart(content='Reminder: keep it short.', source=OperatorSource(), scope='request'))
         return request_context
 
 
@@ -12869,7 +12876,7 @@ async def test_request_scoped_reminder_is_not_streamed(manage_system_prompt: Lit
         if '[DONE]' not in encoded
     ]
 
-    assert [chunk for chunk in chunks if chunk['type'] == 'data-enqueued-messages'] == []
+    assert [chunk for chunk in chunks if chunk['type'] in ('data-enqueued-messages', 'error')] == []
     assert 'Reminder' not in json.dumps(chunks)
 
 

@@ -8,13 +8,14 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, LiteralString, cast
+from typing import Any, Generic, LiteralString, TypeVar, cast
 
 import pytest
 from pydantic import ConfigDict, TypeAdapter, ValidationError
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai._capability_parts import effective_authority, render_capability_parts
+from pydantic_ai._event_registry import set_replay_isolation_guard
 from pydantic_ai.capabilities import AbstractCapability, Hooks
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -227,6 +228,58 @@ def test_base_class_and_undecorated_subclass_cannot_be_instantiated() -> None:
 def test_kind_cannot_be_overridden_per_instance() -> None:
     with pytest.raises(UserError, match='cannot override `kind`'):
         TaskReportPart(content='x', source=OperatorSource(), task_id='t', kind='other.kind')
+
+
+def test_a_redefinition_during_replay_keeps_the_registered_kind() -> None:
+    """Re-executing a module in a durable engine's isolated replay leaves the host's registration in place."""
+
+    def define() -> type[DataCapabilityPart]:
+        @dataclass(kw_only=True)
+        class ReplayedPart(DataCapabilityPart, namespace='test_replay', tag='replayed'):
+            pass
+
+        return ReplayedPart
+
+    host_cls = define()
+    set_replay_isolation_guard(lambda: True)
+    try:
+        assert define() is not host_cls
+        assert CAPABILITY_PART_TYPES['test_replay.replayed'] is host_cls
+    finally:
+        set_replay_isolation_guard(lambda: False)
+        CAPABILITY_PART_TYPES.pop('test_replay.replayed', None)
+
+
+_MixinT = TypeVar('_MixinT')
+
+
+@dataclass
+class _Labelled(Generic[_MixinT]):
+    """A generic mixin ahead of the narrowed base, so the narrowing is found past it."""
+
+
+@dataclass(kw_only=True)
+class LabelledNotePart(_Labelled[int], DataCapabilityPart[str], namespace='test_parts', tag='labelled_note'):
+    pass
+
+
+def test_narrowing_is_found_past_another_generic_base() -> None:
+    dumped = ModelMessagesTypeAdapter.dump_python(
+        [ModelRequest(parts=[LabelledNotePart(content='x', source=OperatorSource())])], mode='json'
+    )
+    dumped[0]['parts'][0]['content'] = ['not', 'text']
+    with pytest.raises(ValidationError):
+        ModelMessagesTypeAdapter.validate_python(dumped)
+
+
+def test_a_part_with_an_invalid_voice_is_refused() -> None:
+    with pytest.raises(UserError, match="it must be `'data'` or `'instruction'`"):
+        UnknownCapabilityPart(
+            kind='elsewhere.note',
+            rendering=CapabilityPartRendering(voice=cast(Any, 'shout')),
+            content='x',
+            source=OperatorSource(),
+        )
 
 
 # Creating a part
@@ -446,6 +499,9 @@ def test_kind_defined_after_the_schema_was_built_loads_as_itself() -> None:
     assert adapter.validate_python(adapter.dump_python(messages)) == messages
     assert adapter.dump_python(messages, mode='json') == ModelMessagesTypeAdapter.dump_python(messages, mode='json')
     assert adapter.validate_python(messages) == messages
+    # A part that's already the late kind's instance is kept as it is, inside a message that's validated.
+    [loaded] = adapter.validate_python([{**adapter.dump_python(messages)[0], 'parts': [part]}])
+    assert loaded.parts == [part]
     # Serialization options reach the late kind's fields too.
     assert None not in adapter.dump_python(messages, mode='json', exclude_none=True)[0]['parts'][0].values()
     excluded = adapter.dump_python(messages, mode='json', exclude={0: {'parts': {0: {'record_id'}}}})
@@ -749,8 +805,8 @@ class Reporter(AbstractCapability[Any]):
     async def before_model_request(
         self, ctx: RunContext[Any], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        if ctx.run_step == 1:
-            ctx.enqueue(*self.parts)
+        # Every run here is answered in one step.
+        ctx.enqueue(*self.parts)
         return request_context
 
 
@@ -890,7 +946,8 @@ class TodaysPartsOnlyModel(Model):
                     elif isinstance(part, UserPromptPart):
                         self.seen.append(f'user: {part.content}')
                     else:
-                        raise NotImplementedError(f'Unknown request part {type(part).__name__}')
+                        # What this model exists to show never happens.
+                        raise NotImplementedError(f'Unknown request part {type(part).__name__}')  # pragma: no cover
         return ModelResponse(parts=[TextPart('Done.')])
 
     @property
@@ -1142,8 +1199,7 @@ def test_enqueue_from_hooks_is_application_code() -> None:
 
     @hooks.on.before_model_request
     async def add_note(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
-        if ctx.run_step == 1:
-            ctx.enqueue(SystemPromptPart('The user is on the free plan.'), report())
+        ctx.enqueue(SystemPromptPart('The user is on the free plan.'), report())
         return request_context
 
     agent = Agent(
