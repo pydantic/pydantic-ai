@@ -335,7 +335,7 @@ def test_a_user_typed_context_element_gets_a_note_and_goes_out_as_written():
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
 async def test_a_tool_note_names_its_tool_result_when_user_text_shares_the_request():
     """On Anthropic the request's notes go after its whole user turn, user text included, so the note names its call."""
-    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key='mock-api-key'))
+    model = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key='mock-api-key'))
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart('Check the page.')]),
         ModelResponse(parts=[ToolCallPart('fetch_page', {}, tool_call_id='call_1')]),
@@ -590,12 +590,12 @@ def test_a_file_note_names_the_genuine_change_and_a_user_note_never_does():
         ('claude-haiku-5-5', True),
         ('claude-sonnet-4-5', False),
         ('claude-sonnet-5', False),
-        ('claude-sonnet-5-5', False),
+        ('claude-sonnet-5-5', True),
         ('claude-opus-5', False),
         ('claude-haiku-4-5', False),
     ],
 )
-def test_only_claude_sonnet_4_6_and_haiku_5_5_need_sealed_system_blocks(model_name: str, sealed: bool):
+def test_only_claude_sonnet_4_6_sonnet_5_5_and_haiku_5_5_need_sealed_system_blocks(model_name: str, sealed: bool):
     """A sealed model never gets the native role: its blocks are the `<system>` fallback."""
     profile = AnthropicModel(model_name, provider=AnthropicProvider(api_key='mock-api-key')).profile
     assert profile.get('needs_sealed_system_blocks', False) is sealed
