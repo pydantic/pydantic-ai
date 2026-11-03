@@ -56,6 +56,7 @@ from .._file_input import KNOWN_DOCUMENT_MEDIA_TYPES, TEXT_DOCUMENT_MEDIA_TYPES
 from .._http import to_httpx2_timeout
 from .._instrumentation import current_model_request_span, get_instructions
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
+from .._removed_names import removed_names_getattr
 from .._run_context import RunContext
 from .._thinking_part import render_replayed_thinking, split_content_into_text_and_thinking
 from .._utils import (
@@ -8263,3 +8264,13 @@ def _map_mcp_call(
             provider_name=provider_name,
         ),
     )
+
+
+_REMOVED_IN_V2 = {
+    'OpenAIModel': 'use `OpenAIChatModel` (the same Chat Completions API), or `OpenAIResponsesModel`.',
+    'OpenAIModelSettings': 'use `OpenAIChatModelSettings`.',
+}
+
+# Kept from type checkers, which would otherwise accept any name on this module.
+if not TYPE_CHECKING:  # pragma: no branch
+    __getattr__ = removed_names_getattr(__name__, _REMOVED_IN_V2)

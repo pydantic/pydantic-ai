@@ -372,11 +372,6 @@ pre {
   align-items: center;
 }
 
-.project-head:hover .session-more,
-.project-head .session-more:focus-visible {
-  display: grid;
-}
-
 .project.removed .session-title {
   color: var(--muted);
 }
@@ -441,7 +436,7 @@ pre {
   font-variant-numeric: tabular-nums;
 }
 
-.session:hover .session-time {
+.session:is(:hover, :has(button:focus-visible)) .session-time {
   display: none;
 }
 
@@ -474,19 +469,22 @@ pre {
   font-weight: 600;
 }
 
+/* Hidden by size and opacity, not `display`, so Tab still reaches it. */
 .session-more {
-  display: none;
+  display: grid;
   place-items: center;
-  width: 26px;
+  width: 0;
   height: 26px;
-  margin-right: 3px;
+  overflow: hidden;
+  opacity: 0;
   border-radius: 6px;
   color: var(--muted);
 }
 
-.session:hover .session-more,
-.session-more:focus-visible {
-  display: grid;
+:is(.session, .project-head):is(:hover, :has(button:focus-visible)) .session-more {
+  width: 26px;
+  margin-right: 3px;
+  opacity: 1;
 }
 
 .session-more:hover {
@@ -960,6 +958,58 @@ pre {
   background: var(--surface);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* Edit and Retry, shown on hover or keyboard focus. */
+.user-actions {
+  display: flex;
+  align-items: center;
+  margin-right: 4px;
+  opacity: 0;
+}
+
+.user-row:hover .user-actions,
+.user-actions:focus-within {
+  opacity: 1;
+}
+
+.user-actions .icon-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.user-bubble.editing {
+  display: flex;
+  flex-direction: column;
+  width: 78%;
+  gap: 8px;
+}
+
+.user-bubble.editing textarea {
+  resize: vertical;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  outline: 0;
+  padding: 6px 10px;
+  background: var(--composer);
+  font: inherit;
+  line-height: 1.5;
+}
+
+.user-bubble.editing textarea:focus {
+  border-color: var(--focus);
+}
+
+.user-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+.user-edit-actions span {
+  margin-right: auto;
 }
 
 /* A sent prompt's images, as the composer showed them, above its text. */
