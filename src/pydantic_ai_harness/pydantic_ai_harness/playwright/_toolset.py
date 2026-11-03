@@ -658,29 +658,27 @@ class EgressPolicy:
         tool call made before the first navigation. Other hostless URLs (`data:`,
         `blob:`) are refused as navigation and allowed as page content, where they
         are ordinary inline assets.
-
-        When the host needs resolving, this is first asked without
-        `resolved_addresses`, and a refusal then stands without a lookup. An
-        override that decides on `resolved_addresses` should return `None` while
-        they are empty, `resolution_failed` is false and `needs_resolution(request)`
-        is true, and decide on the second call. Because of the two calls, the
-        verdict must depend only on `request`: an override must not memoize
-        verdicts or count calls.
         """
         if request.url == _BLANK_PAGE:
             return None
         host = _url_host(request.url)
         if host is not None and self.block_private_addresses and is_blocked_address(host):
             return _PRIVATE_ADDRESS_REASON
+        if host is None:
+            return None if request.kind in ('data', 'subresource') else 'URL with no host'
+        if (reason := self._domain_reason(host, request.kind)) is not None:
+            return reason
         if self.block_private_addresses and request.resolution_failed:
             return _UNRESOLVED_REASON
         if self.block_private_addresses and any(is_blocked_address(a) for a in request.resolved_addresses):
             return _PRIVATE_ADDRESS_REASON
-        if host is None:
-            return None if request.kind in ('data', 'subresource') else 'URL with no host'
+        return None
+
+    def _domain_reason(self, host: str, kind: RequestKind) -> str | None:
+        """Why the domain lists refuse `host` for this kind of request, or `None` if they do not."""
         if self._matches(host, self.blocked_domains):
             return 'domain in blocked_domains'
-        if request.kind in self.allowlist_reach and not self._permitted(host):
+        if kind in self.allowlist_reach and not self._permitted(host):
             return 'domain not in allowed_domains'
         return None
 
@@ -704,12 +702,14 @@ class EgressPolicy:
 
         Asked before `refuse` so that `refuse` stays synchronous: an override needs
         no async machinery, and the lookup a name-based private address requires
-        happens outside it. A host that is already an address needs none.
+        happens outside it. A host that is already an address needs none, and
+        neither does one the domain lists refuse, since `refuse` gives the
+        domain-list reason whatever the host resolves to.
         """
         if not self.block_private_addresses or request.kind not in self.resolved_kinds:
             return False
         host = _url_host(request.url)
-        return host is not None and not _is_ip_literal(host)
+        return host is not None and not _is_ip_literal(host) and self._domain_reason(host, request.kind) is None
 
     def enforced(self) -> bool:
         """Whether anything is restricted, i.e. whether a route guard is worth installing."""
@@ -1330,19 +1330,12 @@ class PlaywrightBrowserSession:
         directly, so a name that points at a private address is caught wherever it
         is asked about: the route guard, the socket guard, the `navigate`
         pre-check, and the post-action re-check.
-
-        The policy is asked once before the lookup, so a host it refuses by name
-        alone is refused without one, for the same reason wherever it points.
         """
         host = _url_host(request.url)
-        if host is None or not self.policy.needs_resolution(request):
-            return self.policy.refuse(request)
-        if (reason := self.policy.refuse(request)) is not None:
-            return reason
-        addresses = await _resolve_host(host)
-        return self.policy.refuse(
-            replace(request, resolved_addresses=addresses or (), resolution_failed=addresses is None)
-        )
+        if host is not None and self.policy.needs_resolution(request):
+            addresses = await _resolve_host(host)
+            request = replace(request, resolved_addresses=addresses or (), resolution_failed=addresses is None)
+        return self.policy.refuse(request)
 
     async def _route_guard(self, route: PlaywrightRoute, request: PlaywrightRequest) -> None:
         """Network-layer egress policy: abort what the policy refuses, pass the rest.
