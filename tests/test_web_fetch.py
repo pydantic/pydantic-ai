@@ -938,7 +938,7 @@ class TestWebFetchLocalTool:
 
         class CountingEncoder(json.JSONEncoder):
             def iterencode(self, o: object, _one_shot: bool = False) -> Iterator[str]:
-                for chunk in super().iterencode(o, _one_shot):
+                for chunk in super().iterencode(o, _one_shot):  # pragma: no branch
                     lengths.append(len(chunk))
                     yield chunk
 
