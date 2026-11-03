@@ -17,7 +17,7 @@ It's the agent's own retry layer: it sees the [normalized model errors](../model
 
 ## Retry or fall back
 
-`RetryOnModelErrors` attempts the *same* model again, for a failure that is likely to be gone a moment later. [`ModelFallback`](model-fallback.md) moves on to a *different* model, for a failure that won't be, like a model that's down, an exhausted quota or a request the model rejects. They're separate capabilities that compose: with both, each model is retried before the request falls back to the next one, and the next model gets a fresh budget of attempts of its own.
+`RetryOnModelErrors` attempts the *same* model again, for a failure that is likely to be gone a moment later. [`ModelFallback`](model-fallback.md) moves on to a *different* model, for a failure that won't be, like a model that's down, an exhausted quota, a request the model rejects, or a [refusal](model-fallback.md#refusals). They're separate capabilities that compose: with both, each model is retried before the request falls back to the next one, and the next model gets a fresh budget of attempts of its own.
 
 ```python {title="retry_then_fall_back.py"}
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart
@@ -64,6 +64,8 @@ By default, a request is retried when it fails with one of these [error categori
 - [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError], including the transport's [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError]
 
 Errors that fail the same way when the request is sent again aren't retried by default: a [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] (a bad request, bad credentials, an unknown model or an overflowing context window), a [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError], a [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] for a request that ran out its whole [`request_timeout`](../timeouts.md#model-request-deadlines), or a plain `ModelAPIError` that falls in no category.
+
+Nor is a [refusal](model-fallback.md#refusals), a response with a `finish_reason` of `'content_filter'`: the same model usually refuses the same request again, which is why `ModelFallback` moves on to another model when one refuses. To retry a refusal on the same model all the same, name [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] in `retry_on`. As in `fallback_on`, it then stands for any refused response, empty or with partial text, because the agent raises the error only after it has accepted a response, too late to retry it. Once the model's attempts are used up, the last refusal is accepted, and a `ModelFallback` can still move on from it.
 
 The `retry_on` parameter chooses differently. It takes the same forms as `ModelFallback`'s [`fallback_on`](model-fallback.md#when-to-fall-back):
 
@@ -112,11 +114,11 @@ Most provider SDKs retry failed requests themselves before raising, so each atte
 
 ## Streaming
 
-A streamed request is retried when it fails before any of its output reaches you: the agent waits for the stream's first event before handing the stream over, so a connection error, an error status, or an error the provider reports right after accepting the request can still be retried. Once output has been streamed, a failure is raised to you rather than retried. Response handlers aren't consulted for a streamed response, which is accepted as is with a `UserWarning`. See [Streaming](model-fallback.md#streaming) for when a request is streamed.
+A streamed request is retried when it fails before any of its output reaches you: the agent waits for the stream's first event before handing the stream over, so a connection error, an error status, or an error the provider reports right after accepting the request can still be retried. Once output has been streamed, a failure is raised to you rather than retried. Response handlers aren't consulted for a streamed response, which is accepted as is with a `UserWarning`. A streamed refusal isn't retried either, without a warning, as it isn't fallen back from. See [Streaming](model-fallback.md#streaming) for when a request is streamed.
 
 ## In agent specs {#agent-specs}
 
-`RetryOnModelErrors` can be declared in an [agent spec](../agent-spec.md). Its `retry_on` takes the names of [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] and its subclasses in [`pydantic_ai.exceptions`][pydantic_ai.exceptions]; exception and response handlers can only be passed in Python:
+`RetryOnModelErrors` can be declared in an [agent spec](../agent-spec.md). Its `retry_on` takes the names of [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] and its subclasses in [`pydantic_ai.exceptions`][pydantic_ai.exceptions], and `ContentFilterError`; exception and response handlers can only be passed in Python:
 
 ```yaml {title="retry_agent.yaml" test="skip"}
 model: {{ openai:medium }}

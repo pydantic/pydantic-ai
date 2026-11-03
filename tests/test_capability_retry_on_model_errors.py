@@ -8,6 +8,7 @@ scripted model can fail on cue with the normalized errors every model raises. Th
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import AsyncIterator, Generator, Sequence
 from contextlib import contextmanager
 from typing import Any
@@ -18,6 +19,7 @@ from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPa
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import BatchModelRequests, Hooks, ModelFallback, RetryOnModelErrors
 from pydantic_ai.exceptions import (
+    ContentFilterError,
     FallbackExceptionGroup,
     ModelAPIError,
     ModelAuthenticationError,
@@ -676,6 +678,50 @@ async def test_response_handlers_are_not_applied_to_a_streamed_response():
             assert await result.get_output() == 'nope'
 
 
+def _refuses_once(answered: list[str]) -> FunctionModel:
+    """A model whose first response its provider's content filter ended, with no output, and which then answers."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        answered.append('primary')
+        if len(answered) == 1:
+            return ModelResponse(parts=[], finish_reason='content_filter')
+        return ModelResponse(parts=[TextPart('hello')])
+
+    return FunctionModel(respond, model_name='primary')
+
+
+async def test_does_not_retry_a_refusal_by_default():
+    """The same model refusing again is the likely outcome, so a refusal isn't retried unless `retry_on` asks."""
+    answered: list[str] = []
+    agent = Agent(_refuses_once(answered), capabilities=[RetryOnModelErrors()])
+    with _recorded_sleeps() as delays, pytest.raises(ContentFilterError):
+        await agent.run('x')
+    assert (answered, delays) == (['primary'], [])
+
+
+async def test_retry_on_content_filter_error_retries_a_refusal():
+    """`ContentFilterError` in `retry_on` stands for a refused response, as it does in `ModelFallback`'s `fallback_on`."""
+    answered: list[str] = []
+    agent = Agent(_refuses_once(answered), capabilities=[RetryOnModelErrors(retry_on=ContentFilterError)])
+    with _recorded_sleeps():
+        result = await agent.run('x')
+    assert result.output == 'hello'
+    assert [(a.outcome, a.kind) for a in result.response.failed_attempts or []] == snapshot([('rejected', 'retry')])
+
+
+async def test_retry_on_content_filter_error_accepts_a_streamed_response_without_a_warning():
+    """A streamed response has already reached the consumer, so it isn't judged, and there's no handler to warn about."""
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'streamed'
+
+    agent = Agent(FunctionModel(stream_function=stream), capabilities=[RetryOnModelErrors(retry_on=ContentFilterError)])
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        async with agent.run_stream('x') as result:
+            assert await result.get_output() == 'streamed'
+
+
 # --- Streaming ---
 
 
@@ -765,6 +811,6 @@ async def test_from_spec_with_arguments():
 def test_from_spec_rejects_unknown_error_names():
     with pytest.raises(
         ValueError,
-        match="`RetryOnModelErrors` `retry_on` in an agent spec takes names of `ModelAPIError` classes, got \\['UserError'\\]",
+        match="`RetryOnModelErrors` `retry_on` in an agent spec takes names of `ModelAPIError` classes and `ContentFilterError`, got \\['UserError'\\]",
     ):
         Agent.from_spec({'capabilities': [{'RetryOnModelErrors': {'retry_on': ['ModelServerError', 'UserError']}}]})

@@ -13,7 +13,7 @@ from pydantic_ai._fallback import (
     spec_list,
 )
 from pydantic_ai._utils import replace_no_init
-from pydantic_ai.exceptions import ModelAPIError, RetryModelRequest, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import ContentFilterError, ModelAPIError, RetryModelRequest, UsageLimitExceeded, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.models.wrapper import WrapperModel
@@ -94,7 +94,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
     def __init__(
         self,
         *models: Model | KnownModelName | str,
-        fallback_on: FallbackOn = (ModelAPIError,),
+        fallback_on: FallbackOn = (ModelAPIError, ContentFilterError),
         sticky: bool = False,
     ):
         """Initialize the fallback capability.
@@ -102,7 +102,13 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         Args:
             models: The models to attempt after the one selected for the request step. When the
                 agent has no model of its own, the first of these is used for the first attempt.
-            fallback_on: Conditions that trigger fallback to the next model. Accepts:
+            fallback_on: Conditions that trigger fallback to the next model. Defaults to
+                `(ModelAPIError, ContentFilterError)`: any API error, and any refusal, meaning a response with
+                `finish_reason='content_filter'`, with or without partial text.
+                [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] is only raised after a response is
+                accepted, so in `fallback_on` it stands for that response. Pass `fallback_on=(ModelAPIError,)` to
+                accept refusals instead: an empty one ends the run with `ContentFilterError`, and one with text is the
+                output. Accepts:
 
                 - A tuple of exception types: `(ModelRateLimitError, ModelUnavailableError)`
                 - An exception handler (sync or async): `lambda exc: isinstance(exc, MyError)`
@@ -116,7 +122,8 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                 Response handlers only apply to non-streamed requests: a streamed response has
                 already reached the consumer by the time it could be judged, so it's accepted as
                 is, with a `UserWarning`. A stream that fails to open, or whose provider reports
-                an error before its first event, still falls back.
+                an error before its first event, still falls back. A streamed refusal is accepted too, without a
+                warning: whether a stream was ended by the content filter is only known once it was streamed.
             sticky: Whether a conversation that fell back keeps using the candidate that answered,
                 instead of starting each request step from the model selected for it. The agent records
                 the model that answered as the response's `model_id`, and the attempts that failed before
@@ -132,7 +139,9 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             raise UserError('`ModelFallback` requires at least one model to fall back to.')
         self.models = list(models)
         self.sticky = sticky
-        self._predicates = FallbackPredicates.parse(fallback_on, owner='ModelFallback')
+        self._predicates = FallbackPredicates.parse(
+            fallback_on, owner='ModelFallback', default='(ModelAPIError, ContentFilterError)'
+        )
         self._supplies_model = False
         self._default_model = None
         self._step = None
@@ -328,7 +337,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         cls,
         models: KnownModelName | str | Sequence[KnownModelName | str],
         *,
-        fallback_on: SpecModelError | Sequence[SpecModelError] = 'ModelAPIError',
+        fallback_on: SpecModelError | Sequence[SpecModelError] = ('ModelAPIError', 'ContentFilterError'),
         sticky: bool = False,
     ) -> ModelFallback[Any]:
         """Build from an agent spec, which names the models and the exceptions to fall back on.
@@ -337,8 +346,8 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         `ModelFallback(...)` is, so a [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability's
         aliases work in a spec too. `fallback_on` takes the names of exception classes in
         [`pydantic_ai.exceptions`][pydantic_ai.exceptions] that subclass
-        [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]; exception and response handlers can only be
-        passed to `ModelFallback(...)` directly.
+        [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], or `ContentFilterError`; exception and response
+        handlers can only be passed to `ModelFallback(...)` directly.
 
         YAML form:
 

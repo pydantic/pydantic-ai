@@ -27,7 +27,7 @@ from opentelemetry.trace import Span, Tracer
 from . import exceptions as _exceptions
 from ._model_request_attempts import AttemptStart, failed_attempt, record_attempt_span
 from ._utils import PeekableAsyncStream, await_maybe, get_first_param_type, is_str_dict
-from .exceptions import FallbackExceptionGroup, ModelAPIError, UserError
+from .exceptions import ContentFilterError, FallbackExceptionGroup, ModelAPIError, UserError
 from .messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     ModelMessage,
@@ -120,13 +120,14 @@ SpecModelError = Literal[
     'ModelAuthenticationError',
     'ModelNotFoundError',
     'ModelRequestTimeout',
+    'ContentFilterError',
 ]
 """The exceptions an agent spec can name in `ModelFallback`'s `fallback_on` and `RetryOnModelErrors`' `retry_on`.
 
-Every public `ModelAPIError` class.
+Every public `ModelAPIError` class, and `ContentFilterError`.
 """
 
-_SPEC_MODEL_ERRORS: dict[str, type[ModelAPIError]] = {
+_SPEC_MODEL_ERRORS: dict[str, type[ModelAPIError | ContentFilterError]] = {
     name: getattr(_exceptions, name) for name in get_args(SpecModelError)
 }
 
@@ -143,8 +144,8 @@ def spec_list(value: object, *, owner: str, param: str) -> Sequence[object]:
     raise UserError(f'`{owner}` `{param}` in an agent spec must be a name or a list of names, got {value!r}.')
 
 
-def spec_error_types(value: object, *, owner: str, param: str) -> tuple[type[ModelAPIError], ...]:
-    """The `ModelAPIError` classes a spec argument names, one name or a list of them."""
+def spec_error_types(value: object, *, owner: str, param: str) -> tuple[type[ModelAPIError | ContentFilterError], ...]:
+    """The `ModelAPIError` classes, or `ContentFilterError`, a spec argument names, one name or a list of them."""
     # Spec arguments reach here unvalidated: the annotations are what the published spec schema
     # advertises, not something that rejects other values on the way in.
     given = spec_list(value, owner=owner, param=param)
@@ -154,7 +155,7 @@ def spec_error_types(value: object, *, owner: str, param: str) -> tuple[type[Mod
     if len(error_types) != len(given):
         unknown = [name for name in given if not (isinstance(name, str) and name in _SPEC_MODEL_ERRORS)]
         raise UserError(
-            f'`{owner}` `{param}` in an agent spec takes names of `ModelAPIError` classes, '
+            f'`{owner}` `{param}` in an agent spec takes names of `ModelAPIError` classes and `ContentFilterError`, '
             f'got {unknown!r}. Valid names: {", ".join(_SPEC_MODEL_ERRORS)}.'
         )
     return error_types
@@ -187,20 +188,29 @@ class FallbackPredicates:
 
     exception_handlers: list[ExceptionHandler]
     response_handlers: list[ResponseHandler]
+    content_filter: bool = False
+    """Whether the predicates name `ContentFilterError`, so a response the provider's content filter ended matches.
+
+    The agent only raises `ContentFilterError` once a response is accepted, too late to fall back from or retry the
+    error, so the
+    exception type stands for any response with `finish_reason='content_filter'`, with or without partial output,
+    which the provider says to discard. Streamed responses skip it without a warning, unlike response handlers: a
+    stream's finish reason is only known once it has been streamed, so a streamed refusal is accepted.
+    """
 
     @classmethod
     def parse(
-        cls, fallback_on: FallbackOn, *, owner: str, param: str = 'fallback_on', default: str = '(ModelAPIError,)'
+        cls, fallback_on: FallbackOn, *, owner: str, default: str, param: str = 'fallback_on'
     ) -> FallbackPredicates:
         """Parse the `fallback_on` argument, or another argument of the same form, into exception and response handlers.
 
         `owner` and `param` name the class and argument in the error raised for an empty value, so the message
-        points at whichever entry point the user actually called, and `default` is the value it suggests instead.
+        points at whichever entry point the user actually called, and `default` is that class's default it suggests.
         """
         predicates = cls(exception_handlers=[], response_handlers=[])
         if _is_exception_type(fallback_on):
             # Single exception type
-            predicates.exception_handlers.append(_exception_types_to_handler((fallback_on,)))
+            predicates._add_exception_type(fallback_on)
         elif callable(fallback_on):
             # Single callable - auto-detect by type hints
             predicates._add_handler(fallback_on)
@@ -208,7 +218,7 @@ class FallbackPredicates:
             # Sequence of mixed handlers/types
             for item in fallback_on:
                 if _is_exception_type(item):
-                    predicates.exception_handlers.append(_exception_types_to_handler((item,)))
+                    predicates._add_exception_type(item)
                 elif callable(item):
                     predicates._add_handler(item)
                 else:
@@ -224,6 +234,12 @@ class FallbackPredicates:
             )
         return predicates
 
+    def _add_exception_type(self, exception_type: type[Exception]) -> None:
+        self.exception_handlers.append(_exception_types_to_handler((exception_type,)))
+        # Only the class itself and its subclasses: `UnexpectedModelBehavior` or `Exception` doesn't name refusals.
+        if issubclass(exception_type, ContentFilterError):
+            self.content_filter = True
+
     def _add_handler(self, handler: Callable[..., Any]) -> None:
         """Add a handler, auto-detecting its type by inspecting type hints."""
         # A response handler's first parameter is annotated as exactly `ModelResponse` (no `Optional`, no subclass);
@@ -235,6 +251,8 @@ class FallbackPredicates:
 
     async def matches(self, value: Exception | ModelResponse) -> bool:
         """Check if any handler matches `value`, an error or a response."""
+        if self.content_filter and isinstance(value, ModelResponse) and value.finish_reason == 'content_filter':
+            return True
         handlers = self.exception_handlers if isinstance(value, Exception) else self.response_handlers
         for handler in handlers:
             # pyright can't narrow handler's param type from the isinstance check on value

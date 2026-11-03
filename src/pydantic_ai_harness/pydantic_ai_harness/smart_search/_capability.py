@@ -17,7 +17,7 @@ from pydantic_ai_harness.smart_search._toolset import (
 
 @dataclass
 class SmartSearch(AbstractCapability[AgentDepsT]):
-    """Plain-English code search: find code by what it does, described in plain English.
+    """Find code by the behavior a plain-English query describes.
 
     Adds a `smart_search` tool. A search lists the files under a directory in the
     run's workspace with `rg`, cuts them into snippets (overlapping line windows, or the
@@ -27,13 +27,10 @@ class SmartSearch(AbstractCapability[AgentDepsT]):
     plus coverage figures so the model can tell an empty result from a complete
     search that found nothing.
 
-    The judge is any Pydantic AI model, and is required, since it decides which
-    provider receives the searched source. A decision model is the recommended
-    kind, since it answers each relevance question with a probability: any one
-    served over the System One API (`'system-one:<name>'`), or TypeSafe's Jev
-    (`'typesafe:jev-latest'`). One search makes up to `candidates` (default 128)
-    judge requests, each counted as one request in the run's usage and checked
-    against its usage limits.
+    The judge is any Pydantic AI model (see `model`), and is required, since it
+    decides which provider receives the searched source. One search makes up to
+    `candidates` (default 128) judge requests, each counted as one request in the
+    run's usage and checked against its usage limits.
 
     ```python
     from pydantic_ai import Agent

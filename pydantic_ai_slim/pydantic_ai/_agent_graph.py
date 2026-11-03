@@ -30,6 +30,7 @@ from dataclasses import field, replace
 from datetime import datetime
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, TypeAlias, TypeGuard, assert_never, cast
+from weakref import WeakValueDictionary
 
 import anyio
 from opentelemetry.trace import Tracer
@@ -78,6 +79,7 @@ from pydantic_graph import BaseNode, End, Graph, GraphBuilder, GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
 
 from . import (
+    _content_filter,
     _display,
     _enqueue,
     _output,
@@ -91,6 +93,7 @@ from . import (
 )
 from ._cancel import RunCancellation
 from ._context_size import context_input_tokens
+from ._conversation_marks import stored_boundary
 from ._deferred_capabilities import (
     _parse_loaded_capabilities,  # pyright: ignore[reportPrivateUsage]
     parse_loaded_capabilities,
@@ -359,8 +362,18 @@ def resolve_conversation(
     message_history: Sequence[_messages.ModelMessage] | None,
     usage: _usage.RunUsage | None,
     conversation_id: str | None,
-) -> tuple[Sequence[_messages.ModelMessage] | None, _usage.RunUsage | None, str | None]:
-    """Resolve a `conversation` argument into the three arguments it stands in for.
+) -> tuple[
+    Sequence[_messages.ModelMessage] | None,
+    _usage.RunUsage | None,
+    str | None,
+    str | None,
+    list[_messages.ModelMessage] | None,
+    bool,
+]:
+    """Resolve a `conversation` argument into the three arguments it stands in for, plus its revision and unsaved messages.
+
+    The last item is whether the messages before the unsaved ones may have changed since they were
+    stored, so the store has to check them.
 
     The usage is copied on the way out. A run accumulates into the `RunUsage` it is handed, so
     passing the conversation's own object would make running from a conversation change it —
@@ -368,7 +381,7 @@ def resolve_conversation(
     branch from. `copy` covers the mutable `details` mapping too, per `UsageBase.__copy__`.
     """
     if conversation is None:
-        return message_history, usage, conversation_id
+        return message_history, usage, conversation_id, None, None, False
 
     if conflicts := [
         name
@@ -385,7 +398,16 @@ def resolve_conversation(
             f'Pass the conversation on its own, or pass its pieces yourself.'
         )
 
-    return conversation.messages, copy(conversation.usage), conversation.conversation_id
+    index = conversation.new_message_index
+    unsaved = None if index is None else conversation.messages[index:]
+    return (
+        conversation.messages,
+        copy(conversation.usage),
+        conversation.conversation_id,
+        conversation.revision,
+        unsaved,
+        index is not None and stored_boundary(conversation) is None,
+    )
 
 
 def resolve_run_id(
@@ -756,6 +778,26 @@ class GraphAgentState:
     `conversation_id` on `message_history`, or a freshly generated UUID7. See the
     `Agent.iter` docstring for the resolution priority.
     """
+    conversation_revision: str | None = None
+    """The [`revision`][pydantic_ai.conversation.Conversation.revision] of the conversation this run was given, if any.
+
+    Carried to the result's `conversation` unchanged, so a store can tell whether the conversation
+    was saved by someone else while this run was going.
+    """
+    conversation_unsaved: list[_messages.ModelMessage] | None = None
+    """The messages at the end of the conversation this run was given that its store doesn't have yet.
+
+    `None` when the run wasn't given a conversation that knows its
+    [`new_message_index`][pydantic_ai.conversation.Conversation.new_message_index]. The result's
+    `conversation` finds them in the history to tell its store where the unsaved messages start.
+    """
+    conversation_unchecked: bool = False
+    """Whether the messages before `conversation_unsaved` may have changed since they were stored, say after the conversation was serialized.
+
+    The result's `conversation` then has its store compare them with the stored ones before appending.
+    """
+    conversation_saved: bool = False
+    """Whether a store saved this run's whole history, through its result, so none of it is unsaved."""
     metadata: dict[str, Any] | None = None
     last_max_tokens: int | None = None
     """Last-resolved `max_tokens` from model settings, used only in error messages."""
@@ -973,6 +1015,17 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     Stamped onto `ModelRequestContext.model_id` so durable-execution capabilities can
     round-trip the original selection token across the activity/step/task boundary.
     """
+
+    failed_tool_nodes: WeakValueDictionary[int, CallToolsNode[DepsT, OutputDataT]] = dataclasses.field(
+        default_factory=WeakValueDictionary[int, 'CallToolsNode[DepsT, OutputDataT]'], init=False, repr=False
+    )
+    """Runtime-only replay nodes, held weakly so recovery does not extend their lifetime."""
+
+    def release_tool_error_caches(self) -> None:
+        """Break cached-error traceback cycles after run recovery and resource teardown finish."""
+        for node in self.failed_tool_nodes.values():
+            node._stream_error = None  # pyright: ignore[reportPrivateUsage]
+        self.failed_tool_nodes.clear()
 
 
 class AgentNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]]):
@@ -2809,7 +2862,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             if not isinstance(e, Exception):
                 raise
             outcome = e
-            recovered = await self._recover_model_request_error(ctx, run_context, request_context, e, failed, start)
+            try:
+                recovered = await self._recover_model_request_error(ctx, run_context, request_context, e, failed, start)
+            except BaseException:
+                # The escaping error's traceback holds this frame; its outcome alias would close a cycle.
+                del outcome
+                raise
             # Not billed, so its usage is committed with the step's response, without the attempts it carries.
             response = failed.log.attach(recovered)
         state.response = response
@@ -3620,6 +3678,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             failed.record_exhausted(request_context, error, start, unrecovered)
             ModelRequestNode._raise_usage_limit_exceeded(ctx, unrecovered)
             raise
+        finally:
+            # The error's traceback holds this frame; retaining error would keep the run's deps in a cycle.
+            del error
 
     @staticmethod
     def _raise_usage_limit_exceeded(
@@ -3858,18 +3919,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 # `stop_reason: 'refusal'`), so a thinking-only response is filtered too. Re-prompting it
                 # would only repeat the refused request.
                 if self.model_response.finish_reason == 'content_filter':
-                    details = self.model_response.provider_details or {}
                     body = _messages.ModelMessagesTypeAdapter.dump_json([self.model_response]).decode()
-
-                    if reason := details.get('finish_reason'):
-                        message = f"Content filter triggered. Finish reason: '{reason}'"
-                    elif reason := details.get('block_reason'):
-                        message = f"Content filter triggered. Block reason: '{reason}'"
-                    elif refusal := details.get('refusal'):
-                        message = f'Content filter triggered. Refusal: {refusal!r}'
-                    else:  # pragma: no cover
-                        message = 'Content filter triggered.'
-
+                    message = _content_filter.content_filter_message(self.model_response.provider_details)
                     raise exceptions.ContentFilterError(message, body=body)
 
                 # If the output type allows `None`, a response with no text output is a valid result:
@@ -4010,6 +4061,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             raise
         except BaseException as e:
             self._stream_error = e
+            ctx.deps.failed_tool_nodes[id(self)] = self
             raise
 
     async def _handle_tool_calls(

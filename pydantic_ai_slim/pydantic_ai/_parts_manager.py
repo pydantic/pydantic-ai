@@ -378,6 +378,9 @@ class ModelResponsePartsManager:
         If `vendor_part_id` is None, updates the latest matching ToolCallPart (or ToolCallPartDelta)
         if any. Otherwise, a new part (or delta) may be created.
 
+        A streamed response's `_get_event_iterator` can use `handle_tool_call_delta_events` instead, which yields
+        the event, so there is no `None` to check.
+
         Args:
             vendor_part_id: The ID the vendor uses for this tool call.
                 If None, the latest matching tool call may be updated.
@@ -469,6 +472,50 @@ class ModelResponsePartsManager:
                     if updated_part.tool_call_id and not delta.tool_call_id:
                         delta = replace(delta, tool_call_id=updated_part.tool_call_id)
                     return PartDeltaEvent(index=part_index, delta=delta)
+
+    def handle_tool_call_delta_events(
+        self,
+        *,
+        vendor_part_id: Hashable | None,
+        tool_name: str | None = None,
+        args: str | dict[str, Any] | None = None,
+        tool_call_id: str | None = None,
+        provider_name: str | None = None,
+        provider_details: dict[str, Any] | None = None,
+    ) -> Iterator[ModelResponseStreamEvent]:
+        """Handle or update a tool call like `handle_tool_call_delta`, yielding its event instead of returning it.
+
+        A streamed response forwards these events the way it forwards those of `handle_text_delta` and
+        `handle_thinking_delta`, with no `None` check.
+
+        Args:
+            vendor_part_id: The ID the vendor uses for this tool call.
+                If None, the latest matching tool call may be updated.
+            tool_name: The name of the tool. If None, the manager does not enforce
+                a name match when `vendor_part_id` is None.
+            args: Arguments for the tool call, either as a string, a dictionary of key-value pairs, or None.
+            tool_call_id: An optional string representing an identifier for this tool call.
+            provider_name: An optional provider name for the tool call part.
+            provider_details: An optional dictionary of provider-specific details for the tool call part.
+
+        Yields:
+            A `PartStartEvent` if a new ToolCallPart or NativeToolCallPart was created, or a `PartDeltaEvent` if an
+            existing part was updated. Yields nothing while the part is still incomplete.
+
+        Raises:
+            UnexpectedModelBehavior: If attempting to apply a tool call delta to a part that is not
+                a ToolCallPart, NativeToolCallPart, or ToolCallPartDelta.
+        """
+        event = self.handle_tool_call_delta(
+            vendor_part_id=vendor_part_id,
+            tool_name=tool_name,
+            args=args,
+            tool_call_id=tool_call_id,
+            provider_name=provider_name,
+            provider_details=provider_details,
+        )
+        if event is not None:
+            yield event
 
     def handle_tool_call_part(
         self,

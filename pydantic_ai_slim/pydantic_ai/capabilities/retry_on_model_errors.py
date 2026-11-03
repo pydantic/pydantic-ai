@@ -133,7 +133,10 @@ class RetryOnModelErrors(AbstractCapability[AgentDepsT]):
                 - A response handler (sync or async): `def check(r: ModelResponse) -> bool`
                 - A sequence mixing all of the above: `[ModelRateLimitError, exc_handler, response_handler]`
 
-                Defaults to the transient errors listed above. Handler type is auto-detected by inspecting type
+                Defaults to the transient errors listed above, which leave a refusal, a response with
+                `finish_reason='content_filter'`, to a `ModelFallback`: the same model usually refuses again. Naming
+                [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] retries a refusal, empty or with
+                partial text, as it falls back from one in `fallback_on`. Handler type is auto-detected by inspecting type
                 hints on the first parameter: a handler whose first parameter is hinted as `ModelResponse` is a
                 response handler, and any other is an exception handler. Response handlers only apply to
                 non-streamed requests: a streamed response has already reached the consumer by the time it
@@ -238,12 +241,13 @@ class RetryOnModelErrors(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
         response: ModelResponse,
     ) -> ModelResponse:
-        if not self._predicates.response_handlers:
+        if not self._predicates.response_handlers and not self._predicates.content_filter:
             return response
         if request_context.streaming:
-            # A streamed response has already reached the consumer, so it's accepted without consulting
-            # the response handlers, as `ModelFallback` does.
-            warn_response_handlers_not_applied('RetryOnModelErrors', 'retry_on')
+            # A streamed response has already reached the consumer, so it's accepted without consulting the
+            # response handlers, with a warning when there are any, as `ModelFallback` does.
+            if self._predicates.response_handlers:
+                warn_response_handlers_not_applied('RetryOnModelErrors', 'retry_on')
             return response
         if self._attempt >= self.max_attempts or not await self._predicates.matches(response):
             return response
@@ -287,7 +291,7 @@ class RetryOnModelErrors(AbstractCapability[AgentDepsT]):
         """Build from an agent spec, which names the exceptions to retry on.
 
         `retry_on` takes the names of exception classes in [`pydantic_ai.exceptions`][pydantic_ai.exceptions] that
-        subclass [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]; exception and response handlers can only
+        subclass [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], or `ContentFilterError`; exception and response handlers can only
         be passed to `RetryOnModelErrors(...)` directly.
 
         YAML form:

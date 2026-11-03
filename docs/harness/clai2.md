@@ -65,13 +65,6 @@ not encrypted. Delete this file while CLAI is closed to clear saved input.
 input recall, and clears the screen back to the startup banner.
 Model responses and tool results are not saved to this file.
 
-## CI coverage
-
-The `CLAI coverage` check combines branch coverage from Python 3.11 and 3.14
-and requires 100% for `src/pydantic_clai2`. It is separate from Harness coverage;
-passing CLAI test jobs alone does not mean either coverage gate has passed.
-Tracked under [#875](https://github.com/pydantic/pydantic-ai-harness/issues/875).
-
 ## Start chatting
 
 Launch `clai2`. The default model is `openai-codex:gpt-6-astra`.
@@ -377,8 +370,8 @@ Interactive commands: `/login`, `/set` (alias `/settings`), `/system_prompt`, `/
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Path completion inserts a path; it does not attach file contents.
 Unknown slash commands are not sent to the model. Up/down recall prompt history
-within this process. Ctrl-D exits. Ctrl-C at input clears the line; during a run it
-exits and unwinds the agent. No cancelled run is automatically retried.
+(see [Input history](#input-history)). Ctrl-D exits. For Ctrl-C, see
+[Interrupting a turn](#interrupting-a-turn). No cancelled run is automatically retried.
 
 ## Reload CLAI during development
 
@@ -621,7 +614,7 @@ not cumulative conversation billing or a context-window percentage; `?` means
 unavailable. During a request it may reflect the previous response.
 
 While running, the footer reserves the terminal's bottom row using ANSI scrolling
-regions. Its text shimmers with a moving highlight at ten frames per second, with no spinner and a
+regions. Its text shimmers with a moving highlight at ten frames per second, with no spinner and
 a 16-colour fallback when truecolour is unavailable. Prompt-toolkit owns the footer while accepting input. The run footer is
 disabled for redirected output and restores normal scrolling on cancellation or
 failure. The cursor is hidden during runs and restored on completion, failure,
