@@ -1,0 +1,27 @@
+version: 1
+interactions:
+- request:
+    method: GET
+    uri: https://93.184.215.14/file.bin
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - identity, gzip
+      connection:
+      - keep-alive
+      host:
+      - 93.184.215.14
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      content-length:
+      - "9"
+      content-type:
+      - application/octet-stream
+    body:
+      type: text
+      content: "\0\x01\x02binary"
+  recorded_at: 2026-11-03T19:15:25.313402+00:00
