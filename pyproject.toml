@@ -247,6 +247,11 @@ complexipy = "2026-10-27T05:00:00Z"
 # TODO(adtyavrdhn): Remove after 2026-11-03 23:56 UTC, then run `uv lock` and
 # `uv lock --script .github/scripts/pydantic-ai-runner`.
 boxd = "2026-10-27T23:56:00Z"
+# k8s-agent-sandbox 1.0.9 is the `kubernetes` extra's floor: it is the first release with the
+# streaming `sandbox.commands.start()` the backend runs commands through.
+# TODO(adtyavrdhn): Remove after 2026-11-05 21:50 UTC, then run `uv lock` and
+# `uv lock --script .github/scripts/pydantic-ai-runner`.
+k8s-agent-sandbox = "2026-10-29T21:50:00Z"
 
 [dependency-groups]
 dev = [
@@ -579,6 +584,7 @@ markers = [
     "smol_live: boots real smolvm VMs; needs a host that can run them",
     "boxlite_live: boots real BoxLite VMs; needs a host that can run them",
     "docker_live: starts real containers; needs a Docker daemon",
+    "kubernetes_live: claims real pods on the kind cluster from `cluster/up.sh`; needs Docker, kind and kubectl",
     "temporal: starts or connects to a local Temporal dev server",
     "subprocess(reason, conditional=False): launches a Python interpreter, which the cost guard otherwise fails; reason required. `conditional=True` skips the stale-marker check for a test that only launches one on some platforms or installs",
     "slow(reason): exempt from the per-test time budget (`PYTEST_TEST_BUDGET_SECONDS`); reason required",

@@ -94,6 +94,7 @@ _PROVIDER_CAPABILITIES = {
     'sprites': 'SpritesSandbox()',
     'daytona': 'DaytonaSandbox()',
     'boxd': 'BoxdSandbox()',
+    'kubernetes': 'KubernetesSandbox(warm_pool=...)',
 }
 """The capability that provides each first-party provider's workspaces, to name in an error."""
 
