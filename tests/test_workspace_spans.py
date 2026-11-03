@@ -89,17 +89,17 @@ async def test_operations_are_traced(tmp_path: Path, include_content: bool) -> N
     await file_agent(capabilities=[LocalWorkspace(tmp_path), instrumentation]).run('go')
 
     expected = {True: snapshot([
-        {'name': 'workspace write_bytes', 'status': 'UNSET', 'logfire.msg': 'workspace write_bytes: notes.txt', 'file.size': 5, 'file.path': '<root>/notes.txt'},
-        {'name': 'workspace read_bytes', 'status': 'UNSET', 'logfire.msg': 'workspace read_bytes: notes.txt', 'file.path': '<root>/notes.txt', 'file.size': 5},
-        {'name': 'workspace exists', 'status': 'UNSET', 'logfire.msg': 'workspace exists: missing.txt', 'file.path': '<root>/missing.txt'},
-        {'name': 'workspace stat', 'status': 'UNSET', 'logfire.msg': 'workspace stat: missing.txt', 'file.path': '<root>/missing.txt'},
-        {'name': 'workspace run', 'status': 'UNSET', 'logfire.msg': "workspace run: sh -c 'exit 3'", 'process.command_args': ('sh', '-c', 'exit 3'), 'process.exit.code': 3},
+        {'name': 'workspace write_bytes', 'status': 'UNSET', 'file.size': 5, 'file.path': '<root>/notes.txt'},
+        {'name': 'workspace read_bytes', 'status': 'UNSET', 'file.path': '<root>/notes.txt', 'file.size': 5},
+        {'name': 'workspace exists', 'status': 'UNSET', 'file.path': '<root>/missing.txt'},
+        {'name': 'workspace stat', 'status': 'UNSET', 'file.path': '<root>/missing.txt'},
+        {'name': 'workspace run', 'status': 'UNSET', 'process.command_args': ('sh', '-c', 'exit 3'), 'process.exit.code': 3},
     ]), False: snapshot([
-        {'name': 'workspace write_bytes', 'status': 'UNSET', 'logfire.msg': 'workspace write_bytes', 'file.size': 5},
-        {'name': 'workspace read_bytes', 'status': 'UNSET', 'logfire.msg': 'workspace read_bytes', 'file.size': 5},
-        {'name': 'workspace exists', 'status': 'UNSET', 'logfire.msg': 'workspace exists'},
-        {'name': 'workspace stat', 'status': 'UNSET', 'logfire.msg': 'workspace stat'},
-        {'name': 'workspace run', 'status': 'UNSET', 'logfire.msg': 'workspace run', 'process.exit.code': 3},
+        {'name': 'workspace write_bytes', 'status': 'UNSET', 'file.size': 5},
+        {'name': 'workspace read_bytes', 'status': 'UNSET', 'file.size': 5},
+        {'name': 'workspace exists', 'status': 'UNSET'},
+        {'name': 'workspace stat', 'status': 'UNSET'},
+        {'name': 'workspace run', 'status': 'UNSET', 'process.exit.code': 3},
     ])}  # fmt: skip
     assert workspace_spans(exporter, tmp_path) == expected[include_content]
     # Every operation names the workspace, with or without content.
@@ -144,33 +144,6 @@ async def test_shell_filesystem_commands_are_traced_without_their_text(tmp_path:
     )
     assert not any(key.startswith('process.command') for span in spans for key in span)
     assert all(data[:100] not in str(span.attributes) for span in exporter.get_finished_spans())
-
-
-async def test_a_script_shows_its_first_line(tmp_path: Path) -> None:
-    """The message keeps to one line; the full script is on `process.command_line`."""
-    instrumentation, exporter = instrumented(include_content=True)
-    agent = Agent(TestModel(call_tools=['script']), capabilities=[LocalWorkspace(tmp_path), instrumentation])
-
-    @agent.tool
-    async def script(ctx: RunContext[Any]) -> int:
-        return (await ctx.workspace.run('echo a\necho b\n', shell=True)).exit_code
-
-    await agent.run('go')
-
-    assert workspace_spans(exporter, tmp_path) == snapshot(
-        [
-            {
-                'name': 'workspace run',
-                'status': 'UNSET',
-                'logfire.msg': 'workspace run: echo a …',
-                'process.command_line': """\
-echo a
-echo b
-""",
-                'process.exit.code': 0,
-            }
-        ]
-    )
 
 
 async def test_a_timeout_is_an_error(tmp_path: Path) -> None:
@@ -228,14 +201,7 @@ async def test_an_instrumented_sub_agent_traces_with_its_own_settings(tmp_path: 
     await agent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
 
     assert workspace_spans(parent_exporter, tmp_path) == snapshot(
-        [
-            {
-                'name': 'workspace exists',
-                'status': 'UNSET',
-                'logfire.msg': 'workspace exists: notes.txt',
-                'file.path': '<root>/notes.txt',
-            }
-        ]
+        [{'name': 'workspace exists', 'status': 'UNSET', 'file.path': '<root>/notes.txt'}]
     )
     assert [span['name'] for span in workspace_spans(sub_exporter, tmp_path)] == snapshot(
         ['workspace write_bytes', 'workspace read_bytes', 'workspace exists', 'workspace stat', 'workspace run']

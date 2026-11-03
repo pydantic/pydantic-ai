@@ -442,9 +442,9 @@ class Workspace(WorkspaceBackend):
             '`SupportsFilesystem` or `SupportsCommands`.'
         )
 
-    def _operation(self, operation: Operation, subject: WorkspaceCommand | None = None) -> AbstractContextManager[Span]:
-        """Trace `operation` on `subject`, a path or command, unless no environment is attached."""
-        return operation_span(operation, self, subject) if self.attached else nullcontext(INVALID_SPAN)
+    def _operation(self, operation: Operation) -> AbstractContextManager[Span]:
+        """Trace `operation`, unless no environment is attached."""
+        return operation_span(operation, self) if self.attached else nullcontext(INVALID_SPAN)
 
     async def _resolve_traced(self, path: str, span: Span) -> str:
         """Resolve `path`, recording it on `span` when content is captured."""
@@ -472,7 +472,7 @@ class Workspace(WorkspaceBackend):
         backend = self._backend
         if not isinstance(backend, SupportsCommands):
             raise UserError('This workspace does not support command execution.')
-        with self._operation('run', command) as span:
+        with self._operation('run') as span:
             set_command(span, command)
             result = await backend.run(command, shell=shell, env=env, timeout=timeout)
             span.set_attribute('process.exit.code', result.exit_code)
@@ -499,40 +499,40 @@ class Workspace(WorkspaceBackend):
 
     async def read_bytes(self, path: str) -> bytes:
         """Read a file's contents as bytes."""
-        with self._operation('read_bytes', path) as span:
+        with self._operation('read_bytes') as span:
             data = await self._filesystem.read_bytes(await self._resolve_traced(path, span))
             span.set_attribute('file.size', len(data))
             return data
 
     async def write_bytes(self, path: str, data: bytes) -> None:
         """Write bytes to a file, creating missing parents and replacing existing contents."""
-        with self._operation('write_bytes', path) as span:
+        with self._operation('write_bytes') as span:
             span.set_attribute('file.size', len(data))
             await self._filesystem.write_bytes(await self._resolve_traced(path, span), data)
 
     async def stat(self, path: str) -> FileEntry:
         """Return metadata for a file or directory."""
-        with self._operation('stat', path) as span:
+        with self._operation('stat') as span:
             return await self._filesystem.stat(await self._resolve_traced(path, span))
 
     async def list_dir(self, path: str) -> Sequence[FileEntry]:
         """List the entries of a directory (non-recursive)."""
-        with self._operation('list_dir', path) as span:
+        with self._operation('list_dir') as span:
             return await self._filesystem.list_dir(await self._resolve_traced(path, span))
 
     async def make_dir(self, path: str) -> None:
         """Create a directory, including missing parents."""
-        with self._operation('make_dir', path) as span:
+        with self._operation('make_dir') as span:
             await self._filesystem.make_dir(await self._resolve_traced(path, span))
 
     async def remove(self, path: str) -> None:
         """Remove a file, or a directory and its contents."""
-        with self._operation('remove', path) as span:
+        with self._operation('remove') as span:
             await self._filesystem.remove(await self._resolve_traced(path, span))
 
     async def exists(self, path: str) -> bool:
         """Whether a file or directory exists at the path."""
-        with self._operation('exists', path) as span:
+        with self._operation('exists') as span:
             return await self._filesystem.exists(await self._resolve_traced(path, span))
 
     async def realpath(self, path: str) -> str:
@@ -547,7 +547,7 @@ class Workspace(WorkspaceBackend):
         [`resolve(path)`][pydantic_ai.workspaces.Workspace.resolve], which collapses `..` as text, so
         `realpath(await ws.resolve(path))` names the file they open.
         """
-        with self._operation('realpath', path) as span:
+        with self._operation('realpath') as span:
             if not posixpath.isabs(path):
                 # Joined, not normalized: `link/..` must climb from the link's target, not cancel out.
                 path = posixpath.join(await self.working_dir(), path)

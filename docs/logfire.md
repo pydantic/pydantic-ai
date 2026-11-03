@@ -545,7 +545,7 @@ The run's own instrumentation decides what is traced and whether content is reco
 | `pydantic_ai.workspace.command.step` | On a shell command behind a file operation: what it does, such as `stat` or `read_chunk`. Its text is never recorded, as it can carry file contents |
 | `file.path` | On file operations, only with `include_content=True` |
 | `file.size` | On `read_bytes` and `write_bytes` |
-| `logfire.msg` | What Logfire shows: the operation, with its path or command's first line when `include_content=True`, such as `workspace run: pytest -x`. A shell command behind a file operation shows its step, such as `workspace run (read_chunk)` |
+| `logfire.msg` | On a shell command behind a file operation, its step, such as `workspace run (read_chunk)`, so it can't pass for a command the agent ran. Paths and commands stay out of it, as Logfire does not scrub it |
 
 An exception records an error status, except a missing file, which is often an expected answer. Under [durable execution](durable_execution/overview.md), calls are traced where they run; with Temporal, that takes the [`LogfirePlugin`](durable_execution/temporal.md#observability-with-logfire) and instrumentation on the agent itself.
 

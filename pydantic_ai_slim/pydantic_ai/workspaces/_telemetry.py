@@ -6,7 +6,6 @@ variable instead. Outside an instrumented run there is none, and nothing is trac
 
 from __future__ import annotations as _annotations
 
-import shlex
 from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -110,20 +109,12 @@ def set_command(span: Span, command: WorkspaceCommand) -> None:
 
 
 @contextmanager
-def operation_span(
-    operation: Operation, workspace: WorkspaceBackend, subject: WorkspaceCommand | None = None
-) -> Generator[Span]:
-    """Open a `workspace {operation}` span, unless tracing is off or an operation's span is already open.
-
-    `subject`, the path or command, is shown in the span's message only when the run captures content.
-    """
+def operation_span(operation: Operation, workspace: WorkspaceBackend) -> Generator[Span]:
+    """Open a `workspace {operation}` span, unless tracing is off or an operation's span is already open."""
     if _in_operation.get():
         yield INVALID_SPAN
         return
-    message = f'workspace {operation}'
-    if subject is not None and (telemetry := _telemetry.get()) is not None and telemetry.include_content:
-        message += f': {_one_line(subject)}'
-    with _span(operation, message) as span:
+    with _span(operation) as span:
         try:
             yield span
         finally:
@@ -138,7 +129,7 @@ def lifecycle_span(action: Lifecycle, workspace: WorkspaceBackend | WorkspaceRef
     It opens even inside an operation's span: a lazy backend creates or attaches during its first
     operation, and this span is what separates that time from the operation's own.
     """
-    with _span(action, f'workspace {action}') as span:
+    with _span(action) as span:
         # A failed create may drop the ref it had allocated; the span still names that sandbox.
         entry_ref = _ref_of(workspace)
         try:
@@ -150,6 +141,8 @@ def lifecycle_span(action: Lifecycle, workspace: WorkspaceBackend | WorkspaceRef
 @contextmanager
 def command_span(step: Step) -> Generator[Span]:
     """Open a `workspace run` span for a shell-filesystem command, recording its `step` but never its text, which can carry file contents."""
+    # The message names the step, so it can't pass for a command the agent ran. It never holds the
+    # command: Logfire does not scrub `logfire.msg`.
     with _span('run', f'workspace run ({step})') as span:
         span.set_attribute('pydantic_ai.workspace.command.step', step)
         yield span
@@ -165,21 +158,15 @@ def _record_ref(span: Span, ref: WorkspaceRef | None) -> None:
         span.set_attribute('pydantic_ai.workspace.id', ref.id)
 
 
-def _one_line(subject: WorkspaceCommand) -> str:
-    text = subject if isinstance(subject, str) else shlex.join(subject)
-    first, newline, _ = text.strip().partition('\n')
-    return f'{first} …' if newline else first
-
-
 @contextmanager
-def _span(operation: Operation | Lifecycle, message: str) -> Generator[Span]:
+def _span(operation: Operation | Lifecycle, message: str | None = None) -> Generator[Span]:
     if (telemetry := _telemetry.get()) is None:
         yield INVALID_SPAN
         return
-    # The message is set at the start, so Logfire's console and pending spans show it too.
+    # Set at the start, so Logfire's console and pending spans show it too.
     with telemetry.tracer.start_as_current_span(
         f'workspace {operation}',
-        attributes={'logfire.msg': message},
+        attributes=None if message is None else {'logfire.msg': message},
         record_exception=False,
         set_status_on_exception=False,
     ) as span:
