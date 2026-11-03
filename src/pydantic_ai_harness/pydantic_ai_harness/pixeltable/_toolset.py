@@ -31,10 +31,10 @@ _MEDIA = frozenset({'Image', 'Video', 'Audio', 'Document'})
 ALL_TABLES = '*'
 
 
-WhereValue = str | int | float | bool | None
-
 DEFAULT_MAX_ROWS = 20
 DEFAULT_MAX_CHARS = 8000
+
+WhereValue = str | int | float | bool | None
 """A `query_table` equality-filter value; timestamps, dates, and UUIDs are ISO strings."""
 
 
