@@ -2255,6 +2255,15 @@ def test_tool_return_file_shaped_data_is_not_hashed_without_a_matching_shape(mon
     assert digested == []
 
 
+def test_tool_return_inferred_serialization_encodes_bytes_like_the_adapter():
+    """Serialized by inference, a tool result's bytes are base64, as `ModelMessagesTypeAdapter` writes them."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content={'raw': b'\xff\x00'}, tool_call_id='c')])
+    ]
+
+    assert to_json(messages) == ModelMessagesTypeAdapter.dump_json(messages)
+
+
 def test_tool_return_records_only_the_files_in_its_content():
     """A file the application keeps in `metadata`, or sends as `ToolReturn.content`, doesn't count toward the result's record."""
     uploaded = UploadedFile('file-1', 'openai')
