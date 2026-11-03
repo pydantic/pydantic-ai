@@ -294,6 +294,7 @@ try:
     from ._message_passes import (
         anchor_system_messages,
         drop_unpaired_native_tool_calls,
+        end_tool_results_before_system_messages,
         place_system_messages_before_generation,
     )
     from ._native_tools import (
@@ -317,6 +318,7 @@ try:
         map_tool_search_tool_result_block,
         map_web_fetch_tool_result_block,
         map_web_search_tool_result_block,
+        provisions_code_execution,
         text_editor_code_execution_tool_result_content_ta,
         web_search_tool_result_content_ta,
     )
@@ -355,6 +357,7 @@ __all__ = (
     'AnthropicStaleThinkingBlockWarning',
     'AnthropicStreamedResponse',
     'AnthropicTaskBudget',
+    'AnthropicWebToolCaller',
     'DEPRECATED_ANTHROPIC_MODELS',
     'LatestAnthropicModelNames',
     'advisor_tool_result_content_ta',
@@ -432,6 +435,13 @@ _ADVISOR_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicVertex,
     AsyncAnthropicFoundry,
 )
+# Neither Bedrock API serves Anthropic's code execution tool. Verified live on every Claude model tried, with both
+# `code_execution_20250825` and `code_execution_20260120`: the legacy InvokeModel API (`AsyncAnthropicBedrock`) rejects
+# them with a 400 ("tool type ... is not supported for this model", or on older models "Input tag ... does not match
+# any of the expected tags"), and the Bedrock Messages API (`AsyncAnthropicBedrockMantle`) with a 400 ("tool type ...
+# is not supported for this model"). Claude Platform on AWS (`AsyncAnthropicAWS`, an `AsyncAnthropic` subclass) is a
+# separate transport and keeps the tool. https://github.com/pydantic/pydantic-ai/issues/11513
+_CODE_EXECUTION_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle)
 # Mid-conversation `{'role': 'system'}` messages are published as available on the Anthropic API,
 # Amazon Bedrock and Google Cloud, which leaves Microsoft Foundry as the only transport that has to
 # fall back to the `<system>`-tagged user rendering. Verified on Bedrock rather than assumed: with
@@ -530,6 +540,11 @@ _AssistantContentBlockParam: TypeAlias = (
 
 AnthropicTaskBudget: TypeAlias = BetaTokenTaskBudgetParam
 """Anthropic task budget payload for `output_config.task_budget`."""
+
+AnthropicWebToolCaller: TypeAlias = Literal[
+    'direct', 'code_execution_20250825', 'code_execution_20260120', 'code_execution_20260521'
+]
+"""Who may invoke Anthropic's web search and web fetch tools, as sent in their `allowed_callers` field."""
 
 
 class AnthropicModelSettings(ModelSettings, total=False):
@@ -643,12 +658,17 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """Container configuration for multi-turn conversations.
 
     By default, if previous messages contain a container_id (from a prior response),
-    it will be reused automatically. An id recovered that way is the only container
-    Pydantic AI may replace on its own: if a request carrying both that id and
-    `CodeExecutionTool` uploads comes back `500`, the id is dropped and the request is
-    sent once more so the upload lands in a fresh container. Nothing else is replaced —
-    not a container you set here, and not the id used to reconnect a paused turn — so a
-    request pinning a container the API will not accept raises instead.
+    it will be reused automatically on requests that have code execution: `CodeExecutionTool`,
+    or `WebSearchTool` or `WebFetchTool` where code execution may call them: on Anthropic's
+    `20260209` versions by default, and on any version when `anthropic_web_tools_allowed_callers`
+    names a code execution caller. The Anthropic API rejects a container
+    on any other request, so Pydantic AI doesn't send it there. Tools passed in
+    `extra_body['tools']` aren't read, so a request that carries them still sends it. An id
+    recovered from history is the only container Pydantic AI may replace on its own: if a
+    request carrying both that id and `CodeExecutionTool` uploads comes back `500`, the id is
+    dropped and the request is sent once more so the upload lands in a fresh container.
+    Nothing else is replaced — not a container you set here, and not the id used to reconnect
+    a paused turn — so a request pinning a container the API will not accept raises instead.
 
     Set to `False` to force a fresh container (ignore any `container_id` from history).
     Set to a container id string (e.g. `'container_xxx'`) to explicitly reuse a container,
@@ -664,6 +684,27 @@ class AnthropicModelSettings(ModelSettings, total=False):
     `'20260120'` for Sonnet 4.5+ and Opus 4.5+, otherwise `'20250825'`.
     Set a concrete version to force that tool version; a `UserError` is raised if
     the selected model profile does not support that version.
+    """
+
+    anthropic_web_tools_allowed_callers: list[AnthropicWebToolCaller]
+    """Who may invoke [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] and
+    [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool], sent as their `allowed_callers`.
+
+    By default the field is omitted and Anthropic picks the caller from the tool version. The
+    `web_search_20260209` and `web_fetch_20260209` versions let the model call the tools from code
+    execution, which gives it a server-side code execution sandbox to filter results in ("dynamic
+    filtering") even when [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] is not
+    enabled. Results the model reads from code execution come back without citations.
+
+    Set `['direct']` to have the model always call the web tools itself with no sandbox, which turns off
+    dynamic filtering and makes the tools eligible for Zero Data Retention. A value set here is sent
+    on whichever web tool version the model uses. A code execution caller gives the model the sandbox
+    on any version. Anthropic rejects an empty list, `code_execution_20250825`, and a code execution
+    caller on models without programmatic tool calling, such as Claude Haiku 4.5.
+    See [the Anthropic docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers).
+
+    Tools passed as `extra_body['tools']` replace the ones Pydantic AI builds, so the setting isn't
+    applied to a request that has them.
     """
 
     anthropic_eager_input_streaming: bool
@@ -1047,6 +1088,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             supported_native_tools = supported_native_tools - {WebFetchTool}
         if isinstance(client, _ADVISOR_UNSUPPORTED_CLIENTS):
             supported_native_tools = supported_native_tools - {AdvisorTool}
+        if isinstance(client, _CODE_EXECUTION_UNSUPPORTED_CLIENTS):
+            supported_native_tools = supported_native_tools - {CodeExecutionTool}
         supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
             client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
         )
@@ -1681,7 +1724,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             tool_choice = settle_tool_choice(tool_choice)
             output_config = settle_output_config(output_config)
         self._validate_task_budget_vs_context_management(model_settings, context_management)
-        container, container_from_history = self._get_container(messages, model_settings)
+        container, container_from_history = self._get_container(messages, model_settings, tools)
         recovery_messages, compaction_boundary = self._stale_thinking_block_recovery_history(messages)
         initial_thinking, initial_betas, initial_thinking_override, initial_effective_thinking = (
             thinking_with_stale_block_history(
@@ -1912,14 +1955,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return OMIT
         previous_message_id: str | None = None
         for message in reversed(messages):
-            if isinstance(message, ModelResponse) and message.provider_name == self.system:
+            if isinstance(message, ModelResponse) and self.accepts_server_state(message):
                 if (response_id := message.provider_response_id) and response_id.startswith('msg_'):
                     previous_message_id = response_id
                 break
         return BetaDiagnosticsParam(previous_message_id=previous_message_id)
 
     def _get_container(
-        self, messages: list[ModelMessage], model_settings: AnthropicModelSettings
+        self, messages: list[ModelMessage], model_settings: AnthropicModelSettings, tools: list[BetaToolUnionParam]
     ) -> tuple[BetaContainerParams | str | None, bool]:
         """Resolve the `container` request parameter, and whether we resolved it from history.
 
@@ -1940,6 +1983,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         the Skills path (`{"skills": ...}` / `{"id": ..., "skills": ...}`) keeps
         working. History-based reuse is always sent as the raw id string since we
         never have skills to attach there.
+
+        An id from history, including a `pause_turn` reconnect id, isn't sent on a request without code execution,
+        such as a follow-up with no tools, since the API rejects it there. `extra_body['tools']` replaces `tools` on
+        the wire but isn't read: a request that carries it keeps the container.
         """
         if (container := model_settings.get('anthropic_container')) is not None:
             if container is False:
@@ -1948,6 +1995,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 return cid, False
             return container, False
         if not self.profile.get('anthropic_accepts_file_and_container_ids', True):
+            return None, False
+        extra_body = model_settings.get('extra_body')
+        if not (_is_str_mapping(extra_body) and 'tools' in extra_body) and not provisions_code_execution(tools):
             return None, False
         # On pause_turn continuation, pass just the container ID string to reconnect.
         # Re-passing BetaContainerParams triggers a prefill rejection on some models
@@ -1958,7 +2008,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return None, False
 
         for m in reversed(messages):
-            if isinstance(m, ModelResponse) and m.provider_name == self.system and m.provider_details:
+            if isinstance(m, ModelResponse) and self.accepts_server_state(m) and m.provider_details:
                 if cid := m.provider_details.get('container_id'):
                     return cid, True
         return None, False
@@ -2275,14 +2325,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # The native memory tool is client-executed and surfaces as a regular `tool_use` block.
         enabled_server_tool_names.discard('memory')
 
-        implicit_code_execution_names = {'code_execution', 'bash_code_execution', 'text_editor_code_execution'}
-        if 'code_execution' in enabled_server_tool_names:
-            enabled_server_tool_names.update(implicit_code_execution_names)
-        # The 20260209 web tools provision code execution for dynamic filtering server-side.
-        if self.profile.get('anthropic_supports_dynamic_filtering', False) and any(
-            isinstance(tool, WebSearchTool | WebFetchTool) for tool in model_request_parameters.native_tools
-        ):
-            enabled_server_tool_names.update(implicit_code_execution_names)
+        if provisions_code_execution(native_tools):
+            enabled_server_tool_names.update({'code_execution', 'bash_code_execution', 'text_editor_code_execution'})
         return frozenset(enabled_server_tool_names)
 
     async def _process_streamed_response(
@@ -2477,6 +2521,24 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 raise UserError(  # pragma: no cover
                     f'`{tool.__class__.__name__}` is not supported by `AnthropicModel`. If it should be, please file an issue.'
                 )
+
+        # `extra_body['tools']` replaces these tools on the wire, so the setting isn't applied to them. That keeps
+        # `_get_enabled_server_tool_names`, which rebuilds the tools through this method, filtering as if it were unset.
+        extra_body = model_settings.get('extra_body')
+        if (allowed_callers := model_settings.get('anthropic_web_tools_allowed_callers')) is not None and not (
+            _is_str_mapping(extra_body) and 'tools' in extra_body
+        ):
+            for web_tool in tools:
+                match web_tool:
+                    case {
+                        'type': 'web_search_20250305'
+                        | 'web_search_20260209'
+                        | 'web_fetch_20250910'
+                        | 'web_fetch_20260209'
+                    }:
+                        web_tool['allowed_callers'] = allowed_callers
+                    case _:
+                        pass
         return tools, mcp_servers, beta_features
 
     def _tool_choice_declarations(
@@ -2645,6 +2707,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         place_system_messages_before_generation(anthropic_messages)
         anchor_system_messages(anthropic_messages)
         self._add_container_uploads(anthropic_messages, model_request_parameters)
+        # After the container uploads, which skip turns of only tool results, so the block doesn't move them.
+        if self.profile.get('anthropic_distrusts_system_after_tool_result', False):
+            end_tool_results_before_system_messages(anthropic_messages)
         check_citations_tool_choice(
             model_settings, model_request_parameters, anthropic_messages, map_context.include_citations
         )
@@ -3113,6 +3178,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         Search, fetch and advisor results carry their state inline, encrypted where it's sensitive, so they're
         sent to any client that accepts the response's stateless data. Code execution and MCP results refer to
         state kept by the account that ran them, such as a container, so they only go back to the same provider.
+        They're judged by `provider_name` alone, not by `accepts_server_state`, until a live check against two
+        endpoints shows whether an endpoint rejects blocks from another: the one exception to judging server-side
+        state by endpoint. The container itself is judged by endpoint in `_get_container`.
         """
         if part.tool_name in _STATELESS_NATIVE_TOOL_KINDS:
             return self.accepts_stateless_artifacts(message, part)

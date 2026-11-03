@@ -458,6 +458,15 @@ def _model_load_script(messages: list[ModelMessage], info: AgentInfo) -> ModelRe
     return ModelResponse(parts=[TextPart('The refund is on its way.')])
 
 
+def _load_from_code_script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    results = _results_since_question(messages)
+    if results == 0:
+        return ModelResponse(parts=[ToolCallPart('open_case', {}, tool_call_id=f'open-{len(messages)}')])
+    if results == 1:
+        return ModelResponse(parts=[ToolCallPart('refund_status', {}, tool_call_id=f'status-{len(messages)}')])
+    return ModelResponse(parts=[TextPart('The refund is on its way.')])
+
+
 def refund_status() -> str:
     return 'refunded'
 
@@ -469,6 +478,13 @@ _REFUNDS = Capability[None](
     tools=[refund_status],
     defer_loading=True,
 )
+
+
+def _load_refunds_from_code(agent: Agent[None, str]) -> None:
+    @agent.tool
+    def open_case(ctx: RunContext[None]) -> str:
+        ctx.load_capability('refunds')
+        return 'Case opened.'
 
 
 def _mid_run_script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -645,6 +661,11 @@ _APPEND_INSTRUCTIONS = (
     "which the adapter strips from client history in `manage_system_prompt='server'`, so every turn re-renders "
     'the baseline from current state and rewrites the prefix; no issue yet'
 )
+_LOADED_INSTRUCTIONS = (
+    "a loaded capability's instructions are stated as an `InstructionDeltaPart`, system voice the adapter strips "
+    'from client history, so the next request states them again after its last message instead of after the load; '
+    "a model's `load_capability` call shows the same; #11771"
+)
 _FEEDBACK_NOT_STREAMED = (
     "retry feedback (`RetryFeedbackPart`) isn't streamed, so the client keeps the rejected and the accepted "
     'answer as one response; no issue yet'
@@ -740,6 +761,22 @@ SCENARIOS = [
                 ('wire', 'dump', 'agui'),
                 ('wire', 'stream', 'agui'),
             ),
+        },
+    ),
+    Scenario(
+        id='capability_load_from_code',
+        script=_load_from_code_script,
+        setup=_load_refunds_from_code,
+        agent_kwargs={'capabilities': [_REFUNDS]},
+        gaps={
+            **_gaps(
+                _AGUI_ACTIVITY,
+                ('load', 'dump', 'agui'),
+                ('load', 'stream', 'agui'),
+                ('wire', 'dump', 'agui'),
+                ('wire', 'stream', 'agui'),
+            ),
+            **_gaps(_LOADED_INSTRUCTIONS, ('wire', 'dump', 'vercel'), ('wire', 'stream', 'vercel')),
         },
     ),
     Scenario(
@@ -1337,6 +1374,7 @@ def test_server_held_history_has_none_of_the_client_round_trip_gaps() -> None:
         [
             'appended_instructions',
             'capability_load',
+            'capability_load_from_code',
             'client_owned_system_prompt',
             'compaction',
             'compaction_boundary',

@@ -542,6 +542,19 @@ def test_sanitize_messages_keeps_workspace_refs_when_asked():
     assert response.workspace_ref == ref
 
 
+def test_sanitize_messages_strips_model_id():
+    """A client-supplied `ModelResponse.model_id` is reset to `None`.
+
+    Pydantic AI routes later requests by it, like `ModelFallback` sending a suspended response's continuation to the
+    candidate that started it, so a client that can set it could pick which of the server's models serves a request.
+    """
+    messages: list[ModelMessage] = [ModelResponse(parts=[TextPart(content='done')], model_id='openai:gpt-5')]
+
+    response = message(sanitize_messages(messages), ModelResponse)
+    assert response.model_id is None
+    assert response.parts == [TextPart(content='done')]
+
+
 def test_sanitize_messages_drops_user_prompt_text_content_metadata():
     """Client-supplied `TextContent.metadata` is dropped, keeping the text and the other content.
 

@@ -26,6 +26,8 @@ async def ask(question: str, conversation_id: str) -> str:
     return result.output
 ```
 
+![StepPersistence saves the full message history to a step store at every step. When compaction later drops messages from the live context, the model can call search_conversation_history. ConversationSearch keeps only runs with the calling run's conversation_id, replays their complete snapshots from the store to recover the original messages, ranks them with BM25, and returns the best excerpts with the messages around them.](https://pydantic.dev/docs/ai/img/harness/conversation-search.svg)
+
 ## Why
 
 Compaction keeps the live history inside the context window, so an exact detail (a file path, a value, a decision) can end up only in a summary's paraphrase, and nothing from earlier runs is in context at all. `ConversationSearch` writes nothing itself. It reads what `StepPersistence` stored, through a `HistorySource`, and lets the model pull exact excerpts back on demand. Give both capabilities the same store instance; they can be listed in any order.

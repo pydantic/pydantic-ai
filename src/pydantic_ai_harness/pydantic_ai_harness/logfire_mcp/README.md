@@ -4,6 +4,8 @@ Let an agent query Logfire telemetry and manage Logfire projects. `LogfireMCP` g
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+![Inside your agent, the LogfireMCP capability connects to Logfire's hosted MCP server, US region by default or EU with LOGFIRE_EU_MCP_URL, sending the API key as a bearer token. The model sees the server's tools under the logfire_ prefix, such as logfire_query_run. The capability also adds guidance to the agent's instructions: the current UTC hour, that queries cover a short time window, that links are made only when asked, and the logfire_ prefix.](https://pydantic.dev/docs/ai/img/harness/logfire-mcp.svg)
+
 ## Install and connect
 
 uv:
@@ -132,7 +134,7 @@ Handle the approval requests with the [deferred tools workflow](https://pydantic
 
 ## Connection customization
 
-Use `auth` in almost every case. Pass `client` only when you need control of the connection itself: your own FastMCP client or transport, for example one with a different authentication scheme, a proxy, or MCP handlers. The client then owns the URL and authentication, so passing `client` together with a non-empty `auth` or a `url` other than the default raises an error. `read_only` and `include_instructions` still apply.
+Pass `client` when you need control of the connection itself: your own FastMCP client or transport, for example one with a different authentication scheme, a proxy, or MCP handlers. The client then owns the URL and authentication, so passing `client` together with a non-empty `auth` or a `url` other than the default raises an error. `read_only` and `include_instructions` still apply.
 
 A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately. To use two connections, give each a distinct `id` and `tool_prefix`.
 

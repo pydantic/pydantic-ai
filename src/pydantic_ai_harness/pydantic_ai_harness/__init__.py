@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from .absurd import AbsurdDurability
     from .advisor import Advisor
     from .approval_reviewer import ApprovalReviewer
+    from .artifact_scanning import ArtifactScanner
     from .ask_user import AskUser
     from .background_tools import BackgroundTools
     from .boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
@@ -58,6 +59,7 @@ if TYPE_CHECKING:
     from .memory import Memory
     from .modal_sandbox import ModalSandbox, ModalSandboxBackend
     from .ordinal import Ordinal
+    from .permissions import Permissions
     from .pgtask import PGTaskDurability
     from .planning import Planning
     from .posthog import PostHog
@@ -88,6 +90,7 @@ __all__ = [
     'AbsurdDurability',
     'Advisor',
     'ApprovalReviewer',
+    'ArtifactScanner',
     'AskUser',
     'BackgroundTools',
     'BoxdSandbox',
@@ -140,6 +143,7 @@ __all__ = [
     'OutputGuardrail',
     'OutputGuardrailFunc',
     'PGTaskDurability',
+    'Permissions',
     'Planning',
     'PostHog',
     'PromptInjectionDefender',
@@ -216,6 +220,7 @@ _CAPABILITY_EXPORTS = {
     'ModalSandbox': 'modal_sandbox',
     'Ordinal': 'ordinal',
     'PGTaskDurability': 'pgtask',
+    'Permissions': 'permissions',
     'Planning': 'planning',
     'PostHog': 'posthog',
     'PromptInjectionDefender': 'prompt_injection_defender',
@@ -251,6 +256,7 @@ _CAPABILITY_EXPORTS = {
 }
 
 _CONSTANT_EXPORTS = {
+    'ArtifactScanner': 'artifact_scanning',
     'BoxdSandboxBackend': 'boxd_sandbox',
     'BoxLiteSandboxBackend': 'boxlite_sandbox',
     'BubblewrapWorkspace': 'bubblewrap_sandbox',

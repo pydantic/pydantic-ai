@@ -29,7 +29,7 @@ it maps to the closest available value (e.g. `'xhigh'` and `'max'` -> `'high'` o
 that don't support them, `'minimal'` -> `'low'` on providers without a minimal level).
 """
 
-CacheRetention: TypeAlias = Literal['5m', '30m', '1h']
+CacheRetention: TypeAlias = Literal['5m', '30m', '1h', '12h']
 """The retention tiers for prompt-cache configuration.
 
 Not all providers support all tiers. A requested retention snaps down to the
@@ -313,6 +313,27 @@ class ModelSettings(TypedDict, total=False):
     It is not sent to the provider. See [Timeouts](../timeouts.md#model-request-deadlines).
     """
 
+    first_event_timeout: float
+    """A deadline for a streamed request to produce its first output, in seconds, enforced by Pydantic AI for every model.
+
+    It runs from when the request is made until the stream's first event: a part starting or a delta of one, thinking
+    included. A provider event that carries no output, like OpenAI's `response.created`, doesn't count. Like
+    [`request_timeout`][pydantic_ai.settings.ModelSettings.request_timeout], it covers every attempt the provider SDK
+    and HTTP transport make, and the continuations of a response the provider paused or runs in the background,
+    until one of them produces output. Once the first event has arrived it no longer applies, so a long response,
+    or a long pause in the middle of one, isn't cut off.
+
+    When it runs out, the request is cancelled and
+    [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] is raised, with `setting` set to
+    `'first_event_timeout'`. Nothing has been streamed yet, so a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or the
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] capability falls back to the next model by default,
+    and gives it a fresh deadline. With `request_timeout` also set, whichever deadline passes first applies.
+
+    It only applies to streamed requests: on a non-streamed one, `request_timeout` covers the same wait. It is not
+    sent to the provider. See [Timeouts](../timeouts.md#waiting-for-the-first-event).
+    """
+
     max_retries: int
     """Override how many times the provider SDK's client retries a failed request, for one request.
 
@@ -328,7 +349,8 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * OpenAI
+    * OpenAI (Responses WebSockets retry only explicit 408, 409, 429 or 5xx rejection frames received before the
+      first response event; disconnects and errors after response events start propagate to the caller)
     * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
@@ -612,8 +634,9 @@ class ModelSettings(TypedDict, total=False):
 
     Prompt caching lets the provider serve a long or multi-turn prompt's stable prefix from its cache
     instead of re-processing it. Cache writes cost more than uncached input (1.25x for Anthropic's
-    5-minute and OpenAI's GPT-5.6 caches, 2x for Anthropic's 1-hour cache) while cache reads cost about
-    0.1x, so a 1.25x write breaks even after one read and a 2x write after two.
+    5-minute and OpenAI's GPT-5.6 30-minute caches, 2x for Anthropic's 1-hour cache, 2.5x for OpenAI's
+    12-hour cache) while cache reads cost about 0.1x, so a 1.25x write breaks even after one read and a
+    2x or 2.5x write after two.
 
     - `True`: Cache the stable prompt prefix (tool definitions and static instructions)
       and the growing conversation, with the provider's default retention. The library places cache
@@ -622,7 +645,7 @@ class ModelSettings(TypedDict, total=False):
       overriding a `cache` value in the model's default settings. Explicit
       [`CachePoint`][pydantic_ai.messages.CachePoint] markers and provider-specific cache settings
       still apply, and providers that cache implicitly (e.g. OpenAI, Gemini) still do.
-    - `'5m'`/`'30m'`/`'1h'`: Cache with a specific retention, snapped to the nearest tier the
+    - `'5m'`/`'30m'`/`'1h'`/`'12h'`: Cache with a specific retention, snapped to the nearest tier the
       provider supports (down where a shorter tier exists).
     - A [`CacheConfig`][pydantic_ai.settings.CacheConfig]: Cache with an optional `retention`, and with
       `messages=False` cache only the stable prefix (tool definitions and static instructions), not the
@@ -647,7 +670,7 @@ class ModelSettings(TypedDict, total=False):
       `bedrock_cache_tool_definitions` and `bedrock_cache_messages`)
     * OpenRouter (Anthropic and Gemini models only; as `openrouter_cache_instructions`,
       `openrouter_cache_tool_definitions` and `openrouter_cache_messages`)
-    * OpenAI (GPT-5.6 and later on the OpenAI API only; as `openai_prompt_cache_options` and
+    * OpenAI (GPT-5.6 and later on the OpenAI API and the Azure OpenAI v1 API; as `openai_prompt_cache_options` and
       `openai_cache_instructions`)
     """
 
@@ -715,6 +738,7 @@ ModelSettingName: TypeAlias = Literal[
     'top_k',
     'timeout',
     'request_timeout',
+    'first_event_timeout',
     'max_retries',
     'parallel_tool_calls',
     'tool_choice',

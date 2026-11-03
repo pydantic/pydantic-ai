@@ -4,7 +4,7 @@ description: "Write your own Pydantic AI capability by subclassing AbstractCapab
 
 # Building Custom Capabilities
 
-To build your own [capability](overview.md), subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] and override the methods you need. There are two categories: **configuration methods** that are called at agent construction — and re-run at run setup on the replacement instance when [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] returns one (see [Per-run state isolation](#per-run-state-isolation)); [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] is always called per-run, and [`get_wrapper_model`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_model] per model request — and **lifecycle hooks** that fire during each run.
+To build your own [capability](overview.md), subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] and override the methods you need. There are two categories: **configuration methods** that are called at agent construction — and re-run at run setup on the replacement instance when [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] returns one (see [Per-run state isolation](#per-run-state-isolation)); [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] is always called per-run, and [`get_wrapper_model`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_model] per attempt at a model request — and **lifecycle hooks** that fire during each run.
 
 Custom capability classes can be plain classes or dataclasses. The shared metadata attributes — [`id`][pydantic_ai.capabilities.AbstractCapability.id], [`description`][pydantic_ai.capabilities.AbstractCapability.description], and [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] — are optional declarations on the capability object for always-on capabilities. If `id` is omitted there, Pydantic AI derives a run-local id from the class name and disambiguates duplicates within the run. Deferred capabilities require an explicit stable `id`.
 
@@ -445,7 +445,7 @@ An [`override(model=...)`][pydantic_ai.agent.AbstractAgent.override] still wins 
 
 Later model contributions override earlier ones. If [`for_run()`][pydantic_ai.capabilities.AbstractCapability.for_run] leaves the capability unchanged, its bootstrap selection is reused on step one; if it returns a replacement with a different selector, that selector makes a new step-one selection.
 
-Fallback is complementary to selection: return a configured [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] when request failures should be retried on another model.
+Fallback is complementary to selection: add [`ModelFallback`](model-fallback.md) to the agent when request failures should be retried on another model, and it falls back from whichever model was selected.
 
 ## Resolving model IDs
 
@@ -500,9 +500,9 @@ Resolution results are cached by model ID and resolver tree for the duration of 
 
 [`get_wrapper_model`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_model] lets a capability wrap the model that serves each model request with a [`WrapperModel`][pydantic_ai.models.wrapper.WrapperModel], to change how requests are sent. [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] uses it to send requests through the provider's [batch API](../batch.md).
 
-Unlike [`get_wrapper_toolset`](#toolset-wrapping), which wraps the toolset once per run, `get_wrapper_model` is called for every model request, with the model that will send that request. That's the model chosen after [model selection](#selecting-the-model) and every [`before_model_request`](#model-request-hooks) hook have run: the agent's model, one passed to the run as `model=`, one a capability's `get_model` such as [`SelectModel`](select-model.md) selected, or one a hook swapped in, whatever the order of the capabilities. So a run that switches models partway through gets each request wrapped around the model serving it.
+Unlike [`get_wrapper_toolset`](#toolset-wrapping), which wraps the toolset once per run, `get_wrapper_model` is called for every attempt at a model request, with the model that will send it. That's the model chosen after [model selection](#selecting-the-model) and every [`before_model_request`](#model-request-hooks) and `prepare_model_request` hook have run: the agent's model, one passed to the run as `model=`, one a capability's `get_model` such as [`SelectModel`](select-model.md) selected, one a hook swapped in, or the one a hook moved the attempt to, like [`ModelFallback`](model-fallback.md)'s next model, whatever the order of the capabilities. So a run that switches models partway through, or falls back to another one, gets each attempt wrapped around the model serving it.
 
-The returned model is entered (`async with`) around each request it serves, and exited when the request is done or has failed, as a model passed to the agent is around a run. Set up per-request resources in its `__aenter__`, and keep long-lived ones on the capability.
+The returned model is entered (`async with`) around each attempt it serves, and exited when the attempt is done or has failed, as a model passed to the agent is around a run. Set up per-request resources in its `__aenter__`, and keep long-lived ones on the capability.
 
 ```python {title="wrapper_model_example.py"}
 from dataclasses import dataclass
@@ -682,6 +682,8 @@ A short-circuiting wrapper skips `before_*`, including policy hooks. Put mandato
 
     Cancellation is terminal: a hook may observe it and clean up, but returning a result to recover the run does not work. The run re-asserts the cancellation at the next step boundary.
 
+    Under an `anyio` cancellation, such as an `anyio.fail_after()` deadline around the run, cleanup that awaits in `on_run_error`, `after_run`, or after `handler()` in `wrap_run` or `wrap_node_run` is cut at its next `await`. Run cleanup that must finish inside `anyio.CancelScope(shield=True)`. Bound shielded cleanup that does I/O with `anyio.move_on_after(..., shield=True)` instead, so a hung call can't hang the run indefinitely.
+
 ### Node hooks
 
 | Hook | Signature | Purpose |
@@ -773,6 +775,7 @@ See [Iterating Over an Agent's Graph](../agent.md#iterating-over-an-agents-graph
 | Hook | Signature | Purpose |
 |---|---|---|
 | [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, request_context: `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]`) -> `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] | Modify messages, settings, parameters, or model before the model call |
+| [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, request_context: `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]`) -> `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] | Prepare each attempt at the request for the model about to serve it (see [attempts](#model-request-attempts)) |
 | [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, request_context: `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]`, response: `[`ModelResponse`][pydantic_ai.messages.ModelResponse]`) -> `[`ModelResponse`][pydantic_ai.messages.ModelResponse] | Modify the model's response |
 | [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, request_context: `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]`, handler: `[`WrapModelRequestHandler`][pydantic_ai.capabilities.WrapModelRequestHandler]`) -> `[`ModelResponse`][pydantic_ai.messages.ModelResponse] | Wrap the complete model-request lifecycle |
 | [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, request_context: `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]`, error: Exception) -> `[`ModelResponse`][pydantic_ai.messages.ModelResponse] | Handle core model-call errors (see [error hooks](#error-hooks)) |
@@ -810,6 +813,55 @@ The [`ShowRequestsLeft` capability](../message-history.md#request-scoped-system-
 
 !!! note "Skip and chain behavior"
     A skip exception ([`SkipModelRequest`][pydantic_ai.exceptions.SkipModelRequest], [`SkipToolValidation`][pydantic_ai.exceptions.SkipToolValidation], or [`SkipToolExecution`][pydantic_ai.exceptions.SkipToolExecution]) raised from `before_*` stops the remaining `before_*` hooks, the core operation, and `after_*`, then propagates outward through the already-entered wrapper chain. A wrapper that raises a skip without calling its handler bypasses all inner wrappers and the entire `before_*`/core/`after_*` lifecycle. If its handler returns before the wrapper raises, that lifecycle has already completed.
+
+#### Retrying and falling back {#model-request-attempts}
+
+A request step can make more than one *attempt* at the model request. A hook asks for another attempt by raising [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest], either with no arguments to re-run the same model, or with the model to move to (a [`Model`][pydantic_ai.models.Model] instance or a model ID, resolved like the agent's own):
+
+- from `on_model_request_error`, when the attempt raised;
+- from `after_model_request`, to reject the response the attempt returned;
+- from `prepare_model_request`, to send the attempt to another model before anything is sent.
+
+Unlike [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], which starts a new step with a retry prompt the model sees, another attempt stays within the step and the model sees nothing of the earlier one. [`ModelRequestContext.attempt`][pydantic_ai.models.ModelRequestContext.attempt] says which attempt is running, starting at `1`. The [`ModelFallback`](model-fallback.md) capability is built on this.
+
+```text
+wrap_model_request(handler)              once per step
+  └─ handler: before_model_request      once per step
+       └─ for each attempt:
+            prepare_model_request        the model about to serve this attempt is known
+            model call
+              ├─ failure → on_model_request_error ─┐
+              └─ success → after_model_request ────┴─ RetryModelRequest → next attempt
+```
+
+Everything that depends on which model serves the request runs per attempt: `prepare_model_request`, the model's own message preparation, and token counting for [`UsageLimits.count_tokens_before_request`][pydantic_ai.usage.UsageLimits.count_tokens_before_request]. Each attempt starts from the request `before_model_request` produced, so an attempt never inherits preparation done for a different model. Put per-model work like compaction or context-window fitting in `prepare_model_request`, and work that should happen once per step, like a history processor or an injected message, in `before_model_request`. Changes `prepare_model_request` makes to `request_context` shape the request that is sent for that attempt and are not persisted to message history. Changes made through [`RunContext.messages`][pydantic_ai.tools.RunContext.messages], the run's persistent history, do persist and are not rolled back for a further attempt: use them for state that doesn't depend on the attempt, such as a record later turns should reuse.
+
+A response that was rejected never reaches history, but its tokens and cost still count toward the run's usage and its token and cost limits. `usage.requests` counts the step once. A streamed request can be re-attempted only while the stream is being opened: raising `RetryModelRequest` from `after_model_request` on a streamed request raises [`UserError`][pydantic_ai.exceptions.UserError], because the response has already been streamed. A step can make at most 100 attempts, after which a `UserError` is raised.
+
+```python {title="retry_once.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import Agent, ModelRequestContext, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.exceptions import ModelAPIError, RetryModelRequest
+from pydantic_ai.messages import ModelResponse
+
+
+@dataclass
+class RetryOnce(AbstractCapability[Any]):
+    """Re-attempt the same model once when a request fails with an API error."""
+
+    async def on_model_request_error(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        if isinstance(error, ModelAPIError) and request_context.attempt == 1:
+            raise RetryModelRequest()
+        raise error
+
+
+agent = Agent('{{ openai:medium }}', capabilities=[RetryOnce()])
+```
 
 ### Tool hooks
 
@@ -1035,7 +1087,7 @@ Error hooks use **raise-to-propagate, return-to-recover** semantics:
 | [`on_output_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_output_validate_error] | Core output validation fails | Return validated output |
 | [`on_output_process_error`][pydantic_ai.capabilities.AbstractCapability.on_output_process_error] | Core output processing fails | Return any output result |
 
-With multiple capabilities, `on_*_error` hooks fire in **reverse** capability order (like `after_*`). The first capability to return a result **recovers** the error — remaining capabilities' error hooks are not called. If a handler re-raises or raises a new exception, the next capability in the chain sees that exception.
+With multiple capabilities, `on_*_error` hooks fire in **reverse** capability order (like `after_*`). The first capability to return a result **recovers** the error — remaining capabilities' error hooks are not called. If a handler re-raises or raises a new exception, the next capability in the chain sees that exception. [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] is the exception: it answers for the whole chain and propagates straight away, rather than being handed to the next capability as its error.
 
 ```python {title="error_hooks_example.py" test="skip" lint="skip"}
 from dataclasses import dataclass, field
@@ -1112,6 +1164,8 @@ Mark each operation method with `@durable_operation(name='...')`. The required n
 A [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] override may return a fresh instance — the operation dispatches on whichever instance the run is using, from `before_run` and from per-request hooks alike. The replacement has to keep the capability's `id`, since that is what dispatch and worker-side recovery resolve it by; Pydantic AI raises a `UserError` at the start of the run if a bound capability's ID is no longer present. Dispatch is established once `for_run()` has returned, so an operation called from inside `for_run()` itself runs directly rather than durably.
 
 An operation can also be called from a tool the capability contributes. Where the engine already runs the tool in its own activity, step, or task, as Temporal, Prefect, and AWS Lambda do, the operation runs directly inside it, under that unit's timeout, retry, and cache configuration rather than its own, since that unit records the result. Where the tool runs in workflow code, as function tools do under DBOS, the operation is its own unit. Either way the work is recorded once, so a capability whose tools do I/O can route that I/O through an operation and stay durable on every engine.
+
+A `prepare_model_request`, `after_model_request` or `on_model_request_error` hook that runs as a durable operation can still raise [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] to ask for another attempt. The model to attempt has to be named by a string, such as a model registered with the durability capability's `models`, since a model instance can't cross the durable boundary.
 
 Arguments and results must follow the same serialization rules as durable tools. Temporal sends them through its data converter; JSON-journal engines require JSON-compatible values. Operation names are scoped by capability ID. Changing either identity creates a different persisted operation, and on Prefect it also creates a different cache key.
 

@@ -149,6 +149,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 |---|---|---|
 | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) | Harness | Validate/block/redact user input, tool calls, tool results, and output, including secret masking and parallel async guards |
 | [Prompt Injection Defender](https://pydantic.dev/docs/ai/harness/prompt-injection-defender/) | Harness | Classify local tool results for indirect prompt injection and optionally withhold high-risk results |
+| [Artifact Scanning](https://pydantic.dev/docs/ai/harness/artifact-scanning/) | Harness | Scan memory files and skills for prompt injection, credential exfiltration, and hidden content before they are stored or loaded |
 | [Spend Limits](https://pydantic.dev/docs/ai/harness/spend/) | Harness | Cross-window USD/token budgets and per-response cost tracking, per model and per tenant |
 | [Ask User](https://pydantic.dev/docs/ai/harness/ask-user/) | Harness | Let the model ask the user multiple-choice questions mid-run; you supply the answerer (terminal, web, test) |
 | [Tool approval](../deferred-tools.md#human-in-the-loop-tool-approval) | Core | Flag tool calls that need human approval before they run |
@@ -189,6 +190,7 @@ Core also ships capabilities for customizing the agent loop itself, mostly for p
 |---|---|---|
 | [Hooks](../hooks.md) | Core | Decorator-based lifecycle hook registration |
 | [Select Model](select-model.md) | Core | Select a static or per-step model with a callable |
+| [Model Fallback](model-fallback.md) | Core | Attempt other models when a request fails or its response is rejected |
 | [Resolve Model ID](resolve-model-id.md) | Core | Resolve custom, application-specific model IDs with a callable |
 | [Prepare Tools / Prepare Output Tools](prepare-tools.md) | Core | Filter or modify function and [output tool][pydantic_ai.output.ToolOutput] definitions per step |
 | [Prefix Tools](prefix-tools.md) | Core | Wrap a capability and prefix its tool names |

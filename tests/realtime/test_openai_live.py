@@ -98,7 +98,7 @@ from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
-from ..conftest import IsDatetime, IsNow, legacy_retry_prompt_part, try_import
+from ..conftest import IsDatetime, IsNow, legacy_retry_prompt_part, no_leaked_tasks, try_import
 
 with try_import() as imports_successful:
     import httpx2
@@ -188,6 +188,7 @@ def test_profile(model: OpenAILiveModel) -> None:
         supports_thinking=True,
         supports_tool_return_schema=False,
         emits_input_speech_events=False,
+        output_speech_timestamp_granularity=None,
         # The one model in the repo that infers its turn boundary rather than reading it off the wire.
         synthesizes_turn_boundary=True,
         # Its spoken replies are inferred turns; the requests that spend tokens are the backend's.
@@ -4571,34 +4572,33 @@ async def test_a_reattach_that_lands_after_close_is_not_used() -> None:
 
     dead = _SignallingDeadWebSocket([])
     connection = OpenAILiveConnection(dead, reattach=reattach, reconnect={'base_delay': 0.0})  # pyright: ignore[reportArgumentType]
-    tasks_before = asyncio.all_tasks()
+    with no_leaked_tasks():
 
-    async def first_event() -> Any:
-        # The receive loop itself, closed explicitly, so what the check below finds left running is the connection's
-        # own doing rather than the event loop's cleanup of an abandoned generator.
-        frames = cast('AsyncGenerator[Sequence[Any]]', connection.frames())
-        try:
-            frame = await anext(frames)
-        finally:
-            await frames.aclose()
-        [error] = [event for event in frame if isinstance(event, RealtimeSessionErrorEvent)]
-        return error
+        async def first_event() -> Any:
+            # The receive loop itself, closed explicitly, so what the check below finds left running is the connection's
+            # own doing rather than the event loop's cleanup of an abandoned generator.
+            frames = cast('AsyncGenerator[Sequence[Any]]', connection.frames())
+            try:
+                frame = await anext(frames)
+            finally:
+                await frames.aclose()
+            [error] = [event for event in frame if isinstance(event, RealtimeSessionErrorEvent)]
+            return error
 
-    events = asyncio.create_task(first_event())
-    await reattaching.wait()
-    sending = asyncio.create_task(connection.send(ToolResult('call_1', output='14C')))
-    await dead.send_failed.wait()
-    await connection.aclose()
-    with pytest.raises(websockets.ConnectionClosedError):
-        await sending
-    release.set()
-    # Closed, the receive loop gives up on re-attaching, and says so.
-    error = await events
-    assert isinstance(error, RealtimeSessionErrorEvent) and not error.recoverable
-    assert late.closed
-    assert late.sent == []
-    assert connection._ws is dead  # pyright: ignore[reportPrivateUsage]
-    assert asyncio.all_tasks() <= tasks_before
+        events = asyncio.create_task(first_event())
+        await reattaching.wait()
+        sending = asyncio.create_task(connection.send(ToolResult('call_1', output='14C')))
+        await dead.send_failed.wait()
+        await connection.aclose()
+        with pytest.raises(websockets.ConnectionClosedError):
+            await sending
+        release.set()
+        # Closed, the receive loop gives up on re-attaching, and says so.
+        error = await events
+        assert isinstance(error, RealtimeSessionErrorEvent) and not error.recoverable
+        assert late.closed
+        assert late.sent == []
+        assert connection._ws is dead  # pyright: ignore[reportPrivateUsage]
 
 
 class _ConfirmingWebSocket(_FakeWebSocket):

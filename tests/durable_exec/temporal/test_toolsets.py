@@ -190,7 +190,7 @@ pytestmark = [
 
 
 @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
-async def test_mcp_tools_cached_across_activities(allow_model_requests: None, client: Client):
+async def test_mcp_tools_cached_across_activities(allow_model_requests: None, client: Client, complex_agent_mcp: None):
     """Verify that MCP tool caching reduces server round-trips across activities.
 
     The complex agent makes 3 model requests, each preceded by a get_tools activity.
@@ -1256,6 +1256,7 @@ async def test_tool_return_metadata_survives_temporal(allow_model_requests: None
                 parts=[ToolCallPart(tool_name='analyze_data', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=51, output_tokens=2),
                 model_name='function:_tool_return_metadata_model:',
+                model_id='function:function:_tool_return_metadata_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1279,6 +1280,7 @@ async def test_tool_return_metadata_survives_temporal(allow_model_requests: None
                 parts=[TextPart(content='done')],
                 usage=RequestUsage(input_tokens=57, output_tokens=3),
                 model_name='function:_tool_return_metadata_model:',
+                model_id='function:function:_tool_return_metadata_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
