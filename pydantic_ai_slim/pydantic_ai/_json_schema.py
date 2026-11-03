@@ -14,7 +14,7 @@ from .exceptions import UserError
 JsonSchema = dict[str, Any]
 _JsonSchemaNode: TypeAlias = JsonSchema | bool
 
-MAX_INLINED_SCHEMA_VALUES = 50_000
+MAX_INLINED_SCHEMA_VALUES = 250_000
 """The most JSON values inlining a schema's `$ref`s may copy into it.
 
 Each object, array, string, number, boolean and null in a copied definition counts as one value.
