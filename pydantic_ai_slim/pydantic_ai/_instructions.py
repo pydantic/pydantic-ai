@@ -4,7 +4,7 @@ import warnings
 from collections import Counter
 from collections.abc import Collection, Iterator, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import Generic, TypeGuard
+from typing import Generic, TypeGuard, cast
 
 from pydantic_ai._deferred_capabilities import LoadCapabilityReturnPart, LoadExchanges
 from pydantic_ai._run_context import AgentDepsT, RunContext
@@ -696,7 +696,10 @@ def settled_loads(message: ModelMessage) -> set[str]:
     """The capabilities whose loads `message` settles, as `settle_loads` recorded them."""
     namespace = (message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
     settled = namespace.get(_SETTLED_LOADS_KEY) if is_str_dict(namespace) else None
-    return {item for item in settled if isinstance(item, str)} if isinstance(settled, list) else set()
+    if not isinstance(settled, list):
+        return set()
+    # `metadata` holds any JSON, so the list's items are checked one by one.
+    return {item for item in cast(list[object], settled) if isinstance(item, str)}
 
 
 _SETTLED_LOADS_KEY = 'settled_loads'
