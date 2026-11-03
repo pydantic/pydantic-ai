@@ -985,6 +985,8 @@ async def test_a_run_whose_tool_raises_can_still_store_what_it_did() -> None:
 
     added = await store.save(failed)
 
+    # Later reads return the saved conversation, so it can be saved again without a conflict.
+    assert captured.conversation is failed
     # The prompt, the response calling the tool, and the request its return would have gone in, cut short.
     assert [entry.message for entry in added] == failed.messages
     last = added[-1].message

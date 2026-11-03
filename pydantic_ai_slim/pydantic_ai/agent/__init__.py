@@ -63,10 +63,13 @@ from .. import (
 )
 from .._agent_graph import (
     CallToolsNode,
+    CapturedConversation,
     EndStrategy,
     ModelRequestNode,
     UserPromptNode,
     build_run_context,
+    capture_conversation_of,
+    capture_run_conversation,
     capture_run_messages,
 )
 from .._cancel import (
@@ -82,6 +85,7 @@ from .._deferred_capabilities import registered_loaded_capability_ids
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._run_context import RealtimeEventBuffer, dispatch_event_stream, set_current_run_context
+from .._run_conversation import failed_run_conversation
 from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import (
@@ -114,14 +118,7 @@ from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..native_tools import AbstractNativeTool
 from ..native_tools._tool_search import ToolSearchTool
 from ..output import OutputDataT, OutputSpec, StructuredDict
-from ..run import (
-    AgentRun,
-    AgentRunResult,
-    CapturedConversation,
-    capture_conversation_of,
-    capture_run_conversation,
-    failed_run_conversation,
-)
+from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
 from ..template import TemplateStr
 from ..tool_manager import ParallelExecutionMode, ToolManager

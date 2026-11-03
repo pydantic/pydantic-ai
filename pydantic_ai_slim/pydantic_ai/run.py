@@ -1,10 +1,8 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
-from collections.abc import AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
-from contextlib import contextmanager
-from contextvars import ContextVar
-from copy import copy, deepcopy
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from copy import deepcopy
 from datetime import datetime
 from functools import cache
 from typing import TYPE_CHECKING, Any, Generic, Literal, NotRequired, Required, cast, overload
@@ -26,13 +24,13 @@ from . import (
     messages as _messages,
     usage as _usage,
 )
-from ._conversation_marks import mark_stored
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._instrumentation import current_otel_traceparent
 from ._run_context import (
     CustomEventT,
     no_workspace,
 )
+from ._run_conversation import conversation_from_state
 from .capabilities._pending_messages import drain_pending_messages_at_end
 from .conversation import Conversation
 from .output import OutputDataT
@@ -115,144 +113,6 @@ def _output_field_schema(schema: CoreSchema) -> CoreSchema:
     while schema['type'] != 'dataclass-args':
         schema = cast('CoreSchema', schema['schema'])  # pyright: ignore[reportGeneralTypeIssues,reportTypedDictNotRequiredAccess]
     return next(field['schema'] for field in schema['fields'] if field['name'] == 'output')
-
-
-_STAMPED_FIELDS = ('timestamp', 'instructions', 'run_id', 'conversation_id')
-"""The fields a run fills in on a message it sends, when the message has them but they aren't set yet."""
-
-
-def _rewritten(message: _messages.ModelMessage, original: _messages.ModelMessage) -> bool:
-    """Whether `message` differs from `original` other than by what a run fills in on a request it sends."""
-    filled = {name: getattr(message, name, None) for name in _STAMPED_FIELDS if getattr(original, name, False) is None}
-    return message != dataclasses.replace(original, **filled)
-
-
-def conversation_from_state(
-    state: _agent_graph.GraphAgentState,
-    new_message_index: int,
-    *,
-    messages: list[_messages.ModelMessage],
-    deferred_tool_requests: DeferredToolRequests | None,
-) -> Conversation:
-    """The conversation a run's state holds, knowing which of its messages its store doesn't have yet."""
-    conversation = Conversation(
-        messages=messages,
-        usage=copy(state.usage),
-        conversation_id=state.conversation_id,
-        deferred_tool_requests=deferred_tool_requests,
-        revision=state.conversation_revision,
-    )
-    index = _unsaved_start(state, new_message_index)
-    if index is not None and state.conversation_unchecked:
-        # Its store compares the messages before the index with the stored ones instead.
-        conversation.new_message_index = index
-    elif index is not None:
-        mark_stored(conversation, conversation.messages[:index])
-    return conversation
-
-
-def _unsaved_start(state: _agent_graph.GraphAgentState, new_message_index: int) -> int | None:
-    if state.conversation_saved:
-        return len(state.message_history)
-    unsaved = state.conversation_unsaved
-    if unsaved is None:
-        return None
-    # The unsaved messages the run was given come just before the ones it added, unless a capability rewrote
-    # them, in which case the store compares the whole history instead. Filling in what a request it sends
-    # lacks doesn't count as a rewrite.
-    start = new_message_index - len(unsaved)
-    carried = state.message_history[start:new_message_index] if start >= 0 else []
-    if len(carried) != len(unsaved) or any(map(_rewritten, carried, unsaved)):
-        return None
-    return start
-
-
-def failed_run_conversation(
-    state: _agent_graph.GraphAgentState, deps: _agent_graph.GraphAgentDeps[Any, Any]
-) -> Conversation:
-    """The conversation of a run that raised, with the messages it got to, so a store can record the failed turn."""
-    return conversation_from_state(
-        state, deps.new_message_index, messages=list(state.message_history), deferred_tool_requests=None
-    )
-
-
-class CapturedConversation:
-    """What [`capture_run_conversation`][pydantic_ai.agent.capture_run_conversation] captured."""
-
-    def __init__(self) -> None:
-        self._build: Callable[[], Conversation] | None = None
-
-    @property
-    def conversation(self) -> Conversation | None:
-        """The conversation of the first run started in the context, as far as it got, or `None` if none started.
-
-        Built when read, so read it after the run raised: it holds the messages the run got to,
-        including a partial response with `state='interrupted'`, and saving it to a
-        [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] appends just
-        what the run added. After a run that finished, prefer its result's
-        [`conversation`][pydantic_ai.agent.AgentRunResult.conversation], which also carries the
-        tool calls a paused run waits on.
-        """
-        return self._build() if self._build is not None else None
-
-
-_captured_conversation: ContextVar[CapturedConversation | None] = ContextVar('_captured_conversation', default=None)
-
-
-@contextmanager
-def capture_run_conversation() -> Generator[CapturedConversation]:
-    """Context manager to get the conversation of a run that raised, so it can still be stored.
-
-    Like [`capture_run_messages`][pydantic_ai.agent.capture_run_messages], it captures the first
-    [`run`][pydantic_ai.agent.AbstractAgent.run], [`run_sync`][pydantic_ai.agent.AbstractAgent.run_sync],
-    [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] or
-    [`iter`][pydantic_ai.agent.Agent.iter] call started inside it, but as a
-    [`Conversation`][pydantic_ai.conversation.Conversation] a
-    [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] can save, whatever the
-    run raised, including an exception from a tool's own code. For errors Pydantic AI raises, an
-    [`AgentRunError`][pydantic_ai.exceptions.AgentRunError] carries the same as its
-    [`conversation`][pydantic_ai.exceptions.AgentRunError.conversation].
-
-    ```python
-    from pydantic_ai import Agent, capture_run_conversation
-    from pydantic_ai.conversation_store import InMemoryConversationStore
-
-    agent = Agent('test')
-    store = InMemoryConversationStore()
-
-
-    @agent.tool_plain
-    def look_up() -> str:
-        raise ConnectionError('The database is down.')
-
-
-    async def main():
-        with capture_run_conversation() as captured:
-            try:
-                await agent.run('Look it up')
-            except ConnectionError:
-                conversation = captured.conversation
-                assert conversation is not None
-                entries = await store.save(conversation)
-                print(len(entries))
-                #> 3
-    ```
-
-    Contexts can be nested: a run is captured by the innermost active context.
-    """
-    captured = CapturedConversation()
-    token = _captured_conversation.set(captured)
-    try:
-        yield captured
-    finally:
-        _captured_conversation.reset(token)
-
-
-def capture_conversation_of(build: Callable[[], Conversation]) -> None:
-    """Let the innermost [`capture_run_conversation`][pydantic_ai.agent.capture_run_conversation] context capture a run starting now, unless it already captured one."""
-    captured = _captured_conversation.get()
-    if captured is not None and captured._build is None:  # pyright: ignore[reportPrivateUsage]
-        captured._build = build  # pyright: ignore[reportPrivateUsage]
 
 
 _STATE_KEYS = (

@@ -8,10 +8,12 @@ from .agent import (
     AgentRetries,
     AgentRunEvents,
     CallToolsNode,
+    CapturedConversation,
     EndStrategy,
     InstrumentationSettings,
     ModelRequestNode,
     UserPromptNode,
+    capture_run_conversation,
     capture_run_messages,
 )
 from .agent.spec import AgentSpec
@@ -215,7 +217,7 @@ from .profiles import (
     ModelProfile,
     ModelProfileSpec,
 )
-from .run import AgentRun, AgentRunResult, AgentRunResultEvent, CapturedConversation, capture_run_conversation
+from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .settings import ModelSettings, ToolChoice, ToolOrOutput
 from .template import TemplateStr
 from .tools import (
