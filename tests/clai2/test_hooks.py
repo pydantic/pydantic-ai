@@ -584,7 +584,8 @@ async def test_a_program_changed_after_loading_does_not_run(tmp_path: Path, even
     else:
         await note_agent(plugin, written).run('hello')
     assert not (repo / 'second').exists() and written == []
-    assert 'mark.sh changed since you approved it; run /plugins enable project_hooks' in output.getvalue()
+    shown = ' '.join(output.getvalue().split())  # The console wraps the long temporary path.
+    assert 'mark.sh changed since you approved it; run /plugins enable project_hooks' in shown
 
 
 async def test_a_program_approval_saved_without_its_contents_is_asked_again(tmp_path: Path) -> None:
