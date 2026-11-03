@@ -150,7 +150,11 @@ class TestSecretRedaction:
 
     @pytest.mark.parametrize(('newline', 'lines'), [('\\n', 20), ('\r\n', 24)])
     def test_a_run_of_header_lines_is_scanned_in_linear_time(self, newline: str, lines: int):
-        """Each header line ends at one place, so a failed match has only one way to read the lines before it."""
+        """Each header line ends at one place, so a failed match has only one way to read the lines before it.
+
+        A time bound, like `test_scanning_a_large_paste_is_linear`'s: `re` reports no step count to assert on. On
+        the lines here, a pattern that splits each line several ways takes seconds.
+        """
         text = '-----BEGIN PRIVATE KEY-----' + newline + ('-: ' + newline) * lines
         start = time.perf_counter()
         result = redact_secrets(text)

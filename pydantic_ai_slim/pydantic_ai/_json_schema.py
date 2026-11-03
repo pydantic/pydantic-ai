@@ -14,8 +14,46 @@ from .exceptions import UserError
 JsonSchema = dict[str, Any]
 _JsonSchemaNode: TypeAlias = JsonSchema | bool
 
-MAX_INLINED_SCHEMA_NODES = 50_000
-"""The most schema nodes a JSON schema may expand to once every `$ref` in it is inlined."""
+MAX_INLINED_SCHEMA_VALUES = 50_000
+"""The most JSON values inlining a schema's `$ref`s may copy into it.
+
+Each object, array, string, number, boolean and null in a copied definition counts as one value.
+"""
+
+
+@dataclass
+class InlinedValues:
+    """A count of the JSON values that inlining `$ref`s copies into a schema, which stops at `MAX_INLINED_SCHEMA_VALUES`.
+
+    Every copy of a definition counts in full, so the count is the size of what inlining adds, and passing the limit
+    stops the inlining before the rest is built.
+    """
+
+    subject: str
+    """What the schema belongs to, as the error names it."""
+    count: int = 0
+
+    def add_copy(self, definition: JsonValue) -> None:
+        """Count one copy of `definition`: every JSON value in it."""
+        values = 0
+        stack = [definition]
+        while stack:
+            value = stack.pop()
+            values += 1
+            if isinstance(value, dict):
+                stack.extend(value.values())
+            elif isinstance(value, list):
+                stack.extend(value)
+        self.add(values)
+
+    def add(self, values: int) -> None:
+        """Count `values` more JSON values, as another copy of a definition counted before adds."""
+        self.count += values
+        if self.count > MAX_INLINED_SCHEMA_VALUES:
+            raise UserError(
+                f'{self.subject} is too large: its `$ref`s expand to more than {MAX_INLINED_SCHEMA_VALUES:,} JSON '
+                'values. Refer to large definitions from fewer places.'
+            )
 
 
 def resolve_json_pointer(schema: JsonSchema, ref: str) -> JsonSchema | None:
@@ -96,7 +134,7 @@ class JsonSchemaTransformer(ABC):
         self.refs_stack: list[str] = []
         self.recursive_refs = set[str]()
         self._walked_defs: dict[str, tuple[JsonSchema, int]] = {}
-        self._walked_nodes = 0
+        self._inlined = InlinedValues('JSON schema')
 
     @abstractmethod
     def transform(self, schema: JsonSchema) -> JsonSchema:
@@ -108,7 +146,7 @@ class JsonSchemaTransformer(ABC):
 
         self.recursive_refs.clear()
         self._walked_defs.clear()
-        self._walked_nodes = 0
+        self._inlined.count = 0
 
         # First, handle everything but $defs:
         schema.pop('$defs', None)
@@ -165,8 +203,6 @@ class JsonSchemaTransformer(ABC):
                     return self._walk_def(key, siblings)
                 return self._copy_walked_def(key)
 
-        self._count_nodes(1)
-
         # Handle the schema based on its type / structure. Object and array keywords are only walked when `type` is
         # exactly `'object'` or `'array'` respectively, not when it's absent or a list like `['object', 'null']`:
         # walking them there would reshape subtrees that otherwise pass through unchanged, collapsing their
@@ -197,34 +233,23 @@ class JsonSchemaTransformer(ABC):
         also keeps the inlined copies independent of each other: the walk transforms schemas in place,
         so handing out the same object at multiple sites would let each site corrupt the next.
 
-        The cache keeps how many nodes the walk counted, so each later copy counts as that many again.
+        The cache keeps how many JSON values the walk counted, so each later copy counts as that many again.
         """
         if (cached := self._walked_defs.get(key)) is None:
-            start = self._walked_nodes
+            start = self._inlined.count
             walked = self._walk_def(key, {})
-            self._walked_defs[key] = (walked, self._walked_nodes - start)
+            self._walked_defs[key] = (walked, self._inlined.count - start)
         else:
-            walked, nodes = cached
-            self._count_nodes(nodes)
+            walked, values = cached
+            self._inlined.add(values)
         return deepcopy(walked)
-
-    def _count_nodes(self, nodes: int) -> None:
-        """Count schema nodes toward the output, which inlining `$ref`s keeps to `MAX_INLINED_SCHEMA_NODES`.
-
-        Each inlined copy counts in full, so the count is the size of the inlined schema, and the walk stops as
-        soon as it passes the limit instead of building the rest.
-        """
-        self._walked_nodes += nodes
-        if self.prefer_inlined_defs and self._walked_nodes > MAX_INLINED_SCHEMA_NODES:
-            raise UserError(
-                f'JSON schema is too large to inline: its `$ref`s expand to more than {MAX_INLINED_SCHEMA_NODES:,} '
-                'schema nodes. Refer to large definitions from fewer places.'
-            )
 
     def _walk_def(self, key: str, siblings: JsonSchema) -> JsonSchema:
         """Walk the definition `key` refers to, with `$ref` sibling keywords merged over it.
 
-        `key` is a `$defs` name, or else a local JSON pointer (RFC 6901) into the original schema.
+        `key` is a `$defs` name, or else a local JSON pointer (RFC 6901) into the original schema. The merged
+        definition counts toward `MAX_INLINED_SCHEMA_VALUES` before it is walked, and so does each definition the
+        walk copies into it.
         """
         def_schema = self.defs.get(key)
         if def_schema is None:
@@ -240,6 +265,7 @@ class JsonSchemaTransformer(ABC):
                 schema['not'] = {}
         else:
             schema = {**deepcopy(def_schema), **siblings}
+        self._inlined.add_copy(schema)
         walked = self._handle(schema)
         self.refs_stack.pop()
 

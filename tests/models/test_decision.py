@@ -1701,17 +1701,17 @@ async def test_a_boolean_schema_is_an_unsupported_argument(allow_model_requests:
         await Agent(model, output_type=Triage, tools=[tool]).run('Where is my order?')
 
 
-_NODE_LIMIT = 1_000
+_VALUE_LIMIT = 1_000
 """The limit these tests patch in, so their schemas stay small."""
 
 
 def _doubling_definitions(combine: Literal['properties', 'anyOf']) -> dict[str, Any]:
-    """Definitions that each refer to the one below twice, so resolving them doubles per level, past `_NODE_LIMIT`.
+    """Definitions that each refer to the one below twice, so resolving them doubles per level, past `_VALUE_LIMIT`.
 
     As `properties`, every level doubles the fields; as `anyOf`, it doubles the options of a single field.
     """
     defs: dict[str, Any] = {'D0': {'type': 'boolean'}}
-    levels = _NODE_LIMIT.bit_length()
+    levels = _VALUE_LIMIT.bit_length()
     for i in range(1, levels + 1):
         ref = {'$ref': f'#/$defs/D{i - 1}'}
         defs[f'D{i}'] = (
@@ -1725,11 +1725,11 @@ def _doubling_definitions(combine: Literal['properties', 'anyOf']) -> dict[str, 
 
 
 @pytest.mark.parametrize('combine', ['properties', 'anyOf'])
-async def test_arguments_past_the_node_limit_are_not_filled(
+async def test_arguments_past_the_value_limit_are_not_filled(
     allow_model_requests: None, combine: Literal['properties', 'anyOf'], monkeypatch: pytest.MonkeyPatch
 ):
     """Arguments whose `$ref`s expand past the limit make the route unfillable, before a fill is asked for."""
-    monkeypatch.setattr('pydantic_ai.models.decision.MAX_INLINED_SCHEMA_NODES', _NODE_LIMIT)
+    monkeypatch.setattr('pydantic_ai._json_schema.MAX_INLINED_SCHEMA_VALUES', _VALUE_LIMIT, raising=False)
     tool = Tool.from_schema(
         look_up, name='look_up', description='Look the order up.', json_schema=_doubling_definitions(combine)
     )
@@ -1744,11 +1744,11 @@ async def test_arguments_past_the_node_limit_are_not_filled(
 
 
 @pytest.mark.parametrize('combine', ['properties', 'anyOf'])
-async def test_an_output_type_past_the_node_limit_is_refused(
+async def test_an_output_type_past_the_value_limit_is_refused(
     allow_model_requests: None, combine: Literal['properties', 'anyOf'], monkeypatch: pytest.MonkeyPatch
 ):
     """Alone, an output type whose `$ref`s expand past the limit is refused before a request is sent."""
-    monkeypatch.setattr('pydantic_ai.models.decision.MAX_INLINED_SCHEMA_NODES', _NODE_LIMIT)
+    monkeypatch.setattr('pydantic_ai._json_schema.MAX_INLINED_SCHEMA_VALUES', _VALUE_LIMIT, raising=False)
     output_tool = ToolDefinition(
         name='final_result',
         description='Look the order up.',
@@ -1757,7 +1757,9 @@ async def test_an_output_type_past_the_node_limit_is_refused(
     )
     model = InMemoryDecisionModel()
 
-    with pytest.raises(UserError, match=f'expand to more than {_NODE_LIMIT:,} schema nodes'):
+    with pytest.raises(
+        UserError, match=f"Output 'final_result' is too large: .* more than {_VALUE_LIMIT:,} JSON values"
+    ):
         await model.request(
             [ModelRequest(parts=[UserPromptPart('Where is my order?')])],
             None,
