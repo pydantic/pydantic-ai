@@ -545,19 +545,28 @@ _(This example is complete, it can be run "as is")_
     `dump_python` → `validate_python` round-trip preserves them exactly. This is the boundary you
     use to persist and reload history.
 
-    A [multi-modal item][pydantic_ai.messages.MultiModalContent] in a tool return is reconstructed
+    A [multi-modal item][pydantic_ai.messages.MultiModalContent] your tool returned is reconstructed
     as its own type wherever it sits — on its own, in a list, or nested at any depth inside a
-    mapping, including one whose own keys happen to look like ours. A URL-based item is
-    reconstructed only when its mapping carries `media_type`, which a dump with the default arguments
-    always writes; without it the item stays the plain mapping your tool returned. A URL whose media type
-    Pydantic AI can't infer from the URL is serialized with `media_type: null`, which validates
-    back into the URL part's default (no media type) and dumps `null` again, in a tool return as
-    anywhere else. A
-    [`BinaryContent`][pydantic_ai.messages.BinaryContent] or
-    [`UploadedFile`][pydantic_ai.messages.UploadedFile] item is recognized by the fields its own type
-    requires. A mapping that merely reuses one of our `kind` values stays a plain mapping, and
-    dumping it back never raises. Spelling one of our items out in full does reconstruct it, and the
-    keys that type doesn't declare are dropped along the way, so keep `kind` off any dictionary you
+    mapping. A tool return records the URL-based and [`UploadedFile`][pydantic_ai.messages.UploadedFile]
+    items it holds when it is serialized, and only those are reconstructed. A mapping your tool
+    returned stays that mapping, even one that spells out one of our items in full, so a round trip
+    hands back exactly what your tool returned.
+
+    History saved by an earlier version has no such record. In it, a mapping shaped like a URL-based
+    item is reconstructed only as an HTTP(S) URL with `force_download` reset, and only when it carries
+    `media_type`. A mapping shaped like an uploaded file or a non-HTTP URL stays a mapping, and so do
+    the uploaded files and non-HTTP URLs your tools returned before the upgrade. If you saved that
+    history yourself and trust it, load it with
+    `ModelMessagesTypeAdapter.validate_json(data, context={'pydantic_ai': {'trusted_history': True}})`
+    (or `validate_python`) and its files load as they did before. Save it again afterwards, and it
+    carries the record and no longer needs the context.
+
+    A URL whose media type Pydantic AI can't infer from the URL is serialized with `media_type: null`,
+    which validates back into the URL part's default (no media type) and dumps `null` again, in a tool
+    return as anywhere else. A [`BinaryContent`][pydantic_ai.messages.BinaryContent] item is recognized
+    by the fields its type requires. A mapping that merely reuses one of our `kind` values stays a plain
+    mapping, and dumping it back never raises. Spelling a `BinaryContent` out in full does reconstruct
+    it, and the keys it doesn't declare are dropped along the way, so keep `kind` off any dictionary you
     want handed back verbatim.
 
     A tool return keyed by something other than a string is the one place that reconstruction
