@@ -39,8 +39,8 @@ Without an attached workspace, operations raise `WorkspaceUnavailableError`; a c
 and file methods for every backend; `WrapperWorkspace` is the base for policy wrappers (override
 operations, delegate the rest to `self.wrapped`), `ReadOnlyWorkspace` blocks commands and changes,
 and `workspace.read_only` lets a tool provider leave write tools out. `UntrustedWorkspace` changes no operation:
-a capability checks `workspace.trusted` before putting file text it reads from the workspace in instructions, and
-sends that text as tool output when it is `False`. To disable workspace access
+a capability that puts file text it reads from the workspace in instructions should check `workspace.trusted` and
+send that text as tool output when it is `False` (no built-in capability reads it yet). To disable workspace access
 for a run on purpose, pass `workspace=UnavailableWorkspace(reason=...)`: its operations raise
 `WorkspaceUnavailableError` with that reason, which a tool can catch as a `WorkspaceError`.
 

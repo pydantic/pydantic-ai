@@ -299,6 +299,10 @@ operator speaking, so a capability that would put text read from the workspace t
 that text as tool output instead. `trusted=False` doesn't limit what the agent can do; use
 [tool approval](deferred-tools.md#human-in-the-loop-tool-approval) or a sandbox for that.
 
+No built-in capability reads `trusted` yet, so setting it doesn't yet change what reaches the model.
+It's the flag your own capabilities check, and built-in capabilities that load workspace files will
+check it as they adopt it.
+
 A capability checks `trusted` when it builds a run's content, so a change applies from the next run.
 Text it already added to a conversation stays in that history, so start a new conversation after
 marking a workspace untrusted.
