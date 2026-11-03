@@ -52,10 +52,10 @@ interactions:
             role: assistant
             reasoning_content: |-
               The user is asking for the capital of France and wants the answer in one word.
-              
+
               The capital of France is Paris.
               "Paris" is one word.
-              
+
               I should answer with just "Paris".
           finish_reason: stop
           logprobs: null
