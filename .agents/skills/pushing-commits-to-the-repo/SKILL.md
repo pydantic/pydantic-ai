@@ -95,6 +95,7 @@ All of these must hold:
 - The diff adds no `skip`, `skipif`, `xfail`, `flaky` or rerun marker.
 - The diff deletes no assertion.
 - The diff loosens no assertion: no wider tolerance, longer timeout or weaker matcher.
+- The diff adds no real wait or in-test retry.
 
 If any condition fails, hand the PR to a maintainer.
 
@@ -403,7 +404,7 @@ if the head changes, capture the new SHA and restart the loop.
    Its success certifies every job it contains, coverage included. Do not inspect individual jobs
    or their logs to reconfirm a success. Don't idle. If it fails, diagnose: fix if the failure is
    yours; if it's a known flake or pre-existing on main, say so with evidence.
-   When a flake fails your CI, fix it in this PR if this PR caused it, or if this PR is labeled `size: S` or `size: M`.
+   When a flake fails your CI, fix it in this PR if this PR caused it, or if this PR is labeled `size: S` or `size: M` and the fix stays within the root `AGENTS.md` scope rule.
    Otherwise, ask the person driving you whether to start a separate worktree and task to fix it.
    Recommend yes.
 3. **Meet the merge bar on the captured SHA.**
