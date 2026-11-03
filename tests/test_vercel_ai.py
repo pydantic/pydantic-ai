@@ -22,6 +22,7 @@ from pydantic_ai._run_context import RunContext, get_current_run_context
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability, Capability, NativeTool
+from pydantic_ai.conversation import Conversation
 from pydantic_ai.conversation_store import InMemoryConversationStore
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
@@ -14197,6 +14198,68 @@ async def test_conversation_store_without_a_scope_reaches_only_unscoped_conversa
     assert unscoped is not None
     assert conversation_view(unscoped.messages) == snapshot(
         ['user-prompt: hi', 'text: ok', 'user-prompt: and now?', 'text: ok']
+    )
+
+
+async def test_conversation_store_rechecks_the_scope_of_what_it_loaded():
+    """A conversation replaced under another scope between the load and the scope check is never run on."""
+    agent, requests, _ = server_history_agent()
+
+    class ReplacingStore(InMemoryConversationStore):
+        replace = False
+
+        async def load(
+            self, conversation_id: str, *, limit: int | None = None, scope: str | None = None
+        ) -> Conversation | None:
+            loaded = await super().load(conversation_id, limit=limit, scope=scope)
+            if self.replace and loaded is not None:
+                # Another request deletes the conversation and saves one under another scope with its ID.
+                await self.delete(conversation_id)
+                await self.save(Conversation(conversation_id=conversation_id), scope='bob')
+            return loaded
+
+    store = ReplacingStore()
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]))
+    store.replace = True
+    model_requests = len(requests)
+
+    chunks = await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI, _OK, _AND_NOW]))
+
+    assert len(requests) == model_requests
+    assert [chunk.error_text for chunk in chunks if isinstance(chunk, ErrorChunk)] == snapshot(
+        ["Conversation 'chat' was not found."]
+    )
+
+
+async def test_conversation_store_saved_between_load_and_check_asks_to_reload():
+    agent, requests, _ = server_history_agent()
+
+    class AdvancingStore(InMemoryConversationStore):
+        advance = False
+
+        async def load(
+            self, conversation_id: str, *, limit: int | None = None, scope: str | None = None
+        ) -> Conversation | None:
+            loaded = await super().load(conversation_id, limit=limit, scope=scope)
+            if self.advance and loaded is not None:
+                again = await super().load(conversation_id)
+                assert again is not None
+                await self.save(again)  # Another request's save, which advances the revision.
+            return loaded
+
+    store = AdvancingStore()
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]))
+    store.advance = True
+    model_requests = len(requests)
+
+    chunks = await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI, _OK, _AND_NOW]))
+
+    assert len(requests) == model_requests
+    assert [chunk.error_text for chunk in chunks if isinstance(chunk, ErrorChunk)] == snapshot(
+        [
+            'The conversation was changed by another request while this one ran, so this turn was not saved. '
+            'Reload the conversation from the server and try again.'
+        ]
     )
 
 

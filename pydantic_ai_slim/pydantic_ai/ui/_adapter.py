@@ -679,6 +679,12 @@ def _reject_answers_for_calls_not_pending(
         )
 
 
+_CONVERSATION_CHANGED = (
+    'The conversation was changed by another request while this one ran, so this turn was not saved. '
+    'Reload the conversation from the server and try again.'
+)
+
+
 def _check_conversation_store_run(message_history: Sequence[ModelMessage] | None, conversation_id: str | None) -> None:
     """Raise a `UserError` for a run that can't use a `conversation_store` as it was called."""
     if message_history is not None:
@@ -1210,9 +1216,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         if (store := self.conversation_store) is None:
             return None
         assert conversation_id is not None
-        if not await self._conversation_available(conversation_id):
-            raise UserError(f'Conversation {conversation_id!r} was not found.')
-        loaded = await store.load(conversation_id, scope=self.conversation_scope)
+        loaded = await self._load_in_scope(store, conversation_id)
         stored = loaded.messages if loaded is not None else []
         # A conversation the store doesn't have is waiting on nothing.
         waiting_on = (loaded.deferred_tool_requests if loaded is not None else None) or DeferredToolRequests()
@@ -1252,6 +1256,21 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             conversation_id is None or conversation_id == 'new' or await self._conversation_available(conversation_id)
         )
 
+    async def _load_in_scope(self, store: ConversationStore, conversation_id: str) -> Conversation | None:
+        """Load the conversation if it was saved with `conversation_scope`, or `None` if the store doesn't have it.
+
+        The scope is checked on the record read after the load, tied to the loaded conversation by its
+        revision, so a conversation saved with another scope in between can't slip through: the store's own
+        `scope=None` would load it whatever its scope.
+        """
+        loaded = await store.load(conversation_id, scope=self.conversation_scope)
+        record = await store.read_record(conversation_id)
+        if record is not None and record.scope != self.conversation_scope:
+            raise UserError(f'Conversation {conversation_id!r} was not found.')
+        if loaded is not None and (record is None or record.revision != loaded.revision):
+            raise UserError(_CONVERSATION_CHANGED)
+        return loaded
+
     async def _conversation_available(self, conversation_id: str) -> bool:
         """Whether a run can use the conversation: one saved with `conversation_scope`, or one the store doesn't have yet.
 
@@ -1271,10 +1290,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         try:
             self._saved_entries = await store.save(result, scope=self.conversation_scope)
         except ConversationConflict as e:
-            raise UserError(
-                'The conversation was changed by another request while this one ran, so this turn was not saved. '
-                'Reload the conversation from the server and try again.'
-            ) from e
+            raise UserError(_CONVERSATION_CHANGED) from e
 
     def _conversation_saved_events(self, conversation_id: str, entries: Sequence[ConversationEntry]) -> list[EventT]:
         """The protocol events that tell the client which entries a [`conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store] save stored.
