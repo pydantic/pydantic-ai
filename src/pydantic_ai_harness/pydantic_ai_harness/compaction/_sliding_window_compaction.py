@@ -125,9 +125,6 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
     receipts: bool = False
     """When `True`, prepend a deterministic compaction receipt recording how much history
     was dropped, with a transcript handle when a `TranscriptHandleProvider` capability is attached.
-
-    Opt-in for now: the receipt text is content, so defaulting it on is deferred to the
-    benchmark eval-rig pass.  The mechanism itself is structural.
     """
 
     def __post_init__(self) -> None:

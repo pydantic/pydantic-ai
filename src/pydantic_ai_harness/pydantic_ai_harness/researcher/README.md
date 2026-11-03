@@ -3,6 +3,12 @@
 `Researcher` gives a Pydantic AI agent a compact stack for broad web research with source-backed answers.
 It is a regular [combined capability](https://pydantic.dev/docs/ai/capabilities/custom/#composition-and-middleware-semantics) made from the [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) below, so you can use it as-is or take it apart.
 
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
+
+![Researcher combines research instructions with four capabilities. WebSearch and WebFetch use the model provider's native search and fetch, or duckduckgo_search and web_fetch where the model has none. SubAgents adds delegate_task, which hands a sub-question to a 'researcher' sub-agent with its own search, fetch and output limits. ToolOutputLimits spills oversized tool results to the run workspace, where read_tool_result reads them.](https://pydantic.dev/docs/ai/img/harness/researcher.svg)
+
+## Usage
+
 Install the local search and fetch fallbacks (DuckDuckGo search, page-to-Markdown fetching):
 
 uv:
@@ -16,6 +22,8 @@ pip:
 ```bash
 pip install "pydantic-ai-harness[researcher]"
 ```
+
+Then ask it a question:
 
 ```python
 from pydantic_ai import Agent
@@ -37,9 +45,11 @@ Or skip the file entirely and run the exported `researcher_agent` with [`clai`](
 uvx --with 'pydantic-ai-harness[researcher]' clai -a pydantic_ai_harness.researcher:researcher_agent -m openai:gpt-5.6-sol
 ```
 
-It is literally these capabilities combined, in this order:
+## What's inside
 
-- Concise default research instructions (`DEFAULT_RESEARCHER_INSTRUCTIONS`): pass `instructions='...'` to replace them, or `instructions=None` to disable
+It combines these capabilities, in order:
+
+- Concise default research instructions: see [Instructions](#instructions) below
 - Core [`WebSearch(local=True)`](https://pydantic.dev/docs/ai/capabilities/web-search/): the provider's native web search when the model supports it, with a local DuckDuckGo fallback when it doesn't
 - Core [`WebFetch(local=True)`](https://pydantic.dev/docs/ai/capabilities/web-fetch/): read the pages behind the results, native where supported with a local fallback, so claims can be checked against their sources
 - [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/): delegation, with a focused web `researcher` sub-agent by default
@@ -49,7 +59,15 @@ Pass `subagents=[]` to disable delegation, or supply your own `SubAgent` entries
 
 Oversized tool results are stored in the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), under `.pydantic-ai-harness/tool-output/` (git-ignored), so a run without one fails at its start. `LocalWorkspace('.')` keeps them in the current directory and a sandbox capability keeps them in the sandbox. To run without a workspace, pass `Researcher(store=LocalFileStore())`; spills then stay on the machine running the agent, including for its default delegate. A custom delegate needs its own store configured.
 
-![Researcher combines research instructions with four capabilities. WebSearch and WebFetch use the model provider's native search and fetch, or duckduckgo_search and web_fetch where the model has none. SubAgents adds delegate_task, which hands a sub-question to a 'researcher' sub-agent with its own search, fetch and output limits. ToolOutputLimits spills oversized tool results to the run workspace, where read_tool_result reads them.](https://pydantic.dev/docs/ai/img/harness/researcher.svg)
+### Instructions
+
+`Researcher` comes with short default research instructions (`DEFAULT_RESEARCHER_INSTRUCTIONS`, written out in full in the [blown-out equivalent](#blown-out-equivalent) below). Pass `instructions='...'` to replace them with your own, or `instructions=None` to get only the abilities, with no default instructions at all.
+
+### Extending it
+
+- **Research in a specific format**: give the agent a typed [`output_type`](https://pydantic.dev/docs/ai/output/): a Pydantic model of findings, each with its source link, and the researcher returns structured data instead of prose.
+- **Exa search**: swap in [`Exa Search`](https://pydantic.dev/docs/ai/harness/exa-search/) as the search backend.
+- **Fan out**: add [`Dynamic Workflow`](https://pydantic.dev/docs/ai/harness/dynamic-workflow/) so the agent can spawn typed researcher sub-agents in parallel and combine their structured results.
 
 ## Blown-out equivalent
 
@@ -89,4 +107,4 @@ agent = Agent(
 )
 ```
 
-See the [source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/researcher/). While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade; see the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
+See the [source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/researcher/).

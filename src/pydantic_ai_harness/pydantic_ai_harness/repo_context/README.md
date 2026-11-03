@@ -82,8 +82,8 @@ directories are skipped.
 
 ### 2. Asset inventory (off by default)
 
-Set `expose_inventory_tool=True` to expose `inventory_agent_context()`, which reports where the repo's CE
-assets live -- the `.claude`/`.agents`/`.codex`/`.grok` roots and, within each,
+Set `expose_inventory_tool=True` to expose `inventory_agent_context()`, which reports where the repo's
+coding-assistant assets live -- the `.claude`/`.agents`/`.codex`/`.grok` roots and, within each,
 the `skills/` (SKILL.md), `agents/` (`.md`), and `settings.json` (hooks) it
 contains. It returns a structured `AgentContextInventory`; it locates assets and
 does not parse them.

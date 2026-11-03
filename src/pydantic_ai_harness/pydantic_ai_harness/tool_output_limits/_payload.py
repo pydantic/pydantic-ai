@@ -1,8 +1,7 @@
 """Size measurement, stringification, truncation, and binary detection.
 
-Harvested from PR #185 (`ToolOutputManagement`) and adapted: character-based truncation
-strategies, ANSI stripping, and binary detection. Token measurement reuses the compaction
-heuristic via `estimate_token_count` so the two capabilities stay aligned.
+Token measurement reuses the compaction heuristic via `estimate_token_count` so the two
+capabilities stay aligned.
 """
 
 from __future__ import annotations

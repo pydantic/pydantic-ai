@@ -160,13 +160,13 @@ class Memory(AbstractCapability[AgentDepsT]):
     _resolved_scope: tuple[MemoryStore, str] | None = field(default=None, init=False, repr=False, compare=False)
 
     _run_snapshot: str | None = field(default=None, init=False, repr=False, compare=False)
+    """The snapshot the model reads as current during this run, kept so compaction can't take it away."""
 
     _run_started: bool = field(default=False, init=False, repr=False, compare=False)
+    """Whether this run's first `before_model_request` call ran, which an earlier hook's retry can postpone."""
 
     _run_continues: bool = field(default=False, init=False, repr=False, compare=False)
     """Whether this run continues earlier work instead of answering a prompt, decided once when it starts."""
-    """Whether this run's first `before_model_request` call ran, which an earlier hook's retry can postpone."""
-    """The snapshot the model reads as current during this run, kept so compaction can't take it away."""
 
     _toolset: MemoryToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
     """The one `memory` toolset, shared with every per-run copy so durable execution sees the leaf it registered."""
@@ -321,19 +321,16 @@ class Memory(AbstractCapability[AgentDepsT]):
         scope_hash = metadata['scope']
         # Compaction replaces what came before its boundary, so a snapshot there is no longer seen by the model.
         latest = _latest_snapshot(post_compaction_window(ctx.messages), metadata)
-        if self._run_started:
+        first_request = not self._run_started
+        self._run_started = True
+        # Only a run's first request injects. Even then, Memory waits for the next prompt when the model has
+        # already responded in this run (a deferred `Memory` loaded mid-run) or the run continues from tool results
+        # without a prompt of its own (resuming after a deferred tool approval): there, a snapshot follows what the
+        # model already saw or tool results.
+        if not first_request or self._run_continues or _responded_in_run(ctx):
             if self._run_snapshot is not None and latest != self._run_snapshot:
                 # Compaction dropped it: what the provider is sent after the boundary is the request being sent,
                 # so it goes there, after any tool results, rather than anywhere the provider would trim.
-                ctx.enqueue(UserPromptPart([TextContent(self._run_snapshot, metadata=metadata)]))
-            return request_context
-        self._run_started = True
-        # Memory waits for the next prompt when the model has already responded in this run (a deferred
-        # `Memory` loaded mid-run) or the run continues from tool results without a prompt of its own (resuming
-        # after a deferred tool approval): there, a snapshot follows what the model already saw or tool results.
-        # The snapshot the run started with is kept current, though, if compaction dropped it on this request.
-        if self._run_continues or _responded_in_run(ctx):
-            if self._run_snapshot is not None and latest != self._run_snapshot:
                 ctx.enqueue(UserPromptPart([TextContent(self._run_snapshot, metadata=metadata)]))
             return request_context
         self._run_snapshot = latest
