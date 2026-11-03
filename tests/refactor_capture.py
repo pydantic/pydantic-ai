@@ -1,4 +1,4 @@
-"""Record what streamed model responses emit and what requests tests send, per test node, to prove a refactor keeps them.
+"""Record what streamed responses emit and what requests tests send, per test node, to prove a refactor keeps them.
 
 The capture is off unless pytest loads this module as a plugin, `-p tests.refactor_capture --refactor-capture=DIR`, so
 other runs never import it. To compare a base commit with the working tree, run this from the repository root, over
@@ -32,15 +32,15 @@ methods a test patches by hand, like the `generate_content` Google's tests patch
 
 Each test starts with `random` seeded from its node id, so a test that draws from it draws the same values on both
 sides. Lines, and the id of each test node run, are written per `pytest-xdist` worker when each test ends. Generated
-tool call ids, UUIDs, object addresses,
-timestamps within a day of the capture, history digests (which hash those timestamps), attempt durations, local server
-ports and multipart boundaries are normalized, so two runs of the same code compare equal.
+tool call ids, UUIDs, object addresses, timestamps within a day of the capture, history digests (which hash those
+timestamps), attempt durations, local server ports and multipart boundaries are normalized, so two runs of the same
+code compare equal.
 
 The comparison lists the test nodes whose records differ or that only one capture has, and exits non-zero if there
 are any. It refuses two captures that imported `pydantic_ai` from the same file, since the base run then didn't load
 the base commit, and a capture that recorded nothing, since it proves nothing. It also counts the nodes whose streams
 reach each module that defines a `StreamedResponse` subclass and the nodes that send to each request target, and names
-the selected nodes that sent no request, so the capture's reach over the changed code shows.
+the selected nodes that recorded no request, so the capture's reach over the changed code shows.
 """
 
 from __future__ import annotations
@@ -92,7 +92,7 @@ GENERATED_VALUES = [
     (re.compile(r'--[0-9a-f]{32}'), '--BOUNDARY'),
 ]
 ISO_DATETIME = re.compile(r'"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)"')
-# The test doubles that stand in for an SDK client, by module and class, with the methods a model sends a request through.
+# Test doubles that stand in for an SDK client, by module and class, with the methods a model sends a request through.
 SDK_MOCKS: list[tuple[str, str, tuple[str, ...]]] = [
     ('tests.models.test_anthropic', 'MockAnthropic', ('messages_create', 'messages_count_tokens')),
     ('tests.models.mock_openai', 'MockOpenAI', ('chat_completions_create',)),
@@ -422,7 +422,7 @@ def compare(base_dir: Path, head_dir: Path) -> int:
     requesting = {
         node for node, records in head_nodes.items() if any(record['kind'] == 'request' for record in records)
     }
-    print(f'nodes that sent no request, head: {len(ran - requesting)}')
+    print(f'nodes that recorded no request, head: {len(ran - requesting)}')
     for node in sorted(ran - requesting):
         print(f'  {node}')
 

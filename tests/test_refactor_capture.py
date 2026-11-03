@@ -314,7 +314,7 @@ def test_capture_stops_the_run_when_it_misses_a_canary_request(tmp_path: Path):
 def test_capture_stops_the_run_when_a_listed_mock_is_gone(
     run: RunCapture, pytester: pytest.Pytester, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """`SDK_MOCKS` entries whose module the collected tests didn't import are skipped, and one that's gone stops the run."""
+    """`SDK_MOCKS` entries whose module the tests didn't import are skipped, and one that's gone stops the run."""
     pytester.makepyfile(unimported_mock='class MockClient:\n    def create(self):\n        pass\n')
     monkeypatch.setattr(
         refactor_capture,
@@ -383,7 +383,7 @@ nodes per stream module, head:
 nodes per request target, head:
   POST http://127.0.0.1:PORT/v1/upload: 2
   tests.models.mock_openai.MockOpenAI.chat_completions_create: 1
-nodes that sent no request, head: 5
+nodes that recorded no request, head: 5
   test_streams.py::test_fails_mid_stream
   test_streams.py::test_fallback_peeks_the_first_event
   test_streams.py::test_no_stream
@@ -400,7 +400,7 @@ nodes per stream module, head:
 nodes per request target, head:
   POST http://127.0.0.1:PORT/v1/upload: 2
   tests.models.mock_openai.MockOpenAI.chat_completions_create: 1
-nodes that sent no request, head: 4
+nodes that recorded no request, head: 4
   test_streams.py::test_fallback_peeks_the_first_event
   test_streams.py::test_no_stream
   test_streams.py::test_subclass_defined_after_the_capture_started
@@ -414,10 +414,10 @@ only in base: 1, only in head: 0, differing: 4
 """)
 
 
-def test_compare_names_the_nodes_that_sent_no_request(
+def test_compare_names_the_nodes_that_recorded_no_request(
     run: RunCapture, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ):
-    """A selected node that sent no request is listed, whether it recorded a stream or nothing, without failing."""
+    """A selected node that recorded no request is listed, whether it recorded a stream or nothing, without failing."""
     base, head = tmp_path / 'base', tmp_path / 'head'
     for capture_dir in (base, head):
         run(capture_dir, '-k', 'test_text or no_stream or json').assert_outcomes(passed=3, deselected=5)
@@ -427,7 +427,7 @@ def test_compare_names_the_nodes_that_sent_no_request(
     assert compare(base, head) == 0
     assert capsys.readouterr().out.splitlines()[-4:] == snapshot(
         [
-            'nodes that sent no request, head: 2',
+            'nodes that recorded no request, head: 2',
             '  test_streams.py::test_no_stream',
             '  test_streams.py::test_text',
             'only in base: 0, only in head: 0, differing: 0',
