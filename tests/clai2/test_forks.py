@@ -3,7 +3,9 @@
 import asyncio
 import io
 import signal
+import sqlite3
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import closing
 from pathlib import Path
 from typing import Generic, TypeVar
 
@@ -296,13 +298,21 @@ async def test_structured_output_prints_as_is() -> None:
 
 
 async def test_first_forks_on_a_new_database_all_run(tmp_path: Path) -> None:
-    for attempt in range(25):
-        model, output = Model(), io.StringIO()
-        shell = shell_for(tmp_path / str(attempt), model, output)
-        for prompt in ('one', 'two', 'three'):
-            await shell.commands.execute_async(f'/fork {prompt}')
-        await asyncio.gather(*(record.task for record in shell.forks.records))
-        assert [record.status for record in shell.forks.records] == ['done', 'done', 'done'], output.getvalue()
+    """Concurrent first connections to a brand-new store can fail on its WAL switch, so `/fork` opens it first."""
+    model, output = Model(), io.StringIO()
+    shell = shell_for(tmp_path, model, output)
+    conversations = shell.session.conversations
+    assert conversations is not None
+    assert not conversations.database.exists()
+    await shell.commands.execute_async('/fork one')
+    # The fork has not run yet, and the command has already switched the new store to WAL.
+    assert model.seen == {}
+    with closing(sqlite3.connect(f'{conversations.database.as_uri()}?mode=ro', uri=True)) as connection:
+        assert connection.execute('PRAGMA journal_mode').fetchone() == ('wal',)
+    for prompt in ('two', 'three'):
+        await shell.commands.execute_async(f'/fork {prompt}')
+    await asyncio.gather(*(record.task for record in shell.forks.records))
+    assert [record.status for record in shell.forks.records] == ['done', 'done', 'done'], output.getvalue()
 
 
 async def test_forks_fire_turn_hooks() -> None:

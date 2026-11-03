@@ -224,7 +224,7 @@ def load_from_registry(
     if cls is None:
         raise ValueError(
             f'{label.capitalize()} {name!r} is not in the provided `{custom_types_param}`. Valid choices: {list(registry.keys())}.'
-            f' If you are trying to use a custom {label}, you must include its type in the `{custom_types_param}` argument.'
+            f' If you are trying to use a custom {label}, you must include it in the `{custom_types_param}` argument.'
         )
     try:
         if instantiate is not None:

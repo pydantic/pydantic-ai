@@ -4,6 +4,8 @@ Let the model ask the user multiple-choice questions mid-run and wait for the an
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/ask_user/)
 
+![The model calls ask_user_question with one to ten multiple-choice questions. AskUser validates them, rejecting calls outside the limits or with control characters as a retry, then hands an AskUserRequest to the answerer you supply, such as a terminal menu or a web form. The answerer returns an AskUserResponse. The model gets the picked labels keyed by header, a sentence saying the user declined or did not answer in time, or, with answerer=None, the run pauses with DeferredToolRequests until you answer in a later run.](https://pydantic.dev/docs/ai/img/harness/ask-user.svg)
+
 ## The problem
 
 An agent given an ambiguous task either guesses or buries a question in its output and stops.
@@ -69,6 +71,87 @@ An `Answerer` is one async callable: it takes an `AskUserRequest` and returns an
   `with Agent.parallel_tool_call_execution_mode('sequential'):`.
 - The model writes the questions, and a prompt injection can make it ask for a password or a
   token. Present the questions as coming from the model, not as a system or sign-in prompt.
+
+### Reading the asking run
+
+An answerer with two required positional parameters receives `(ctx, request)`, satisfying
+`ContextAnswerer`. Request-only answerers keep receiving just the request. Both plain async
+functions and callable objects are supported, including two-argument lambdas.
+
+If a callable accepts both one and two positional arguments, annotate its first parameter as
+`RunContext[DepsT]` to select the context form; otherwise it receives only the request. Only the
+first annotation is inspected; an unresolved annotation naming `RunContext` also selects the context form.
+Use `AnyAnswerer[DepsT]` to annotate a stored callback that may use either signature.
+
+```python
+from pydantic_ai import Agent, RunContext
+from pydantic_ai_harness import AskUser
+from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserRequest, AskUserResponse
+
+
+async def answer_for_session(ctx: RunContext[str], request: AskUserRequest) -> AskUserResponse:
+    for question in request.questions:
+        print(f'{ctx.deps}: {question.question}')
+    answers = [AskUserAnswer(header=q.header, selected=(q.options[0].label,)) for q in request.questions]
+    return AskUserResponse(answers=tuple(answers))
+
+
+agent = Agent('anthropic:claude-fable-5-1', deps_type=str, capabilities=[AskUser(answerer=answer_for_session)])
+```
+
+In an in-process run, `ctx.deps`, `ctx.model`, and `ctx.messages` belong to the run that called
+the tool. For a delegated agent, that is the child's run, not the parent's. The messages include the model response that
+asked the question, including thinking parts when the model provides them. Treat the history as
+read-only; other tools may still run while the answerer waits.
+
+The context reaches only the answerer; it is not part of the request, its events or deferred
+calls. With `answerer=None`, no answerer is called: deferred hosts supply context from their own
+state. Durable execution can restrict access to context fields; see
+[Temporal's run-context rules](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#agent-run-context-and-dependencies).
+
+## Adding notes to an answer
+
+Set `AskUserAnswer.note` to a tuple of `UserContent` items to accompany selected labels or a
+custom answer. Text and images keep their order; notes do not replace the required answer.
+
+```python
+from pydantic_ai.messages import ImageUrl
+from pydantic_ai_harness.ask_user import AskUserAnswer
+
+answer = AskUserAnswer(
+    header='Database',
+    selected=('Postgres',),
+    note=('Keep version 16. Match this layout:', ImageUrl('https://example.com/schema.png')),
+)
+```
+
+Text, including `TextContent`, follows the custom-answer character rules. A nonempty note must
+contain nonblank text or an attachment, not only whitespace or cache markers. Run
+`check_response(request, response)` before submitting client input. The harness sets no note size
+limit; the answerer should bound text and attachments from clients.
+
+File URLs must use HTTP(S) and `force_download=False`. Notes reject other URL schemes, forced
+download modes (including `True` and `'allow-local'`), Google Files API URLs and `UploadedFile`
+provider references, even when a server-side answerer constructed them. To attach a file instead, have the application
+authorize access and supply its bytes as `BinaryContent`.
+
+Only the rendered text of `TextContent` and `StructuredContent` is forwarded; user-supplied text
+metadata is dropped so notes cannot claim framework provenance. The answered event still carries
+the original response before validation, so observers must treat its note metadata as user input.
+
+With notes, `ask_user_result` returns a `ToolReturn`: `return_value` is the unchanged answer
+dictionary, and `content` sends the notes as `UserPromptPart` content rather than tool data.
+Each note is framed by `<answer_note header="...">` and `</answer_note>` text items. Headers and
+framing tags inside text are escaped; images remain multimodal items between those boundaries.
+The boundary items are `TextContent` with `metadata` containing
+`origin='user.pydantic-ai-harness.ask_user.answer_note.v1'`, `request_id` and `header`, so applications
+can identify the record without matching visible text.
+The user-content origin keeps notes classified as user turns during compaction.
+Without notes, the result is the answer dictionary or decline text.
+
+Annotate results with `AskUserResult` from `pydantic_ai_harness.ask_user`. To inspect wrapped
+answers, narrow with `isinstance(result, ToolReturn)` and read `result.return_value`.
+Deferred hosts can pass the result directly to `DeferredToolResults.calls`.
 
 ## Bounding the wait
 
@@ -220,7 +303,9 @@ started. Two identical ones now become one, and two that differ fail when the ag
 
 `AskUser` emits no spans. Core's tool-call span already covers the wait, and the two events
 above carry what was asked and answered. That span records the tool's arguments and result,
-which here are the questions and the user's answers, custom text included. Set
+which here are the questions and the user's answers, custom text included. Notes and attachments
+appear in the following model request's user content; inline answers also record them in the tool
+span's serialized `ToolReturn`. The `include_content` setting applies to notes as well. Set
 [`include_content=False`](https://pydantic.dev/docs/ai/integrations/logfire/#excluding-prompts-and-completions) to leave them out.
 
 ## Specs
@@ -230,7 +315,7 @@ to name.
 
 ## API
 
-`AskUser`, `Answerer`, `AskUserRequest`, `AskUserResponse`, `AskUserAnswer`, `Question`,
+`AskUser`, `Answerer`, `ContextAnswerer`, `AnyAnswerer`, `AskUserRequest`, `AskUserResponse`, `AskUserAnswer`, `Question`,
 `QuestionOption`, `AskUserRequestedEvent`, `AskUserAnsweredEvent`, `check_response`, `ask_user_result`,
 `TOOL_NAME`, `DECLINED`, `TIMED_OUT`, and `MAX_QUESTIONS` are exported from `pydantic_ai_harness.ask_user`,
 along with `AskUserToolset`, the toolset `AskUser` registers, and `ASK_USER_EVENTS`, the namespace

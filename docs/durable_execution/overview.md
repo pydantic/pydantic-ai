@@ -4,6 +4,8 @@ description: "Add durable execution to Pydantic AI agents so runs survive crashe
 
 # Durable Execution
 
+Pydantic AI agents run durably, surviving crashes and restarts, on Temporal, DBOS, Prefect, Restate, AWS Lambda, Absurd, pgtask and Apache Airflow.
+
 Use durable execution in production when a run in flight has to survive its process stopping, through a deploy, a crash or a transient API failure, or when a workflow waits hours or days for a person or another system. A durable engine journals the agent's model requests and the tool calls it wraps, and a restarted run replays the completed ones from the journal and retries the one in flight. Which tool calls (function tools, [MCP](../mcp/client.md) servers) an engine wraps for you and how it delivers [streaming](../agent.md#streaming-all-events) differ per engine; each page below says.
 
 !!! note "Durability is not storage"

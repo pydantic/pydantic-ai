@@ -8,6 +8,8 @@ user's workspaces.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+![Inside your agent, the Ordinal capability connects to Ordinal's hosted MCP server at app.tryordinal.com/mcp with an OAuth access token. The model sees the server's tool names unchanged. It starts with ordinal_get_workspace_context, which returns the workspaceSlug every other Ordinal tool needs. Wrapping the toolset with approval_required() pauses calls that publish or schedule posts for review.](https://pydantic.dev/docs/ai/img/harness/ordinal.svg)
+
 ## Before you start
 
 Ordinal MCP needs the Pro plan or higher, the same as the REST API. You need an
@@ -149,7 +151,7 @@ Limits](https://pydantic.dev/docs/ai/harness/tool-output-limits/).
 
 ## Connection customization
 
-Use `auth` in almost every case. Pass `client` only when you need control of the
+Pass `client` when you need control of the
 connection itself: your own FastMCP client or transport, for example one with a
 proxy or MCP handlers. The client then owns the URL and authentication, so
 passing `client` together with `auth` raises an error.
@@ -188,5 +190,3 @@ from pydantic_ai_harness import Ordinal
 
 agent = Agent.from_file('agent.yaml', custom_capability_types=[Ordinal])
 ```
-
-Pass `custom_capability_types` so the loader can create `Ordinal` from the file.

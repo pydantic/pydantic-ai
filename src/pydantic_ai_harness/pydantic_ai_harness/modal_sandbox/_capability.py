@@ -5,14 +5,19 @@ from __future__ import annotations
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Never
+from typing import TYPE_CHECKING, Any, Never
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_renamed
-from pydantic_ai_harness._workspace_provider import check_integer, check_working_dir
+from pydantic_ai_harness._workspace_provider import (
+    check_integer,
+    check_provider,
+    check_working_dir,
+    reject_defer_loading,
+)
 from pydantic_ai_harness.modal_sandbox._backend import (
     DEFAULT_APP_NAME,
     DEFAULT_SANDBOX_TIMEOUT,
@@ -231,11 +236,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
                 raise UserError('Pass `working_dir` only; `workdir` is its deprecated name.')
             warn_argument_renamed('ModalSandbox', 'workdir', 'working_dir')
             working_dir = workdir
-        if defer_loading:
-            raise UserError(
-                '`ModalSandbox` does not support `defer_loading=True`: '
-                'the workspace is selected before deferred capabilities load.'
-            )
+        reject_defer_loading('ModalSandbox', defer_loading)
         # Checked here rather than when the backend first creates a sandbox, so a bad value fails
         # where it is written instead of at the first workspace operation of some later run.
         if type(sandbox_timeout) is not int or not MIN_SANDBOX_TIMEOUT <= sandbox_timeout <= MAX_SANDBOX_TIMEOUT:
@@ -259,6 +260,45 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         self._warned_no_tools = False
         self._sandbox_id_ref = _sandbox_id_ref(removed_arguments.get('sandbox_id'))
 
+    @classmethod
+    def from_spec(
+        cls,
+        *,
+        id: str | None = None,
+        description: str | None = None,
+        image: str | None = None,
+        app_name: str = DEFAULT_APP_NAME,
+        create_app_if_missing: bool = True,
+        sandbox_timeout: int = DEFAULT_SANDBOX_TIMEOUT,
+        idle_timeout: int | None = None,
+        working_dir: str | None = None,
+        env: Mapping[str, str] | None = None,
+        warn_if_no_tools: bool = True,
+        **kwargs: Any,
+    ) -> ModalSandbox[Any]:
+        """Build from an agent spec, naming the fields a spec can express.
+
+        Core reads this signature to generate the spec's JSON schema. Inherited, core falls back
+        to the variadic base `from_spec`, because `__init__`'s `modal.Image` hint is a
+        `TYPE_CHECKING` import, and publishes only the bare `'ModalSandbox'`. A spec names an
+        image by its registry tag. `**kwargs` reaches
+        `__init__` unchanged, so deprecated arguments keep their guidance and `defer_loading`
+        its refusal.
+        """
+        return cls(
+            id=id,
+            description=description,
+            image=image,
+            app_name=app_name,
+            create_app_if_missing=create_app_if_missing,
+            sandbox_timeout=sandbox_timeout,
+            idle_timeout=idle_timeout,
+            working_dir=working_dir,
+            env=env,
+            warn_if_no_tools=warn_if_no_tools,
+            **kwargs,
+        )
+
     def backend(self, ref: WorkspaceRef) -> ModalSandboxBackend:
         """Construct a backend for a stored Modal ref without opening the sandbox."""
         return ModalSandboxBackend(ref=ref, working_dir=self.working_dir, env=self.env)
@@ -268,8 +308,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
 
         A sandbox that no longer exists is already gone, so destroying it returns quietly.
         """
-        if ref.provider != 'modal':
-            raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'modal'")
+        check_provider(ref, 'modal')
         await terminate_sandbox(ref.id)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:

@@ -22,23 +22,10 @@ not text, and replacing one with a scrubbed string would change its type, so
 reach for [`for_text`][pydantic_ai_harness.guardrails.detectors.for_text] to
 say what should happen there.
 
-What these cannot do is worth stating. A regex finds a credential because
-credentials have a shape; it does not find a prompt injection, which is
-ordinary language, and it does not understand context.
-
-That last point has a concrete cost for `email`, which matches anything shaped
-like an address because that is all an address is:
-
-```python
-redact_personal_data('git clone git@github.com:pydantic/pydantic-ai.git')
-# -> replaces `git@github.com`, leaving a command that no longer runs
-```
-
-An input guard rewrites the prompt in place, so the model receives the broken
-version. On an agent that handles code or paths, reach for
-`personal_data(only=['us_ssn', 'credit_card', 'iban'])`, or apply the detector
-to the output rather than the prompt. Treat all of these as one cheap layer,
-not as the answer.
+A regex finds a credential because credentials have a shape; it does not find a
+prompt injection, which is ordinary language, and it does not understand context,
+so `email` also matches `git@github.com` in a clone URL. See the guardrails docs
+for narrowing the defaults.
 """
 
 from __future__ import annotations
@@ -288,9 +275,9 @@ def secret_data(
 ) -> TextDetector:
     """Build a detector that rewrites credentials out of text.
 
-    Redacting rather than refusing is the useful default here: an agent that
-    quotes a key back has still done the work, and blocking the answer loses it
-    while leaving the key in the message history either way.
+    It redacts rather than refuses: an agent that quotes a key back has still
+    done the work, and blocking the answer would lose it while leaving the key
+    in the message history.
 
     Args:
         only: Restrict to these names from `DEFAULT_SECRET_PATTERNS`.

@@ -12,6 +12,8 @@ dropping context already inside it.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/tool_output_limits/)
 
+![ToolOutputLimits runs in the after_tool_execute hook, on a tool result before it enters the history. With the default band, a 48,000-character result is spilled: the full payload is written to the workspace store under .pydantic-ai-harness/tool-output/, and the model gets a short marker with the handle and a head and tail preview. The model reads slices back with the read_tool_result tool.](https://pydantic.dev/docs/ai/img/harness/tool-output-limits.svg)
+
 ## The three modes
 
 | Mode | Cost | Lossy? | What the model gets |
@@ -275,10 +277,8 @@ When spills are files in the run's workspace (the default `WorkspaceStore()`, wi
 `workspace=` of its own) and `FileSystem` is on the agent, `read_tool_result` steps aside for
 `FileSystem`'s `read_file`. The tool is marked with
 [`unless_tool_kind`](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#unless-tool-kind)
-set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind. Keep
-`FileSystem` under its own names for now: a renamed `FileSystem` tool can't be called yet
-([#10927](https://github.com/pydantic/pydantic-ai/issues/10927)). The spill marker then names that tool as it is called in the
-run, with the spill's path:
+set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind. The
+spill marker then names that tool as it is called in the run, with the spill's path:
 
 ```text
 [Tool output too large (20,719 chars); stored to handle '/repo/.pydantic-ai-harness/tool-output/<run>/<call>.0'. Read it with read_file(path='/repo/.pydantic-ai-harness/tool-output/<run>/<call>.0').]
