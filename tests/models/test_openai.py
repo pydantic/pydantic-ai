@@ -7824,6 +7824,31 @@ async def test_openai_chat_refusal_falls_back_with_model_fallback(allow_model_re
     assert [(a.model_name, a.outcome) for a in result.response.failed_attempts or []] == [('gpt-4o', 'rejected')]
 
 
+@pytest.mark.parametrize('stream', [False, True])
+async def test_openai_chat_cut_off_response_with_model_fallback(
+    allow_model_requests: None, openai_api_key: str, stream: bool
+):
+    """`ModelFallback` falls back by default when a response reaches `max_tokens`; a streamed one is accepted as is."""
+    m = OpenAIChatModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    backup = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('from backup')]), model_name='backup')
+    agent = Agent(m, capabilities=[ModelFallback(backup)], model_settings=ModelSettings(max_tokens=5))
+    prompt = 'Describe the history of Paris in three paragraphs.'
+
+    if stream:
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            async with agent.run_stream(prompt) as result:
+                output = await result.get_output()
+        assert output == snapshot('Paris, the capital of')
+        assert result.response.finish_reason == 'length'
+    else:
+        result = await agent.run(prompt)
+        assert result.output == 'from backup'
+        assert [(a.model_name, a.outcome) for a in result.response.failed_attempts or []] == [
+            ('gpt-4.1-mini-2025-04-14', 'rejected')
+        ]
+
+
 async def test_openai_chat_streamed_refusal_with_model_fallback(allow_model_requests: None):
     """A streamed refusal is only known once it has been streamed, so it's accepted, without a warning."""
     stream = [

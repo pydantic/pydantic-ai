@@ -63,6 +63,7 @@ __all__ = (
     'ModelNotFoundError',
     'ModelRequestTimeout',
     'ContentFilterError',
+    'OutputTokenLimitExceeded',
     'IncompleteToolCall',
     'MessageHistoryMutatedWarning',
     'UnsupportedSettingWarning',
@@ -1310,7 +1311,21 @@ class ToolFailedError(Exception):
         return self.__class__, (self.tool_failed,)
 
 
-class IncompleteToolCall(UnexpectedModelBehavior):
+class OutputTokenLimitExceeded(UnexpectedModelBehavior):
+    """Raised when a response reached the output token limit before the model finished its output.
+
+    The limit is the [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens] model setting, or the model's
+    own limit, and the response's [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] is `'length'`.
+    The agent raises it when the response has no output it can use, as re-prompting the model with the same limit
+    would run into it again. Text output that was cut off is the run's output instead.
+
+    Naming it in [`ModelFallback`][pydantic_ai.capabilities.ModelFallback]'s or
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]'s `fallback_on`, as `ModelFallback` does by default,
+    also rejects any response with `finish_reason='length'`, so the next model is tried.
+    """
+
+
+class IncompleteToolCall(OutputTokenLimitExceeded):
     """Error raised when a model stops due to token limit while emitting a tool call."""
 
 
