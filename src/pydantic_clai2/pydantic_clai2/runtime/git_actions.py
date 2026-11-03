@@ -356,7 +356,8 @@ async def commit(workspace: Path, *, message: str, files: Sequence[str] | None =
     directory, as `git_status` lists them. Raises `ValueError` for an empty message, for nothing to
     commit, for a file that still has a merge conflict, for only some files while a merge is in
     progress, which Git finishes only with every change, and without a Git identity; and `GitError` when
-    Git refuses, as when a hook fails, leaving the index as it was.
+    Git refuses, as when a hook fails, leaving the index as it was unless it has unmerged entries, as
+    while a rebase stops on a conflict.
     """
     message = message.strip()
     if not message:
