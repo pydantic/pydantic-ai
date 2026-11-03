@@ -39,10 +39,10 @@ from pydantic_ai_harness.media._store import (
     _EMPTY_CONTEXT,  # pyright: ignore[reportPrivateUsage]
     MediaContext,
     PublicUrlResolver,
-    _coerce_metadata_mapping,  # pyright: ignore[reportPrivateUsage]
-    _resolve_public_url,  # pyright: ignore[reportPrivateUsage]
+    coerce_metadata_mapping,
     media_uri_for,
     parse_media_uri,
+    resolve_public_url,
 )
 
 _DEFAULT_CHUNK_SIZE_BYTES = 8 * 1024 * 1024
@@ -213,7 +213,7 @@ class MongoMediaStore:
         return await self._db[self._files_name].find_one({'_id': digest}, {'_id': 1}) is not None
 
     async def public_url(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> str | None:
-        return await _resolve_public_url(self._public_url_resolver, uri, context)
+        return await resolve_public_url(self._public_url_resolver, uri, context)
 
     async def get_metadata(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> Mapping[str, str]:
         digest = parse_media_uri(uri)
@@ -223,4 +223,4 @@ class MongoMediaStore:
         raw = doc.get('metadata', '{}')
         if not isinstance(raw, str):
             raise ValueError(f'media manifest for {uri} has non-string metadata: {raw!r}')
-        return _coerce_metadata_mapping(json.loads(raw))
+        return coerce_metadata_mapping(json.loads(raw))

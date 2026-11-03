@@ -28,6 +28,8 @@ which `StepPersistence` works alongside.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/step_persistence/)
 
+![An agent run with StepPersistence writes to a step store as it goes: before_run writes a RunRecord, after_model_request appends a model_request_completed event, after_tool_execute marks a tool effect completed, and after_node_run saves a complete snapshot of the message history. When the worker crashes during a second tool call, that tool effect stays at started, so it reads as unknown after the crash. Later, in any process, your code finds the run with list_runs, loads the latest complete snapshot with continue_run, and passes its messages to a new Agent.run.](https://pydantic.dev/docs/ai/img/harness/step-persistence.svg)
+
 ## What it gives you
 
 1. **Append-only step events** -- every interesting boundary (run start/end,
@@ -97,6 +99,28 @@ the `run_id` derivation above, so the store key stays `ctx.run_id` and runs can
 still be looked up by the id passed to or returned from `Agent.run`.
 
 ## Durable execution
+
+`StepPersistence` and a durable execution engine recover from different
+failures:
+
+- **`StepPersistence`** saves message-history snapshots, a step-event trail,
+  and a tool-effect ledger to a store you choose, with no engine to run. After
+  a crash, your code decides what happens next: load the latest complete
+  snapshot's messages with `continue_run` or `fork_run` and pass them to a new
+  `Agent.run(message_history=...)`, in the same process or another one. A step
+  that was in flight is not retried: its tool calls show up as `started`
+  effects in the ledger, and you decide whether redoing them is safe.
+- **A durable engine** replays the run itself after a restart and retries the
+  call that was in flight, as
+  [Durable Execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/)
+  describes.
+
+Use `StepPersistence` alone when a run can be resumed or forked from its last
+settled step, for example by an orchestrator that continues a delegate's
+investigation. Use a durable engine when a run must finish without your code
+restarting it, including a step interrupted partway through. Use both to have
+the engine keep the run alive while the store keeps a history you can inspect,
+continue, or fork after the run ends.
 
 `StepPersistence` has the stable capability id `step_persistence`, so it can
 be attached alongside a Pydantic AI durability capability without passing
@@ -372,7 +396,8 @@ configured retention can delete older snapshots.
   Pass `connection=` instead of `database=` to share a `sqlite3.Connection`
   with the rest of your application; the connection must be opened with
   `check_same_thread=False` because hook calls are dispatched onto a
-  worker thread.
+  worker thread; the store leaves its busy timeout and journal mode as the
+  caller set them.
 - `MongoStepStore(client= or db_url=, database=...)` -- MongoDB collections
   `runs`, `events`, `snapshots`, `snapshot_messages`, `snapshot_idempotency_keys`,
   `tool_effects`, and `counters` (atomic `$inc` for monotonic `seq`). Run registration uses an
@@ -858,13 +883,24 @@ An application may set `ConversationSummary.checkout` to a `GitCheckout` (reposi
 name, checkout root, branch) for the workspace, so a browser can still group the
 conversation by repository after that folder is removed; the store saves it as given.
 
+`ConversationSummary.created_at` records when the conversation was first saved;
+later saves keep it, so a browser can list conversations in a stable order:
+`listing(order_by='created_at')` pages by it, so using an old conversation again
+does not move it onto the first page. A conversation saved before the field
+existed reads `None` until its next save, which sets it to the conversation's
+previous `updated_at`.
+
 Metadata naming uses a separate version. `name(source=..., title=..., ...)` cannot
 overwrite a newer content revision, newer name, or a manual title. Naming does not
 change the activity timestamp. `delete(source=...)` removes the conversation and
 associated run records from the same SQLite database atomically, retaining shared
 media. It is not secure erasure. A local live PID marks an unfinished conversation
 as busy; this is not a distributed lease and the database must not be shared
-between hosts. PID reuse is conservatively treated as busy.
+between hosts. On Linux, a process that started after the conversation was last
+saved has reused the recorded PID, so the conversation is not busy; elsewhere PID
+reuse is conservatively treated as busy. Linux times a process's start from the
+current wall clock, so if the clock jumps forward by more than the owner's age at
+its last save, a running conversation reads as not busy.
 
 `set_archived(conversation_id=..., archived=...)` archives or unarchives a
 conversation through `ConversationSummary.archived_at`, a metadata-only change that
@@ -872,6 +908,11 @@ keeps its messages, content revision, and activity timestamp. Saving new content
 unarchives it, since the conversation is in use again. Archiving deletes nothing.
 `listing(archived=False)` leaves archived conversations out, `archived=True` lists
 only those, and the default `None` lists both, as before archiving existed.
+
+An application that copies a conversation may set `ConversationSummary.forked_from`
+to the `id` of the conversation it copied; later saves keep it. It names the source
+conversation, not a message in it, and the application decides which copies record it.
+`listing(forked_from=...)` lists only the conversations recording that ID.
 
 The database is created owner-only where supported. Contents are not encrypted.
 There is no automatic conversation TTL or media garbage collection.

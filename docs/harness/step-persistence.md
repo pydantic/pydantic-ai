@@ -13,6 +13,8 @@ A snapshot holds the run's message history, not everything around it: capability
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![An agent run with StepPersistence writes to a step store as it goes: before_run writes a RunRecord, after_model_request appends a model_request_completed event, after_tool_execute marks a tool effect completed, and after_node_run saves a complete snapshot of the message history. When the worker crashes during a second tool call, that tool effect stays at started, so it reads as unknown after the crash. Later, in any process, your code finds the run with list_runs, loads the latest complete snapshot with continue_run, and passes its messages to a new Agent.run.](../img/harness/step-persistence.svg)
+
 ## What it gives you
 
 1. **Append-only step events.** Every interesting boundary (run start/end, model request, tool call, failure) appends a `StepEvent`. A run killed mid-tool-call still leaves a usable event trail.
@@ -54,6 +56,13 @@ That is the whole setup. `run_id` is always per-`Agent.run` call, matching pydan
 The run record, events, and snapshots carry `agent_name`. When it is unset, they record the running agent's `name` instead (which Pydantic AI infers from the variable name when `Agent(name=...)` is not passed). That fallback does not feed the `run_id` derivation above, so the store key stays `ctx.run_id` and runs can still be looked up by the id passed to or returned from `Agent.run`.
 
 ## Durable execution
+
+`StepPersistence` and a durable execution engine recover from different failures:
+
+- **`StepPersistence`** saves message-history snapshots, a step-event trail, and a tool-effect ledger to a store you choose, with no engine to run. After a crash, your code decides what happens next: load the latest complete snapshot's messages with `continue_run` or `fork_run` and pass them to a new `Agent.run(message_history=...)`, in the same process or another one. A step that was in flight is not retried: its tool calls show up as `started` effects in the ledger, and you decide whether redoing them is safe.
+- **A durable engine** replays the run itself after a restart and retries the call that was in flight, as [Durable Execution](../durable_execution/overview.md) describes.
+
+Use `StepPersistence` alone when a run can be resumed or forked from its last settled step, for example by an orchestrator that continues a delegate's investigation. Use a durable engine when a run must finish without your code restarting it, including a step interrupted partway through. Use both to have the engine keep the run alive while the store keeps a history you can inspect, continue, or fork after the run ends.
 
 `StepPersistence` has the stable capability id `step_persistence`, so it can be attached alongside a Pydantic AI durability capability without passing `id=`. Pass an explicit id only when the same agent has more than one `StepPersistence` instance.
 
@@ -311,7 +320,7 @@ The helper reads the active `run_id` from the `StepPersistence` `ContextVar` and
     - `tool_effects.jsonl` -- append-only `ToolEffectRecord`s, scoped to this run
     - `snapshot-keys.jsonl` -- replay-suppression keys retained independently of snapshot pruning
     - `snapshots/{seq}.json` -- `ContinuableSnapshot`s, named by a per-run monotonic counter (not `step_index`, which would collide when the same `run_id` is reused across `Agent.run` calls, since `ctx.run_step` resets to 0 each call).
-- `SqliteStepStore(database='runs.db')` -- single SQLite file with tables `runs`, `events`, `snapshots`, `snapshot_idempotency_keys`, `tool_effects`, and a sibling `media` table for externalized blobs (see [Persisting media](#persisting-media) below), plus `snapshot_messages` and `snapshot_message_refs` (see [Storing each message once](#storing-each-message-once)). WAL mode is enabled, and a write waits up to 30 seconds for another writer, such as another process sharing the file, before raising `database is locked`; `tool_effects` upserts per `(run_id, tool_call_id)` so the latest state wins; snapshots use `AUTOINCREMENT seq` to mirror `FileStepStore._next_snapshot_seq`. Databases created before the snapshot `state` column existed gain it automatically on open (existing rows read as `complete`). Pass `connection=` instead of `database=` to share a `sqlite3.Connection` with the rest of your application; the connection must be opened with `check_same_thread=False` because hook calls are dispatched onto a worker thread.
+- `SqliteStepStore(database='runs.db')` -- single SQLite file with tables `runs`, `events`, `snapshots`, `snapshot_idempotency_keys`, `tool_effects`, and a sibling `media` table for externalized blobs (see [Persisting media](#persisting-media) below), plus `snapshot_messages` and `snapshot_message_refs` (see [Storing each message once](#storing-each-message-once)). WAL mode is enabled, and a write waits up to 30 seconds for another writer, such as another process sharing the file, before raising `database is locked`; `tool_effects` upserts per `(run_id, tool_call_id)` so the latest state wins; snapshots use `AUTOINCREMENT seq` to mirror `FileStepStore._next_snapshot_seq`. Databases created before the snapshot `state` column existed gain it automatically on open (existing rows read as `complete`). Pass `connection=` instead of `database=` to share a `sqlite3.Connection` with the rest of your application; the connection must be opened with `check_same_thread=False` because hook calls are dispatched onto a worker thread; the store leaves its busy timeout and journal mode as the caller set them.
 - `MongoStepStore(client= or db_url=, database=...)` -- MongoDB collections `runs`, `events`, `snapshots`, `snapshot_messages`, `snapshot_idempotency_keys`, `tool_effects`, and `counters` (atomic `$inc` allocates the monotonic `seq`). Run registration uses an atomic insert by `runs._id = run_id`; duplicate ids raise `ValueError`. Needs the `mongodb` extra (which installs `pymongo>=4.17.0`); pass a shared `AsyncMongoClient` as `client=`, or a connection string as `db_url=` (the store then owns the client -- call `await store.aclose()` to release it). Individual parts at or above `media_threshold_bytes` externalize by default to a `MongoMediaStore` on the same client. That is a per-value offload, not an aggregate cap: a message of many below-threshold parts can still exceed MongoDB's 16 MiB document limit and fail on insert, so lower the threshold if that is a risk for your workload.
 - `PostgresStepStore(pool, table='step_persistence')` -- PostgreSQL tables `{table}_runs`, `{table}_events`, `{table}_snapshots`, `{table}_snapshot_keys`, `{table}_messages`, and `{table}_tool_effects`, plus `{table}_media` for externalized blobs (see [Persisting media](#persisting-media) below). `table` is a prefix, not a table name. `pool` is a caller-owned asyncpg-compatible pool: the harness imports no driver and defines no extra for it, and the store does not close the pool. Run registration inserts by the `run_id` primary key of `{table}_runs`; duplicate ids raise `ValueError`. Events and snapshots are ordered by a `BIGINT GENERATED ALWAYS AS IDENTITY` `seq`, which keeps counting when `ctx.run_step` resets to 0; `{table}_snapshot_keys` holds the replay-suppression keys independently of snapshot pruning; `{table}_tool_effects` upserts per `(run_id, tool_call_id)` so the latest state wins. Timestamps and JSON are stored as `TEXT`.
 
@@ -562,13 +571,24 @@ An application may set `ConversationSummary.checkout` to a `GitCheckout` (reposi
 name, checkout root, branch) for the workspace, so a browser can still group the
 conversation by repository after that folder is removed; the store saves it as given.
 
+`ConversationSummary.created_at` records when the conversation was first saved;
+later saves keep it, so a browser can list conversations in a stable order:
+`listing(order_by='created_at')` pages by it, so using an old conversation again
+does not move it onto the first page. A conversation saved before the field
+existed reads `None` until its next save, which sets it to the conversation's
+previous `updated_at`.
+
 Metadata naming uses a separate version. `name(source=..., title=..., ...)` cannot
 overwrite a newer content revision, newer name, or a manual title. Naming does not
 change the activity timestamp. `delete(source=...)` removes the conversation and
 associated run records from the same SQLite database atomically, retaining shared
 media. It is not secure erasure. A local live PID marks an unfinished conversation
 as busy; this is not a distributed lease and the database must not be shared
-between hosts. PID reuse is conservatively treated as busy.
+between hosts. On Linux, a process that started after the conversation was last
+saved has reused the recorded PID, so the conversation is not busy; elsewhere PID
+reuse is conservatively treated as busy. Linux times a process's start from the
+current wall clock, so if the clock jumps forward by more than the owner's age at
+its last save, a running conversation reads as not busy.
 
 `set_archived(conversation_id=..., archived=...)` archives or unarchives a
 conversation through `ConversationSummary.archived_at`, a metadata-only change that
@@ -576,6 +596,11 @@ keeps its messages, content revision, and activity timestamp. Saving new content
 unarchives it, since the conversation is in use again. Archiving deletes nothing.
 `listing(archived=False)` leaves archived conversations out, `archived=True` lists
 only those, and the default `None` lists both, as before archiving existed.
+
+An application that copies a conversation may set `ConversationSummary.forked_from`
+to the `id` of the conversation it copied; later saves keep it. It names the source
+conversation, not a message in it, and the application decides which copies record it.
+`listing(forked_from=...)` lists only the conversations recording that ID.
 
 The database is created owner-only where supported. Contents are not encrypted.
 There is no automatic conversation TTL or media garbage collection.

@@ -62,6 +62,7 @@ Specifically, for a typical model add, grep for:
 - Every prefix/membership key in the profile module you're editing (e.g. OpenAI's `_REASONING_SUPPORT_BY_PREFIX` keys, Anthropic's inline `model_name.startswith((...))` tuples, xAI's `_GROK_43_REASONING_MODELS`)
 - `KnownModelName` and its provider-block neighbours
 - Snapshot test files: `tests/models/test_model_names.py`, `tests/test_capability_spec.py`
+- Public API compatibility: the release comparison reports a model-name `Literal` change as an attribute-value change. The gate passes added and removed names on an alias listed under `model_name_literals` in `.github/api-compatibility-allowlist.json`. Do not add a waiver for that change: the gate fails on an unused waiver. If the gate fails on a model-name alias that is not listed, add its `path` and `symbol` to `model_name_literals`. Any other change to the alias, such as dropping `str |`, needs an exact waiver.
 
 Classify each hit:
 - **must update** — model-name lists, dispatch tuples
@@ -70,53 +71,33 @@ Classify each hit:
 
 If `rg` output looks mangled (unicode/regex artifacts), drop to `grep -n` — don't push past garbled output.
 
-## Step 3b — Pair the genai-prices entry
+## Step 3b — Verify pricing and context data
+
+Pricing additions belong to the automated workflows in `pydantic/genai-prices`.
+The [Update prices workflow](https://github.com/pydantic/genai-prices/blob/main/.github/workflows/update-prices.yml)
+imports provider data hourly and aggregator data weekly.
+[Genie Pricer](https://github.com/pydantic/genai-prices/blob/main/.github/workflows/GENIE_PRICER.md)
+handles targeted model additions through the
+[Model Price Check workflow](https://github.com/pydantic/genai-prices/blob/main/.github/workflows/agentic-model-price-check.md).
+Do not open or implement a manual genai-prices counterpart PR during a model add.
+Do not trigger a pricing request unless the user authorizes that request.
+
+Verify the exact API IDs and hosting providers independently of pricing data.
+Do not infer availability from an older sibling or a pricing match.
+Do not block model-name support on pricing-feed lag.
 
 Cost and `context_window` data come from `pydantic/genai-prices` through `_genai_prices.py`.
 Bundled data requires a `genai-prices` release.
-Update the Pydantic AI lock to verify the bundled entry locally.
+Check both the installed package and the live merged feed for the exact model.
+Update the Pydantic AI lock when adopting a package release with the entry.
 The live merged feed can supply entries through `pydantic_ai.prices.update_in_background()`.
 Check the updater for an entry before claiming a package release blocks support.
 `Model.profile` only consults genai-prices when nothing else set `context_window`.
 Without a price entry in either source, `ModelResponse.cost()` raises `LookupError` and a
 `cost_limit` cannot be enforced — the run warns `CostNotFoundWarning` at the end instead.
 Without a `context_window` value from any source, `RunContext.context_window_used` is `None`.
-If no genai-prices entry exists, open the genai-prices PR alongside the model add and link the two.
-
-Before you write the entry, check that no one has added it already. Someone else may have added
-it on release day. Grep genai-prices `main` for each provider file you plan to edit, then the
-provider-file changes in its open PRs:
-
-```bash
-for f in <provider files, e.g. openai openrouter github_copilot>; do gh api "repos/pydantic/genai-prices/contents/prices/providers/$f.yml" -H 'Accept: application/vnd.github.raw' | grep -n '<id>' | sed "s/^/$f.yml:/"; done
-for n in $(gh pr list --repo pydantic/genai-prices --state open --limit 200 --json number --jq '.[].number'); do gh api "repos/pydantic/genai-prices/pulls/$n/files" --paginate --jq '.[] | select(.filename | startswith("prices/providers/")) | .patch' | grep -q '<id>' && echo "#$n"; done
-```
-
-A hit means you link that entry or PR instead of opening your own. Do not rely on `gh search prs`:
-its index lags newly opened PRs, and on release day it did not yet return genai-prices #732.
-
-Check the current catalogs of other providers that host the new model before scoping that PR.
-For example, OpenRouter may publish `openai/<id>` and a `YYYYMMDD` canonical slug on release day
-even when OpenAI's own model list exposes only the base id. Add a separate genai-prices entry
-for each confirmed host with its own published rates; do not infer Bedrock or Azure availability
-from an older sibling model.
-
-Compare the new price entry's `match` with the adjacent model families in the same provider file,
-and accept the same id forms they do, even before the provider publishes a snapshot. That way a
-later snapshot gets the same price and context data. The forms differ per provider file:
-
-| genai-prices file | Forms the siblings accept |
-|---|---|
-| `openai.yml` | base id + `-YYYY-MM-DD` |
-| `anthropic.yml` | base id + `-YYYYMMDD` (Claude Opus entries also take `claude-opus-X.Y` / `claude-X-Y-opus` aliases) |
-| `google.yml` (Vertex Claude) | base id + `@YYYYMMDD` |
-| `aws.yml` (Bedrock) | `global.` and `us.`/`eu.`/`jp.`/`au.` profiles, bare `anthropic.` id, and `-v1` / `-v1:0` suffixes |
-| `openrouter.yml` | slug + `:beta` |
-
-Dump the siblings' clauses before writing yours rather than copying one PR's shape (see #8635 and
-genai-prices #709). Test the base and suffixed forms, including the canonical model id. This match
-rule does not add a speculative id to Pydantic AI's model-name literals. Its profile prefix should
-resolve the same capabilities for either form.
+Compare matched prices against the provider's official rates; a broad sibling match can silently return stale prices.
+Report missing or incorrect data and link an existing automation proposal when available.
 
 ## Step 4 — SDK pin check
 
@@ -142,7 +123,7 @@ If the new model is just another sibling in an existing family (e.g. `gpt-5.5` a
 
 If the model is a new family or has unclear capabilities, write a small comparison script (`local-notes/probe_<model>.py`) that hits the new model AND its closest neighbour with:
 - `temperature` / `top_p` (does the API reject sampling params?)
-- `reasoning.effort` values (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) — note which the API accepts. OpenAI's 400 lists the accepted values
+- `reasoning.effort` values (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) — note which the API accepts. OpenAI's 400 lists the accepted values. Probe `max` on both the Responses and Chat Completions APIs: they accept different sets, recorded in `openai_responses_supports_max_reasoning_effort` (set in `OpenAIProvider.model_profile`) and `openai_chat_supports_max_reasoning_effort` (set in each OpenAI-compatible provider's `model_profile`)
 - New parameters mentioned in the release notes
 - Streaming / tool calls if the family is new
 
@@ -224,14 +205,14 @@ check. Keep the model-specific evidence concise:
 - **A dotted point release matches none of its family's prefixes.** `gpt-6.1-sol` does not start with `'gpt-6-sol'`. Before you add it, it resolves to `_NO_REASONING` and misses every `startswith` gate in `openai_model_profile()`. Add it to `_REASONING_SUPPORT_BY_PREFIX` and to the generation's gate tuple (`_GPT_6_MODEL_PREFIXES`).
 - **Probe a point release against every sibling, not only its namesake.** GPT-6.1 Sol rejects `effort='none'` like GPT-6 Astra; GPT-6 Sol accepts it. The accepted-effort list decides `can_be_disabled`. Decide `supports_image_output` by forcing the tool (`tool_choice={'type': 'image_generation'}`), not from the model page's tool list.
 - **Chat Completions rejects function tools while reasoning is on** for the GPT-6 family: `Function tools with reasoning_effort are not supported`. A model that rejects `effort='none'` therefore has no Chat Completions tool calling. Document the limit in `docs/models/openai.md`.
-- **A gateway 404 `No cost data available for model` means genai-prices has no entry yet.** It is not a gateway rejection. Keep the `gateway/openai:` literal and leave `UNSUPPORTED_GATEWAY_MODEL_NAMES` alone. The id waits on the Step 3b genai-prices entry.
+- **A gateway 404 `No cost data available for model` means genai-prices has no entry yet.** It is not a gateway rejection. Keep the `gateway/openai:` literal and leave `UNSUPPORTED_GATEWAY_MODEL_NAMES` alone. Gateway routing needs the pricing entry; model-name support does not. Follow Step 3b to report the gap.
 - **clai2 keeps a curated Codex menu**: `CODEX_MODELS` in `src/pydantic_clai2/pydantic_clai2/model_catalog.py`. Add the id when Codex offers it. Check `openai/codex`'s `codex_tui__chatwidget__tests__model_selection_popup.snap`, then run `Agent('openai-codex:<id>')` with a local Codex login. Update the Codex model lists in `src/pydantic_clai2/README.md` (two of them), `src/pydantic_clai2/PLUGINS.md` and `docs/harness/clai2.md`: `rg 'openai-codex:gpt-|gpt-5.6-luna' src/pydantic_clai2 docs/harness`.
 
 ### Anthropic
 
 - **TWO literal lists, not one.** Add the id to BOTH:
   1. `pydantic_ai_slim/pydantic_ai/models/_known_model_names.py` — the `anthropic:` AND `gateway/anthropic:` blocks (the `KnownModelName` alias moved here from `models/__init__.py` in #5803; older add-model PR diffs that edit `__init__.py` are stale on this point).
-  2. `AnthropicModelName` in `models/anthropic.py` — see the SDK-lag bridge below.
+  2. `AnthropicModelName` in `models/anthropic/__init__.py` — see the SDK-lag bridge below.
 - **Anthropic names ARE enumeration-tested**, unlike what you might assume from the hand-maintained look of the list. `tests/models/test_model_names.py::test_known_model_names` asserts `known_model_names()` (i.e. `KnownModelName`) equals the set generated from `_PROVIDER_TO_MODEL_NAMES['anthropic']`, which is `AnthropicModelName` = `ModelParam` (from the installed `anthropic` SDK) `| Literal[...bridge...]`. A new id missing from BOTH the SDK's `ModelParam` and the local bridge fails this test with `Extra names: {...}`.
 - **SDK-lag bridge (the Step 4 mechanism for Anthropic).** When the installed SDK's `anthropic.types.model_param.ModelParam` doesn't yet list the new id (check: `get_args` it and grep), bridge it with a local `Literal`:
   ```python
@@ -242,10 +223,10 @@ check. Keep the model-specific evidence concise:
 - **A point release inherits every flag of its base id silently.** The tuples are `startswith` prefixes, so `'claude-opus-5'` already matches `claude-opus-5-5` (as `'claude-fable-5'` matches `claude-fable-5-1`): before you touch anything, the new id resolves to the base model's profile. Tests stay green and nothing warns, so the only way to find a divergence is to read the model's migration guide and probe side by side with the base id. Opus 5.5 looked like an Opus 5 mirror and broke default `output_type` runs with a 400 until it opted out of forcing. Where a flag must *not* carry over, carve the id out explicitly (`startswith('claude-opus-5') and not startswith('claude-opus-5-5')`).
 - **Read the migration guide's "breaking changes" before probing.** Anthropic's `platform.claude.com/docs/en/models/<id>/migration-guide` and `whats-new-<id>` pages list every divergence from the previous model and name which other models share it (e.g. "the first three also apply on Claude Fable 5.1"). Those map straight onto profile flags, and they tell you what to probe.
 - **Bump the SDK through the 7-day quarantine rather than bridging, once the SDK lists the id.** `exclude-newer = "7 days"` in the root `pyproject.toml` keeps a same-day `anthropic` release out of the lock; admit exactly that release with a timestamp cutoff under `[tool.uv.exclude-newer-package]` (one second past its last artifact's PyPI `upload_time`, plus a `TODO` to remove it once the global window covers it — past that date it turns into a ceiling), raise the floor under `tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies` in `pydantic_ai_slim/pyproject.toml` (move the exact `uv add --optional`-generated requirement there and remove its conflicting `[project.optional-dependencies]` table), run `uv lock --upgrade-package anthropic`, and refresh the gh-aw runner's own lock with `uv lock --script .github/scripts/pydantic-ai-runner` (no CI step checks it, so a stale one stays green while silently dropping its pinned hashes). File a tracking issue for removing the cutoff and link it from the `TODO`. Precedents: #7989 (1.3.0), #8637 (1.8.0). The local-`Literal` bridge below is the fallback for when no SDK release lists the id yet.
-- **An SDK bump is a real change: pyright `models/anthropic.py` and the Anthropic tests against it.** 1.8.0 renamed the citations request TypedDict to `BetaCitationsConfigParamParam` (`BetaCitationsConfigParam` became a response model, and passing it into a request param broke a dict assertion) and widened `BetaInputTransformation` to a union with `thinking_mismatch_allowed`.
+- **An SDK bump is a real change: pyright `models/anthropic/` and the Anthropic tests against it.** 1.8.0 renamed the citations request TypedDict to `BetaCitationsConfigParamParam` (`BetaCitationsConfigParam` became a response model, and passing it into a request param broke a dict assertion) and widened `BetaInputTransformation` to a union with `thinking_mismatch_allowed`.
 - **Opus 5.5 skips thinking on trivial prompts at its default `medium` effort.** A cassette test that needs a thinking block (e.g. `stale_thinking_block_history`) has to raise `anthropic_effort` for it.
-- **A point release falls into its base model's price entry.** The base entries' prefix and `contains` clauses (`starts_with: claude-opus-5`) also capture `claude-opus-5-5`. So until the new entry exists, `calc_price` returns the *old* model's price with no error: genai-prices 0.1.7 priced Opus 5.5 at Opus 5's $5/$25 instead of $4/$20. Check `calc_price(..., model_ref='<new-id>')` against the published price. The genai-prices PR has to narrow the base entry's clauses so they stop at the base model, keeping every form they matched before and pinning those forms with a positive test (genai-prices #671, #709), as well as add the new entry per Step 3b.
-- **Forced `tool_choice` is a real per-model divergence worth probing.** Most Anthropic models accept `tool_choice` `{'type':'any'}`/`{'type':'tool'}` and only reject forcing alongside *thinking*; Claude Fable 5.1, Claude Mythos 5.1, and Claude Opus 5.5 reject it **unconditionally** (400 `tool_choice forces tool use is not compatible with this model`). That's modeled by `AnthropicModelProfile.anthropic_supports_forced_tool_choice` (default `True`) threaded into `_support_tool_forcing` in `models/anthropic.py`. Probe `tool_choice={'type':'any'}` against the new id AND its neighbour to tell a genuine divergence from a thinking-only constraint.
+- **A point release falls into its base model's price entry.** The base entries' prefix and `contains` clauses (`starts_with: claude-opus-5`) also capture `claude-opus-5-5`. So until the new entry exists, `calc_price` returns the *old* model's price with no error: genai-prices 0.1.7 priced Opus 5.5 at Opus 5's $5/$25 instead of $4/$20. Check `calc_price(..., model_ref='<new-id>')` against the published price. Report an incorrect sibling match to the pricing automation owner per Step 3b. Link genai-prices #671 and #709 for the match-boundary regression pattern.
+- **Forced `tool_choice` is a real per-model divergence worth probing.** Most Anthropic models accept `tool_choice` `{'type':'any'}`/`{'type':'tool'}` and only reject forcing alongside *thinking*; Claude Fable 5.1, Claude Mythos 5.1, and Claude Opus 5.5 reject it **unconditionally** (400 `tool_choice forces tool use is not compatible with this model`). That's modeled by `AnthropicModelProfile.anthropic_supports_forced_tool_choice` (default `True`) threaded into `_support_tool_forcing` in `models/anthropic/__init__.py`. Probe `tool_choice={'type':'any'}` against the new id AND its neighbour to tell a genuine divergence from a thinking-only constraint.
 - **Probe the stale-thinking-block retry shape on every new binding model.** When the request set no thinking, the retry sends a `thinking` object through `extra_body`. Claude Fable 5.1 and Claude Opus 5.5 accept `{'block_binding': ...}` alone; Claude Sonnet 5.5 rejects it with `thinking.type: Field required`, so the retry fills in `'type': 'adaptive'`. Probe `extra_body={'thinking': {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}` against the new id. Also probe any new `thinking.type` the release adds with `block_binding`: Sonnet 5.5's `between_tools` rejects it (`Extra inputs are not permitted`), so the retry skips that type.
 - **Probe a mid-conversation `system` entry against the `<system>`-tagged fallback before touching `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES`.** Ask each rendering to lift a restriction the top-level prompt set; a plain non-conflicting instruction lands on every model and discriminates nothing. Claude Opus 5 obeys the entry 6/6 and the tagged text 0/6. Claude Sonnet 5.5 refuses both 6/6, so Anthropic's published support decides and it stays in: the entry keeps operator authority at no measured cost. Leave an id out only when the tagged fallback does measurably better, as it did on Claude Sonnet 5. `_TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES` is a separate gate: probe a `tool_addition` by reference and check that the model calls the added tool.
 - **List Bedrock inference profiles, not only foundation models.** Claude Sonnet 5.5 launched with `global.anthropic.claude-sonnet-5-5` and no `us.` profile. Run `aws bedrock list-inference-profiles` and add only the profiles it returns.
@@ -289,6 +270,12 @@ Google image-model landmines:
 - Direct image generation has a separate public literal, `KnownImageGenerationModelName` in `pydantic_ai_slim/pydantic_ai/images/__init__.py`. When the task is scoped to `ImageGenerator`, update and test this literal independently; do not automatically widen the change to conversational `KnownModelName`, gateway aliases, profiles, and capability snapshots unless those surfaces are explicitly in scope.
 - `Client().models.list()` returns a lazy pager. Keep the client in a named variable until iteration finishes; constructing it inline can let it be closed before the pager sends its request. The endpoint can still list deprecated preview image IDs, so cross-check the official deprecation page and add only current IDs.
 - Probe image settings on the exact model and API surface. For `gemini-3.1-flash-image`, the minimum `generateContent` value is `ImageConfigDict(image_size='512')`; the superficially similar literal `'0.5K'` is invalid and returns HTTP 400. `gemini-3.1-flash-lite-image` supports only 1K output. Do not transfer value spellings between model families or API examples without a live check.
+
+### MoonshotAI (Kimi)
+
+- `MoonshotAIModelName` in `providers/moonshotai.py` is a local literal, independent of the OpenAI SDK's model enum. Update it and `models/_known_model_names.py` together, then refresh `tests/test_capability_spec.py::test_model_json_schema_with_capabilities`.
+- The `kimi-k3` prefix already covers `kimi-k3.1-pro` and `kimi-k3.1-pro-highspeed` in both family and provider profiles. Probe before adding another prefix or changing profile flags.
+- Verify the API at `https://api.moonshot.ai/v1`. The separate Kimi Code subscription uses different model IDs. Read the [canonical API guide](https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart) and compare live behavior with the nearest sibling; do not transfer subscription semantics.
 
 ### Others
 

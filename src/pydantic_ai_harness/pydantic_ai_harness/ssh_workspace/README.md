@@ -6,21 +6,23 @@ Run your agent's commands and file edits on another machine over SSH, using your
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. SSHWorkspace's get_workspace hook gives the run a remote host as ctx.workspace, so each command and file operation opens an SSH connection with your own ssh client, logs in with a key in BatchMode, and runs on the host as the login user; output comes back to the tool. The WorkspaceRef names the host and directory. A ref from the message history for the same host and directory reattaches; a ref for any other host or directory raises ValueError.](https://pydantic.dev/docs/ai/img/harness/ssh-workspace.svg)
+
 ## Install
 
 uv:
 
 ```bash
-uv add "pydantic-ai-harness[anthropic]"
+uv add "pydantic-ai-harness[coder,anthropic]"
 ```
 
 pip:
 
 ```bash
-pip install "pydantic-ai-harness[anthropic]"
+pip install "pydantic-ai-harness[coder,anthropic]"
 ```
 
-No extra is needed for SSH itself: the capability runs the `ssh` client already on your machine. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra.
+No extra is needed for SSH itself: the capability runs the `ssh` client already on your machine. The `coder` extra is there because the examples use `Coder`; the workspace itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra.
 
 ## Quick start
 
@@ -47,6 +49,8 @@ Logging in needs a key; passwords aren't supported. `ssh` runs with `BatchMode=y
 
 Every operation opens an SSH connection, and file operations run as shell commands on the host, so the host needs a POSIX `sh` and the usual file utilities. Turn on connection sharing in your SSH configuration (`ControlMaster auto` with a `ControlPersist` time) to make them fast.
 
+The script that runs each command reaches the host's `sh` on the connection's input rather than on its command line, and the command itself reads an empty input, as it would locally. So a command, however many quotes it holds, can be as long as the host allows one program argument to be: 128 KiB on Linux. If `ssh` doesn't forward its input (`-n` or `-f` in `ssh_args`, or `StdinNull` in your SSH configuration), the script goes on the host's command line instead, where a long command full of quotes can be too long to start.
+
 A host that can't be reached, a missing working directory, or a connection lost mid-command raises `WorkspaceUnavailableError`. The exit code is the command's own, even when it is 255, which `ssh` also uses for its own errors.
 
 On a timeout or cancellation, a second connection stops the command's processes on the host; a command that detached into a session of its own, like a [Shell](https://pydantic.dev/docs/ai/harness/shell/) background job, keeps running.
@@ -61,7 +65,7 @@ The ref is `WorkspaceRef(provider='ssh', id='dev@build-box:/srv/app')`, availabl
 
 `SSHWorkspace` has the full authority of the remote user. Neither `working_dir` nor a [FileSystem](https://pydantic.dev/docs/ai/harness/filesystem/) root jails shell commands. Do not pass your local environment to the host: choose the variables the command needs with `env=`, which is kept out of the capability's `repr`.
 
-`env=` values travel inside the command that `ssh` sends, so while a command runs they are visible in process listings (`ps`) to other users on both this machine and the host. Don't put secrets in `env=` on a shared machine: keep them in a file only the remote user can read, or in the remote user's login environment.
+`env=` values travel inside the script that `ssh` sends, which this machine passes to a local `sh` as arguments, so while a command runs they are visible in process listings (`ps`) to other users on this machine, and on the host too when `ssh` doesn't forward its input (see above). Don't put secrets in `env=` on a shared machine: keep them in a file only the remote user can read, or in the remote user's login environment.
 
 ## Platforms
 

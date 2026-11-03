@@ -36,17 +36,16 @@ class CapabilityCreation(AbstractCapability[AgentDepsT]):
     """Create Pydantic AI capabilities during one run for activation on the next.
 
     Exposes `author_capability(name, code)`, `list_authored_capabilities`, and
-    `disable_authored_capability`. Authoring writes Python source to `directory`,
-    imports it, and validates it (exactly one `AbstractCapability` subclass that
-    constructs with no arguments and whose static getters run). Authored
-    capabilities hold live code, so they are not spec-serializable and are
-    persisted as source rather than as a spec.
+    `disable_authored_capability`. Authoring validates the Python source (exactly
+    one `AbstractCapability` subclass that constructs with no arguments and whose
+    static getters run) before it replaces `<name>.py` in `directory`; code that
+    fails is kept for inspection and, while a working version exists, does not
+    replace it. Authored capabilities hold live code, so they are persisted as source
+    rather than as a spec.
 
-    Activation boundary: a capability cannot be added to a live, already-executing
-    run -- pydantic-ai resolves the capability set once at the start of each run.
-    The authored capability becomes usable on the next `agent.run(...)`. The
-    integration contract is one line on the orchestrator side: thread the store's
-    active capabilities into the next run.
+    Pydantic AI resolves the capability set once at the start of each run, so an
+    authored capability becomes usable on the next run: pass the store's active
+    capabilities as `capabilities=`.
 
     ```python
     from pathlib import Path
@@ -58,7 +57,7 @@ class CapabilityCreation(AbstractCapability[AgentDepsT]):
     creation = CapabilityCreation(directory=Path('.authored'))
     agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[LocalWorkspace('.'), creation])
 
-    # Loop: each iteration injects whatever the agent has authored so far.
+    # Inject whatever the agent has authored so far.
     result = await agent.run('build a logging capability', capabilities=creation.store.load_active())
     ```
 
@@ -123,17 +122,17 @@ class CapabilityCreation(AbstractCapability[AgentDepsT]):
     @durable_operation('write')
     async def _write(self, name: str, code: str) -> AuthoredCapability | RetryRequest:
         try:
-            return await anyio.to_thread.run_sync(self.store.write, name, code)
+            return await anyio.to_thread.run_sync(self.store.write, name, code, abandon_on_cancel=True)
         except ValueError as exc:
             return RetryRequest(str(exc))
 
     @durable_operation('list_all')
     async def _list_all(self) -> list[AuthoredCapability]:
-        return await anyio.to_thread.run_sync(self.store.list_all)
+        return await anyio.to_thread.run_sync(self.store.list_all, abandon_on_cancel=True)
 
     @durable_operation('disable')
     async def _disable(self, name: str) -> bool:
-        return await anyio.to_thread.run_sync(self.store.disable, name)
+        return await anyio.to_thread.run_sync(self.store.disable, name, abandon_on_cancel=True)
 
     @classmethod
     def get_serialization_name(cls) -> str | None:

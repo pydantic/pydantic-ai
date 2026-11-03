@@ -1,0 +1,214 @@
+--- expected
++++ actual
+@@ -103,0 +104,76 @@
++   "role": "assistant",
++   "content": "Noted the background result."
++  },
++  {
++   "role": "user",
++   "content": "Question 2"
++  }
++ ],
++ "tools": [
++  {
++   "type": "function",
++   "function": {
++    "name": "start_job",
++    "description": "",
++    "parameters": {
++     "additionalProperties": false,
++     "properties": {},
++     "type": "object"
++    }
++   }
++  }
++ ]
++}
++{
++ "messages": [
++  {
++   "role": "user",
++   "content": "Question 1"
++  },
++  {
++   "role": "assistant",
++   "content": null,
++   "tool_calls": [
++    {
++     "id": "job-1",
++     "type": "function",
++     "function": {
++      "name": "start_job",
++      "arguments": "{}"
++     }
++    }
++   ]
++  },
++  {
++   "role": "tool",
++   "tool_call_id": "job-1",
++   "content": "started"
++  },
++  {
++   "role": "assistant",
++   "content": "Noted the background result."
++  },
++  {
++   "role": "user",
++   "content": "Question 2"
++  },
++  {
++   "role": "assistant",
++   "content": null,
++   "tool_calls": [
++    {
++     "id": "job-5",
++     "type": "function",
++     "function": {
++      "name": "start_job",
++      "arguments": "{}"
++     }
++    }
++   ]
++  },
++  {
++   "role": "tool",
++   "tool_call_id": "job-5",
++   "content": "started"
++  },
++  {
+@@ -114,117 +190,17 @@
+-  },
+-  {
+-   "role": "assistant",
+-   "content": "Noted the background result."
+-  },
+-  {
+-   "role": "user",
+-   "content": "Question 2"
+-  }
+- ],
+- "tools": [
+-  {
+-   "type": "function",
+-   "function": {
+-    "name": "start_job",
+-    "description": "",
+-    "parameters": {
+-     "additionalProperties": false,
+-     "properties": {},
+-     "type": "object"
+-    }
+-   }
+-  }
+- ]
+-}
+-{
+- "messages": [
+-  {
+-   "role": "user",
+-   "content": "Question 1"
+-  },
+-  {
+-   "role": "assistant",
+-   "content": null,
+-   "tool_calls": [
+-    {
+-     "id": "job-1",
+-     "type": "function",
+-     "function": {
+-      "name": "start_job",
+-      "arguments": "{}"
+-     }
+-    }
+-   ]
+-  },
+-  {
+-   "role": "tool",
+-   "tool_call_id": "job-1",
+-   "content": "started"
+-  },
+-  {
+-   "role": "user",
+-   "content": "Background result: 42"
+-  },
+-  {
+-   "role": "assistant",
+-   "content": "Synthetic reply"
+-  },
+-  {
+-   "role": "user",
+-   "content": "Synthetic follow-up"
+-  },
+-  {
+-   "role": "assistant",
+-   "content": "Noted the background result."
+-  },
+-  {
+-   "role": "user",
+-   "content": "Question 2"
+-  },
+-  {
+-   "role": "assistant",
+-   "content": null,
+-   "tool_calls": [
+-    {
+-     "id": "job-7",
+-     "type": "function",
+-     "function": {
+-      "name": "start_job",
+-      "arguments": "{}"
+-     }
+-    }
+-   ]
+-  },
+-  {
+-   "role": "tool",
+-   "tool_call_id": "job-7",
+-   "content": "started"
+-  },
+-  {
+-   "role": "user",
+-   "content": "Background result: 42"
+-  },
+-  {
+-   "role": "assistant",
+-   "content": "Synthetic reply"
+-  },
+-  {
+-   "role": "user",
+-   "content": "Synthetic follow-up"
+-  }
+- ],
+- "tools": [
+-  {
+-   "type": "function",
+-   "function": {
+-    "name": "start_job",
+-    "description": "",
+-    "parameters": {
+-     "additionalProperties": false,
+-     "properties": {},
+-     "type": "object"
+-    }
+-   }
+-  }
+- ]
+-}
++  }
++ ],
++ "tools": [
++  {
++   "type": "function",
++   "function": {
++    "name": "start_job",
++    "description": "",
++    "parameters": {
++     "additionalProperties": false,
++     "properties": {},
++     "type": "object"
++    }
++   }
++  }
++ ]
++}

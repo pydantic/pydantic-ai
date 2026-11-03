@@ -21,12 +21,15 @@ from pydantic_ai.exceptions import (
     ContentFilterError,
     IncompleteToolCall,
     ModelAPIError,
+    ModelAuthenticationError,
     ModelConnectionError,
     ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelNotFoundError,
     ModelOverloadedError,
     ModelQuotaExceededError,
     ModelRateLimitError,
+    ModelRequestRejectedError,
     ModelRequestTimeout,
     ModelServerError,
     ModelTimeoutError,
@@ -229,6 +232,21 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
                 'hint': 'Check the provider account setting',
             },
         ),
+        (
+            lambda: ModelHTTPError.for_category(
+                ModelNotFoundError,
+                status_code=404,
+                model_name='gpt-5x',
+                provider_error_code='model_not_found',
+                suggested_model_id='openai:gpt-5',
+            ),
+            {
+                'status_code': 404,
+                'model_name': 'gpt-5x',
+                'provider_error_code': 'model_not_found',
+                'suggested_model_id': 'openai:gpt-5',
+            },
+        ),
         (lambda: IncompleteToolCall('incomplete'), {'message': 'incomplete', 'body': None}),
     ],
     ids=[
@@ -256,6 +274,7 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         'ModelHTTPError-ModelContextWindowExceededError',
         'ModelHTTPError-with-hint',
         'ModelHTTPError-with-model-suggestion-and-hint',
+        'ModelHTTPError-ModelNotFoundError-with-model-suggestion',
         'IncompleteToolCall',
     ],
 )
@@ -618,7 +637,7 @@ def test_model_http_error_headers_provider_anthropic():
     anthropic = pytest.importorskip('anthropic', reason='anthropic extra not installed')
     import httpx2
 
-    from pydantic_ai.models.anthropic import _map_api_errors  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.models.anthropic._errors import map_api_errors
 
     req = httpx2.Request('POST', 'https://api.anthropic.com/v1/messages')
     resp = httpx2.Response(
@@ -629,7 +648,7 @@ def test_model_http_error_headers_provider_anthropic():
     sdk_exc = anthropic.RateLimitError(message='Rate limited', response=resp, body=None)
 
     with pytest.raises(ModelHTTPError) as exc_info:
-        with _map_api_errors('claude-sonnet-4-5'):
+        with map_api_errors('claude-sonnet-4-5'):
             raise sdk_exc
 
     exc = exc_info.value
@@ -833,7 +852,18 @@ _HTTP_CATEGORIES = [
     ModelOverloadedError,
     ModelServerError,
     ModelContextWindowExceededError,
+    ModelRequestRejectedError,
+    ModelAuthenticationError,
+    ModelNotFoundError,
 ]
+
+
+@pytest.mark.parametrize('category', [ModelContextWindowExceededError, ModelAuthenticationError, ModelNotFoundError])
+def test_rejection_subcategories_are_rejected_requests(category: type[ModelRequestRejectedError]):
+    """An overflow, a rejected credential and an unknown model are rejected requests, with or without a status."""
+    assert isinstance(category('gpt-4', 'rejected'), ModelRequestRejectedError)
+    http_error = ModelHTTPError.for_category(category, status_code=400, model_name='gpt-4')
+    assert isinstance(http_error, ModelRequestRejectedError) and isinstance(http_error, category)
 
 
 @pytest.mark.parametrize('category', _HTTP_CATEGORIES, ids=lambda c: c.__name__)

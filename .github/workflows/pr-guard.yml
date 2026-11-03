@@ -1,3 +1,4 @@
+# description: Closes non-maintainer pull requests to the default branch that duplicate an open pull request or do not link an assigned open issue.
 name: PR Guard
 
 on:

@@ -46,6 +46,7 @@ from .profiles import AsyncToolCallMode, RealtimeModelProfile, RealtimeModelProf
 from .settings import (
     AudioRetention,
     KnownRealtimeTranscriptionModelName,
+    RealtimeModelSettingName,
     RealtimeModelSettings,
     ReconnectPolicy,
     TurnDetection,
@@ -74,6 +75,7 @@ __all__ = (
     'RealtimeModel',
     'RealtimeModelProfile',
     'RealtimeModelProfileSpec',
+    'RealtimeModelSettingName',
     'RealtimeModelSettings',
     'RealtimeSession',
     'RealtimeSessionInput',

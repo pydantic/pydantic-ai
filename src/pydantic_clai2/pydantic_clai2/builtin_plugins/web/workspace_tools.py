@@ -1,29 +1,33 @@
-"""The orchestrator's tools: make a workspace, start its CLAI with a prompt, watch it, steer it, and report back.
+"""The orchestrator's tools: make a workspace, start a session in it with a prompt, watch it, steer it, and report back.
 
 They work over the `workspaces` plugin's registry, whose settings are the kinds of workspace the model may
-make, and talk to each workspace's CLAI through its web UI with `web.client`. The model never sees a token.
-Only the orchestrator's own agent gets them (`web.orchestrator`), never the session's.
+make. Each workspace's session is a live session of this CLAI in its checkout, followed through
+`local_client.LocalClient` as a page follows it, so the sidebar lists it under its repository like any
+other. Only the orchestrator's own agent gets these tools (`web.orchestrator`), never a session's.
 """
 
 import asyncio
 import functools
+from collections import defaultdict
 from collections.abc import Awaitable, Callable, Sequence
-from contextlib import AsyncExitStack
 from dataclasses import dataclass
-from typing import ParamSpec
+from typing import TYPE_CHECKING, ParamSpec
 
 import anyio
-import httpx
 from pydantic import BaseModel, TypeAdapter, ValidationError
-from websockets.exceptions import WebSocketException
 
 from pydantic_ai import RunContext
 from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
 from pydantic_ai_harness.ask_user import AskUserAnswer
-from pydantic_clai2.builtin_plugins.web.client import SessionView, WebClient
-from pydantic_clai2.builtin_plugins.web.protocol import Item
-from pydantic_clai2.builtin_plugins.workspaces import Workspace, Workspaces, configured, describe
-from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.builtin_plugins.web.client import SessionView
+from pydantic_clai2.builtin_plugins.web.local_client import LocalClient, live_session
+from pydantic_clai2.builtin_plugins.web.protocol import Item, SessionsChanged
+from pydantic_clai2.builtin_plugins.web.workspaces import required_workspaces, workspace_session
+from pydantic_clai2.builtin_plugins.workspaces import Workspaces, describe
+from pydantic_clai2.builtin_plugins.workspaces.manager import works_in
+
+if TYPE_CHECKING:
+    from pydantic_clai2.builtin_plugins.web.service import WebService
 
 ASK_USER_TOOL = 'ask_user_question'
 CONNECT_TIMEOUT = 15.0
@@ -42,11 +46,11 @@ class SessionAnswer(BaseModel):
 
 @dataclass(kw_only=True)
 class _Link:
-    """A connection to one workspace's CLAI, followed in a task."""
+    """A workspace's session, followed in a task."""
 
     view: SessionView
     task: asyncio.Task[None]
-    stack: AsyncExitStack
+    live_id: str
 
 
 def _cut(text: str, chars: int) -> str:
@@ -70,7 +74,6 @@ def _asked(view: SessionView) -> str:
             + ', '.join(option.label for option in question.options)
             for question in request.questions
         ]
-    lines += [f'Dialog {dialog.id} ({dialog.kind}): {dialog.title}' for dialog in view.dialogs.values()]
     return '\n'.join(lines)
 
 
@@ -102,8 +105,8 @@ def confirmed(messages: Sequence[ModelMessage], workspace_id: str) -> bool:
     return approved
 
 
-_PROBLEMS = (LookupError, ValueError, RuntimeError, OSError, httpx.HTTPError, WebSocketException)
-"""What the workspace and client layers raise for a problem the model can act on, such as an unknown workspace."""
+_PROBLEMS = (LookupError, ValueError, RuntimeError, OSError)
+"""What the workspace and session layers raise for a problem the model can act on, such as an unknown workspace."""
 _BUGS = (KeyError, IndexError, NotImplementedError, RecursionError)
 """Subclasses of those that mean a bug here, which fails the turn instead."""
 P = ParamSpec('P')
@@ -125,54 +128,57 @@ def reported(tool: Callable[P, Awaitable[str]]) -> Callable[P, Awaitable[str]]:
 
 
 class WorkspaceTools:
-    """The tools, and the connections to the workspaces' CLAIs they keep between calls."""
+    """The tools, and the workspaces' sessions they follow between calls."""
 
-    def __init__(self, host: PluginHost[None]) -> None:
-        self.host = host
+    def __init__(self, service: 'WebService') -> None:
+        self.service = service
         self.links: dict[str, _Link] = {}
+        self._locks: defaultdict[str, anyio.Lock] = defaultdict(anyio.Lock)
+        """One per workspace, so tool calls the model makes at once follow its session once, not once each."""
 
     def workspaces(self) -> Workspaces:
         """The registry with the kinds the `workspaces` plugin is configured with; `RuntimeError` while it is off."""
-        workspaces = configured(self.host.plugins)
-        if workspaces is None:
-            raise RuntimeError('The `workspaces` plugin is off. Ask the user to turn it on.')
-        return workspaces
+        return required_workspaces(self.service.host.plugins)
 
-    async def view(self, workspace: Workspace) -> SessionView:
-        """A followed connection to the workspace's running CLAI, made on first use and again after it ends."""
-        link = self.links.get(workspace.id)
-        if link is not None and not link.view.closed:
-            return link.view
-        await self.disconnect(workspace.id)
-        if workspace.status != 'running' or workspace.session is None:
-            raise RuntimeError(f'Workspace {workspace.id} has no CLAI running. Start it with `session_start`.')
-        token = await self.workspaces().token(workspace.id)
-        stack = AsyncExitStack()
-        client = await stack.enter_async_context(WebClient(url=workspace.session.url, token=token))
-        view = SessionView(client)
-        link = _Link(
-            view=view, task=asyncio.create_task(view.follow(), name=f'clai2-orchestrator-{workspace.id}'), stack=stack
-        )
-        self.links[workspace.id] = link
-        with anyio.move_on_after(CONNECT_TIMEOUT):
-            await view.ready()
-        if view.session is None:
-            await self.disconnect(workspace.id)
-            raise RuntimeError(f'Could not connect to the CLAI of workspace {workspace.id}.')
-        return view
+    async def view(self, workspace_id: str, *, start: bool = False) -> SessionView:
+        """The workspace's session, followed from first use until it closes; with `start`, a new one if it has none."""
+        async with self._locks[workspace_id]:
+            link = self.links.get(workspace_id)
+            if link is not None and not link.view.closed and await self._in_checkout(workspace_id, link.live_id):
+                return link.view
+            await self.disconnect(workspace_id)
+            channel = await workspace_session(self.service, workspace_id, start=start)
+            view = SessionView(LocalClient(self.service, channel.session.id))
+            task = asyncio.create_task(view.follow(), name=f'clai2-orchestrator-{workspace_id}')
+            self.links[workspace_id] = _Link(view=view, task=task, live_id=channel.session.id)
+            with anyio.move_on_after(CONNECT_TIMEOUT):
+                await view.ready()
+            if view.session is None:
+                await self.disconnect(workspace_id)
+                raise RuntimeError(f'Could not follow the session of workspace {workspace_id}.')
+            return view
+
+    async def _in_checkout(self, workspace_id: str, live_id: str) -> bool:
+        """Whether the live session still works in the checkout, which `/workspace` or a `/resume` there may change.
+
+        The session itself, not the view: it moves before its snapshot reaches the view.
+        """
+        session = live_session(self.service, live_id)
+        if session is None:
+            return False
+        return works_in(session.workspace, (await self.workspaces().get(workspace_id)).path)
 
     async def disconnect(self, workspace_id: str) -> None:
-        """Stop following a workspace's CLAI."""
+        """Stop following a workspace's session, which stays open until it is idle."""
         link = self.links.pop(workspace_id, None)
         if link is None:
             return
         link.task.cancel()
         with anyio.CancelScope(shield=True):
             await asyncio.gather(link.task, return_exceptions=True)
-            await link.stack.aclose()
 
     async def close(self) -> None:
-        """Disconnect from every workspace; their CLAIs keep running."""
+        """Stop following every workspace's session."""
         for workspace_id in list(self.links):
             await self.disconnect(workspace_id)
 
@@ -193,7 +199,7 @@ class WorkspaceTools:
     # The tools. Each returns text for the model; a problem it can act on comes back as an error line.
 
     async def workspace_list(self) -> str:
-        """List the workspaces, with their status, kind, branch, and folder, and the kinds you can make."""
+        """List the workspaces, with their kind, branch, and folder, and the kinds you can make."""
         workspaces = self.workspaces()
         listing = await workspaces.listing()
         lines = [describe(workspace) for workspace in listing] or ['No workspaces yet.']
@@ -205,11 +211,12 @@ class WorkspaceTools:
         `ref` is a branch, tag, or commit, such as `main`; empty for the kind's own or the repository's `HEAD`.
         The workspace gets a new branch. Nothing runs in it until `session_start`.
         """
-        workspace = await self.workspaces().create(kind=kind, repo=repo, ref=ref, base=self.host.workspace)
+        workspace = await self.workspaces().create(kind=kind, repo=repo, ref=ref, base=self.service.host.workspace)
+        self.service.hub.publish(SessionsChanged())  # The sidebar lists its checkout.
         return f'Created workspace {workspace.id} at {workspace.path} on branch {workspace.branch}.'
 
     async def workspace_destroy(self, ctx: RunContext[None], workspace: str) -> str:
-        """Stop the workspace's CLAI, remove its checkout (unless its kind keeps it), and forget it.
+        """Remove its checkout, closing the sessions working there first, unless its kind keeps it; then forget it.
 
         Only after the user picked `Destroy ID` in `ask_user_question`, with ID the workspace's.
         """
@@ -218,30 +225,36 @@ class WorkspaceTools:
                 f'Not destroyed. Ask the user first with `ask_user_question`, offering `Destroy {workspace}` '
                 f'and `Keep {workspace}`, and call this again only if they pick `Destroy {workspace}`.'
             )
-        await self.disconnect(workspace)
-        destroyed = await self.workspaces().destroy(workspace)
+        service = self.service
+        # Neither a tool call nor the page opens its session again meanwhile.
+        async with self._locks[workspace], service.workspace_locks[workspace]:
+            await self.disconnect(workspace)
+            destroyed = await self.workspaces().destroy(workspace, live=service.live)
+        del self._locks[workspace], service.workspace_locks[workspace]
+        service.hub.publish(SessionsChanged())
         kept = 'removed' if destroyed.teardown == 'remove' else 'kept'
         return f'Destroyed workspace {destroyed.id}; its checkout at {destroyed.path} was {kept}, its branch kept.'
 
     async def session_start(self, workspace: str, prompt: str) -> str:
-        """Start the workspace's CLAI, unless it runs already, and send it `prompt`; then `session_wait`."""
+        """Start a session in the workspace, unless it has one, and send it `prompt`; then `session_wait`."""
         _prompt_only(prompt)
-        started = await self.workspaces().start(workspace)
-        view = await self.view(started)
+        view = await self.view(workspace, start=True)
         await view.send(prompt)
-        assert started.session is not None, 'a started workspace has a session'
-        return f'Workspace {workspace} runs at {started.session.url}; the prompt is sent. Wait with `session_wait`.'
+        assert view.session is not None, 'a followed view has its snapshot'
+        return (
+            f'Workspace {workspace} runs session {view.session.id}, listed in the sidebar under its repository; '
+            'the prompt is sent. Wait with `session_wait`.'
+        )
 
     async def session_send(self, workspace: str, text: str) -> str:
-        """Send another prompt to the workspace's CLAI; it queues behind a running turn."""
+        """Send another prompt to the workspace's session; it queues behind a running turn."""
         _prompt_only(text)
-        view = await self.view(await self.workspaces().get(workspace))
-        await view.send(text)
+        await (await self.view(workspace)).send(text)
         return 'Sent. Wait with `session_wait`.'
 
     async def session_read(self, workspace: str, last: int = 5) -> str:
         """The workspace's session in short: whether a turn runs, what it asks, and its `last` items."""
-        view = await self.view(await self.workspaces().get(workspace))
+        view = await self.view(workspace)
         items = view.items
         title = view.session.title if view.session is not None else None
         lines = [f'Workspace {workspace}: {"a turn is running" if view.running else "idle"}; session {title!r}.']
@@ -260,46 +273,45 @@ class WorkspaceTools:
 
     async def session_wait(self, workspace: str, timeout: float = 300) -> str:
         """Wait up to `timeout` seconds until the turn ends or the session asks something; then its final answer."""
-        view = await self.view(await self.workspaces().get(workspace))
+        view = await self.view(workspace)
         outcome = await view.wait(timeout=min(max(timeout, 0), MAX_WAIT))
         if outcome == 'asking':
             return f'Workspace {workspace} asks:\n{_asked(view)}\nAnswer with `session_answer`.'
         if outcome == 'timeout':
             return f'Workspace {workspace} is still running. Wait again, `session_read` it, or `session_interrupt` it.'
         if outcome == 'closed':
+            link = self.links.get(workspace)
             await self.disconnect(workspace)
-            return f'The CLAI of workspace {workspace} stopped.'
+            # Following also ends when it falls too far behind, while the session goes on.
+            if link is None or live_session(self.service, link.live_id) is None:
+                return f'The session of workspace {workspace} closed.'
+            return f'Lost track of the session of workspace {workspace}, which is still open. Wait again to follow it.'
         answer = next((item.text for item in reversed(view.items) if item.kind == 'assistant'), '')
         ended = view.last_turn.outcome if view.last_turn is not None else 'no turn ran'
         return f'Workspace {workspace} is idle; last turn: {ended}. Its final answer:\n{_cut(answer, ANSWER_CHARS)}'
 
     async def session_interrupt(self, workspace: str) -> str:
         """Stop the workspace's running turn, as Esc does."""
-        view = await self.view(await self.workspaces().get(workspace))
+        view = await self.view(workspace)
         stopped = await view.client.interrupt()
         return 'Interrupted.' if stopped else 'Nothing was running.'
 
-    async def session_answer(
-        self, workspace: str, request: str, answers: list[SessionAnswer] | None = None, value: str | None = None
-    ) -> str:
-        """Answer what the session asks: a question request with `answers` (none declines), or a dialog with `value`."""
-        view = await self.view(await self.workspaces().get(workspace))
-        if request in view.dialogs:
-            await view.answer_dialog(request, value)
-            return 'Answered the dialog.'
+    async def session_answer(self, workspace: str, request: str, answers: list[SessionAnswer] | None = None) -> str:
+        """Answer a question request the session asks with `answers`, one per question; none declines them all."""
+        view = await self.view(workspace)
         if request not in view.questions:
-            return f'Workspace {workspace} has no open question or dialog {request!r}.'
+            return f'Workspace {workspace} has no open question {request!r}.'
         given = None if answers is None else [_answer(answer) for answer in answers]
         await view.answer(request, given)
         return 'Answered. Wait with `session_wait`.'
 
 
 def _prompt_only(text: str) -> None:
-    """Refuse a `/command`: in a workspace's CLAI one would run with no one there to confirm it."""
+    """Refuse a `/command`: in a workspace's session one would run with no one there to confirm it."""
     if text.lstrip().startswith('/'):
         raise ValueError(
             'Send prompts only. A `/command`, such as `/workspaces destroy`, would run in the workspace with no one '
-            "to confirm it; ask the user to type it in the workspace's page."
+            'to confirm it; ask the user to type it themselves.'
         )
 
 

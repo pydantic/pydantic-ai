@@ -27,10 +27,10 @@ from pydantic_ai_harness.media._store import (
     KeyStrategy,
     MediaContext,
     PublicUrlResolver,
-    _resolve_public_url,  # pyright: ignore[reportPrivateUsage]
     default_key_strategy,
     media_uri_for,
     parse_media_uri,
+    resolve_public_url,
 )
 
 if TYPE_CHECKING:
@@ -296,7 +296,7 @@ class S3MediaStore:
         return True
 
     async def public_url(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> str | None:
-        return await _resolve_public_url(self._public_url_resolver, uri, context)
+        return await resolve_public_url(self._public_url_resolver, uri, context)
 
     async def get_metadata(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> Mapping[str, str]:
         digest = parse_media_uri(uri)

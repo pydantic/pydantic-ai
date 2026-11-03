@@ -40,7 +40,7 @@ from pydantic_ai_harness.step_persistence import (
     StepPersistence,
     ToolEffectRecord,
 )
-from tests.harness.step_persistence._histories import growing_histories
+from tests.harness.step_persistence._histories import growing_histories, history_with_unordered_keys
 
 
 def _sample_messages_with_media(payload_size: int) -> list[ModelMessage]:
@@ -855,6 +855,16 @@ def _count(db: Path, table: str) -> int:
 
 
 class TestSqliteStoresEachMessageOnce:
+    async def test_dict_key_order_round_trips(self, tmp_path: Path) -> None:
+        """A reloaded history keeps its dict key order, so the next request sends the provider the same bytes."""
+        store = SqliteStepStore(database=tmp_path / 'runs.db', media_store=None)
+        history = history_with_unordered_keys()
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=history))
+
+        snap = await store.latest_snapshot(run_id='r1')
+        assert snap is not None
+        assert ModelMessagesTypeAdapter.dump_json(snap.messages) == ModelMessagesTypeAdapter.dump_json(history)
+
     async def test_stores_each_message_once_and_restores_every_snapshot(self, tmp_path: Path) -> None:
         db = tmp_path / 'runs.db'
         store = SqliteStepStore(database=db, media_store=None, max_snapshots_per_run=1)

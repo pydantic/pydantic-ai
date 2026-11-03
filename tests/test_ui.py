@@ -70,7 +70,7 @@ from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
 from pydantic_ai.workspaces import WorkspaceRef
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, message, message_part
+from .conftest import IsDatetime, conversation_view, message, message_part
 from .workspace_fakes import ConnectOnlyWorkspaceCapability
 
 pytest.importorskip('starlette')
@@ -80,7 +80,12 @@ from starlette.requests import Request
 from starlette.responses import StreamingResponse
 
 from pydantic_ai.ui import DEFAULT_ALLOWED_CONTENT_TYPES, NativeEvent, OnCompleteFunc, UIAdapter, UIEventStream
-from pydantic_ai.ui._adapter import resolve_allow_uploaded_files
+from pydantic_ai.ui._adapter import (
+    _ServerHeldTurn,  # pyright: ignore[reportPrivateUsage]
+    _take_new_turn,  # pyright: ignore[reportPrivateUsage]
+    resolve_allow_uploaded_files,
+)
+from pydantic_ai.ui._utils import set_ui_message_id
 
 pytestmark = [
     pytest.mark.vcr,
@@ -2027,6 +2032,337 @@ def test_allowed_file_url_schemes_visible_in_base_adapter_signatures():
     assert from_request_parameters['allowed_file_url_force_download'].default == frozenset()
     assert 'allowed_file_url_force_download' in dispatch_request_parameters
     assert dispatch_request_parameters['allowed_file_url_force_download'].default == frozenset()
+
+
+def test_manage_message_history_visible_in_base_adapter_signatures():
+    from_request_parameters = inspect.signature(DummyUIAdapter.from_request).parameters
+    dispatch_request_parameters = inspect.signature(DummyUIAdapter.dispatch_request).parameters
+
+    assert from_request_parameters['manage_message_history'].default == 'client'
+    assert dispatch_request_parameters['manage_message_history'].default == 'client'
+
+
+def _with_ui_id(message: ModelMessage, ui_message_id: str) -> ModelMessage:
+    """`message` as `load_messages` returns it for a client message with that id."""
+    set_ui_message_id(message, ui_message_id)
+    return message
+
+
+def _recording_agent() -> tuple[Agent[None, str], list[list[ModelMessage]]]:
+    """An agent that answers `ok` and records the history of every model request."""
+    requests: list[list[ModelMessage]] = []
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        requests.append(messages)
+        yield 'ok'
+
+    return Agent(FunctionModel(stream_function=stream_function)), requests
+
+
+async def _run(adapter: DummyUIAdapter[None, str], message_history: list[ModelMessage] | None) -> AgentRunResult[Any]:
+    results: list[AgentRunResult[Any]] = []
+    async for _ in adapter.run_stream(message_history=message_history, on_complete=results.append):
+        pass
+    [result] = results
+    return result
+
+
+async def test_client_message_history_warns_when_client_messages_repeat_message_history():
+    """In the default `'client'` mode, client messages already in `message_history` reach the model twice, with a warning."""
+    agent, requests = _recording_agent()
+    stored = [_with_ui_id(ModelRequest.user_text_prompt('hi'), 'u1'), ModelResponse(parts=[TextPart('hello')])]
+    client = [
+        _with_ui_id(ModelRequest.user_text_prompt('hi'), 'u1'),
+        ModelResponse(parts=[TextPart('hello')]),
+        _with_ui_id(ModelRequest.user_text_prompt('and now?'), 'u2'),
+    ]
+    adapter = DummyUIAdapter(agent=agent, run_input=DummyUIRunInput(messages=client))
+
+    with pytest.warns(UserWarning, match=r'1 client-submitted message\(s\) already appear in `message_history`'):
+        await _run(adapter, stored)
+
+    assert conversation_view(requests[0]) == snapshot(
+        ['user-prompt: hi', 'text: hello', 'user-prompt: hi', 'text: hello', 'user-prompt: and now?']
+    )
+
+
+async def test_client_message_history_without_overlapping_ids_does_not_warn():
+    """Ids are all the check compares, so a history without them, or a disjoint one, never warns."""
+    agent, requests = _recording_agent()
+    stored = [ModelRequest.user_text_prompt('server context'), ModelResponse(parts=[TextPart('noted')])]
+    client = [_with_ui_id(ModelRequest.user_text_prompt('hi'), 'u1')]
+    adapter = DummyUIAdapter(agent=agent, run_input=DummyUIRunInput(messages=client))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        await _run(adapter, stored)
+
+    assert conversation_view(requests[0]) == snapshot(['user-prompt: server context', 'text: noted', 'user-prompt: hi'])
+
+
+@pytest.mark.parametrize('client_sends', ['everything', 'new turn only'])
+async def test_server_message_history_takes_only_the_new_turn(client_sends: str):
+    agent, requests = _recording_agent()
+    stored = [_with_ui_id(ModelRequest.user_text_prompt('hi'), 'u1'), ModelResponse(parts=[TextPart('hello')])]
+    new_turn = [_with_ui_id(ModelRequest.user_text_prompt('and now?'), 'u2')]
+    # A client copy of an earlier turn needn't match the stored one: only the new turn is read.
+    earlier = [_with_ui_id(ModelRequest.user_text_prompt('hi (as the client kept it)'), 'u1'), ModelResponse(parts=[])]
+    client = [*earlier, *new_turn] if client_sends == 'everything' else new_turn
+    adapter = DummyUIAdapter(agent=agent, run_input=DummyUIRunInput(messages=client), manage_message_history='server')
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        result = await _run(adapter, stored)
+
+    assert conversation_view(requests[0]) == snapshot(['user-prompt: hi', 'text: hello', 'user-prompt: and now?'])
+    assert conversation_view(result.all_messages()) == snapshot(
+        ['user-prompt: hi', 'text: hello', 'user-prompt: and now?', 'text: ok']
+    )
+
+
+@pytest.mark.parametrize(
+    ('resubmitted_id', 'expected'),
+    [
+        pytest.param(
+            'u2',
+            snapshot(['user-prompt: hi', 'text: hello', 'user-prompt: and now, edited?']),
+            id='resubmitted',
+        ),
+        pytest.param(
+            'u3',
+            snapshot(
+                ['user-prompt: hi', 'text: hello', 'user-prompt: and now?', 'text: ok', 'user-prompt: and now, edited?']
+            ),
+            id='not-in-history',
+        ),
+    ],
+)
+async def test_server_message_history_resubmitted_message_replaces_its_turn(resubmitted_id: str, expected: list[str]):
+    """A regenerate, edit or retried submit cuts the stored history before the message; an unknown id appends."""
+    agent, requests = _recording_agent()
+    stored = [
+        _with_ui_id(ModelRequest.user_text_prompt('hi'), 'u1'),
+        ModelResponse(parts=[TextPart('hello')]),
+        _with_ui_id(ModelRequest.user_text_prompt('and now?'), 'u2'),
+        ModelResponse(parts=[TextPart('ok')]),
+    ]
+    client = [_with_ui_id(ModelRequest.user_text_prompt('and now, edited?'), resubmitted_id)]
+    adapter = DummyUIAdapter(agent=agent, run_input=DummyUIRunInput(messages=client), manage_message_history='server')
+
+    await _run(adapter, stored)
+
+    assert conversation_view(requests[0]) == expected
+
+
+async def test_server_message_history_resubmission_keeps_the_stored_tool_results_it_cuts():
+    """A stored request can carry the server's tool results as well as the resubmitted user message.
+
+    The run that follows tool calls merges their results into the client's next request, which keeps the
+    client's UI message id. Cutting that request for an edit keeps those results, so the client can't
+    answer the calls again, and the copies an honest client sends back along with its edit are dropped quietly.
+    """
+    agent, requests = _recording_agent()
+    stored = [
+        ModelRequest.user_text_prompt('what time is it, and where am I?'),
+        ModelResponse(
+            parts=[
+                ToolCallPart('get_time', {}, tool_call_id='server-call'),
+                ToolCallPart('get_location', {}, tool_call_id='frontend-call'),
+            ]
+        ),
+        _with_ui_id(
+            ModelRequest(
+                parts=[
+                    ToolReturnPart('get_time', 'noon', tool_call_id='server-call'),
+                    ToolReturnPart('get_location', 'Paris', tool_call_id='frontend-call'),
+                    UserPromptPart('thanks!'),
+                ]
+            ),
+            'u2',
+        ),
+        ModelResponse(parts=[TextPart('ok')]),
+    ]
+    edited = ModelRequest(
+        parts=[
+            ToolReturnPart('get_time', 'midnight', tool_call_id='server-call'),
+            ToolReturnPart('get_location', 'Paris', tool_call_id='frontend-call'),
+            UserPromptPart('thanks, and the weather?'),
+        ]
+    )
+    adapter = DummyUIAdapter(
+        agent=agent, run_input=DummyUIRunInput(messages=[_with_ui_id(edited, 'u2')]), manage_message_history='server'
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        await _run(adapter, stored)
+
+    assert conversation_view(requests[0]) == snapshot(
+        [
+            'user-prompt: what time is it, and where am I?',
+            'call server-call',
+            'call frontend-call',
+            'return server-call: noon',
+            'return frontend-call: Paris',
+            'user-prompt: thanks, and the weather?',
+        ]
+    )
+
+
+def test_server_message_history_cut_is_part_of_the_result():
+    """The split says where a resubmission cut the stored history, for a caller that stores it, such as a store.
+
+    Not a run test: what the run sees is pinned above, and this is the shape a store integration builds on.
+    """
+    hi, hello = _with_ui_id(ModelRequest.user_text_prompt('hi'), 'u1'), ModelResponse(parts=[TextPart('hello')])
+    and_now, ok = _with_ui_id(ModelRequest.user_text_prompt('and now?'), 'u2'), ModelResponse(parts=[TextPart('ok')])
+    edited = _with_ui_id(ModelRequest.user_text_prompt('and now, edited?'), 'u2')
+    new = _with_ui_id(ModelRequest.user_text_prompt('next'), 'u3')
+
+    assert _take_new_turn([hi, hello, and_now, ok], [edited]) == _ServerHeldTurn([hi, hello], [edited], cut_at=2)
+    assert _take_new_turn([hi, hello], [hi, hello, new]) == _ServerHeldTurn([hi, hello], [new], cut_at=None)
+
+
+async def test_server_message_history_cuts_only_at_a_user_message():
+    """A client can't cut the stored history at a request it knows the id of that holds no user prompt."""
+    agent, requests = _recording_agent()
+    stored = [
+        ModelRequest.user_text_prompt('where am I?'),
+        ModelResponse(parts=[ToolCallPart('get_location', {}, tool_call_id='call-1')]),
+        # A frontend tool's result, under the id of the AG-UI tool message it came in.
+        _with_ui_id(ModelRequest(parts=[ToolReturnPart('get_location', 'Paris', tool_call_id='call-1')]), 't1'),
+        ModelResponse(parts=[TextPart('You are in Paris.')]),
+    ]
+    resent = _with_ui_id(ModelRequest(parts=[ToolReturnPart('get_location', 'London', tool_call_id='call-1')]), 't1')
+    adapter = DummyUIAdapter(agent=agent, run_input=DummyUIRunInput(messages=[resent]), manage_message_history='server')
+
+    with pytest.warns(UserWarning, match=r'1 client-submitted tool result\(s\) were dropped'):
+        result = await _run(adapter, stored)
+
+    # Nothing is left to answer, so the stored history comes back as it was.
+    assert requests == []
+    assert conversation_view(result.all_messages()) == snapshot(
+        ['user-prompt: where am I?', 'call call-1', 'return call-1: Paris', 'text: You are in Paris.']
+    )
+
+
+class _RegeneratingUIAdapter(DummyUIAdapter[AgentDepsT, OutputDataT]):
+    def _regenerates(self) -> bool:
+        return True
+
+
+async def test_server_message_history_rejects_a_regenerate_of_an_unknown_message():
+    """A regenerate of a message the stored history lacks, as after an unstored run or from a stale tab, fails on the stream."""
+    agent, requests = _recording_agent()
+    stored = [_with_ui_id(ModelRequest.user_text_prompt('hi'), 'u1'), ModelResponse(parts=[TextPart('hello')])]
+    client: list[ModelMessage] = [_with_ui_id(ModelRequest.user_text_prompt('and now?'), 'u2')]
+    adapter = _RegeneratingUIAdapter(
+        agent=agent, run_input=DummyUIRunInput(messages=client), manage_message_history='server'
+    )
+
+    events = [event async for event in adapter.run_stream(message_history=stored)]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            "<error type='UserError'>The message to regenerate ('u2') is not in `message_history`. Either the server never stored it, as when the run that answered it failed or was stopped, or the client holds a different conversation than the server, as a client in a stale tab does. Send the message again as a new one, or reload the conversation from the server.</error>",
+            '</stream>',
+        ]
+    )
+    assert requests == []
+
+
+async def test_server_message_history_first_turn_ignores_client_history():
+    """With no stored history, the client's earlier turns are still not part of the conversation."""
+    agent, requests = _recording_agent()
+    client = [
+        ModelRequest.user_text_prompt('a turn the server never had'),
+        ModelResponse(parts=[TextPart('an answer the model never gave')]),
+        ModelRequest.user_text_prompt('hi'),
+    ]
+    adapter = DummyUIAdapter(agent=agent, run_input=DummyUIRunInput(messages=client), manage_message_history='server')
+
+    await _run(adapter, None)
+
+    assert conversation_view(requests[0]) == snapshot(['user-prompt: hi'])
+
+
+async def test_server_message_history_keeps_only_tool_results_the_history_waits_on():
+    agent, requests = _recording_agent()
+    stored = [
+        ModelRequest.user_text_prompt('where am I?'),
+        ModelResponse(parts=[ToolCallPart('get_location', {}, tool_call_id='old')]),
+        ModelRequest(parts=[ToolReturnPart('get_location', 'Paris', tool_call_id='old')]),
+        ModelResponse(parts=[ToolCallPart('get_location', {}, tool_call_id='pending')]),
+    ]
+    client = [
+        ModelResponse(parts=[ToolCallPart('get_location', {}, tool_call_id='pending')]),
+        # Already answered in the stored history, so the request is left with nothing.
+        ModelRequest(parts=[ToolReturnPart('get_location', 'London', tool_call_id='old')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('get_location', 'Amsterdam', tool_call_id='pending'),
+                ToolReturnPart('get_location', 'Berlin', tool_call_id='pending'),
+            ]
+        ),
+    ]
+    adapter = DummyUIAdapter(agent=agent, run_input=DummyUIRunInput(messages=client), manage_message_history='server')
+
+    with pytest.warns(UserWarning, match=r'2 client-submitted tool result\(s\) were dropped'):
+        await _run(adapter, stored)
+
+    assert conversation_view(requests[0]) == snapshot(
+        ['user-prompt: where am I?', 'call old', 'return old: Paris', 'call pending', 'return pending: Amsterdam']
+    )
+
+
+async def test_server_message_history_sanitizes_the_new_turn():
+    """The new turn is still client input: its system prompts and compaction summaries don't reach the model."""
+    agent, requests = _recording_agent()
+    stored = [ModelRequest.user_text_prompt('hi'), ModelResponse(parts=[TextPart('hello')])]
+    client: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart('client system prompt'),
+                CompactionPart(content='client summary'),
+                UserPromptPart('and now?'),
+            ]
+        )
+    ]
+    adapter = DummyUIAdapter(agent=agent, run_input=DummyUIRunInput(messages=client), manage_message_history='server')
+
+    with pytest.warns(UserWarning, match='Parts carrying the system voice were stripped'):
+        await _run(adapter, stored)
+
+    assert conversation_view(requests[0]) == snapshot(['user-prompt: hi', 'text: hello', 'user-prompt: and now?'])
+    assert not any(isinstance(part, CompactionPart) for m in requests[0] for part in m.parts)
+
+
+async def test_dispatch_request_forwards_manage_message_history():
+    agent, requests = _recording_agent()
+    stored = [_with_ui_id(ModelRequest.user_text_prompt('hi'), 'u1'), ModelResponse(parts=[TextPart('hello')])]
+    body = DummyUIRunInput(
+        messages=[*stored, _with_ui_id(ModelRequest.user_text_prompt('and now?'), 'u2')]
+    ).model_dump_json()
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': body.encode()}
+
+    request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+    response = await DummyUIAdapter.dispatch_request(
+        request, agent=agent, message_history=stored, manage_message_history='server'
+    )
+    assert isinstance(response, StreamingResponse)
+
+    async def send(_: MutableMapping[str, Any]) -> None:
+        pass
+
+    await response.stream_response(send)
+
+    assert conversation_view(requests[0]) == snapshot(['user-prompt: hi', 'text: hello', 'user-prompt: and now?'])
 
 
 def _make_dummy_adapter(

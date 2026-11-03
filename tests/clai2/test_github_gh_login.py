@@ -78,7 +78,7 @@ async def test_browser_sign_in_through_gh(tmp_path: Path, monkeypatch: pytest.Mo
     assert 'auth login --hostname github.com --web --clipboard' in fake_gh.calls()
     assert shell.login() == 'gh'
     assert shell.loader.capabilities() == [
-        GitHub[None](auth=GhToken(hostname='github.com', setup=SETUP), read_only=True)
+        GitHub[None](defer_loading=True, auth=GhToken(hostname='github.com', setup=SETUP), read_only=True)
     ]
     assert GhToken(hostname='github.com', setup=SETUP)(None) == 'gho_browser'
 
@@ -108,7 +108,9 @@ async def test_an_existing_gh_login_is_used_without_a_browser(
     assert (await shell.sign_in())[0] == ['GitHub uses your GitHub CLI login for octocorp.ghe.com.']
     assert fake_gh.opened == []
     assert shell.loader.capabilities() == [
-        GitHub[None](auth=GhToken(hostname='octocorp.ghe.com', setup=SETUP), url=GHE, read_only=True)
+        GitHub[None](
+            defer_loading=True, auth=GhToken(hostname='octocorp.ghe.com', setup=SETUP), url=GHE, read_only=True
+        )
     ]
 
 
@@ -280,7 +282,14 @@ async def test_cancelling_as_the_code_arrives_still_stops_gh(
 async def test_a_stalled_check_after_sign_in_is_reported(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_gh: FakeGh
 ) -> None:
-    monkeypatch.setattr('pydantic_clai2.gh_cli.TOKEN_TIMEOUT', 0.5)
+    def stalls_after_sign_in(hostname: str) -> str | None:
+        # Only the check after sign-in meets the hung `gh`; the one before keeps the usual timeout, since
+        # starting the fake `gh` can itself outlast a short one on a loaded runner.
+        if (fake_gh.state / 'token-hang').exists():
+            monkeypatch.setattr('pydantic_clai2.gh_cli.TOKEN_TIMEOUT', 0.5)
+        return gh_token(hostname)
+
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.github.gh_token', stalls_after_sign_in)
     fake_gh.next_login('stall-token')
     shell = Shell(tmp_path, {'login': 'key'})
     await shell.loader.enable('github')

@@ -15,7 +15,7 @@ LOCAL_WORKTREE = 'local-worktree'
 
 
 class WorktreeKind(BaseModel):
-    """A Git worktree on this machine, with its own CLAI running as you, with your CLAI settings and sign-ins."""
+    """A Git worktree on this machine, whose sessions run in this CLAI as any other does."""
 
     model_config = ConfigDict(extra='forbid', frozen=True)
 
@@ -47,7 +47,13 @@ class WorktreeKind(BaseModel):
         default='remove',
         description='Destroying a workspace removes its checkout, uncommitted changes included, or keeps it on disk.',
     )
-    model: str = Field(default='', description="The model the workspace's CLAI starts with. Empty: your saved default.")
+    model: str = Field(
+        default='',
+        description=(
+            "Retired: the model of a workspace's own CLAI process. Its sessions run in this CLAI now and start with "
+            'the saved default, so a value an older CLAI saved is kept for it but not used.'
+        ),
+    )
 
     @field_validator('branch_prefix')
     @classmethod

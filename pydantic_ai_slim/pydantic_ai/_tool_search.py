@@ -44,7 +44,12 @@ from .messages import (
 from .usage import RequestUsage
 
 if TYPE_CHECKING:
-    from .messages import ModelMessage, ModelResponse, ModelResponsePart
+    from .messages import (
+        ModelMessage,
+        ModelResponse,
+        ModelResponsePart,
+        _StatelessArtifactPredicate,  # pyright: ignore[reportPrivateUsage]
+    )
 
 
 _NO_MATCHES_MESSAGE = 'No matching tools found. The tools you need may not be available.'
@@ -379,17 +384,18 @@ def synthesize_local_from_native_return(part: NativeToolSearchReturnPart) -> Too
 
 
 def synthesize_local_tool_search_messages(
-    messages: list[ModelMessage], *, target_provider_name: str | None = None
+    messages: list[ModelMessage], *, keeps_native: _StatelessArtifactPredicate | None = None
 ) -> list[ModelMessage]:
     """Translate any `NativeToolSearch*Part` instances in the message history into local equivalents.
 
     Returns a new list with translated copies of any messages that contain
-    `NativeToolSearch*Part`s from a provider other than `target_provider_name`;
-    messages without such parts are returned unchanged (no copy). Passing no
-    target translates every native part, which is suitable for adapters without
-    native tool search. A native-capable adapter passes its provider name so its
-    own parts retain their exact replay shape while foreign parts take the
-    provider-agnostic path.
+    `NativeToolSearch*Part`s that `keeps_native` doesn't accept; messages without
+    such parts are returned unchanged (no copy). Passing no predicate translates
+    every native part, which is suitable for adapters without native tool search.
+    A native-capable adapter passes its
+    [`accepts_stateless_artifacts`][pydantic_ai.models.Model.accepts_stateless_artifacts],
+    the predicate it replays native tool-search parts by, so parts it can send keep
+    their exact replay shape while foreign parts take the provider-agnostic path.
 
     A native server-side tool-search exchange is a single `ModelResponse` carrying both
     `NativeToolSearchCallPart` (the call) and `NativeToolSearchReturnPart` (the inline
@@ -419,13 +425,11 @@ def synthesize_local_tool_search_messages(
             split_emitted = False  # Tracks whether we've emitted a response from this msg already.
             changed = False
             for part in msg.parts:
-                if isinstance(part, NativeToolSearchCallPart) and (
-                    target_provider_name is None or part.provider_name != target_provider_name
-                ):
+                if isinstance(part, NativeToolSearchCallPart) and (keeps_native is None or not keeps_native(msg, part)):
                     buffer.append(synthesize_local_from_native_call(part))
                     changed = True
                 elif isinstance(part, NativeToolSearchReturnPart) and (
-                    target_provider_name is None or part.provider_name != target_provider_name
+                    keeps_native is None or not keeps_native(msg, part)
                 ):
                     # Flush the buffered parts as a `ModelResponse` (skip if empty), then
                     # emit the search return as its own `ModelRequest`. Subsequent parts

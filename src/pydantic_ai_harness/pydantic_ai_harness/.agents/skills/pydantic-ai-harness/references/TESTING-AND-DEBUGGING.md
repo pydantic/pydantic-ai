@@ -11,7 +11,7 @@ Harness capabilities are real code (they write files, run commands, call answere
 model with a `FunctionModel` and let the capabilities execute against temp directories and in-memory
 stores. `Agent.override(model=..., workspace=...)` swaps both without touching the production agent;
 `workspace=` takes a backend such as `LocalWorkspaceBackend(tmp_dir)`. This also works on an agent
-with `ModalSandbox`/`E2BSandbox`/`SpritesSandbox`/`DaytonaSandbox` attached: no sandbox is created, no factory needed.
+with `ModalSandbox`/`E2BSandbox`/`SpritesSandbox`/`DaytonaSandbox`/`BoxdSandbox` attached: no sandbox is created, no factory needed.
 
 - `FunctionModel`: return a `ToolCallPart` on the first request and a `TextPart` once results are in.
 - `TestModel(call_tools=[])`: smoke test that the agent builds and runs. Plain `TestModel()` calls every
@@ -161,12 +161,19 @@ print(asked[0].questions[0].header)
 - Schema violations (fewer than 2 options, duplicate headers, more than 10 questions, control characters) are retries to the model, and the answerer is never called.
 - An answerer response that does not fit its request (unknown header, label not offered, several picks on single-select) fails the whole run with `ValueError`, as `check_response` would; decline with `cancelled=True` instead.
 - `AskUserRequestedEvent`/`AskUserAnsweredEvent` let an observer capability (`@on_event`) assert on the exchange without being the answerer.
+- For `AskUserAnswer(note=...)`, assert that the answer dictionary stays in `ToolReturnPart.content`
+  and notes arrive in a separate `UserPromptPart`. Invalid notes raise `ValueError` through `check_response`.
+  See [Adding notes to an answer](https://pydantic.dev/docs/ai/harness/ask-user/#adding-notes-to-an-answer)
+  for supported content, framing and provenance.
+- Annotate `ask_user_result` values with `AskUserResult` from `pydantic_ai_harness.ask_user`.
+  Pass the result directly to `DeferredToolResults.calls` for deferred answers, including notes.
 
 ## Memory with an In-Memory Store
 
 `Memory()` defaults to `InMemoryStore`. Seed it with `InMemoryStore({'<scope>/<file>': text})`, where
 scope is `agent_name` (default `'main'`), prefixed by `namespace/` when one is set, and read `store.files`
-afterwards. The snapshot is injected as a user-role `TextContent` starting with `<memory>`.
+afterwards. The snapshot is a user-role `TextContent` starting with `<memory>`, kept in
+message history and added on a run's first request only when memory changed since the last one.
 
 ```python
 from pydantic_ai import Agent
@@ -323,11 +330,16 @@ the install command, e.g. `pydantic-monty is required for CodeMode. Install it w
 `RuntimeError: 'datetime.now' is not supported in this environment` (clock without `os_access`). See
 [Code Mode](./CODE-MODE.md#sandbox-restrictions) for the rules and how to grant host access.
 
-**Asserting a `SystemReminders` reminder.** It is ephemeral (absent from `result.all_messages()`), so
-check it inside the script. `interval` counts model requests from 1; on a firing request,
-`messages[-1].parts[-1]` is a `UserPromptPart` whose content list ends with
-`'<system-reminder>\n<text>\n</system-reminder>'` (raw text with `Reminder(tag=None)`), after a
-`CachePoint` when the request has user content.
+**Asserting a `SystemReminders` reminder.** A plain firing is a `ModelRequest` holding one
+`SystemPromptPart(scope='request')` in `result.all_messages()`, whose content is the reminder text
+(wrapped in `<tag>` only when `Reminder(tag=...)` is set); inside a `FunctionModel` script the model
+sees only the current one, as `<system>`-tagged user text at the end of the last request. A
+`Reminder(scope='conversation')` firing is a `SystemPromptPart` with the default `scope='conversation'`
+instead, which every later request sends again. An
+`LLMReminder` firing is instead a lasting record: a `SystemPromptPart` note (no `scope='request'`) and
+the generated text as user-channel `TextContent` in `<generated_reminder model="...">`, both re-sent on
+every later request. `interval` counts model requests from 1; `LLMReminder` fires only every
+`interval` requests (10 by default), so a short scripted run needs `LLMReminder(..., interval=1)`.
 
 **Looks like it never fires.** Context-window-driven capabilities (the compaction family) cannot
 resolve a window for `TestModel`, so thresholds default high; pass `context_window=` or

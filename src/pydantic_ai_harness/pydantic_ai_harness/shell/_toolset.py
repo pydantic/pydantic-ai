@@ -26,9 +26,14 @@ from pydantic_ai_harness._output import truncate_tail
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored
 from pydantic_ai_harness._workspace import metadata_dir, require_workspace, supports_commands
 from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT, Job
-from pydantic_ai_harness.shell._limits import file_limit_status, limited_script, validate_file_limit
+from pydantic_ai_harness.shell._limits import (
+    file_limit_status,
+    limited_script,
+    validate_byte_limit,
+    validate_file_limit,
+)
 from pydantic_ai_harness.shell._persistent import MAX_FOREGROUND_WAIT, CommandMode, run_persistent_command
-from pydantic_ai_harness.shell._policy import is_interactive_command, recoverable
+from pydantic_ai_harness.shell._policy import is_interactive_command, recoverable, run_model_command
 
 RUN_SCOPED_TOOL_NAMES: tuple[str, ...] = ('run_command', 'start_command', 'check_command', 'stop_command')
 """The default tools. Background commands keep running until they exit, `stop_command` stops them, or the workspace ends."""
@@ -73,6 +78,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         persist_cwd: bool,
         allow_interactive: bool,
         max_file_bytes: int | None = None,
+        max_log_bytes: int | None = None,
         env: Mapping[str, str] | None = None,
         denied_env_patterns: Sequence[str] = (),
         tools: Sequence[str] = RUN_SCOPED_TOOL_NAMES,
@@ -96,6 +102,8 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
                 'max_file_bytes is not supported with persist_cwd; cwd capture writes a file in the child.'
             )
         self._max_file_bytes = max_file_bytes
+        validate_byte_limit('max_log_bytes', max_log_bytes)
+        self._max_log_bytes = max_log_bytes
         self._persist_cwd = persist_cwd
         self._allow_interactive = allow_interactive
         self._env = dict(env) if env is not None else None
@@ -151,6 +159,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             default_timeout=self._default_timeout,
             max_output_chars=self._max_output_chars,
             max_file_bytes=self._max_file_bytes,
+            max_log_bytes=self._max_log_bytes,
             persist_cwd=self._persist_cwd,
             allow_interactive=self._allow_interactive,
             env=self._env,
@@ -252,7 +261,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
     async def _jobs_base(self, ctx: RunContext[AgentDepsT]) -> str:
         """The workspace directory holding job and capture files, looked up once per workspace."""
         if (jobs_dir := self._jobs_dirs.get(ctx.workspace)) is None:
-            jobs_dir = self._jobs_dirs[ctx.workspace] = await metadata_dir(ctx.workspace, 'shell')
+            jobs_dir = self._jobs_dirs[ctx.workspace] = await metadata_dir(ctx.workspace, 'shell', temp_fallback=True)
         return jobs_dir
 
     async def _job(self, ctx: RunContext[AgentDepsT], command_id: str) -> Job | None:
@@ -382,9 +391,10 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         try:
             try:
                 cwd = shlex.quote(await self._cwd_for(ctx))
-                result = await ctx.workspace.run(
-                    f'cd {cwd} || exit\n{limited_script(actual_command, self._max_file_bytes)}',
-                    shell=True,
+                result = await run_model_command(
+                    ctx.workspace,
+                    lambda cmd: f'cd {cwd} || exit\n{limited_script(cmd, self._max_file_bytes)}',
+                    actual_command,
                     env=self._resolve_env(),
                     timeout=timeout,
                 )
@@ -413,15 +423,19 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         mode: CommandMode = 'foreground',
         timeout: float | None = None,
     ) -> str:
-        """Run a command that keeps running after this call and after the agent run.
+        """Run a shell command and return its output.
 
-        Foreground waits up to `timeout` seconds (at most 270) for the command to
-        exit, then returns handles to the same still-running process. Background
-        returns the handles immediately. Both return the PID, the path of the
-        combined stdout/stderr log, and the path of a JSON status file whose
-        `exit_code` is null until the command exits. Read those files with your
-        other tools and stop the process with `kill` and the returned PID; no
-        notification arrives when it finishes.
+        Foreground (the default) waits up to `timeout` seconds (at most 270) and
+        returns the command's combined stdout/stderr inline (the last ~16 KB; any
+        earlier output is marked as truncated), then the PID, log path, status file
+        and exit status. A command that finished in the foreground needs no further
+        reads: do not open its log or status file. Chain related commands in one
+        call (e.g. `cmd1; cmd2`); read files with `read_file`, not `cat`, since long
+        output is truncated. Background mode returns the handles
+        immediately; only for background jobs, a foreground command still running
+        at its timeout, or truncated long output, read the log or status file (e.g.
+        `tail` in a later shell call) and stop the process with `kill` and the
+        returned PID. No notification arrives when a background job finishes.
 
         Args:
             ctx: The current agent run context.
@@ -434,10 +448,12 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             ctx,
             command,
             base=await self._jobs_base(ctx),
+            job_id=_job_id(ctx),
             cwd=await ctx.workspace.working_dir(),
             env=self._resolve_env(),
             mode=mode,
             timeout=self._default_timeout if timeout is None else timeout,
+            log_limit=self._max_log_bytes,
         )
 
     @recoverable
@@ -456,11 +472,6 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             A message containing the unique command ID for later check/stop calls.
         """
         self._check_command(command)
-        # Activity retries share the same tool-call identity, not just the run:
-        # separate starts in one run still need distinct job directories.
-        job_id = None
-        if ctx.run_id is not None and ctx.tool_call_id is not None:
-            job_id = hashlib.sha256(f'{ctx.run_id}:{ctx.tool_call_id}'.encode()).hexdigest()[:32]
         job = await Job.launch(
             ctx.workspace,
             command,
@@ -469,7 +480,8 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             env=self._resolve_env(),
             combined=False,
             file_limit=self._max_file_bytes,
-            job_id=job_id,
+            log_limit=self._max_log_bytes,
+            job_id=_job_id(ctx),
         )
         return f'Started background command: {command!r}\nID: {posixpath.basename(job.directory)}'
 
@@ -537,6 +549,18 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         if exit_code is not None:
             parts.append(f'[exit code: {exit_code}]' + file_limit_status(exit_code, self._max_file_bytes))
         return '\n'.join(parts)
+
+
+def _job_id(ctx: RunContext[AgentDepsT]) -> str | None:
+    """The job directory name for this tool call, or `None` to have `Job.launch` pick a random one.
+
+    Derived from the run and tool call, not the run alone, so separate launches in one run get distinct
+    directories while a retried activity or a replayed workflow (where `Job.launch` is called again but its
+    workspace call returns the recorded result) names the job it launched the first time.
+    """
+    if ctx.run_id is None or ctx.tool_call_id is None:
+        return None
+    return hashlib.sha256(f'{ctx.run_id}:{ctx.tool_call_id}'.encode()).hexdigest()[:32]
 
 
 def _labelled(stdout: str, stderr: str, *, empty: str | None, trailer: str | None = None) -> str:

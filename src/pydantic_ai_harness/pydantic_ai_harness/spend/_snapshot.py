@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from decimal import Decimal, localcontext
+from decimal import ROUND_HALF_UP, Decimal, localcontext
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -34,6 +34,35 @@ def money_precision() -> Generator[None]:
     with localcontext() as context:
         context.prec = MONEY_PRECISION
         yield
+
+
+_NANOS_PER_USD = Decimal(10) ** 9
+
+
+def to_nanos(usd: Decimal) -> int:
+    """US dollars as whole billionths, the unit the shared stores hold counters in.
+
+    Counters are integers because floating-point accumulation (Redis `INCRBYFLOAT`)
+    gathers binary rounding error over the tens of thousands of requests a busy day
+    produces, while integer increments are both exact and atomic.
+
+    Billionths rather than millionths because the residue does not average out:
+    an agent repeats requests of near-identical shape, so the same fraction is
+    rounded the same way every time. At a cheap model's per-request price,
+    rounding to a millionth drifts by tens of percent over a day; a billionth
+    keeps that under a part in ten thousand.
+
+    The local context is pinned so an application that lowered `Decimal`
+    precision for its own arithmetic cannot silently truncate money here.
+    """
+    with money_precision():
+        return int((usd * _NANOS_PER_USD).to_integral_value(rounding=ROUND_HALF_UP))
+
+
+def from_nanos(nanos: int) -> Decimal:
+    """Whole billionths back to US dollars."""
+    with money_precision():
+        return Decimal(nanos) / _NANOS_PER_USD
 
 
 @dataclass(frozen=True, kw_only=True)

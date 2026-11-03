@@ -456,7 +456,7 @@ def _parse_zai_quota(value: object) -> Quota:
         ):
             return _unknown_quota('invalid_percentage')
         reset_millis = entry.get('nextResetTime')
-        if 'nextResetTime' in entry and reset_millis is None and consumed_value == 0:
+        if reset_millis is None and consumed_value == 0:
             reset = None
             reset_millis_value = None
         elif isinstance(reset_millis, bool) or not isinstance(reset_millis, int):
@@ -940,8 +940,13 @@ def _monitor_workflow_outcome(
     run_attempt: int,
     result: RunResult | None,
     repo: str,
+    *,
+    triage: bool = False,
 ) -> int:
-    """Record only trusted host failures and typed, identity-matched provider outcomes."""
+    """Record only trusted host failures and typed, identity-matched provider outcomes.
+
+    With `triage`, stop before reading incidents and hand outcomes that need them to the serialized monitor job.
+    """
     needs_failure_evidence = args.conclusion in ('failure', 'timed_out') or (
         result is not None and result.failure is not None
     )
@@ -971,6 +976,8 @@ def _monitor_workflow_outcome(
             kind = 'quota_unknown' if health.quota.status == 'unknown' else 'quota_exhausted'
             marker = IncidentMarker('provider', 'zai', kind, str(args.run_id), health.quota.reset_at)
             result = RunResult(health.workflow, health.task_key, health.trigger_event, run_attempt, None)
+            if triage:
+                return _defer_incident_reconciliation()
             existing = next(
                 (issue for issue in client.open_incidents() if _marker_from_body(issue.body) == marker), None
             )
@@ -1008,6 +1015,8 @@ def _monitor_workflow_outcome(
     if result.failure is None and failed_stage is None:
         print('No trusted failed job or step identifies a host stage; leaving workflow outcome unclassified')
         return 0
+    if triage:
+        return _defer_incident_reconciliation()
     reason = health.reason if not health.ready else _failure_reason(result.failure)
     marker_override = None
     if result.failure is None and failed_stage is not None:
@@ -1029,6 +1038,14 @@ def _monitor_workflow_outcome(
         dry_run=args.dry_run,
         marker_override=marker_override,
     )
+    return 0
+
+
+def _defer_incident_reconciliation() -> int:
+    if output := os.environ.get('GITHUB_OUTPUT'):
+        with open(output, 'a', encoding='utf-8') as handle:
+            handle.write('reconcile=true\n')
+    print('Outcome needs incident reconciliation; deferring it to the serialized monitor job')
     return 0
 
 
@@ -1213,7 +1230,7 @@ def _check_command(args: argparse.Namespace) -> int:
     return 0
 
 
-def _monitor_command(args: argparse.Namespace) -> int:
+def _monitor_command(args: argparse.Namespace, *, triage: bool = False) -> int:
     repo = args.repository or os.environ.get('GITHUB_REPOSITORY', '')
     token = os.environ.get('GITHUB_TOKEN', '')
     if not repo or not token:
@@ -1243,7 +1260,7 @@ def _monitor_command(args: argparse.Namespace) -> int:
     if not health.ready and health.reason == _RETIRED_PROVIDER_REASON:
         print(f'Skipping retired provider configuration: {health.workflow}')
         return 0
-    return _monitor_workflow_outcome(client, args, health, run_attempt, result, repo)
+    return _monitor_workflow_outcome(client, args, health, run_attempt, result, repo, triage=triage)
 
 
 def _recover_issue(
@@ -1375,6 +1392,16 @@ def main(argv: list[str] | None = None) -> int:
     monitor.add_argument('--recover-issue', type=int)
     monitor.add_argument('--dry-run', action='store_true')
     monitor.set_defaults(handler=_monitor_command)
+    triage = commands.add_parser(
+        'triage', help='report whether a completed agent workflow needs serialized incident reconciliation'
+    )
+    triage.add_argument('--repository')
+    triage.add_argument('--run-id', type=int, required=True)
+    triage.add_argument('--run-attempt', type=int, required=True)
+    triage.add_argument('--conclusion')
+    triage.add_argument('--health-artifact', type=Path, required=True)
+    triage.add_argument('--agent-artifact', type=Path)
+    triage.set_defaults(handler=functools.partial(_monitor_command, triage=True))
     args = parser.parse_args(argv)
     try:
         return args.handler(args)

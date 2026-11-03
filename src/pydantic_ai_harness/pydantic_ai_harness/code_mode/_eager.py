@@ -16,6 +16,7 @@ from pydantic_ai.messages import AgentStreamEvent, PartDeltaEvent, PartStartEven
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets.abstract import ToolsetTool
 
+from ._parts import RUN_CODE_TOOL_NAME
 from ._streaming import (
     CANCEL_TIMEOUT_SECONDS,
     MAX_SCAN_CHARS,
@@ -81,7 +82,7 @@ class EagerCoordinator(Generic[AgentDepsT]):
             case PartStartEvent(part=ToolCallPart() as part):
                 if self.first_tool_part_index is None:
                     self.first_tool_part_index = event.index
-                if part.tool_name != 'run_code':
+                if part.tool_name != RUN_CODE_TOOL_NAME:
                     return
                 call = self.calls.get(part.tool_call_id)
                 if call is None:
@@ -134,9 +135,11 @@ class EagerCoordinator(Generic[AgentDepsT]):
                 call.halted = True
                 self.drop_queued(call)
                 return False
+            previous_char = call.args_text[-1:]
             call.args_text += args
-            # A statement can only close on a newline, so deltas without one need no decoding.
-            return '\\n' in args
+            # A statement can only close on a newline, so deltas without one need no decoding. The
+            # previous character joins the check because a provider can split the `\n` escape.
+            return '\\n' in previous_char + args
         if isinstance(args, dict):
             code = args.get('code')
             if args.get('restart'):
@@ -250,7 +253,7 @@ class EagerCoordinator(Generic[AgentDepsT]):
         """Feed a streamed call's queued statements in program order."""
         while call.queue and call.error is None:
             source = call.queue.popleft()
-            feed_ctx = replace(ctx, tool_call_id=call.tool_call_id, tool_name='run_code')
+            feed_ctx = replace(ctx, tool_call_id=call.tool_call_id, tool_name=RUN_CODE_TOOL_NAME)
             try:
                 async with self.feed_lock:
                     await executor.feed_fragment(call, source, feed_ctx)
@@ -367,6 +370,6 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
     ) -> None:
         tools = await self.get_tools(ctx)
-        run_code_tool = self._as_run_code_tool(tools['run_code'])
+        run_code_tool = self._as_run_code_tool(tools[RUN_CODE_TOOL_NAME])
         assert run_code_tool is not None, '`get_tools` always builds the `run_code` tool'
         await self._execute_code(source, ctx, run_code_tool, call.execution)

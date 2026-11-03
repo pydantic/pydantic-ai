@@ -26,7 +26,8 @@ def model_options(*, model: str) -> dict[str, tuple[str, ...]]:
         options.pop('temperature')
         options.pop('seed')
         options['thinking'] = ()
-        if provider in ('openrouter', 'vllm'):
+        # Azure runs on Chat Completions, so it gets rows for the family defaults it sends.
+        if provider in ('openrouter', 'vllm') or (provider == 'azure' and family_defaults):
             options = _openai_options(provider='openai-chat', name=name, family_defaults=family_defaults)
     options['cache'] = ()
     glm = _glm_version(name=name)
@@ -153,7 +154,6 @@ def _anthropic_efforts(*, name: str) -> tuple[str, ...]:
     efforts = ['low', 'medium', 'high']
     if profile.get('anthropic_supports_xhigh_effort', False):
         efforts.append('xhigh')
-    # Max effort starts with Opus 4.6; Sonnet only offers low/medium/high.
-    if profile.get('anthropic_supports_adaptive_thinking', False) and 'sonnet' not in name:
+    if profile.get('anthropic_supports_max_effort', True):
         efforts.append('max')
     return tuple(efforts)

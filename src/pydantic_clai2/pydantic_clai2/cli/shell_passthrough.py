@@ -18,7 +18,7 @@ from rich.console import Console
 from rich.text import Text
 
 from pydantic_clai2.cli.shell_terminal import COMMAND_ENVIRONMENT, PtyRun, attached_terminal
-from pydantic_clai2.runtime._processes import kill_process_tree, signal_process_group
+from pydantic_clai2.runtime.processes import kill_process_tree, signal_process_group
 from pydantic_clai2.ui.menus.menu_worker import full_terminal
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.rendering import theme

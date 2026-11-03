@@ -31,7 +31,7 @@ You can then use `CerebrasModel` by name:
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('cerebras:llama-3.3-70b')
+agent = Agent('cerebras:gpt-oss-120b')
 ...
 ```
 
@@ -41,7 +41,7 @@ Or initialise the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.cerebras import CerebrasModel
 
-model = CerebrasModel('llama-3.3-70b')
+model = CerebrasModel('gpt-oss-120b')
 agent = Agent(model)
 ...
 ```
@@ -56,7 +56,7 @@ from pydantic_ai.models.cerebras import CerebrasModel
 from pydantic_ai.providers.cerebras import CerebrasProvider
 
 model = CerebrasModel(
-    'llama-3.3-70b', provider=CerebrasProvider(api_key='your-api-key')
+    'gpt-oss-120b', provider=CerebrasProvider(api_key='your-api-key')
 )
 agent = Agent(model)
 ...
@@ -73,7 +73,7 @@ from pydantic_ai.providers.cerebras import CerebrasProvider
 
 custom_http_client = AsyncClient(timeout=30)
 model = CerebrasModel(
-    'llama-3.3-70b',
+    'gpt-oss-120b',
     provider=CerebrasProvider(api_key='your-api-key', http_client=custom_http_client),
 )
 agent = Agent(model)

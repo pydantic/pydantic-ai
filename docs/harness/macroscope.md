@@ -15,11 +15,13 @@ the tools it already has -- this capability surfaces findings only.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model calls run_macroscope_review, which runs macroscope codereview --raw in the run's workspace. The CLI uploads the branch diff to Macroscope's service and streams findings back, and the tool returns them as a MacroscopeReview with a review id, a status and a list of MacroscopeIssue findings. The agent then checks each finding and fixes the real ones with its own file and shell tools. Setup problems, such as a missing or signed-out CLI, raise UserError and stop the run.](../img/harness/macroscope.svg)
+
 ## The problem
 
 Macroscope reviews the current branch's diff and streams findings, but it ships
-as editor plugins (Claude Code, Codex, Cursor, OpenCode). There is no way to
-give a Pydantic AI agent the same review-and-fix loop from your own code.
+as editor plugins (Claude Code, Codex, Cursor, OpenCode). This capability gives
+a Pydantic AI agent the same review-and-fix loop.
 
 ## Usage
 
@@ -59,9 +61,8 @@ or to fix the configured `base` if the CLI reports an unknown ref. The
 exception is a review that fails to start with a `base` the model passed: that
 is reported to the model as a retry so it can drop or change the ref.
 
-The tool invokes `macroscope codereview --raw` for machine-readable streaming
-output, which needs a recent CLI build. The installer fetches the latest and the
-CLI self-updates on use, so a fresh install satisfies this.
+The tool runs `macroscope codereview --raw`. Builds without `--raw` are too old;
+the CLI updates itself on use.
 
 ## The tool
 
@@ -107,11 +108,12 @@ workspace's `PATH` instead.
 
 ## Scope and composition
 
-This capability surfaces findings only. It does not edit files, create
-worktrees, or commit -- validating and fixing findings is the agent's job,
-using its other capabilities. Pair it with `FileSystem` or `Shell` to let the
-agent read code and apply fixes, and consider running the agent in an isolated
-worktree if you want fixes kept off your working tree.
+This capability surfaces findings only: it does not edit files, create
+worktrees, or commit. Pair it with `FileSystem` or `Shell` so the agent can
+read code and apply fixes. To keep fixes off your working tree, give the agent
+a separate worktree as its workspace. The tool returns a review's findings in
+one result, which can be large; add [Tool Output Limits](tool-output-limits.md)
+to cap its size.
 
 ## Durable execution
 
@@ -137,8 +139,7 @@ treat them as untrusted input: run the agent in a sandbox workspace, or require
 
 `Macroscope` emits no spans of its own. Core's
 [instrumentation](../capabilities/instrumentation.md) records each
-`run_macroscope_review` call as a tool span, and the capability makes no
-decision worth a span of its own.
+`run_macroscope_review` call as a tool span.
 
 ## Two of them
 
@@ -172,11 +173,9 @@ from pydantic_ai_harness import Macroscope
 agent = Agent.from_file('agent.yaml', custom_capability_types=[Macroscope])
 ```
 
-Pass `custom_capability_types` so the spec loader knows how to instantiate
-`Macroscope`.
-
 ## Further reading
 
+- [The agent writes faster than you can review](https://pydantic.dev/articles/harness-macroscope) (Pydantic): from a ten-line self-critic to Macroscope's review
 - [Macroscope CLI documentation](https://docs.macroscope.com/cli)
 - [Pydantic AI capabilities](../capabilities/overview.md)
 - [Toolsets](../toolsets.md)

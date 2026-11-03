@@ -320,6 +320,7 @@ def test_profile() -> None:
         supports_output_truncation=False,
         supports_text_output=False,  # Grok Voice always speaks
         supports_session_seeding=True,
+        supports_system_messages=False,
         supports_webrtc=False,
         supports_seeding_images=False,
         supports_seeding_audio=False,
@@ -329,6 +330,7 @@ def test_profile() -> None:
         supports_async_tool_calls=True,  # deprecated, derived from `async_tool_call_mode`
         supports_tool_return_schema=False,
         emits_input_speech_events=True,
+        output_speech_timestamp_granularity=None,
         synthesizes_turn_boundary=False,
         responses_are_requests=True,
         response_usage_covers_context=False,

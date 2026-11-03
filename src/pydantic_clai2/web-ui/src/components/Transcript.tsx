@@ -3,14 +3,14 @@ import { SessionContext } from '../api'
 import { OpenCardsContext } from '../openCards'
 import { JumpToLatest, useStickToBottom } from '../stickToBottom'
 import { WorkspaceLinkContext } from '../workspaceLink'
-import type { Item } from '../protocol'
+import type { Item, TurnSummary } from '../protocol'
 import type { Entry } from '../state'
 import { cell } from '../code'
 import { compact, duration } from '../format'
-import type { TurnSummary } from '../state'
-import { ChevronIcon } from './icons'
+import { ChevronIcon, PencilIcon, RetryIcon } from './icons'
 import { Markdown } from './Markdown'
 import { Thinking } from './Thinking'
+import { ForkResult, ForksCard } from './ForksCard'
 import { ToolCard, codeCalls, isWorkspaceTool } from './ToolCard'
 import { UsageCard } from './UsageCard'
 
@@ -45,31 +45,114 @@ function Thumbnail({ id }: { id: string }) {
   )
 }
 
-const EntryView = memo(function EntryView({ entry, live }: { entry: Entry; live: boolean }) {
-  switch (entry.kind) {
-    case 'user':
-      return (
-        <div className="user-row">
-          <div className="user-bubble">
-            {entry.images.length > 0 && (
-              <div className={`user-images ${entry.text ? 'captioned' : ''}`}>
-                {entry.images.map((id, index) => (
-                  <Thumbnail key={`${index}-${id}`} id={id} />
-                ))}
-              </div>
-            )}
-            {entry.text}
+/** Rewind the conversation to the prompt `runId` started and send `text` in its place; `false` when it failed. */
+export type Rewind = (runId: string, text: string) => Promise<boolean>
+
+const REWIND_NOTE = 'Later messages are removed; files are not restored.'
+
+/** A sent prompt; with `rewind`, Edit and Retry send it again from here once no turn runs. */
+function UserEntry({ entry, rewind, running }: { entry: Item; rewind?: Rewind; running: boolean }) {
+  const [draft, setDraft] = useState<string | null>(null)
+  const runId = rewind ? entry.run_id : null
+  const send = async (text: string) => {
+    if (runId && (await rewind?.(runId, text))) setDraft(null)
+  }
+  const images = entry.images.length > 0 && (
+    <div className={`user-images ${entry.text || draft !== null ? 'captioned' : ''}`}>
+      {entry.images.map((id, index) => (
+        <Thumbnail key={`${index}-${id}`} id={id} />
+      ))}
+    </div>
+  )
+  if (draft !== null)
+    return (
+      <div className="user-row">
+        <div className="user-bubble editing">
+          {images}
+          <textarea
+            autoFocus
+            rows={Math.min(8, draft.split('\n').length)}
+            value={draft}
+            aria-label="Edit prompt"
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                setDraft(null)
+              } else if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && !running) {
+                event.preventDefault()
+                void send(draft)
+              }
+            }}
+          />
+          <div className="user-edit-actions">
+            <span>{REWIND_NOTE}</span>
+            <button className="ghost" onClick={() => setDraft(null)}>
+              Cancel
+            </button>
+            <button className="primary" disabled={running} onClick={() => void send(draft)}>
+              Send
+            </button>
           </div>
         </div>
-      )
+      </div>
+    )
+  return (
+    <div className="user-row">
+      {runId && (
+        <div className="user-actions">
+          <button
+            className="icon-button"
+            title={`Edit and send from here. ${REWIND_NOTE}`}
+            aria-label="Edit prompt"
+            disabled={running}
+            onClick={() => setDraft(entry.text)}
+          >
+            <PencilIcon size={13} />
+          </button>
+          <button
+            className="icon-button"
+            title={`Send again from here. ${REWIND_NOTE}`}
+            aria-label="Retry prompt"
+            disabled={running}
+            onClick={() => void send(entry.text)}
+          >
+            <RetryIcon size={13} />
+          </button>
+        </div>
+      )}
+      <div className="user-bubble">
+        {images}
+        {entry.text}
+      </div>
+    </div>
+  )
+}
+
+const EntryView = memo(function EntryView({
+  entry,
+  live,
+  rewind,
+  running,
+}: {
+  entry: Entry
+  live: boolean
+  rewind?: Rewind
+  running: boolean
+}) {
+  switch (entry.kind) {
+    case 'user':
+      return <UserEntry entry={entry} rewind={rewind} running={running} />
     case 'assistant':
-      return <Markdown className={`assistant ${live ? 'streaming' : ''}`} text={entry.text} />
+      return <Markdown className={`assistant ${live ? 'streaming' : ''}`} text={entry.text} live={live} />
     case 'thinking':
       return <Thinking text={entry.text} live={live} />
     case 'tool':
       return <ToolCard item={entry} />
     case 'notice':
       if (entry.usage && entry.level === 'info') return <UsageCard notice={entry} usage={entry.usage} />
+      if (entry.forks) return <ForksCard notice={entry} forks={entry.forks} />
+      if (entry.fork) return <ForkResult notice={entry} fork={entry.fork} />
       return (
         <div className={`notice ${entry.level}`}>
           {entry.command && <span className="notice-command">{entry.command}</span>}
@@ -156,7 +239,7 @@ const ToolGroup = memo(function ToolGroup({ tools }: { tools: Item[] }) {
   const interrupted = tools.filter((tool) => tool.state === 'interrupted').length
   const [open, setOpen] = useState<boolean | null>(null)
   // Open while a call runs, or while the user has one of its cards open, until they close the group.
-  const shown = open ?? (running || tools.some((tool) => cards.open.has(tool.id)))
+  const shown = open ?? (running || tools.some((tool) => cards.open.get(tool.id) === true))
   return (
     <div className={`tool-group ${shown ? 'open' : ''}`}>
       <button className="row-toggle" onClick={() => setOpen(!shown)} aria-expanded={shown}>
@@ -177,17 +260,22 @@ const ToolGroup = memo(function ToolGroup({ tools }: { tools: Item[] }) {
 })
 
 /** The conversation; it follows new output while the reader is at the bottom, and stays put once they scroll up. */
-export function Transcript({ entries, running, empty }: { entries: Entry[]; running: boolean; empty: React.ReactNode }) {
-  const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set())
+export function Transcript({
+  entries,
+  running,
+  empty,
+  rewind,
+}: {
+  entries: Entry[]
+  running: boolean
+  empty: React.ReactNode
+  rewind?: Rewind
+}) {
+  const [open, setOpen] = useState<ReadonlyMap<string, boolean>>(() => new Map())
   const cards = useMemo(
     () => ({
       open,
-      toggle: (id: string) =>
-        setOpen((current) => {
-          const next = new Set(current)
-          if (!next.delete(id)) next.add(id)
-          return next
-        }),
+      toggle: (id: string, shown: boolean) => setOpen((current) => new Map(current).set(id, !shown)),
     }),
     [open],
   )
@@ -207,7 +295,13 @@ export function Transcript({ entries, running, empty }: { entries: Entry[]; runn
               row.kind === 'group' ? (
                 <ToolGroup key={row.id} tools={row.tools} />
               ) : (
-                <EntryView key={row.entry.id} entry={row.entry} live={running && row.entry === last} />
+                <EntryView
+                  key={row.entry.id}
+                  entry={row.entry}
+                  live={running && row.entry === last}
+                  rewind={rewind}
+                  running={running}
+                />
               ),
             )}
         {running && last?.kind !== 'assistant' && last?.kind !== 'thinking' && (

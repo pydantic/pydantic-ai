@@ -1,3 +1,4 @@
+# description: Runs every pydantic-ai-harness sandbox provider's live tests daily and opens an issue when a scheduled run fails.
 name: Sandbox live nightly
 
 # Sandbox live tests run only in this workflow. The daily schedule runs every provider against
@@ -36,6 +37,7 @@ jobs:
       E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
       SPRITE_TOKEN: ${{ secrets.SPRITE_TOKEN }}
       DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+      BOXD_API_KEY: ${{ secrets.BOXD_API_KEY }}
 
   report:
     needs: [live]

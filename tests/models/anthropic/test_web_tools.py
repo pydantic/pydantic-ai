@@ -2,7 +2,7 @@
 
 The wire tool version (`web_search_20260209` / `web_fetch_20260209` vs the earlier ones) and the
 beta headers are narrowed by the concrete Anthropic client the provider wraps — first-party,
-Bedrock(-Mantle), Vertex, and Foundry each support a different subset. These tests pin that matrix,
+both Bedrock APIs, Vertex, and Foundry each support a different subset. These tests pin that matrix,
 the dynamic-filtering `caller` round-trip on web-fetch history, and the live request shape via VCR.
 """
 
@@ -21,7 +21,8 @@ from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool,
 
 from ..._inline_snapshot import snapshot
 from ...cassette_utils import single_request_body
-from ...conftest import IsStr, TestEnv, try_import
+from ...conftest import IsStr, RequestCapture, TestEnv, try_import
+from ..conftest import AnthropicModelFactory
 from ..test_anthropic import (
     MockAnthropic,
     completion_message,
@@ -34,6 +35,7 @@ if TYPE_CHECKING:
 
 with try_import() as imports_successful:
     from anthropic import (
+        APIStatusError,
         AsyncAnthropic,
         AsyncAnthropicBedrock,
         AsyncAnthropicBedrockMantle,
@@ -55,7 +57,7 @@ with try_import() as imports_successful:
         BetaWebFetchToolResultBlock,
     )
 
-    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings, AnthropicWebToolCaller
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 if not imports_successful():  # pragma: lax no cover
@@ -103,13 +105,6 @@ CLIENT_SUPPORT_CASES = [
         expected_tool_types=['web_search_20260209', 'web_fetch_20260209'],
     ),
     ClientSupportCase(
-        id='bedrock-mantle',
-        client_cls=AsyncAnthropicBedrockMantle,
-        base_url='https://bedrock-mantle.us-east-1.api.aws',
-        native_tools=[WebSearchTool(), WebFetchTool()],
-        expected_tool_types=['web_search_20260209', 'web_fetch_20260209'],
-    ),
-    ClientSupportCase(
         id='foundry',
         client_cls=AsyncAnthropicFoundry,
         base_url='https://example.services.ai.azure.com/anthropic',
@@ -134,6 +129,20 @@ CLIENT_SUPPORT_CASES = [
         id='bedrock-web-fetch-rejected',
         client_cls=AsyncAnthropicBedrock,
         base_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+        native_tools=[WebFetchTool()],
+        rejected_tool=WebFetchTool,
+    ),
+    ClientSupportCase(
+        id='bedrock-mantle-web-search-rejected',
+        client_cls=AsyncAnthropicBedrockMantle,
+        base_url='https://bedrock-mantle.us-east-1.api.aws',
+        native_tools=[WebSearchTool()],
+        rejected_tool=WebSearchTool,
+    ),
+    ClientSupportCase(
+        id='bedrock-mantle-web-fetch-rejected',
+        client_cls=AsyncAnthropicBedrockMantle,
+        base_url='https://bedrock-mantle.us-east-1.api.aws',
         native_tools=[WebFetchTool()],
         rejected_tool=WebFetchTool,
     ),
@@ -182,6 +191,109 @@ def test_anthropic_explicit_profile_instance_narrows_web_tools():
     profile = provider.model_profile('claude-sonnet-4-6')
     m = AnthropicModel('claude-sonnet-4-6', provider=provider, profile=profile)
     assert WebSearchTool not in m.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+
+
+@dataclass(frozen=True)
+class AllowedCallersCase:
+    id: str
+    model_name: str
+    allowed_callers: list[AnthropicWebToolCaller]
+    expected_tools: list[tuple[str, list[str] | None]]
+    prompt: str = 'Reply with exactly: ok'
+    expected_web_tool_calls: list[tuple[str, dict[str, Any] | None]] = field(
+        default_factory=list[tuple[str, dict[str, Any] | None]]
+    )
+
+
+ALLOWED_CALLERS_CASES = [
+    AllowedCallersCase(
+        id='setting-direct',
+        model_name='claude-sonnet-5-5',
+        allowed_callers=['direct'],
+        prompt='Use web fetch to read https://ai.pydantic.dev and say in one sentence what Pydantic AI is.',
+        expected_tools=snapshot([('web_search_20260209', ['direct']), ('web_fetch_20260209', ['direct'])]),
+        expected_web_tool_calls=snapshot([('web_fetch', None)]),
+    ),
+    AllowedCallersCase(
+        id='setting-direct-previous-versions',
+        model_name='claude-sonnet-4-5',
+        allowed_callers=['direct'],
+        expected_tools=snapshot([('web_search_20250305', ['direct']), ('web_fetch_20250910', ['direct'])]),
+    ),
+]
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in ALLOWED_CALLERS_CASES])
+async def test_anthropic_web_tools_allowed_callers(
+    case: AllowedCallersCase,
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+):
+    """The setting is sent as both web tools' `allowed_callers` on either tool version, and calls come back direct."""
+    agent = Agent(
+        anthropic_model(case.model_name, capture=True),
+        capabilities=[NativeTool(WebSearchTool(max_uses=1)), NativeTool(WebFetchTool(max_uses=1))],
+        model_settings=AnthropicModelSettings(anthropic_web_tools_allowed_callers=case.allowed_callers),
+    )
+
+    result = await agent.run(case.prompt)
+
+    tools = request_capture.body('/v1/messages')['tools']
+    assert isinstance(tools, list)
+    assert [
+        (tool['type'], tool.get('allowed_callers')) for tool in tools if isinstance(tool, dict)
+    ] == case.expected_tools
+    assert [
+        (part.tool_name, part.provider_details)
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, NativeToolCallPart) and part.tool_name in ('web_search', 'web_fetch')
+    ] == case.expected_web_tool_calls
+
+
+@pytest.mark.vcr()
+async def test_anthropic_explicit_code_execution_caller_on_previous_web_tool_versions(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """A code execution caller set on a web tool version that defaults to direct calls gets a sandbox too.
+
+    Its `code_execution` calls are kept, so the follow-up replays every call its results point at, and the follow-up
+    reuses the container.
+    """
+    model = anthropic_model('claude-sonnet-4-5', capture=True)
+    agent = Agent(
+        model,
+        capabilities=[NativeTool(WebSearchTool(max_uses=1))],
+        model_settings=AnthropicModelSettings(anthropic_web_tools_allowed_callers=['code_execution_20260120']),
+    )
+    async with agent.run_stream(
+        'First, in the code sandbox, write the text "sentinel-42" to /tmp/state.txt. '
+        'Then use web search once to find the latest pydantic-ai version on PyPI. Reply with just the version.'
+    ) as result:
+        await result.get_output()
+    second = await agent.run(
+        'In the code sandbox, print the contents of /tmp/state.txt. Reply with exactly what it printed.',
+        message_history=result.all_messages(),
+    )
+
+    bodies = request_capture.bodies('/v1/messages')
+    tools = bodies[0]['tools']
+    assert isinstance(tools, list)
+    assert [(tool['type'], tool.get('allowed_callers')) for tool in tools if isinstance(tool, dict)] == snapshot(
+        [('web_search_20250305', ['code_execution_20260120'])]
+    )
+    assert sorted(
+        {
+            part.tool_name
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, NativeToolCallPart)
+        }
+    ) == snapshot(['code_execution', 'web_search'])
+    assert ['container' in body for body in bodies] == snapshot([False, True])
+    assert second.output == snapshot('sentinel-42')
 
 
 async def test_anthropic_web_fetch_20260209_caller_pass_history_back(env: TestEnv, allow_model_requests: None):
@@ -284,7 +396,7 @@ async def test_anthropic_web_fetch_20260209_caller_pass_history_back(env: TestEn
 async def test_anthropic_supported_model_uses_20260209_web_tools(
     allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
 ):
-    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m, capabilities=[NativeTool(WebSearchTool()), NativeTool(WebFetchTool())])
 
     result = await agent.run('Use web fetch to read https://ai.pydantic.dev and reply with exactly the page title.')
@@ -322,3 +434,43 @@ async def test_anthropic_unsupported_model_uses_previous_web_tools(
     assert result.output
     tool_types = [tool['type'] for tool in single_request_body(vcr)['tools']]
     assert tool_types == ['web_search_20250305', 'web_fetch_20250910']
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize(
+    'tool',
+    [
+        pytest.param(WebSearchTool(), id='web-search'),
+        pytest.param(WebFetchTool(), id='web-fetch'),
+    ],
+)
+@pytest.mark.parametrize('dynamic_filtering', [pytest.param(False, id='basic'), pytest.param(True, id='20260209')])
+async def test_anthropic_web_tools_rejected_by_bedrock_messages_api(
+    allow_model_requests: None,
+    request_capture: RequestCapture,
+    request: pytest.FixtureRequest,
+    tool: AbstractNativeTool,
+    dynamic_filtering: bool,
+):
+    """The Bedrock Messages API rejects both versions of both web tools, which is why its client doesn't get them.
+
+    `AnthropicModel` no longer sends them there, so this sends the definitions and betas it builds through the SDK.
+    That pins the provider behavior the `bedrock-mantle` rows of the support matrix rest on.
+    https://github.com/pydantic/pydantic-ai/issues/11481
+    """
+    if isinstance(tool, WebSearchTool):
+        tool_param = AnthropicModel._map_web_search_tool(tool, dynamic_filtering)  # pyright: ignore[reportPrivateUsage]
+        beta = None
+    else:
+        assert isinstance(tool, WebFetchTool)
+        tool_param, beta = AnthropicModel._map_web_fetch_tool(tool, dynamic_filtering, False)  # pyright: ignore[reportPrivateUsage]
+    client = request.getfixturevalue('anthropic_bedrock_mantle_client')
+
+    with pytest.raises(APIStatusError, match=rf"tool type '{tool_param['type']}' is not supported for this model"):
+        await client.beta.messages.create(
+            model='anthropic.claude-opus-5-5',
+            max_tokens=256,
+            messages=[{'role': 'user', 'content': 'Look up https://example.com and give me its title.'}],
+            tools=[tool_param],
+            betas=[beta] if beta else [],
+        )

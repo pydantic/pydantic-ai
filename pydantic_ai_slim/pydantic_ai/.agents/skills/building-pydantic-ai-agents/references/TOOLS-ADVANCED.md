@@ -199,7 +199,7 @@ See [Parallel Output Tool Calls](https://pydantic.dev/docs/ai/core-concepts/outp
 
 For tool-call retries, use `ModelRetry` and tool `retries=...`.
 
-For HTTP request retries at the transport layer, use the library's retry configuration separately. Do not assume `ModelRetry` alone solves provider transport failures. The provider SDK client retries too, on top of the transport; set `model_settings={'max_retries': 0}` to leave retrying to the transport alone, or another count to change the SDK's.
+For HTTP request retries at the transport layer, use the library's retry configuration separately: pass a retrying transport such as `AsyncHTTPX2TenacityTransport` to `create_async_httpx2_client(transport=...)` (from `pydantic_ai.models`), which keeps Pydantic AI's client timeouts and user agent, and give the client to the provider as `http_client`. Do not assume `ModelRetry` alone solves provider transport failures. The provider SDK client retries too, on top of the transport; set `model_settings={'max_retries': 0}` to leave retrying to the transport alone, or another count to change the SDK's.
 
 ## Recognize Tools by Kind, Not Name
 

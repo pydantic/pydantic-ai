@@ -5,11 +5,13 @@ agent and hand the findings back for validation and fixing.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/macroscope/)
 
+![The model calls run_macroscope_review, which runs macroscope codereview --raw in the run's workspace. The CLI uploads the branch diff to Macroscope's service and streams findings back, and the tool returns them as a MacroscopeReview with a review id, a status and a list of MacroscopeIssue findings. The agent then checks each finding and fixes the real ones with its own file and shell tools. Setup problems, such as a missing or signed-out CLI, raise UserError and stop the run.](https://pydantic.dev/docs/ai/img/harness/macroscope.svg)
+
 ## The problem
 
 Macroscope reviews the current branch's diff and streams findings, but it ships as
-editor plugins (Claude Code, Codex, Cursor, OpenCode). There is no way to give a
-Pydantic AI agent the same review-and-fix loop from your own code.
+editor plugins (Claude Code, Codex, Cursor, OpenCode). This capability gives a
+Pydantic AI agent the same review-and-fix loop.
 
 ## The solution
 
@@ -40,10 +42,10 @@ print(result.output)
 
 The capability drives the `macroscope` binary installed in the agent's
 [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/): your machine
-with `LocalWorkspace`, or the sandbox when the run uses one. A run without a workspace fails at its start. The review runs in
-the workspace's working directory, which should be the repository. The
-capability cannot install or authenticate on your behalf, so do this once
-wherever the review runs:
+with `LocalWorkspace`, or the sandbox when the run uses one. A run without a
+workspace fails at its start. The review runs in the workspace's working
+directory, which should be the repository. The capability cannot install or
+authenticate on your behalf, so do this once wherever the review runs:
 
 1. Install the CLI:
 
@@ -61,9 +63,8 @@ wherever the review runs:
 
    This writes `~/.macroscope/config.yaml`.
 
-The tool invokes `macroscope codereview --raw` for machine-readable streaming
-output, which needs a recent CLI build. The installer fetches the latest and the
-CLI self-updates on use, so a fresh install satisfies this.
+The tool runs `macroscope codereview --raw`. Builds without `--raw` are too old;
+the CLI updates itself on use.
 
 The model cannot fix these setup problems, so the tool raises `UserError` and the
 run stops rather than spending tool retries on them. A missing binary reports the
@@ -101,11 +102,11 @@ starts, the model gets a retry.
 
 ## Scope and composition
 
-This capability surfaces findings only. It does not edit files, create worktrees, or
-commit -- validating and fixing findings is the agent's job, using its other
-capabilities. Pair it with `FileSystem` or `Shell` to let the agent read code and
-apply fixes, and consider running the agent in an isolated worktree if you want fixes
-kept off your working tree.
+This capability surfaces findings only: it does not edit files, create worktrees, or
+commit. Pair it with `FileSystem` or `Shell` so the agent can read code and apply
+fixes. To keep fixes off your working tree, give the agent a separate worktree as its
+workspace. The tool returns a review's findings in one result, which can be large; add
+[Tool Output Limits](https://pydantic.dev/docs/ai/harness/tool-output-limits/) to cap its size.
 
 ## Durable execution
 
@@ -131,8 +132,7 @@ for its shell and write tools.
 ## Telemetry
 
 `Macroscope` emits no spans of its own. Core's instrumentation records each
-`run_macroscope_review` call as a tool span, and the capability makes no decision
-worth a span of its own.
+`run_macroscope_review` call as a tool span.
 
 ## Two of them
 

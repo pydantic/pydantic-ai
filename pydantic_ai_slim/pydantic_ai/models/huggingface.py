@@ -68,11 +68,11 @@ try:
         ChatCompletionInputMessage,
         ChatCompletionInputMessageChunk,
         ChatCompletionInputTool,
-        ChatCompletionInputToolCall,
         ChatCompletionInputToolChoiceClass,
         ChatCompletionInputURL,
         ChatCompletionOutput,
         ChatCompletionOutputMessage,
+        ChatCompletionOutputToolCall,
         ChatCompletionStreamOutput,
         TextGenerationOutputFinishReason,
     )
@@ -437,7 +437,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                     hf_messages.append(item)
             elif isinstance(message, ModelResponse):
                 texts: list[str] = []
-                tool_calls: list[ChatCompletionInputToolCall] = []
+                tool_calls: list[ChatCompletionOutputToolCall] = []
                 for item in message.parts:
                     if isinstance(item, TextPart):
                         texts.append(item.content)
@@ -480,8 +480,9 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         return hf_messages
 
     @staticmethod
-    def _map_tool_call(t: ToolCallPart) -> ChatCompletionInputToolCall:
-        return ChatCompletionInputToolCall.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
+    def _map_tool_call(t: ToolCallPart) -> ChatCompletionOutputToolCall:
+        # `ChatCompletionInputToolCall`'s function type has no `arguments` field, so they'd be dropped from the body.
+        return ChatCompletionOutputToolCall.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
             {
                 'id': _guard_tool_call_id(t=t),
                 'type': 'function',

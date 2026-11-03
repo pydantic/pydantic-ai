@@ -5,8 +5,12 @@ from typing import TYPE_CHECKING, Self, overload
 from urllib.parse import urlparse
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._json_schema import (
+    JsonSchema,
+    JsonSchemaTransformerWithOutputOverride,
+)
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles import InlineDefsJsonSchemaTransformer, merge_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
@@ -29,7 +33,7 @@ else:
 
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 try:
@@ -45,7 +49,7 @@ _DEFAULT_VOICE_LIVE_API_VERSION = '2026-07-15'
 """Default Azure AI Voice Live API version when neither `AZURE_VOICELIVE_API_VERSION` nor an argument is set."""
 
 
-class AzureProvider(_OpenAICompatibleProvider):
+class AzureProvider(_OpenAISDKProvider):
     """Provider for Azure OpenAI API.
 
     See <https://azure.microsoft.com/en-us/products/ai-foundry> for more information.
@@ -53,6 +57,12 @@ class AzureProvider(_OpenAICompatibleProvider):
 
     @property
     def name(self) -> str:
+        return 'azure'
+
+    @property
+    def canonical_system(self) -> str:
+        # Fixed, so a subclass that only renames itself keeps sharing encrypted reasoning. Azure doesn't
+        # accept OpenAI's encrypted reasoning or compaction items, nor OpenAI Azure's.
         return 'azure'
 
     @property
@@ -143,8 +153,11 @@ class AzureProvider(_OpenAICompatibleProvider):
             # https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/prompt-caching
             base = openai_model_profile(model_name)
 
-        # Azure Chat Completions API doesn't support document input.
-        base = merge_profile(base, OpenAIModelProfile(openai_chat_supports_document_input=False))
+        # Azure Chat Completions API doesn't support document input, and Responses WebSockets aren't verified on Azure.
+        base = merge_profile(
+            base,
+            OpenAIModelProfile(openai_chat_supports_document_input=False, openai_responses_supports_websocket=False),
+        )
 
         # Reported in #6593 (not verified against the live API here): Azure AI Foundry's
         # Mistral gateway rejects `max_completion_tokens` with a 422 and accepts the legacy
@@ -153,7 +166,29 @@ class AzureProvider(_OpenAICompatibleProvider):
         if is_mistral:
             base = merge_profile(base, OpenAIModelProfile(openai_chat_supports_max_completion_tokens=False))
 
+        if model_name.startswith('grok'):
+            # Azure Grok rejects definition references and still needs OpenAI schema conversion.
+            # https://github.com/pydantic/pydantic-ai/issues/10987
+            base = merge_profile(base, OpenAIModelProfile(json_schema_transformer=_AzureGrokJsonSchemaTransformer))
+
         return base
+
+    def _configured_model_profile(self, model_name: str) -> ModelProfile | None:
+        """The model profile, with the unified `cache` setting turned on where this provider's API takes it.
+
+        The [Azure OpenAI v1 API](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/api-version-lifecycle)
+        honors the `prompt_cache_options` (whose only TTL is `'30m'`) and explicit breakpoints of GPT-5.6 and later,
+        which the unified `cache` setting maps onto, as on `OpenAIProvider`. Dated `api-version` deployments and
+        Azure AI Foundry serverless endpoints aren't verified to accept them, so `cache` stays off there.
+        """
+        profile = self.model_profile(model_name)
+        if (
+            profile is None
+            or not profile.get('openai_supports_prompt_cache_breakpoints')
+            or not _is_azure_openai_v1_api(self.base_url)
+        ):
+            return profile
+        return merge_profile(profile, OpenAIModelProfile(supports_cache=True, supported_cache_retentions=('30m',)))
 
     @staticmethod
     def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
@@ -391,6 +426,29 @@ class AzureProvider(_OpenAICompatibleProvider):
         self._voice_live_api_version = (
             voice_live_api_version or os.getenv('AZURE_VOICELIVE_API_VERSION') or _DEFAULT_VOICE_LIVE_API_VERSION
         )
+
+
+class _AzureGrokJsonSchemaTransformer(
+    OpenAIJsonSchemaTransformer, InlineDefsJsonSchemaTransformer, JsonSchemaTransformerWithOutputOverride
+):
+    output_object_transformer = OpenAIJsonSchemaTransformer
+
+    def walk(self) -> JsonSchema:
+        result = super().walk()
+        if self.recursive_refs:
+            # Keep OpenAI's recursive conversion instead of merging an unconverted root definition.
+            transformer = OpenAIJsonSchemaTransformer(self.schema, strict=self.strict)
+            result = transformer.walk()
+            self.is_strict_compatible = transformer.is_strict_compatible
+        return result
+
+
+def _is_azure_openai_v1_api(base_url: str) -> bool:
+    """Whether a client's base URL targets the Azure OpenAI v1 API (`/openai/v1/`), whatever its client class.
+
+    An `AsyncAzureOpenAI` client can reach it too, with `base_url` set and `api_version='preview'` or `'latest'`.
+    """
+    return urlparse(base_url).path.rstrip('/').endswith('/openai/v1')
 
 
 def _openai_compatible_v1_base_url(endpoint: str) -> str | None:

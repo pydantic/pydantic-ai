@@ -23,6 +23,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.logfire_mcp import LOGFIRE_EU_MCP_URL, LOGFIRE_US_MCP_URL, LogfireMCP
+from tests.harness._hosted_mcp import mcp_connection, only_leaf
 
 from ...conftest import try_import
 
@@ -61,17 +62,8 @@ def server() -> FastMCP:
     return server
 
 
-def leaf(capability: LogfireMCP[None]) -> AbstractToolset[None]:
-    """The one toolset under the `logfire_` prefix: the connection, or the per-run toolset that opens one."""
-    leaves: list[AbstractToolset[None]] = []
-    capability.get_toolset().apply(leaves.append)
-    [result] = leaves
-    return result
-
-
 def transport(capability: LogfireMCP[None]) -> StreamableHttpTransport:
-    toolset = leaf(capability)
-    assert isinstance(toolset, MCPToolset)
+    toolset = mcp_connection(capability.get_toolset())
     result = toolset.client.transport
     assert isinstance(result, StreamableHttpTransport)
     return result
@@ -129,6 +121,25 @@ class TestLogfireMCP:
         assert ('Provider instructions.' in (request.instructions or '')) is include
 
     @pytest.mark.parametrize(
+        ('tool_prefix', 'note'),
+        [
+            ('logfire', '`query_run` is `logfire_query_run`.'),
+            ('work', '`query_run` is `work_query_run`.'),
+            (None, None),
+        ],
+    )
+    async def test_instructions_name_the_tool_prefix(
+        self, server: FastMCP, tool_prefix: str | None, note: str | None
+    ) -> None:
+        agent = Agent(TestModel(call_tools=[]), capabilities=[LogfireMCP(client=server, tool_prefix=tool_prefix)])
+        request = (await agent.run('Hello')).all_messages()[0]
+        assert isinstance(request, ModelRequest)
+        instructions = request.instructions or ''
+        assert ("which the server's own text leaves out" in instructions) is (note is not None)
+        if note is not None:
+            assert note in instructions
+
+    @pytest.mark.parametrize(
         ('auth', 'url'),
         [('key', LOGFIRE_US_MCP_URL), (per_user_token, LOGFIRE_US_MCP_URL), (None, LOGFIRE_EU_MCP_URL)],
     )
@@ -138,8 +149,46 @@ class TestLogfireMCP:
         with pytest.raises(UserError, match='`client` owns the connection'):
             LogfireMCP(client='https://example.com/mcp', auth=auth, url=url)
 
+    def test_client_rejects_a_falsy_auth_function(self) -> None:
+        # Only `None` and `''` are unset: a function is a credential source however it converts to `bool`.
+        class FalsyToken:
+            def __call__(self, ctx: RunContext[None]) -> str | None:
+                # Rejected before any run.
+                return 'token'  # pragma: no cover
+
+            def __bool__(self) -> bool:
+                return False
+
+        token = FalsyToken()
+        assert not token
+        with pytest.raises(UserError, match='`client` owns the connection'):
+            LogfireMCP[None](client='https://example.com/mcp', auth=token)
+
+    def test_client_accepts_empty_auth(self) -> None:
+        # The `auth` table documents `''` as unset, so it does not conflict with `client`.
+        capability = LogfireMCP[None](client='https://example.com/mcp', auth='')
+        assert capability.auth is None
+        assert transport(capability).url == 'https://example.com/mcp'
+
+    def test_empty_and_omitted_auth_combine(self, server: FastMCP) -> None:
+        # Both mean unset, so the two describe one connection rather than disagreeing on `auth`.
+        Agent(TestModel(), capabilities=[LogfireMCP(client=server), LogfireMCP(client=server, auth='')])
+
     def test_defer_loading_needs_no_id(self, server: FastMCP) -> None:
         Agent(TestModel(), capabilities=[LogfireMCP(client=server, defer_loading=True)])
+
+    @pytest.mark.parametrize('id', [None, ''])
+    def test_unset_id_means_the_default(self, server: FastMCP, id: str | None) -> None:
+        capability = LogfireMCP[None](id=id, client=server, defer_loading=True)
+        assert (capability.id, only_leaf(capability.get_toolset()).id) == ('logfire-mcp', 'logfire-mcp')
+        Agent(TestModel(), deps_type=type(None), capabilities=[capability])
+
+    def test_unset_ids_that_differ_raise_when_the_agent_is_built(self) -> None:
+        with pytest.raises(
+            UserError,
+            match="Capability id 'logfire-mcp' is used by multiple LogfireMCP capabilities that disagree on 'auth'",
+        ):
+            Agent(TestModel(), capabilities=[LogfireMCP(id=None, auth='a'), LogfireMCP(id=None, auth='b')])
 
     def test_two_that_differ_raise_when_the_agent_is_built(self) -> None:
         with pytest.raises(
@@ -158,7 +207,7 @@ class TestLogfireMCP:
         ids=['token', 'function', 'client'],
     )
     def test_custom_id_is_forwarded(self, capability: LogfireMCP[str | None]) -> None:
-        assert leaf(capability).id == 'tenant-logfire'
+        assert only_leaf(capability.get_toolset()).id == 'tenant-logfire'
 
     @pytest.mark.parametrize(
         ('capability', 'include'),
@@ -172,8 +221,7 @@ class TestLogfireMCP:
         self, capability: LogfireMCP[str | None], include: bool
     ) -> None:
         # `MCPToolset` defaults to False, so this proves the capability passes its own setting on.
-        toolset = leaf(capability)
-        assert isinstance(toolset, MCPToolset)
+        toolset = mcp_connection(capability.get_toolset())
         assert toolset.include_instructions is include
 
     def test_credential_is_not_in_repr(self) -> None:
