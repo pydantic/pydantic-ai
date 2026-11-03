@@ -1,8 +1,8 @@
 # Smart Search
 
-Plain-English code search: the agent describes the behavior it is looking for in plain English and gets back ranked
-source excerpts with file and line ranges, judged by any Pydantic AI model, with a decision model served over the
-System One API, or TypeSafe's Jev, as the recommended judge.
+Code search by behavior: the agent describes what it is looking for in plain English and gets back ranked source
+excerpts with file and line ranges. Any Pydantic AI model can judge relevance; a decision model served over the
+System One API, or TypeSafe's Jev, is the recommended judge.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/smart_search/)
 

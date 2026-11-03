@@ -76,10 +76,10 @@ _TRAVERSAL_DEPRECATION = (
 class RepoContext(AbstractCapability[AgentDepsT]):
     """Discover and load a repo's accumulated coding-assistant context engineering.
 
-    Three strategies, each independently toggleable:
-
     Everything is read through the run's workspace, anchored at its working
     directory; a run without a workspace fails at its start.
+
+    Three strategies, each independently toggleable:
 
     1. Walk-up instruction autoload (`autoload_instructions`, on by default):
        load `CLAUDE.md`/`AGENTS.md` from the working directory and every ancestor
@@ -89,7 +89,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
        conversation is appended rather than rewritten.
 
     2. Asset inventory (`expose_inventory_tool`, off by default): a tool that
-       reports where the repo's CE assets live (`.claude`/`.agents`/`.codex`/
+       reports where the repo's coding-assistant assets live (`.claude`/`.agents`/`.codex`/
        `.grok` and their `skills/`, `agents/`, `settings.json`). It locates
        assets; it does not parse them. It steps aside for `FileSystem`'s
        `read_file` when the asset roots are inside the working directory, and
@@ -100,18 +100,13 @@ class RepoContext(AbstractCapability[AgentDepsT]):
        surface the `CLAUDE.md`/`AGENTS.md` of that directory and of every
        directory between it and the working directory, shallowest first. The
        working directory's own files are not repeated when Strategy 1 loaded
-       them. The note is enqueued in
-       the message tail, not added to system instructions, so it does not
-       invalidate the cached prefix. `nested_inject='pointer'` (default)
-       enqueues a one-line pointer; `'contents'` inlines the file body. With it
-       on, the instructions also gain one static sentence on how instruction
-       files relate: each applies to its subtree, the deeper one wins, and the
-       user's direct instructions win over all of them.
-
-    Cache note: injecting file contents into the system prompt costs prompt-cache
-    stability. Strategy 1 is safe because its files are stable within a run, and a
-    change between runs is appended rather than rewritten; the volatile Strategy 3
-    content rides in the message tail instead.
+       them. The note is enqueued in the message tail, not added to system
+       instructions, so it does not invalidate the cached prefix.
+       `nested_inject='pointer'` (default) enqueues a one-line pointer;
+       `'contents'` inlines the file body. With it on, the instructions also gain
+       one static sentence on how instruction files relate: each applies to its
+       subtree, the deeper one wins, and the user's direct instructions win over
+       all of them.
 
     ```python
     from pathlib import Path
