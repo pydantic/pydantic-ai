@@ -240,7 +240,7 @@ class PendingMessageQueue(list[PendingMessage]):
         with self._lock:
             return self._pop_priority(priority)
 
-    def withdraw(self, enqueue_id: str) -> bool:
+    def dequeue(self, enqueue_id: str) -> bool:
         """Remove the queued message `enqueue_id`, or return `False` if it isn't queued (any more).
 
         A closed queue can hold messages a run left early didn't deliver; they're out of reach too.
@@ -248,10 +248,10 @@ class PendingMessageQueue(list[PendingMessage]):
         with self._lock:
             return not self._closed and remove_pending(self, enqueue_id)
 
-    def reprioritize(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
+    def set_enqueue_priority(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
         """Give the queued message `enqueue_id` a new priority, keeping its place, or return `False` if it isn't queued."""
         with self._lock:
-            return not self._closed and reprioritize_pending(self, enqueue_id, priority)
+            return not self._closed and set_pending_priority(self, enqueue_id, priority)
 
     def append_capability_load(self, capability_id: str, records: Sequence[CapabilityLoadRecord]) -> bool:
         """Queue the records of a load of `capability_id`, delivered together with the next model request.
@@ -326,7 +326,7 @@ def remove_pending(messages: list[PendingMessage], enqueue_id: str) -> bool:
     return False
 
 
-def reprioritize_pending(messages: list[PendingMessage], enqueue_id: str, priority: PendingMessagePriority) -> bool:
+def set_pending_priority(messages: list[PendingMessage], enqueue_id: str, priority: PendingMessagePriority) -> bool:
     """Give the message `enqueue_id` in `messages` a new priority, returning whether it was there. The caller handles locking."""
     for pending in messages:
         if pending.enqueue_id == enqueue_id:
@@ -341,7 +341,7 @@ class EnqueueGuard(list[PendingMessage]):
     A durable unit's recorded output is replayed on recovery (DBOS), cache hit (Prefect), or
     across the activity boundary (Temporal) without re-running the code, so messages enqueued
     inside it would be silently dropped; enqueueing raises an explanatory `UserError` instead.
-    `RunContext.withdraw` and `RunContext.reprioritize` raise `change_error` for the same reason.
+    `RunContext.dequeue` and `RunContext.set_enqueue_priority` raise `change_error` for the same reason.
     """
 
     def __init__(self, unit_noun: str, container_noun: str):

@@ -2430,8 +2430,8 @@ async def test_enqueue_priorities_stay_separate_when_both_drain_at_end_of_run():
     assert all(len([p for p in r.parts if isinstance(p, UserPromptPart)]) == 1 for r in drained)
 
 
-async def test_agent_run_withdraw_removes_only_that_message():
-    """`withdraw` removes the named message and keeps the others in order; a second call finds nothing."""
+async def test_agent_run_dequeue_removes_only_that_message():
+    """`dequeue` removes the named message and keeps the others in order; a second call finds nothing."""
     agent = Agent(TestModel())
 
     async with agent.iter('Hello') as agent_run:
@@ -2440,14 +2440,14 @@ async def test_agent_run_withdraw_removes_only_that_message():
         third = agent_run.enqueue('third', priority='when_idle')
         assert first is not None and second is not None and third is not None
 
-        assert agent_run.withdraw(second) is True
+        assert agent_run.dequeue(second) is True
         assert [pending.enqueue_id for pending in agent_run.pending_messages] == [first, third]
-        assert agent_run.withdraw(second) is False
-        assert agent_run.withdraw('never-queued') is False
-        assert agent_run.reprioritize(second, 'asap') is False
+        assert agent_run.dequeue(second) is False
+        assert agent_run.dequeue('never-queued') is False
+        assert agent_run.set_enqueue_priority(second, 'asap') is False
 
 
-async def test_reprioritized_message_keeps_its_place():
+async def test_new_priority_keeps_the_message_in_place():
     """A promoted message is delivered ahead of `'asap'` messages queued after it, as it keeps its place."""
     agent = Agent(TestModel())
 
@@ -2455,7 +2455,7 @@ async def test_reprioritized_message_keeps_its_place():
         promoted = agent_run.enqueue('queued first', priority='when_idle')
         assert promoted is not None
         assert agent_run.enqueue('queued second') is not None
-        assert agent_run.reprioritize(promoted, 'asap') is True
+        assert agent_run.set_enqueue_priority(promoted, 'asap') is True
         async for _ in agent_run:
             pass
 
@@ -2469,8 +2469,8 @@ async def test_reprioritized_message_keeps_its_place():
     assert delivered == ['queued first', 'queued second']
 
 
-async def test_withdrawn_message_never_reaches_the_model():
-    """A withdrawn `when_idle` message isn't delivered, so it no longer keeps the run from ending."""
+async def test_dequeued_message_never_reaches_the_model():
+    """A dequeued `when_idle` message isn't delivered, so it no longer keeps the run from ending."""
     seen: list[list[ModelMessage]] = []
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -2482,7 +2482,7 @@ async def test_withdrawn_message_never_reaches_the_model():
     async with agent.iter('Hello') as agent_run:
         enqueue_id = agent_run.enqueue('Never mind', priority='when_idle')
         assert enqueue_id is not None
-        assert agent_run.withdraw(enqueue_id) is True
+        assert agent_run.dequeue(enqueue_id) is True
         async for _ in agent_run:
             pass
 
@@ -2495,7 +2495,7 @@ async def test_withdrawn_message_never_reaches_the_model():
     )
 
 
-async def test_reprioritize_promotes_when_idle_message_to_the_next_request():
+async def test_set_enqueue_priority_promotes_when_idle_message_to_the_next_request():
     """A `when_idle` message promoted to `'asap'` mid-run goes into the next request, under its original id.
 
     Left at `when_idle`, it would wait for the run to end and redirect it into a third request.
@@ -2525,7 +2525,7 @@ async def test_reprioritize_promotes_when_idle_message_to_the_next_request():
         while not isinstance(node, End):
             if Agent.is_call_tools_node(node) and not promoted:
                 # The user pressed "send now" while the agent was working.
-                assert agent_run.reprioritize(enqueue_id, 'asap') is True
+                assert agent_run.set_enqueue_priority(enqueue_id, 'asap') is True
                 promoted = True
             if Agent.is_model_request_node(node):
                 async with node.stream(agent_run.ctx) as stream:
@@ -2581,8 +2581,8 @@ async def test_reprioritize_promotes_when_idle_message_to_the_next_request():
     assert [event.enqueue_id for event in delivered] == [enqueue_id]
 
 
-async def test_run_context_withdraw_and_demote_from_a_tool():
-    """From a tool, `ctx.withdraw` drops a message and `ctx.reprioritize` demotes one.
+async def test_run_context_dequeue_and_demote_from_a_tool():
+    """From a tool, `ctx.dequeue` drops a message and `ctx.set_enqueue_priority` demotes one.
 
     Demoted content no longer goes next to the tool's return: it's delivered as its own request when the
     run would otherwise end, like content enqueued with `when_idle` in the first place.
@@ -2600,8 +2600,8 @@ async def test_run_context_withdraw_and_demote_from_a_tool():
         dropped = ctx.enqueue('dropped')
         demoted = ctx.enqueue('later, please')
         assert dropped is not None and demoted is not None
-        assert ctx.withdraw(dropped) is True
-        assert ctx.reprioritize(demoted, 'when_idle') is True
+        assert ctx.dequeue(dropped) is True
+        assert ctx.set_enqueue_priority(demoted, 'when_idle') is True
         return 'worked'
 
     result = await agent.run('Hello')
@@ -2673,8 +2673,8 @@ async def test_tool_content_promoted_back_goes_next_to_the_tool_result():
     def work(ctx: RunContext[object]) -> str:
         note = ctx.enqueue('note')
         assert note is not None
-        assert ctx.reprioritize(note, 'when_idle') is True
-        assert ctx.reprioritize(note, 'asap') is True
+        assert ctx.set_enqueue_priority(note, 'when_idle') is True
+        assert ctx.set_enqueue_priority(note, 'asap') is True
         return 'worked'
 
     result = await agent.run('Hello')
@@ -2691,7 +2691,7 @@ async def test_tool_content_promoted_back_goes_next_to_the_tool_result():
 
 
 @pytest.mark.parametrize('end', ['delivered', 'run-ended', 'early-exit'])
-async def test_withdraw_and_reprioritize_return_false_once_no_longer_queued(end: str):
+async def test_dequeue_and_set_enqueue_priority_return_false_once_no_longer_queued(end: str):
     """Both return `False` for a delivered message, and after the run ends, instead of raising like `enqueue`.
 
     A run left early keeps undelivered messages in its closed queue; they can't be delivered any more either.
@@ -2713,11 +2713,11 @@ async def test_withdraw_and_reprioritize_return_false_once_no_longer_queued(end:
             async for _ in agent_run:
                 pass
 
-    assert agent_run.withdraw(enqueue_id) is False
-    assert agent_run.reprioritize(enqueue_id, 'when_idle') is False
+    assert agent_run.dequeue(enqueue_id) is False
+    assert agent_run.set_enqueue_priority(enqueue_id, 'when_idle') is False
 
 
-@pytest.mark.parametrize('method', ['withdraw', 'reprioritize'])
+@pytest.mark.parametrize('method', ['dequeue', 'set_enqueue_priority'])
 def test_queue_change_does_not_race_pending_message_drain(method: str):
     """A change from a worker thread waits for a drain in progress, then finds the message delivered.
 
@@ -2729,13 +2729,13 @@ def test_queue_change_does_not_race_pending_message_drain(method: str):
     release_drain = threading.Event()
 
     class BlockingQueue(PendingMessageQueue):
-        def withdraw(self, enqueue_id: str) -> bool:
+        def dequeue(self, enqueue_id: str) -> bool:
             change_started.set()
-            return super().withdraw(enqueue_id)
+            return super().dequeue(enqueue_id)
 
-        def reprioritize(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
+        def set_enqueue_priority(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
             change_started.set()
-            return super().reprioritize(enqueue_id, priority)
+            return super().set_enqueue_priority(enqueue_id, priority)
 
         def _pop_priority(self, priority: PendingMessagePriority) -> list[PendingMessage]:
             drain_started.set()
@@ -2748,7 +2748,7 @@ def test_queue_change_does_not_race_pending_message_drain(method: str):
     assert enqueue_id is not None
 
     def change() -> bool:
-        return ctx.withdraw(enqueue_id) if method == 'withdraw' else ctx.reprioritize(enqueue_id, 'when_idle')
+        return ctx.dequeue(enqueue_id) if method == 'dequeue' else ctx.set_enqueue_priority(enqueue_id, 'when_idle')
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         drain_future = executor.submit(queue.pop_priority, 'asap')
@@ -2762,7 +2762,7 @@ def test_queue_change_does_not_race_pending_message_drain(method: str):
 
 
 def test_run_context_queue_changes_work_on_a_hand_built_context():
-    """A tool unit-tested with a hand-built `RunContext(pending_messages=[])` can withdraw and reprioritize, as it can enqueue.
+    """A tool unit-tested with a hand-built `RunContext(pending_messages=[])` can dequeue and change priority, as it can enqueue.
 
     A unit test: this is the context users build by hand to test a tool outside a run.
     """
@@ -2772,14 +2772,14 @@ def test_run_context_queue_changes_work_on_a_hand_built_context():
     dropped = ctx.enqueue('dropped')
     assert kept is not None and dropped is not None
 
-    assert ctx.withdraw(dropped) is True
-    assert ctx.withdraw(dropped) is False
-    assert ctx.reprioritize(kept, 'when_idle') is True
-    assert ctx.reprioritize(dropped, 'asap') is False
+    assert ctx.dequeue(dropped) is True
+    assert ctx.dequeue(dropped) is False
+    assert ctx.set_enqueue_priority(kept, 'when_idle') is True
+    assert ctx.set_enqueue_priority(dropped, 'asap') is False
     assert [(pending.enqueue_id, pending.priority) for pending in pending_messages] == [(kept, 'when_idle')]
 
 
-@pytest.mark.parametrize('method', ['withdraw', 'reprioritize'])
+@pytest.mark.parametrize('method', ['dequeue', 'set_enqueue_priority'])
 @pytest.mark.parametrize(
     'pending_messages, match',
     [
@@ -2803,7 +2803,7 @@ def test_run_context_queue_changes_need_a_live_queue(
 
     # The error names the method that was called.
     with pytest.raises(UserError, match=match.format(method=method)):
-        if method == 'withdraw':
-            ctx.withdraw('some-id')
+        if method == 'dequeue':
+            ctx.dequeue('some-id')
         else:
-            ctx.reprioritize('some-id', 'asap')
+            ctx.set_enqueue_priority('some-id', 'asap')

@@ -724,7 +724,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """Internal: live view of the queue mutated by `enqueue` and drained by the internal `PendingMessageDrainCapability`.
 
         Exposed for inspection / debugging; use [`enqueue`][pydantic_ai.run.AgentRun.enqueue] to add messages,
-        and [`withdraw`][pydantic_ai.run.AgentRun.withdraw] or [`reprioritize`][pydantic_ai.run.AgentRun.reprioritize]
+        and [`dequeue`][pydantic_ai.run.AgentRun.dequeue] or [`set_enqueue_priority`][pydantic_ai.run.AgentRun.set_enqueue_priority]
         to change them.
         """
         return self._graph_run.state.pending_messages
@@ -805,10 +805,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         self._graph_run.state.pending_messages.append(pending)
         return pending.enqueue_id
 
-    def withdraw(self, enqueue_id: str) -> bool:
-        """Withdraw a message queued with [`enqueue`][pydantic_ai.run.AgentRun.enqueue] before it's delivered.
+    def dequeue(self, enqueue_id: str) -> bool:
+        """Remove a message queued with [`enqueue`][pydantic_ai.run.AgentRun.enqueue] before it's delivered.
 
-        Works like [`RunContext.withdraw`][pydantic_ai.tools.RunContext.withdraw], and is safe to call
+        Works like [`RunContext.dequeue`][pydantic_ai.tools.RunContext.dequeue], and is safe to call
         from the same places as `enqueue`.
 
         Args:
@@ -816,14 +816,14 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
 
         Returns:
             `True` if the message was still queued and is now removed, or `False` if it was already
-            delivered, withdrawn, or never queued in this run, including once the run has ended.
+            delivered, dequeued, or never queued in this run, including once the run has ended.
         """
-        return self._queue.withdraw(enqueue_id)
+        return self._queue.dequeue(enqueue_id)
 
-    def reprioritize(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
+    def set_enqueue_priority(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
         """Change when a message queued with [`enqueue`][pydantic_ai.run.AgentRun.enqueue] is delivered.
 
-        Works like [`RunContext.reprioritize`][pydantic_ai.tools.RunContext.reprioritize]: the message
+        Works like [`RunContext.set_enqueue_priority`][pydantic_ai.tools.RunContext.set_enqueue_priority]: the message
         keeps its place and its `enqueue_id`.
 
         Args:
@@ -831,10 +831,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             priority: The new priority, with the same meaning as in `enqueue`.
 
         Returns:
-            `True` if the message was still queued, or `False` if it was already delivered, withdrawn,
+            `True` if the message was still queued, or `False` if it was already delivered, dequeued,
             or never queued in this run, including once the run has ended.
         """
-        return self._queue.reprioritize(enqueue_id, priority)
+        return self._queue.set_enqueue_priority(enqueue_id, priority)
 
     @property
     def _queue(self) -> PendingMessageQueue:

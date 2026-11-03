@@ -29,7 +29,7 @@ from ._enqueue import (
     PendingMessagePriority,
     PendingMessageQueue,
     remove_pending,
-    reprioritize_pending,
+    set_pending_priority,
 )
 from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import UserError
@@ -342,8 +342,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     backed by a running agent (e.g. the `RunContext` built by `Agent.system_prompt_parts`), where
     [`enqueue`][pydantic_ai.tools.RunContext.enqueue] would have nowhere to drain to and so raises.
     Managed by the framework: read it if useful, but use [`enqueue`][pydantic_ai.tools.RunContext.enqueue]
-    to add messages, and [`withdraw`][pydantic_ai.tools.RunContext.withdraw] or
-    [`reprioritize`][pydantic_ai.tools.RunContext.reprioritize] to change them, rather than mutating it directly.
+    to add messages, and [`dequeue`][pydantic_ai.tools.RunContext.dequeue] or
+    [`set_enqueue_priority`][pydantic_ai.tools.RunContext.set_enqueue_priority] to change them, rather than mutating it directly.
     """
 
     _cancellation: RunCancellation | None = field(default=None, repr=False)
@@ -1047,18 +1047,18 @@ class RunContext(Generic[RunContextAgentDepsT]):
         self.pending_messages.append(pending)
         return pending.enqueue_id
 
-    def withdraw(self, enqueue_id: str) -> bool:
-        """Withdraw a message queued with [`enqueue`][pydantic_ai.tools.RunContext.enqueue] before it's delivered.
+    def dequeue(self, enqueue_id: str) -> bool:
+        """Remove a message queued with [`enqueue`][pydantic_ai.tools.RunContext.enqueue] before it's delivered.
 
         Safe to call from the same places as `enqueue`. The check and the removal happen under the
-        queue's lock, so a concurrent delivery and a withdrawal can't both succeed.
+        queue's lock, so a concurrent delivery and a dequeue can't both succeed.
 
         Args:
             enqueue_id: The ID `enqueue` returned.
 
         Returns:
             `True` if the message was still queued and is now removed, or `False` if it was already
-            delivered, withdrawn, or never queued in this run. No
+            delivered, dequeued, or never queued in this run. No
             [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] is emitted for it.
 
         Raises:
@@ -1066,12 +1066,12 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 `Agent.system_prompt_parts`), or it runs inside a durable execution unit, where the change
                 would be lost on replay.
         """
-        queue = self._changeable_queue('withdraw')
+        queue = self._changeable_queue('dequeue')
         if isinstance(queue, PendingMessageQueue):
-            return queue.withdraw(enqueue_id)
+            return queue.dequeue(enqueue_id)
         return remove_pending(queue, enqueue_id)  # a hand-built context's list, which nothing drains
 
-    def reprioritize(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
+    def set_enqueue_priority(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
         """Change when a message queued with [`enqueue`][pydantic_ai.tools.RunContext.enqueue] is delivered.
 
         The message keeps its place among queued messages and its `enqueue_id`, so the
@@ -1087,7 +1087,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
             priority: The new priority, with the same meaning as in `enqueue`.
 
         Returns:
-            `True` if the message was still queued, or `False` if it was already delivered, withdrawn,
+            `True` if the message was still queued, or `False` if it was already delivered, dequeued,
             or never queued in this run.
 
         Raises:
@@ -1095,12 +1095,12 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 `Agent.system_prompt_parts`), or it runs inside a durable execution unit, where the change
                 would be lost on replay.
         """
-        queue = self._changeable_queue('reprioritize')
+        queue = self._changeable_queue('set_enqueue_priority')
         if isinstance(queue, PendingMessageQueue):
-            return queue.reprioritize(enqueue_id, priority)
-        return reprioritize_pending(queue, enqueue_id, priority)  # a hand-built context's list, which nothing drains
+            return queue.set_enqueue_priority(enqueue_id, priority)
+        return set_pending_priority(queue, enqueue_id, priority)  # a hand-built context's list, which nothing drains
 
-    def _changeable_queue(self, method: Literal['withdraw', 'reprioritize']) -> list[PendingMessage]:
+    def _changeable_queue(self, method: Literal['dequeue', 'set_enqueue_priority']) -> list[PendingMessage]:
         queue = self.pending_messages
         if queue is None:
             raise UserError(

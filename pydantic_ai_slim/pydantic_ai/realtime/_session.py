@@ -596,15 +596,15 @@ class _RealtimePendingMessages(PendingMessageQueue):
         if self._on_change is not None:
             self._on_change(pending.priority)
 
-    def withdraw(self, enqueue_id: str) -> bool:
-        withdrawn = super().withdraw(enqueue_id)
-        if withdrawn and self._on_change is not None:
+    def dequeue(self, enqueue_id: str) -> bool:
+        removed = super().dequeue(enqueue_id)
+        if removed and self._on_change is not None:
             # A `when_idle` drain backs off while an `asap` item is queued, so removing one may unblock it.
             self._on_change('when_idle')
-        return withdrawn
+        return removed
 
-    def reprioritize(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
-        changed = super().reprioritize(enqueue_id, priority)
+    def set_enqueue_priority(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
+        changed = super().set_enqueue_priority(enqueue_id, priority)
         if changed and self._on_change is not None:
             # Only an append starts a drain, so a promoted item needs the same wake-up.
             self._on_change(priority)
@@ -1794,10 +1794,10 @@ class RealtimeSession:
         self._pending_messages.append(pending)
         return pending.enqueue_id
 
-    def withdraw(self, enqueue_id: str) -> bool:
-        """Withdraw content queued with [`enqueue()`][pydantic_ai.realtime.RealtimeSession.enqueue] before it's delivered.
+    def dequeue(self, enqueue_id: str) -> bool:
+        """Remove content queued with [`enqueue()`][pydantic_ai.realtime.RealtimeSession.enqueue] before it's delivered.
 
-        Works like [`RunContext.withdraw`][pydantic_ai.tools.RunContext.withdraw], which a tool running in
+        Works like [`RunContext.dequeue`][pydantic_ai.tools.RunContext.dequeue], which a tool running in
         the session can call too.
 
         Args:
@@ -1805,14 +1805,14 @@ class RealtimeSession:
 
         Returns:
             `True` if the content was still queued and is now removed, or `False` if it was already
-            delivered, withdrawn, or never queued in this session.
+            delivered, dequeued, or never queued in this session.
         """
-        return self._pending_messages.withdraw(enqueue_id)
+        return self._pending_messages.dequeue(enqueue_id)
 
-    def reprioritize(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
+    def set_enqueue_priority(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
         """Change when content queued with [`enqueue()`][pydantic_ai.realtime.RealtimeSession.enqueue] is delivered.
 
-        Works like [`RunContext.reprioritize`][pydantic_ai.tools.RunContext.reprioritize]: the content
+        Works like [`RunContext.set_enqueue_priority`][pydantic_ai.tools.RunContext.set_enqueue_priority]: the content
         keeps its place and its `enqueue_id`. Promoted to `'asap'`, it's delivered as soon as no reply
         is being generated.
 
@@ -1821,10 +1821,10 @@ class RealtimeSession:
             priority: The new priority, with the same meaning as in `enqueue()`.
 
         Returns:
-            `True` if the content was still queued, or `False` if it was already delivered, withdrawn,
+            `True` if the content was still queued, or `False` if it was already delivered, dequeued,
             or never queued in this session.
         """
-        return self._pending_messages.reprioritize(enqueue_id, priority)
+        return self._pending_messages.set_enqueue_priority(enqueue_id, priority)
 
     async def _send_audio_content(self, content: BinaryContent) -> None:
         if content.media_type == _WAV_MEDIA_TYPE:

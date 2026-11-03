@@ -1056,16 +1056,16 @@ calling its handler skips `before_model_request`, so it also skips that request-
       loop indefinitely. Set [`UsageLimits`][pydantic_ai.usage.UsageLimits] on the
       run as a safety net.
 
-### Withdrawing or reprioritizing a queued message
+### Dequeuing a message or changing its priority
 
 Until it's delivered, a queued message can be changed by its `enqueue_id`.
-[`AgentRun.withdraw`][pydantic_ai.run.AgentRun.withdraw] removes it, and
-[`AgentRun.reprioritize`][pydantic_ai.run.AgentRun.reprioritize] gives it a new `priority`, keeping its
+[`AgentRun.dequeue`][pydantic_ai.run.AgentRun.dequeue] removes it, and
+[`AgentRun.set_enqueue_priority`][pydantic_ai.run.AgentRun.set_enqueue_priority] gives it a new `priority`, keeping its
 place in the queue and its `enqueue_id`. That's what a chat UI needs for a message the user typed
 while the agent was working: a "send now" button promotes it from `'when_idle'` to `'asap'`, and a
-remove button withdraws it.
+remove button dequeues it.
 
-```python {title="reprioritize_queued_message.py"}
+```python {title="dequeue_or_send_now.py"}
 from pydantic_ai import Agent
 from pydantic_graph import End
 
@@ -1085,30 +1085,30 @@ async def main():
             if Agent.is_call_tools_node(node) and not clicked:
                 # The user pressed "send now" on one message and "remove" on the other.
                 # `False` would mean the message was no longer queued, e.g. already delivered.
-                sent_now = agent_run.reprioritize(follow_up, 'asap')
-                removed = agent_run.withdraw(typo)
+                sent_now = agent_run.set_enqueue_priority(follow_up, 'asap')
+                removed = agent_run.dequeue(typo)
                 print(sent_now, removed)
                 #> True True
                 clicked = True
             node = await agent_run.next(node)
 ```
 
-Both return `False` once the message is no longer queued: it was delivered, it was already withdrawn,
+Both return `False` once the message is no longer queued: it was delivered, it was already dequeued,
 or the run has ended. That's not an error, as a click can race with the delivery: the check and the
 change happen under the same lock as delivery, so exactly one of them wins. `False` doesn't say which
 of these happened. To tell the user a message was sent, watch for the
 [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] carrying its `enqueue_id`. A
-withdrawn message gets no such event; a reprioritized one is announced under its original
+dequeued message gets no such event; one whose priority changed is announced under its original
 `enqueue_id` when it's delivered.
 
 A message enqueued at `'when_idle'` and promoted goes into the next model request as its own
 [`ModelRequest`][pydantic_ai.messages.ModelRequest], after any `'asap'` messages queued before it.
 Content a tool enqueued at `'asap'` and then demoted to `'when_idle'` is delivered like other
 `'when_idle'` content, not next to that tool's result. Tools and capability hooks can do the same with
-[`RunContext.withdraw`][pydantic_ai.tools.RunContext.withdraw] and
-[`RunContext.reprioritize`][pydantic_ai.tools.RunContext.reprioritize], and code driving a realtime
-session with [`RealtimeSession.withdraw`][pydantic_ai.realtime.RealtimeSession.withdraw] and
-[`RealtimeSession.reprioritize`][pydantic_ai.realtime.RealtimeSession.reprioritize]. Inside a
+[`RunContext.dequeue`][pydantic_ai.tools.RunContext.dequeue] and
+[`RunContext.set_enqueue_priority`][pydantic_ai.tools.RunContext.set_enqueue_priority], and code driving a realtime
+session with [`RealtimeSession.dequeue`][pydantic_ai.realtime.RealtimeSession.dequeue] and
+[`RealtimeSession.set_enqueue_priority`][pydantic_ai.realtime.RealtimeSession.set_enqueue_priority]. Inside a
 [durable execution](durable_execution/overview.md) unit, both raise
 [`UserError`][pydantic_ai.exceptions.UserError], like `enqueue`, since the change would be lost on
 replay.

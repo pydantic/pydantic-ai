@@ -8691,7 +8691,7 @@ async def test_session_enqueue_when_idle_follows_asap() -> None:
     assert conn.sent_before_each_done == [['soon'], ['soon', 'idle']]
 
 
-async def test_session_reprioritize_wakes_delivery() -> None:
+async def test_session_set_enqueue_priority_wakes_delivery() -> None:
     """Promoting a `when_idle` item to `'asap'` starts a delivery, as enqueueing it at `'asap'` would.
 
     Each `when_idle` drain backs off while an `'asap'` item is queued, so without a wake-up both items
@@ -8705,33 +8705,33 @@ async def test_session_reprioritize_wakes_delivery() -> None:
             assert session.enqueue('later', priority='when_idle') is not None
             promoted = session.enqueue('now', priority='when_idle')
             assert promoted is not None
-            assert session.reprioritize(promoted, 'asap') is True
-            assert session.reprioritize('never-queued', 'asap') is False
+            assert session.set_enqueue_priority(promoted, 'asap') is True
+            assert session.set_enqueue_priority('never-queued', 'asap') is False
             events = [event async for event in session]
 
     assert [item for item in conn.sent if isinstance(item, str)] == ['now', 'later']
     assert [event.enqueue_id for event in events if isinstance(event, EnqueuedMessagesEvent)][0] == promoted
 
 
-async def test_session_withdraw_before_delivery() -> None:
-    """A withdrawn item is never sent; the item queued behind it still is."""
+async def test_session_dequeue_before_delivery() -> None:
+    """A dequeued item is never sent; the item queued behind it still is."""
     conn = _RespondingConnection(replies=1)
     agent: Agent[None, str] = Agent()
 
     with anyio.fail_after(5):
         async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
-            withdrawn = session.enqueue('never mind')
-            assert withdrawn is not None
+            dropped = session.enqueue('never mind')
+            assert dropped is not None
             assert session.enqueue('still wanted', priority='when_idle') is not None
-            assert session.withdraw(withdrawn) is True
-            assert session.withdraw(withdrawn) is False
+            assert session.dequeue(dropped) is True
+            assert session.dequeue(dropped) is False
             _ = [event async for event in session]
 
     assert [item for item in conn.sent if isinstance(item, str)] == ['still wanted']
 
 
-def test_realtime_queue_withdraw_wakes_when_idle_delivery() -> None:
-    """A withdraw wakes a `when_idle` drain, which may have backed off for the `'asap'` item just removed.
+def test_realtime_queue_dequeue_wakes_when_idle_delivery() -> None:
+    """A dequeue wakes a `when_idle` drain, which may have backed off for the `'asap'` item just removed.
 
     A unit test: a `when_idle` drain running between that item's enqueue and its own drain can't be
     scheduled deterministically through the session.
@@ -8744,9 +8744,9 @@ def test_realtime_queue_withdraw_wakes_when_idle_delivery() -> None:
     queue.append(pending)
     woken.clear()
 
-    assert queue.withdraw('never-queued') is False
+    assert queue.dequeue('never-queued') is False
     assert woken == []
-    assert queue.withdraw(pending.enqueue_id) is True
+    assert queue.dequeue(pending.enqueue_id) is True
     assert woken == ['when_idle']
 
 
