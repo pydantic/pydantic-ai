@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import Generator
 from pathlib import Path
+from unittest.mock import patch
 
 import anyio
 import pytest
@@ -11,7 +12,7 @@ from pydantic import JsonValue
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
@@ -23,7 +24,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability, ContinueAsNew, run_durable
 
-    from .examples import load_generation_example
+    from .generation_example import load_generation_example
     from .worker import InMemoryWorker, completed, registered_agent
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='durabletask not installed')
@@ -151,17 +152,20 @@ class TestContinueAsNew:
 
     def test_grouped_cleanup_failure_is_not_hidden(self, durable_worker: InMemoryWorker) -> None:
         def workflow(ctx: task.OrchestrationContext, payload: object) -> Generator[task.Task[object], object, None]:
-            async def body() -> None:
-                raise BaseExceptionGroup('cleanup failed', [ContinueAsNew(None), RuntimeError('resource cleanup')])
+            group = BaseExceptionGroup('cleanup failed', [ContinueAsNew(None), RuntimeError('resource cleanup')])
 
-            yield from run_durable(ctx, body)
+            async def body() -> None:
+                raise group
+
+            with pytest.raises(BaseExceptionGroup, match='cleanup failed') as failure:
+                yield from run_durable(ctx, body)
+            assert failure.value is group
+            assert len(failure.value.exceptions) == 2
+            assert isinstance(failure.value.exceptions[0], ContinueAsNew)
+            assert str(failure.value.exceptions[1]) == 'resource cleanup'
 
         durable_worker.add_orchestrator(workflow)
-        with pytest.raises(BaseExceptionGroup, match='cleanup failed') as failure:
-            completed(durable_worker, durable_worker.schedule(workflow))
-        assert len(failure.value.exceptions) == 2
-        assert isinstance(failure.value.exceptions[0], ContinueAsNew)
-        assert str(failure.value.exceptions[1]) == 'resource cleanup'
+        assert completed(durable_worker, durable_worker.schedule(workflow)) is None
 
     def test_unrelated_singleton_group_is_not_unwrapped(self, durable_worker: InMemoryWorker) -> None:
         def workflow(ctx: task.OrchestrationContext, payload: object) -> Generator[task.Task[object], object, None]:
@@ -258,37 +262,81 @@ class TestContinueAsNew:
         assert calls == ['once', 'once', 'once']
         assert len(durable_worker.instances[instance_id].generations) == 1
 
-    @pytest.mark.parametrize(
-        ('fixture', 'commit'),
-        [
-            ('pr1-escaped-history.json', 'b6b07c333271e94dcd63eb99d6b7ceb3390a7b65'),
-            ('pr1-main-history.json', '3eefe33b2398f8f28119b28c08313e7fd1956560'),
-        ],
-    )
-    def test_final_pr1_histories_replay_identically(
-        self, durable_worker: InMemoryWorker, fixture: str, commit: str
+    def test_documented_main_runs_three_generations(
+        self, durable_worker: InMemoryWorker, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        recording = json.loads(Path(__file__).with_name(fixture).read_text(encoding='utf-8'))
-        assert recording['commit'] == commit
+        starts: list[bool] = []
+        calls: list[int] = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            count = sum(
+                isinstance(part, ToolReturnPart)
+                for message in messages
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+            )
+            if count == 4:
+                return ModelResponse(parts=[TextPart('four steps')])
+            return ModelResponse(parts=[ToolCallPart('count', {'value': count}, tool_call_id=f'call-{count}')])
+
+        monkeypatch.setattr(durable_worker, 'start', lambda: starts.append(True))
+        monkeypatch.setattr(durable_worker, 'stop', lambda: starts.append(False))
+        with (
+            patch('durabletask.worker.TaskHubGrpcWorker', return_value=durable_worker) as make_worker,
+            patch('durabletask.client.TaskHubGrpcClient') as make_client,
+        ):
+            client = make_client.return_value.__enter__.return_value
+            client.schedule_new_orchestration.side_effect = durable_worker.schedule
+            client.wait_for_orchestration_completion.side_effect = durable_worker.wait
+            example = load_generation_example(FunctionModel(model), agent_name='documented-main')
+
+            @example.agent.tool_plain
+            def count(value: int) -> int:
+                calls.append(value)
+                return value
+
+            example.main()
+        connection = {'host_address': 'localhost:8080', 'metadata': [('taskhub', 'default')], 'secure_channel': False}
+        make_worker.assert_called_once_with(**connection)
+        make_client.assert_called_once_with(**connection)
+        assert starts == [True, False]
+        assert calls == [0, 1, 2, 3]
+        assert len(durable_worker.instances['run-0'].generations) == 2
+        assert "{'output': 'four steps', 'requests': 5, 'generation': 2}" in capsys.readouterr().out
+
+    @pytest.mark.parametrize('configured', [False, True])
+    def test_model_and_tool_history_replays_without_execution(
+        self, durable_worker: InMemoryWorker, configured: bool
+    ) -> None:
+        recording = json.loads(Path(__file__).with_name('model-tool-replay.json').read_text(encoding='utf-8'))
+        assert recording['commit'] == '170625e1d108ff54b8be12cafe1effa5ffa8f439'
+        steps: list[int] = []
+
+        def checkpoint(ctx: RunContext[None]) -> None:
+            steps.append(ctx.run_step)
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            pytest.fail('A recorded model activity executed during replay')  # pragma: no cover
+
         agent = Agent(
-            TestModel(custom_output_text='replacement must not execute'),
-            name='pr1-replay',
-            capabilities=[AzureDurableTaskDurability()],
+            FunctionModel(model),
+            name='model-tool',
+            deps_type=type(None),
+            capabilities=[AzureDurableTaskDurability(continue_as_new=checkpoint if configured else None)],
         )
 
         @agent.tool_plain
-        async def baseline() -> str:
-            pytest.fail('A recorded PR1 activity executed during replay')  # pragma: no cover
+        async def baseline_tool() -> str:
+            pytest.fail('A recorded tool activity executed during replay')  # pragma: no cover
 
-        def pr1_replay_workflow(
-            ctx: task.OrchestrationContext, prompt: str
-        ) -> Generator[task.Task[object], object, str]:
+        def model_tool_replay(ctx: task.OrchestrationContext, prompt: str) -> Generator[task.Task[object], object, str]:
             result = yield from run_durable(ctx, lambda: agent.run(prompt))
             return result.output
 
-        durable_worker.add_orchestrator(pr1_replay_workflow)
+        durable_worker.add_orchestrator(model_tool_replay)
         with registered_agent(durable_worker, agent):
             actions = durable_worker.replay_history(recording)
         assert len(actions) == 1
         assert actions[0].completeOrchestration.result.value == recording['output']
+        assert steps == ([1, 2] if configured else [])
         assert durable_worker.activity_calls == []

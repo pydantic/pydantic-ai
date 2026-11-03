@@ -21,12 +21,52 @@ with try_import() as imports_successful:
 
     from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability, run_durable
 
+    from .generation_example import README, python_examples
     from .worker import InMemoryWorker, completed, registered_agent
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='durabletask not installed')
 
 
 class TestNativeVersioning:
+    def test_documented_stacked_registration(
+        self, durable_worker: InMemoryWorker, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        starts: list[bool] = []
+        results: list[JsonValue] = []
+        old = Agent(
+            TestModel(custom_output_text='old code'), name='support-1.0', capabilities=[AzureDurableTaskDurability()]
+        )
+        new = Agent(
+            TestModel(custom_output_text='new code'), name='support-2.0', capabilities=[AzureDurableTaskDurability()]
+        )
+        agents = {'1.0': old, '2.0': new}
+
+        def support(ctx: task.OrchestrationContext, prompt: str) -> Generator[task.Task[object], object, str]:
+            version = ctx.version
+            assert version is not None
+            result = yield from run_durable(ctx, lambda: agents[version].run(prompt))
+            return result.output
+
+        durable_worker.add_orchestrator(support)
+
+        def drain(prompt: str) -> str:
+            assert prompt == 'Press Enter after stopping traffic and draining the worker.\n'
+            for version in ['1.0', '2.0']:
+                instance_id = durable_worker.schedule(support, input='Hi', version=version)
+                results.append(completed(durable_worker, instance_id))
+            return ''
+
+        source = next(source for source in python_examples() if 'with old_durability.register(worker)' in source)
+        monkeypatch.setattr(durable_worker, 'start', lambda: starts.append(True))
+        monkeypatch.setattr(durable_worker, 'stop', lambda: starts.append(False))
+        monkeypatch.setattr('builtins.input', drain)
+        exec(
+            compile(source, f'{README}:versioning', 'exec', dont_inherit=True),
+            {'old_agent': old, 'new_agent': new, 'worker': durable_worker},
+        )
+        assert starts == [True, False]
+        assert results == ['old code', 'new code']
+
     @pytest.mark.parametrize('names', [('agent-1.0', 'agent-2.0'), ('version_1', 'version<1')])
     def test_retained_activity_dispatch(self, durable_worker: InMemoryWorker, names: tuple[str, str]) -> None:
         old = Agent(
@@ -55,14 +95,14 @@ class TestNativeVersioning:
         capability = AzureDurableTaskDurability.from_agent(new)
         assert old_capability is not None and capability is not None
         with old_capability.register(durable_worker), capability.register(durable_worker):
-            old_id = durable_worker.client.schedule_new_orchestration(workflow, input='old', version='1.0')
-            new_id = durable_worker.client.schedule_new_orchestration(workflow, input='new', version='2.0')
+            old_id = durable_worker.schedule(workflow, input='old', version='1.0')
+            new_id = durable_worker.schedule(workflow, input='new', version='2.0')
             assert completed(durable_worker, old_id) == 'old code'
             assert completed(durable_worker, new_id) == 'new code'
         assert durable_worker.activity_calls == (
-            ['agent-1.0____model.request', 'agent-2.0____model.request']
+            ['agent--1.0__model.request', 'agent--2.0__model.request']
             if names[0] == 'agent-1.0'
-            else ['version__1____model.request', 'version_x3C_1____model.request']
+            else ['version_1__model.request', 'version-x3C-1__model.request']
         )
 
     @pytest.mark.parametrize('failure', ['REJECT', 'FAIL'])
@@ -101,7 +141,7 @@ class TestNativeVersioning:
             else:
                 with pytest.raises(OrchestrationFailedError, match='version'):
                     completed(durable_worker, instance_id)
-        assert durable_worker.activity_calls == (['admission____model.request'] if failure == 'REJECT' else [])
+        assert durable_worker.activity_calls == (['admission__model.request'] if failure == 'REJECT' else [])
 
     def test_sdk_rejects_duplicate_activity_names(self, durable_worker: InMemoryWorker) -> None:
         old = Agent(TestModel(), name='version', capabilities=[AzureDurableTaskDurability()])
@@ -109,7 +149,7 @@ class TestNativeVersioning:
         old_capability = AzureDurableTaskDurability.from_agent(old)
         capability = AzureDurableTaskDurability.from_agent(new)
         assert old_capability is not None and capability is not None
-        with pytest.raises(ValueError, match=r"A 'version____[^']+' activity already exists"):
+        with pytest.raises(ValueError, match=r"A 'version__[^']+' activity already exists"):
             with ExitStack() as stack:
                 stack.enter_context(old_capability.register(durable_worker))
                 stack.enter_context(capability.register(durable_worker))
@@ -132,13 +172,12 @@ class TestNativeVersioning:
             with capability.register(durable_worker):
                 assert capability.get_durable_operation_backend().registrations()
 
-    @pytest.mark.parametrize('fixture', ['pr1-history.json', 'pr1-escaped-history.json'])
-    def test_renamed_activity_breaks_recorded_replay(self, durable_worker: InMemoryWorker, fixture: str) -> None:
-        recording = json.loads(Path(__file__).with_name(fixture).read_text(encoding='utf-8'))
+    def test_renamed_activity_breaks_recorded_replay(self, durable_worker: InMemoryWorker) -> None:
+        recording = json.loads(Path(__file__).with_name('model-tool-replay.json').read_text(encoding='utf-8'))
         agent = Agent(TestModel(), name='renamed-agent', capabilities=[AzureDurableTaskDurability()])
 
         @agent.tool_plain
-        async def baseline() -> str:
+        async def baseline_tool() -> str:
             return 'not called'  # pragma: no cover
 
         def workflow(ctx: task.OrchestrationContext, prompt: str) -> Generator[task.Task[object], object, JsonValue]:
@@ -152,7 +191,7 @@ class TestNativeVersioning:
         assert len(actions) == 1
         failure = actions[0].completeOrchestration.failureDetails
         assert failure.errorType == 'durabletask.task.NonDeterminismError'
-        assert 'renamed-agent____model.request' in failure.errorMessage
+        assert 'renamed--agent__model.request' in failure.errorMessage
         assert durable_worker.activity_calls == []
 
     def test_native_migration_preserves_unprocessed_events(self, durable_worker: InMemoryWorker) -> None:

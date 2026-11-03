@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
-from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
+from contextlib import AbstractContextManager, AsyncExitStack, asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -148,14 +148,13 @@ class AzureDurableTaskDurability(BaseDurabilityCapability[AgentDepsT]):
             raise UserError('Bind `AzureDurableTaskDurability` to an agent before registering its activities.')
         return self._backend
 
-    @contextmanager
-    def register(self, worker: TaskHubGrpcWorker) -> Generator[None]:
+    def register(self, worker: TaskHubGrpcWorker) -> AbstractContextManager[None]:
         """Register activities and own their runtime until the worker has stopped and drained.
 
         Use the bound capability returned by `AzureDurableTaskDurability.from_agent(agent)`.
+        Register your orchestrators directly with the SDK worker.
         """
-        with self.get_durable_operation_backend().worker_scope(worker):
-            yield
+        return self.get_durable_operation_backend().worker_scope(worker)
 
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext

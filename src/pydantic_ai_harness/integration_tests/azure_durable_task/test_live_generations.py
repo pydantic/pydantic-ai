@@ -18,7 +18,7 @@ from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunCon
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability, run_durable
-from tests.harness.azure_durable_task.examples import load_generation_example
+from tests.harness.azure_durable_task.generation_example import load_generation_example
 
 from .test_live_azure_durable_task import hub as hub
 

@@ -10,7 +10,6 @@ from typing import Any, TypeVar
 
 import pytest
 from durabletask import client, task, worker
-from durabletask.internal.exceptions import AbandonOrchestrationError
 from durabletask.serialization import DEFAULT_DATA_CONVERTER
 from google.protobuf.json_format import ParseDict
 from pydantic import JsonValue, TypeAdapter
@@ -20,7 +19,7 @@ from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability, run_durable
 
-from .sdk import ActivityExecutor, OrchestrationExecutor, Registry, pb, ph
+from .sdk import AbandonOrchestrationError, ActivityExecutor, OrchestrationExecutor, Registry, pb, ph
 
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')

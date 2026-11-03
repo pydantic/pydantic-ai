@@ -219,14 +219,18 @@ def investigation(
 
 
 def main() -> None:
-    worker = TaskHubGrpcWorker(host_address='localhost:8080', secure_channel=False)
+    worker = TaskHubGrpcWorker(
+        host_address='localhost:8080', metadata=[('taskhub', 'default')], secure_channel=False
+    )
     worker.add_orchestrator(investigation)
     durability = AzureDurableTaskDurability.from_agent(agent)
     assert durability is not None
     with durability.register(worker):
         worker.start()
         try:
-            with TaskHubGrpcClient(host_address='localhost:8080', secure_channel=False) as client:
+            with TaskHubGrpcClient(
+                host_address='localhost:8080', metadata=[('taskhub', 'default')], secure_channel=False
+            ) as client:
                 instance_id = client.schedule_new_orchestration(
                     investigation, input=GenerationInput(prompt='Investigate the incident.').model_dump(mode='json')
                 )
