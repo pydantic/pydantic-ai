@@ -1057,8 +1057,10 @@ def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[_ToolPair]:
     is dropped when no call precedes it, and a call when no return answers it.
 
     A retried return (`outcome='retried'`) isn't a result: it tells the model to make the call again. It
-    is left out, so it is never cleared before the model sees the correction, doesn't count toward
-    `ClearToolResults.keep_pairs`, and doesn't supersede an earlier successful read.
+    still answers its call -- the retry re-issues it -- so its call is consumed without emitting a pair.
+    The retried return is never cleared before the model sees the correction, doesn't count toward
+    `ClearToolResults.keep_pairs`, and doesn't supersede an earlier successful read. Leaving the call
+    queued instead would mis-pair a later turn's return -- one reusing the id -- with the stale call.
     """
     open_calls: dict[str, deque[tuple[tuple[int, int], ToolCallPart]]] = {}
     pairs: list[_ToolPair] = []
@@ -1069,20 +1071,21 @@ def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[_ToolPair]:
                     open_calls.setdefault(part.tool_call_id, deque()).append(((message_index, part_index), part))
         elif isinstance(msg, ModelRequest):  # pragma: no branch
             for part_index, part in enumerate(msg.parts):
-                if isinstance(part, ToolReturnPart) and part.outcome != 'retried':
+                if isinstance(part, ToolReturnPart):
                     pending = open_calls.get(part.tool_call_id)
                     if pending:
                         call_position, call = pending.popleft()
-                        pairs.append(
-                            _ToolPair(
-                                part.tool_call_id,
-                                call.tool_name,
-                                call,
-                                len(pairs),
-                                call_position,
-                                (message_index, part_index),
+                        if part.outcome != 'retried':
+                            pairs.append(
+                                _ToolPair(
+                                    part.tool_call_id,
+                                    call.tool_name,
+                                    call,
+                                    len(pairs),
+                                    call_position,
+                                    (message_index, part_index),
+                                )
                             )
-                        )
     return pairs
 
 

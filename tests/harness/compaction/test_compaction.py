@@ -2417,6 +2417,28 @@ class TestIterToolPairs:
         pairs = iter_tool_pairs(msgs)
         assert [p.tool_name for p in pairs] == ['first', 'second']
 
+    def test_retried_return_consumes_its_call(self):
+        """A retried return answers its call, so the next return pairs with its own call.
+
+        A retried outcome isn't emitted as a pair, but it does settle the pairing: leaving its call
+        queued would pair a later turn's return -- one reusing the id -- with that stale call, and
+        strategies would attribute the later return to the stale call's tool name or file key.
+        """
+        msgs: list[ModelMessage] = [
+            _read_call('c1', 'a.py'),
+            ModelRequest(
+                parts=[ToolReturnPart(tool_name='read_file', content='bad', tool_call_id='c1', outcome='retried')]
+            ),
+            _read_call('c1', 'a.py'),
+            _read_return('c1', 'second a'),
+            _read_call('c1', 'b.py'),
+            _read_return('c1', 'b body'),
+        ]
+        pairs = iter_tool_pairs(msgs)
+        assert [_file_key(p.call_part) for p in pairs] == ['a.py', 'b.py']
+        assert [p.call_position for p in pairs] == [(2, 0), (4, 0)]
+        assert [p.return_position for p in pairs] == [(3, 0), (5, 0)]
+
 
 # ---------------------------------------------------------------------------
 # ClearToolResults
@@ -2748,6 +2770,27 @@ class TestDeduplicateFileReads:
         rc = _make_request_context(messages)
         result = await cap.before_model_request(_make_ctx(rc.messages), rc)
         assert _return_contents(result.messages) == ['[superseded file read]', 'second a', 'b body']
+
+    async def test_retried_read_does_not_supersede_the_latest_read(self):
+        """A retried read doesn't leave its call queued, so the retry's result can't be blanked.
+
+        With a reused `tool_call_id`, a queued retried call would make the next read's return pair
+        with it, and the only successful read of the retried file would be blanked as superseded.
+        """
+        cap = DeduplicateFileReads(file_key=_file_key)
+        messages: list[ModelMessage] = [
+            _read_call('tc1', 'a.py'),
+            ModelRequest(
+                parts=[ToolReturnPart(tool_name='read_file', content='bad', tool_call_id='tc1', outcome='retried')]
+            ),
+            _read_call('tc1', 'a.py'),
+            _read_return('tc1', 'second a'),
+            _read_call('tc1', 'b.py'),
+            _read_return('tc1', 'b body'),
+        ]
+        rc = _make_request_context(messages)
+        result = await cap.before_model_request(_make_ctx(rc.messages), rc)
+        assert _return_contents(result.messages) == ['bad', 'second a', 'b body']
 
 
 # ---------------------------------------------------------------------------
