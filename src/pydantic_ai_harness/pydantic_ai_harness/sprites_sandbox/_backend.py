@@ -478,6 +478,35 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             )
         self._working_dir_pending = False
 
+    async def _fetch_sprite(self, client: AsyncSpritesClient, name: str) -> AsyncSprite:
+        """Look up the Sprite the ref names."""
+        try:
+            return await client.get_sprite(name)
+        except NotFoundError as error:
+            if self._uncertain_create:
+                # A 404 during eventual visibility is not proof that creation failed.
+                raise NetworkError(f'Sprite {name!r} may still be becoming visible') from error
+            raise
+
+    async def _create_sprite(self, client: AsyncSpritesClient) -> AsyncSprite:
+        """Create a Sprite under the preallocated name."""
+        try:
+            sandbox = await client.create_sprite(self._new_sprite_name, runtime=self._runtime)
+        except (NetworkError, TimeoutError, SpriteError) as error:
+            if isinstance(error, SpriteError) and not (isinstance(error, NetworkError) or '(status 409)' in str(error)):
+                raise
+            # The create may have committed even if lookup is not yet visible. Keep its
+            # preallocated name for failure hooks and use lookup only on future attempts.
+            self._ref = WorkspaceRef(provider='sprites', id=self._new_sprite_name)
+            self._uncertain_create = True
+            try:
+                sandbox = await client.get_sprite(self._new_sprite_name)
+            except (NotFoundError, NetworkError, TimeoutError):
+                raise error from None
+        # Logged as soon as it exists: a Sprite persists until deleted, whatever ends the run later.
+        logger.info('Created Sprite %s', sandbox.name)
+        return sandbox
+
     async def _acquire_locked(self, *, fetched: bool) -> AsyncSprite:
         """Create or attach to the Sprite; the caller holds `_lock`."""
         if (sandbox := self._sandbox) is not None and not (fetched and self._unfetched):
@@ -502,32 +531,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         async def acquire() -> AsyncSprite:
             with lifecycle_span('create' if ref is None else 'attach', self):
                 with anyio.move_on_after(_ACQUIRE_TIMEOUT):
-                    if ref is not None:
-                        try:
-                            sandbox = await client.get_sprite(ref.id)
-                        except NotFoundError as error:
-                            if self._uncertain_create:
-                                # A 404 during eventual visibility is not proof that creation failed.
-                                raise NetworkError(f'Sprite {ref.id!r} may still be becoming visible') from error
-                            raise
-                    else:
-                        try:
-                            sandbox = await client.create_sprite(self._new_sprite_name, runtime=self._runtime)
-                        except (NetworkError, TimeoutError, SpriteError) as error:
-                            if isinstance(error, SpriteError) and not (
-                                isinstance(error, NetworkError) or '(status 409)' in str(error)
-                            ):
-                                raise
-                            # The create may have committed even if lookup is not yet visible. Keep its
-                            # preallocated name for failure hooks and use lookup only on future attempts.
-                            self._ref = WorkspaceRef(provider='sprites', id=self._new_sprite_name)
-                            self._uncertain_create = True
-                            try:
-                                sandbox = await client.get_sprite(self._new_sprite_name)
-                            except (NotFoundError, NetworkError, TimeoutError):
-                                raise error from None
-                        # Logged as soon as it exists: a Sprite persists until deleted, whatever ends the run later.
-                        logger.info('Created Sprite %s', sandbox.name)
+                    sandbox = await (self._create_sprite(client) if ref is None else self._fetch_sprite(client, ref.id))
                     # Recorded as soon as the SDK returns, so a cancelled caller still leaves it named.
                     self._sandbox = sandbox
                     self._ref = WorkspaceRef(provider='sprites', id=sandbox.name)
