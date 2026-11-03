@@ -18,8 +18,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset
-from pydantic_ai_harness._combine import one_per_id
-from pydantic_ai_harness._mcp import credential, per_run_connection
+from pydantic_ai_harness._mcp import credential, one_connection, per_run_connection, prefixed_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
@@ -58,6 +57,13 @@ class Ordinal(AbstractCapability[AgentDepsT]):
     description: str | None = _DEFAULT_DESCRIPTION
     """Routing description used when the capability is loaded on demand."""
 
+    tool_prefix: str | None = None
+    """Prepended with `_` to the server's tool names, as in `work_ordinal_get_workspace_context`.
+
+    Unset, the server's names are kept, since they already start with the service, as in
+    `ordinal_get_workspace_context`. Give two instances distinct prefixes to use both.
+    """
+
     auth: str | Callable[[RunContext[AgentDepsT]], str | None | Awaitable[str | None]] | None = field(
         default=None, repr=False
     )
@@ -80,16 +86,20 @@ class Ordinal(AbstractCapability[AgentDepsT]):
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Two under one `id` are one connection stated twice; two that disagree raise rather than merge."""
-        return one_per_id(capabilities)
+        return one_connection(capabilities)
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
         """Return the Ordinal MCP tools."""
         id = self.id or _ID
         if self.client is not None:
-            return MCPToolset(self.client, id=id, include_instructions=self.include_instructions)
-        if callable(self.auth):
-            return per_run_connection(self.auth, self._connect, id=id)
-        return self._connect(self.auth)
+            toolset: AbstractToolset[AgentDepsT] = MCPToolset(
+                self.client, id=id, include_instructions=self.include_instructions
+            )
+        elif callable(self.auth):
+            toolset = per_run_connection(self.auth, self._connect, id=id)
+        else:
+            toolset = self._connect(self.auth)
+        return prefixed_toolset(toolset, self.tool_prefix)
 
     def _connect(self, auth: str | None) -> MCPToolset[AgentDepsT]:
         return MCPToolset(

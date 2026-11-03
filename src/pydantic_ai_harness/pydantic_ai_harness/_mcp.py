@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from os import environ
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, PreparedToolset
+from pydantic_ai_harness._combine import CapabilityT, one_per_id
 from pydantic_ai_harness._warn import MCPReadOnlyNoToolsWarning
+
+
+def one_connection(capabilities: Sequence[CapabilityT]) -> CapabilityT:
+    """Resolve hosted MCP capabilities that share an `id`: one connection stated twice is one, two that disagree raise."""
+    return one_per_id(capabilities, remedy='Give each its own `id` and `tool_prefix`')
 
 
 def credential(auth: str | None, *, env: str | None, service: str) -> str:
@@ -48,6 +54,11 @@ def per_run_connection(
         return connect(token) if token else None
 
     return DynamicToolset(connect_for_run, per_run_step=False, id=id)
+
+
+def prefixed_toolset(toolset: AbstractToolset[AgentDepsT], prefix: str | None) -> AbstractToolset[AgentDepsT]:
+    """Prefix the server's tool names with `prefix` and `_`; `None` keeps them as the server names them."""
+    return toolset if prefix is None else toolset.prefixed(prefix)
 
 
 def is_read_only(tool: ToolDefinition) -> bool:

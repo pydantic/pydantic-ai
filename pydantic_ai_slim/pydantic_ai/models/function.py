@@ -41,7 +41,6 @@ from ..profiles import ModelProfile, ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
-    Model,
     ModelRequestParameters,
     StreamedResponse,
     _has_instruction_state,  # pyright: ignore[reportPrivateUsage]
@@ -50,10 +49,11 @@ from . import (
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
 )
+from ._in_memory_batch import InMemoryBatchModel
 
 
 @dataclass(init=False)
-class FunctionModel(Model):
+class FunctionModel(InMemoryBatchModel):
     """A model controlled by a local function.
 
     Apart from `__init__`, all methods are private or match those of the base class.
@@ -64,6 +64,9 @@ class FunctionModel(Model):
     # instead of requiring a subclass to restate what the profile already says.
     supported_tool_deferral_modes = frozenset({'standalone', 'with_tool_search'})
     supported_tool_addition_modes = frozenset({'by_reference', 'with_definitions'})
+    # Nor is there a model to tell what the `<system>` tag means, and the announcement would show up in every
+    # history a test inspects.
+    _announces_system_voice = False
 
     function: FunctionDef | None
     stream_function: StreamFunctionDef | None
@@ -478,6 +481,7 @@ def _estimate_usage(  # noqa: C901
                 elif isinstance(part, FilePart):
                     response_tokens += _estimate_string_tokens([part.content])
                 elif isinstance(part, CompactionPart):
+                    # A provider's own compaction item is opaque state, not text the model reads.
                     pass
                 elif isinstance(part, SpeechPart):
                     response_tokens += _estimate_string_tokens(part.content)

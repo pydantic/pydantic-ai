@@ -3056,7 +3056,7 @@ def test_weekly_digest_workflow_is_monday_or_manual_read_only_and_secret_isolate
     for job_name in ('notify', 'alert'):
         assert 'environment' not in jobs[job_name]
         action = jobs[job_name]['steps'][0]
-        assert action['uses'] == 'slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c'
+        assert action['uses'] == 'slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d'
         assert action['with']['webhook'] == '${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}'
 
 

@@ -12,15 +12,15 @@ from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal, TypeVar
 from uuid import uuid4
 
 import anyio
 from pydantic import SerializerFunctionWrapHandler, TypeAdapter, WrapSerializer
 
-from pydantic_ai import AgentRunResult, AgentStreamEvent, RunContext, capture_run_messages
+from pydantic_ai import AgentRunResult, AgentStreamEvent, CapabilityEvent, RunContext, capture_run_messages
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, on_event
-from pydantic_ai.exceptions import ModelRetry, RunCancelled
+from pydantic_ai.exceptions import ModelRetry, RunCancelled, UserError
 from pydantic_ai.messages import (
     EnqueuedMessagesEvent,
     ModelMessage,
@@ -28,7 +28,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.output import OutputContext
-from pydantic_ai_harness._task_report import make_task_output
+from pydantic_ai_harness._task_report import make_task_output, make_task_question
 from pydantic_ai_harness.step_persistence import StepPersistence, StepStore
 from pydantic_ai_harness.subagents._events import DelegationOutcome
 
@@ -37,6 +37,12 @@ if TYPE_CHECKING:
 
 _CURRENT: ContextVar[DelegationTasks | None] = ContextVar('delegation_tasks', default=None)
 _CHILD: ContextVar[str | None] = ContextVar('delegation_child', default=None)
+
+NOT_BACKGROUNDABLE = 'This workspace is owned by the parent run and cannot run background children'
+"""Why a delegation can't run in the background."""
+
+RESUME_DIRECTORY_MISMATCH = 'A resumed task cannot change its working directory.'
+"""Why a resume cannot select a different workspace."""
 
 
 def _dump_messages(messages: list[ModelMessage], handler: SerializerFunctionWrapHandler) -> object:
@@ -57,6 +63,8 @@ class DelegationTask:
     conversation_id: str
     parent_id: str | None = None
     model: str | None = None
+    working_directory: str | None = None
+    """Resolved directory selected for this task, or `None` to inherit the parent workspace."""
     background: bool = False
     backgroundable: bool = True
     resumable: bool = True
@@ -64,6 +72,8 @@ class DelegationTask:
     status: Literal['running', 'finished'] = 'running'
     outcome: DelegationOutcome | None = None
     output: str = ''
+    pending_question: str | None = None
+    """The question a running task is waiting on an answer to, saved so a process exit doesn't lose it."""
     messages: Annotated[list[ModelMessage], WrapSerializer(_dump_messages, when_used='json')] = field(
         default_factory=list[ModelMessage]
     )
@@ -105,8 +115,56 @@ class DelegationTaskEvent:
 
 Observer = Callable[[DelegationTaskEvent], Awaitable[None]]
 Runner = Callable[[DelegationTask], Awaitable[str]]
+Emitter = Callable[[CapabilityEvent], Awaitable[object]]
+"""Emits a capability event into a running delegating run, like `RunContext.emit`."""
+CapabilityEventT = TypeVar('CapabilityEventT', bound=CapabilityEvent)
+
+STOPPED_OUTPUT = 'Task stopped; no successful result is available.'
+"""The output of a task that was stopped before it produced one."""
+
+UNSTARTED_OUTPUT = 'Task stopped before execution.'
+"""The output of a task that was stopped before its worker was scheduled."""
+
+CANCELLED_ANSWER = 'No answer: this task is being cancelled. Stop working on it.'
+"""What `ask_parent` returns to a task that was asked to stop while it waits for an answer."""
+
+
+@dataclass(kw_only=True)
+class _Question:
+    question_id: str
+    text: str
+    answer: asyncio.Future[str]
+    queued: bool = False
+
+
+def _question_part(record: DelegationTask, question: _Question) -> UserPromptPart:
+    return make_task_question(
+        question.text, task_id=record.id, agent_name=record.agent_name, question_id=question.question_id
+    )
+
+
+_KeyT = TypeVar('_KeyT')
+_ItemT = TypeVar('_ItemT')
+
+
+def _unregister(stacks: dict[_KeyT, list[_ItemT]], key: _KeyT, item: _ItemT) -> None:
+    """Remove `item`, by identity, from the stack under `key`, and the stack once it is empty."""
+    stack = stacks[key]
+    del stack[max(index for index, registered in enumerate(stack) if registered is item)]
+    if not stack:
+        del stacks[key]
+
+
 _ADAPTER = TypeAdapter(DelegationTask)
 _SAFE_ID = re.compile(r'[0-9a-f]{32}\Z')
+
+
+async def _read(path: anyio.Path) -> DelegationTask:
+    """A saved task, checked to have the identity its file name gives it."""
+    record = _ADAPTER.validate_json(await path.read_bytes())
+    if not _SAFE_ID.fullmatch(record.id) or not _SAFE_ID.fullmatch(record.run_id) or path.name != f'{record.id}.json':
+        raise ValueError(f'Invalid saved task identity in {path.name!r}')
+    return record
 
 
 class DelegationTasks:
@@ -143,11 +201,18 @@ class DelegationTasks:
         self._workers: dict[str, asyncio.Task[str]] = {}
         self._released: dict[str, asyncio.Event] = {}
         self._stopping: set[str] = set()
-        self._receivers: dict[tuple[str, str | None], Callable[[UserPromptPart], str | None]] = {}
-        self._steering: dict[str, Callable[[str], str | None]] = {}
+        # Stacks, like `_emitters`: the latest registration receives, and each run removes only its own.
+        self._receivers: dict[tuple[str, str | None], list[Callable[[UserPromptPart], str | None]]] = {}
+        self._steering: dict[str, list[Callable[[str], str | None]]] = {}
         self._unsteered: dict[str, list[str]] = {}
         self._queued: dict[str, tuple[str, int]] = {}
         self._save_locks: dict[str, anyio.Lock] = {}
+        self._questions: dict[str, _Question] = {}
+        self._queued_questions: dict[str, str] = {}
+        self._woken = anyio.Event()
+        self._stops: set[str] = set()
+        self._emitters: dict[tuple[str, str | None], list[Emitter]] = {}
+        self._starting: dict[str, int] = {}
         self._open = False
 
     @staticmethod
@@ -165,11 +230,15 @@ class DelegationTasks:
         """Route this run's delegations to the owner without taking ownership of the run."""
         if not self._open:
             raise RuntimeError('Open the delegation task owner before binding it')
+        # A child of another owner, whose tool binds this one, is none of this owner's children.
+        child = _CHILD.set(None) if _CURRENT.get() is not self else None
         token = _CURRENT.set(self)
         try:
             yield
         finally:
             _CURRENT.reset(token)
+            if child is not None:
+                _CHILD.reset(child)
 
     @asynccontextmanager
     async def opened(self) -> AsyncGenerator[DelegationTasks]:
@@ -182,13 +251,7 @@ class DelegationTasks:
                 directory = anyio.Path(self.directory)
                 await directory.mkdir(parents=True, exist_ok=True)
                 async for path in directory.glob('*.json'):
-                    record = _ADAPTER.validate_json(await path.read_bytes())
-                    if (
-                        not _SAFE_ID.fullmatch(record.id)
-                        or not _SAFE_ID.fullmatch(record.run_id)
-                        or path.name != f'{record.id}.json'
-                    ):
-                        raise ValueError(f'Invalid saved task identity in {path.name!r}')
+                    record = await _read(path)
                     if record.status == 'running':
                         if self.step_store is not None:
                             snapshot = await self.step_store.latest_snapshot(
@@ -197,7 +260,13 @@ class DelegationTasks:
                             if snapshot is not None:
                                 record.messages = snapshot.messages
                         record.status, record.outcome = 'finished', 'cancelled'
-                        record.output = 'Execution interrupted by process exit. Inspect effects before resuming.'
+                        record.output = (
+                            'Execution interrupted by process exit while waiting for an answer to:\n'
+                            f'{record.pending_question}\nResume it with the answer. Inspect effects before resuming.'
+                            if record.pending_question is not None
+                            else 'Execution interrupted by process exit. Inspect effects before resuming.'
+                        )
+                        record.pending_question = None
                         record.finished_at = time.time()
                     self.records[record.id] = record
                 for record in self.records.values():
@@ -210,6 +279,8 @@ class DelegationTasks:
                         parent = self.records[parent].parent_id
             yield self
         finally:
+            # Closed first, so a delegation still persisting its acceptance schedules no worker after this drain.
+            self._open = False
             with anyio.move_on_after(10, shield=True) as cleanup:
                 for worker in self._workers.values():
                     worker.cancel()
@@ -219,7 +290,6 @@ class DelegationTasks:
                         record.status, record.outcome = 'finished', 'cancelled'
                         record.finished_at = time.time()
                     await self.save(record)
-            self._open = False
             if cleanup.cancel_called:
                 raise RuntimeError('Delegation cleanup timed out; children did not release their resources')
 
@@ -252,6 +322,29 @@ class DelegationTasks:
                 await temporary.write_bytes(_ADAPTER.dump_json(record))
                 await temporary.replace(destination)
 
+    async def restore(self, record: DelegationTask) -> bool:
+        """Add a finished task made elsewhere, such as one imported from another agent's session.
+
+        Works whether or not the owner is open; a closed owner loads it when it opens. A task with the
+        same ID that has run since, with a different `run_id`, is kept instead, as is the saved copy of
+        one this owner has not loaded yet. Returns whether `record` was added.
+        """
+        if record.status != 'finished' or not _SAFE_ID.fullmatch(record.id) or not _SAFE_ID.fullmatch(record.run_id):
+            raise ValueError('Only a finished task with a valid identity can be restored')
+        current = self.records.get(record.id)
+        if current is None and self.directory is not None:
+            path = anyio.Path(self.directory / f'{record.id}.json')
+            current = await _read(path) if await path.exists() else None
+        if current is not None and current.run_id != record.run_id:
+            return False
+        if self.directory is not None:
+            await anyio.Path(self.directory).mkdir(parents=True, exist_ok=True)
+        self.records[record.id] = record
+        await self.save(record)
+        if self._open:
+            await self.notify(record)
+        return True
+
     async def delegate(
         self,
         *,
@@ -263,30 +356,32 @@ class DelegationTasks:
         resume: str | None,
         run: Runner,
         backgroundable: bool = True,
+        task_id: str | None = None,
+        resumable: bool = True,
+        working_directory: str | None = None,
     ) -> str:
-        """Start or resume a child; foreground waiting can be released by `background`."""
+        """Start or resume a child; foreground waiting can be released by `background`.
+
+        `task_id` names a new child, instead of a generated ID. A child is resumable unless `resumable`
+        is off or its agent is one of `one_shot`.
+        """
         if not self._open:
             raise RuntimeError('Delegation task owner is closed')
         if background and not backgroundable:
-            raise ModelRetry('This workspace is owned by the parent run and cannot run background children')
+            raise ModelRetry(NOT_BACKGROUNDABLE)
         parent_id = _CHILD.get()
         if parent_id is not None:
             conversation_id = self.records[parent_id].conversation_id
         if resume is not None:
-            record = self.records.get(resume)
-            if record is None or record.conversation_id != conversation_id:
-                raise ModelRetry(f'Unknown task {resume!r} in this conversation')
-            if record.status == 'running' or (resume in self._workers and not self._workers[resume].done()):
-                raise ModelRetry(f'Task {resume!r} is still running')
-            if not record.resumable or record.user_stopped:
-                raise ModelRetry(f'Task {resume!r} cannot resume; it is one-shot or was stopped by the user')
-            if record.agent_name != agent_name:
-                raise ModelRetry('Resume must use the original agent type')
+            record = self.check_resume(resume, conversation_id=conversation_id, agent_name=agent_name)
+            if working_directory != record.working_directory:
+                raise ModelRetry(RESUME_DIRECTORY_MISMATCH)
             record.prompt, record.model = prompt, model
             record.background, record.status = background, 'running'
             record.outcome, record.output, record.finished_at = None, '', None
             record.started_at, record.delivered = time.time(), False
             self._stopping.discard(record.id)
+            self._stops.discard(record.id)
             self._unsteered.pop(record.id, None)
             record.generation += 1
             record.run_id = uuid4().hex
@@ -294,23 +389,34 @@ class DelegationTasks:
             record.backgroundable = backgroundable
         else:
             record = DelegationTask(
-                id=uuid4().hex,
+                id=task_id or uuid4().hex,
                 agent_name=agent_name,
                 prompt=prompt,
                 conversation_id=conversation_id,
                 parent_id=_CHILD.get(),
                 model=model,
+                working_directory=working_directory,
                 background=background,
-                resumable=agent_name not in self.one_shot,
+                resumable=resumable and agent_name not in self.one_shot,
                 backgroundable=backgroundable,
             )
             self.records[record.id] = record
         release = self._released[record.id] = asyncio.Event()
         # Persist acceptance before scheduling: cancellation here cannot leave an orphan worker.
-        await self.save(record)
-        if record.user_stopped or record.status != 'running':
+        try:
+            await self.save(record)
+        except BaseException:
+            # Never scheduled, so it settles here: nothing may wait for a worker it will not get.
+            self._settle_unstarted(record)
+            raise
+        if record.user_stopped or record.status != 'running' or not self._open:
+            # Stopped meanwhile, or its owner is closing: it settles without a worker.
+            if record.status == 'running':
+                self._settle_unstarted(record)
             return f'Task {record.id} was stopped before execution.'
         worker = asyncio.create_task(self._run(record, run), name=f'delegate-{record.id}')
+        # Even a worker cancelled before it ran ends a wait for its task.
+        worker.add_done_callback(lambda _: self._wake())
         self._workers[record.id] = worker
         if background:
             return self._receipt(record)
@@ -336,6 +442,23 @@ class DelegationTasks:
             with anyio.move_on_after(5, shield=True):
                 await asyncio.gather(waiter, return_exceptions=True)
 
+    def check_resume(self, task_id: str, *, conversation_id: str, agent_name: str) -> DelegationTask:
+        """The settled child `task_id` names, when `agent_name` can resume it in this conversation.
+
+        Raises:
+            ModelRetry: the task is unknown in this conversation, still running, not resumable, or of another agent.
+        """
+        record = self.records.get(task_id)
+        if record is None or record.conversation_id != conversation_id:
+            raise ModelRetry(f'Unknown task {task_id!r} in this conversation')
+        if record.status == 'running' or (task_id in self._workers and not self._workers[task_id].done()):
+            raise ModelRetry(f'Task {task_id!r} is still running')
+        if not record.resumable or record.user_stopped:
+            raise ModelRetry(f'Task {task_id!r} cannot resume; it is one-shot or was stopped by the user')
+        if record.agent_name != agent_name:
+            raise ModelRetry('Resume must use the original agent type')
+        return record
+
     async def _run(self, record: DelegationTask, run: Runner) -> str:
         token = _CHILD.set(record.id)
         try:
@@ -348,13 +471,14 @@ class DelegationTasks:
                         record.messages = messages
             record.outcome = record.outcome or 'ok'
         except (asyncio.CancelledError, RunCancelled):
-            record.outcome, record.output = 'cancelled', 'Task stopped; no successful result is available.'
+            record.outcome, record.output = 'cancelled', STOPPED_OUTPUT
         except Exception as exc:
             record.outcome = record.outcome or 'failed'
             record.output = f'{type(exc).__name__}: {exc}'
         finally:
             _CHILD.reset(token)
             self._unsteered.pop(record.id, None)
+            self._stops.discard(record.id)
             record.status, record.finished_at = 'finished', time.time()
             # A cancelled/failed parent cannot leave descendants without an observer.
             if record.outcome != 'ok':
@@ -404,9 +528,7 @@ class DelegationTasks:
             if record.status == 'running':
                 # Its run never started to read steering sent meanwhile.
                 self._unsteered.pop(task_id, None)
-                record.status, record.outcome = 'finished', 'cancelled'
-                record.output = 'Task stopped before execution.'
-                record.finished_at = time.time()
+                self._settle_unstarted(record)
                 await self.notify(record)
             await self.save(record)
         if cleanup.cancel_called:
@@ -424,6 +546,16 @@ class DelegationTasks:
             and not r.delivered
         ]
 
+    def questions(self, *, conversation_id: str, parent_id: str | None = None) -> list[DelegationTask]:
+        """Running children whose question awaits delivery to their own parent, like `reports`."""
+        return [
+            record
+            for task_id, question in self._questions.items()
+            if not question.queued
+            and (record := self.records[task_id]).conversation_id == conversation_id
+            and record.parent_id == parent_id
+        ]
+
     def steer(self, task_id: str, text: str) -> bool:
         """Send a running child a user message, which its run reads at its next model request.
 
@@ -436,11 +568,11 @@ class DelegationTasks:
             raise ValueError('Steering text must not be empty')
         if self.records[task_id].status != 'running':
             return False
-        enqueue = self._steering.get(task_id)
-        if enqueue is None:
+        steering = self._steering.get(task_id)
+        if steering is None:
             self._unsteered.setdefault(task_id, []).append(text)
         else:
-            enqueue(text)
+            steering[-1](text)
         return True
 
     def history(self, task_id: str) -> list[ModelMessage]:
@@ -461,9 +593,10 @@ class DelegationTasks:
 
     def queue_reports(self, *, conversation_id: str, parent_id: str | None) -> None:
         """Queue only settled direct-child reports on an active parent's native queue."""
-        receiver = self._receivers.get((conversation_id, parent_id))
-        if receiver is None:
+        receivers = self._receivers.get((conversation_id, parent_id))
+        if receivers is None:
             return
+        receiver = receivers[-1]
         for record in self.reports(conversation_id=conversation_id, parent_id=parent_id):
             identity = (record.id, record.generation)
             if identity in self._queued.values():
@@ -471,6 +604,14 @@ class DelegationTasks:
             enqueue_id = receiver(record.report())
             if enqueue_id is not None:
                 self._queued[enqueue_id] = identity
+        for task_id, question in self._questions.items():
+            record = self.records[task_id]
+            if question.queued or record.conversation_id != conversation_id or record.parent_id != parent_id:
+                continue
+            enqueue_id = receiver(_question_part(record, question))
+            if enqueue_id is not None:
+                question.queued = True
+                self._queued_questions[enqueue_id] = task_id
 
     @contextmanager
     def receiving(
@@ -486,27 +627,41 @@ class DelegationTasks:
         `steer` queues a user message on a child's own run, for `DelegationTasks.steer`.
         """
         key = (conversation_id, parent_id)
-        self._receivers[key] = enqueue
+        # What this run queued, which it alone can still deliver.
+        queued: set[str] = set()
+
+        def receive(part: UserPromptPart) -> str | None:
+            enqueue_id = enqueue(part)
+            if enqueue_id is not None:
+                queued.add(enqueue_id)
+            return enqueue_id
+
+        self._receivers.setdefault(key, []).append(receive)
         if steer is not None and parent_id is not None:
-            self._steering[parent_id] = steer
+            self._steering.setdefault(parent_id, []).append(steer)
             for text in self._unsteered.pop(parent_id, ()):
                 steer(text)
         self.queue_reports(conversation_id=conversation_id, parent_id=parent_id)
         try:
             yield
         finally:
-            self._receivers.pop(key, None)
-            if parent_id is not None:
-                self._steering.pop(parent_id, None)
+            _unregister(self._receivers, key, receive)
+            if steer is not None and parent_id is not None:
+                _unregister(self._steering, parent_id, steer)
             self._queued = {
-                enqueue_id: identity
-                for enqueue_id, identity in self._queued.items()
-                if self.records[identity[0]].parent_id != parent_id
-                or self.records[identity[0]].conversation_id != conversation_id
+                enqueue_id: identity for enqueue_id, identity in self._queued.items() if enqueue_id not in queued
             }
+            # A question queued on a run that ended before delivering it is queued again on the next one.
+            for enqueue_id in queued & self._queued_questions.keys():
+                task_id = self._queued_questions.pop(enqueue_id)
+                if (question := self._questions.get(task_id)) is not None:
+                    question.queued = False
+            # Another run of the same parent may still be receiving: it gets what this one could not deliver.
+            self.queue_reports(conversation_id=conversation_id, parent_id=parent_id)
 
     async def acknowledge(self, enqueue_id: str) -> None:
         """Persist delivery only after core confirms it entered message history."""
+        self._queued_questions.pop(enqueue_id, None)
         identity = self._queued.pop(enqueue_id, None)
         if identity is not None:
             task_id, generation = identity
@@ -515,13 +670,159 @@ class DelegationTasks:
                 record.delivered = True
                 await self.save(record)
 
-    async def wait_children(self, task_id: str) -> None:
-        """Wait for direct children before the child's final output can settle."""
-        workers = [
-            self._workers[r.id] for r in self.records.values() if r.parent_id == task_id and r.status == 'running'
-        ]
-        if workers:
-            await asyncio.gather(*(asyncio.shield(worker) for worker in workers))
+    async def wait_children(self, task_id: str | None) -> None:
+        """Wait for direct children before the child's final output can settle, or until one asks a question.
+
+        `None` waits for the children of the top-level run. A child waiting for an answer would otherwise
+        wait for its parent forever, so its question ends the wait and the parent gets a turn to answer it.
+        """
+        while True:
+            running = [r.id for r in self.records.values() if r.parent_id == task_id and r.status == 'running']
+            if not running or any(child in self._questions for child in running):
+                return
+            # Cancelling this wait leaves the children running.
+            await self._woken.wait()
+
+    def _settle_unstarted(self, record: DelegationTask) -> None:
+        """Settle a task that was stopped before it got a worker, and wake whoever waits for it."""
+        record.status, record.outcome = 'finished', 'cancelled'
+        record.output, record.finished_at = UNSTARTED_OUTPUT, time.time()
+        self._wake()
+
+    def _wake(self) -> None:
+        """Wake `wait_children`: a child asked a question, its worker finished, or it settled without one."""
+        self._woken.set()
+        self._woken = anyio.Event()
+
+    def running_count(self, conversation_id: str) -> int:
+        """How many children of a conversation are running, or being started by `starting`."""
+        running = sum(r.conversation_id == conversation_id and r.status == 'running' for r in self.records.values())
+        return running + self._starting.get(conversation_id, 0)
+
+    @contextmanager
+    def starting(self, conversation_id: str) -> Generator[None]:
+        """Count a child that is about to be delegated as running, so a concurrent delegation can't overrun a limit."""
+        self._starting[conversation_id] = self._starting.get(conversation_id, 0) + 1
+        try:
+            yield
+        finally:
+            self._starting[conversation_id] -= 1
+
+    @contextmanager
+    def publishing(self, *, conversation_id: str, parent_id: str | None, emit: Emitter) -> Generator[None]:
+        """Send the task events of a run's children into that run's event stream, while it lasts."""
+        key = (conversation_id, parent_id)
+        # Several runs, or capabilities of one run, can publish for the same parent; the latest gets the events.
+        self._emitters.setdefault(key, []).append(emit)
+        try:
+            yield
+        finally:
+            _unregister(self._emitters, key, emit)
+
+    def delegation_of(self, run_id: str | None) -> DelegationTask | None:
+        """The child that the run `run_id` runs, or `None` for a run that isn't one of this owner's delegations.
+
+        A run that a child's tool starts sees the child's ID too, but runs under an ID of its own.
+        """
+        child = _CHILD.get()
+        if child is None:
+            return None
+        record = self.records[child]
+        return record if record.run_id == run_id else None
+
+    async def publish(
+        self, record: DelegationTask, event: CapabilityEventT, *, observe: bool = True
+    ) -> CapabilityEventT:
+        """Emit a task event into its parent's run, when that run is publishing, then send it to the observer.
+
+        Returns the event once the parent run's listeners have seen it, so a caller can read their decisions.
+        """
+        emitters = self._emitters.get((record.conversation_id, record.parent_id))
+        if emitters is not None:
+            await emitters[-1](event)
+        if observe:
+            await self.notify(record, event)
+        return event
+
+    def pending_question(self, task_id: str) -> tuple[str, str] | None:
+        """The `(question_id, question)` a running child is waiting on an answer to, if any."""
+        question = self._questions.get(task_id)
+        return None if question is None else (question.question_id, question.text)
+
+    async def ask(self, task_id: str, *, question_id: str, question: str) -> str:
+        """Put a child's question to its parent, and wait for `answer`.
+
+        The question is queued on the parent's run like a report. `request_stop` answers it with
+        `CANCELLED_ANSWER`.
+        """
+        if task_id in self._stops:
+            # Asked to stop while it was putting the question, so it gets no turn to wait for an answer.
+            return CANCELLED_ANSWER
+        record = self.records[task_id]
+        pending = self._questions[task_id] = _Question(
+            question_id=question_id, text=question, answer=asyncio.get_running_loop().create_future()
+        )
+        self._wake()
+        self.queue_reports(conversation_id=record.conversation_id, parent_id=record.parent_id)
+        # Saved, so a process exit while it waits leaves the question in the interrupted task's output.
+        record.pending_question = question
+        await self.save(record)
+        try:
+            try:
+                # The observer learns the task waits, so an application can start its idle parent's next run.
+                await self.notify(record)
+            except Exception:
+                logging.getLogger(__name__).exception('Task question observer failed for %s', record.id)
+            return await pending.answer
+        finally:
+            record.pending_question = None
+            if self._questions.get(task_id) is pending:
+                del self._questions[task_id]
+
+    def answer(self, task_id: str, *, question_id: str, answer: str) -> bool:
+        """Answer the question a child is waiting on. `False` if it is not waiting on `question_id`."""
+        question = self._questions.get(task_id)
+        if question is None or question.question_id != question_id or question.answer.done():
+            return False
+        question.answer.set_result(answer)
+        return True
+
+    def request_stop(self, task_id: str) -> None:
+        """Ask a running child to stop before its next model request, and to stop waiting for an answer."""
+        self._stops.add(task_id)
+        question = self._questions.get(task_id)
+        if question is not None and not question.answer.done():
+            question.answer.set_result(CANCELLED_ANSWER)
+
+    def stop_requested(self, task_id: str) -> bool:
+        """Whether `request_stop` asked this child to stop."""
+        return task_id in self._stops
+
+
+@contextmanager
+def isolated(owner: DelegationTasks | None) -> Generator[None]:
+    """Bind `owner`, or no owner, for a run that isn't a delegation of the bound owner, with no current child."""
+    current, child = _CURRENT.set(owner), _CHILD.set(None)
+    try:
+        yield
+    finally:
+        _CHILD.reset(child)
+        _CURRENT.reset(current)
+
+
+def enqueue_while_open(
+    ctx: RunContext[object], part: UserPromptPart, *, priority: Literal['asap', 'when_idle']
+) -> str | None:
+    """Queue `part` on the run of `ctx`, or return `None` once that run takes no more messages.
+
+    A run closes its queue when it reads its last queued messages, but its capabilities still receive until it
+    returns. What it no longer takes stays with the owner, which queues it on the conversation's next run.
+    """
+    try:
+        return ctx.enqueue(part, priority=priority)
+    except UserError:
+        # The only `UserError` a running agent's `enqueue` raises for a part: the run has ended.
+        return None
 
 
 class DelegationReports(AbstractCapability[object]):
@@ -545,8 +846,9 @@ class DelegationReports(AbstractCapability[object]):
         with self.owner.receiving(
             conversation_id=self.conversation_id,
             parent_id=self.task_id,
-            enqueue=lambda part: ctx.enqueue(part, priority=self.priority),
-            steer=lambda text: ctx.enqueue(text, priority='asap'),
+            enqueue=lambda part: enqueue_while_open(ctx, part, priority=self.priority),
+            # Like a report, steering a run that has read its last queued messages is dropped.
+            steer=lambda text: enqueue_while_open(ctx, UserPromptPart(text), priority='asap'),
         ):
             return await handler()
 

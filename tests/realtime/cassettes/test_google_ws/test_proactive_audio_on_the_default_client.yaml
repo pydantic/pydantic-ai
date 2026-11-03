@@ -1,0 +1,79 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    setup:
+      model: models/gemini-2.5-flash-native-audio-preview-09-2025
+      generationConfig:
+        responseModalities:
+        - AUDIO
+      systemInstruction:
+        parts:
+        - text: Answer in two or three words.
+        role: user
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+      proactivity:
+        proactive_audio: true
+- kind: message
+  direction: received
+  at: 0.11
+  data:
+    setupComplete: {}
+- kind: message
+  direction: sent
+  at: 0.118
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: Say a short greeting.
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  at: 1.471
+  data:
+    serverContent:
+      outputTranscription: {}
+- kind: message
+  direction: received
+  at: 1.475
+  data:
+    serverContent:
+      outputTranscription:
+        text: Hello.
+- kind: message
+  direction: received
+  at: 2.32
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 6f/X/97/AQAQAAIA5f/Y/9L/5v/4/wEA9P+8/5L/bv9y
+- kind: message
+  direction: received
+  at: 2.321
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  at: 2.965
+  data:
+    serverContent:
+      turnComplete: true
+    usageMetadata:
+      promptTokenCount: 1181
+      responseTokenCount: 23
+      totalTokenCount: 1204
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 1181
+      responseTokensDetails:
+      - modality: AUDIO
+        tokenCount: 23

@@ -8,7 +8,7 @@ The output is wrapped in [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] or
 
 Both `AgentRunResult` and `StreamedRunResult` are generic in the data they wrap, so typing information about the data returned by the agent is preserved.
 
-A run ends when the model responds with one of the output types, or, if no output type is specified or `str` is one of the allowed options, when a plain text response is received. A run can also be cancelled if usage limits are exceeded, see [Usage Limits](agent.md#usage-limits).
+A run ends when the model responds with one of the output types, or, if no output type is specified or `str` is one of the allowed options, when a plain text response is received. A run can also be cancelled if usage limits are exceeded, see [Usage Limits](agent.md#usage-limits). With [`DeferredToolRequests`](deferred-tools.md) or [`PendingModelResponse`](batch.md#ending-a-run-while-it-waits) in the output type, a run can also end early, so you can approve its tools or wait for a model request the provider is still processing, like a batch request, and resume it later.
 
 Here's an example using a Pydantic model as the `output_type`, forcing the model to respond with data matching our specification:
 
@@ -372,7 +372,7 @@ _(This example is complete, it can be run "as is")_
 
 #### Native Output
 
-Native Output mode uses a model's native "Structured Outputs" feature (aka "JSON Schema response format"), where the model is forced to only output text matching the provided JSON schema. Note that this is not supported by all models, and sometimes comes with restrictions. For example, [Gemini 3](https://ai.google.dev/gemini-api/docs/structured-output#structured_outputs_with_tools) supports Native Output alongside function and native tools, while earlier Gemini models cannot combine Native Output with function tools.
+Native Output mode uses a model's native "Structured Outputs" feature (aka "JSON Schema response format"), where the model is forced to only output text matching the provided JSON schema. Note that this is not supported by all models, and sometimes comes with restrictions. For example, [Gemini 3](https://ai.google.dev/gemini-api/docs/structured-output#structured_outputs_with_tools) supports Native Output alongside function and native tools, while earlier Gemini models cannot combine Native Output with function tools. On [Anthropic](models/anthropic.md#schema-complexity-limits), the schema is compiled into a grammar with complexity limits that a large schema can exceed, and on a request that thinks, a structured `output_type` uses Native Output even without the marker class, unless its schema is over those limits. On [OpenAI](models/openai.md#structured-output-schemas), a schema over the strict-mode size limits is sent without strict mode.
 
 To use this mode, you can wrap the output type(s) in the [`NativeOutput`][pydantic_ai.output.NativeOutput] marker class that also lets you specify a `name` and `description` if the name and docstring of the type or function are not sufficient.
 

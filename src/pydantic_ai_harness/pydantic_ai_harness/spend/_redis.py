@@ -12,16 +12,14 @@ import warnings
 from collections.abc import Awaitable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
 from typing import Protocol, runtime_checkable
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.spend._budget import SEPARATOR, delimited
-from pydantic_ai_harness.spend._snapshot import Spent, money_precision
+from pydantic_ai_harness.spend._snapshot import Spent, from_nanos, money_precision, to_nanos
 from pydantic_ai_harness.spend._store import DEFAULT_DEDUP_RETAIN, SpendEntry, warn_unreachable_overrides
-
-_SCALE = Decimal(10) ** 9
 
 _MARKER = f'{SEPARATOR}dedup'
 """First segment of a dedup marker's name.
@@ -140,32 +138,6 @@ class RedisClient(Protocol):
         ...  # pragma: no cover
 
 
-def _to_nanos(usd: Decimal) -> int:
-    """US dollars as whole billionths.
-
-    Counters are integers because `INCRBYFLOAT` accumulates binary rounding
-    error over the tens of thousands of requests a busy day produces, while
-    `HINCRBY` on integers is both exact and atomic.
-
-    Billionths rather than millionths because the residue does not average out:
-    an agent repeats requests of near-identical shape, so the same fraction is
-    rounded the same way every time. At a cheap model's per-request price,
-    rounding to a millionth drifts by tens of percent over a day; a billionth
-    keeps that under a part in ten thousand.
-
-    The local context is pinned so an application that lowered `Decimal`
-    precision for its own arithmetic cannot silently truncate money here.
-    """
-    with money_precision():
-        return int((usd * _SCALE).to_integral_value(rounding=ROUND_HALF_UP))
-
-
-def _from_nanos(nanos: int) -> Decimal:
-    """Whole billionths back to US dollars."""
-    with money_precision():
-        return Decimal(nanos) / _SCALE
-
-
 def _expiry_seconds(ttl: timedelta) -> int:
     """A positive `timedelta` as whole seconds, rounded up.
 
@@ -198,7 +170,7 @@ def _field(fields: Mapping[str | bytes, str | bytes], name: str) -> int:
 def _spent(fields: Mapping[str | bytes, str | bytes]) -> Spent:
     """A window's counters, read from its hash."""
     return Spent(
-        usd=_from_nanos(_field(fields, _USD_FIELD)),
+        usd=from_nanos(_field(fields, _USD_FIELD)),
         tokens=_field(fields, _TOKENS_FIELD),
         requests=_field(fields, _REQUESTS_FIELD),
         unpriced_requests=_field(fields, _UNPRICED_FIELD),
@@ -370,7 +342,7 @@ class RedisSpendStore:
         arguments: list[str | int] = [len(entries)]
         for entry in entries:
             arguments += [
-                _to_nanos(entry.usd),
+                to_nanos(entry.usd),
                 entry.tokens,
                 entry.requests,
                 entry.unpriced,
@@ -380,7 +352,7 @@ class RedisSpendStore:
         rows = await self.client.eval(_ADD_SCRIPT, 2 * len(entries), *keys, *markers, *arguments)
         return {
             entry.key: Spent(
-                usd=_from_nanos(int(_text(row[0]))),
+                usd=from_nanos(int(_text(row[0]))),
                 tokens=int(_text(row[1])),
                 requests=int(_text(row[2])),
                 unpriced_requests=int(_text(row[3])),

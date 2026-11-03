@@ -44,7 +44,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import ModelMessagesTypeAdapter
+from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequestPart
 from pydantic_ai.models import (
     Model,
     ModelRequestContext,
@@ -56,6 +56,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
+from tests.function_model_prefix import REQUEST_SCOPED_PROMPT_DROPPED
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsStr, RequestCapture, try_import
@@ -267,7 +268,7 @@ async def test_anthropic_request_scoped_fallback_on_model_without_native_support
     request_capture: RequestCapture,
     case: FallbackCase,
 ):
-    """Claude Haiku 4.5 has no `system` role: the reminder is sent while current, then left out.
+    """Claude Sonnet 5 doesn't honor a `system` entry in `messages`: the reminder is sent while current, then left out.
 
     It renders as `<system>`-tagged text at the end of the request's user turn, and the breakpoint goes
     on the block before it, whether `anthropic_cache_messages` or `anthropic_cache` asked for one: with
@@ -276,7 +277,7 @@ async def test_anthropic_request_scoped_fallback_on_model_without_native_support
     read covers the previous request bar the reminder. No beta header, no `clear_at`, and no empty
     responses: the text never piles up after the tool results.
     """
-    agent = weather_agent(anthropic_model('claude-haiku-4-5', capture=True), model_settings=case.settings)
+    agent = weather_agent(anthropic_model('claude-sonnet-5', capture=True), model_settings=case.settings)
 
     result = await agent.run(PROMPT)
 
@@ -354,6 +355,7 @@ def recording_function_model(seen: list[list[ModelMessage]], *, profile: ModelPr
     return FunctionModel(respond, profile=profile)
 
 
+@pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
 async def test_superseded_reminders_are_left_out_without_native_support():
     """A model that can't clear a request-scoped prompt gets each one only while it's current.
 
@@ -452,6 +454,7 @@ async def test_native_support_leaves_out_a_reminder_no_user_message_clears():
     assert request_scoped_texts(prepared) == []
 
 
+@pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
 async def test_reminder_enqueued_from_before_model_request_matches_two_writes():
     """`ctx.enqueue` from `before_model_request` delivers into the request being prepared, and into history.
 
@@ -488,6 +491,7 @@ async def test_reminder_enqueued_from_before_model_request_matches_two_writes():
     assert [type(message) for message in enqueued_history] == [type(message) for message in written_history]
 
 
+@pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
 async def test_enqueued_request_scoped_prompt():
     """`ctx.enqueue` delivers a request-scoped prompt into the next request, and it's gone from the one after."""
     seen: list[list[ModelMessage]] = []
@@ -650,6 +654,7 @@ async def test_retry_without_response_drops_the_request_scoped_prompt():
     assert request_scoped_texts(result.all_messages()) == ['Reminder: be terse. This is request 2.']
 
 
+@pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
 async def test_resuming_a_suspended_response_defers_the_enqueued_reminder():
     """Resuming a provider-suspended turn sends the history ending in it unchanged, with nothing added after it.
 
@@ -925,7 +930,7 @@ async def test_openrouter_message_cache_control_goes_before_the_request_scoped_p
     nothing is marked.
     """
     model = OpenRouterModel(
-        'anthropic/claude-haiku-4.5',
+        'anthropic/claude-haiku-5.5',
         provider=OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client),
     )
     settings: OpenRouterModelSettings = {'openrouter_cache_messages': '5m'}
@@ -1090,15 +1095,19 @@ def test_anthropic_bedrock_lookback_breakpoint_skips_the_request_scoped_entry():
     ] == [(0, 0), (3, 11)]
 
 
-def duplicate_text_history() -> list[ModelMessage]:
-    """A tool round whose lasting user text is the same as the request-scoped reminder after it, as rendered."""
+def duplicate_text_history(lasting: ModelRequestPart | None = None) -> list[ModelMessage]:
+    """A tool round whose lasting text is the same as the request-scoped reminder after it, as rendered.
+
+    By default the lasting text is user text. On a model without mid-conversation system messages, user text can't
+    carry a `<system>` tag, so `lasting` there is a lasting `SystemPromptPart` with the reminder's text.
+    """
     return [
         ModelRequest(parts=[UserPromptPart('Weather in Paris?')]),
         ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='call_1')]),
         ModelRequest(
             parts=[
                 ToolReturnPart('get_weather', 'Paris: 18C', tool_call_id='call_1'),
-                UserPromptPart('<system>Reminder.</system>'),
+                lasting or UserPromptPart('<system>Reminder.</system>'),
             ]
         ),
         ModelRequest(parts=[SystemPromptPart('Reminder.', scope='request')]),
@@ -1113,7 +1122,7 @@ async def test_lasting_text_equal_to_a_reminder_keeps_the_breakpoint_anthropic(
 
     With nothing ahead of the reminder, there's nothing to cache up to.
     """
-    model = anthropic_model('claude-haiku-4-5', capture=True)
+    model = anthropic_model('claude-sonnet-5', capture=True)
     settings: AnthropicModelSettings = {'anthropic_cache_messages': True}
 
     await send(model, duplicate_text_history(), settings)
@@ -1136,7 +1145,7 @@ async def test_lasting_text_equal_to_a_reminder_keeps_the_cache_point_bedrock(
     settings: BedrockModelSettings = {'bedrock_cache_messages': True}
 
     with converse_request_bodies(model) as bodies:
-        await send(model, duplicate_text_history(), settings)
+        await send(model, duplicate_text_history(SystemPromptPart('Reminder.')), settings)
 
     assert bodies[0]['messages'][-1]['content'][-3:] == [
         {'text': '<system>Reminder.</system>'},
@@ -1151,7 +1160,7 @@ async def test_lasting_text_equal_to_a_reminder_keeps_the_cache_control_openrout
 ):
     """Only the reminder message ending the request is skipped: a lasting one with the same content is marked."""
     model = OpenRouterModel(
-        'anthropic/claude-haiku-4.5',
+        'anthropic/claude-haiku-5.5',
         provider=OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client),
     )
     settings: OpenRouterModelSettings = {'openrouter_cache_messages': '5m'}

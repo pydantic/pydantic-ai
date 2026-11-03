@@ -697,6 +697,11 @@ class DurableToolsetBase(WrapperToolset[AgentDepsT]):
     def id(self) -> str | None:
         return self.wrapped.id
 
+    @property
+    def _explicit_id(self) -> str | None:
+        # Forwarded with `id`, so a derived one stays derived through the wrapper.
+        return self.wrapped._explicit_id
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         # Its units (Temporal activities) resolve tools on the registered toolset, which a per-run
         # replacement cannot reach, so the run must list that same toolset's tools.

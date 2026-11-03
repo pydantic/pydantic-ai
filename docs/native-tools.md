@@ -78,6 +78,8 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
+The function is called for each model request, with the model about to receive it as `ctx.model`, so it can decide by that model's provider or profile. When the [`ModelFallback`](capabilities/model-fallback.md) capability moves a request to another model, the function is called again with that model as `ctx.model`, so each model gets the tool it would get on its own.
+
 !!! note "Returning `None` under a `fallback_subagent_model`"
     Omission is what `None` means everywhere the native tool is the only path. [`XSearch`][pydantic_ai.capabilities.XSearch] and [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] are the exception: once `fallback_subagent_model` is set, their subagent tool is offered to the model whenever the factory returns `None`, and calling it raises [`UserError`][pydantic_ai.exceptions.UserError] instead of running with default settings. See [X Search](capabilities/x-search.md) and [Image Generation](capabilities/image-generation.md).
 
@@ -206,8 +208,8 @@ left out on models that don't support them.
     the web search tool version from the model profile and Anthropic client: `web_search_20260209`
     for models and platforms that support Anthropic's dynamic-filtering web tools, and
     `web_search_20250305` otherwise.
-    The legacy Amazon Bedrock client does not support Anthropic web search, so Pydantic AI raises
-    a `UserError` if you use `WebSearchTool` with `AsyncAnthropicBedrock`.
+    Amazon Bedrock does not support Anthropic web search, so Pydantic AI raises a `UserError` if you
+    use `WebSearchTool` with `AsyncAnthropicBedrock` or `AsyncAnthropicBedrockMantle`.
     On Vertex AI, `WebSearchTool` always uses `web_search_20250305`, as Anthropic does not offer the
     dynamic-filtering version there, so dynamic filtering is unavailable even on otherwise-supported models.
     See the [Anthropic web search docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool)
@@ -292,7 +294,7 @@ in a secure environment, making it perfect for computational tasks, data analysi
 |----------|-----------|-------|
 | OpenAI Responses | ✅ | To include code execution output on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] that's available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs] [model setting](agent.md#model-run-settings). If the code execution generated images, like charts, they will be available on [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images] as [`BinaryImage`][pydantic_ai.messages.BinaryImage] objects. The generated image can also be used as [image output](output.md#image-output) for the agent run. |
 | Google | ✅ | See [Google tool combinations](#google-tool-combinations). |
-| Anthropic | ✅ | Available on compatible Anthropic models. Pydantic AI selects a compatible code execution tool version automatically; see [Anthropic code execution tool version](models/anthropic.md#code-execution-tool-version) to override it. |
+| Anthropic | ✅ | Available on compatible Anthropic models. Pydantic AI selects a compatible code execution tool version automatically; see [Anthropic code execution tool version](models/anthropic.md#code-execution-tool-version) to override it. Not available on the [Amazon Bedrock](models/anthropic.md#aws-bedrock) clients (`AsyncAnthropicBedrock` and `AsyncAnthropicBedrockMantle`), where using it raises a [`UserError`][pydantic_ai.exceptions.UserError]. |
 | xAI | ✅ | Full feature support. |
 | Groq | ❌ | |
 | Bedrock | ✅ | Only available for Nova 2.0 models. |
@@ -712,9 +714,9 @@ in its place if one is provided, an `optional=True` tool is left out, and a
     the web fetch tool version from the model profile and Anthropic client: `web_fetch_20260209`
     for models and platforms that support Anthropic's dynamic-filtering web tools, and
     `web_fetch_20250910` otherwise.
-    `WebFetchTool` is unavailable on the legacy Amazon Bedrock and Vertex AI Anthropic clients, so
-    Pydantic AI raises a `UserError` if you use it with `AsyncAnthropicBedrock` or
-    `AsyncAnthropicVertex`.
+    `WebFetchTool` is unavailable on the Amazon Bedrock and Vertex AI Anthropic clients, so
+    Pydantic AI raises a `UserError` if you use it with `AsyncAnthropicBedrock`,
+    `AsyncAnthropicBedrockMantle` or `AsyncAnthropicVertex`.
     See the
     [Anthropic web fetch docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-fetch-tool)
     and [tool reference](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-reference)
@@ -818,7 +820,7 @@ The [`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool] lets an executor model
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
-| Anthropic | ✅ | Available on the Claude API and Claude Platform on AWS. |
+| Anthropic | ✅ | Available on the Claude API and Claude Platform on AWS, not on Amazon Bedrock. |
 | OpenRouter | ✅ | Works with any executor model. |
 | OpenAI | ❌ | |
 | Google | ❌ | |

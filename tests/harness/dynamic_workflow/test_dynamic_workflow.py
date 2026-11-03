@@ -13,7 +13,14 @@ from pydantic import BaseModel, ConfigDict, Field, GetCoreSchemaHandler
 from pydantic_core import core_schema
 from pydantic_monty import AsyncMonty
 
-from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext, capture_run_messages
+from pydantic_ai import (
+    Agent,
+    DeferredToolRequests,
+    DeferredToolResults,
+    PendingModelResponse,
+    RunContext,
+    capture_run_messages,
+)
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, PrefixTools
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
@@ -40,7 +47,7 @@ from pydantic_ai_harness.dynamic_workflow import (
     WorkflowResourceLimits,
 )
 
-from .._deferred_tools import deferring_agent
+from .._deferred_tools import deferring_agent, pending_agent
 
 
 def _sub_agent(text: str = 'ok', name: str | None = 'sub', description: str | None = None) -> Agent[object, str]:
@@ -452,8 +459,9 @@ async def test_missing_output_schema_falls_back_to_any(monkeypatch: pytest.Monke
         ([str, DeferredToolRequests], 'str'),
         (str | DeferredToolRequests, 'str'),
         ([Review, DeferredToolRequests], 'Review'),
+        ([str, PendingModelResponse], 'str'),
     ],
-    ids=['list', 'union', 'structured'],
+    ids=['list', 'union', 'structured', 'pending'],
 )
 async def test_signature_leaves_out_deferred_tool_requests(output_type: Any, return_type: str) -> None:
     # The script cannot approve tools or resume a sub-agent run, so the marker is not a return
@@ -463,6 +471,7 @@ async def test_signature_leaves_out_deferred_tool_requests(output_type: Any, ret
     desc = (await ts.get_tools(_ctx()))['run_workflow'].tool_def.description
     assert desc is not None
     assert 'DeferredToolRequests' not in desc
+    assert 'PendingModelResponse' not in desc
     assert f'async def approver(*, task: str) -> {return_type}:' in desc
 
 
@@ -932,6 +941,77 @@ async def test_sub_agent_usage_limits_generous_allows_run() -> None:
     assert out == 'done'
 
 
+async def test_sub_agents_run_under_parent_usage_limits() -> None:
+    # Without `sub_agent_usage_limits`, a sub-agent sharing the parent's usage must be bounded by
+    # the parent run's `usage_limits`, not pydantic-ai's default `request_limit` of 50.
+    sub_requests = 60
+
+    def researcher_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if sum(isinstance(m, ModelResponse) for m in messages) < sub_requests - 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='step', args={})])
+        return ModelResponse(parts=[TextPart('researched')])
+
+    researcher: Agent[object, str] = Agent(FunctionModel(researcher_fn), name='researcher')
+
+    @researcher.tool_plain
+    def step() -> str:
+        return 'next'
+
+    def parent_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if returns := _workflow_returns(messages):
+            return ModelResponse(parts=[TextPart(str(returns[0].content))])
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='run_workflow', args={'code': "await researcher(task='dig')"})]
+        )
+
+    agent: Agent[object, str] = Agent(
+        FunctionModel(parent_fn), capabilities=[DynamicWorkflow[object](agents=[researcher])]
+    )
+    result = await agent.run('research', usage_limits=UsageLimits(request_limit=10_000))
+    assert result.output == 'researched'
+    assert result.usage.requests == sub_requests + 2
+
+
+async def test_sub_agents_hit_parent_usage_limits() -> None:
+    # The parent's limit is checked against the shared counter, so it bounds the whole tree.
+    researcher: Agent[object, str] = Agent(TestModel(), name='researcher')
+
+    @researcher.tool_plain
+    def step() -> str:
+        return 'next'
+
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=researcher)])
+    ctx = _ctx()
+    ctx.usage_limits = UsageLimits(request_limit=2)
+    ctx.usage.requests = 1
+    with pytest.raises(ModelRetry, match='The next request would exceed the request_limit of 2'):
+        await _run_script(ts, "await researcher(task='x')", ctx)
+
+
+async def test_sub_agent_usage_limits_replace_parent_usage_limits() -> None:
+    # An explicit `sub_agent_usage_limits` replaces the parent's limits rather than intersecting them:
+    # a shared counter that already spent the parent's limit doesn't trip a sub-agent under its own cap.
+    ts = DynamicWorkflowToolset[object](agents=[_wf_agent()], sub_agent_usage_limits=UsageLimits(request_limit=10_000))
+    ctx = _ctx()
+    ctx.usage_limits = UsageLimits(request_limit=2)
+    ctx.usage.requests = 2
+    assert await _run_script(ts, "await sub(task='x')", ctx) == 'ok'
+
+
+async def test_isolated_sub_agents_ignore_parent_usage_limits() -> None:
+    # With `forward_usage=False` each sub-agent counts on its own, so the parent's limits don't apply.
+    researcher: Agent[object, str] = Agent(TestModel(custom_output_text='done'), name='researcher')
+
+    @researcher.tool_plain
+    def step() -> str:
+        return 'next'
+
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=researcher)], forward_usage=False)
+    ctx = _ctx()
+    ctx.usage_limits = UsageLimits(request_limit=1)
+    assert await _run_script(ts, "await researcher(task='x')", ctx) == 'done'
+
+
 # --- Errors / output shapes ------------------------------------------------
 
 
@@ -1174,6 +1254,19 @@ async def test_sub_agent_ending_with_deferred_tool_requests_fails_the_call() -> 
         "RuntimeError: sub-agent 'approver' ended with `DeferredToolRequests` because it needs tool approval "
         'or deferred tool results; a workflow script cannot resume it, so do the task another way, or without '
         'this sub-agent'
+    ) in str(exc_info.value)
+
+
+async def test_sub_agent_ending_with_pending_model_response_fails_the_call() -> None:
+    background, model = pending_agent()
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=background)])
+    with pytest.raises(ModelRetry) as exc_info:
+        await _run_script(ts, "await background(task='x')")
+    # The script can't check on the request later, so it's cancelled.
+    assert model.cancelled == ['job-1']
+    assert (
+        "RuntimeError: sub-agent 'background' ended with `PendingModelResponse` because it needs the result of a "
+        'model request the provider is still processing; a workflow script cannot resume it'
     ) in str(exc_info.value)
 
 

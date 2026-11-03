@@ -23,11 +23,11 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 
-class OVHcloudProvider(_OpenAICompatibleProvider):
+class OVHcloudProvider(_OpenAISDKProvider):
     """Provider for OVHcloud AI Endpoints."""
 
     @property

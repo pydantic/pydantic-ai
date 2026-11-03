@@ -29,7 +29,7 @@ from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
 from pydantic_clai2.plugins.keys import choose_key
 from pydantic_clai2.plugins.menus import Dialogs, FieldRow, Option, SettingsMenu
 from pydantic_clai2.plugins.sign_in import sign_in_command, sign_in_now, warn_if_signed_out
-from pydantic_clai2.runtime._session import WorkspacelessCapability
+from pydantic_clai2.runtime.session import WorkspacelessCapability
 from pydantic_clai2.ui.menus.field_menu import first_error
 from pydantic_clai2.ui.rendering import theme
 
@@ -73,7 +73,9 @@ class DayAIPlugin(Plugin[DayAISettings, DepsT]):
         if isinstance(auth, KeyReference):
             return (
                 DayAI[DepsT](
-                    auth=SavedKey(name=auth.name, setup=SETUP), include_instructions=self.settings.include_instructions
+                    defer_loading=True,
+                    auth=SavedKey(name=auth.name, setup=SETUP),
+                    include_instructions=self.settings.include_instructions,
                 ),
             )
         return (WorkspacelessCapability[DepsT](self.for_run),)
@@ -85,7 +87,9 @@ class DayAIPlugin(Plugin[DayAISettings, DepsT]):
         # Checked per run, so signing in from the menu or `/day_ai login` applies to the next prompt.
         if not await to_thread.run_sync(SIGN_IN.signed_in, abandon_on_cancel=True):
             return None
-        return DayAI[DepsT](client=SIGN_IN.client(), include_instructions=self.settings.include_instructions)
+        return DayAI[DepsT](
+            defer_loading=True, client=SIGN_IN.client(), include_instructions=self.settings.include_instructions
+        )
 
     def settings_menu(self) -> SettingsMenu:
         source = DayAISource(self.host)

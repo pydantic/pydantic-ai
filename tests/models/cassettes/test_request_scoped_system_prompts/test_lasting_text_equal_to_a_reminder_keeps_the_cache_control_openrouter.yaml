@@ -7,7 +7,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
@@ -19,7 +19,7 @@ interactions:
     body:
       type: json
       content:
-        model: anthropic/claude-haiku-4.5
+        model: anthropic/claude-haiku-5.5
         stream: false
         messages:
         - role: user
@@ -81,11 +81,11 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1792166365-aQpjt9TcjJT3nERLfw01
+        id: gen-1792945480-2qC60OYHTzPFKQ4ARvHn
         object: chat.completion
-        created: 1792166365
-        model: anthropic/claude-haiku-4.5
-        provider: Amazon Bedrock
+        created: 1792945480
+        model: anthropic/claude-haiku-5.5
+        provider: Claude Platform on AWS
         system_fingerprint: null
         service_tier: default
         choices:
@@ -95,17 +95,20 @@ interactions:
           native_finish_reason: end_turn
           message:
             role: assistant
-            content: |-
-              The weather in Paris is currently **18°C** (about 64°F).
-
-              Is there anything else you'd like to know about the weather in Paris or any other location?
+            content: Paris is currently 18°C.
             refusal: null
             reasoning: null
+            reasoning_details:
+            - type: reasoning.text
+              signature: >-
+                CAQS3wYKEAgTGAI4AUIIdGhpbmtpbmcSDIgRfqIMmXTl54gHThoMKNpqqQrm15dp2WndIjD+JCQkdVbg6w1b6bPPbinMfrkNcP99tid7sch1coTfhmOiFYnLjZVe+sS8MDaIFzQq/AWyOy9uZiVIl85dJ8ce2IImRTEoaUrQz0GQ96ugRnJccu2Ofn16GHjPxVPZ68wYw84lyTZvKpdOsxwXcpbCIhNkKGn2PThQVxaZmpDsOpFHVoolkAvWJ/LIL4Tx14bky/MdUw+sYi9bIiWZ9kk9uI50A4lAQ1mU14VLIaveattY8/9Kl5+F2rZ6ZCth4IuA95RDIUJX5yC9qZmjeMVzS7fX5EkfaXScGM4n7siB13Bhjh2nvGTJCnaXYXtHBOm2Qt9puUJD3TC5LvWnyJRC4tnktMYXsL4jblTlS1FCyRH6+yQVVYPFDgGTg/MQ7Qf/FZAoBQcBLiigfmbJzVAkK298GGAmNgvt1KapgglD288nq2Y0wwIJi/QyrLJPtje2Mmf31bGvteOQOTH+exDBOfx4+RlBDVkqRjJX0E5c3iH8FnKtdSLYW2uM4gpL7qGR+RTv2HOJeIxeIWG2Tc0jyDEtj7ALkn86KDJKoNCuyfskwKDj+QKiSElUdIokzP4jgJJ0C4kgAQiTCNp6hCqQivXGm0VPHslPgBnCNoVjPqrFjl0YFO5myatRrquKI6zEZsomREsw16LCcXaOaIe8lfxrr2Sc+SfG1CA54wVlakIQAt2lXTuNY5cW6IYgf7TiaoWWJpoaSL0z/fglCu3jXjh2RFsbbTDV8AS5l6NGSjYh6mGkamotp6tUqfabxXmoEVPc6yIzP5ZqDTiZmsnjNjkeHPONkZjEgfNDTDvEC7DKmxdxUt4zG48G+s709kzATZ6o0uEChoBoYOs0ZC7VVWaX1rTk9Tl83nCclizPe4d8wlNjlm/64Ug89nLgS0lA6THUFYucL7/XmGDZB/Z6SEfIE7dUc4KbrhIatmfwKprGIQ8qM+3UsvobIfAIoqH4ZboN7+0WxgmLAedvi8+sTO6H2Ep7uvmEjbplnLbkbAipLmPApaIyXQ+BhHloKhY9SzbGi/W0NIvxNu8wN2h2RV/3LRBED4BuXJ3YGucu68W7Z3xCfjWEDNZLQHetYBgB.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1oYWlrdS01LjUtMjAyNjEwMDd8Y2xhdWRlLW9uLWF3cyJ9
+              format: anthropic-claude-v1
+              index: 0
         usage:
-          prompt_tokens: 648
-          completion_tokens: 41
-          total_tokens: 689
-          cost: 0.000853
+          prompt_tokens: 456
+          completion_tokens: 86
+          total_tokens: 542
+          cost: 0.0000886
           is_byok: false
           prompt_tokens_details:
             cached_tokens: 0
@@ -113,11 +116,11 @@ interactions:
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 0.000853
-            upstream_inference_prompt_cost: 0.000648
-            upstream_inference_completions_cost: 0.000205
+            upstream_inference_cost: 0.0000886
+            upstream_inference_prompt_cost: 0.0000456
+            upstream_inference_completions_cost: 0.000043
           completion_tokens_details:
-            reasoning_tokens: 0
+            reasoning_tokens: 73
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-16T15:59:29.053652+00:00
+  recorded_at: 2026-10-25T16:24:41.907187+00:00

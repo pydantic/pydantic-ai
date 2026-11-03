@@ -5,7 +5,8 @@ import dataclasses
 import inspect
 from abc import ABC, abstractmethod
 from collections import defaultdict, deque
-from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Coroutine, Iterator, Sequence
+from contextlib import aclosing
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Generic, Literal, assert_never, cast
 
@@ -327,7 +328,7 @@ async def process_tool_calls(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     output_parts: list[_messages.ModelRequestPart],
     output_final_result: deque[result.FinalResult[NodeRunEndT]] | None = None,
-) -> AsyncIterator[_messages.AgentStreamEvent]:
+) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
     """Process a model response's tool calls, honoring the `end_strategy`.
 
     Output and function tools are classified by kind and executed per strategy:
@@ -381,8 +382,9 @@ async def process_tool_calls(
         output_parts=output_parts,
         final_result=final_result,
     )
-    async for event in processor.run():
-        yield event
+    async with aclosing(processor.run()) as events:
+        async for event in events:
+            yield event
     if processor.final_result:
         output_final_result.append(processor.final_result)
 
@@ -507,7 +509,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
     def is_executable_function(self, index: int) -> bool:
         return self.call_kinds[index] in self.executable_function_kinds and self._is_resume_eligible(index)
 
-    async def run(self) -> AsyncIterator[_messages.AgentStreamEvent]:
+    async def run(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         """Run the configured strategy, then apply retry-wins and resolve deferred calls."""
         # Check tool-call usage limits up front for the full count of function-kind calls.
         if self.ctx.deps.usage_limits.tool_calls_limit is not None and self.function_indices:
@@ -516,15 +518,17 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             projected_usage.tool_calls += len(self.function_indices)
             self.ctx.deps.usage_limits.check_before_tool_call(projected_usage)
 
-        async for event in self._run_strategy():
-            yield event
+        async with aclosing(self._run_strategy()) as events:
+            async for event in events:
+                yield event
 
         self._apply_retry_wins()
-        async for event in self._finalize_deferred():
-            yield event
+        async with aclosing(self._finalize_deferred()) as events:
+            async for event in events:
+                yield event
 
     @abstractmethod
-    def _run_strategy(self) -> AsyncIterator[_messages.AgentStreamEvent]:
+    def _run_strategy(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         """Execute this strategy's tool calls, building up `final_result` and `output_parts`."""
         raise NotImplementedError
 
@@ -719,7 +723,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
     async def _run_function_calls(
         self, calls: list[_messages.ToolCallPart]
-    ) -> AsyncIterator[_messages.AgentStreamEvent]:
+    ) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         """Validate a batch of function/unknown calls upfront, then execute via `_call_tools`."""
         if not calls:
             return
@@ -728,14 +732,17 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             yield event
 
         before = len(self.output_parts)
-        async for event in self._call_tools(
-            calls,
-            tool_call_results=self.calls_to_run_results,
-            validated_calls=validated_calls,
-            deferred_calls=self.deferred_calls,
-            deferred_metadata=self.deferred_metadata,
-        ):
-            yield event
+        async with aclosing(
+            self._call_tools(
+                calls,
+                tool_call_results=self.calls_to_run_results,
+                validated_calls=validated_calls,
+                deferred_calls=self.deferred_calls,
+                deferred_metadata=self.deferred_metadata,
+            )
+        ) as events:
+            async for event in events:
+                yield event
         # Check the parts this batch just appended for retry-wins triggers, deriving each part's
         # tool kind from its `tool_name` (the parallel exhaustive path keys off `call_kinds` instead,
         # but both funnel through `_is_retry_wins_trigger`).
@@ -847,7 +854,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         validated_calls: dict[str, ValidatedToolCall[DepsT]],
         deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
         deferred_metadata: dict[str, dict[str, Any]],
-    ) -> AsyncIterator[_messages.AgentStreamEvent]:
+    ) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         tool_parts_by_index: dict[int, _FunctionCallParts] = {}
         user_parts_by_index: dict[int, _messages.UserPromptPart] = {}
         deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
@@ -1042,7 +1049,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         self.output_parts[idx] = dataclasses.replace(self.winning_output_part, content=_RETRY_WINS)
         self.final_result = None
 
-    async def _finalize_deferred(self) -> AsyncIterator[_messages.AgentStreamEvent]:
+    async def _finalize_deferred(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         """Stub, collect, or inline-resolve deferred (`external`/`unapproved`) tool calls."""
         # Collect deferred calls (unless they were already included in the run because results were provided).
         if self.tool_call_results is None:
@@ -1050,8 +1057,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 yield event
 
         if not self.final_result and self.deferred_calls:
-            async for event in self._resolve_deferred_calls():
-                yield event
+            async with aclosing(self._resolve_deferred_calls()) as events:
+                async for event in events:
+                    yield event
 
     async def _collect_deferred_calls(self) -> AsyncIterator[_messages.AgentStreamEvent]:
         """Stub deferred calls (a final result was reached) or validate-and-collect them for resolution."""
@@ -1091,7 +1099,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                         self.output_parts.append(part)
                         yield _messages.FunctionToolResultEvent(part)
 
-    async def _resolve_deferred_calls(self) -> AsyncIterator[_messages.AgentStreamEvent]:
+    async def _resolve_deferred_calls(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         """Resolve collected deferred calls via capability handlers, else set the `DeferredToolRequests` result."""
         # Deferred calls are returned to the caller and later matched back to results by `tool_call_id`.
         # Duplicate ids would make that matching ambiguous, so reject them before handing the requests out.
@@ -1148,14 +1156,17 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 list
             )
             new_deferred_metadata: dict[str, dict[str, Any]] = {}
-            async for event in self._call_tools(
-                resolved_calls,
-                tool_call_results=handler_tool_call_results,
-                validated_calls=handler_validated_calls,
-                deferred_calls=new_deferred_calls,
-                deferred_metadata=new_deferred_metadata,
-            ):
-                yield event
+            async with aclosing(
+                self._call_tools(
+                    resolved_calls,
+                    tool_call_results=handler_tool_call_results,
+                    validated_calls=handler_validated_calls,
+                    deferred_calls=new_deferred_calls,
+                    deferred_metadata=new_deferred_metadata,
+                )
+            ) as events:
+                async for event in events:
+                    yield event
 
             deferred_tool_requests = deferred_tool_requests.remaining(handler_results)
             if new_deferred_calls['external'] or new_deferred_calls['unapproved']:
@@ -1184,7 +1195,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 class _EarlyProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
     """`'early'`: run all output tools first; run function tools only if every output failed."""
 
-    async def _run_strategy(self) -> AsyncIterator[_messages.AgentStreamEvent]:
+    async def _run_strategy(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         for i in self.output_indices:
             # `_run_output` always yields ≥1 event, so the empty-iterator branch can't happen.
             async for event in self._run_output(self.tool_calls[i]):  # pragma: no branch
@@ -1199,36 +1210,40 @@ class _EarlyProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                     yield event
         else:
             # Every output failed; run function tools so the model can correct next round.
-            async for event in self._run_function_calls(function_calls):  # pragma: no branch
-                yield event
+            async with aclosing(self._run_function_calls(function_calls)) as events:
+                async for event in events:  # pragma: no branch
+                    yield event
 
 
 @dataclasses.dataclass
 class _GracefulProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
     """`'graceful'`: walk in emission order, running pending function-tool batches before each output tool."""
 
-    async def _run_strategy(self) -> AsyncIterator[_messages.AgentStreamEvent]:
+    async def _run_strategy(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         pending_functions: list[_messages.ToolCallPart] = []
 
-        async def flush_pending() -> AsyncIterator[_messages.AgentStreamEvent]:
+        async def flush_pending() -> AsyncGenerator[_messages.AgentStreamEvent, None]:
             nonlocal pending_functions
             if pending_functions:
                 batch = pending_functions
                 pending_functions = []
-                async for event in self._run_function_calls(batch):
-                    yield event
+                async with aclosing(self._run_function_calls(batch)) as events:
+                    async for event in events:
+                        yield event
 
         for i, call in enumerate(self.tool_calls):
             if self.is_executable_output(i):
-                async for event in flush_pending():
-                    yield event
+                async with aclosing(flush_pending()) as events:
+                    async for event in events:
+                        yield event
                 # `_run_output` always yields ≥1 event, so the empty-iterator branch can't happen.
                 async for event in self._run_output(call):  # pragma: no branch
                     yield event
             elif self.is_executable_function(i):
                 pending_functions.append(call)
-        async for event in flush_pending():
-            yield event
+        async with aclosing(flush_pending()) as events:
+            async for event in events:
+                yield event
         self.ctx.state.output_retries_used += self.output_retries_increment
 
 
@@ -1243,7 +1258,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
     stream as each task completes.
     """
 
-    async def _run_strategy(self) -> AsyncIterator[_messages.AgentStreamEvent]:  # noqa: C901
+    async def _run_strategy(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:  # noqa: C901
         externally_won_id = self.final_result.tool_call_id if self.final_result is not None else None
 
         # Upfront-validate function calls in emission order, emitting their call events.

@@ -23,19 +23,26 @@ from pydantic import (
     model_serializer,
 )
 
+from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, CombinedCapability, WrapperCapability
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.models import Model, ModelResolutionContext
 from pydantic_ai.tools import RunContext
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
 from pydantic_ai_harness.coder import Coder
+from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.skills import SkillDefinition, Skills
+from pydantic_ai_harness.subagents import ModelOption, SubAgent, SubAgents, TaskControl
 from pydantic_clai2.builtin_plugins.coder_folders import edit_agent_folders, is_folder_name
 from pydantic_clai2.builtin_plugins.coder_skills import edit_skills
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config.project_settings import repository_directories
+from pydantic_clai2.models.profiles import parse_model
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
 from pydantic_clai2.plugins.menus import FieldRow, SettingsMenu
-from pydantic_clai2.runtime._session import supports_local_workspace
+from pydantic_clai2.runtime.session import ModelDefaults, SessionModels, resolve_model_name, supports_local_workspace
+from pydantic_clai2.runtime.tasks import REVIEW_AGENT_NAME, review_workspace
 from pydantic_clai2.ui.menus.field_menu import first_error
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
@@ -50,6 +57,51 @@ SKILL_FOLDERS_FEATURE = 'coder-skill-folders'
 
 DISABLED_SKILLS_FEATURE = 'coder-disabled-skills'
 """Builds without it would reject a saved `disabled_skills`, so they drop the setting and offer every skill."""
+
+TASK_CONTROL_FEATURE = 'coder-task-control'
+"""Builds without it would reject a saved `task_control`, so they drop the setting."""
+
+DELEGATE_MODELS_FEATURE = 'coder-delegate-models'
+"""Builds without the delegate model menu ignore its saved configuration."""
+
+REVIEW_AGENT_FEATURE = 'coder-review-agent'
+"""Builds without the Review specialist ignore its saved opt-in."""
+
+
+class DelegateModel(BaseModel):
+    """One named option in the delegate model menu."""
+
+    model_config = ConfigDict(extra='forbid', strict=True, frozen=True)
+
+    model: str
+    description: str | None = None
+    settings: dict[str, JsonValue] = Field(default_factory=dict)
+
+    @field_validator('settings')
+    @classmethod
+    def valid_settings(cls, value: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        # The model settings menu stays unloaded until delegate overrides are configured.
+        from pydantic_clai2.models.model_settings import ModelSettingsForm
+
+        ModelSettingsForm.model_validate(value)
+        return value
+
+    @model_serializer(mode='plain')
+    def _only_chosen(self) -> dict[str, JsonValue]:
+        values: dict[str, JsonValue] = {'model': self.model}
+        if 'description' in self.model_fields_set:
+            values['description'] = self.description
+        if 'settings' in self.model_fields_set:
+            values['settings'] = self.settings
+        return values
+
+    @field_validator('model')
+    @classmethod
+    def valid_model(cls, value: str) -> str:
+        ref = parse_model(value)
+        if not ref.provider or not ref.name or value != value.strip() or not value.isprintable():
+            raise ValueError('Use a nonempty PROVIDER[@ACCOUNT]:MODEL or chain:NAME.')
+        return value
 
 
 def _expand_home(value: str, *, home: Path) -> str:
@@ -68,6 +120,18 @@ class CoderSettings(BaseModel):
     workspace: str | None = Field(default=None, description='Deprecated workspace option, retained for saved settings.')
     repo_context: bool = Field(default=True, description='Include repository instructions with coding tools.')
     sub_agents: bool = Field(default=True, description='Enable delegation to sub-agents.')
+    task_control: bool = Field(
+        default=True,
+        description='With sub-agents, let the model run tasks in the background and steer, answer, or cancel them.',
+    )
+    delegate_models: dict[str, DelegateModel] = Field(
+        default_factory=dict,
+        description='With Sub-agents enabled, offer named models or saved chains to delegate_task.',
+    )
+    review_agent: bool = Field(
+        default=False,
+        description='With Sub-agents enabled, add a read-only Review specialist that can use another directory.',
+    )
     agent_folders: list[str] = Field(
         default_factory=list,
         description=(
@@ -106,6 +170,14 @@ class CoderSettings(BaseModel):
                 raise ValueError('Skill names must be nonempty, without surrounding whitespace or control characters.')
         # Harness compares skill names after NFKC normalization, so a name typed another way still matches.
         return [unicodedata.normalize('NFKC', value) for value in values]
+
+    @field_validator('delegate_models')
+    @classmethod
+    def valid_delegate_keys(cls, values: dict[str, DelegateModel]) -> dict[str, DelegateModel]:
+        for key in values:
+            if not key or key != key.strip() or not key.isprintable():
+                raise ValueError('Delegate model keys must be nonempty, without surrounding whitespace or controls.')
+        return values
 
     @model_serializer(mode='wrap')
     def _only_chosen(self, handler: SerializerFunctionWrapHandler) -> dict[str, JsonValue]:
@@ -197,6 +269,20 @@ class CoderSource(Generic[DepsT]):
                     **({json.dumps(disabled): f'{len(disabled)} off'} if disabled else {}),
                 },
             ),
+            FieldRow(
+                key='delegate_models',
+                label='Delegate models',
+                description=CoderSettings.model_fields['delegate_models'].description or '',
+                default='{}',
+            ),
+            FieldRow(
+                key='review_agent',
+                label='Review specialist',
+                description=CoderSettings.model_fields['review_agent'].description or '',
+                default='false',
+                choices=('true', 'false'),
+                allow_custom=False,
+            ),
         )
 
     def current(self, row: FieldRow) -> str:
@@ -204,9 +290,14 @@ class CoderSource(Generic[DepsT]):
         values: dict[str, JsonValue] = {
             'unrestricted_filesystem': settings.unrestricted_filesystem,
             'sub_agents': settings.sub_agents,
+            'review_agent': settings.review_agent,
             'agent_folders': list[JsonValue](settings.agent_folders),
             'skill_folders': list[JsonValue](settings.skill_folders),
             'disabled_skills': list[JsonValue](settings.disabled_skills),
+            'delegate_models': {
+                key: option.model_dump(mode='json', exclude_unset=True)
+                for key, option in settings.delegate_models.items()
+            },
         }
         return json.dumps(values[row.key])
 
@@ -286,7 +377,13 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
     @classmethod
     def from_host(cls, host: PluginHost[DepsT]) -> Self:
         # Tags the setting, so a build that cannot read it uses the default instead of failing to load `coder`.
-        requires = {'skill_folders': [SKILL_FOLDERS_FEATURE], 'disabled_skills': [DISABLED_SKILLS_FEATURE]}
+        requires = {
+            'task_control': [TASK_CONTROL_FEATURE],
+            'skill_folders': [SKILL_FOLDERS_FEATURE],
+            'disabled_skills': [DISABLED_SKILLS_FEATURE],
+            'delegate_models': [DELEGATE_MODELS_FEATURE],
+            'review_agent': [REVIEW_AGENT_FEATURE],
+        }
         return cls(host, host.settings(CoderSettings, requires=requires))
 
     def __init__(self, host: PluginHost[DepsT], settings: CoderSettings) -> None:
@@ -336,20 +433,66 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
 
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
         settings = self.settings
+        custom_delegation = bool(settings.delegate_models) or settings.review_agent
         coder = Coder[DepsT](
             instructions=settings.instructions,
             unrestricted_filesystem=settings.unrestricted_filesystem,
             workspace=settings.workspace,
             repo_context=settings.repo_context,
-            sub_agents=settings.sub_agents,
+            sub_agents=settings.sub_agents and not custom_delegation,
             agent_folders=settings.folders(home=Path.home()) or None,
+            task_control=TaskControl()
+            if settings.sub_agents and settings.task_control and not custom_delegation
+            else None,
         )
-        if self._skills is None or self._skill_workspace is None:
-            return (coder,)
-        return (
-            coder,
-            _ProjectSkills[DepsT](CombinedCapability([self._skills]), project=self._skill_workspace),
-        )
+        capabilities: list[AgentCapability[DepsT]] = [coder]
+        if settings.sub_agents and custom_delegation:
+            from pydantic_clai2.models.model_settings import ModelSettingsForm
+
+            agents: list[SubAgent[object]] = []
+            if settings.review_agent:
+                reviewer = Agent(
+                    deps_type=object,
+                    name=REVIEW_AGENT_NAME,
+                    description='Review code and proposed changes with read-only file tools.',
+                    instructions=(
+                        'Read the repository instructions in your workspace. '
+                        'Review the code or changes described in the task. '
+                        'Return actionable findings with file paths.'
+                    ),
+                    capabilities=[FileSystem[object](read_only=True), RepoContext[object](expose_inventory_tool=False)],
+                )
+                agents.append(SubAgent(reviewer, read_only=True, resumable=False, can_ask_questions=False))
+            models: dict[str, ModelOption] = {
+                key: ModelOption(
+                    option.model,
+                    description=option.description,
+                    settings=ModelSettingsForm.model_validate(option.settings).to_model_settings(),
+                )
+                for key, option in settings.delegate_models.items()
+            }
+            capabilities.append(
+                SubAgents[DepsT](
+                    agents=agents,
+                    models=models,
+                    include_self=True,
+                    agent_folders=settings.folders(home=Path.home()) or None,
+                    task_control=TaskControl() if settings.task_control else None,
+                    workspace_resolver=review_workspace if settings.review_agent else None,
+                    shared_capabilities=[
+                        SessionModels[DepsT](self._resolve_delegate_model),
+                        ModelDefaults[DepsT](self.host.model_settings),
+                    ],
+                )
+            )
+        if self._skills is not None and self._skill_workspace is not None:
+            capabilities.append(
+                _ProjectSkills[DepsT](CombinedCapability([self._skills]), project=self._skill_workspace)
+            )
+        return capabilities
+
+    async def _resolve_delegate_model(self, ctx: ModelResolutionContext[DepsT], name: str) -> Model | None:
+        return await resolve_model_name(self.host.resolve_model, name)
 
     def get_commands(self) -> Sequence[Command]:
         return tuple(

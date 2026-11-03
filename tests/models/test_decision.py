@@ -16,6 +16,7 @@ from pydantic_ai import Agent, BinaryContent, BoolCriteria, DocumentUrl, ModelRe
 from pydantic_ai.capabilities import FileUnderstanding, Instrumentation
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
+    CachePoint,
     FilePart,
     ModelMessage,
     ModelRequest,
@@ -23,6 +24,7 @@ from pydantic_ai.messages import (
     NativeToolReturnPart,
     RetryFeedbackPart,
     RetryInfo,
+    StructuredContent,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -2089,6 +2091,92 @@ async def test_a_tool_result_with_no_prompt_before_it_is_all_history(allow_model
             ]
         }
     )
+
+
+@pytest.mark.parametrize(
+    'value',
+    [
+        pytest.param({'question': 'What is 2 + 2?', 'expected': '4', 'answer': 'Four'}, id='object'),
+        pytest.param(['4', 'Four'], id='array'),
+        pytest.param(4, id='scalar'),
+        pytest.param(None, id='null'),
+        pytest.param({}, id='empty'),
+    ],
+)
+async def test_a_structured_prompt_is_judged_as_its_value(allow_model_requests: None, value: JsonValue):
+    """A prompt that is one `StructuredContent` is the whole state as the value itself, not the text it renders to.
+
+    A null or empty value is still a value to judge, not a missing prompt.
+    """
+    model = InMemoryDecisionModel()
+    await Agent(model, output_type=bool, instructions='Are the answers equivalent?').run(
+        [StructuredContent(value), CachePoint()]
+    )
+    assert model.requests[0].state == value
+
+
+async def test_a_structured_prompt_is_judged_as_json_compatible_data(allow_model_requests: None):
+    """A Pydantic model is sent as the JSON-compatible data it dumps to, which is what a backend can take."""
+
+    class Answers(BaseModel):
+        expected: str
+        answer: str
+
+    model = InMemoryDecisionModel()
+    await Agent(model, output_type=bool, instructions='Are the answers equivalent?').run(
+        [StructuredContent(Answers(expected='4', answer='Four'))]
+    )
+    assert model.requests[0].state == snapshot({'expected': '4', 'answer': 'Four'})
+
+
+async def test_a_structured_prompt_after_a_conversation_goes_under_state(allow_model_requests: None):
+    """With history before it, the value goes under `state`, beside the history rather than merged into it.
+
+    An earlier structured prompt is a `user` entry holding its value, and the caller's keys stay the caller's,
+    even ones named like the envelope's.
+    """
+    model = InMemoryDecisionModel()
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart([StructuredContent({'url': '/products/41'})])]),
+        ModelResponse(parts=[TextPart('That one is out of stock.')]),
+    ]
+    await Agent(model, output_type=bool, instructions='Is the product in stock?').run(
+        [StructuredContent({'url': '/products/42', 'history': 'mine'})], message_history=history
+    )
+    assert model.requests[0].state == snapshot(
+        {
+            'history': [{'user': {'url': '/products/41'}}, {'assistant': 'That one is out of stock.'}],
+            'state': {'url': '/products/42', 'history': 'mine'},
+        }
+    )
+
+
+async def test_after_a_tool_returns_a_structured_prompt_stays_the_state(allow_model_requests: None):
+    """Once a tool has returned, the value is still what is judged, under `state`, with the calls under `done`."""
+    model = RoutingDecisionModel({'Triage': 0.4, 'look_up_order': 0.6})
+    await Agent(model, output_type=Triage, tools=[look_up_order]).run([StructuredContent({'order': 1})])
+    assert model.requests[-1].state == snapshot(
+        {
+            'state': {'order': 1},
+            'done': [
+                {'tool_call': {'name': 'look_up_order', 'args': {}}},
+                {'tool_return': {'name': 'look_up_order', 'content': 'Order #1 shipped yesterday.'}},
+            ],
+        }
+    )
+
+
+async def test_a_structured_prompt_with_text_beside_it_is_judged_as_text(allow_model_requests: None):
+    """A prompt that mixes a structured value with text has no single value to send, so it is sent as text."""
+    model = InMemoryDecisionModel()
+    await Agent(model, output_type=bool, instructions='Is the question answered?').run(
+        [StructuredContent({'cart_total': 949}, tag='ui_state'), 'Too high?']
+    )
+    assert model.requests[0].state == snapshot("""\
+<ui_state>{"cart_total":949}</ui_state>
+
+Too high?\
+""")
 
 
 class HandsOffFirstDecisionModel(InMemoryDecisionModel):

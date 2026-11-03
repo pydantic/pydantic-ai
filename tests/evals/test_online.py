@@ -667,6 +667,31 @@ async def test_no_sink_still_emits_otel_events(capfire: CaptureLogfire):
 
 
 @needs_logfire
+async def test_scoring_run_id_shared_within_one_call(capfire: CaptureLogfire):
+    """All events from one target call share a run id, across sink groups; separate calls get separate ids."""
+    config = OnlineEvalConfig(default_sink=Collector())
+
+    @config.evaluate(
+        AlwaysTrue(),
+        OnlineEvaluator(evaluator=AlwaysFalse(), sink=Collector()),  # lands in a separate sink group
+    )
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(1)
+    await wait_for_evaluations()
+    await my_func(2)
+    await wait_for_evaluations()
+
+    records = [dict(r.log_record.attributes or {}) for r in capfire.log_exporter.get_finished_logs()]
+    assert len(records) == 4
+    first_call, second_call = records[:2], records[2:]
+    assert len({str(r['logfire.scorer.run_id']) for r in first_call}) == 1
+    assert len({str(r['logfire.scorer.run_id']) for r in second_call}) == 1
+    assert first_call[0]['logfire.scorer.run_id'] != second_call[0]['logfire.scorer.run_id']
+
+
+@needs_logfire
 async def test_emit_otel_events_false_disables_emission(capfire: CaptureLogfire):
     """`emit_otel_events=False` suppresses the default OTel emission."""
     calls: list[int] = []

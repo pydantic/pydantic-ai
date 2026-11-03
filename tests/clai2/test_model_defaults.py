@@ -241,7 +241,9 @@ def test_nonreasoning_openai_hides_verbosity() -> None:
     assert 'openai_text_verbosity' not in model_options(model='openai:gpt-4o')
 
 
-@pytest.mark.parametrize('name', ['openai-chat:gpt-6', 'openrouter:openai/gpt-6', 'vllm:openai/gpt-6'])
+@pytest.mark.parametrize(
+    'name', ['openai-chat:gpt-6', 'openrouter:openai/gpt-6', 'vllm:openai/gpt-6', 'azure:gpt-6', 'azure:gpt-5.6']
+)
 def test_chat_compatible_reasoning_defaults_can_be_overridden(tmp_path: Path, name: str) -> None:
     context, _ = make_context(tmp_path)
     source = ModelSettingsSource(context.store, name)
@@ -266,6 +268,12 @@ def test_chat_compatible_reasoning_defaults_can_be_overridden(tmp_path: Path, na
     assert menu.row_for('openai_reasoning_summary') is None
     source.reset(row)
     assert source.current(row) == 'medium'
+
+
+@pytest.mark.parametrize('model', ['azure:o3', 'azure:gpt-5'])
+def test_azure_without_family_defaults_keeps_generic_rows(model: str) -> None:
+    """Only the GPT-6 and GPT-5.6 families get Chat Completions rows on Azure, for the defaults clai2 sends."""
+    assert set(model_options(model=model)) == {'max_tokens', 'thinking', 'custom_params', 'cache'}
 
 
 @pytest.mark.parametrize('model', ['custom:gpt-6', 'custom:o3'])

@@ -7,11 +7,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "207"
+      - "243"
       content-type:
       - application/json
       host:
@@ -25,11 +25,13 @@ interactions:
           content:
           - text: How do I cross the street?
             type: text
-        model: claude-sonnet-4-6
+        model: claude-sonnet-5-5
+        output_config:
+          effort: max
         stream: true
         thinking:
-          type: enabled
-          budget_tokens: 1024
+          type: adaptive
+          display: summarized
   response:
     status: 200
     headers:
@@ -41,10 +43,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=278
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-7a1624dfb1ec7d2da274d64b869621fa-dc25e21ac8288a5e-01
+      - 00-b7a5df7a6868bd6edd48e8190448a586-2cced9ce296a5347-01
       transfer-encoding:
       - chunked
       vary:
@@ -53,345 +57,498 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011CfY5JvP9tsuUrzoV5SHP9","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":43,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}   }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPJyh9xDdEPQbmr4d7cH","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":16,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}              }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}     }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}      }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The user is asking a"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"This se"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" simple,"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ems like a stra"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" straightforward question about how"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ightforward safety question, so"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" to cross the street safely"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" I want"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"."}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" to give clear practical steps"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EtACCpIBCBIYAipA+UJD8BvfLKVk8y+KNoosVO/047oe7bOLFQ17WfzLE8uX/saiVZCAIAhwrQCX3QsJXOHvkQZ7QYw6mLahohfWTDIRY2xhdWRlLXNvbm5ldC00LTY4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgBztjv1QYSDPWiX7aM0GanjsPXiRoMTNdb93E0c03b/chVIjBydetHdxmhyqDMRUghR+qejOCamGzlUvtFa5lTh7RYs/h5Vy4k2UApbt4i9teb0fsqa6eGyiQ8CP4jVpjNAi59MA34PAp8EUINNzKDFc0SuVWl7hB428cZiLXUGIddfqSK6lQVRjH1AqU78vWV8GU7gXwAabAUUS4fVRGHFslasowTmToERcUY6/+N4QnQmmw9caWNbyDxBL2CtG/RGAE="}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" covering different sc"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"enarios—crosswal"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ks with signals, unmar"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ked cross"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ings, no"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" crosswalk at all—"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"plus general"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" safety tips and"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" a"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" note that rules can"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" vary by location"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"."}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\n"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"I should also cover cr"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ossing without a crosswal"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"k, mult"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"i-lane ro"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ads (the \"multiple thre"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"at\" sc"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"enario where one"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" lane stops but"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" another doesn't), nigh"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ttime visibility with"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" reflective clothing, and"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" crossing with kids. I"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"'ll keep the format"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" conc"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ise with headings and bullets"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":", maybe clos"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ing by off"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ering to tailor adv"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ice to a specific situation like"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" teaching a child or trave"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ling abroad."}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\n"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS1hUKEAgTGAI4AUIIdGhpbmtpbmcSDBj2BMPClPrOX35VQxoMPPYAPPZHhsZ4QRzAIjCrv7JD3ULSHZiBXbAnABHM+4ej+SSB82TZOgmG/3L7waHlNjNbF2R9GgqJwJg3x9kq8xST2JPgvOEjZ5JnAKya0NCqkGMd8mr6c1jmDPCnydmI8H8qA1NEDPmzJOiAdiHbqGnuiZSx1FZOww+VFRtdLTKBDZrzf8S4jMVY5FtM/aKy67Q+pNDZhy9V1kvpvLKV7MUIBk+jg0hyNJ1ehFlOQWODfEbVjCmpn9KMnwl7bZlGrCJgDXc3EJZ0SlvTxYTJsRhDGVFVePoLcnqsbMJkGhQ0os7hbrYgQhO61VTgDBWgV0/1xoTestogG2LmGc+5Lx+j9hSBfHK2pAYHy4r5sQwHXPXB+yZVAqAqOHCJQF/q92ErGBF0EPDvigjsBfnHvOzSi2+s2WLHBqHVPvSyxRlE1zjaEiDvgxTRXeUSYGOoJ5cPZYBJHJdu5QFR5wrjIA/Hvtx6s2SU008o+EmqSytxILP+4ByIFApW3WgkNM2R7x1Osh2BGt4HiwUYn6i3rn6WQlhzkTm7qGGk7p1UHDleinD3vBpg76ZArlloBz15yOiZQ3vbLUx6GmTMeGO2OcIJoupMzCrVQQ6tEq9A6rB1UiWuSG3P2LMezf7cLEfglNFuAcE4avZxZgfJeLoyca+w+1zyLyWYDRdSu3YSh4FOn4iUcfeeIDxZ9NaJgfY5nQQLn650f4MW6JRQVdsYc+B3XLsCizVMbAC/R0X3q/dB1byzGx/FfNdcqmksqUdxUq1VINPrM/4BQtUP8+sc+VJ9PIOSH6v/vEVTAvPWH7PmZNllBSi24xvdU3/l+QDgDwYf8TNxdl5QcLR0qr8QcBfXxaSkMTuokaxxYdILr9S+yoiWzcdQwqmROg04o7K0mPX8zYsJMHU24pBQdsAC105QIZwHbkPCIsHkgtua5bW5JqjgTYbxMvvAoc4JVKM4Ylv0HHjKd+dFrgSl8zeccdiLtc5MEHUyoT7rPxiZfVmmElPs18qiVDWztUkC/Gf31T0iZbh1/b9nqLLfGA/RrgJ5Dz6X85VgdWJmEX17R7EH6ZSB8QHwsACi1waRLs2/fLtvhzotJ+61JHEPMo1SNI19Zp7hDbqkjDQVu/hFaWAn44ISv3vAUJlt26Kcs5oBf3kgA9rBJ1xg4shHv0MBUuFBaxAFbeJ35AHfWzF9wCY3br1ZG7nid3EF5hjfMJS8+cNtYMR6PLMM/KRHPXKMWcufTRMS/+edRDbfXJ0eaZ6tv9KbNhqFGj1u+iAdJb7DrbeDpoar+Hu399shz+rNHJzkI3ofQU94+2OgSVAfILw7T8YVtpMp85GDV26e2PtvWIjQPRoyJVIBf6DAYmZDFiMqQyJWpT6wXFSkUveWCUNpedTW7zx97uVCh1Or2mxrvM8w2sjwP4jeKcpzBwA33y0H7w4TfxOa+FPSHhGlokMdVEizgjDNbyg3mBqkM5vUFRaRc/voHSvk5d+e78r7ILOk9dHPoQXaPOJDxXULNfktS6tqXNcaSgjSC+P4Jkx3suzECcCDPcIFb0Gj0ZZbV0K9pkjIUmCyCvnbba8pe6lCH0+arKrt76h0o2b0iF6AlRzfYR8/ZGQfgdRpPKGrpDmspQa7D6kwAxcjlkOZ5U0efKtfT6gpYSkUrBer2IsjKMCc2QZDQUyCuZOWgKhf/4FjSryG3yRjerMrLxNwSGx24ljMhns0cBabhqmBtCl2qkxB8aMu02AztobQAU+NsEb8gJ4NFtQeRfG3JvWNZ6sOyxkTzVY9N7qSVCO3BrWx4KBtSTQ01g/XPc/Fch6HqgTatlyCkyLIzkOEuBvHfJJEXyEMuarKBFbj0NlLQXH6Y0nVIGM8EoXSIHLkU0lb90hEg+WNacbWm1HVzLhkW8E2LgKjqPyqZV+UBn2ilqVYQ231MGeqsPABMdJAlD6vkVq5fzozpqlPZcC/Mm2VFtoeLrMbLRD5YnPn3NXmVFPS4hA2OSzg5lfOMl+RJtgdUvi0hDVhYPfwbN4fF1tMWRAT8rIDXkL8gbffnvXL+1IPDNr8++u4cmov0qHqU7uVLKcexHm9hLJu6zKO8c7xxqXGrWqtlcijX/aj9riy5bUGNd9/y3XD4Qb6qscQjvcPL9HlgOrXCjyL6qcMAG9sLu0LJ2EI3b4314LybIo/pZ+MdnNj4FDIldCIiLO7nMOSQ82vxOpRbGdGwA9EWOUiuIZCcSZjjdgFzn99ryJZHpEsP7tCRBle2XICkWQbR6Hncxchg7CabqpAC3XcsPxJPwxMt2dYyTrV10h5EMX4A4ROyWjUyehZE3aFH7YF97VWYu0JFYVs98BSLEd9yzt993MGdxaLgZTQPm2sq4y/SV77sBT29XNtHqVvWM1sRiQ1V6IWdB9AuHVlk8vXpws9bN2mKPNejy2VbmfUvg5fUvuNTtndYn/b9hflydiZYZJXJeHC2FtqV/JxX4enXydOF5TOEbhRUZ78D3EzQSy2dK2q2mx6chJrlriWmQNVb9xB/DIcVyBqXi7+7t6cqwd49/x7f0HPtbIy3SNBEsqsEqikpwtxzCsZW0bCwbtIIuEtZrro5iDY6UvDT9qnGOfatYQN3ae04GVrD1xhKvwu6VTEsAtBZtcbzNoyEx5DGXk5jIHGOOhspSlwJhRgfLJktiZMHRM6cRWfWcXwBpNk5Tv3KiCYfjC2gioISpsJ8vgwbk9E9KC4c7/Rh0//90ETCsfKYV84p2iClpyqP1kK9Yyg8BvnkBqopQKgg7KwZRBf1YF5ZyIWZ/WT3gjELA2AQjtEteYiIGZa7eXsXgj4O/83lhMFiUu1EXpk6VZL/sQY3RNLyiyRNW7rEXqKQuotdPDMEs8l91efqCXzCFN/sTCcUGlG5YJpw0U/3JfXihe6Ppi6S5Osu8tVqUdXV0h/H4Co/9RaynsGXdLCZKUHyL2dIU0QQNaR66fRQUCTAIwUju5ltGQF+FaYVJbk4K2xMGBrrXOnh0nZ0lR4/D1umtr6nDMWU1POknu+nhnXvNJVP+m/1FyQwHDRufrSW1cYpsbDDhynsJO7GG7iUw0cdOhLwa7qYDu7MCcK7VN/EAeoritR3YKNWDFUVQEAqlQ4Vh6a4C2B5yJCFaWoOMfjtU/Q3ZQSEdPY8cUL8RXYYh/THJRmgEBZHDdFIT/KWzINUxaQ6amd3Kawh7Q5tA4GsQ8oEIgmjfSS6qDX0ruKYIZBdBKAB7ly22TwE5llCP6om63JfG8rFtJpa6usFD6rtncOfKJhU8cha1l++4UxXpN+pBes+rxTkWIAMugSvzwy1jDLVqRSnlIVJAee3eKCHQVAI70BFkv8qXgK5XkeR8jZVueA8VkWOkpIG6EMJCzmDK0VmBrDK/ADaCp4wXmTHvSQvknCXmuQ4QoevVOZP9E7I/IqryLYRQXfQ+Ki9EyDLMkfymaIW6127QBjNFMZBCAgXtr86xpOAP2ShN4j1JL72sQKdbh45SbDV3o3+Nr3FT0QAXqLEU87G1K6MtWFYL3scpU6kpIrywXrj+qvfBxJuwd6CGrka6GeiyXTwCZV/cEnWk0bhWKRdoE7gmwmMkP4daNAGRZr4PxTAFoJlLVG1IymLMoHTLScKk0JT7uKEEAIvbnMsLt+jZiI2Yx7A3KrCbP/aBgB"}         }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0      }
+        data: {"type":"content_block_stop","index":0               }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}       }
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Here"}      }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"#"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" are some"}}
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" How"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" basic"}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" to Cross the Street"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" steps for"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Safely\n\n## At"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" crossing the street safely"}              }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a crosswalk or"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":":\n\n1. **Find"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" intersection\n1. **"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a safe place"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Stop at the curb**"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" to cross"}              }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", a"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"**,"}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" step"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" such"}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" back from the edge.\n2"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" as:"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":". **Press"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n   - A cross"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the pedestrian button**"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"walk"}              }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" if"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n   - An"}              }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" there is one, and"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" intersection"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" wait for the \""}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" with"}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Walk\" signal."}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" traffic"}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n3. **Look and listen"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" signals\n   - A pedestrian"}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"**"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" crossing"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" in all directions."}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n2. **Stop"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" In countries where traffic dr"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" at"}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ives on the right, look left,"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the curb** before"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" right, then"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" stepping"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" left again. In left-driving"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" into"}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" countries like the UK,"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the street\n\n3. **Look"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Australia, and"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" both"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Japan, look right first."}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" ways** -"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Also check for turning cars"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" look"}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":".\n4. **Make e"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" left,"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ye contact with"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" then right,"}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" drivers** so you know they"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" then left again ("}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" see you.\n5. **"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"in"}}
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Walk,"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" countries"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" don't run**"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" where"}}
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", and keep sc"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" traffic"}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"anning as you cross."}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" drives"}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n## Re"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" on the right"}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ading the signals\n- **"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" side"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Walking person"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":")\n\n4. **Wait"}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" or"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" for traffic"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" \""}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" to clear** or"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Walk\":"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" for the"}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"** you may"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" walk"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" go, but still"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" signal"}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" wat"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" if"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ch for turning v"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" there's a traffic"}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ehicles.\n- **"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" light\n\n5. **Make"}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Flashing hand or countd"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" eye"}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"own:** don't start cross"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" contact with"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ing. If you're already in the"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" drivers"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" street"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"** when"}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", ke"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" possible to"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ep going.\n- **Sol"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" ensure"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"id red"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" they see you\n\n6. **"}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" hand or"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Walk"}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" \"Don't Wal"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":","}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"k\":** wait.\n\n##"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" don't run** across"}        }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" If"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the street\n\n7. **Stay"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" there's no crosswalk"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" alert** - avoid"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n- Choose a spot"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" looking"}      }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" with a clear view in both direct"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" at your phone while"}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ions,"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" crossing\n\n8. **Continue"}      }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" not near a cur"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" watching"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ve,"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" for traffic"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"** as"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" hill, or between parked c"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" you cross\n\n**"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ars.\n- Wait for"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Additional"}              }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a big"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" tips:**\n- Use"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" gap in traffic."}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" marked"}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n- Cross straight over"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" crosswalks whenever"}        }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" r"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" possible"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ather than diagonally."}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n- Be"}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n- Check your"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" extra"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" local jaywalking laws"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" cautious at"}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":".\n\n##"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" dr"}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Extra tips\n- **"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"iveways and"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Put your phone away"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" parking"}      }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"** and ke"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" lot"}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ep headphone"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" exits\n- Watch"}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" volume low.\n- **On"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" for turning"}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" multi-lane roads,"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" vehicles"}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"** make sure every lane is"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" even"}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" clear or"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" when"}      }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" stopped. A car st"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" you"}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"opping in one lane can"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" have"}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" block your"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a walk"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" view of a car"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" signal\n- Be"}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" still"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" visible"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" mo"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" -"}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ving in the"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" wear bright clothing"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" next.\n- **At night,"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" at"}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"** wear light"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" night"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" or re"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n- Follow"}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"flective clothing."} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" local"}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n- **"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" traffic laws"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Don't assume**"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" and signals\n\nWould"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" you like more specific advice"}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" driver will stop,"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" for a particular situation"}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" even if you"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"?"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" have the right of way."}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n- **With children,** hold"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" their hand and have"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" them pract"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ice the"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" look"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"-and-listen rout"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ine.\n\nIf you"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" have a specific situation in m"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ind, such as teaching a"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" child, crossing in"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a foreign country, or acc"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"essibility need"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"s, tell me and"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" I can t"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ailor the"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" advice."}           }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":1    }
+        data: {"type":"content_block_stop","index":1  }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":43,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":269,"output_tokens_details":{"thinking_tokens":23}} }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":16,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1353,"output_tokens_details":{"thinking_tokens":772}}         }
 
         event: message_stop
-        data: {"type":"message_stop"            }
+        data: {"type":"message_stop"        }
 
-  recorded_at: 2026-09-29T16:50:26.995134+00:00
+  recorded_at: 2026-10-25T16:58:53.862311+00:00
 - request:
     method: POST
     uri: https://api.openai.com/v1/responses
@@ -399,11 +556,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "1514"
+      - "2714"
       content-type:
       - application/json
       host:
@@ -411,6 +568,8 @@ interactions:
     body:
       type: json
       content:
+        model: gpt-5
+        stream: false
         include:
         - reasoning.encrypted_content
         input:
@@ -419,51 +578,52 @@ interactions:
         - role: assistant
           content: |-
             <think>
-            The user is asking a simple, straightforward question about how to cross the street safely.
+            This seems like a straightforward safety question, so I want to give clear practical steps covering different scenarios--crosswalks with signals, unmarked crossings, no crosswalk at all--plus general safety tips and a note that rules can vary by location.
+
+            I should also cover crossing without a crosswalk, multi-lane roads (the "multiple threat" scenario where one lane stops but another doesn't), nighttime visibility with reflective clothing, and crossing with kids. I'll keep the format concise with headings and bullets, maybe closing by offering to tailor advice to a specific situation like teaching a child or traveling abroad.
+
+
             </think>
         - role: assistant
           content: |-
-            Here are some basic steps for crossing the street safely:
+            # How to Cross the Street Safely
 
-            1. **Find a safe place to cross**, such as:
-               - A crosswalk
-               - An intersection with traffic signals
-               - A pedestrian crossing
+            ## At a crosswalk or intersection
+            1. **Stop at the curb**, a step back from the edge.
+            2. **Press the pedestrian button** if there is one, and wait for the "Walk" signal.
+            3. **Look and listen** in all directions. In countries where traffic drives on the right, look left, right, then left again. In left-driving countries like the UK, Australia, and Japan, look right first. Also check for turning cars.
+            4. **Make eye contact with drivers** so you know they see you.
+            5. **Walk, don't run**, and keep scanning as you cross.
 
-            2. **Stop at the curb** before stepping into the street
+            ## Reading the signals
+            - **Walking person or "Walk":** you may go, but still watch for turning vehicles.
+            - **Flashing hand or countdown:** don't start crossing. If you're already in the street, keep going.
+            - **Solid red hand or "Don't Walk":** wait.
 
-            3. **Look both ways** - look left, then right, then left again (in countries where traffic drives on the right side)
+            ## If there's no crosswalk
+            - Choose a spot with a clear view in both directions, not near a curve, a hill, or between parked cars.
+            - Wait for a big gap in traffic.
+            - Cross straight over rather than diagonally.
+            - Check your local jaywalking laws.
 
-            4. **Wait for traffic to clear** or for the walk signal if there's a traffic light
+            ## Extra tips
+            - **Put your phone away** and keep headphone volume low.
+            - **On multi-lane roads,** make sure every lane is clear or stopped. A car stopping in one lane can block your view of a car still moving in the next.
+            - **At night,** wear light or reflective clothing.
+            - **Don't assume** a driver will stop, even if you have the right of way.
+            - **With children,** hold their hand and have them practice the look-and-listen routine.
 
-            5. **Make eye contact with drivers** when possible to ensure they see you
-
-            6. **Walk, don't run** across the street
-
-            7. **Stay alert** - avoid looking at your phone while crossing
-
-            8. **Continue watching for traffic** as you cross
-
-            **Additional tips:**
-            - Use marked crosswalks whenever possible
-            - Be extra cautious at driveways and parking lot exits
-            - Watch for turning vehicles even when you have a walk signal
-            - Be visible - wear bright clothing at night
-            - Follow local traffic laws and signals
-
-            Would you like more specific advice for a particular situation?
+            If you have a specific situation in mind, such as teaching a child, crossing in a foreign country, or accessibility needs, tell me and I can tailor the advice.
         - role: user
           content: Considering the way to cross the street, analogously, how do I cross the river?
-        model: gpt-5
         reasoning:
           effort: high
           summary: detailed
-        stream: false
   response:
     status: 200
     headers:
       access-control-expose-headers:
-      - X-Request-ID
+      - X-Request-ID, Server-Timing-Total
       - CF-Ray
       - CF-Ray
       alt-svc:
@@ -473,7 +633,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "48449"
+      - "29462"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -483,15 +643,15 @@ interactions:
     body:
       type: json
       content:
-        id: resp_0bd463641f0080ef006abbec55308087d1ac30fbbf212ebde7
+        id: resp_0cd077c38ef4ecd0006ade354fd93887d28c1da5846255f42d
         object: response
-        created_at: 1790700629
+        created_at: 1792947535
         status: completed
         access_programs: null
         background: false
         billing:
           payer: developer
-        completed_at: 1790700677
+        completed_at: 1792947565
         error: null
         frequency_penalty: 0.0
         incomplete_details: null
@@ -501,65 +661,51 @@ interactions:
         model: gpt-5-2025-08-07
         moderation: null
         output:
-        - id: rs_0bd463641f0080ef006abbec55cb3887d1b059d169b0450cfe
+        - id: rs_0cd077c38ef4ecd0006ade3550569887d28c4d2908b77c7c12
           type: reasoning
           content: []
           encrypted_content: >-
-            gAAAAABqu-yFQyfphd3urj096L1nqnkCjTv8S4Lp_Jn-vxKZ0E3kIrttAk4v0PhTs2ov9GKD4gQ5NYW9ZtMSBWmNKpPVCVO0AGovr1HFRWZrfXKyRPRk5sCHZjB0ovENqR-hxN4Y4LKJPwr_r3JUop76k8Z1HHXheHLT8YVmvSKkc6lPhEbUGXWwLfEZqirqTWKUhY84g0FJEEGNLnLXVO7r9tsgpccEdQXKRK1EGZHxLv4URd2X3sDT8Ueg0ytoD-gGBzDytXMHpCcubLctRPSjEIOsTwf7ZZxJUca7Q55C5r8lGBPSuyHI5sOEO2U2UGRovD7jMIFdyHVGK3oIrtUYZhXjnq3tzTn6ShadIzO_oY9r4f0t5k1s9OEavmJgjqzlNwjeFZu7GSKTamJXNXlxdRYYEDXBBZPiv1BMofY654QP1jJXV28yUOlgpZFpsCgAqV7V0I5NbG6bAE_L_r_OtHpc5gV56zv6mGr2z2fRAf2BgiZP12N17PX1F_QotqY4uUHHPO36hPR8g1H6lAhZjVY_xFWxNZQiP13D6IHFnRpR6gzsDqL80-VOyNOBbCepxmKlvsraS-yvcBJGfqhazZA5cDYyPVEur_QNl1TcWSohYi5dOE5xoLAvjP0C8kRMVT29MMVoa_cSc7WbH1By27E1OZ2Cbpr5yjN_Ug8JMyGGliRTsYT3zIOa_Mh2vxZnthVO5_aK4ToRy4zWOarAlx2tzGE51GZxSHb7Po0GCl7uJnCZhHJGAQ_FQS_EF3jzCIIRW4ThuoIL7RbjElAsgFz1tnpROlIVqVH4Wb5DOG7lVQPItEfrfRj_C_zaKJsNgJR8cBGR1Ye0H2MHA03M_teZJTgMcr3c4S0H4woGHgh3cJeOtvm16NVJnIyfO_rloJVuNaJaNFpgGlITgFisXIS6US_F4HNhTbYqretrlvNs4A8NOcL6nyalFmrtGNgHVCafFUy_RSGaWPwNNX9BIQ3nkJXULuc0cs-8HPv7jvjAVRTjf4uMQoDYmL9Z7r8RODns8u8wMF3HEqiPiM3KJSRF4GeF4J6-4R_u4TDdpAFX4znhL4Rg5ISUByKtWG44r0Vst3gQJplQZw6zlHjAnOOM5UmfVfEUkbiBycaESr04la5buBUG5Sy7pzMCWmHXw9JRUQlMO5hLT6TxBK-H8qpcJ6A0tF48VAnVvSWFGUr8hk8XkFohV1f6t_OaATPOeiceEg3p6MfNKdD0hIdWlLl3j6ho_LSbdBLXQD77LGec4F1Glc56h3nNW97RK28rHaUCzW9-iTD3_M8B-f8HJOUzV_sZ5Xfi4cTEJmt14H9vSFm8mBRzZE-_iOTWbQXOJ7xE1n3u8V20YxtvqeBC9P81R_0m8sEmAVF65tweqPAHgFkMnY61ggKwurWEAyvNvSRulEAzgx2iE2NVFUcb38zMHiKbAv61vqSHXAO4riqTlDjjMAS0Lj20gDOYJqL35kHsgW-_pC5bVg-hwQuXunk-1PTWCXee0eu9i-_PZaZvWb7p-_fYMwnKH-CTBYPxCVCh0aKIwN0lYv0o5tYEwEixaYTHYs9BzR6--RZcPMnevkXCstesz84_ryUXjR_vX1R9xsN3rZvqFou4g7PZcejoE_YgVyIk1YeHQ1KxKXZKUo8z26KR1MZmgHlrRTC2XdlVozRUbChmCFgDP_OdO9uQd9LwSTCY9l_3DVxv3FbMcSEX3XaBpzcKqnJsA5y1AM_b7WacPr-lOJi-MflaT5MnzuPzqLVmYtPeQiJ9vJcSd1A-02dOkKG9U2KEcJxV3x15PC_sVEsexdWi3444Tg04DzRff5MBj_hQeTW-U4wqMk17L6algA4eU3zF329n_sl7L7Etas1LebjxFC_0AL-asL-hZoUAZr5mw715F6rbtX1R0UYg3pGNuRuN3lQhKXWdo6hu09pSQlqL6wVGTf43BpHc1NCqiDFmvoqRrxQPr_FnbfakKa0Je9iHBjGMC6-QBbuTTrnhSFeoBkffROhtpiCoLXmf3SN3MdSe7HBSMIM40nwNIdNDCHtZmH0yrzr4EtjQ6kNcogx8dlbAWt4Orb-IpVzL7AMN5e7iCmVDKjdJ3q14IlO6YQXYiANEK0Edg7IRN3aLtNmoZ1PoUC78Kqf7QDY2t3xisH66u-iW9O0_NIYyX0DzaSfFGyGhZ34_Qjz1hZq8T3fTZH_vGZNrV5PNf2faUtmN8dq6BtLRoHaBS5TaSVfav7xWl8UlYBMRo5YHXdGI_hBr9H8Y1HCpQgOOCS3YqpKo04C0P7cCqtSHuCKE9j9syh1OLL2mLpkJXwN2hGDBDyVxVR_JNw-jLUFWDiDcq55KlZfGUma2nK7NNpZtZoBWLsdQoOTXkrNV8CqrVHESHUrSQKixSuiV_mhu5Pc5lZ4to72V_zgDRRn1pIAyG-fR-QtWY97McqEhZSh9FM2PViPGPhTP5DzgSt9BxEZaFuIhONQzwHzRmKyeGVvxqdTdiHHwRQWWEgF8fAGv8fEUM_Sh7sms5gD52Hu781gQXmo8LnjQCKD76qaClhxYB-ZAMX5CH_-F6kTPUi0gIFwnpcby83bAvmdLJGTspxxQdMq2AxZQnbJLJe_5JPsBg0LdoUo9rYnWEFrquUY6yQL8PXGWz4-WsheFhVqqnyZxieYvON_du4oGCdeSfJH5jz-2qbUIykG2r-27D8PL9-xYYKRISb5ZHyhct-CzYfWOf_Cy25jpAf567dQoCkGrdG8wdfk3AiuLL3QRanHtzU-NNmc9j9PefK2XpX5YALLgam61pxHMBleII29mMKFTwyk088UwxWOVIA6I-56qUW1ylYkrjaSgnCo3H-zaJxCHZkEQAxOceIAxblK-smwbVzqm2J5hu8WY6OMDopPazWUws4oLQSvtSANAmJ6FY-1asaN3bGWMP9J0kAw48KdOZN21PPZ5q4ZFIRx6ZQdFlil77NfSq0CaUIGDTZkuQfoFnlZnQVd0G3f5kHRi2ekgv0lDW069zmtKQTKMcZbFX7e3h0__g7oA5vPjoIs6yiGGqNSKZrwPT5HlbNt1UTgukjgsS6ZihOeDvBLVqvP3qSjMoQs3AZK2qiuuyu3Eic3McxtZ-TRRxukPtzUjuaF5nPHYbr4AB6HaL0Chfm1jSTqpkFPp6HBDGKHiv5-YpDJaYBSjG7Na1aDOm08rdRX3QKbB3eXrRPggQ2gcO_nLq6h_Wzy300qoR6jCIh9wthiQcSlkIIbRDit7dU9b_7Ig1sJQG0JbMGjR2L_g2AS4Jk6RkG_p55fr0Qy4iAEmgp2bJDuPhv9R6iTN3ykAR-ekvRKiKlMUStBoJtP6e2Q0iYaoqIi_wUvmYqov14AL8XkLXDeV8MwOnyFpWNa8j0XYuu02XU7_rZAY2ncZqpHA6N00ReJ0eTzgdftB6dfQeFPE2MxA1T12GPddD20XVQE0j5PZo1MS7a6q6VvphLZBiqc_aVqXPcHZvz9K4mK2wfIXRcCV_EtHMjqRtkWJy7neapqYePbVY-dDvRXhnQLlawCZf3kWJDLUWMEQJTLZHxtq9bCZUfHv05y9D8SK57m5NAGp0hK9FsbngNAxpSzdi1G9O17gc_KsOAhq_H4gLZJzdp-CPZZbv3uqJFoAt8OX2RX6IOqZNIQB4IQQJVY9q-Gm0CXBFAjvlp9X8WkqSC0V5qqMvuvCFs6GDGC3O6yVc--KwWxpd3g6ttzn7mrD3SoSrCzunecesZFc6T-YH20DTn3PR8Am-x8mGZ3EYcfNRWEx22ZqqwX0eCPyqMp4YjkBe-gnr2s4kgjxCSPod9VxLXB8PVBddCswUF-fH8fcVmhLVyYiaC9ZwA8_pZrQ9edw9RFv7l2x1crIXlnYCw6ya_gLNKmLFHsXycr5Ze5e4THvDADVsKsrCwYp_ObyU3iQHI_WdD3_Z4_qG-IDaaj07x5jtRN8kFmzrw4uzmZlZzjecUTkkIUnowVJ186FFPTAaibrhPkUrAidgmlF374u4DZhVx8hIscbGV-Q94yaXXUzSW-m2WhvSBqqbY4H50LeaRgXRp_Flu8EURDU5WQsgzuhiXDk5iElPgs_YWHQKobn_PMDCq7QNcoIcQVqnSY-pQqFsjEQmVKifazkEG9-snlpJ_abWwNOFTUPyWub-v4fq96pDtkGQtAj6xOmHT-fi5q6mRljodeKdRGCcgYMgwC95Nm0HMe5tjawMOAqFaiRWcMMUT6kAswJjoDR4ezYP1w-LIZMgYxoaLuIocBbcO5Ryj8BNNKvVEVBqbTTuKoy1r267OFQfQNs2lvXqqYzlHAxZPD6b7c2DpSSyY3uj_RFQkVPTbRo0Ge0u0SFsKC__1El9UYEq5Oktr_9hUyBVmK1xl4G5Za7qV_Etdhf4jipFkC_hswBzQ_WLuIw1G8zkZFQ6ZzXa_eQdiNKv6bdQ3Mf5q8RSZo6scNlFjz4bFa_ueNJFi2OnMO85_Tba9LmZXnR5mGoUiqGlHhQSRAzJt1FzhPPIHmVutUTCERWoraXTeDwuIgK7F2ZEYdIxyyPtX5k35-reJzRx7E2N5az81x6M0223CcW38oOF9Rbcg5SYD7Lg5RFbkfNpYwhso_JgZf5rRuJTdg9Z6o1GBOyYJ44-pSr7VmcuNSM8d8-F1TtLT2EnLExW_UotWfXL9vi_Heuz8HrhGN4ZYrWuIyJpZDdChpdeyxLsbzFcyh-bQJPu7VjcHd3VI2wSql0PzEyVRS4R0bEeaxwjJWbFEQRE4YjYzrFFu8a6X2_gtgiv6h21cGNT7_xoVOu4ZG8-NhkhPuHCV9A9K8LAxu6QUAYfeo_-r_Uq2SrTIlIWcw_d5EDZappQzxokpr7xMN3uAvIWw9Np00fx7uwh0iolDSECC0aaE49S56GEwnx_2UHfCkt4NphUjaTRD5s2uGtSXaKGFbaRkekufCXEPxT3oQnNE3YyMTD-RRZvMLraJfqyf_AsPTpYJ0s3brgOkncdp3859Zxf_OnjFVCcNXiH9k7K3eJN63AxzL1upousqmbrgUTiIbmlARva7qOj8NWqyxewuQQB_KR984pDJgaEogMcEMAj5rL4hSlGISNXONbhFCu9rXLenIKpIP4shM_CIGDYaNX991qLBDjloUih0Zm9X694zt3JAD7bFMPlsdx60NB58mPK-xeryzcKpexTQQVaHFO-GFeMrC2J1UbA4r2klmIWw4LGOCYoPQhokg_eykE1SY87cmKiDnyUphae64Hh9UOt8L1UN72wEkrO1aZ4M832XUpg5G0TTo9mr5bga1UEEJwaEjWilG0mXX-Aqg9XM7iLH2vr-yBEPYFEO3CWPVAb6e2sQqJRZ84YHgmZNRIcsQIddAoLVKXCuNIiYYj9viVhQqfnOaT78UjcYKiUscWHLR9BWn_58BaugPzgC4Qn-u6T4mBDXGSuUrdxd9cRnLGIQB4CwUmJKw2rfTMSzXNQWrCnERlvzSGYpRKq3Q8bxuc7qLyRwoZuiUj02yAuVh3evEdnKJpPyD8w7Q41OU6AV18ws8YnANhutmn51CSzsNMcqKB8uZTvFR6m0ovdZT0eG9WeEkmHfFkna-yoRvFPOY5ZVFs8XDbd-ZOm39eaeoi_ZEbFYdA-OfqpudaGcOTVnCTmMSEYo7VZ-1Xgpccfgx12tcjk3wLBMVsqYoADJJhjXLfGXsU3yenjiqbPV98qQuQadZki3_c1gtWbLRcV-fOQxissmFMgpC73zK8uZSsQDTf_3uz9Iq_1bIAV9p0NlQukp1TaIftjahhA0D3mFm8J3q8RNtZ-RDGEnNtpwkGmRUnhIG7jOD49xZcNUlbpW-pumM-Av6v67fkgCHvWeWfWEsBRApX0KZc5fQ1c9Br63cx1V6JDfqLOVl4bRGKoPST11ArZkTC1Kb-WqCOD-_vE-eJ6bfxMQgQKwfyM15-UKsfUgQqcxqxS8F2Fa0tED_RTm1nl9XLIefkPhmeZP0t92LDeslV1QcAWH7LnuaLus9M2teE68TN8zF1JpdNWdbGZ0bDlb0j6h7eAkVYqgj8ZiQDoiMidn3RI9-5oaQ7QZCnSZjS7hFgsbGxwVjz4SSfxTecteT72zmEIwF-bjSVPpFK1jEaKcqGW2QgO2d1dLo5NrTVjW8dKXE3sxv-pYsezHn-SqiXq3EI_ZpgZ6UARgdAluYWK2paw96rucqeNUluyYhzhCBDpG1nABe2cqYW7ShC4k5y5DWNhv4MnP8YRPLUR44JfOZTBF0kqAauzIzWivVKp9H6TPPHZoeL_f0ZAT1Whj5Lckrsompa6tvpZjHyYel0hZsW_KAAe3g2Cv0v80i1waIJ1JelDjixCPIobM7OT2eGVqxarbbZGzFJKLs7BVzFb0_yXuxszFTA2xzR1sje_5s2kT5TYC8Fq8r9GnEpi0-ymXd_a_YOlyaFl23jxqJyzmS-H0OZL2c-o7xKtPFOQOSp5pbultf4AbUvF7eVUWo8gPhT5gVrZTNOENtc7iZesU0LugniCc_O2fZfL8wX88f_KMJWdDq24gltjaeE4MFtpBSBDKY0y5UYKzVvoBVZSu47TNYLGtSSWvbpzYPXEeijn6aLpRtcyHFwGzLLT4sck310GvKu2DSsSVw8bLy8GPZNjzBxfAIjq-nOaAZHQk41pP6iNY-SiqWvwcMUTccIjz1e2GUr5B96lD64xmEdCJfA5Nhy7dSWM_QagLGqjIHU11T4_lwTKG14tSmALU8gXOCBM2cXMf3wTQTNX7uFfq2-hWyyr4Hyabxrm7m7qw_ZGAhoBjgsg3zEEOa7k_jQJO1uq3WkpYGZhokotyxcsWZSaf4wkC7CTF12Z6allO8bNSFJ0M7cAukRY5nI2Y1X7tNTYGhL5IvvHQYeHViDAfpPu6Cn27ux5XJ8kS7PHJ6HNMRCUmQYRCBqizyeBwHaoatSuVYTsPWU2T5e3DhgRsUlzDtaZxxj2pcfQn3L1eUNeOpFdxh0nELtyQcWLwDJcENteu7510Wly1grd2qtgTshzY4FBbwbEnbb_OZ8xKjb7BIKdvD3k_HuuhRrAGcMUj_Snv3bCvaqz3JAMeQr9ilOKjnW_pHU5PSOFriYOGkUEyE7xT8lZt8e5OGZv9LpmiKk0XHt7btpKWXk6MyvpCxEuhwxrsk0Vn2tOyXLS-jBugFxWLcdPilDPgwu5m6nZYVvV4hpJM2D60hRTO0zNpp1L8NKBR7HZW3Y3CSOMpCSACkUw5sD9Y0Guxgfi67-i-hg8CP8m-LBPUkuQt2AeUvDQzN-bJQccz_R4BQtfClJmFzDcLdZ1zGQttd-H2J7z5rmVV6QyT91pVBAoyGKV4QaNtg5IE8fSypPbmm86BP1aaaV-KvoUXy3SHJuLkqoY2MBp6NYilG_qatsiLYC7Zak0kqCiJCRrtDHmebxX8lRK2XgsDnOct2nhGeVf-yxMJOjS-nb_pr_klEnu1Y48XhVlzxNYmTWFtcXbCOMNQQo2pqzqsgU5QTpNe6vePl8K9Wzjmoum1jdzVOdPxtJpyAdtN32OiIpDX3i_4OM8ct9cDTbIvWwwENtwErh-owlJ2KBWJ-SkXcIpwupU6U4JpZp6qFVk-9qLn0ZTgVUoRCxggl87LUecj0PJWgRmiL-EWn5DB_aVnj7O69yXgYO_gSw-Kc6vszJNgJDdsG3sF_ffS3-nhIkouub-ipKHRkQvWMcr0CwYfHxynjSjk3R01-HH2lDyADKNVACDa5PCNVjdEJVf7NQZnkntHT_P8eDc3_uEuKrOdDyahLykeFtxENZ_h6SyXsXaizsJYp2rt8TGYyKR9WdIex33mxcSWhaCXBauHsBuVGjul5ytOYQMcZd0dApVkgzAmfWFL07pYdbuYLk3h1a1IE6uj424EZVhO7M84v0Vi8B4AX_eOKoAfQ2d8VX56jwSuLQ0jv02VXHDMS2kWNamMopQl1bfaC1XxxFmXN6Yv-KkYFcS8t7VIDa_bTy3iK0NTwIcoWSLmLg2AoGnlQDcHP1kq1aQKvD_mWzg5lgEX_m3w2nPhhh7CQYCgfnsyBxqG9Iuy3NMLulNJKEo8CsdvYwK-jEs0cwGbC67I4OXNzLi0fsOhAyJd4oaEtngrOD2JqPT6l6awayLNs-miH033X9m5XuFno1J-1aJsavD7HwIqXKbZLxqwkuz70B89Pln6Jw0XGmy_b9Hs6vzyVgdnEsrZbPGOYZE-Cs7OvSVB6bOAM3Ac2LrT8xP0nCqds5nmeQrzDL-SwbiDhLk8C4A54U-aq1aSx2tgXJuAej8-lKloI2FWltd5swyehtOUFINvHTaWWIAsIAUZKkOgj7chM-OVSxCUl99Z8hFu9M_nihMmX1NsmmqNDX7b_b9eUI3pFo8LL2GgpSeBceqXINZGDoPISZASKN_WTtn9u0U_kDifnVAYNJZ1GqUrrVLuDiAb9vCEOzE1GkoN9fiaOBfsl-wUDPnI0PA2vRO0rd6TB6tirdvffHhmsDXTSiwndcQQpi29ezfuOG4dDLhMbTv8dIcj1mUCREQURmIxhltwPRjHzmB2foI7sSU94pWyPB1pw_XBP6Mb-nUP7AhSz0XBtpX7MvEJaNE0D_3gTCc3VIdc7UOdM1Df0JiwwMJflC6gDwpozLXcusIOrecaIIBJZTrCnkHoPpV0Edh3ssCetDOqXvl8fv1xRV48DmiGhA-j7NMWl14PANpgGCn4TWltZdEYXO7akVWDbc5V7qM8xhSnGoJj9SaGpsOlRcmOtPTeUUH7fTytGghhsxbk9csnhyUyOquEbBQKLEo3yU8Rdq_Z_y008KEvby8bH61fZWTs9I29yh1p749zsWQ5x0YD0C4KpXMXsz0--jKJIvFN5dwn4DW0P3rrf2pSxv6czmcoaRWO7TSZa1_855Kfr8r84IEMkVkoG5TlTGL06ZkStmiBEdUaD_CfJWJ3VBu9xSilLT_AKcJEdL8yNPwpx5Zx5C3y21r_5IXp68PovH4CsXjqNDoj4KKna7DyMx5a1YF4opiO4cKxkHYMd0TmtGbh51Y9k3O-7pGiVRtgILU0ucq5yoysyUM8t-hVVH1YnmIF84U61RBwce1C40SlIRpLiwEqpPMXMK5CXiK2-pfMPTNQPe0AYarhfv6NUZA9HPeDNOxBRvWQeDIQmN40w1sJvtzVcT89pU8pd8W7HQKS35IhRhmEEBiY0BbR20BWovo0wz2sOX76rBCIV3Edmj1pxk1JWfoED4QtQYZSFNxj7hw88VWTXMZdDzPmqcMXrfoJEAuTAT-DVdjkTO-y-5-SI4z2sxUJ55PqWehivS3TAaJPK1tf1bIl-i-ZhwZPzPcE7wAzyGJtMHEBe1pgyLawys6blLMGk9IFFUlLAIDRerUAi-sm4TYe-ey1sVcnorBDD-4GnO0YI8CPmHYSTmbXqgEeyoR7NrjtsKDS5kYFruUlHLTLY_taJKn4sw_1rACk5w8IJWlK1DaPI05pZbuk3DMfph1z7WHBoLoiBgm_NcieDoQv56Orvol0T-EYj2Rn4K0wVwB6Ghf8fTZjtPULjhO_WM_hkbuadO9YpWN3Qxs1m1oupwqMT5RJLLY_GFnn1eslNQUJ5AhT8_EmJjnF59D9ZScHZRWTHz5A_glNu3gbdaNIiQg5BK3wSLuwRVfTPXB3cxk292OmhrWexs3AqD2VsFEN2o8L-TNr6iIct6QcjW9x7IUdCESYr5FStYTj4_pHeR2Xs_KvUPqpLrbBNLzL92HTPQk43B-Y5_BWgvEBBLysO1K3FpgjO5tjrOWxqs-T0MAQro_MHr9H8AOh9iyFqO_Rtyl5wvhIhVTNg-xULeXrggzlpTDLAftdlgPwsKSn4RoasZzJP-1YqRdyudzMgYHtiibC443usTvXnuPlVprs3XJimTdHPETtDFUSjZ4xpdA3lqkI1DL4hX0yuHgNK3ULkzRO4rOMTHPM42nVnY1X6iJlqxCaPC3E5-O8lqW8u5bcJCNFasRXaVk_SsIEzIV-5KM-PNajaFa55h0eAUsguLv3l-cTiQ5_AvTT-U1-mPeqJNxKIpoicO-hp_MMbUThQSNNDvr8tayJa-4WT238nrsBALQnmugOi9AjAUftnJIKu4S0estTG_EwvQWBEzszDjIeNr8qy_Rcrb4Y02TxDr5InaJAuHI6PsjqHodlk9ej8W1TL9U0g9JIRoLULQWKvsjuyIHXvUSo4C07S2haVceW4Ihdvsn-x9QAQc897BteBOrvCf8T57nobtI1y4-HtkJiyj4lRYGaLQ8D9gz9lqR6JD2js7dN-EvL0zp-eD-v77a2g8myT52_Ulmeow-_BqTW89QwNx70K9Frhrk8hgX1lr2ejNNJVwLL5h3dUGM5XCvpVo7qEyd5q-S3yw4nhfr0DljxR2I0xt1cDsjRggQZpRtWEr1_MM-kM5ZJH9FJCjKeHenp-lK4cULX3M7CSYU07GPHGMA9kHt8rEzm9x3E-bv5CWweF-kg4cXMnzieiPglyniTxt5HcBZ_XKy5Txy4SfAeKVcokpLVCYnIiYlgiivY-tbj4PROo1HNDf7HkWSIVKZgaLci6LeLznldrisd_0VRPecPJEz1hs33vnr72DIp4FIby-VIFgU-HtDxt0HIG_lSS8dSzG5oDb0pDJHIC_SZ3QcToGqffc2DE-Qm-YOgzgbtcTKyvGoNt5n0kEvCK7byqrOgERMMMeGIssPgnbYqDbDbobJU2uOrs3_8bnQSOWEfex9p8__D_Mvm4VrkG-6hLiJWxbt637ohkXbyx7_HLbTmBAF7ONa8z72IaHNm8W1xOrG1wfjqfJMIk-6zxC_7on27NwVL0Qucpnx2DDrCN4lBp72DYR1oj9p-z4Qzwhoj6gv6Uu5yWA4qM13cN-33OOKruOhH-JfyVjyIM_GoBX2fV8uHWGa-O9hQAf2HXqC-xuKhh6pjpE6YQgFCT3Ra4lcjhtm_73_gkmA1TsGjXn_5K_pDN4ZLHbKIh-eVXLdkJzuAhSEE8TvJuCmaHr02GfTUv-08em1lmP9DvFoa7rRZDcDQlEC80NNYw0RPNqfg06A6b_kxvMbjcX7LNtgodeVl6jpJ59D3-otesW6kQ3XpF8tTmEuzw3SSNVfAJQGkHu3rIRkM6vGkZFH0Y0DNlba6o5pBwsEJVeBJLAcMzBr_CpkIS6e8In0N7h6YrqX6YENNkRHttI0u934k8KyKxo_6SuLStoR7xmYBYFD8GHnlBYn4uOH21Bnlmi3QeEbEK25EE6KLIXqS8elCy7m8-FBV5tNDvB5ArlNq2FcbDf0wmRxm9cPpRFXLtQirRA_kZw8TpJIy6TCG8auXOjx6XlWyYfAM2eowuzB97lZkKw4ix4xTb1c23o7pwe4o_Twf6gx2gdaYc7LTAWV4XJICwBhYk2BR1s-vzme-iSc8nAXGreWqGKWL29JJySgYnofOh9JnOSLRydiH_j99Y682iIUHlbN2vpYpZ0SK6jydblpK_jwdMJsmLaCVv7_rDYF1EzWnXqTzYxqjDNTH3x7raaGymNjitmY0ZcPhZ7KQNESOQFKUmke3-qLMPu3kvDtHrv5T5jnhrsHrrU-b12-WqQjXtmV_c8K3bGm_5_RVeORelIQek5oa2Pxvcn8LBi9fAkA_ptf3h_EpxI2bLQbnMDXpSrIj2SJpqTESQYaFLzXm2WpEjpt5ntAPHNAJXvfO0l4cAIl5av2QxSUbN0q06CfH__PPFWezxiTDY04yxgQh4siyLyxlcB_8nANK-13U9d5LeIyTWC7pHY8eXnTE7vrUibslQDGQP3tbMkHC1t24sPvAVtCBVEMmeC5YXV4Ey3W9G4Mil9GFhMZwFR-wGgcCdhf374y9e0rfnR6wVy-4GIN8pY9dBlglkNVd2Sh3SAJfQkEF44jFAFyHW-QLS3BdU5imkE4Y2X1g8guaL1IheaD6FaShwJM3uF9zGukrQEEho3dEQ-QVbCoS8Ve7MMOjt5E05ClYTh24ckfRzOmZegbsQ_yK8-o6zVgXq0b1is1MY8VQpuvmLIpruXIucAQw562MfmLq3NkP8Cc31UbieIzOuOkbMab8A7gZ3Madd_DCkWZRG86sppnAHV3rz5iiC7dmPMb2WxRsRqZwEJM3WB9mCFvJMe9botzH7XFQlPDDXIpQmOmMQB30S5JcvNmXmd4-0PXSkxmOkIAY4Z3KJyhE25G8oEFYFbg81egPNUwGwbtpKIRNUtOXOGQ9k2b0y1Dquz45ZaTcXqKESk8h33aSDCmAvfp_THXJYj-oNaL3USoDux9lfX_ZOv9vSrYHPoP5HFikGuqKdkuo0yU-3mzKfuHinh1XiYwDH6Nb2AGv78MU3hKdXl9cOpafQccMLplLi70Ex7gORDbobC5fX4xVaFD2hVF4Rjfjsiv6yA1vFSnsanMxYoftZneFVqQxtHDPQBI2GdSneJbm7p7pbFxYcvksHrp6VPeKsMxq4M6SAkbndOsB9ieFUgZBDKN9-ECZP7RK12wij0MVwFKaOh81AfBSUHft-MU6tHqjgwxgbzi7Lxngb_AKQcSU1O1n6D_US_5cEgR_9D4dF1UJMVB9o1FnjlTopJwL8LPyS6MVR9KVeNY2y6H9FgVAhBCV4bsH4xgVDlnsJ6vuzidFifra7rTw4C6OMzgQ8JhdX85XsjKMetdmGYffcU05itZxMJbtuqA93Dz5oWOVauAMURHqlA51jHyJXgi-3taPO6YpYMsV_9_wIrPmnccQH57KQSX2nohm76l1mH-q8p5iVxac-YeA5oh29xkoQDenpgYLORNllkKmAIbIYxqy6Z6oFAfCwux6SFiXpWIJFyxzlk87D1R2cepXSh9vxSCnembZ48vsf_zCNH2YHmvHusaiv3PLlCcQ3OjRIiRMr3e44hgkkRKH5EUXYSJ28chKbq512p1euOxquWbxPM6v-2FuDXi9VBEhDZXSD05e6_BvAhhTfKqwupt7jLkGmhgc4ojkkshxu9pkkMeKij1WAIEmGE_WWwAY1lY7SKUJvg0aMAdm6SJ3IL_PPpzXouu1PfGh55coUjBxy6Bu-BrURF9T6oG1my8SiqweVrgT9DHViZ1xyQQIM13giEZ7iRsEI5Zd0CvSlXBhBJACzfC2yJ1hlzpghAYvmSXyvHsqO0kv_kWD0q6ons0tHc8fhxnfssVUnGLPk-6op0FSAykx2UU3bIKxAZRjWSWO6Mp6oZzkalM6VpfPT0X0qrG3bvWBSgQrp-5i9UEUPoFyjovBa8sCpurv3FF31Z9eMq8kA3ntn9OQKZ9UeA3WDK-QUxmZ_tT4RfNc3aIXWTz1DAO6BDAI_xtKAE3Un03p-gwJZQIfDggJzLPQNTaT2NZZ6LTOtxmWjkLb9yt9mqXxwVFBk-huUzTCTgf0mwJ5y6IOmD2H77pO7BYDsF8YHu8qdKKJuDNkWzAvPQkKF5LwBPUroPgynNzyP6MXLXQ0xf53OkSMYSYQDG465pFwdecmkSAMI1dE5HI52jU9gmtOYABa5tWalc2lUUwrAkkFdmPsAUPWNBYhGXe5zyJz9H9ALs8xADQp01YSiayQcRQOeGKaoB7UbVOgMPOG3XHDGD4H2ywRSKUx0pToXCV4BJJELDa4uXS5MOReduhPexbaJQbfyUx95Z1jYMi-TUYR4WDgkvuNBVoL3d7NgV-beZX2XnjDRwE9QoL-yg5XoixYoU8jhFtpRVij7xK5Tmssf9OdvWc5diPc3AHjmcF8Fl0Tf1jkPCBEJrHa9sKt_CbF9eEUrQo264_ct9mMdcdOtf02225IB_Q-7wanycwCLfr2833LcddrAtWOQvUrup2uUYqr3OzLUVYI-DKf4oeFJHHCf06_lD097cOlOsNxpYMgJuprvgWr8Je44eX0EwtMFENrQ20oUGKAmYi5JaadpMxSrjhp7KAykuTyn7tYkwtNwpKsJxLAVIy5guQed_xlpKEV7ZVnEhakrybGfm7OlceDuVu-3MlfIhUPz9HTEuTHhqh7JTZQK-3FDVssldgEkfN7ZWK2U0jLIgTKDhntDREdsQifIAsTwNXR5Y9dwBrr9eb96prZQXm0xT9czcAzkzGEfS83nsl3Yc4tzCw1UR_lCTyRUtFyLv2NqPlIjHCzYBmvlraGsyBXAYc3bVAyXShLZJSq0boWESL9Kujyxvy2Q9HrwEnrPog7Ro7xm3Oo-vfi8eEsxLiJx5tu17WUQvbAsLdiaCIoBrV2iww8EjG5Rl10A0lMZTsLXijJVBHExDJxjShV-nBvkxYRQ5Ck4gmAOCXXlWsJyIsmqmvGs4_KZiyrmpBEzYrudQEU3vCA-7Cf3rfRWEh0PkGpcvRjiAPhdvCUxSQ3o1d1eQspgE0X760L5cT6VfEm7BpHJllhuzexlHxaF8hMZXCPqgeNBMiAAHdZQkh8FZjPHdwksU6GhwaaC7VaQGB0LPBGKfyICDNIbzEHoZ0r1f4Gja5vHRsAx1elw4r29dn46JfgUUrIj8q1KHnWdVXOn9MGNzc25BpsVNQtRLghXtZ91c80BfkAyy7S7YbEJ0mrUtIQG2cUh81OE9sDx4Kgs-dNrokfca9P-gDjM6BC2r1VQ6Pdedc7TvgRPEeL81KvsjF-F3IW1v-BeJof3JXsOvtIM9MwGwTdNIZAlZy9OXpZnkkU4PZ-g-rSWwxY98UPUBHguHgj6Fv-tRKd5z-G0wZPzzeXu5JdaLO9ub02u9j1e7laBfD7Zo02Rdgnux5AZiSHQV8nIH3ER9MJ7m97xYFYLiXFMVZRGGYB5sQfjSIkM9Q5rCb9y43Rj4bk4BP4b72yfsBjS_p2801mWaj6uPfRy946mCfF5UfSSKnAjHEV5Pm_9pR-KPFaRKI9ImyU2GP-PtUUnLAWTxxIOAKFgo7p0LHiyUpHLBrLEYmolBr2qm-z_WWAX8p50y7djOuPfz7z53s2IxI0dl_uCRDE5gUnE40IDLh44OAi7ckap0BOWn_vy2ZjWlJmOfU9Ri7ti7Ke4cDahauNtybWBwNaxqP5_0mqdJYGu_WudHEaSQ7WFkMPbKwGSnqm5_MU4DPYfL-N7q53xgKDgTNdQfOKMHw3ALvDh4p-EtfGyJedXIEXR262gWusWQCu9F3f_2vQ-rjYr4kcHhYA-cFjGu-Vxm68O_n8xi7JEJtSjZpA1LySWacyyCC2kFOo7OT6yp2YQjRvpVxNYtslO2tr14o77Xoy9WCs90PhiKoaustU40LROPZCJ5l2Nk-wg4VdJuvU_qj6j7WQ0ayrQ6HsOtqB4VyFZPGIZiS9JqhRaThezqrwzISMom80-fn8D1NCDVhujw5w2mKOfr2Ax4g18zZnBDQeyAHOjI2QeGNJGDeovycs3LubYiu9tFO5_ufS8HiJMuqLoZ9ElYtr-KPSG1KDpMxBYfSbk4dpXUZEL7bJbfBkPkGR8spt63XS_udt_QBTdj4OgqLsGnrhD93gcYYojai2YXpSvoZWBl5qIQhIMfDhml6K7F5sOXOTcNx_cwmacXSrKoWawiU4oyE45IveQ_g3vMbWwlXwdntyEHPvGPDJrmDZrJJvpas9Yp1JO-oA2Fpwt-VE4p9XlyASUt34f2K6s_oCqfNqRGcRitxL5LRU5IhRtyAg6OR_B78Ru3e3xF9PmVkH3sJ9KMAkcQadY0tTOK0WL4BJsZ5Gaf2PGbKlv1UQe8e4mxvzSDCDPGqklCZezN1X0K7_N4uMGh9VXOY3kxOSj6lyGVwcVF_9bcPJ5ieGAG0yfC3yqG4btFBy53aaJpoVZyy5U9imgSJ8t-GSudrC2ZRzuBW8eP5XcrYOHNUnIlnzznD1RIbFZllbRew4RtnjiX_f5QTKXI_PMp-KmwXUjCukBbwC29noNBB3TXYwpYgURRAUj_-OhE2HIoINYJID4zU4-XjKDUzv6mEE_nzwXECxH5uVfJshnsxoAzv1kE6L6CQ86VKDu0vn_lzRMkU84-pqFf3KShvX5uY2YfxgqNi21utVMJ3gULpw3IIUYdzL5T2nMcnsTbl8xJUsESotJRaVlnBLfZTYy_aJ_QgOniNIcEUQcb9jJgZhPsDKooE_k5PqVjC3MjsTAPsgJjf7SQR0AMDZ5V3dHBHfnmZeP0oxVTZZk0-viG4YI60Ccz6L-BRrMTsLlt5xOi-wUuhBiBAT--w5hVREWczl_TjQgsOlVa12wHlpiZYQ5c7moINO1bmol16c4CzJ3Dl3UzmQsLs2_K5QZuhOp486WeqZ1twt4lL5I2XtL06DYpgPL4tId6tEhSmwS7igfpD6SIEuwZaBDDymGJ27rCgszO9xIyMZH64wpRBEOx4wjJQYcfIDwra3tBJH4fPzQPCTlcotEV45VaTcCDXhw1yWzaQLZQXQnOY7T1UR5oj2ynZJ6qs71A7A1ZiopNyny1nmgMLUH4w_km0Hk90PZrZnjf7ffC4YyNqIYeHs3zaV9N3dQYdGDAJ4jnkKjEIpR3siQrUu8GW3HcOefyjDANJ12vQtIICFwIO0nEEJZLIbg9D_KIXr2TCYw6othmK7aFUHqSLppN-8Gf67-1YIY8aMsQHxB7DCOPCQ67_vEmCkpj9qHJmntpsNH1KhGGYuUuU1RIYRcD7Y9WtF2x9TSeTEcdky2XGhzEMk1V6BVMHZPHaVcJDcI2-mLh3wgMv1Y5Y-JmBJ4IH4e21pC6UV8RxWy4D4JaIgcQ1VFKqmKq7uUdW6O-C-8xIN8Mo5g8i8BM5TLPVAYiA7EZW1PMOtWy_-BCwn7b1m6xaft1PfQYCNQbMFMVCrkOGZtLj_5kHEJ1Di-PXda-DDck6mViUqUjxIL_OfT7ri6gwcAUM-8u3go1Em5Q6QzewhQJ1zBGzUJm
+            gAAAAABq3jVtL1CtL0iddLwaLe8sUlWvLGuvS_ki192Zh_8W4hPlQ1cd41qoKThtzHHYwHB-dPIKL-PlQUfAk2KKTD0SUjEO54xkeu4JPrdRkyy_GPLm5k9yQ7ZLTbSnHcuKAWC1TI7qv1RnDDvkcUg2nCVZ73_PexuNYmD19W9fvCY3rtGu-aB5arAOw8MYauk2kKlzZQk5VPL78Qsq4rNaoZHLWASuGkrpwkXZMus1vtS2g9SVhHZ2SRAsp9XvCzhCZPY4yYQypUZk2HHQb1i8ymaiFU2rLmsL1aKh3Yo6mK3cDM1eWFuKU2y4u3pnvXdHJnk6ZgUBqoaSgNcQmaU0QH0TWK1usXI9knQ21bd4te0Uqgi9dwWFcOz83XdJ6CtovGpgnb0jkF-j-5WEJ1oF9bwGrFRcQfO8F5QtwBhAxCUDuc2cilLRQEnS4WZ5hfZwupK4JoN2J1mYWnP1R4tyaArQj8pLmbsoTCLQanEJv3SxlOB3cTnmnD_dKGZfs9Fi8g3XoBWbPdWDNo5QOcbpk-Ua2bKCBZXIPrLA54TZcbIRIBJxkKKZvGZ9Xr8bFaluFz2Wui8a3y_GCn72YfyxJAe21aa071jTy1hmsn8yMn6POxIXbIiRvHrCfgPArNNlIMUbLB3er8u5_XsccnStMtc4Jol9mFaIeUA12VA5ylOtHXP5i9n0cGYksfqxVrjHt2QgeZl3015qMvWVd93eSYpwsTbF7ey2i-dSZ3r2XFdFcEMjQjHmQNlsc6QnjiHTgh6p2Wq7fqH3JtBdxy-1mEsC6gI_rTYciGsXt1Ah_VCm6zqxicFOBIjVwRnqWo-Fv11qgByWH0tujfih-r0HvOkUywyP23e7vzF0FzTab9eM7RqKzaP14-C73bNYNXXICJ3mvO22up1vEcJPfuSbsbo3jijjoEDyPCUFe4PuBfpDSQpHvwt3yXK-PlM6ALeek_k9GK43iU3VaSXTiefgWIvgi5fnQ2umbsOCTiVl0AS5zyYCdJK7O8VH6j3WGMuKFY1EyaJSG_muJkU2NVBv9yEP9r3GHGDe5OJOex2u68eU-DYFY4JcfAQR4FY-131JQVY_-l9h0wQ9mZ9vlHnfa1mpoy88QzWK9siX4u3UvwBDYI-OqxDJC3tvZs9xEWaa5ABX1n6YP8c8VdYcO6M7EmwFVM7Ydp9vU0brQch_LoAadeFwfMqMz7Ca-xlDtitXD45ROs4QjVIbz2DYx08PtY4AVjwncRdJJb5V-2e4vlZGHqgxJMMSexbwxRChjpFieLDhTy75KMEkEoF1RQnaRdn4AhQJMzdtBUPCK-XJSCEe-4UtVbsDxod_pcHfj9WVu9yk-lnfaq4eVYx7U5BBZ2a51_piiw7VPz760LsKXrtSlwook4_A9Rg9luErBNhYMyNy5jlap4cSRzxvJk1MDwb3UfNNeZXWeqfsx1Q2wsHihqtDk3SWPODfUo9khVX6wMkshf1QfACHCK0glOY8KANFgPREbAgPVNuaQk4qw-NCgGg-anujOjlYcL-sdYSPAAasUTpVJ2Vb8BUGGvOzUuBP7sEP8aShhNdenFRMR8VA28gWppAZyH67HoV3mSfvZZCzp9YxwkmO_M14Qqcwk-DZIe5_EubbkHJD9SHa1VZWNfZ-C7pizK8T9bRvkrQJGtmrQwMjkI_87G-KEVpXR5XXOCgwWupUKamD2M1YmTGrEUd07gQnYNsg77Cu2YO2_cCM4Esw4NYslukhPkL9ORTN3AfaATNlGSQOx9npZbdhU-63dcqHcdGI7wbw-ke_edPcwJFDul-XKo9NhF0soW0aexZLQxwzeOmedfdmSmSB7fS0hS4HiW6odU5ZTOdcM4q3KVrvhA7L6Ty8o6zmfQLyaItDNEiV0Vv8BfLROMrRVQNhq-d5NFuePtKEmAMJ6nImz7SnqcI_kcOSKLobwpqfWXR7TQJFD8BxIngWr8pImOcDublQDFxTKGjpXS5gImJ82ZSWl5DVOqUXekXlch-6Sf_K9tqiro1K5URa1E1W2PUs9sHA_U8H_sgW-FWer3RemDNg0JwLSissWe44u73iAG9mBEIxYs0eOuUf3inUMlw1xwQIsglYXNRArnNf1bLrGTrBm8cDkHRz-0nDCWFBVIXIfTJrNkNkfrqjCjLnZvxGZQ1HmaQlF647YEL2KRIGgNgvvg_sW66WEl2qmfNKzvjLyZ42ZWTrGZEok-JAfDUJ78Qjd3o2-ajP6HIRH2lxpCIOUFf8_7TGU7qxEBYW7GGDE8U1rks-5XgkfFALOTz8-jHKgBBoxS5ETZovbYWwTPsqLFrz-6Ceo6vGVPuaTotCBuLWNCq2dvW8RdX-BLd-y8JAoavDse1PT5cO0jBIz7tfwF-tTMo7JyQ1sJZE-JDZaKVQhBsiI2FJPtvsuP5HDHkYa0rQr8-zEja-YgLmgepugLa2tta0AwWDVWgMhe4k3zlN6RTWGwjsI2UrPMVWk19vIuOYw1sL0Tvsg0r1eJiR7dUPMhqPRkOVXD92jZRUIMUufaRSSiNM54edkSkQc8JrvU5PuGmP-IEllO_aK8bnhke-sFXWSniQ88GIy-7cDeFWH-6H33qycmKL55dWdgaJb2-AGeSR8wDopr9t6PE1NypzCrDyr4Wby8FIVkuaBwl8TSXsr3nvo4YDlZVQaaP9S-SWwfD-R4xNMhxMwol8Y6gERcDaEhIhv4_z3Pw75KvNcWFmvFPzXSKGjBmeCNSYjw4IoibAz7FTwxkam9r_Af4SQDyQNbZTJVkLoIkraWK3hEIT0a2peXe7hB_LdnaeXE4IvY_YscTAw-e3E1t91lats9E4S_5Kp7UTOWHKUaHAAQLUeTpkChsGRBXuiE3n6G3JT-1HbnsA-gAOcVepL3450nubqLqOcvjXCHRve5NkYKLlE-R9mWBaxaqHLZ94tcobE0S25r68rSRdn7MQSR_8F-ueP5YrWzLUyUzNZ6c1gQIPACZb7fyZApitgOQnkn01iYYaFfglCaRFHejEsi3mgkDBGGOKoFJGDJJ6W7WcnlIkZSzCVJt_a9qVUZfWjQA8XGthb24AZtxWGf4Kp4QIKjmyflss88OSTZBHT-pbOj17GKbraLRhQE9SXTaJfHkWjiNdKCfW1yCmYSGK1w0OKgZJDOOr2JpFbfOOqmh1_OJTUaUgAF6a4EHzXPy6Bf3lLY6GaP5mpjA57l_EtFBq9zaIJYWk8X-y-jukS5dQb0dk2u92AFX7calb-IyQKBLdcWR-hxx5XIMEbrfmpVSdYXCrkz32XoGdovOSkKacjnp0HPeUPICZsWRw2g12jMvyQc9vn5PYHwtgPkdr7D6aRE3pok4AulPIdadS45im0VQHbxgNK5K3cdzqslzg5Oz3xEhExsyBq2IYwsVPVSKhLk7AZTHKfySYZwG_Cvo2JmxqGz3XaSpdqkIewEb1WGcVlz-QEGwzoniUZIxjn3w1M69DqN8GTx_SVLHnwdaiYqcPhUSbJdPtvdsss3ZQclEm6N6grv-_TDqfZYCeFfUZ644iORmWKrrxDzKBjpWiO5x6hCXfMAkrCERRKpw0tzHSiZw-ihXej_J_foN6-dLtn0MYIgSqG2n2EHi5MHSe1bki2HS3rHSrbjxF9kcGXv45P5dwmQm72hCDwuOqNyhFIferqK3x_9Vrwqm6XsYyCXdaDP5aASm_LM8PWHKRF9RZPZG4ijydzXgp5vkpBtcXT2MgfehlU5qzZp-aJNwpBRN1BIgfVF08YESMsNxs5iN_xBCmhgPgPDfvGPIE_Xk2MSa6tUBwEMAcSPB2NbC5gMS3vsraH48dz2yUoy9ap85zD_cI4oW7W0pFWYgUqUs1-jTZxkWhsUfqrjQVT6y13RgDUxe56mZqoXzEk5Oq8fRbTdGc9m7IrRkQXbCh-G6rVe7bqBXRMs9L8rhMQWfBOVj_wdsRoG36xShYlKlv4NAGvz7GW9zbTHLqEFH7nWK_T2ht-8GuUBnmydLh7gmrLGoJK3UTexi_G65mxf5tEcTkCgHMOOAnBruphqjMMExE7unCwr_owDC83P5OUEakvv5kNjqSr2OQ1sTR_CR3tx0LGlooG_9VwuE4ipCXzYocQ0_bXXgO5i2I4x5S35-4Z1pU4j88TVL6-V06B0Xb8rACyqHOwtI6nSjILfba1v1cWmUKDQdvaTsRidakSi8W6sNzKexXqLfFVIWe2rs16QqHKeBjXN3YW2jUA_RTuw16No5BM5pv1-oz6o7-QiJhJEL8u2A4vOYKykDc4WSSQDKTuffH5ock2AihYKwCZM9Au98BOxRo9K8zk75ddbvJh9t_rbBlM4pdHGfpdqdeQIAIs6lS1kX7JiVrh01zKF2dAdKvuDqh0OoGbwvpZX_CKyHMTekkqmXBrPV4ppawjcCF_2_R2omKuIMak_yUvyNuDEkzZU8ER0c9Wy5hMfyu7ui9sRkdZcTpSEfIOlgGtBg1QjwglVY1iSY1TcF28_IPd7ZqaRu9DdTO7FXjxgIisK26gMsA608LlE5EA6ZZVMpVPVxsHzfzw0e8LsEPTuj_pb5yRHHnXnoeBlxqra_295sdRhwd9ay-sND_4zNPHxD0UFLU3vZ_oAbU6HepG4XJC5dRuTQb8t9TWF3VOLnoM5nMpQxrPRfLkajPXL2F25lN4p7nwPa9OLDlFqJVVAbqnTxBnqL-67Mokv_FhaUX4u_p0x4UtQEZGwA7OhXJ44K5kfELI6XDKdDYBorJGY8f6cT16KnJbBAxN_RmJOhD-AHJyW-RHZwR-LqiTma3nGisqmo0h7xuwqjjpAcz-GzkVS4hjyw4UyKMDGglPPj_LyFdRXtVjicYsmBGYA2-ofLlAs0QhZmyt9JfwnHTfqWx-bppdYUzUM5vE-gwYxtdqClqYp07v8vqtAxdfvr8f0P0UT_MU7xvuTdUb4KJBo3Ozu-rcpmwAkoL3undYvI-2_NL_kIZ8jx0WoDhe3aD7Aa_Wqepuw1T77aymWBgVRNN2xY6HYOl0sbedvWOfdqx-UJ0JsKljs5wIiqiKInbhBkfb59qpc7hhZCIjEjhityUvtYj5618Dj4w5qJSjzPlWawihMmxe_HD2lEUdKaycshmIHLbQMLHi2BK6RY8jpHQ-03SnsyDJeqh4dN1NdUvflgJeJBH3rjJyQr1lzp5SyAy_ARcALepT_D3q_Jgnim_LtLcJ9YbFT9nzNbJ2i_b_KNLps-Lb6Ro3_zPJ8pSZ7mEqWorMgA1rgQEmseAoT7izEe5wYZilkb8O0c4wlO8vyMfO2wTn5kSGy_TgQCoN30rbwXHrZDT2uormgg42flBPfG25fn500Bfyf8GxrJK76Cn51EoPNkcw77HjTGOk0fN0hz1rBvZYU92D05__ZhEsdtYkQf912LijsjCqPDTYrE2sbX78WSlGwD1gh1ARmI3XpC9pkerPxclyTmZ3ot24B6-9GfZe95yKy8_kebLGwTsxgkTqE7wj708yyr6RfZ-KgXGK7ZyPisdsO-DAcgkuIdQzzZrrbuECAwj9WCfeFyWGXLLTkFzReP5lBGljCwVH9lNTEjxjiQTZXiae9aV0kzknGRC9OBI4CcyBtQAUkBPs0gJ7i5piNElBQVygcxBCC0V3hQNfnPqFcxmQgZ-oPacIsvwlrb3SCTCvOGQF82Z0_GkVFZUSJsM0EF02RSsm5qawWUX-9GFRWGgJVPLyEm91xaNyYQUfiUAKiHQa52uUgDMkWDgWooBhUgKwttlO5Z_7DJBIZ27ro9V7Md-twlpf65nefTGU4Xkdlxn9HOex20Lu1R0PWSeMUH0OEJkZjw581PXeSkoSnxQGUqR4h3aygItyu9HyrhG3HhDQbqPqr8bheY9mKDoYpCGOOquEd3OnkLZvG1YZE5K7lmctGcOMadXQCkG7xoLM_WeEhFPC0xv1uMvfsYaygYs4mj40tJzmfpXXtYRsMyQ8zLXeQwdLg3R-7jnIE0i0dJ93-xTvfzQuagqpAqzavM404TZieUIhtqeBSxiIulMXbqR0h-a5vZPooXaBvXy8pdjoYFfPRza_mCJSPjj-OWjXCc43NCmbEDE3g22_NP7ZCaXNe0tC4jRNylVOpmWTeVw8oQ9RDpf04mw9FzHaLCQH9RheSYLLnquP6arpreML1xCRF195BFbTU3xLEQaWBnKQujVGsC_Ivs0f4aRGSNIbmhnuW5bI9HAd1J660xUU0e0fiYLcFzJbYttSQgxI201kec0bvjYatke-g1zX4Q52SHHjoEUWp2e8Xqf1leDOQWM74xc38J4zSfSqo7XDIYzekx6GK9lTKtt06gkMAtlVUZax5eZFR3vlDmpAP0Dy2Dv7TDmN3D4teifJlPPvGWLBElZz9h7YB0g_tff4foRTLuScWD2tAf48Y1zV70vPP6IX5brUqZPEiU2yjUsyzSjPL4NyRV4Cl5bQnSktMcLKOBIDiBujiGR9tFZV2KCiN07cQIj0xqWf-POWRxoX2AaEpyS6Sd99alC-V4v_xtno6cNYPaqG6dU3Owg6eTNkTBbu5U_1x-88u4iGqft1hoRLn7_uSjuB6N50NfdvEriL2gTZYqK1azYrWKXjn0yve8bneLbkjfZiBp7rzDEAzBU7b1oMXO5NpyCbwYlLiW-TKYieA-x2yHjvhgcI9-EoAMKWMxDtmmFraMXtmTpP5VNIkGziTefUbIO0le1XvlBhg0qKs7ef8zVLIsFn8Vh7M8hTaaDQpyYSfrl0gdjHuNCFtiNtCdiLBhc9QDdOI0oaEMC1ZTg1VG0UAzW-IBkYw6_rG-51He04F4ecLuOtPl91zHByL9MvSu8ORiXnteU6L1nuWSI8xnw9JtfSFGt89bkx4bEnZAybvLcR894VxY6H-S0oCEeBNoSJL0QEuh_vfgYNliA772vhec1Hb2rEkid7Pe49CY6eeNUtQpUmdJJPXxs-bWbAgZZpJTAAjC4w5nS5kEIlzMs3-oPzntX15f1JrG1FLS1Vmok5vL4ZWEfljg4Y3_eYB8pflspdAn-Jdfl0K5FNBKiW06Zo1_Xk0pzbq2SQkn886zvUIor6tXg4MupA5hUrlZXrsdEUxS2buaFG7xdVfv-K0MrDUL_werEFEzhlqwdlEoPjGSpqAVhrZz_wJ2iHHQ4dHbKcn59vlJpjoB1SOrcswo65Lk5xRnQ7-h_4QOWlJR-ijdPbTTp-FYrIX0Du9wxp9dDd-oqnmNywxzmGuJc8bc33IedzL_sY_T6mywx41LtxEV_984IrJA0MOoA75j2YbodStGouj6JOBORVRRmWIk1uL-DdCxV2mp7quBNmZlgTmUJ0t_A_WP1q7Lt3IJ8CSiLqIEuQVBxtC6j3BJPilnqpVX1ar2GphK6X2rcdsWfTsAFxES7avwHj72gOfR7eZW92COwTphmzl7iD9F8DhqsuF_mBfd9cuCm-R0WCoH57nXw8CXe3eMHPbRoN73JXD6isB8n_xQALYLXSfAItf5Ujh8-4rHzJQAqHowTsMTZ8rt1h-3WegpcOCgHo3YvKD5kDWIPwdtUmtFRYNdYo7V52Qd1BssIc9iejtjPqJI4nudkpFU8JL-GrN5kd_yIDNq3MY2qXaqlorQrCC6Ni2UBmiAu91MpJ-x2uAHVzr9YBjYQ56_e6JHIXYwEKhqNAesN_35mTANoLn8QQrY64qshzILKFOFRFtbMTjNevYTuoLlmJ1dqNl2xV95TKAk8fL8f3rTPv-31lHfQAFm39uV5qaUEtFLOsCg-wzwZ7hyoL0Byhf9ChHgFg8_IxbslExYqRK3VNht1A11z1QTkmdcRPTbzsKmQfk38jNam-4kqRRQFSnWQTMUD_ToVd6OaJVs6YpWdnoxhhuNbMIhE7vIXoo1Q-4BAEexjHxBP7o3GzaTET1uLNhBJm73Nd08NkUHVAXaL704ZSclx5ONdLoyqxkDadsh9c-ppVA14EeDPns5imDhF5LxjZaKoJ4RJ3-GVFQMLXLFFPvBT9NjX3iQSMHK311FgY0LsBz4li0ffXMz6teumrJhf1BqsaKqUfCGE1KP-wtLLTG4b16YhezRUWaTN3ieD_HhL5DAKZJynXvMAxYDpmex2ithN6CQOxVHJ_XJLoTGx8VvCzOhGN8QtDHWBz82URcivRsq1maWfTnSweRL9rh70qxW2a3Q4qTVjpK0d_hSzzcPkxTi-WctkyysJ1BY4oKMcTCk15Ag30loeJOf9Bz9tvWwN6YEQXQbxDXZjyXsdADN3Smw401-X7_46QanWhT-wMcD2bAsk3eHlxj9OLnVGKId6adPKQ73GrUt8ZvHnqzdWy0eTRXaBX2GqHW7COjfQCB-HlZhDCzqMzsz-dlnc4iuFr9Dx0vL1bKuqmG-ITyHCVMOKbuaiojTTRC3HURdLvHlVexBfQ4BtTSX-L_Sk0VjSVOdk3EtpYO3oxGPZodEiOfXBEU2T-F38Trawzm_Esvz0GmcbsDrLsHn7aivmDekpbS-DUnLR7d1r9_gygbNPtaEMIr9f3rIp8RNghRe_CHop-cKmUYawgY0HgeBwWol-4gReLOx05BDRmlyY6svgdGO0HswpaHcv1EJAq_aBctlRqfRZNvBK1wwYSk9P3Jtk03I-ZgSxCvNyuWqsxANpDZ8SCo2zrNnPOerOcwoGprI22VDoVATverp5EI48h0iPcijsjU6i9MXGXGPYYPNAQMVPQdMnomCBDmSI7hB0j4LfACyFZi2MUTxU33V8cBXvHaNz0wd2gNB4VBtV-Qul88YKyNCD4gGzD8tGi_hUS7qSD3c2S8GXqWfdu2iIYiFHMBSk0XHItSiG_zuFvg1k17ke4v8ZY1eJmxs5NQlvuL2-O5iPEdylDBRLaZiE9I065_10aEiAogvv4IuRCZfu8Q0mZIbiuFwcjHA_yJpE4_zQv37WOHDcc7_HZ4YKSH8dek0xuC37FUw4Y9xQyMp1A8gjGV6tvb8_GCtD9vXmxzoDAYNQNiv_XrII4CYYo3SJrYfGkOj_ItzcTrwk22GdZHQi6GauWPjiLQhgx19_Mt6DhPhBYl4kfHXvLokkYmAxai_68GmsNm_mj7oZgl2Sz0FSWN5VFatL6XVfMmNo3dY6d5z5acvJhUCwRxakNl07Mr_iucDDk6DVm0wefu2vThIs6UO-VHIgTOkCsV9p7-rDJEtvgg7fVTF9HKolqtSHqjj8kaTE3pslAlBrEPDyTyLdDLYu3kS6_9kK_RVqHFb4GaY-rmDAFbRZiT9m7bY7mc5pUx4ez968k_18bLQc12KcfYYvMKTkzOBDOYfEClVnoPfYcNFjSQwED1AXVSpDhixLr_a8WQlbiYH39nLZJOFOe6BkTIoijlSpQe9L_KA7PNPZIDA1fA8_RVXkX_jpx1FzrrhrJgPjab58kDot5Ihj9dsXwxpGHnWfLI0Ot3VL3VJ5a_j5yoaEjN2EHyDj0NFpBKFe7lS4EaX1CWwq4By7QDgHh2Z7JZRSHhMqjLRW5fUfqoLNl8NTvHeR3kdon6nfC0krdqiw6F-nuNwTmlMgvv8Y8tq_qllBXhxqdTHUapLBNAzVMkAULzZaTvBI9eb3ig4kkM0ec-1qBLDB2wV9GzZPbvqvrXkr7QbSPifR-kxyemkyO4Y-Kq9JSTbtbnHCv833sf6FbiNDlQXwzRYP3EsWsyCw7bVm_6-_r9JPf2VbIz4dY4ZuEjqeAUMW5zM6mmfLzhEayrCZNam15gzPHAUfxbSh4Pz_UxPAFGkObMU0tPX8ecJgntsNMzkvv8xmM6MIpANDTPKNGv53mjPWhoV6QNq7Wnw4_odS96HU3bK5eBXyq8P94YiE5Z5T8R3ypVnqKKee4IjwFXbRwxCrbonwFn_-p_tWaHW8bUoV2WXWTsb9DJMSUNaKEd5CH2SuQPeXDUsj2NrOZwkNVi4_GEJyn3iMhfkaQStswsuKeThtj_Fce8qiu2gAH5vHCpSPqDAjigCDFAxV_BMDR7DL4j-_132-ZLkhxMWCY76DiQ89H0tcGrKLPaqXaU6ij5P0u5rKPrk1lDrkT0XrXqXp2rYXBm1I25nBuS-JwfXaCWH1up7IzuuqE3LNOFyqnfmU5Hj3q687Mo7ZFlTAl_1APHgXgyJYuO7jZOJBDXp_0NJ5bVRiQHbnlEDBIZtNzRHJEcYaK7XioTXv8fy-nXE6LPGCyGJv6t55sVEsYkwBlvZEy0PiwsHnAzR9Cw7NCB1zQMAa5sVkxBgN5YUbfa2vgPeDnr1MjgGTswCe82ZxNc4XhhWzuXYR0HlqbOoM58HMhA58ipCk2Z2ET1otyFQYT3wiS1LVVEHam3feU2aONBH2_p75NuqvvIGzRyim2trK9jputdnPXBDrSB5HTAb2v0f7xhMuw8octHSANwtAG8ridEPdmMbyePZDUmnz2fbA_ijeOGBPxvwT_xnJSWlQ4YuUKNR02RvzSmUM51Gp4K_aVg-LiqEwy3CYh9hW91u6gO9J64_TH8nLZbKyiZOtCA5HtBCtTPc5I1Fziz3X7uHY23C3KLDlqSwfC8ilKfP5pAxvCex3Ggyry8QYNXw-nAgHwb7E28p-e3OU0odW30cL6KydO4W_r046SJ7_pf8LebeHxy2ScuLVHMRLCyVfV5SlOnJq5e9q-6aPod9f00dHcB7Ew6xEWwMqPTBi9dUGmFL0ZDXeT1gj-01bBrQ81zgHd22kewvgozEQ9JFTSXoo63a7Zs1NUMcZ64IQQtmkDpqpwBVTcQGGRz7mWtBMAo51NDxGEgjrlWMtvInXj7QMpx2o0l3fqy4aitBPB6fXduV00_BRx0OMdgP8GgO68vSU0bGnfMIpit3ntg8AdV58F0LWgNvjgvtWYmxerCGD7FPrVRZRVbGVxsChm1UD_s1MFcSZrI0cn-iW02HkOb-Y0PX4UkSe3C9_FaoxSCanTqr7YmszCMMFuHo_rriLahNxX2DdUJAO5HVAeAPZHC_ZhYvk35RXoiOtCKFxb5XvlOZ2rwW9VgCSlt5uLFQ9cpUqgmkzikLcbic3pqbzdT_wcEIiWXN92hShGSRkzh7cUgCf3POr3q7MbpItpZ9diaPEUhaE_FO8vNR3oH1XixYmzs4M6WXwcbFzJuhTZ6oxoCUhv797GfIdRgRIlJ1uv9ai1h2BP1pXNIDZCp-TWnUSebSqktB_b39uE2fWHLHgzi71mTxNHETFN_EDk2IWfUyhTwXshMGzO8Z5DxerenhZdZDoXt1z4oi1dDw1NKUME4PyCOBALj01Y_-FhGMgo2XEGGdeaesIjGipvtFRKBrzDRNOsCpUhipLn4XXDNjNYZvw5NCN7_fZa0Jjugx9hNzcLKELjiL4Sv54h7uM_ZaXPxVx7byMbZaJvBDJowgStPOJ5135ThnVT_c1OyxepmXnu39ULr5p7WsKjmQCH2RBPKJtLuWKkXzmi0RpM2lj086ELAH_zF03dbqg8Wf2xrlLcU6aJ4UXSGwASboEFUsuVS-Vwennr5-lxa5qFf9FtARFFht7RnLPqcC6i5whMBGKW72znzPJm8lLHioDulWcKmeHuEpWgRRuzTA6G1zsp-N4cwfE5Mp4zm2q2rOa9rJouN0ayHued5Z1O0jhhdAMhod9ZxtkJjkS__gM9KGSeKQiiKzwUKo6w4zscGQU5Clao3EUWrFcFT9yKZU5-DmGWILGzRoFXEB110SCQsNCdICskZR-qsV431RDmBruo6puDODMTrdjq9focG0fTgXHo59gpjdJk--5qxNIycwzCPxYtw9sgmCLhiuCNKi9cvBTZ0EkQkJhletB0Ja8esXpyUS6lvhSt-2laDf3ZnVMWltabDsy4EdL4sd2l40S6_R8567hUts2Sz3hDqqeQUhRFYhPKGxE8S65xFSOKOTleoWgfP3MsMxeG4T3JTHgQUzltPDASKPEoUjTAZ64pYYjCvobAmJToa5fk2PFZ9U83kj6TrY7zEc6FZq6tt-uIbWlrkS5bWj_LU3R4ZQdiYm8xYBTM5XBCmygttRwbd3bvRKiWyT5B3NUDK7ZKjTU-yH0fhxpverkUgOG-M7Zr7bFvC9d43aWeu7-_DgbjvFwWdovGIWJU6sClyeZq0SrSY7N6EJh6d2XMBV1wN7Bi1LyTA4noQB2o64cvBFLPdm1Y9Hpu8cQ3UnhO2600PSUvFiyRkr0DhFPjvrGkK4LPTnTCcSuJNqilRAuzra-QRcRbMirT9JrVXz-aj98W5qveiH-xz2sNafd0KEtQoVI-JbwlWH_17HD9NWV5lajtR1hApc8XoogtgHyQNRi0c5ekH4PwQKyTyOxfsNXl7Zg2PUgPgrRuPm-YHn6QfD15kI386wq0a-2CgSiY524C2WYmN1_Dbr2sQ71TQXD7EHpV16Cmwes4sNV0FORY5nmblwHAzlbuX0Z13BdWh_KH5FL85pn0CnoDWdS2GtyyQpqWGsXGO0RxLunvoZA6xcwStEi9JPQejdKmlNNAGI3TQaUDsdi4WNwxDA11xeQzrOx7Y8flsX2av6Do0YbEWtspgDOePoW7Wdp390kAF3QmGW4WpnUGkWXIgq4o7xAXgnJT1zHElZghleJdqZkfs_a3m_tx1QZBYETnyv-06Zi6ump-9s2UGZp-yDJoLhmqus6rrkr6P1PepMM6A4-nmmVqH1tYLjaqD88seVFMXRORcqzkcLrRnGqeBM1uX3UIQVPIuMH3J1OHcvCpu-cIEtoakJFOqJj_VPCgu315MDzhWJic2Gr0lJpVKFpybeGMJGmmD2o1sWtlrjPoGF7ULloZrXDBnP-iawizylC3yGdqXU5B0vguQ89aTwfTSgC3qIU9CBNhINgmlHLH3RDo-ZgLPMZoxrnAC3Wl7EQa5EDSuUA09j75tvtwaYv6QHqCyxsHiIMY9fnbQcubVUV49UIB7GY11jp33Z_VhYuOA2KHfINk1wCIzBL11sBITc_gGvoZCNYfESgZKugKgdlh4NCIhamXapI63Mg0QoBxenTZjeKgnMJTKhmKd7kVYUHD0T1mVYLZiP7GNwhhZmTjvOyHKV5sQIo3N-La-96e4D55NRRXqhN2hCkQyow89R3qkEc-Z7Uyfgo-pFpTyMUeH2MDWjcEHRWyLYuekpGRfeniLyKg9hsIXCELJwpZJSXNZTP_kt5PFW3M0fZ0QfAuX0NdNNF4PwfblioDBGPcRi2ZoM-phXLYikkNjlfmNduPyLkLrLxx441tVwINoXBYasQBJ7j2w4zVBZVb86ZI15rqDS62PeF5AFMpWc3JOeW-N6elolcdBIse6L4pUaBMbk8to8H4bVSgOVDu7zgA5cwCSN9TBwsEPbnWOSIxDioW5wDYO0ogGc3fHIMTxxn1qcVlmamc6o_z98akMGW8GkWWoO2jewFSmoBqTk6T6FCEsoltpMbIfCUpINRcrpWcrIDPz4qqjSi2eJmx_IHWar5huudR8lMizDHpPQkDT8floxbMxGPPgTwk-fyCVH4uO5zoymZ_eXJQB79aGU9e1U0qjtBf1-VdNG9OWFLcX-YhiTROzdYad7S7ExqD5arAm1sbFVyq6OiSm3Z7XgxoJ_WR4dQZNJJlr_73m-KeH9tQs2wbPJAdsxz5_P36ahKc72WJsSl9RqMqS_bgnewpoC-9gdrCXq7Txaiv8mVIzLhiK3Abd1SrW5HExFOmzarV6KUESkY5vsgE4PVnAlxN7DyIqvnEE-M2iwd_iIjt3dV2NoxgegCNkZqVvZml1YPmJ-NBIIq4qiFWRxZ6mKl7Syxm4zHBDGOYObPq4LfO7TUYgXLq_MSTg64Sfg1plSknR-oOPhYB1GuOICc1-JnhfaPhKwNxjRI_USw7EjOFI7Bi8nlhlX7mEyn1Sm6hLK7zU5A5Mp6rv-k0qeZHHIRQvBZTiX5xlboy6iHtf15YnLZ2_9UPESE7OikS2rCIvE63W5t_Vxt_1Ly6FlvqzExBv6WAxnDAzPL2IhdHOXIuNpalZ8fcfT4tF23wYQCjjTVHl1cSvhlkmcj09ekT6inpJx8gAwrkriOMOJJB2vjuPmV-DndLpHnXpFtzvyq7Oysptf0Naz77jLmmeWCu_8xiEZxyhgByVE84uPd8GT1LK_MjtSdiFAonXIAGPBw3WDK8aUbJblL-GhY37pdrqMy24bpLp2_63jZKHV3msG6mkYDJr7CnAabkObtN8UmKyFfdJiCM96mTeY_CGDLl5dm1a2CaPv6BBF8LHa5VZXM_j7MupM7s5VthiC1apHamYQY-2YvL2tMcpbGqTJJEDFBx105TvCcCWlu6m6pwloVipvTxZYB9PksqaS5kgsJi0Z38UXDA036AjhxvO5ivlY0DT6837bv9GoqsGv7eFo8f0RioGENUl6ASwjhoBatzVJ3o5Zuj2UKKV48JcglaQXFTXTfkfje-yJyVhfQ5P4XHp5FhMmJHIrcwgXVO6xz12iJ6L2wsZN6B7b_ZKPzWsJ9L1rDqdRIJZaCY9F8nFhxsOgMazw_9qcq9rT9bCFF5t9SDtwshqqD1g-EXzav-HWQxEI8W2Do4MeuuQLzOnSzEzTyOxmi3bbmladH8RbYFfsPFdq65GNPcPmeY3gEbXJ71_9ZoJKDI8aWuNBkDWoryY36ZJ1b7rsKDfhD2fiCJJwd0G5itr-4-NPQI3smVFjXBa-Q1iHvz7mBJZPczsMx2lIqjdJVtCVqd1U4sYukHzVfWW9yuKXgH-sPnBkrtx-lK309QaKLrnx-HnSJUc1X58LIVuAM453uMiegbq0cIxMG07qRXknNLbADK-t7QCh49IJ0Ib6em0ReHzbcbXqKVydhr6QM-O_VKzLC27G866JNr_yWYLmQ7r-c3ASDRAc4F7uU2kq1qLPJkrN_pPwHy-MTYYkjVy9u7k6ylWwwM-GXsIMp856mwh5Pb6V9n5y_j3M6qfiVJt1an7hVGJOz7kz6ZqFoq8FLFHE0GCqq-vzGvkqHoA4JwXKxFAqxIMxzmQiFJ900ZgcFTtZVxUabUSDmqYXP1qaa54ImZrv-ejTSBovnazbqFG1RX68Tkr9sj8x8tRLmWRpYwtXVvvKWAqIaoMfRd-GA05O9cNroq2t92YBgRTEHOYZGdcAqifMcuA3RGz5ypuVOQq5GVE6Bg_mFZiKq-HWDm6Zwj3eGbeycQZia9KbAhRTAXiHu6TeV7kpjqDM05CquR9UgBxcfwyLuYxF3YLk31c87lIXJpex9dcnzqdNOJAc_210CVcCnTMkDNwmjHs8kLBjz0L7fm5Dkmd-VZjUBDjVpxBsFRzt9hGweWNkY9RQqYQ47Hc_aMu7MXBNMzbMCdMkIl0CdaytZuK6hLp5TsmwYQpvC8br5BLOZfbvUZ5Uok3JghTpxbRwGRry2LRO4XdjvDaz7EEu5fX-Ov3JoEvOxAWMDO1THPph5Q6u55H3gS8KLJNU77f30Q8f-7hlOpdXD4e-2kVHoWL0ZkXYBFjRxuVdT7xsibUfNzzGt4N6wApw06X8emPAJgKFWeK0mY-Yr4N3R0pvj2JJVzURG7JHUVdnIw3sjfEu8-a1LlT3p8QdEfMJ6nVUPj9QYltOooyAreo-Aj-P6cFgZuAkqThs_y1zztuKB-jKJnbiZQervY4Q1bHMJ7QvXMZ_QRYQLY0NfdHCAY2HZTRREeKOiOZEmMPVUMR_NEgpaxj3m0rI2kSFBQ6xWTErXtskZTSZgFlUyGLOTyAoJdGoXuW2JsJ1WbL8_SyLaBRTzy3V43t72G57AL1nz-v54vcV6BPIMAAmW51HdqUlGu6boAndIzQa6aV9mvBQkcBH-q8cngGapxXrn1OAsJx0zlwyNRjldOAtqDw8d6YnhUXp2O3tjhlDKL65WUX33LBYHOQa1UYkNWBvbCeQ5vs0zlU-s3ZnvDU-1CkO-dGYxLHJNi4GpyOgQ3u50Mi31ogGxl1W9o5COYd6L5JJfrmJDOYrmbfHHxnSo1ZEVTHnvy9bdPpae93DjtXZnukiyLRU8riUHIpfuBrtvxtHQPodpYNChPjuaejyfMP-Z6YgaFGRPs5pc5Vky6hNSajOmF5DBaaMxE1Fv2p0mdTic0JaIM6Ff0N4OL-Utnw7EA3-N34iKZyLDw1Fdp8je7uAu_M9XG94-VHWw2qrpDlHp4Y2aG-ELkDsNpKHgbZHYpRbLx9TbKYr0QueBWG6W-el0ofMubNEOeGpwr_jC97yAoGGlisU1i1OO45zhFaOOF_YMmrYS3Akh6Vx9LQcXMXdGdJLrPgFJPbzzoUdSdx8N30qpyXZUDxyLlO0oVpWFNWIlAtfKkPer6z0bMU84PP7lQRRN15lwHgOWrVzd4YpjE7ytMxK6iHSAxKGnSoyt_g-qbjegKoUDXVXpBZxM6suB4eddoUfdvIJRQZrK2EmoRCvo4v_gRasPJ3d8DgHJBhQJ1QiRw746GemHUvr84uR4ksS4B3NIXWDO14MwCmQhyaN_mGCS709ayv5nxpUVuX67wIPAuFNFDF8mgNxpn-ouqAuDZ2FK0gZ_sH2-7AEiaouYh77x0kQhHzar08RJt7zjOplXYXqLGwwDkqQ_go46i7JsHES5QCv4AVnxr44vpjl7fwbpakHALSf5-Ht11-zXhLsLNcAhOjzU7Txx_eqIigECwUCcblcAejYJZuGPNucezk1qlV41lVrCnPu042smN7nIlyuhfcv7dHXL-CG92R78E00J7CTkLQj2j7mfMcnHGJi616wtDGPkGwggyH4KKgCLw1-pFcyfdJTdIqhALB_auPkzQ09LMt9nvPRoN0gzr_pCCMbz_-Ic4VA6hjF7vCSuhvE9e8JOILXTbqjqxXHpe2bqP8B2nLkXw8ljRz0iCZZNVXh-BVmpoIS4PVBXV_IeM7SJTQB8QJVzyqDPYQtnroYDG4wUitwDGtOYNBg8UoY4Vi6NfM6ozSX3p8udW84oT57OP6endHelXobeciAypRzl72QkymPUgI1RQSWDWqVXf8T_Hgm8Fqe4tlVgAuj5AFBaILQ0c2roWmvbrQNiiow7Q_dSwE4pXeao19BKhnf5CzwsNHTNsBJlnbA-U97-_U7KokH6hOaLeRG2TtH6un006Ua9FkSBJBalwuZVunJ88KbdC4W0JuUlPIGQCYyw9PNXCmhejCk5_2P0d_DX8JfIpWmZMN4KhsQFNI0D26NAj0Y9rHN_jL6ADpTFV1u9VSBVLHGq0fDIlBwiYhInpSk3o9N-QatOW_a4HxC0IKR3Hg3eC6W3oOKBuAfVmo4CE-_uMr4LAFP35_vjJpjAJlptbYwXM17FNt_R1laqjfDjwziQd0LSvLZBXVsQQ3pTWYIdkntpLqe1axwu4s22lUeCAFvOa4EEAxgUd_2IJ8yx8f9-KQyWMuexB3bi2KD3ONXJO4lll61GHUni_Zcj5Iw7iQxEEq95ZLkLH0jD51yoCraRCBBLviLcGqFY5I8l4Ig2eIu3p6CBvZyZbLNiCuqt0hq6DLs13qK9FgG794y-VBwKWYoLXbrLWxcsI6ohNn2WI_8VMXc82MnY-_LnQBGQk91k1j3jtLGDmND4iSCHD6-dN_EkC-dkDlllqo0VwDcUapC06o0heKTR-JfZ5UQ17M1GsVVP11ClJDyrfqhSnXSCB2U3HqeGXmAXKWpyUxxzWbNWR_pNM7WfMLphv2_wnql0riYotX9wDEBzQqxm-Re1HaWfrN0_EHl4a9zWQLG_BqtbN8EaiuiKG7Tg9yf55Ure-3MjJPiK3V1BeHQITOeVrv57oG1iLRXj_aYeiPNa-Cbt_u0x5g54Rt5RlcSi__V5csbrJeied698OKtZdrxs583WDPDWR0LMSqyq8E2H93-vrOfApDr5l-8wSeeg0S9uuZ-ALXv0Ue_QQjberlayWs_iudsOmOSAPfgGQ8N5BIS2LKtNjiAWlAwA50XWxMp35dJ57sL0nNr6ga88dSFzfIs8rxWoVTvAzw3S9lSDmZdigJu1n7r7rB5JXJAsV7H01GSUvKxxtsMDGmqWhOFfj3CbIREgGjiQhHSeRLG1g7WM0mTfevli9h_UDb6PUk3exiXYzDtNjiHtIsAnhc59WB9yFv9cC5GPKp_EvNe4Tebevk6zi3Xo0AnWC1-GImp5CSnKjdkFz6RVOiNnmhnvE4EQEdRS1TrNlBcy-CMQWSFYG2zmV4QTC7JjLb-1oWjOJctHYH49C8LIiVBcdUZZWO4QTmEmId_g8hwvZZNoVgjdCJ4OdPAA43RbZ-2S22nvu0NEIo0lAuyFnjBGjg11R6zmVOPaPizCPzOSW0WWFHRtGvFcYz-HduifTDY_VdgS0W4b1HVvglPZbbvylfKkQGA-2TEhriyYSPCUK4AK1sUWnhUPLvqByriLBCpq6WeTNhi3X6PstB_gt0IT-pOgZwbaRIpz4zR0XkcUWqNt8zuEV_FXX8bVsHw5ZCcYTputjamF4FXYQcr0xmGjPMbmWaVEZv7kTAGN481o3B2PM1AljRc5wA0286lqgIqOU-2Uft3NTlTTA60EWA4U21M3KKKVStj6HgROkbMeWKAxu4naPiPebdBAuR9sVg7arxpNdwGK8tTwYy1mEdtKvaee4bta-eQMQJcpxcXP8Z66B9BU4XWMWiYGV6uaFW1CXuoeMFEfPU7h2BN3joj2xlLgN2y2cR3CQZ0Tl7YeNGewqlD0G9w0aP2BdeWD5Qbl5eXNHl3KwJdMcfpaG-XCSDSjaLK31xVeMX-ZI9gszfeSgVntSL1aS7fM-PxoKHqL5pChsHq9JOiq7jY1P4p0nhFq0qbPZ5lwR7CZmyfcAuGVgWMatMGFeUO9SuPFuyQzwzHiMchi3jgo0ZqUUnmTAJ-Vy5CtSpcJOjbIJEc_muN0-Mtn9jgQHuwAFp0EKRleb-cCGe7f4QZRLs_OXSi0T8L1Flh3kA3oCsJedEzl6j3cvHERBwtHoR1U8QZQ21w-u587OCFmKr4UH6W1r8gXA3Q71LXxdwTFSz_Y78SqwtDcZewBTD6aasP_BmU0-sCwEamqsB7bE9ScrJTqYBAitlx3ChVGTFHt57w41glMb-XUW-yFKNkL0DOvRVBLYGz9-EI3XNWQGqiuM5_SX0X3oH6XL26AqxPSS9LfcsINtjU8YncETOIDzCqidDWcGxdF6NReL9-xloA8rDmkK9yV-VIFdjjcomefy68eYOFtLclDMc0PEPy4I_0KceFeyua9IcaCQTqJjrv43xMtXXYvqJe_KCmK41-CXYNXQ73pXVcwimt8Oml1LQY6VKDcZ3Ffmgu4i3_vbsLutSDzDntUx1Pyl-L4LHcp2lwBFlk4KecS6wKCz3idIftEZm-DocDMC98GBwItK6kVTtYQZEfT9RuH8h__k78l-gaHumMLqPlUIrZUXEwWIu_FtMK7fEp2QwX5i4RnVcAH7b0CH2v-arDnfwZo887HOKpeUBo384mgarAX9UnWN48Xj9-C6IlNnYJZsYAEl07kiCvyfm6EN6hG37Ms5bY2QwMQ9zltA20aoM-GmPcS7gMj2mGb64ePaYKYt0rYS_QHNsY1AdLBCqBe8hBt56BvBTqMuuYZ1oSmj1EguRuaFHz2kMYG1__EOYEvxdntuf9YZEXbp_DN7XERD83GEAhodFql5-pcl4_72i0oQx7eCTYJ_60vMTr_hCTYUEBvMZLvCLwMvfMOBZJMj6vLKFWJYaBDcNxqoUDjFcAUyH4A0_jwEDDX3Ae7GQFIhwGoawYlgsknMuME2NsdQIcVQDGTYJdMqGXFXAPXnZVe_bTV5LcOH1yZy4umaKLWTDIz0Or9GIqadWmDNXgZTT_OSaBsPkXS6dfGRpuG96ZUPLauEhXtMnPadCGb9l0GKvB1xno-iB0inegIHnGRPO-aDZQWd_fDteD2Am8I8sAbp1q1mVc4jltXLBZP3zHqbQKqk_KPUNnPXFLDzlftPwohcYNSAh20a9Ec8yQoi_RhZukj9J3HTTjngWZs5xMJ--v1CHBQpmSedy_YGQT18zxfsX5m1KkrL3GSve6uL-mJjaHDm5OVGKxY3SaTrBJ6T0iDCyMxN1uIh1FR0SoPJO7ZA7OpS5LnF5RLQpGHqV1Uh6Qx8Buy6oPNcb9LTjISWxAGaamAZSqUYy4FE8zgQ9PBiTxTvhEaHJcCJWiQXRvQcdBOaxDufAaWmTo6UNgsfyytUcseLfPJOSS7t8qdlUePTqojdVhitx5tgPInj_OkFwBYNsaxc5kWOcZXJjySWO5uJcpEHjMXfVuoHGU81wJuVKFcHrAAHkVtaZUiEhQ8kCSbrEhgoeyIUA_rVpexF5tFwP97D7248njAB72SXroJtHN6wjg2BCC9vXyg5gvExrEdSOpEGYip4DSHNYldptincDwAyTOhnmWedrMhHgCgWAr208r70jtIYhw4toDLs45Z0Xfw0ItXuZBJM812IqOI5fRXzaPRD4gBNwR00Tu06KVvkeVQD7Kdc5RfgZ5K57Tl5RYM9u9EYRbmTpwzYNavftdEWoH8yNfIUlvkA2Z2L4zrvkTaa8div5iRfOnsAfgDeUUNpILXWabqwfH6-zmbxhwXxW0IQcHBRh5JDz1yzx-fb_o5qTFpuRdnT5uozWJjQ-25MzKMaD7ERVnjJrusLmzeL1lkiLhG0hHIFbNazLCf7Pehx4yeqnWGBwYVe5Jxv2GWPSJ4UgBf38l-5gov2Q4LyQdF6FC6W4bK2sdml9rVvAZGPsHMniVktC4lC_lYF7Fuq3fAzTxm2jeUTt2dwaSPNUJBv-kYp_m8QUx3XhYtmOcdtbamXd2gVK0j7IPNzWGb8j47-_9TfRMhqyCg0DcpbprJE7l_4Rt-GKtZYWQTlb5ev465Sng2BZiZ_gHr3Urdej6AXz4R84afiR4HFV6Hc2kI14NMD7C6Qd5-0Z4kodcf_3iFW1C2HrNOXHS6BJ98eODDRV-TzSWRv3joF7V33FceTAM_VGVTpyskgMoK37zWoQRMol4j0TeK5qmPe3O8aAJqSk62prQ1zroQRCbqUait3XWQl-t0ercWUMa5m65wVe2N9GYuyb_BqMmtpjU2r-et4FPoPZEuItkrBIc_3kBh8pYThkDASgjUG4FxbYaH-yVm8c3pfnnQOG8WazTcmEGEc2miHNpF-qKC_TqkImKmY3qjOGl-71iD6w16Asd0gOfVTa5Q1jljR3l08QO-Jx0yTyLi-qVN15xWDyEcrVYGuQcAYeVdGsZJRnBekyZ3CesygUuLvV-hYfS4j4AqyC2u2un3J3xbRzSEfgrHo5G6-jpKJErU6kUGSwKnIq54S3oBoZ53DAa6_l9wn5BvqfPechgQMicg6ypfmg3qUR6PKPEADLG1TkGKVymLKZ7rCqF4O5AM_Vl3UKZNwPqoeWQIsai9RpDgZ7USv4gaEK7U0aOUZVZP1fgeF43x3fXYcSOB4nEw72x6j9njpikcAXw80z_kUP9FC-v_W096g-Se-JNcW4459-TizSQmtxk19uZ4vcz7124egC1TMwjoQDEOHQyZgVzgv7_IfCaOBHu14K5vUmfAOI9xY-a9V1gzUCKwuiqc00EZPOfbeqiuUvQEkMH2RF4vACMnOr5mvFRurXVWNLESEwU-hzDJBS8Ys0bmWBVuWWqxsg9Xx77ABySAlgE-BtXetktBKkd88RlOI654YVK8ZPj8aSimpvLYWgeP-9ekBwQJqlpLhY0SWRyxHOAY8RIYeOhzIlTjrDBN5dlBWcVt23genuZZ-g9AGoi93CATp2DK1I7oD8EQOUqAdJUNjaXb2_1MVugSGa5eGAp4ikNXgma1yl0Eka3QnPr-4hcBhi23ZSr64AIezW3N1bz7ZtfAYpJH6Bp0mYviLWpYEB70kT-dYfBYCaW2CzDyIz96PWzH7PoEaVznqzKpaddr0f6ES53FHVinW2oYTAATRzTeZ79Ai8eaaOPB73mLzQU8PHGjm1kfqBXCZXfdLas8C36lQNBEZuhNgK9ZLMOtKIp2HmCFX1YtSotFeBOEmG34QGQuSOPXytv3vPJY_aJqL-EpyocWwefXRESQEvyMA-vRcAUqR3x937t6iANagewoMOzLuw5q8voFk0e_zh_PWBwbMJ_BvUJ4_UD3illalY80n2sThQ5qt8vb0Y2hUj61iqIjWc3tn8eBv7kAaDIVwEO6MVnQEPlrGg_N2cC1ZqkblAnY6XB-k-9jdTmEESr-tRyyRwHAfF50gNYK7kkJSfBJGY1poIT7zoNFu_BE_UTGf5pjtXNFdaIzyH5kVRATzT_d3RS7EsJN85tq8PP4gsU8qERw3NzO7Gc0IuJK8tcOSgWHt6r5xKeLAmpbHm6dftBAzgp6EDSMksGLNnA4W4c_VhRS2Z6kVuU39fAKC9_owFE07x7Wtja4e49Ozkllx2nvSt5DAUP4bh6ZEN6sT04uQuGzPAOrODl0OqDfLQNew6a7ULXt0oSUNPG3Df7y3HUEtS7DkuSTaTQ8X1DLoG1ydjMBRXWxXfs27L0_Adcwacmcg9tNbzAmc_wtwoLyUaHLTWTiCpFqmMOptpdCqFhkSgqZ3kdPXgOWiGo5ib_zG8taEKKT9Jp1sPGFLPVLOlEZ4TIt3iFz8yhlHDrWHjdgYFZ3UVN_WsKpuFGvKtlBUBa49aT4juKKGN7Cpk87uw0zP-hVSDyWJcJa_F2vdy-2qas9nOgRseFI_RKNWYXZei6c2a1THtmjtq1FXwMb-lMPMT9HE_gxgpZNujFsNDP5w_tF7MSWwIw7XfAUm4nKZM9bSMwwRKtGPdFKhcNC5fOm9uRo4TXmojZNppESviYmiIKVkLb9pmbOXhs93P3rlTD2zIoRa93pK47-kC-TP1p6bwC2_UW4eiPz4_Bg3rDOEcoMszogNbBnjzRAj3r2_yxLpTdOZlrYGi66xHvjI1sXZvud5YJP5IZs5BohDqRJtwfnrfyUsNAF8ExinqjAf9vruIQFspBKlYj-15GCc-Y3aJmIlbKtSB5p5Rlm7ZZ1UwJOQqQShS-0h23w_r1OYZDC4gAaKUSi_LCdkDZ9H22HWFCVjQkNdaV53ORoiHEq_pUWKcTRm51waX89VYo25ztgt3XyFDU27q91gEQ8L-StYit027BXY0qxkqJjhVioZbPBVP7OdMLbWJLlTpSUcUdUkafcd1cHDf6BC27XYviitWsh4nYT6FkORDgGpGmq1TJd0hpg0nhH-xeWnC80-H8hqZ1ETHOYPj-vHlmUlthEcetCOFLhl4SJQvaNU96Ez-mVbn_AZd65_f7Fi5ZEmyBa2ADpFWNgOPBOTJnDSehGykL_qJp5yhmHFDxKKbJMzoKKbTiNdBWLKpnp14Q0j9MfaJlKnBd-p_FhqsZ9UmkBDKbqGULfuttgwzl4_MvTSPQjZC4YW9yFzin3NjNvbzAithMk7eX1lRjsalmT6ONkxZU0ogm7x0BbhaIBJha-XsRD5MHCY3ALA52NcC8qPsuojAlom5FM3_wqnL8CLnz8pX8MhOvjk5qU3KhzEHwY7g64XTWVxHNzivGFdSbBMoSTQiSvBfVXXQwb5XZ5KCW4UdPJ7SD1cgflmiK3yT5D25iAIaaZjsXWRuvvqD8JLCIYaikI6uHMMbs0FO-WgP17KXrJxQTcq8IiDXrWDbRyBHwO4YKQNMe6vQGgms9jkq67HlmDhXgjsvzn1AtOmVnym2WkxIDgj_5XiKcj0sXFDDkc6GTOZc546012pfd082O10-x85EtSz1bSh5LEZNNG0VZTxwuS56MCtG0ZcMZKFfjFYiaH3qGby-p6s6jHpzt1Fg7RSKRDSeXWVM-U5OZKjUPyQvqthHllpp0glGPhTJUHdEHXOjgejc5VW_1Lu_sm9DYDstt_eUYVZ7HUj0mIqfDsvWy3iB6Z56W1igGq6KIwyRN0WTAnZItVpgGdQ7-phMRvlyrEWxTgqiht3QURlrzvh6Tdmi_lmyi-oybK1N7x3KlvrCc9fTnBlK7TRdS0Coc_kn1gXmen1i5lqkgXGH1xni9ncqwHCQvJaGrCwahlKwCerr_7-0xGZlunmBNqLeuqysWkeD3r1fJsHvsWcgRh_HZ6n7QvETsVAlZqV6A1JSKyqDCU27GvcRIhaHwaXsGVieYq2_Js1Bvo0itf4_Kvxma0fvIxY-L6-Kje6WdZgR5RfAu46Dha7yx3IuoRxenR7T-4rXRbgMOEpJ8lwgd1D2-FtuTgs3fbhLv6BhsrCZopo5iiTGbedDkJbvRNGY_NyftxucMhVjVi850d1Q1E6bmcLN2UGKorHZN6Zv6nDK6SbyH64ynbsofA1yrdftYTREkEWj-YtIwWellzWdBUQMr8NNCZvgSRtU74LPj-cPS5bMmSsnglOJlNuzcGdpB-vRjpvE3bBT2V84xWx0unZFlu-y9pwcYMUiNJ3SzLskSY4d0c66WLK2OYjGikhQBIscLkIHXxdf3J-vdZn3aN0QVKckSgGwQh0yYQ_NNk6ykSpOO0dT2tg5A8fIq7YbMqMT4sw_OlOOTzbWogtB1W1f8JzA-zKpZ3jLXi4Z5j4fGbgepv44DM5sBBgJ_7zdzEi7_mhaa9k80uXVLnKmrYtHCoCc_W6zPkkBGvMslqRf0-RX35EaiY-6QDgkPPhGlEtYciMVyDOKmrPC27Cb9RzJDwOWuiRNgS_IuRadq-HASSo6sIoZQ2JMa-zU6rvcfiVCDvnii6McoeqPyK0fE7aot7qnuPSOhjrWck0c02H9naBw9d4ef9tE2ZWpGzz8hlVyhmFOXp0-gzJAGFirc-kOXPms-nMzcn9PB5Tojn51PhV8YOkN883AGyo__5EMrFHmaHBSb6_0htrOSDHP7R_W8jbSShy6HInhG7AeAzt0rUz7o1N9z4IBuBSTTKMz4TDxBHV9EpRegFEA8y8WpJ5m_vIprPn7rOpSQ-3s87UT0qff5WUXRS3CpxOC7oljljLjFjqhPovjQW9JlKN2SdicO-pAsOkgL64fIbbZCDdrEGlaqkFNQA6zr1qFqbmTEK3oaAkazHtJ2XO2C8-fImmynmAdiD2-P_Cwe5R9xxghkl3Zf7ehNRvWChmEgq5z-qfuLWlD49isE2oCq2rV_D1GrEcPABcvUskyntv7IYH0mO93kejjqPZc61eWzQg_Ohne7bf4gDJK681By4tk8KNlZHgkIQvI2e4lgjO6uHNAJwNLYcGOm0C1VAw51uAkb4CxlcJFbwO3p5scC32JZk5HsfVqkoY6OSlWpvm6rjKMWEMWULb3yQIRrUStHjfxXVyT93qDqEn8hdck9CEMvxm_q7O_0EAfn7_-2qIM3UB177sXPvH4wV3Bt_PNYhMXgKymrGOBkFF3N7bzEdYJZKR9K-PmPxtuQtoXFm_1s8-tNjsiPl9vSiJ2v9wkXaZGBPjEiPzj7ZNwJwUEXYzIASfRpV3xtGNwUz6c_j-XDCb7TC6fXCV-3_LO5n1HDPuSN0PG3vUJlGz2RcIQxgL4qNiu8_4or75-s3YDziDewT2cYnObnG_35KfVdBPSVeJ189v1fF9IpIkJJONk7XT1_6PM9-AxN4DTH1EjX8hv-NvmwlMV1ZvR-6OCvK9-1Dsce2HlCDqHpPDhYDzCu6AlRhg3ny5wyUlxtQx5mg6jQfj1YDpE-M3A2ugHjq_p5lqvowtAFLEeBlebK0x0VKa2wNnAil04JVmvQuLYkEtLDJcxwAkC96u1NafWpAuXZdz0ipBsq44qYtgh2T7Fxclt7dSlyul0qmRZVsW1srRx2GU3v8sV4PrfxvXeZPTafr-Jre655GkSOKBf2Isolk5kXGgj29fLPjHiSHuVl5rWUOxUuWrXuVf5nK7qWLTG8dN5fxrgDu7z3jTtp_hqzWNk9CWVDHamvw-82nCFZcT4APKDLzbo0xaMU02oegfDfGKg6Q71gXrk5frbWgvyDy0Uxk2dNoqhJvYo4yrTr6hAOup169uX1fPJnbbbcPZeID_NZZQblErLxKDzohwCikIH8W5l-OEDiL6C2kdV14hvmDMu1P8qgQCG9RpRhO2SslGebUVOAJ-fMBh-QvnSr4WIpHXoBYxxMby7CH2Mdqh6DNIUbkfJsOOmGhula8bvvrmZwPeLvzReAliWaNskJ1J3gJ9YBdXtlRXdES8An5acZeB3MGUf830_FSV9tIU24WiE88m1jLDh5IxM1P1YgbnCNMD_Qdx5_ezpNgUCQjIWTHn8Ss9K5UAdRz2jEjQ3cYgOtg6GfigQ4Og7rRXmyyqREqyNqUPZA1sNSmZ71vKp0fuqi0irZbLIglC7P7C4Xj626PcwY4hZYyeAi-g5HC3XnfQzvKk4zUFGxI5pqUEfOKBk2cBIk_mPqWS4PuWhz9Yxp6dXRrkhPWwtS3qIcKcAP7-qHoyAtUh21n5wrwO7P2rlTvqDg2DFPoLisPaUTR5BD4P-Qg1upNMVuKMgjDPhdUi9f7PxWZv2SIFHP35wf0O-z1g0IggpHTNbvSzyaef-xS1yFR9clnZ4imwulyV0gjpnij4F-o3fmmwH6G4kW83G1InYohCAJkQGApmmD6UUJKZd1LS57983LIZxgCdLO_4u313lh72Q8JjO-RD3w9Ui2LizExVr6GkY8vnsVg7OdwgMeV26EVG3cm1SMeB6p_uTViVn-2Z5goqfGiJY2CMatxRwF-_cBco8QPEEo7mnCyW70SUQSRmdtaef7sBl6G0JkjLcJ9SXCnTCD90W63olZ12GZSxjcUDjcFHv8NREo83Q8wvYwQAtK7EJsFQEiHQKwwGCWzADYuGWHJAthvRpVlXy7jRz4Wq4zKx9sjH4RoxfN9oN_MPgY55qL4-0OHfI0MFMvMRtY5W1A6tAIylgtIwqQm3Bw3clssnSCQKZTAsRJIE9G6JNlLkF9h82fYQ82R1Ydmg94whIhp14db-YFh4edDvGuMPT7nL2gI-G73z1AQl1jH5bR4SC7jUEKeDHUYZrdamz_UlYd2a4JVlKybTpkC2O-sNxfpKHiQqdLPsPQXU_gFxhxYpaXWZpIiFclj9urtM1ZRPJ3VZ58UZODVgXeTo1L1NQ5Dz0gTMqQF503khiIXp3HQvLRKF-AP5G6H5eByAhvnyB2gNdtc0ziORBmvnWV7vm4F1VfcqNa8JOQTpUBsv5IOBSVTz9E5NjKPrbc2tq619Zb0e41Y3adXsMlSn07_sUuwT4Yir5SO83uVmWufvvOM8613tbZglSFWwAlYCamfJ-gN7bsIYy3AnJVD-YvOU5j4yjIh6RS3TIpMkY-nLz7Q0iDYAQNoA2K1-K4MckQQLyZKUXuw2EiD6zx-9hpFQ1f_0C5qn78IYfgV322shaDYmgZg775x3e4oX6wYWSLkf1CwCg-vdeddrPRNigjAPE0Jgj6QDT_f8_61WikiSZK5yepfGNww-0H8qxNrLA-XrDagC3adCoo50IQKqQ6SowCswetccyBEbShXP0yrEcSQK_lbcCjPC9sK9OI037C2gA4qJWFj7-mrhWPkdqR_nS-eF11xmvOPQcH4_poGeccmjDLsTChpuveb4pjp0Sb-rwTf7kzzd4fpqJhh_adQzaEPdikqm4lgZh7DYklZP7KLCOOCKRWJIX57c_4EVkxa5sVDje7ZGLT1sOiLNtggoAAjzLLPsE51aCdXpXfzKXOkTMwF0zmaItUUYN_ouGdeLSQNizHIvVXmsneLVdo9nRd9uq5UoUUKJ00ipcPXEZCcc1Fxkw-_TgR9jLC6rfBkDtA-Kj9phvWXWluEMqsVAZBYGKCBsGz6S9kucMmOwIl9fgyRzEeoLZy7lc6OTVta00Jv5rWOvUiHTUAMobmJIL8Dk-DEFgakXoRlV5MhlRU-iWGuZtBLBR77gKhVWbBPS6ac71_qbZTxXjInTmZ4G7OBtSmhST32XvMzhmaoy_Tdq6xcb0IbLCMsOIjyGbqFaxLKoKibaQurOEvt8VFKmqqO9UgYRXcf6GYPsN-nB3guwJXQDuXh35OoSoIGWD29sQaUdN7O_H-ifYJ8kaoPfgXvw8Q5AZDyr6yQxGOLznrWef3K2cIq6LMNvh0JTjKpE-rpuB1OcMzVGMji66FY9leACWcyF8mTQPtFvD9Cwg8PgPc4En2cVuaaZQoHvU1mI-53DuNjH6RCSmiuxBrF7w6Lk1OUFR9EYzCfcSfF00hB_fmeqlnCimvxMs46H2R2WkHmK8yp903C5P0KbQDfF29G7Gy70tJsOnw2wxYwPCAMt--Yfy0iXlo05auqVb1Lo9nSIq86WDufYFljOLYgb1EclAzqQiVcSitHJrUI7VOFrraqpDt3p6xQsgK9uKyLQoU7J74fI9WkcpHttuSZgrUb9sSsi1rdYIGTtJd5-Oi6ye-nkf4A-AVLOIW0uWDW5UJWn7O3sDHUxSP83KGAaS3UKmUCtRhcCuy0AknuN1PPLCAF44I3hFzwe5rUfvFbNv4QNoRrm3hG4a0oPuCribLRe6fW7SbwGlaUplBGvcQjzC1oZheItXzCNyZbmnFosPaGx6gCgX2U7-aVARFaTq70fOTTLTA4FX9DQxkyBmldp1Bo2Kbkq-IBW3E6V0ieG6nwzDNWScWffppib-t7yoFMaLHJaaGhMCYM2iScOfMDCmpGnk2U0vU_Fm7KZXyLzfUqtxZ1uYyTs5E3YOvelRtbOEC3mP-gmsVS59AmuiFy64wPCm0Zfnp7z6IFAmh9-OLpfpT2G2cJgUuY2avWDheXMDVXkqFCRriR36EuMrBhAfzwjDAX_ASCApnSYywMs3AwRHOSF7mS_etdxehimUkajm2yY3AFjSn3S89SvKDNKPuqs2-GyZ9EOuddbQQ_BIZ9T-mHvsyYSp444z5dwltCxaUn-WSfpvaKpqb4Mb2s8pmktdB3btnDImof8IKM2Yy9m3_gyjANQkrBz_Nl7_6jr93SjlPQCYI9weneNhqp3z6eSPP4x4K9mNy4vN-GZ2MXADXOx8k3thtUjlXAOVrSyC-Kd9NM4Ag37Z8OGFq9Tc1suh5k2l5ZBRpFGbY2gRqrIwshtimadepKEu_2lj0RtZcvddUymcgm-ajETw4OC-YZWTCIJuJBSqOccZo-Yymh90YTx8URzGZjmV5S_5Jd54WxWU67XQPlYrUqk-9BymD33oWlrVzfMh9s07ypLcIgGal2L3cdVIVTDeFGwj_irIuRYI2TLN0uoCHdBsrU2hmTuEVKwRqRIT5dbn2STbnrfW8dwHNyMTTgBKkLTsDqG5N-HVSaRabg-eCcry4RWyCcdqeH751CaQ-3kxwXZikJeOE1OfRB4gQe7RXf9C8-n8OG8Ipnlm3I4WWm_WeGQuaZFGPZ_CnRYsmgKXuLCQxZfHpc7IHuq8cDHvpWDPo_89Dum4FdOivqZ8wWXfzZxDtfzA41cc3SNdoqKO9inI7yxzS9O0YDXIupTSMup54TPDcaa7lfadcdHMrKeT3yGne1p6whh20KwQox5O97Y8RARCGSwsvOO-SUWK53SvokVpN3i180znK3i8PNoBI9w4frHJq94UFP5j1N_TCu2sm1ANdZQs86ZDIE_QtKrC0OFOD0DzWCq3dNPXnvmBgvEbOUS6fp7folqfcsJAbBWrrb9W4WqKGjtF9QZNjYuUPwFfTx79I0VQ_mmXzGOlKSyvJWk8ya1TI4XniK1RlGv1SXutxlBv3QuNXl400shAvAgrqdS7yeSojtzR_L25GHbNmj2Qx7JplTWwBqK_MAOjlCfwb1UTimtRsPQn23GQgRAHSkUZ59KHQ2536Ju0y3xLV9SkGJnUXtiMSLTV-uRHKJmrYpuGKkqhZIQPbvCUlth8m6Cp5VUTWiuJTbQdW29vDll37UppQS5zpBHA7PkqiDCN5d-hSy5o1PQD4pQvTpPi9yvNUsi4wo7z-aAYk-d7PM9rp0SFOGGLDlMrcM-flSnPM-L95s4OW6TRzTqKrV93rGG62aO-V0CTGGYQqB94JoG6YKfIm8_txUP3TsFh55z5ea3hrVYBH0nCdipwwjRljWjKC15AjloSks0v67p4OwCprk4CMpc3qkdpCkPcjGYSmHuQk96yfzWVzPdTLdiLyBj-d1Bl3dZKcdnnfVtk9L26iC0FLoGBaos3KNwJZg1OAbPJOuH9z8hVz6gu7d7YCQjUU6dkgXF-7tkfK1EEjEkRu_E2YZBNNPsReh-oc4w7kW9jvftu5wwxLmuPfpnv0ds4ScFaJg3PJiydXySl4zHJdaegykrs_wL5PFeE8V-JQ4Zz9hrdRpx-gDh1a44S57l3FWlIhtGREmloypyAMQq1t67hhfchd0sbOao4lzo-Pc-dAbZEd1ID2av5GucbD4JzLTecQrYhjoicnEEeXiukb7CQHTSxZyb6nAKujbMuwPCjCE3eSaxJGtT_YB_zmxzaKndD_49BSle3jutA8sdxstjJMfJrzMxPqqLau8-iGFenvUZltLnFGaDvPtOusvb02Z-c2J0LHRu78cXkdu0ipym1eADERS8p9EAytIk3fFU-Xk6Cq1wYXrKa3M_CPaYsNOdyamf14-3huhiT8-X93saZaQLDPp5KqcJkilr0ebbKCTQmddocL9qslr5QXL9BvgKdY1_HaCQKPE2J32DUgzpDyxbcPHnqlQu_qMWwmbkg09Ys-2QowJKY1B7Z_8ZoyPq6UOpAwaln8h5eGtc0E1NV8W-1o34sqaJvKQfD6KR1VpJgAhhWdQvCc__ab6WIlfuVFzLc1Tf8AL4FD3LbfAYYFFSzAeTRcZ2LwUnf_30TkvqpFOXpqxufmZeZgQx9hMSMPzvD89RoOQvZQwLdzAZbITSQFMFrkNT-udVKOlsWYDWQJwY3ni7Tal99L1XSx_uD16JfGngUX6yUHKBuIhUtek7-ZTomSMqeIC8-u7SstM7TT3dr570XFygzMJGPnwdv0apVYj_kB1W3vlcTghnwsB_JHmEv1gpy9MTx8A6lo7d9hvhm6LcexV49rzxIaMqK_KdeCBqXD4X_AKrWqCt7HZpI3NehIw7YGSO0notun7QD6QbZcTeM_p-M4evBOoQEFLdTzvn1CdloJpcy7rxpOXT6yN2_4Gl7jiZevOxC8boNzcwugnE0wSHR6QXFRYQ3hS2-l9XxrENSYE1YC887Jc9D_c5fG9h6PKi0GflhZgZXQWYlIKNaRR_FHF
           summary:
           - type: summary_text
             text: |-
-              **Mapping crossings safely**
+              **Responding to river analogy**
 
-              I need to answer a question about drawing an analogy between crossing a street and crossing a river. I think I should provide general guidelines for safely crossing a river, considering different contexts like hiking or using a bridge or boat.
-
-              I'll list steps like finding a safe crossing point, assessing conditions, and checking for hazards. Perhaps I can include tips on communication with boaters too--just like looking both ways for drivers!
+              I need to address the user's question about crossing the river, drawing a parallel from their previous inquiry about street crossing. This is conceptual; I'll treat the river like traffic, noting concepts like looking for bridges as crosswalks and checking ferry schedules as signals. I should also mention hazards and provide general safety advice for various contexts--like foot bridges, wading, or boating--while emphasizing risk awareness. Since the user didn't specify how they want to cross the river, I need to be flexible in my response.
           - type: summary_text
             text: |-
-              **Crossing rivers on foot safely**
+              **Clarifying guidance format**
 
-              When crossing a river on foot, I should first unbuckle my pack and use a wading staff. It's important to face upstream and shuffle sideways while keeping three points of contact to maintain balance. I need to avoid slippery rocks and water above my thighs, especially with strong currents. I should also check for hazards like downed trees and calculate the safest crossing point. Besides wearing proper footwear, I should ensure I have my PFD if I'm near the water!
+              I need to ask some follow-up questions for clarity but can also offer general guidance. Earlier, we structured our response with bullet points based on crossing scenarios like crosswalks. I can do something similar for crossing a river with sections like "At a bridge or ferry," "At a shallow ford," "If swimming or boating," and "Reading the river's signals." I should include disclaimers about varying conditions. I want to avoid heavy formatting, sticking to bullet points with bold titles where appropriate. This approach keeps it clear and organized!
           - type: summary_text
             text: |-
-              **Crossing rivers with a group**
+              **Structuring safety guidance**
 
-              When crossing a river, it's often recommended to face upstream and angle slightly downstream for balance. I should take small shuffling steps and use a sturdy stick for stability. If crossing as a group, I might consider linking arms or interlocking pack straps for support. While there are various group techniques, like forming a tripod or using the mutual support method, I need to be cautious about suggesting advanced methods. Ultimately, using bridges or ferries is the safest option for crossing!
+              It's totally fine to use bullet lists for clarity. I'm thinking of structuring my response with bullets and simple section titles, keeping verbosity moderate. I want to adhere to safety disclaimers, including a caution about not crossing flooded rivers and staying clear of low-head dams, which can be very dangerous. I should mention potential hazards like cold shock, hypothermia, and fast currents. Also, I'll touch on proper techniques for crossing, using equipment, and the important reminder: "Turn Around, Don't Drown." This will keep the advice focused and helpful!
           - type: summary_text
             text: |-
-              **Providing river crossing caution**
+              **Maintaining the analogy**
 
-              I need to give additional caution regarding river crossings. River levels can change due to rain, snowmelt, and dam releases, and it's important to consider the time of day and weather conditions. I should check local info on flow rates and stage heights. A good rule of thumb is if you can't see the bottom clearly, it's likely too deep. If the water is above your knee and fast, don't cross--it's essential to prioritize safety!
+              I want to keep the analogy consistent: a crosswalk is like a bridge, and waiting for a signal translates to assessing river conditions like flow rate. I can compare multi-lane roads to multiple channels on a river. It's also important to emphasize the need for communication with boaters, just like making eye contact with drivers. Other factors include the differences between walkways with and without crosswalks, being cautious at night, and keeping kids safe by holding their hands and maintaining three points of contact on slippery rocks.
           - type: summary_text
             text: |-
-              **Crafting river crossing guidance**
+              **Creating a comprehensive guidance list**
 
-              Crossing a river can be risky, so I want to provide clear safety guidance without getting too legal. I'll present this info in a structured bullet-point format for easy understanding, avoiding overly technical details while emphasizing caution.
-
-              By mapping street safety to river crossing, I'll suggest the following:
-
-              1) Find a safe place to cross, such as a bridge or ferry.
-              2) Pause and assess conditions, ensuring depth and current are manageable.
-              3) Prepare by securing loose items, unbuckling straps, and wearing shoes.
-              4) Cross deliberately, maintaining points of contact and moving as a group.
-              5) Keep scanning for hazards and communicate with others.
-              6) If unsure, don't cross; instead, wait or reroute to a safer option.
+              I should craft an analogical mapping for crossing rivers based on the user's street-crossing analogy. I'll outline preferred crossing points like bridges and ferries, and emphasize assessing river conditions. Indicators to watch include flow speed, depth, and bottom texture. If a designated crossing is unavailable, I'll advise careful wading and group techniques. For swimming and boating, wearing a PFD and understanding conditions is crucial. I'll also note driving risks through floodwaters and special precautions for kids and pets. Overall, the focus will be on safety and preparedness, all in concise bullet points!
           - type: summary_text
             text: |-
-              **Mapping river crossing safety**
+              **Crafting a river crossing guide**
 
-              I want to provide clear guidance using principles similar to street crossing. Here's a structured mapping:
+              I want to close with a line inviting the user to share their hiking situation--like location, season, and gear--so I can offer tailored advice. I'll avoid heavy Markdown formatting and keep the list organized with simple bullet points. I'll address river signals, such as eddies and color changes, while simplifying technical terms.
 
-              1) Find a safe place: choose a bridge or ferry.
-              2) Stop at the bank: pause before entering.
-              3) Look upstream and downstream for hazards.
-              4) Wait for safe conditions: check for lower water or current.
-              5) Make eye contact: signal to your group or boaters.
-              6) Wade deliberately: maintain three points of contact.
-              7) Stay alert: keep distractions away.
-              8) Continue watching: always monitor surroundings as you cross.
+              I'll structure it as follows:
+              - At a bridge or ferry
+              - Reading the river's signals
+              - If no bridge or ford
+              - Extra tips including ice safety.
 
-              Additionally, avoid wading if the water is above knee height or the current is strong. If you slip, float on your back with feet up! If you'd like, tell me your specific scenario for a more tailored response.
-        - id: msg_0bd463641f0080ef006abbec8067f887d19765a3359225c08d
+              I'll keep the advice high-level, ensuring clarity and safety.
+        - id: msg_0cd077c38ef4ecd0006ade3568b7c487d2ab3dacdac8c6bf83
           type: message
           status: completed
           content:
@@ -567,42 +713,50 @@ interactions:
             annotations: []
             logprobs: []
             text: |-
-              Great question. Use the same mindset as crossing a street: choose the safest place, pause, scan, communicate, move deliberately, and keep reassessing. Mapped directly:
+              How to cross a river safely (by analogy to crossing a street)
 
-              - Find a safe place to cross
-                - Street: crosswalk or light. River: bridge, ferry, or a marked/known ford. These are far safer than wading or swimming.
+              Preferred options (the "crosswalks" of rivers)
+              - Use a bridge, footbridge, or ferry. Obey signs and barriers; wait your turn; hold rails where provided.
+              - Ask locals/park staff about designated fords or stepping stones.
 
-              - Stop at the edge
-                - Pause on the bank. Identify both your entry and exit points.
+              Reading the river's "signals"
+              - Speed: Fast, pushy water is a red light. If the current makes it hard to stand or walk, don't wade.
+              - Depth: Above knee-deep in moving water becomes dangerous quickly.
+              - Bottom: Slippery rocks, deep mud, or big boulders raise the risk.
+              - Hazards: Avoid rapids, waterfalls, low-head dams, fallen trees (strainers), and blind bends.
+              - Weather and releases: Recent rain, snowmelt, tides, or dam releases can raise levels suddenly.
 
-              - Look both ways
-                - Scan upstream and downstream for hazards: fast current, rapids, dams, strainers (downed trees), boats, deep pools.
+              If there's no bridge and you're considering wading
+              - Choose the best spot: Wider, shallower, braided sections are usually safer than narrow, deep channels. Ensure an easy exit on the far bank.
+              - Prepare:
+                - Keep footwear on for traction; use a sturdy stick/trekking poles.
+                - Loosen backpack hip/chest straps so you can ditch it if you fall.
+                - Secure loose items; wear a PFD if you have one.
+              - Technique:
+                - Face slightly upstream; shuffle sideways with small steps.
+                - Keep 3 points of contact (two feet and a pole).
+                - Cross at a slight upstream angle toward your exit; don't rush.
+                - In a group, link up (partners side by side, arms over each other's packs) and move as one.
+              - Abort if it feels unstable at the edge--conditions won't improve midstream.
 
-              - Wait for the "walk signal"
-                - If you must wade, wait for the safest conditions: broad, shallow, slow, and clear water. After rain, snowmelt, or dam releases, water may be too high--wait or reroute.
+              Swimming or boating
+              - Swimming across is risky; only attempt if trained, with a PFD and a clear downstream landing zone. Don't fight the current; use a ferry angle and keep feet up to avoid foot entrapment.
+              - In a boat, wear a PFD, scout the line, avoid low-head dams, and be ready to portage.
 
-              - Make eye contact/communicate
-                - Let partners know the plan, signal boaters if relevant, and make sure someone knows where you'll cross.
+              Driving
+              - Don't drive through floodwater. As little as 15 cm/6 in can float a small car. Turn around, don't drown.
 
-              - Walk, don't run
-                - If wading is the only option:
-                  - Choose a wide, shallow, straight section with a firm bottom.
-                  - Keep footwear on for traction; use a sturdy pole/trekking poles.
-                  - Unclip your pack's hip and chest straps so you can shed it if needed.
-                  - Face slightly upstream, lean into the current, and shuffle sideways with small steps, keeping 2-3 points of contact.
-                  - Avoid wading if water is above your knees or the current can push you off balance.
+              Big red flags--do not cross
+              - Swift water above your knees, water you can't see into, night/poor visibility, thunderstorm or rising water, upstream dams or obvious hazards, you're alone or with kids/pets, or you lack proper footwear/PFD.
 
-              - Stay alert
-                - Keep scanning the water and bottom; be ready to turn back if it worsens.
+              With children or pets
+              - Use only bridges or supervised ferries. Hold hands and keep pets leashed. Avoid wading with kids in moving water.
 
-              - Keep watching as you cross
-                - Maintain your line to the chosen exit; don't commit to deeper, faster water.
+              Plan ahead
+              - Check local advisories, river gauges/tides, and ask rangers or locals about fords and hazards.
+              - If in doubt, don't cross; reroute to a known crossing.
 
-              If you slip: release the pack if needed, float on your back with feet pointed downstream, steer to shore, and only stand up once the water is slow and shallow to avoid foot entrapment.
-
-              If it isn't clearly safe, don't cross--use a bridge, wait for levels to drop, or find another route.
-
-              Want guidance for a specific river or situation (hiking ford, using a small boat, with kids or a dog)?
+              If you share your situation (location, season, gear, whether you're on foot or driving), I can tailor this to your exact crossing.
           role: assistant
         parallel_tool_calls: true
         presence_penalty: 0.0
@@ -641,14 +795,14 @@ interactions:
         top_p: 1.0
         truncation: disabled
         usage:
-          input_tokens: 300
+          input_tokens: 566
           input_tokens_details:
             cache_write_tokens: 0
             cached_tokens: 0
-          output_tokens: 3010
+          output_tokens: 3006
           output_tokens_details:
-            reasoning_tokens: 2496
-          total_tokens: 3310
+            reasoning_tokens: 2368
+          total_tokens: 3572
         user: null
         metadata: {}
-  recorded_at: 2026-09-29T16:51:17.696023+00:00
+  recorded_at: 2026-10-25T16:59:25.455573+00:00

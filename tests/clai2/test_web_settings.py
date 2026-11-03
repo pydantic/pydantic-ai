@@ -1,17 +1,19 @@
 """Commands' own menus in the web UI: `/set`, `/theme`, `/spinner`, and `/mcp` shown in the page instead of the terminal."""
 
 import io
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+import pytest
 from pydantic import JsonValue, TypeAdapter
 from rich.console import Console
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2.builtin_plugins.web.protocol import (
+    PROTOCOL,
     DialogOpened,
     Notice,
     SettingsChanged,
@@ -20,15 +22,17 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     TurnEnded,
 )
 from pydantic_clai2.cli.command_context import CommandContext
+from pydantic_clai2.cli.self_update import Installed, Updates
 from pydantic_clai2.commands import Command, Commands
-from pydantic_clai2.config import Settings
+from pydantic_clai2.config import Settings, UpdateChannel
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.mcp import MCPPlugin, MCPSettings, MCPStore
 from pydantic_clai2.plugins import PluginHost, collect
 from pydantic_clai2.plugins.menus import Dialogs, FieldRow, SettingsMenu
+from pydantic_clai2.runtime import session_runtime
 from tests.clai2.test_web import TOKEN, MakeWeb, Web, make_web as make_web, receive_until
 
-SOCKET = f'/ws?token={TOKEN}'
+SOCKET = f'/ws?token={TOKEN}&protocol={PROTOCOL}'
 ORIGIN = {'origin': 'http://testserver'}
 
 
@@ -305,12 +309,22 @@ def test_usage_and_cost_notices_carry_the_figures_they_report(make_web: MakeWeb)
         running.result(timeout=10)
 
 
-def test_the_about_menu_shows_the_version_and_asks_before_updating(make_web: MakeWeb) -> None:
+def test_the_about_menu_shows_the_version_and_asks_before_updating(
+    make_web: MakeWeb, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def offline_updates(*, channel: Callable[[], UpdateChannel]) -> Updates:
+        return Updates(channel=channel, current=Installed(version='1.0.0'), fetch=lambda channel: '1.0.0', spawn=run)
+
+    def run(work: Callable[[], None]) -> None:
+        work()
+
+    monkeypatch.setattr(session_runtime, 'Updates', offline_updates)
     web_ = make_web(Agent(TestModel()))
     assert web_.post('/api/input', {'text': '/update'}).json() == {'menu': 'update'}, 'bare, it only opens the menu'
     rows = fields(web_, 'update')
     version = rows['version']
     assert (version['button'], version['action'], version['value'] == version['default']) == ('Update…', True, True)
+    assert version['note'] == 'clai2 is already on the latest version 1.0.0 on the stable channel.'
     assert rows['updates.channel']['value'] == 'stable'
     assert web_.post('/api/commands/update/fields/updates.channel', {'value': 'main'}).status_code == 200
     assert web_.shell.context.settings.update_channel == 'main'
@@ -327,7 +341,7 @@ def test_the_about_menu_shows_the_version_and_asks_before_updating(make_web: Mak
         socket.receive_text()
         running = web_.run()
         with ThreadPoolExecutor(1) as pool:
-            for answer, messages in (('no', []), ('yes', ['Running /update on the main channel.'])):
+            for answer, messages in (('no', []), ('yes', ['Running /update now on the main channel.'])):
                 action = pool.submit(web_.post, '/api/commands/update/fields/version/action')
                 dialog = receive_until(socket, DialogOpened)[1].dialog
                 assert (dialog.kind, dialog.yes, dialog.no) == ('confirm', 'Update', 'Cancel')
@@ -335,6 +349,6 @@ def test_the_about_menu_shows_the_version_and_asks_before_updating(make_web: Mak
                 web_.post(f'/api/dialogs/{dialog.id}', {'value': answer})
                 assert action.result(timeout=10).json()['messages'] == messages
         notice = receive_until(socket, Notice)[1]
-        assert (notice.command, notice.text) == ('/update', 'Pretended to update.')
+        assert (notice.command, notice.text) == ('/update now', 'Pretended to update.')
         web_.post('/api/input', {'text': '/exit'})
         running.result(timeout=10)

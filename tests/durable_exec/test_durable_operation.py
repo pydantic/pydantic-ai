@@ -582,7 +582,9 @@ def test_temporal_backend_preserves_sdk_visible_activity_definitions() -> None:
     for wrapped in durability._toolsets_by_id.values():  # pyright: ignore[reportPrivateUsage]
         legacy_registrations.extend(toolset_temporal_activities(wrapped))
 
-    registrations = list(backend.registrations())
+    # Child workflow definitions now share the backend registration stream, while this
+    # compatibility assertion remains specifically about SDK-visible activities.
+    registrations = durability.temporal_activities
     assert registrations == legacy_registrations
 
     def sdk_definition(item: Callable[..., object]) -> tuple[str | None, inspect.Signature]:
@@ -1330,7 +1332,7 @@ def test_dbos_registered_backend_exposes_bound_operation_and_rejects_unsupported
     assert backend.bind(unsupported).operation is unsupported
 
     with pytest.raises(TypeError, match='not a model or event operation'):
-        backend._bind_model_or_event(unsupported, 'unsupported', {})  # pyright: ignore[reportPrivateUsage]
+        backend._bind_model_or_event(unsupported)  # pyright: ignore[reportPrivateUsage]
 
     unsupported_call = replace(unsupported, operation_id=ToolsetCallToolId('function', toolset_id='tools'))
     with pytest.raises(TypeError, match='not registered'):

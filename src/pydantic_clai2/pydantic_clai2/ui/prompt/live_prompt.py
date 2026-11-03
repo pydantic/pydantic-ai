@@ -37,8 +37,12 @@ IDLE_REPAINT = 1.0
 """Seconds between timed repaints of an idle editor, and how long it keeps repainting fast after animating.
 
 Timed repaints pick up status that no key, output, or resize announces, such as a plugin's status
-segment. They run ten times a second while a turn runs or the panel shows forks or tasks.
+segment. They run every `ANIMATED_REPAINT` seconds while a turn runs or the panel shows forks or tasks;
+an idle editor sleeps between them.
 """
+
+ANIMATED_REPAINT = 0.1
+"""Seconds between timed repaints while the editor animates, unless the spinner is faster."""
 
 
 class PromptWakeup(Exception):
@@ -112,6 +116,8 @@ class LivePrompt:
         self._recall_target: QueuedPrompt | None = None
         self._search_target: QueuedPrompt | None = None
         self._submitted = asyncio.Event()
+        self._animate = asyncio.Event()
+        """Set to cut short the timed repaint's idle sleep, as work starts."""
         self._wake_pending = False
         self._suspended = False
         self._completions: list[Completion] = []
@@ -182,6 +188,9 @@ class LivePrompt:
         """Consume queued submissions in order, first showing the status the shell set up for this read."""
         self.paint()
         await self._submitted.wait()
+        # What a read returns starts work, whose spinner animates from its first frame, not the next idle one.
+        self._animated_at = self.clock()
+        self._animate.set()
         if not self._submissions:
             self._wake_pending = False
             self._submitted.clear()
@@ -607,9 +616,9 @@ class LivePrompt:
     def tick(self) -> float:
         """Repaint for status changes when due, returning the seconds until the next tick.
 
-        Ten times a second while a turn runs, the panel shows forks or tasks, or for `IDLE_REPAINT`
-        after either; every `IDLE_REPAINT` seconds otherwise. A spinner faster than that gets a
-        repaint per frame, but only while it shows.
+        Every `ANIMATED_REPAINT` seconds while a turn runs, the panel shows forks or tasks, or for
+        `IDLE_REPAINT` after either; `IDLE_REPAINT` seconds after the last frame otherwise. A spinner
+        faster than that gets a repaint per frame, but only while it shows.
         """
         now = self.clock()
         if self.interrupts.active or self._panel_shown:
@@ -624,7 +633,14 @@ class LivePrompt:
         else:
             # Output written too soon after the last frame waits for this, idle or not.
             self.output.refresh()
-        return min(0.1, self.spinner().interval) if self.interrupts.active else 0.1
+        if self.interrupts.active:
+            return min(ANIMATED_REPAINT, self.spinner().interval)
+        # The frame just painted may have found the panel's first fork or task.
+        if self._panel_shown or now - self._animated_at < IDLE_REPAINT:
+            return ANIMATED_REPAINT
+        due = self._painted_at + IDLE_REPAINT - now
+        # A menu owning the screen leaves the last frame behind; nothing is due until it closes.
+        return due if due > 0 else IDLE_REPAINT
 
     @asynccontextmanager
     async def suspended(self) -> AsyncGenerator[None]:
@@ -655,7 +671,9 @@ class LivePrompt:
 
         async def refresh() -> None:
             while True:
-                await anyio.sleep(self.tick())
+                with anyio.move_on_after(self.tick()):
+                    await self._animate.wait()
+                self._animate.clear()
 
         loop = asyncio.get_running_loop()
 

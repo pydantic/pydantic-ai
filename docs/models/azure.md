@@ -119,6 +119,85 @@ Or initialise the model and provider directly, for example to process a document
     ])
     ```
 
+## Prompt caching
+
+On GPT-5.6 and later, Azure's v1 API honors OpenAI's explicit [prompt caching](openai.md#prompt-caching) settings: [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_options], [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_cache_instructions] and [`CachePoint`][pydantic_ai.messages.CachePoint] markers, with both the Chat Completions and Responses APIs. Cache writes and reads are reported as [`cache_write_tokens`][pydantic_ai.usage.RequestUsage.cache_write_tokens] and [`cache_read_tokens`][pydantic_ai.usage.RequestUsage.cache_read_tokens] in the response's usage, as on OpenAI. See [Monitoring cache efficiency](../capabilities/caching.md#monitoring-cache-efficiency).
+
+With the v1 API, an `azure_endpoint` (or an `AsyncAzureOpenAI` client's `base_url`) ending in `/openai/v1/`, the unified [`cache`][pydantic_ai.settings.ModelSettings.cache] setting and the [`Caching`][pydantic_ai.capabilities.Caching] capability turn these on, as on OpenAI: `cache=True` sends `openai_prompt_cache_options={'mode': 'implicit', 'ttl': '30m'}` and turns on `openai_cache_instructions`, so separate conversations share the cached instructions. `'30m'` is the only TTL, so any requested retention snaps to it. Setting `openai_prompt_cache_options` or `openai_cache_instructions` yourself takes precedence over the unified setting.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Caching
+from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.providers.azure import AzureProvider
+
+model = OpenAIResponsesModel(
+    'gpt-6.1-sol',
+    provider=AzureProvider(
+        azure_endpoint='https://your-resource.openai.azure.com/openai/v1/',
+        api_key='your-api-key',
+    ),
+)
+agent = Agent(model, instructions='...', capabilities=[Caching()])
+...
+```
+
+On [`api-version`-based deployments](#connecting-to-an-existing-api-version-based-deployment) and Azure AI Foundry serverless endpoints, the unified setting sends nothing, since they haven't been verified to accept these fields.
+
+Pydantic AI recognizes these models by the deployment name you pass as the model name, so this applies to deployments whose names start with `gpt-5.6` or a GPT-6 model name, such as `gpt-6-sol` or `gpt-6.1-sol` (case-insensitive). For a deployment with another name, such as `prod-chat`, `CachePoint` markers, `openai_cache_instructions` and the unified setting are ignored. Pass a profile that turns breakpoints and the unified setting on, with its `'30m'` retention tier: it's merged over the one `AzureProvider` provides.
+
+```python
+from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.profiles.openai import OpenAIModelProfile
+from pydantic_ai.providers.azure import AzureProvider
+
+model = OpenAIResponsesModel(
+    'prod-chat',
+    provider=AzureProvider(
+        azure_endpoint='https://your-resource.openai.azure.com/openai/v1/',
+        api_key='your-api-key',
+    ),
+    profile=OpenAIModelProfile(
+        openai_supports_prompt_cache_breakpoints=True,
+        supports_cache=True,
+        supported_cache_retentions=('30m',),
+    ),
+)
+```
+
+This has been verified on the v1 API with `gpt-5.6-luna`, `gpt-6-sol`, `gpt-6-luna`, `gpt-6.1-sol` and `gpt-6-astra`. It hasn't been verified with `gpt-6.1-terra`, which wasn't available to test, or on `api-version`-based deployments.
+
+## Grok tool schemas
+
+For deployments whose names start with `grok` (case-insensitive), [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] inlines non-recursive tool-schema definitions while retaining OpenAI's schema conversion, including nested `additionalProperties: false` where applicable. This applies with both [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] and [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel].
+
+Native structured output using [`NativeOutput`][pydantic_ai.output.NativeOutput] with nested models still sends `$defs` and `$ref`. Tool-schema inlining does not apply to these output schemas.
+
+!!! warning "Recursive tool schemas"
+    Recursive tool argument types cannot be fully inlined, so their schemas retain `$defs` and `$ref`. If Azure Grok rejects a recursive tool schema with a 400 response, use a non-recursive tool argument type.
+
+### Custom profile with `OpenAIProvider`
+
+The generic `openai:` prefix and [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] select OpenAI profiles even when `OPENAI_BASE_URL` or `base_url` points to Azure. To keep that provider, explicitly pass the profile returned by [`AzureProvider.model_profile`][pydantic_ai.providers.azure.AzureProvider]. This reuses the Azure Grok tool-schema conversion and preserves native structured-output schemas.
+
+```python {gateway_toggle="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.providers.azure import AzureProvider
+from pydantic_ai.providers.openai import OpenAIProvider
+
+model_name = 'grok-4-1-fast-reasoning'
+model = OpenAIResponsesModel(
+    model_name,
+    provider=OpenAIProvider(
+        base_url='https://your-resource.services.ai.azure.com/openai/v1/',
+        api_key='your-api-key',
+    ),
+    profile=AzureProvider.model_profile(model_name),
+)
+agent = Agent(model)
+```
+
 ## Claude on Microsoft Foundry
 
 For Claude, install the `anthropic` optional group and pass an `AsyncAnthropicFoundry` client to [`AnthropicProvider`][pydantic_ai.providers.anthropic.AnthropicProvider]. See [Claude on Microsoft Foundry](anthropic.md#microsoft-foundry) for the example and Entra ID authentication guidance.

@@ -24,11 +24,11 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 
-class OllamaProvider(_OpenAICompatibleProvider):
+class OllamaProvider(_OpenAISDKProvider):
     """Provider for local or remote Ollama API."""
 
     @property

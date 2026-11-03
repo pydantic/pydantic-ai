@@ -17,11 +17,7 @@ from ..exceptions import (
     ModelConnectionError,
     ModelContextWindowExceededError,
     ModelHTTPError,
-    ModelOverloadedError,
-    ModelRateLimitError,
-    ModelServerError,
     ModelTimeoutError,
-    ModelUnavailableError,
     TransportPhase,
     UnexpectedModelBehavior,
     UserError,
@@ -113,8 +109,10 @@ _GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
     grpc.StatusCode.RESOURCE_EXHAUSTED: 429,
     grpc.StatusCode.INTERNAL: 500,
     grpc.StatusCode.UNAVAILABLE: 503,
+    # The client's own deadline is a `ModelTimeoutError` (see `_grpc_transport_error`), so this one is the server's.
     grpc.StatusCode.DEADLINE_EXCEEDED: 504,
 }
+"""The HTTP status for a gRPC status code sent by the server, which also decides its error category."""
 
 
 @contextmanager
@@ -135,13 +133,12 @@ def _map_api_errors(model_name: str, *, in_stream: bool = False) -> Generator[No
             transport_error := _grpc_transport_error(model_name, grpc_status, details, in_stream=in_stream)
         ) is not None:
             raise transport_error from e
-        status_code = _GRPC_STATUS_TO_HTTP.get(grpc_status)
-        category = _GRPC_STATUS_CATEGORIES.get(grpc_status)
-        if grpc_status == grpc.StatusCode.INVALID_ARGUMENT and 'maximum prompt length' in details.lower():
-            category = ModelContextWindowExceededError
-        elif grpc_status == grpc.StatusCode.UNAVAILABLE and _model_errors.says_overloaded(details):
-            category = ModelOverloadedError
-        if status_code is not None:
+        if (status_code := _GRPC_STATUS_TO_HTTP.get(grpc_status)) is not None:
+            category = (
+                ModelContextWindowExceededError
+                if grpc_status == grpc.StatusCode.INVALID_ARGUMENT and 'maximum prompt length' in details.lower()
+                else _model_errors.http_status_category(status_code, details)
+            )
             raise ModelHTTPError.for_category(
                 category,
                 status_code=status_code,
@@ -159,15 +156,6 @@ def _map_api_errors(model_name: str, *, in_stream: bool = False) -> Generator[No
             in_stream=in_stream,
         ) from e
 
-
-_GRPC_STATUS_CATEGORIES: dict[grpc.StatusCode, _model_errors.HTTPErrorCategory] = {
-    grpc.StatusCode.RESOURCE_EXHAUSTED: ModelRateLimitError,
-    grpc.StatusCode.UNAVAILABLE: ModelUnavailableError,
-    grpc.StatusCode.INTERNAL: ModelServerError,
-    # The client's own deadline is a `ModelTimeoutError` (see `_grpc_transport_error`), so this one is the server's.
-    grpc.StatusCode.DEADLINE_EXCEEDED: ModelServerError,
-}
-"""Error categories for gRPC status codes sent by the server."""
 
 # The gRPC client reports its own transport failures with the same status codes a server sends, `UNAVAILABLE` and
 # `DEADLINE_EXCEEDED`, so they're told apart by how grpc-core words them in `details`, as of grpcio 1.72 to 1.84.
@@ -213,10 +201,6 @@ Drop each bridge once the floor is bumped past the release that adds it to `Chat
 https://github.com/xai-org/xai-sdk-python/blob/main/CHANGELOG.md
 """
 
-# `provider_name` values accepted on history replay. Includes the current `'xai'` plus the pre-v2
-# `'grok'` alias (when `GrokProvider` existed) so persisted messages from before the rename still
-# route their thinking and native-tool parts back to this provider.
-_XAI_PROVIDER_NAMES = frozenset({'xai', 'grok'})
 _ATTACHMENT_SEARCH_TOOL_NAME = 'attachment_search'
 
 
@@ -476,7 +460,7 @@ class XaiModel(Model[AsyncClient]):
                 )
                 xai_messages.extend(mapped_request_parts)
             elif isinstance(message, ModelResponse):
-                xai_messages.extend(self._map_response_parts(message.parts))
+                xai_messages.extend(self._map_response_parts(message))
                 pending_tool_call_ids.extend(
                     part.tool_call_id for part in message.parts if isinstance(part, ToolCallPart) and part.tool_call_id
                 )
@@ -536,25 +520,31 @@ class XaiModel(Model[AsyncClient]):
 
         return xai_messages
 
-    def _map_response_parts(self, parts: Sequence[ModelResponsePart]) -> list[chat_types.chat_pb2.Message]:
-        """Map ModelResponse parts to xAI assistant messages (one message per part)."""
+    def _map_response_parts(self, response: ModelResponse) -> list[chat_types.chat_pb2.Message]:
+        """Map ModelResponse parts to xAI assistant messages (one message per part).
+
+        Thinking and server-side tool parts are sent natively when this model accepts their encrypted data,
+        which includes history recorded under the pre-v2 `grok` name: see `Model.accepts_stateless_artifacts`.
+        """
         messages: list[chat_types.chat_pb2.Message] = []
 
         # Track builtin tool calls by tool_call_id to update their status with return parts
         builtin_calls: dict[str, chat_types.chat_pb2.ToolCall] = {}
 
-        for item in parts:
+        for item in response.parts:
             if isinstance(item, TextPart):
                 messages.append(assistant(item.content))
             elif isinstance(item, ThinkingPart):
-                if (thinking_msg := self._map_thinking_part(item)) is not None:
+                if (
+                    thinking_msg := self._map_thinking_part(item, self.accepts_stateless_artifacts(response, item))
+                ) is not None:
                     messages.append(thinking_msg)
             elif isinstance(item, ToolCallPart):
                 client_side_tool_call = self._map_tool_call(item)
                 self._append_tool_call(messages, client_side_tool_call)
             elif isinstance(item, NativeToolCallPart):
                 builtin_call = self._map_builtin_tool_call_part(item)
-                if item.provider_name in _XAI_PROVIDER_NAMES and builtin_call:
+                if builtin_call and self.accepts_stateless_artifacts(response, item):
                     self._append_tool_call(messages, builtin_call)
                     # Track specific tool calls for status updates
                     # Note: tool_call_id is always truthy here since _map_builtin_tool_call_part
@@ -562,7 +552,9 @@ class XaiModel(Model[AsyncClient]):
                     if item.tool_call_id:  # pragma: no branch
                         builtin_calls[item.tool_call_id] = builtin_call
             elif isinstance(item, NativeToolReturnPart):
-                if (tool_msg := self._map_builtin_tool_return_part(item, builtin_calls)) is not None:
+                if self.accepts_stateless_artifacts(response, item) and (
+                    tool_msg := self._map_builtin_tool_return_part(item, builtin_calls)
+                ):
                     messages.append(tool_msg)
             elif isinstance(item, FilePart):
                 # Files generated by models (e.g., from CodeExecutionTool) are not sent back
@@ -587,11 +579,7 @@ class XaiModel(Model[AsyncClient]):
         A failed return marks its call as failed. An encrypted result is replayed as the tool turn it came in as,
         paired with its call by `tool_call_id`, matching `xai_sdk`'s `Chat.append`.
         """
-        if (
-            item.provider_name not in _XAI_PROVIDER_NAMES
-            or not item.tool_call_id
-            or (call := builtin_calls.get(item.tool_call_id)) is None
-        ):
+        if not item.tool_call_id or (call := builtin_calls.get(item.tool_call_id)) is None:
             return None
         details = item.provider_details or {}
         if details.get('status') == 'failed':
@@ -623,13 +611,14 @@ class XaiModel(Model[AsyncClient]):
             msg.tool_calls.append(tool_call)
             messages.append(msg)
 
-    def _map_thinking_part(self, item: ThinkingPart) -> chat_types.chat_pb2.Message | None:
+    def _map_thinking_part(self, item: ThinkingPart, native: bool) -> chat_types.chat_pb2.Message | None:
         """Map a `ThinkingPart` into a single xAI assistant message.
 
-        - Native xAI thinking (with optional signature) is sent via `reasoning_content`/`encrypted_content`
+        - Native xAI thinking (with optional signature), which `native` says this model accepts, is sent via
+          `reasoning_content`/`encrypted_content`
         - Non-xAI (or non-native) thinking is preserved by wrapping in the model profile's thinking tags
         """
-        if item.provider_name in _XAI_PROVIDER_NAMES and (item.content or item.signature):
+        if native and (item.content or item.signature):
             msg = assistant('')
             if item.content:
                 msg.reasoning_content = item.content
@@ -1105,6 +1094,7 @@ class XaiModel(Model[AsyncClient]):
             timestamp=response.created,
             provider_name=self.system,
             provider_url=self._provider.base_url,
+            canonical_system=self._canonical_system_stamp,
             provider_response_id=response.id,
             finish_reason=_map_finish_reason(response),
         )
@@ -1126,13 +1116,15 @@ class XaiModel(Model[AsyncClient]):
 
         first_response, _ = first_item
 
-        return XaiStreamedResponse(
+        streamed_response = XaiStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=self._model_name,
             _response=peekable_response,
             _timestamp=first_response.created,
             _provider=self._provider,
         )
+        streamed_response.canonical_system = self._canonical_system_stamp
+        return streamed_response
 
 
 @dataclass

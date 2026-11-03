@@ -139,11 +139,24 @@ a relative `--database` path still refers to the directory you launched from.
 CLAI prints the path and branch. A directory at that path that is not a Git
 worktree is rejected. If checkout fails, CLAI tries to remove only the branch it just
 created, without forcing deletion. If cleanup or the ignore edit fails, the error
-names the retained branch or checkout for recovery. The worktree and branch
-remain after exit, including startup
-errors after creation, so CLAI does not delete your work. Enter that directory
-and run `clai2 --resume` to continue a saved session. `--worktree` cannot be
-combined with `--resume`, `config`, or `plugins`.
+names the retained branch or checkout for recovery.
+
+On interactive exit, CLAI removes an unchanged worktree this launch created and
+tries to delete its newly created branch with `git branch -d`. Other unchanged
+worktrees are kept. If the checkout changed, CLAI asks whether to remove it.
+Default Git removal keeps the branch and refuses dirty or locked checkouts.
+
+You can register a user-only `worktrees.remove_commands` entry for a repository.
+After confirmation, that command runs instead of Git and may delete the branch
+and uncommitted files. Automatic removal of unchanged worktrees and
+`/workspaces destroy` continue to use Git. See
+[the removal-command reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#register-a-worktree-removal-command)
+for configuration and shell-function examples.
+
+Headless runs, piped input, and startup errors keep the checkout without asking.
+Enter a retained directory and run `clai2 --continue` or `clai2 --resume` to
+continue a saved session. `--worktree` cannot be combined with `--resume`,
+`--continue`, `config`, or `plugins`.
 
 When you no longer need the checkout, use Git's own cleanup commands from your
 original repository root. Without `--force`, Git refuses to remove a dirty worktree:
@@ -412,15 +425,18 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-The agent has the `coder`, `repo_context`, and `compaction` built-ins, configured as
-in `clai2`. The file and shell tools work in `workspace`, unless a capability you pass
-supplies a workspace, and `AGENTS.md` or `CLAUDE.md` is read from it. Model names
-resolve as in `clai2`, with CLAI's per-model defaults. Nothing else you saved for
-`clai2` applies: no saved, drop-in, or project plugins, no `.clai/settings.json`, no
-`/model settings`, and no `chain:` fallback chains. `plugin_settings` changes a built-in's
-settings, merged over the stock ones, such as `{'coder': {'agent_folders': []}}`.
-`capabilities` adds your own capabilities, bound beside the built-ins so delegated
-tasks carry them too. Plugins close when the `async with` block exits.
+The agent has the `coder`, `repo_context`, and `compaction` built-ins,
+configured as in `clai2`, except that `coder`'s `task_control` is off: pass
+`plugin_settings={'coder': {'task_control': True}}` to give the model the task
+tools and background delegation. The file and shell tools work in `workspace`,
+unless a capability you pass supplies a workspace, and `AGENTS.md` or
+`CLAUDE.md` is read from it. Model names resolve as in `clai2`, with CLAI's
+per-model defaults. Nothing else you saved for `clai2` applies: no saved,
+drop-in, or project plugins, no `.clai/settings.json`, no `/model settings`, and
+no `chain:` fallback chains. `plugin_settings` changes a built-in's settings,
+merged over the stock ones, such as `{'coder': {'agent_folders': []}}`.
+`capabilities` adds your own capabilities, bound beside the built-ins so
+delegated tasks carry them too. Plugins close when the `async with` block exits.
 
 To serve it to an editor, pass the agent to [`run_acp_stdio`](acp.md). Every session
 then works in `workspace`. To follow the folder each client session opens instead,

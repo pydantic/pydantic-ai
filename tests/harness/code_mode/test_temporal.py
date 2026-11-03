@@ -135,12 +135,14 @@ def add(a: int, b: int) -> int:
 
 
 _captured_tool_defs: list[list[ToolDefinition]] = []
+_captured_instructions: list[str | None] = []
 
 
 # FunctionModel that emits a run_code tool call for the given code snippet.
 def _code_mode_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
     """Model that uses two REPL feeds, then returns the second result as text."""
     _captured_tool_defs.append(info.function_tools)
+    _captured_instructions.append(info.instructions)
 
     returns = [
         part
@@ -225,7 +227,7 @@ remote_code_mode_agent = Agent(
     name='code_mode_temporal_remote_agent',
     toolsets=[FunctionToolset(tools=[add], id='math')],
     capabilities=[
-        CodeMode(monty_sandbox_url=f'ws://127.0.0.1:{MONTY_RELAY_PORT}', os_access=_workflow_os),
+        CodeMode(monty_sandbox=f'ws://127.0.0.1:{MONTY_RELAY_PORT}', os_access=_workflow_os),
         TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
     ],
 )
@@ -257,7 +259,7 @@ class SandboxRestrictionWorkflow:
 
 @workflow.defn
 class RemoteCodeModeWorkflow:
-    """`CodeModeWorkflow` against remote workers reached over `monty_sandbox_url`."""
+    """`CodeModeWorkflow` against remote workers reached over a `monty_sandbox` URL."""
 
     @workflow.run
     async def run(self, prompt: str) -> str:
@@ -274,6 +276,7 @@ class RemoteCodeModeWorkflow:
 async def test_code_mode_runs_in_temporal_workflow(client: Client) -> None:
     """CodeMode runs workflow-side, nested tools use activities, and the history replays."""
     _captured_tool_defs.clear()
+    _captured_instructions.clear()
     workflow_id = 'test_code_mode_temporal_1'
     async with Worker(
         client,
@@ -356,15 +359,18 @@ async def test_code_mode_runs_in_temporal_workflow(client: Client) -> None:
 
     # 5. Verify tool definitions sent to the model
     assert len(_captured_tool_defs) == 3
-    for tool_defs in _captured_tool_defs:
+    for tool_defs, instructions in zip(_captured_tool_defs, _captured_instructions, strict=True):
         tool_names = [td.name for td in tool_defs]
         # CodeMode wraps `add` into `run_code` -- the model should only see `run_code`
         assert 'run_code' in tool_names
         assert 'add' not in tool_names
 
+        # The catalog crosses the model request in the instructions, not in `run_code`'s description.
+        assert instructions is not None
+        assert 'async def add' in instructions
         run_code_td = next(td for td in tool_defs if td.name == 'run_code')
         assert run_code_td.description is not None
-        assert 'async def add' in run_code_td.description
+        assert 'async def add' not in run_code_td.description
         assert run_code_td.parameters_json_schema['properties']['code']['type'] == 'string'
 
     history = await client.get_workflow_handle(workflow_id).fetch_history()

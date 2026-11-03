@@ -11,6 +11,8 @@ description: Connect a Pydantic AI agent to Day AI's hosted MCP server to search
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![Inside your agent, the DayAI capability connects to Day AI's hosted MCP server at day.ai/api/mcp with an OAuth access token, and the model sees the server's tools under the day_ai_ prefix. The server marks no tool read-only, so there is no read_only option. Wrapping the capability's toolset with approval_required() pauses every Day AI tool call until you approve it.](../img/harness/day-ai.svg)
+
 ## Before you start
 
 Day AI MCP needs a paid Day AI Agent tier; the tools and limits of your tier and workspace role apply. Day AI MCP takes an OAuth access token; there is no API key to copy.
@@ -78,7 +80,19 @@ Your app gets each user's token, stores it, and refreshes it. For example, a "Co
 
 With durable execution such as Temporal, read the token from the run's deps rather than from a global, since the function may run in another process. Temporal stores deps in workflow history, so encrypt history with a [payload codec](https://docs.temporal.io/develop/python/converters-and-encryption#custom-payload-codec) before you put tokens there.
 
-The capability's `id` defaults to `day_ai`, so `defer_loading=True` works without one. To add more than one `DayAI` to an agent, give each a distinct `id` and wrap them in [PrefixTools](../capabilities/prefix-tools.md), since their tool names are the same; two that share an `id` but differ raise an error.
+The capability's `id` defaults to `day_ai`, so `defer_loading=True` works without one. To add more than one `DayAI` to an agent, give each a distinct `id` and `tool_prefix`; two that share an `id` but differ raise an error.
+
+## Tool names
+
+The agent sees each of the server's tools under the `day_ai_` prefix, as in `day_ai_<tool>`, so they don't collide with other tools on the agent. Set `tool_prefix` to use a different prefix, or `tool_prefix=None` to keep the names the server gives them.
+
+A [toolset wrapper](../toolsets.md) on `capability.get_toolset()`, such as `filtered()`, sees the names the agent sees, prefix included.
+
+## Upgrading
+
+`DayAI` used to give the agent the server's tool names unprefixed. They now reach the agent as `day_ai_<tool>`. Code that refers to them by name, such as a `filtered()` wrapper, an approval rule, or a `ToolGuardrail(tools=[...])`, needs the new names. A rule that no longer matches stops applying, so an approval rule or guardrail that named an old tool lets its calls through without approval or checks until you update it. Pass `tool_prefix=None` to keep the old names. If you wrapped `DayAI` in [PrefixTools](../capabilities/prefix-tools.md) to avoid collisions, you can drop the wrapper and set `tool_prefix` instead; keeping it adds both prefixes.
+
+- **Durable runs in flight.** A Temporal or DBOS run replays the model responses it recorded, and their tool calls use the old names, so a run started before the change that calls a `DayAI` tool after it no longer replays. Activity and step names come from the capability's `id`, which is unchanged. Let those runs finish, keep `tool_prefix=None` until they have, or deploy the change with [Temporal worker versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning) or a new DBOS application version.
 
 ## Tool selection and approval
 

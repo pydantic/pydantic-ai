@@ -74,6 +74,7 @@ try:
         Content as CohereContent,
         ContentDeltaV2ChatStreamResponse,
         MessageEndV2ChatStreamResponse,
+        MessageStartV2ChatStreamResponse,
         SystemChatMessageV2,
         TextAssistantMessageV2ContentOneItem,
         TextContent as CohereTextContent,
@@ -139,6 +140,9 @@ def _map_api_errors(model_name: str) -> Generator[None]:
                 category, status_code=status_code, model_name=model_name, body=e.body, headers=e.headers
             ) from e
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
+    except httpx.HTTPStatusError as e:
+        # A retrying transport raises this for a status it gave up on, and `cohere` lets it through unwrapped.
+        raise _model_errors.transport_status_error(model_name, e.response) from e
     except httpx.TransportError as e:
         # `cohere` doesn't wrap connection errors and timeouts in its own exceptions.
         timeout = isinstance(e, httpx.TimeoutException)
@@ -615,7 +619,9 @@ class CohereStreamedResponse(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with _map_api_errors(self._model_name):
             async for event in self._response:
-                if isinstance(event, ContentDeltaV2ChatStreamResponse):
+                if isinstance(event, MessageStartV2ChatStreamResponse):
+                    self.provider_response_id = event.id
+                elif isinstance(event, ContentDeltaV2ChatStreamResponse):
                     for part_event in self._handle_content_delta(event):
                         yield part_event
 
