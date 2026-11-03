@@ -10,7 +10,7 @@ Pushing starts a loop; it does not end the task. **Work stops only when the curr
 merge bar below, every comment is triaged, and metadata is current.**
 Apply the [prose-only documentation exception](#prose-only-documentation) when that exception covers the whole PR.
 
-Lifecycle: implement → targeted verification → commit → pre-push gate → push → CI → required reviews → metadata.
+Lifecycle: implement → targeted verification → commit → pre-push gate → push → CI → required reviews → metadata → handback → watch until merge or close.
 Apply the exceptions below at each gate.
 
 ## Model tiers
@@ -56,6 +56,10 @@ A human approval does not substitute for douwebot.
 
 `PR Review Gates` enforces M/L/XL against the recomputed size and exactly one matching label.
 Size S remains a manual judgment; review enforcement skips merge groups after admission.
+
+A merge-queue removal posts no comment and leaves the PR open. Detect it as a new `removed_from_merge_queue` event in `gh api --paginate repos/pydantic/pydantic-ai/issues/<number>/timeline` while the PR is still open; a merge logs the same event.
+Diagnose the failed jobs of the PR's newest `merge_group` run (`head_branch` `gh-readonly-queue/main/pr-<number>-<sha>`) as step 2 of "After you push — the loop" requires. Never re-enqueue the PR; a maintainer does.
+After diagnosing, post a PR comment that names each failed job and its cause, with evidence: your fix commit, a known flake, or a failure already on `main`. When the current head meets the merge bar again, comment that the PR is ready to re-enqueue.
 
 ## When you open the PR
 
@@ -576,3 +580,16 @@ Any author-selected additional review must also have settled.
    After metadata corrections, wait for the corresponding edited-event checks and triage feedback.
    Require workflow-defined accepted terminal outcomes; earlier checks on the same HEAD do not cover the edit.
    Hand the PR back after these gates settle.
+
+## After handback — watch until merge or close
+
+Keep watching the PR after you hand it back, until it merges or closes.
+Poll the PR's state, timeline, comments and reviews every 30 minutes.
+The merge queue can remove the PR after handback, and new reviews can still land.
+Handle a merge-queue removal as the [Merge bar](#merge-bar) section requires, then keep watching.
+Triage each new comment or review through step 4 of [After you push — the loop](#after-you-push--the-loop).
+A push changes the head, so restart that loop on the new head.
+
+This section exempts a non-interactive run that exits when it hands back.
+A pydanty run and a hosted review workflow are examples.
+If an interactive session ends before the PR merges or closes, its last report states that nothing watches the PR.

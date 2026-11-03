@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock
 
+import anyio.to_thread
 import pytest
 from inline_snapshot import snapshot
 
@@ -845,7 +846,7 @@ class TestNestedTraversal:
 
         async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
             if _tool_returns(messages) == 0:
-                _write(tmp_path / 'AGENTS.md', 'WRITTEN DURING THE RUN')
+                await anyio.to_thread.run_sync(_write, tmp_path / 'AGENTS.md', 'WRITTEN DURING THE RUN')
                 yield {0: DeltaToolCall(name='read_file', json_args='{"path":"README.md"}', tool_call_id='call')}
             else:
                 yield 'done'
