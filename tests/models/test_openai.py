@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import Enum
+from types import SimpleNamespace
 from typing import Annotated, Any, Literal, NotRequired, cast
 from unittest.mock import AsyncMock, patch
 
@@ -30,12 +31,14 @@ from pydantic_ai import (
     ImageUrl,
     MarkerCitationAnchor,
     ModelAPIError,
+    ModelConnectionError,
     ModelHTTPError,
     ModelProfile,
     ModelRequest,
     ModelResponse,
     ModelRetry,
     ModelServerError,
+    ModelTimeoutError,
     PartDeltaEvent,
     PartEndEvent,
     RetryFeedbackPart,
@@ -2273,6 +2276,65 @@ def test_responses_model_connection_error(allow_model_requests: None) -> None:
         agent.run_sync('hello')
     assert exc_info.value.model_name == 'o3-mini'
     assert 'Connection to http://localhost:11434/v1 timed out' in str(exc_info.value.message)
+
+
+class _TransportErrorClient:
+    """Minimal client whose create call raises the raw `httpx2` error the SDK surfaces
+
+    when the connection drops while the error body of a streamed request is being read.
+    """
+
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._raise))
+        self.responses = SimpleNamespace(create=self._raise)
+
+    async def _raise(self, *_args: Any, **_kwargs: Any) -> Any:
+        raise self._error
+
+
+_REMOTE_PROTOCOL_ERROR = httpx2.RemoteProtocolError(
+    'peer closed connection without sending complete message body (incomplete chunked read)'
+)
+
+
+async def test_chat_stream_transport_error_is_mapped(allow_model_requests: None) -> None:
+    model = OpenAIChatModel(
+        'gpt-4o',
+        provider=OpenAIProvider(openai_client=_TransportErrorClient(_REMOTE_PROTOCOL_ERROR)),  # pyright: ignore[reportArgumentType]
+    )
+    with pytest.raises(ModelConnectionError) as exc_info:
+        async with model.request_stream([ModelRequest.user_text_prompt('hello')], None, ModelRequestParameters()):
+            pass
+    assert exc_info.value.model_name == 'gpt-4o'
+    assert 'peer closed connection' in str(exc_info.value.message)
+    assert isinstance(exc_info.value.__cause__, httpx2.RemoteProtocolError)
+
+
+async def test_responses_stream_transport_error_is_mapped(allow_model_requests: None) -> None:
+    model = OpenAIResponsesModel(
+        'o3-mini',
+        provider=OpenAIProvider(openai_client=_TransportErrorClient(_REMOTE_PROTOCOL_ERROR)),  # pyright: ignore[reportArgumentType]
+    )
+    with pytest.raises(ModelConnectionError) as exc_info:
+        async with model.request_stream([ModelRequest.user_text_prompt('hello')], None, ModelRequestParameters()):
+            pass
+    assert exc_info.value.model_name == 'o3-mini'
+    assert 'peer closed connection' in str(exc_info.value.message)
+    assert isinstance(exc_info.value.__cause__, httpx2.RemoteProtocolError)
+
+
+async def test_chat_stream_timeout_is_mapped_as_timeout(allow_model_requests: None) -> None:
+    model = OpenAIChatModel(
+        'gpt-4o',
+        provider=OpenAIProvider(
+            openai_client=_TransportErrorClient(httpx2.ReadTimeout('timed out'))  # pyright: ignore[reportArgumentType]
+        ),
+    )
+    with pytest.raises(ModelTimeoutError) as exc_info:
+        async with model.request_stream([ModelRequest.user_text_prompt('hello')], None, ModelRequestParameters()):
+            pass
+    assert exc_info.value.model_name == 'gpt-4o'
 
 
 _STREAM_ERROR_SSE_CHUNK = (
