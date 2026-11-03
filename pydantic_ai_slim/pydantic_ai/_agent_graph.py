@@ -2725,17 +2725,17 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         else:
             await self._build_retry_node(ctx, error)
 
-    @staticmethod
     @asynccontextmanager
     async def _empty_agent_stream(
+        self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
         model_request_parameters: models.ModelRequestParameters,
-    ) -> AsyncIterator[result.AgentStream[DepsT, T]]:
+    ) -> AsyncGenerator[result.AgentStream[DepsT, T]]:
         """An agent stream with no events, for a streamed step that ends without a response."""
         empty_sr = CompletedStreamedResponse(
             _messages.ModelResponse(parts=[]), model_request_parameters=model_request_parameters
         )
-        agent_stream = ModelRequestNode._build_agent_stream(ctx, empty_sr, model_request_parameters)
+        agent_stream = self._build_agent_stream(ctx, empty_sr, model_request_parameters)
         try:
             yield agent_stream
         finally:
