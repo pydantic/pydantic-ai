@@ -1,9 +1,10 @@
-"""The opt-in capture in `tests/refactor_capture.py`, run against small in-process pytest sessions."""
+"""The opt-in capture in `tests/refactor_capture.py`, mostly run against small in-process pytest sessions."""
 
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Callable
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TypeAlias
 
@@ -11,10 +12,9 @@ import pytest
 from inline_snapshot import snapshot
 
 import pydantic_ai
-from pydantic_ai.messages import ModelResponseStreamEvent
 from pydantic_ai.models import StreamedResponse
 
-from .refactor_capture import SOURCE_FILE, Capture, compare
+from .refactor_capture import SOURCE_FILE, RefactorCapture, compare, normalized
 
 pytest_plugins = ['pytester']
 
@@ -26,7 +26,8 @@ import asyncio
 import pytest
 
 from pydantic_ai.direct import model_request_stream
-from pydantic_ai.messages import ModelRequest
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart
+from pydantic_ai.models import CompletedStreamedResponse, ModelRequestParameters
 from pydantic_ai.models.function import FunctionModel
 
 
@@ -48,6 +49,19 @@ async def drain(stream_function):
         assert aiter(stream) is aiter(stream)
 
 
+class ReplayedStreamedResponse(CompletedStreamedResponse):
+    def __aiter__(self):
+        return super().__aiter__()
+
+
+async def drain_replayed():
+    stream = ReplayedStreamedResponse(
+        ModelResponse(parts=[TextPart('replayed')]), model_request_parameters=ModelRequestParameters(), replay_events=True
+    )
+    async for _ in stream:
+        pass
+
+
 def test_text():
     asyncio.run(drain(stream_text))
 
@@ -55,6 +69,10 @@ def test_text():
 def test_fails_mid_stream():
     with pytest.raises(RuntimeError, match='provider went away'):
         asyncio.run(drain(stream_then_fail))
+
+
+def test_subclass_defined_after_the_capture_started():
+    asyncio.run(drain_replayed())
 
 
 def test_no_stream():
@@ -70,13 +88,13 @@ def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunCaptur
 
     def run(capture_dir: Path, *args: str, text: str = 'hello') -> pytest.RunResult:
         pytester.makepyfile(test_streams=STREAMS.format(text=text))
-        return pytester.runpytest_inprocess('-p', 'no:cacheprovider', *args, plugins=[Capture(capture_dir)])
+        return pytester.runpytest_inprocess('-p', 'no:cacheprovider', *args, plugins=[RefactorCapture(capture_dir)])
 
     return run
 
 
 def test_capture_records_each_stream_per_test(run: RunCapture, tmp_path: Path):
-    run(tmp_path).assert_outcomes(passed=3)
+    run(tmp_path).assert_outcomes(passed=4)
 
     assert json.loads((tmp_path / SOURCE_FILE).read_text()) == {'pydantic_ai': pydantic_ai.__file__}
     records = [json.loads(line) for line in (tmp_path / 'main.jsonl').read_text().splitlines()]
@@ -85,7 +103,7 @@ def test_capture_records_each_stream_per_test(run: RunCapture, tmp_path: Path):
             record['node'],
             record['stream'],
             record['modules'],
-            len(record['events']),
+            [event['event_kind'] for event in record['events']],
             record.get('error'),
             record['response']['state'],
         )
@@ -96,7 +114,7 @@ def test_capture_records_each_stream_per_test(run: RunCapture, tmp_path: Path):
                 'test_streams.py::test_text',
                 'pydantic_ai.models.function.FunctionStreamedResponse',
                 ['pydantic_ai.models.function'],
-                1,
+                ['part_start', 'final_result', 'part_end'],
                 None,
                 'complete',
             ),
@@ -104,9 +122,17 @@ def test_capture_records_each_stream_per_test(run: RunCapture, tmp_path: Path):
                 'test_streams.py::test_fails_mid_stream',
                 'pydantic_ai.models.function.FunctionStreamedResponse',
                 ['pydantic_ai.models.function'],
-                1,
+                ['part_start', 'final_result'],
                 'RuntimeError: provider went away',
                 'incomplete',
+            ),
+            (
+                'test_streams.py::test_subclass_defined_after_the_capture_started',
+                'test_streams.ReplayedStreamedResponse',
+                ['test_streams'],
+                ['part_start', 'final_result', 'part_end'],
+                None,
+                'complete',
             ),
         ]
     )
@@ -124,28 +150,21 @@ def test_capture_records_each_stream_per_test(run: RunCapture, tmp_path: Path):
     )
 
 
-def test_capture_stops_the_run_when_the_hook_point_changes(
-    run: RunCapture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    """A stream that `__aiter__` no longer reads through `_get_event_iterator` fails the run instead of going unrecorded."""
+def test_capture_stops_the_run_when_it_misses_the_canary_stream(tmp_path: Path):
+    """A canary stream the capture doesn't see fails the run instead of the capture recording nothing.
 
-    def iterate_without_the_hook(stream: StreamedResponse) -> AsyncIterator[ModelResponseStreamEvent]:
-        return type(stream)._get_event_iterator(stream)  # pyright: ignore[reportPrivateUsage]
-
-    monkeypatch.setattr(StreamedResponse, '__aiter__', iterate_without_the_hook)
-
-    result = run(tmp_path)
-
-    assert result.ret == pytest.ExitCode.USAGE_ERROR
-    result.stderr.fnmatch_lines(['*A canary stream iterated through `StreamedResponse.__aiter__` was not recorded*'])
-    assert StreamedResponse.__aiter__ is iterate_without_the_hook
-    assert not list(tmp_path.glob('*.jsonl'))
+    The capture's `__aiter__` wrappers aren't installed, standing in for streams iterated some way they don't reach.
+    """
+    unwrapped = StreamedResponse.__aiter__
+    with pytest.raises(pytest.UsageError, match='was not recorded'):
+        RefactorCapture(tmp_path).check_hook()
+    assert StreamedResponse.__aiter__ is unwrapped
 
 
 def test_capture_refuses_to_append_to_an_earlier_capture(
     run: RunCapture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    run(tmp_path).assert_outcomes(passed=3)
+    run(tmp_path).assert_outcomes(passed=4)
 
     result = run(tmp_path)
     assert result.ret == pytest.ExitCode.USAGE_ERROR
@@ -153,17 +172,19 @@ def test_capture_refuses_to_append_to_an_earlier_capture(
 
     # `pytest-xdist` workers write alongside the controller, which made the check.
     monkeypatch.setenv('PYTEST_XDIST_WORKER', 'gw0')
-    run(tmp_path).assert_outcomes(passed=3)
+    run(tmp_path).assert_outcomes(passed=4)
     assert sorted(path.name for path in tmp_path.glob('*.jsonl')) == ['gw0.jsonl', 'main.jsonl']
 
 
 def test_compare_flags_a_changed_event(run: RunCapture, tmp_path: Path, capsys: pytest.CaptureFixture[str]):
     base, same, changed = tmp_path / 'base', tmp_path / 'same', tmp_path / 'changed'
-    run(base).assert_outcomes(passed=3)
-    run(same).assert_outcomes(passed=3)
-    run(changed, '-k', 'not fails', text='goodbye').assert_outcomes(passed=2, deselected=1)
+    run(base).assert_outcomes(passed=4)
+    run(same).assert_outcomes(passed=4)
+    run(changed, '-k', 'not fails', text='goodbye').assert_outcomes(passed=3, deselected=1)
     capsys.readouterr()
 
+    assert compare(base, tmp_path / 'missing') == 2
+    assert capsys.readouterr().err.startswith('No capture in')
     assert compare(base, same) == 2
     assert capsys.readouterr().err.startswith('Both captures imported `pydantic_ai` from the same file')
 
@@ -174,18 +195,51 @@ def test_compare_flags_a_changed_event(run: RunCapture, tmp_path: Path, capsys: 
     assert compare(base, same) == 0
     assert compare(base, changed) == 1
     assert capsys.readouterr().out == snapshot("""\
-nodes: base 2, head 2
-records: base 2, head 2
-stream events: head 2
+nodes: base 3, head 3
+records: base 3, head 3
+stream events: head 8
 nodes per stream module, head:
   pydantic_ai.models.function: 2
+  test_streams: 1
 only in base: 0, only in head: 0, differing: 0
-nodes: base 2, head 1
-records: base 2, head 1
-stream events: head 1
+nodes: base 3, head 2
+records: base 3, head 2
+stream events: head 6
 nodes per stream module, head:
   pydantic_ai.models.function: 1
+  test_streams: 1
 only in base: 1, only in head: 0, differing: 1
   only in base: test_streams.py::test_fails_mid_stream
   differing: test_streams.py::test_text
 """)
+
+
+def test_normalized_replaces_values_that_change_between_runs():
+    now = datetime.now(UTC)
+    assert normalized(
+        {
+            'aware_now': now,
+            'naive_now': now.replace(tzinfo=None),
+            'recorded': datetime(2024, 1, 1, tzinfo=UTC),
+            'not_a_date': '2024-02-30T00:00:00',
+            'tool_call_id': f'pyd_ai_{"0" * 32}',
+            'uuid': '12345678-1234-5678-1234-567812345678',
+            'repr': object(),
+            'history_digest': '0' * 64,
+            'duration': timedelta(seconds=1.5),
+            'url': 'http://127.0.0.1:8123/v1',
+        }
+    ) == snapshot(
+        {
+            'aware_now': 'NOW',
+            'naive_now': 'NOW',
+            'recorded': '2024-01-01T00:00:00Z',
+            'not_a_date': '2024-02-30T00:00:00',
+            'tool_call_id': 'pyd_ai_ID',
+            'uuid': 'UUID',
+            'repr': '<object object at 0x?>',
+            'history_digest': 'DIGEST',
+            'duration': 'DURATION',
+            'url': 'http://127.0.0.1:PORT/v1',
+        }
+    )

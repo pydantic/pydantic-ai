@@ -114,7 +114,7 @@ def pytest_configure(config: pytest.Config) -> None:
     config.pluginmanager.register(cost_guards, cost_guards.PLUGIN_NAME)
     # Set only for a `tests/refactor_capture.py` run, which its own tests stand in for.
     if capture_dir := os.environ.get(refactor_capture.CAPTURE_DIR_ENV):  # pragma: no cover
-        config.pluginmanager.register(refactor_capture.Capture(Path(capture_dir)))
+        config.pluginmanager.register(refactor_capture.RefactorCapture(Path(capture_dir)))
     config.addinivalue_line(
         'markers',
         'moves_cache_prefix(reason): recorded conversation deliberately moves the cache prefix; reason required',

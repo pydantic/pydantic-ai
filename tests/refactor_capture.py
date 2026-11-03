@@ -1,8 +1,8 @@
 """Record what streamed model responses emit, per test node, to prove a refactor keeps it.
 
-The capture is off unless `REFACTOR_CAPTURE_DIR` is set: only then does `tests/conftest.py` register `Capture`.
-To compare a base commit with the working tree, run this from the repository root, over one or two test nodes that
-stream through each changed line rather than whole test files:
+The capture is off unless `REFACTOR_CAPTURE_DIR` is set: only then does `tests/conftest.py` register
+`RefactorCapture`. To compare a base commit with the working tree, run this from the repository root, over one or two
+test nodes that stream through each changed line rather than whole test files:
 
     uv run python -m tests.refactor_capture "$(git merge-base HEAD upstream/main)" <test nodes>
 
@@ -11,14 +11,17 @@ those sources ahead of the installed ones on `PYTHONPATH` and once without, each
 then compares the two. The tests, this plugin and the environment come from the working tree both times, so the
 library code is the only difference.
 
-Each stream is one JSON line of kind `stream`: the events its `_get_event_iterator` yields, the error that iterator
-raised if any, and the response `get()` builds once the test ends. It hooks in through
-`StreamedResponse.__aiter__`, so a subclass that overrides `__aiter__` without calling it, like the continuation
-composite in `models/_continuation.py`, is recorded only through the streams it iterates. When a capture starts, it
-iterates a canary stream and stops the run if that stream wasn't recorded, so a change to the hook point fails loudly
-instead of recording nothing. Lines are written per `pytest-xdist` worker when each test ends. Generated tool call
-ids, UUIDs, object addresses, timestamps within a day of the capture, history digests (which hash those timestamps),
-attempt durations and local server ports are normalized, so two runs of the same code compare equal.
+Each stream is one JSON line of kind `stream`: the events its `__aiter__` hands the consumer, `PartEndEvent`s and
+`FinalResultEvent`s included, the error iteration raised if any, and the response `get()` builds once the test ends.
+The capture wraps `__aiter__` on `StreamedResponse` and on every subclass that overrides it, whether the subclass is
+defined before the capture starts or after. A stream whose `__aiter__` iterates other streams, like the continuation
+composite in `models/_continuation.py`, is recorded once itself and once for each stream it iterates. When a capture
+starts, it runs an agent over a streamed canary response and stops the run if that stream wasn't recorded, so a
+consumer that stops iterating through `__aiter__` fails loudly instead of recording nothing.
+
+Lines are written per `pytest-xdist` worker when each test ends. Generated tool call ids, UUIDs, object addresses,
+timestamps within a day of the capture, history digests (which hash those timestamps), attempt durations and local
+server ports are normalized, so two runs of the same code compare equal.
 
 The comparison lists the test nodes whose records differ or that only one capture has, and exits non-zero if there
 are any. It refuses two captures that imported `pydantic_ai` from the same file, since the base run then didn't load
@@ -39,7 +42,7 @@ import sys
 import tarfile
 import tempfile
 from collections import Counter, defaultdict
-from collections.abc import AsyncIterator, Generator
+from collections.abc import AsyncIterator, Callable, Generator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -47,10 +50,10 @@ import pytest
 from pydantic_core import to_json
 
 import pydantic_ai
-from pydantic_ai.messages import ModelResponseStreamEvent
-from pydantic_ai.models import ModelRequestParameters, StreamedResponse
-
-from .continuation_utils import ScriptedStreamedResponse, StreamSegment
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage, ModelResponseStreamEvent
+from pydantic_ai.models import StreamedResponse
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 CAPTURE_DIR_ENV = 'REFACTOR_CAPTURE_DIR'
 SOURCE_FILE = 'source.json'
@@ -65,13 +68,15 @@ GENERATED_VALUES = [
 ISO_DATETIME = re.compile(r'"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)"')
 
 
-class Capture:
+class RefactorCapture:
     """Records each stream a test iterates, and appends the records to the capture directory when the test ends."""
 
     def __init__(self, capture_dir: Path) -> None:
         self.capture_dir = capture_dir
         self.node: str | None = None
         self.records: list[tuple[dict[str, object], StreamedResponse]] = []
+        # The recording iterator handed out for each stream, by `id`; `records` keeps the stream alive meanwhile.
+        self._iterators: dict[int, AsyncIterator[ModelResponseStreamEvent]] = {}
         self._monkeypatch = pytest.MonkeyPatch()
 
     def pytest_configure(self) -> None:
@@ -97,38 +102,33 @@ class Capture:
             self.write()
 
     def install(self) -> None:
-        """Wrap each stream's `_get_event_iterator` when its iteration starts."""
-        original_aiter = StreamedResponse.__aiter__
-
-        def recording_aiter(stream: StreamedResponse) -> AsyncIterator[ModelResponseStreamEvent]:
-            if '_get_event_iterator' not in vars(stream):
-                # `__aiter__` calls `self._get_event_iterator()` once, so an instance attribute wraps it for this stream only.
-                setattr(stream, '_get_event_iterator', lambda: self._recorded_events(stream))
-            return original_aiter(stream)
-
-        self._monkeypatch.setattr(StreamedResponse, '__aiter__', recording_aiter)
+        """Wrap `__aiter__` on `StreamedResponse` and every subclass that overrides it, now and when one is defined."""
+        pending: list[type[StreamedResponse]] = [StreamedResponse]
+        while pending:
+            cls = pending.pop()
+            pending.extend(cls.__subclasses__())
+            self._wrap_aiter(cls)
+        self._monkeypatch.setattr(StreamedResponse, '__init_subclass__', classmethod(self._wrap_aiter))
 
     def check_hook(self) -> None:
-        """Stop the run unless a canary stream's events are recorded."""
-        canary = ScriptedStreamedResponse(
-            ModelRequestParameters(),
-            _segment=StreamSegment(
-                texts=['canary'], state='complete', provider_response_id='canary', input_tokens=1, output_tokens=1
-            ),
-        )
+        """Stop the run unless the stream an agent iterates is recorded."""
 
-        async def drain() -> None:
-            async for _ in canary:
-                pass
+        async def stream_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            yield 'canary'
 
-        asyncio.run(drain())
-        recorded = any(stream is canary and record['events'] for record, stream in self.records)
+        async def run() -> None:
+            async with Agent(FunctionModel(stream_function=stream_text)).run_stream('canary') as result:
+                await result.get_output()
+
+        asyncio.run(run())
+        recorded = any(record['events'] for record, _ in self.records)
         self.records.clear()
+        self._iterators.clear()
         if not recorded:
             self._monkeypatch.undo()
             raise pytest.UsageError(
-                'A canary stream iterated through `StreamedResponse.__aiter__` was not recorded, so the capture would '
-                'miss every stream. Update `tests/refactor_capture.py` to the new hook point.'
+                'The stream a canary agent run iterated was not recorded, so the capture would miss streams. '
+                'Update `tests/refactor_capture.py` to the way streams are iterated now.'
             )
 
     def write(self) -> None:
@@ -137,12 +137,29 @@ class Capture:
             worker = os.environ.get('PYTEST_XDIST_WORKER', 'main')
             with open(self.capture_dir / f'{worker}.jsonl', 'a', encoding='utf-8') as f:
                 f.writelines(
-                    json.dumps({**record, 'response': _normalized(stream.get())}) + '\n'
+                    json.dumps({**record, 'response': normalized(stream.get())}) + '\n'
                     for record, stream in self.records
                 )
             self.records.clear()
+            self._iterators.clear()
 
-    def _recorded_events(self, stream: StreamedResponse) -> AsyncIterator[ModelResponseStreamEvent]:
+    def _wrap_aiter(self, cls: type[StreamedResponse]) -> None:
+        if '__aiter__' not in vars(cls):
+            return
+        original: Callable[[StreamedResponse], AsyncIterator[ModelResponseStreamEvent]] = vars(cls)['__aiter__']
+
+        def recording_aiter(stream: StreamedResponse) -> AsyncIterator[ModelResponseStreamEvent]:
+            iterator = original(stream)
+            # An override that calls `super().__aiter__()` gets back the iterator that call already recorded.
+            if id(stream) not in self._iterators:
+                self._iterators[id(stream)] = self._recorded(stream, iterator)
+            return self._iterators[id(stream)]
+
+        self._monkeypatch.setattr(cls, '__aiter__', recording_aiter)
+
+    def _recorded(
+        self, stream: StreamedResponse, iterator: AsyncIterator[ModelResponseStreamEvent]
+    ) -> AsyncIterator[ModelResponseStreamEvent]:
         stream_type = type(stream)
         events: list[object] = []
         record: dict[str, object] = {
@@ -157,19 +174,22 @@ class Capture:
         }
         self.records.append((record, stream))
 
+        # Closing this doesn't close `iterator`: every `__aiter__` in the library returns a guard that does no cleanup
+        # on close, so only its garbage collection moves.
         async def recorded() -> AsyncIterator[ModelResponseStreamEvent]:
             try:
-                async for event in stream_type._get_event_iterator(stream):  # pyright: ignore[reportPrivateUsage]
-                    events.append(_normalized(event))
+                async for event in iterator:
+                    events.append(normalized(event))
                     yield event
             except Exception as e:
-                record['error'] = _normalized(f'{type(e).__name__}: {e}')
+                record['error'] = normalized(f'{type(e).__name__}: {e}')
                 raise
 
         return recorded()
 
 
-def _normalized(value: object) -> object:
+def normalized(value: object) -> object:
+    """`value` as JSON-compatible data, with the values that change from run to run replaced by placeholders."""
     now = datetime.now(UTC)
 
     def generated_timestamp(match: re.Match[str]) -> str:
@@ -198,6 +218,11 @@ def _load(capture_dir: Path) -> dict[str, list[str]]:
 
 def compare(base_dir: Path, head_dir: Path) -> int:
     """Print how a head capture differs from a base capture. Return 1 if it does, 2 if they can't be compared."""
+    if missing := [d for d in (base_dir, head_dir) if not (d / SOURCE_FILE).exists()]:
+        print(
+            f'No capture in {", ".join(map(str, missing))}; its pytest run stopped before it started.', file=sys.stderr
+        )
+        return 2
     base_source, head_source = (json.loads((d / SOURCE_FILE).read_text()) for d in (base_dir, head_dir))
     if base_source == head_source:
         print(f'Both captures imported `pydantic_ai` from the same file: {base_source}', file=sys.stderr)
