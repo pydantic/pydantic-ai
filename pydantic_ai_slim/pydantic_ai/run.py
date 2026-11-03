@@ -151,6 +151,7 @@ def _filtered_value(value: Any, spec: Any, *, keep: bool) -> Any:
     """
     if isinstance(spec, Mapping):
         sub_specs = cast('Mapping[Any, Any]', spec)
+        # An empty mapping names no keys, but `all()` alone would accept it as an empty key set.
         if not (sub_specs and all(sub_spec is True for sub_spec in sub_specs.values())):
             return value
         spec = set(sub_specs)

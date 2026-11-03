@@ -218,7 +218,10 @@ async def test_init_with_http_client_replaces_existing_gateway_hook():
 
 
 @pytest.mark.vcr(ignore_hosts=['*'])
-async def test_gateway_hook_only_changes_requests_to_the_gateway():
+@pytest.mark.parametrize('provider_name', ['openai', 'google-cloud', 'anthropic'])
+async def test_gateway_hook_only_changes_requests_to_the_gateway(
+    provider_name: Literal['openai', 'google-cloud', 'anthropic'],
+):
     # Not a cassette test: a caller's client can also send requests to other hosts, and follow a Gateway redirect
     # to one, which cassette playback of Gateway traffic would never exercise. `ignore_hosts` lets the requests
     # reach the mock transport instead of the module's cassette.
@@ -231,7 +234,7 @@ async def test_gateway_hook_only_changes_requests_to_the_gateway():
         return httpx2.Response(200)
 
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler), follow_redirects=True) as http_client:
-        gateway_provider('openai', http_client=http_client, api_key='gw-key', base_url=GATEWAY_BASE_URL)
+        gateway_provider(provider_name, http_client=http_client, api_key='gw-key', base_url=GATEWAY_BASE_URL)
         with TracerProvider().get_tracer(__name__).start_as_current_span('caller'):
             await http_client.get('https://example.com/data')
             await http_client.get('http://gateway.pydantic.dev/proxy')
