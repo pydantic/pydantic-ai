@@ -7,11 +7,16 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness._workspace import innermost_backend
-from pydantic_ai_harness._workspace_provider import check_env, check_integer, check_working_dir
+from pydantic_ai_harness._workspace_provider import (
+    check_env,
+    check_integer,
+    check_provider,
+    check_working_dir,
+    reject_defer_loading,
+)
 from pydantic_ai_harness.opensandbox_sandbox._backend import PROVIDER, OpenSandboxBackend, destroy_sandbox
 
 if TYPE_CHECKING:
@@ -93,12 +98,7 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
     top. Nothing is read from the host."""
 
     def __post_init__(self) -> None:
-        if self.defer_loading:
-            # Core picks the run's workspace from the always-on capabilities only.
-            raise UserError(
-                '`OpenSandbox` does not support `defer_loading=True`: '
-                'the workspace is selected before deferred capabilities load.'
-            )
+        reject_defer_loading('OpenSandbox', self.defer_loading)
         # Checked here rather than at the first workspace operation, so a bad value fails where it is written.
         check_working_dir(self.working_dir)
         check_integer('sandbox_timeout', self.sandbox_timeout, optional=True)
@@ -147,8 +147,7 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
 
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Delete a sandbox by ID, files included; one that no longer exists returns quietly."""
-        if ref.provider != PROVIDER:
-            raise ValueError(f'unsupported workspace provider {ref.provider!r}; expected {PROVIDER!r}')
+        check_provider(ref, PROVIDER)
         await destroy_sandbox(ref.id, self.connection)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:

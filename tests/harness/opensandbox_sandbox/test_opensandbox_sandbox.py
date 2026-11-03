@@ -88,23 +88,29 @@ class TestConfiguration:
         assert 'secret-server-key' not in repr(capability)
 
     @pytest.mark.parametrize(
-        ('kwargs', 'message'),
+        ('kwargs', 'error_type', 'message'),
         [
-            ({'defer_loading': True}, 'does not support `defer_loading=True`'),
-            ({'working_dir': 'relative'}, 'working_dir must be an absolute POSIX path'),
-            ({'sandbox_timeout': 0}, 'sandbox_timeout must be an integer of at least 1'),
-            ({'env': {'A=B': 'x'}}, 'env keys must be non-empty without `=`'),
+            ({'defer_loading': True}, UserError, 'does not support `defer_loading=True`'),
+            ({'working_dir': 'relative'}, UserError, 'working_dir must be an absolute POSIX path'),
+            ({'sandbox_timeout': 0}, UserError, 'sandbox_timeout must be an integer of at least 1'),
+            ({'env': {'A=B': 'x'}}, ValueError, 'env keys must be non-empty without `=`'),
         ],
     )
-    def test_bad_values_fail_where_they_are_written(self, kwargs: dict[str, Any], message: str) -> None:
-        with pytest.raises((UserError, ValueError), match=message):
+    def test_bad_values_fail_where_they_are_written(
+        self, kwargs: dict[str, Any], error_type: type[Exception], message: str
+    ) -> None:
+        with pytest.raises(error_type, match=message):
             OpenSandbox[None](image='fake-image', **kwargs)
 
-    async def test_a_ref_from_another_provider_is_left_to_other_capabilities(self, server: FakeOpenSandbox) -> None:
+    def test_a_ref_from_another_provider_is_left_to_other_capabilities(self, server: FakeOpenSandbox) -> None:
         capability = OpenSandbox[None](image='fake-image', connection=server.connection)
         assert capability.get_workspace(_ctx(), ref=WorkspaceRef(provider='docker', id='x')) is None
+
+    async def test_destroy_rejects_another_provider_before_contacting_the_server(self, server: FakeOpenSandbox) -> None:
+        capability = OpenSandbox[None](connection=server.connection)
         with pytest.raises(ValueError, match="expected 'opensandbox'"):
             await capability.destroy(WorkspaceRef(provider='docker', id='x'))
+        assert server.requests == []
 
     async def test_backend_attaches_lazily_with_the_capabilitys_settings(
         self, server: FakeOpenSandbox, working_dir: str

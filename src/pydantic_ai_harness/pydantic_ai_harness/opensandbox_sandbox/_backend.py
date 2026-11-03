@@ -49,6 +49,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness._workspace_provider import (
     check_env,
+    check_provider,
     check_timeout,
     command_argv,
     require_asyncio,
@@ -215,8 +216,8 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
     ) -> None:
         if (image is None) == (ref is None):
             raise ValueError('pass exactly one of `image`, to create a sandbox, or `ref`, to attach to one')
-        if ref is not None and ref.provider != PROVIDER:
-            raise ValueError(f'unsupported workspace provider {ref.provider!r}; expected {PROVIDER!r}')
+        if ref is not None:
+            check_provider(ref, PROVIDER)
         if working_dir is not None and not posixpath.isabs(working_dir):
             raise ValueError(f'working_dir must be an absolute path in the sandbox, got {working_dir!r}')
         if sandbox_timeout is not None and (type(sandbox_timeout) is not int or sandbox_timeout < 1):
