@@ -577,37 +577,37 @@ def _pending_message_record(pending: PendingMessage) -> list[ModelRequestPart] |
 
 
 class _RealtimePendingMessages(PendingMessageQueue):
-    """A `RunContext.enqueue` queue that validates content and wakes the live session for delivery."""
+    """A `RunContext.enqueue` queue that validates content and wakes the live session when queued content is added or changed."""
 
     def __init__(self) -> None:
         super().__init__()
-        self._on_append: Callable[[PendingMessagePriority], None] | None = None
+        self._on_change: Callable[[PendingMessagePriority], None] | None = None
 
-    def bind(self, on_append: Callable[[PendingMessagePriority], None]) -> None:
-        self._on_append = on_append
+    def bind(self, on_change: Callable[[PendingMessagePriority], None]) -> None:
+        self._on_change = on_change
 
     def unbind(self) -> None:
         """Drop the callback, which holds a bound method back to the session."""
-        self._on_append = None
+        self._on_change = None
 
     def append(self, pending: PendingMessage) -> None:
         _pending_message_text(pending)
         super().append(pending)
-        if self._on_append is not None:
-            self._on_append(pending.priority)
+        if self._on_change is not None:
+            self._on_change(pending.priority)
 
     def withdraw(self, enqueue_id: str) -> bool:
         withdrawn = super().withdraw(enqueue_id)
-        if withdrawn and self._on_append is not None:
+        if withdrawn and self._on_change is not None:
             # A `when_idle` drain backs off while an `asap` item is queued, so removing one may unblock it.
-            self._on_append('when_idle')
+            self._on_change('when_idle')
         return withdrawn
 
     def reprioritize(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
         changed = super().reprioritize(enqueue_id, priority)
-        if changed and self._on_append is not None:
+        if changed and self._on_change is not None:
             # Only an append starts a drain, so a promoted item needs the same wake-up.
-            self._on_append(priority)
+            self._on_change(priority)
         return changed
 
     def has_priority(self, priority: PendingMessagePriority) -> bool:

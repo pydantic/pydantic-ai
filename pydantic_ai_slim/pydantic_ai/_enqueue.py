@@ -239,8 +239,13 @@ class PendingMessageQueue(list[PendingMessage]):
             return self._pop_priority(priority)
 
     def withdraw(self, enqueue_id: str) -> bool:
-        """Remove the queued message `enqueue_id`, or return `False` if it isn't queued (any more)."""
+        """Remove the queued message `enqueue_id`, or return `False` if it isn't queued (any more).
+
+        A closed queue can hold messages a run left early didn't deliver; they're out of reach too.
+        """
         with self._lock:
+            if self._closed:
+                return False
             for index, pending in enumerate(self):
                 if pending.enqueue_id == enqueue_id:
                     del self[index]
@@ -250,12 +255,11 @@ class PendingMessageQueue(list[PendingMessage]):
     def reprioritize(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
         """Give the queued message `enqueue_id` a new priority, keeping its place, or return `False` if it isn't queued."""
         with self._lock:
+            if self._closed:
+                return False
             for pending in self:
                 if pending.enqueue_id == enqueue_id:
                     pending.priority = priority
-                    if priority != 'asap':
-                        # Only `asap` content goes next to a tool call's return, as in `PendingMessage.from_content`.
-                        pending._tool_call = None  # pyright: ignore[reportPrivateUsage]
                     return True
             return False
 
@@ -328,16 +332,30 @@ class EnqueueGuard(list[PendingMessage]):
 
     A durable unit's recorded output is replayed on recovery (DBOS), cache hit (Prefect), or
     across the activity boundary (Temporal) without re-running the code, so messages enqueued
-    inside it would be silently dropped, and changes to queued messages lost; enqueueing raises an
-    explanatory `UserError` instead, and so does changing a queued message.
+    inside it would be silently dropped; enqueueing raises an explanatory `UserError` instead.
+    `RunContext.withdraw` and `RunContext.reprioritize` raise `change_error` for the same reason.
     """
 
-    def __init__(self, message: str):
+    def __init__(self, unit_noun: str, container_noun: str):
+        """`unit_noun` is the engine's durable unit (`'activity'`/`'step'`/`'task'`) and `container_noun` its durable container (`'workflow'`/`'flow'`), so every engine raises the same explanation in its own vocabulary."""
         super().__init__()
-        self.message = message
+        self._unit_noun = unit_noun
+        self._container_noun = container_noun
 
     def append(self, pending: PendingMessage) -> None:
-        raise UserError(self.message)
+        raise UserError(
+            f'`ctx.enqueue()` is not supported inside a durable {self._unit_noun}: the durable runtime replays '
+            f"the {self._unit_noun}'s recorded result without re-running your code, so the enqueued messages "
+            f'would be dropped. Enqueue messages from {self._container_noun}-level code instead.'
+        )
+
+    def change_error(self, method: str) -> UserError:
+        """The error for `ctx.<method>()`, a change to a queued message, inside the durable unit."""
+        return UserError(
+            f'`ctx.{method}()` is not supported inside a durable {self._unit_noun}: the durable runtime replays '
+            f"the {self._unit_noun}'s recorded result without re-running your code, so the change to the queued "
+            f'message would be lost. Change queued messages from {self._container_noun}-level code instead.'
+        )
 
 
 def stamped_messages(

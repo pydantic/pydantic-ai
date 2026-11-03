@@ -539,20 +539,6 @@ class DispatchSnapshots:
     _tool_names_by_kind: dict[str, str] = field(repr=False)
 
 
-def enqueue_not_supported_message(unit_noun: str, container_noun: str) -> str:
-    """The shared `ctx.enqueue()` error, worded for one engine's durable unit and container.
-
-    `unit_noun` is the engine's durable unit (`'activity'`/`'step'`/`'task'`) and
-    `container_noun` is its durable container (`'workflow'`/`'flow'`), so every engine
-    raises the same explanation with its own vocabulary.
-    """
-    return (
-        f'`ctx.enqueue()` is not supported inside a durable {unit_noun}: the durable runtime replays '
-        f"the {unit_noun}'s recorded result without re-running your code, so the enqueued messages "
-        f'would be dropped. Enqueue messages from {container_noun}-level code instead.'
-    )
-
-
 class CancelGuard(RunCancellation):
     """Replaces the run's live cancellation controller inside a durable unit.
 
@@ -592,7 +578,7 @@ def guard_run_context(ctx: RunContext[AgentDepsT], *, unit_noun: str, container_
     """
     return replace(
         ctx,
-        pending_messages=EnqueueGuard(enqueue_not_supported_message(unit_noun, container_noun)),
+        pending_messages=EnqueueGuard(unit_noun, container_noun),
         _cancellation=CancelGuard(cancel_not_supported_message(unit_noun, container_noun)),
     )
 

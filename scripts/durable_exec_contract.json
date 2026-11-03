@@ -106,7 +106,7 @@
     }
   },
   "pydantic_ai_slim/pydantic_ai/_enqueue.py": {
-    "PendingMessage": {
+    "EnqueueGuard": {
       "engines": [
         "durable_exec"
       ],
@@ -114,6 +114,7 @@
         "import"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::<module>"
       ]
     }

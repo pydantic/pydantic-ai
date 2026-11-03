@@ -11,7 +11,7 @@ from contextvars import ContextVar
 from dataclasses import field
 from datetime import datetime
 from functools import wraps
-from typing import TYPE_CHECKING, Any, Generic, TypeAlias, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, overload
 
 import anyio
 from opentelemetry.trace import NoOpTracer, Tracer
@@ -1063,9 +1063,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
         The message keeps its place among queued messages and its `enqueue_id`, so the
         [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] for its delivery still
-        carries that ID. Promoting it to `'asap'` delivers it at the next model request, in its own
-        [`ModelRequest`][pydantic_ai.messages.ModelRequest]. Demoting content enqueued during a tool call
-        to `'when_idle'` means it's no longer put next to that call's result.
+        carries that ID. A message enqueued at `'when_idle'` and promoted to `'asap'` is delivered at the
+        next model request, in its own [`ModelRequest`][pydantic_ai.messages.ModelRequest]. Content
+        enqueued during a tool call and demoted to `'when_idle'` is delivered like other `'when_idle'`
+        content, as its own request, not next to that call's result.
 
         Args:
             enqueue_id: The ID `enqueue` returned.
@@ -1081,10 +1082,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
         """
         return self._live_queue('reprioritize').reprioritize(enqueue_id, priority)
 
-    def _live_queue(self, method: str) -> PendingMessageQueue:
+    def _live_queue(self, method: Literal['withdraw', 'reprioritize']) -> PendingMessageQueue:
         queue = self.pending_messages
         if isinstance(queue, EnqueueGuard):
-            raise UserError(queue.message)
+            raise queue.change_error(method)
         if not isinstance(queue, PendingMessageQueue):
             raise UserError(
                 f'`{method}` is only available during an agent run (from tools, capability hooks, or '

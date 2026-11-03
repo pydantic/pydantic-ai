@@ -2447,6 +2447,28 @@ async def test_agent_run_withdraw_removes_only_that_message():
         assert agent_run.reprioritize(second, 'asap') is False
 
 
+async def test_reprioritized_message_keeps_its_place():
+    """A promoted message is delivered ahead of `'asap'` messages queued after it, as it keeps its place."""
+    agent = Agent(TestModel())
+
+    async with agent.iter('Hello') as agent_run:
+        promoted = agent_run.enqueue('queued first', priority='when_idle')
+        assert promoted is not None
+        assert agent_run.enqueue('queued second') is not None
+        assert agent_run.reprioritize(promoted, 'asap') is True
+        async for _ in agent_run:
+            pass
+
+    assert agent_run.result is not None
+    delivered = [
+        part.content
+        for message in agent_run.result.all_messages()
+        for part in message.parts
+        if isinstance(part, UserPromptPart) and part.content != 'Hello'
+    ]
+    assert delivered == ['queued first', 'queued second']
+
+
 async def test_withdrawn_message_never_reaches_the_model():
     """A withdrawn `when_idle` message isn't delivered, so it no longer keeps the run from ending."""
     seen: list[list[ModelMessage]] = []
@@ -2637,15 +2659,20 @@ async def test_run_context_withdraw_and_demote_from_a_tool():
     )
 
 
-@pytest.mark.parametrize('end', ['delivered', 'run-ended'])
+@pytest.mark.parametrize('end', ['delivered', 'run-ended', 'early-exit'])
 async def test_withdraw_and_reprioritize_return_false_once_no_longer_queued(end: str):
-    """Both return `False` for a delivered message, and after the run ends, instead of raising like `enqueue`."""
+    """Both return `False` for a delivered message, and after the run ends, instead of raising like `enqueue`.
+
+    A run left early keeps undelivered messages in its closed queue; they can't be delivered any more either.
+    """
     agent = Agent(TestModel())
 
     async with agent.iter('Hello') as agent_run:
-        enqueue_id = agent_run.enqueue('steer')
+        enqueue_id = agent_run.enqueue('steer', priority='when_idle' if end == 'early-exit' else 'asap')
         assert enqueue_id is not None
-        if end == 'delivered':
+        if end == 'early-exit':
+            pass
+        elif end == 'delivered':
             node = agent_run.next_node
             while not isinstance(node, End) and not Agent.is_call_tools_node(node):
                 node = await agent_run.next(node)
@@ -2667,9 +2694,18 @@ def test_queue_change_does_not_race_pending_message_drain(method: str):
     through the public API.
     """
     drain_started = threading.Event()
+    change_started = threading.Event()
     release_drain = threading.Event()
 
     class BlockingQueue(PendingMessageQueue):
+        def withdraw(self, enqueue_id: str) -> bool:
+            change_started.set()
+            return super().withdraw(enqueue_id)
+
+        def reprioritize(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
+            change_started.set()
+            return super().reprioritize(enqueue_id, priority)
+
         def _pop_priority(self, priority: PendingMessagePriority) -> list[PendingMessage]:
             drain_started.set()
             assert release_drain.wait(timeout=5)
@@ -2687,6 +2723,7 @@ def test_queue_change_does_not_race_pending_message_drain(method: str):
         drain_future = executor.submit(queue.pop_priority, 'asap')
         assert drain_started.wait(timeout=5)
         change_future = executor.submit(change)
+        assert change_started.wait(timeout=5)
         assert not change_future.done()
         release_drain.set()
         assert [pending.enqueue_id for pending in drain_future.result(timeout=5)] == [enqueue_id]
@@ -2699,7 +2736,10 @@ def test_queue_change_does_not_race_pending_message_drain(method: str):
     [
         (None, 'only available during an agent run'),
         ([], 'only available during an agent run'),
-        (EnqueueGuard('enqueued messages would be dropped'), 'enqueued messages would be dropped'),
+        (
+            EnqueueGuard('activity', 'workflow'),
+            r'is not supported inside a durable activity.*change to the queued message would be lost',
+        ),
     ],
     ids=['no-queue', 'plain-list', 'durable-unit'],
 )
@@ -2713,8 +2753,10 @@ def test_run_context_queue_changes_need_a_live_queue(
     """
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), pending_messages=pending_messages)
 
-    with pytest.raises(UserError, match=match):
+    with pytest.raises(UserError, match=match) as exc_info:
         if method == 'withdraw':
             ctx.withdraw('some-id')
         else:
             ctx.reprioritize('some-id', 'asap')
+    # The error names the method that was called.
+    assert f'`{method}`' in str(exc_info.value) or f'`ctx.{method}()`' in str(exc_info.value)

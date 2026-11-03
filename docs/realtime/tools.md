@@ -248,9 +248,6 @@ deliver an out-of-band watchdog instruction:
 
 Delivery is reported as an [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] on
 the session's event stream, matching [standard runs](../message-history.md#injecting-messages-mid-run).
-Until it's delivered, queued content can be [withdrawn or reprioritized](../message-history.md#withdrawing-or-reprioritizing-a-queued-message)
-by its `enqueue_id`, with [`RealtimeSession.withdraw()`][pydantic_ai.realtime.RealtimeSession.withdraw] and
-[`RealtimeSession.reprioritize()`][pydantic_ai.realtime.RealtimeSession.reprioritize].
 
 ```python
 import asyncio
@@ -290,6 +287,10 @@ use [`send(..., respond=False)`](turns.md#text-turns) instead. Delivered turns w
 [injecting messages mid-run](../message-history.md#injecting-messages-mid-run). A message of user
 prompt parts that holds `TextContent` is recorded as those parts, so their metadata, which isn't sent
 to the model, stays in history for the code that recognizes it, such as a background task's report.
+
+Until it's delivered, queued content can be [withdrawn or reprioritized](../message-history.md#withdrawing-or-reprioritizing-a-queued-message)
+by its `enqueue_id`, with [`RealtimeSession.withdraw()`][pydantic_ai.realtime.RealtimeSession.withdraw] and
+[`RealtimeSession.reprioritize()`][pydantic_ai.realtime.RealtimeSession.reprioritize].
 
 `enqueue()` does not replace `send()`: it waits for the response in flight to finish, while
 [`send()`][pydantic_ai.realtime.RealtimeSession.send] delivers immediately, even while a tool call or

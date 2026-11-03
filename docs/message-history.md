@@ -1045,6 +1045,17 @@ you drive the run, so [`Agent.run`][pydantic_ai.agent.AbstractAgent.run],
 loop all deliver enqueued messages. A `wrap_model_request` hook that short-circuits without
 calling its handler skips `before_model_request`, so it also skips that request-time drain.
 
+!!! info "Limitations"
+    - Inside a [Temporal](durable_execution/temporal.md) workflow, tools run in
+      activities and don't share state with the workflow, so `ctx.enqueue` from a
+      tool doesn't currently propagate back to the run. Enqueue from the workflow
+      context (e.g. via `AgentRun.enqueue`) instead.
+    - Each end-of-run redirect opens a new model request. If something keeps
+      enqueueing on every step (e.g. a tool that always enqueues, or a
+      system-prompt callback that re-enqueues on each reinjection), the run will
+      loop indefinitely. Set [`UsageLimits`][pydantic_ai.usage.UsageLimits] on the
+      run as a safety net.
+
 ### Withdrawing or reprioritizing a queued message
 
 Until it's delivered, a queued message can be changed by its `enqueue_id`.
@@ -1063,30 +1074,34 @@ agent = Agent('{{ anthropic:large }}')
 
 async def main():
     async with agent.iter('Refactor the billing module') as agent_run:
+        # Messages the user typed while the agent was working.
         follow_up = agent_run.enqueue('Then update the changelog.', priority='when_idle')
         typo = agent_run.enqueue('Also rename `foo`', priority='when_idle')
         assert follow_up is not None and typo is not None
 
-        # The user pressed "send now" on one message and "remove" on the other.
-        agent_run.reprioritize(follow_up, 'asap')
-        agent_run.withdraw(typo)
-
         node = agent_run.next_node
         while not isinstance(node, End):
+            if Agent.is_call_tools_node(node) and typo is not None:
+                # The user pressed "send now" on one message and "remove" on the other.
+                agent_run.reprioritize(follow_up, 'asap')
+                if not agent_run.withdraw(typo):
+                    print('Too late: it was already sent.')
+                typo = None
             node = await agent_run.next(node)
 ```
 
 Both return `False` once the message is no longer queued: it was delivered, it was already withdrawn,
 or the run has ended. That's not an error, as a click can race with the delivery: the check and the
-change happen under the same lock as delivery, so exactly one of them wins, and a UI can show the
-message as sent when it gets `False`. A withdrawn message gets no
-[`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent]; a reprioritized one is
-announced under its original `enqueue_id` when it's delivered.
+change happen under the same lock as delivery, so exactly one of them wins. To tell the user the
+message was sent, go by the [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent]
+carrying its `enqueue_id`, not by `False`, which also covers a second withdrawal of the same message.
+A withdrawn message gets no such event; a reprioritized one is announced under its original
+`enqueue_id` when it's delivered.
 
-A promoted message goes into the next model request as its own
+A message enqueued at `'when_idle'` and promoted goes into the next model request as its own
 [`ModelRequest`][pydantic_ai.messages.ModelRequest], after any `'asap'` messages queued before it.
-Content a tool enqueued at `'asap'` and then demoted to `'when_idle'` is no longer put next to that
-tool's result. Tools and capability hooks can do the same with
+Content a tool enqueued at `'asap'` and then demoted to `'when_idle'` is delivered like other
+`'when_idle'` content, not next to that tool's result. Tools and capability hooks can do the same with
 [`RunContext.withdraw`][pydantic_ai.tools.RunContext.withdraw] and
 [`RunContext.reprioritize`][pydantic_ai.tools.RunContext.reprioritize], and code driving a realtime
 session with [`RealtimeSession.withdraw`][pydantic_ai.realtime.RealtimeSession.withdraw] and
@@ -1094,17 +1109,6 @@ session with [`RealtimeSession.withdraw`][pydantic_ai.realtime.RealtimeSession.w
 [durable execution](durable_execution/overview.md) unit, both raise
 [`UserError`][pydantic_ai.exceptions.UserError], like `enqueue`, since the change would be lost on
 replay.
-
-!!! info "Limitations"
-    - Inside a [Temporal](durable_execution/temporal.md) workflow, tools run in
-      activities and don't share state with the workflow, so `ctx.enqueue` from a
-      tool doesn't currently propagate back to the run. Enqueue from the workflow
-      context (e.g. via `AgentRun.enqueue`) instead.
-    - Each end-of-run redirect opens a new model request. If something keeps
-      enqueueing on every step (e.g. a tool that always enqueues, or a
-      system-prompt callback that re-enqueues on each reinjection), the run will
-      loop indefinitely. Set [`UsageLimits`][pydantic_ai.usage.UsageLimits] on the
-      run as a safety net.
 
 ## Processing Message History
 
