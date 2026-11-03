@@ -1686,7 +1686,7 @@ async def test_openrouter_limit_cache_points_counts_mid_conversation_system_mess
     survive the trim in the request body.
     """
     client = _done_mock_client()
-    model = OpenRouterModel('anthropic/claude-sonnet-5.5', provider=OpenRouterProvider(openai_client=client))
+    model = OpenRouterModel('anthropic/claude-opus-5.5', provider=OpenRouterProvider(openai_client=client))
     agent = Agent(model, instructions='You are a helpful assistant.')
 
     @agent.tool_plain

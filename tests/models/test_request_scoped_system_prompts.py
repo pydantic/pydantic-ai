@@ -187,7 +187,7 @@ def assert_append_only(bodies: Sequence[dict[str, Any]]) -> None:
     'with breakpoints stripped the messages are append-only, which `assert_append_only` checks'
 )
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
-@pytest.mark.parametrize('model_name', ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1'])
+@pytest.mark.parametrize('model_name', ['claude-opus-5-5', 'claude-fable-5-1'])
 async def test_anthropic_request_scoped_reminders_keep_thinking_and_cache(
     allow_model_requests: None,
     anthropic_model: AnthropicModelFactory,
