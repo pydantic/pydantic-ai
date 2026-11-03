@@ -21,8 +21,10 @@ from __future__ import annotations
 
 import asyncio
 import codecs
+import email.parser
 import json
 import os
+import shutil
 import signal
 import time
 import uuid
@@ -253,6 +255,22 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
                 if sandbox.state != 'Running':
                     raise httpx.ConnectError('connection refused')
                 return await self._command(sandbox, json.loads(request.content))
+            case ['files', 'info']:
+                return self._files_info(request)
+            case ['files', 'download']:
+                return self._files_download(request)
+            case ['files', 'upload']:
+                return await self._files_upload(request)
+            case ['files', 'mv']:
+                return self._files_mv(request)
+            case ['files', 'permissions']:
+                return self._files_permissions(request)
+            case ['files']:
+                return self._files_delete(request)
+            case ['directories', 'list']:
+                return self._files_list(request)
+            case ['directories']:
+                return self._directories(request)
             # A request the backend never makes.
             case _:  # pragma: no cover
                 raise AssertionError(f'unexpected execd request {request.url.path}')
@@ -282,6 +300,127 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
             headers={'content-type': 'text/event-stream'},
             stream=_EventStream(self, sandbox, execution_id, process, queue),
         )
+
+    def _entry_info(self, path: str) -> dict[str, Any] | None:
+        """execd `get_files_info`: symlinks are not followed, missing paths just omit the key."""
+        try:
+            st = os.lstat(path)
+        except OSError:
+            return None
+        kind = st.st_mode & 0o170000
+        # Unix file-type masks: symlink, directory, FIFO, regular file.
+        if kind == 0o120000:
+            entry_type = 'symlink'
+        elif kind == 0o040000:
+            entry_type = 'directory'
+        elif kind == 0o010000:
+            entry_type = 'other'
+        else:
+            entry_type = 'file'
+        return {
+            'path': path,
+            'type': entry_type,
+            'mode': int(f'{st.st_mode & 0o777:o}'),
+            'size': st.st_size,
+            'modified_at': datetime.fromtimestamp(st.st_mtime, tz=UTC).isoformat(),
+            'created_at': datetime.fromtimestamp(st.st_ctime, tz=UTC).isoformat(),
+            'owner': str(st.st_uid),
+            'group': str(st.st_gid),
+        }
+
+    def _files_info(self, request: httpx.Request) -> httpx.Response:
+        infos = {}
+        for path in request.url.params.get_list('path'):
+            info = self._entry_info(path)
+            if info is not None:
+                infos[path] = info
+        return httpx.Response(200, json=infos)
+
+    def _files_download(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.params['path']
+        info = self._entry_info(path)
+        if info is None:
+            return _error(404, 'NOT_FOUND', f'no such file: {path}')
+        if info['type'] == 'directory':
+            # execd answers a download of a directory with a 500.
+            return _error(500, 'INTERNAL_ERROR', f'cannot read a directory: {path}')
+        with open(path, 'rb') as file:
+            file.seek(
+                int(range_start[6:].split('-')[0]) if (range_start := request.headers.get('range', 'bytes=0-')) else 0
+            )
+            data = file.read()
+        return httpx.Response(200, content=data, headers={'accept-ranges': 'bytes'})
+
+    async def _files_upload(self, request: httpx.Request) -> httpx.Response:
+        # The SDK's direct-to-execd upload streams an async-generator body, so the request can only be read
+        # asynchronously. Each entry arrives as two parts: a `metadata` JSON part, then the `file` part.
+        ctype = request.headers.get('content-type', '')
+        if not ctype.startswith('multipart/form-data'):  # pragma: no cover
+            raise AssertionError(f'unexpected /files/upload content-type {ctype!r}')
+        body = await request.aread()
+        message = email.parser.BytesParser().parsebytes(b'Content-Type: ' + ctype.encode() + b'\r\n\r\n' + body)
+        parts: list[tuple[str, bytes]] = []
+        for part in message.walk():
+            if part.is_multipart():
+                continue
+            name = str(part.get_param('name', header='content-disposition'))
+            raw = part.get_payload(decode=True)
+            parts.append((name, raw if isinstance(raw, bytes) else b''))
+        # execd applies each entry's mode to the target, replacing any previous one; the backend preserves an
+        # existing file's mode by passing it back.
+        for metadata_part, file_part in zip(parts[::2], parts[1::2], strict=True):
+            metadata = json.loads(metadata_part[1])
+            path, mode = str(metadata['path']), int(str(metadata.get('mode', 755)), 8)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, 'wb') as file:
+                file.write(file_part[1])
+            os.chmod(path, mode)
+        return _json(200)
+
+    def _files_list(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.params['path']
+        info = self._entry_info(path)
+        if info is None:
+            return _error(404, 'NOT_FOUND', f'no such directory: {path}')
+        if info['type'] != 'directory':
+            # execd refuses to list a directory reached through a symlink.
+            return _error(500, 'INTERNAL_ERROR', f'not a directory: {path}')
+        entries: list[dict[str, Any]] = []
+        for child in sorted(os.listdir(path)):
+            child_info = self._entry_info(os.path.join(path, child))
+            if child_info is not None:
+                entries.append(child_info)
+        return httpx.Response(200, json=entries)
+
+    def _files_mv(self, request: httpx.Request) -> httpx.Response:
+        for entry in json.loads(request.content):
+            src = entry.get('src') or entry.get('source')
+            dest = entry.get('dest') or entry.get('destination')
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            os.replace(src, dest)
+        return _json(200)
+
+    def _files_permissions(self, request: httpx.Request) -> httpx.Response:
+        for path, spec in json.loads(request.content).items():
+            os.chmod(path, int(str(spec['mode']), 8))
+        return _json(200)
+
+    def _files_delete(self, request: httpx.Request) -> httpx.Response:
+        for path in request.url.params.get_list('path'):
+            # A missing path deletes without error; a directory must go through delete_directories.
+            if os.path.lexists(path) and not (os.path.isdir(path) and not os.path.islink(path)):
+                os.remove(path)
+        return _json(200)
+
+    def _directories(self, request: httpx.Request) -> httpx.Response:
+        if request.method == 'POST':
+            for path in json.loads(request.content):
+                os.makedirs(path, exist_ok=True)
+        else:
+            for path in request.url.params.get_list('path'):
+                # A missing directory deletes without error.
+                shutil.rmtree(path, ignore_errors=True)
+        return _json(200)
 
 
 class _EventStream(httpx.AsyncByteStream):

@@ -630,3 +630,57 @@ async def test_trio_is_refused_before_any_request(server: FakeOpenSandbox, worki
     with pytest.raises(UserError, match='OpenSandbox needs the asyncio event loop'):
         await OpenSandbox[None](connection=server.connection).destroy(WorkspaceRef(provider='opensandbox', id='x'))
     assert server.requests == []
+
+
+async def test_workspace_binary_round_trip_uses_native_files(server: FakeOpenSandbox, working_dir: str) -> None:
+    """A binary round trip uses execd's file API instead of shell transfers."""
+    from pydantic_ai.workspaces import Workspace
+
+    backend = _create(server, working_dir)
+    workspace = Workspace(backend)
+    payload = bytes(range(256)) * 300
+    await workspace.write_bytes('blob.bin', payload)
+    assert await workspace.read_bytes('blob.bin') == payload
+    assert any('/files/upload' in request for request in server.requests)
+    assert any('/files/download' in request for request in server.requests)
+    await backend.aclose()
+
+
+async def test_workspace_filesystem_contract_preserves_symlinks_and_errors(
+    server: FakeOpenSandbox, working_dir: str
+) -> None:
+    """Workspace file operations keep local semantics through execd's file API."""
+    from pydantic_ai.workspaces import Workspace
+
+    backend = _create(server, working_dir)
+    workspace = Workspace(backend)
+    await workspace.write_bytes('new.bin', b'x')
+    result = await backend.run(['stat', '-c', '%a', 'new.bin'])
+    assert result.stdout.strip() == '644'
+    await backend.run(['chmod', '600', 'new.bin'])
+    await workspace.write_bytes('new.bin', b'y')
+    assert await workspace.read_bytes('new.bin') == b'y'
+    result = await backend.run(['stat', '-c', '%a', 'new.bin'])
+    assert result.stdout.strip() == '600'
+
+    await workspace.write_bytes('target.bin', b'old')
+    await backend.run(['ln', '-s', 'target.bin', 'link.bin'])
+    await workspace.write_bytes('link.bin', b'new')
+    assert await workspace.read_bytes('target.bin') == b'new'
+    await workspace.remove('link.bin')
+    assert await workspace.read_bytes('target.bin') == b'new'
+    assert not await workspace.exists('link.bin')
+
+    await workspace.make_dir('sub')
+    await backend.run(['ln', '-s', 'sub', 'sublink'])
+    assert [entry.name for entry in await workspace.list_dir('sublink')] == []
+
+    with pytest.raises(FileNotFoundError):
+        await workspace.read_bytes('missing.bin')
+    with pytest.raises(IsADirectoryError):
+        await workspace.read_bytes(working_dir)
+    with pytest.raises(FileNotFoundError):
+        await workspace.remove('missing.bin')
+    with pytest.raises(ValueError, match='ancestor'):
+        await workspace.remove(working_dir)
+    await backend.aclose()

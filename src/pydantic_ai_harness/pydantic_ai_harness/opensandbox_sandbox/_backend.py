@@ -18,8 +18,8 @@ changing how sandboxes are created, attached to, or how commands run and stop:
 - A sandbox's `timeout` deletes it when it runs out, files included; `renew` sets a new one.
 - The SDK runs on asyncio only, and each `Sandbox` holds an HTTP transport bound to the event loop that opened it.
 
-File operations go through the shell, as for `DockerSandboxBackend`: execd's own file API reads a directory as a
-500 and deletes a missing path without error, so native file access needs its own probes and is left for later.
+File operations go through execd's file API (`Sandbox.files`), which answers a download of a directory with a
+500 and deletes a missing path without error, so the backend probes file type and existence before it acts.
 """
 
 from __future__ import annotations as _annotations
@@ -29,7 +29,7 @@ import posixpath
 import secrets
 import shlex
 import time
-from collections.abc import AsyncGenerator, Generator, Mapping
+from collections.abc import AsyncGenerator, Generator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from datetime import timedelta
 
@@ -38,7 +38,10 @@ import anyio.lowlevel
 
 from pydantic_ai.workspaces import (
     CommandResult,
+    FileEntry,
     SupportsCommands,
+    SupportsFilesystem,
+    Workspace,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
@@ -48,6 +51,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness._workspace_provider import (
+    absolute_path,
     check_env,
     check_provider,
     check_timeout,
@@ -64,6 +68,7 @@ try:
     from opensandbox.exceptions import SandboxApiException, SandboxConnectionException, SandboxException
     from opensandbox.manager import SandboxManager
     from opensandbox.models.execd import ExecutionHandlers, OutputMessage, RunCommandOpts
+    from opensandbox.models.filesystem import DirectoryListEntry, EntryInfo, WriteEntry
     from opensandbox.models.sandboxes import NetworkPolicy, SandboxFilter
 except ImportError as _import_error:
     raise ImportError('Install `pydantic-ai-harness[opensandbox]` to use OpenSandbox.') from _import_error
@@ -188,7 +193,7 @@ async def destroy_sandbox(sandbox_id: str, connection: ConnectionConfig | None =
         await manager.close()
 
 
-class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
+class OpenSandboxBackend(WorkspaceBackend, SupportsFilesystem, SupportsCommands):
     """Run commands in an [OpenSandbox](https://open-sandbox.ai) sandbox, created on first use.
 
     Built with `image`, the first operation creates a sandbox from it; built with `ref`, it attaches to that
@@ -196,8 +201,9 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
     gone. The backend never kills the sandbox: call
     [`OpenSandbox.destroy`][pydantic_ai_harness.opensandbox_sandbox.OpenSandbox.destroy] with its ref.
 
-    The image needs a POSIX `sh` and the usual file utilities. File operations run through that shell. The
-    OpenSandbox SDK runs on asyncio only, so under Trio every operation raises `UserError`.
+    The image needs a POSIX `sh` and the usual file utilities. File operations go through execd's file API
+    (`Sandbox.files`): the backend probes file type and existence first, resolves symlinks with a `realpath`
+    command probe, and maps provider errors onto the protocol's typed errors.
 
     Args:
         image: The image for a new sandbox. Pass it or `ref`, not both.
@@ -260,6 +266,165 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
     def ref(self) -> WorkspaceRef | None:
         """`WorkspaceRef(provider='opensandbox', id=<sandbox id>)`, or `None` before a sandbox has been created."""
         return self._ref
+
+    _NEW_FILE_MODE = 644
+    """execd file modes are the usual octal digits as an integer; the issue proposes `644` for new files."""
+
+    async def read_bytes(self, path: str) -> bytes:
+        """Read a file as bytes through execd's download endpoint, following symlinks."""
+        absolute_path('path', path)
+        async with self._operation():
+            sandbox = await self._acquire()
+            info = await self._info(sandbox, path)
+            if info is None:
+                raise FileNotFoundError(path)
+            if info.entry_type == 'directory':
+                raise IsADirectoryError(path)
+            if info.entry_type != 'file':
+                raise OSError(f'not a regular file: {path}')
+            with _api_errors(f'read {path}'):
+                return await sandbox.files.read_bytes(path)
+
+    async def write_bytes(self, path: str, data: bytes) -> None:
+        """Write bytes, creating missing parents, writing through a leaf symlink, keeping an existing file's mode."""
+        absolute_path('path', path)
+        async with self._operation():
+            sandbox = await self._acquire()
+            try:
+                target = await Workspace(self).realpath(path)
+            except WorkspaceError as error:
+                raise OSError(f'too many levels of symbolic links at {path}') from error
+            parent = posixpath.dirname(target)
+            parent_info = await self._info(sandbox, parent)
+            if parent_info is None:
+                with _api_errors(f'create parent directories for {path}'):
+                    await sandbox.files.create_directories([WriteEntry(path=parent)])
+            elif parent_info.entry_type != 'directory':
+                raise NotADirectoryError(parent)
+            info = await self._info(sandbox, target)
+            mode = self._NEW_FILE_MODE
+            if info is not None:
+                if info.entry_type == 'directory':
+                    raise IsADirectoryError(path)
+                mode = info.mode or mode
+            with _api_errors(f'write {path}'):
+                await sandbox.files.write_file(path=target, data=data, mode=mode)
+
+    async def stat(self, path: str) -> FileEntry:
+        """Return a `FileEntry` for `path`, following symlinks as the local backend does."""
+        absolute_path('path', path)
+        async with self._operation():
+            sandbox = await self._acquire()
+            info = await self._info(sandbox, path)
+            if info is None:
+                raise FileNotFoundError(path)
+            return FileEntry(
+                name=posixpath.basename(path),
+                path=path,
+                is_dir=info.entry_type == 'directory',
+                size=None if info.entry_type == 'directory' else info.size,
+            )
+
+    async def list_dir(self, path: str) -> Sequence[FileEntry]:
+        """List a directory; execd refuses a directory reached through a symlink, so resolve first."""
+        absolute_path('path', path)
+        async with self._operation():
+            sandbox = await self._acquire()
+            try:
+                target = await Workspace(self).realpath(path)
+            except WorkspaceError as error:
+                raise OSError(f'too many levels of symbolic links at {path}') from error
+            info = await self._info(sandbox, target)
+            if info is None:
+                raise FileNotFoundError(path)
+            if info.entry_type != 'directory':
+                raise NotADirectoryError(path)
+            with _api_errors(f'list {path}'):
+                entries = await sandbox.files.list_directory(DirectoryListEntry(path=target))
+            result: list[FileEntry] = []
+            for entry in sorted(entries, key=lambda entry: entry.path):
+                name = posixpath.basename(entry.path)
+                child_path = posixpath.join(path, name)
+                if entry.entry_type == 'symlink':
+                    # Follow child links for type and size, as the local backend does; a broken link keeps
+                    # its own entry with `is_dir=False` and no size.
+                    entry = await self._info(sandbox, child_path) or entry
+                result.append(
+                    FileEntry(
+                        name=name,
+                        path=child_path,
+                        is_dir=entry.entry_type == 'directory',
+                        size=None if entry.entry_type == 'directory' else entry.size,
+                    )
+                )
+            return result
+
+    async def make_dir(self, path: str) -> None:
+        """Create a directory and any missing parents; an existing directory is fine, an existing file is not."""
+        absolute_path('path', path)
+        async with self._operation():
+            sandbox = await self._acquire()
+            parent = posixpath.dirname(path)
+            parent_info = await self._info(sandbox, parent)
+            if parent_info is not None and parent_info.entry_type != 'directory':
+                raise NotADirectoryError(parent)
+            info = await self._info(sandbox, path)
+            if info is not None:
+                if info.entry_type == 'directory':
+                    return
+                raise FileExistsError(path)
+            with _api_errors(f'create directory {path}'):
+                await sandbox.files.create_directories([WriteEntry(path=path)])
+
+    async def remove(self, path: str) -> None:
+        """Remove a file, symlink (the link itself, not its target), FIFO, or directory tree; missing refuses."""
+        absolute_path('path', path)
+        async with self._operation():
+            sandbox = await self._acquire()
+            working_dir = await self.working_dir()
+            try:
+                resolved_parent = await Workspace(self).realpath(posixpath.dirname(path))
+            except WorkspaceError as error:
+                raise OSError(f'too many levels of symbolic links at {path}') from error
+            target = posixpath.join(resolved_parent, posixpath.basename(path))
+            if working_dir == target or working_dir.startswith(target.rstrip('/') + '/'):
+                raise ValueError('cannot remove the workspace root or its ancestor')
+            entry = await self._entry(sandbox, target)
+            if entry is None:
+                # execd deletes a missing path without error, so probe first to keep the typed error.
+                raise FileNotFoundError(path)
+            with _api_errors(f'remove {path}'):
+                if entry.entry_type == 'directory':
+                    await sandbox.files.delete_directories([target])
+                else:
+                    await sandbox.files.delete_files([target])
+
+    async def exists(self, path: str) -> bool:
+        """Whether `path`, or the target of a symlink at `path`, exists."""
+        absolute_path('path', path)
+        async with self._operation():
+            sandbox = await self._acquire()
+            try:
+                return await self._info(sandbox, path) is not None
+            except (OSError, WorkspaceError):
+                return False
+
+    async def _entry(self, sandbox: Sandbox, path: str) -> EntryInfo | None:
+        """`get_file_info` on exactly `path`, which does not follow symlinks; `None` when missing."""
+        with _api_errors(f'inspect {path}'):
+            entries = await sandbox.files.get_file_info([path])
+        return entries.get(path)
+
+    async def _info(self, sandbox: Sandbox, path: str) -> EntryInfo | None:
+        """Probe `path`, following a leaf symlink; `None` when it or its target is missing."""
+        info = await self._entry(sandbox, path)
+        if info is not None and info.entry_type == 'symlink':
+            try:
+                target = await Workspace(self).realpath(path)
+            except WorkspaceError:
+                return None
+            return await self._entry(sandbox, target)
+        return info
 
     async def get_sandbox(self) -> Sandbox:
         """The `opensandbox.Sandbox`, for features the workspace API does not cover.
