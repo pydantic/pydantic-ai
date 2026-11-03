@@ -54,6 +54,7 @@ _PRIVATE_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (
     ipaddress.IPv6Network('::1/128'),  # Loopback
     ipaddress.IPv6Network('fe80::/10'),  # Link-local
     ipaddress.IPv6Network('fc00::/7'),  # Unique local address
+    ipaddress.IPv6Network('fec0::/10'),  # Site-local, deprecated by RFC 3879
     # IPv6 IANA-reserved / special-purpose ranges
     ipaddress.IPv6Network('100::/64'),  # Discard prefix (RFC 6666)
     ipaddress.IPv6Network('2001::/32'),  # Teredo tunneling (RFC 4380)
@@ -112,6 +113,7 @@ _CLOUD_METADATA_IPV4: frozenset[ipaddress.IPv4Address] = frozenset(
         '100.100.100.200',  # Alibaba Cloud
         '192.0.0.192',  # Oracle Cloud (Classic)
         '169.254.42.42',  # Scaleway
+        '169.254.0.23',  # Tencent Cloud
     )
 )
 _CLOUD_METADATA_IPV6: frozenset[ipaddress.IPv6Address] = frozenset(

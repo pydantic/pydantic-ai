@@ -33,6 +33,19 @@ def _validate_user_path(value: str) -> str:
 _UserPath = Annotated[str, AfterValidator(_validate_user_path)]
 
 
+def _validate_worktree_remove_command(argv: list[str]) -> None:
+    placeholders = {'{path}', '{branch}', '{repo}'}
+    if not argv or not argv[0]:
+        raise ValueError('Worktree removal commands must have a non-empty executable and argv')
+    if any('\0' in token for token in argv):
+        raise ValueError('Worktree removal command arguments cannot contain NUL')
+    if any(token not in placeholders and any(name in token for name in placeholders) for token in argv):
+        raise ValueError('Worktree command placeholders must fill a whole argv token')
+    unknown = {token for token in argv if _WORKTREE_COMMAND_PLACEHOLDER.fullmatch(token) and token not in placeholders}
+    if unknown:
+        raise ValueError(f'Unknown worktree command placeholders: {", ".join(sorted(unknown))}')
+
+
 class Settings(BaseModel):
     """An immutable snapshot; storage contains only explicit overrides."""
 
@@ -155,7 +168,6 @@ class Settings(BaseModel):
     @classmethod
     def validate_worktree_remove_commands(cls, value: dict[str, list[str]]) -> dict[str, list[str]]:
         """Validate executable argv entries and canonical absolute repository keys."""
-        placeholders = {'{path}', '{branch}', '{repo}'}
         normalized: dict[str, list[str]] = {}
         original_keys: dict[str, str] = {}
         for directory, argv in value.items():
@@ -163,17 +175,7 @@ class Settings(BaseModel):
                 raise ValueError('Worktree command keys cannot contain NUL')
             if not Path(directory).is_absolute():
                 raise ValueError(f'Worktree command key must be an absolute path: {directory!r}')
-            if not argv or not argv[0]:
-                raise ValueError('Worktree removal commands must have a non-empty executable and argv')
-            if any('\0' in token for token in argv):
-                raise ValueError('Worktree removal command arguments cannot contain NUL')
-            if any(token not in placeholders and any(name in token for name in placeholders) for token in argv):
-                raise ValueError('Worktree command placeholders must fill a whole argv token')
-            unknown = {
-                token for token in argv if _WORKTREE_COMMAND_PLACEHOLDER.fullmatch(token) and token not in placeholders
-            }
-            if unknown:
-                raise ValueError(f'Unknown worktree command placeholders: {", ".join(sorted(unknown))}')
+            _validate_worktree_remove_command(argv)
             canonical = str(Path(directory).resolve())
             if canonical in original_keys:
                 raise ValueError(

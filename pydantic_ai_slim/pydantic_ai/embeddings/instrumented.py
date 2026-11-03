@@ -66,6 +66,11 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
             finish(result)
             return result
 
+    @staticmethod
+    def _recorded_settings(settings: EmbeddingSettings | None) -> dict[str, object]:
+        """The settings recorded on the span: all but the request header and body overrides."""
+        return {key: value for key, value in (settings or {}).items() if key not in ('extra_headers', 'extra_body')}
+
     @contextmanager
     def _instrument(
         self,
@@ -85,8 +90,8 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
             'inputs_count': inputs_count,
         }
 
-        if settings:
-            attributes['embedding_settings'] = json.dumps(self.serialize_any(settings))
+        if recorded_settings := self._recorded_settings(settings):
+            attributes['embedding_settings'] = json.dumps(self.serialize_any(recorded_settings))
 
         if self.instrumentation_settings.include_content:
             attributes['inputs'] = json.dumps(inputs)

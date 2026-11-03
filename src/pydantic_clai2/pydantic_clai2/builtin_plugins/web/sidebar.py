@@ -82,19 +82,24 @@ def project_names(identities: Mapping[str, ProjectIdentity]) -> dict[str, str]:
     names = {key: identity.name for key, identity in identities.items()}
     for key, folder in folders.items():
         name = identities[key].name
-        others = [other for other in folders if other != key and identities[other].name == name]
+        others = [folders[other] for other in folders if other != key and identities[other].name == name]
         if not others:
             continue
-        for depth in range(2, len(folder.parts) + 1):
-            label = folder.parts[-depth:]
-            if all(folders[other].parts[-depth:] != label for other in others):
-                names[key] = str(PurePath(*label))
-                break
-        else:
+        if (end := _unshared_end(folder, others)) is not None:
+            names[key] = end
+        elif key != MISSING:
             # Equal folders, as after Git failed once while listing one, still differ by key; Removed folders has none.
-            if key != MISSING:
-                names[key] = key
+            names[key] = key
     return names
+
+
+def _unshared_end(folder: PurePath, others: list[PurePath]) -> str | None:
+    """The shortest end of `folder`'s path, of two parts or more, that none of `others` ends with; `None` if each does."""
+    for depth in range(2, len(folder.parts) + 1):
+        label = folder.parts[-depth:]
+        if all(other.parts[-depth:] != label for other in others):
+            return str(PurePath(*label))
+    return None
 
 
 def completions(typed: str) -> list[Project]:
