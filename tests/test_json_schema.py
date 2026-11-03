@@ -587,7 +587,7 @@ def test_inlining_counts_every_value_of_every_copy(monkeypatch: pytest.MonkeyPat
         InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
 
 
-def test_a_schema_kept_with_its_defs_is_not_limited(monkeypatch: pytest.MonkeyPatch):
+def test_a_schema_walked_without_inlining_is_not_limited(monkeypatch: pytest.MonkeyPatch):
     """Without inlining, each definition is walked once and a `$ref` stays a `$ref`, so nothing expands."""
     monkeypatch.setattr('pydantic_ai._json_schema.MAX_INLINED_SCHEMA_VALUES', _VALUE_LIMIT, raising=False)
     schema = _doubling_chain(_VALUE_LIMIT.bit_length())

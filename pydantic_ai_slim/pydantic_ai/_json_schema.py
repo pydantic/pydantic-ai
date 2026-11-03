@@ -18,7 +18,7 @@ MAX_INLINED_SCHEMA_VALUES = 250_000
 """The most JSON values inlining a schema's `$ref`s may copy into it.
 
 Each object, array, string, number, boolean and null in a copied definition counts as one value, as the definition
-is written: what a transformer adds to a copy is not counted.
+is written: what `transform()` adds to a copy is not counted.
 """
 
 
