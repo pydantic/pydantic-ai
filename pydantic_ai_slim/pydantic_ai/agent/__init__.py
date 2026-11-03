@@ -4991,6 +4991,8 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 graph_deps.cancellation.release_issued()
 
         async with AsyncExitStack() as stack:
+            # Keep errors replayable through recovery and teardown, then break their traceback cycles last.
+            stack.callback(graph_deps.release_tool_error_caches)
             # Enter first so cancellation is classified only after every other context has torn down.
             await stack.enter_async_context(_translate_cancellation())
             stack.callback(lambda: graph_deps.tool_manager._release_context())  # pyright: ignore[reportPrivateUsage]

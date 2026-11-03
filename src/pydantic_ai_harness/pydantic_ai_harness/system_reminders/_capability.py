@@ -28,6 +28,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai_harness._message_text import user_prompt_text
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_ignored, warn_default_changed
 from pydantic_ai_harness.system_reminders._events import ReminderFiredEvent
@@ -412,7 +413,7 @@ class GoalReanchor(Generic[AgentDepsT]):
         window = post_compaction_window(ctx.messages)
         if _first_user_text(window) is not None:
             return _GOAL_NOTE
-        if _starts_with_compaction(window):
+        if _opening_compaction(window) is not None:
             return _COMPACTED_GOAL_NOTE
         return self.fallback
 
@@ -446,9 +447,8 @@ _LLM_REMINDER_NOTE = (
 class LLMReminder(Generic[AgentDepsT]):
     """Dynamic reminder whose text a model generates from a compact transcript.
 
-    Opt-in and dependency-free (it uses `pydantic_ai.Agent`). `model` is required and has no
-    default -- pass an explicit model. On any error it falls back to `GoalReanchor` text, so a
-    failed generation never blocks the run. Add it to `SystemReminders.dynamic_reminders`.
+    On any error it falls back to `GoalReanchor` text, so a failed generation doesn't block
+    the run. Add it to `SystemReminders.dynamic_reminders`.
 
     It generates every `interval` model requests (the 10th, 20th, ... by default), and each
     firing adds a lasting record of two parts to the message history, so `interval` bounds both
@@ -645,22 +645,10 @@ def _first_user_text(messages: Sequence[ModelMessage]) -> str | None:
         if isinstance(msg, ModelRequest):
             for part in msg.parts:
                 if isinstance(part, UserPromptPart) and not _is_reminder_data(part):
-                    text = _prompt_text(part.content)
+                    text = user_prompt_text(part)
                     if text:
                         return text
     return None
-
-
-def _prompt_text(content: str | Sequence[object]) -> str:
-    if isinstance(content, str):
-        return content
-    texts: list[str] = []
-    for item in content:
-        if isinstance(item, str):
-            texts.append(item)
-        elif isinstance(item, TextContent):
-            texts.append(item.content)
-    return ' '.join(texts)
 
 
 def _build_compact_transcript(messages: Sequence[ModelMessage], max_messages: int) -> str:
@@ -672,7 +660,9 @@ def _build_compact_transcript(messages: Sequence[ModelMessage], max_messages: in
     window; when compaction took it, the summary is the only record of it.
     """
     window = post_compaction_window(messages)
-    summary = _compaction_summary(window)
+    compaction = _opening_compaction(window)
+    # Some providers keep the summary encrypted, with no readable `content`.
+    summary = (compaction.content or None) if compaction is not None else None
     goal = _first_user_text(window)
     recent = _recent_texts(window, max_messages)
     sections: list[str] = []
@@ -685,21 +675,11 @@ def _build_compact_transcript(messages: Sequence[ModelMessage], max_messages: in
     return '\n\n'.join(sections) if sections else 'No activity yet.'
 
 
-def _starts_with_compaction(window: Sequence[ModelMessage]) -> bool:
-    """Whether a post-compaction window opens with the response holding its `CompactionPart`."""
-    first = window[0] if window else None
-    return isinstance(first, ModelResponse) and bool(first.parts) and isinstance(first.parts[0], CompactionPart)
-
-
-def _compaction_summary(window: Sequence[ModelMessage]) -> str | None:
-    """The readable summary that opens a post-compaction window, or `None` when there is none.
-
-    A compaction window starts with the response holding the `CompactionPart`; some providers keep
-    its summary encrypted, with no readable `content`.
-    """
+def _opening_compaction(window: Sequence[ModelMessage]) -> CompactionPart | None:
+    """The `CompactionPart` a post-compaction window opens with, or `None` when it has none."""
     first = window[0] if window else None
     if isinstance(first, ModelResponse) and first.parts and isinstance(part := first.parts[0], CompactionPart):
-        return part.content or None
+        return part
     return None
 
 
@@ -709,7 +689,7 @@ def _recent_texts(messages: Sequence[ModelMessage], max_messages: int) -> list[s
     for msg in messages:
         for part in msg.parts:
             if isinstance(part, UserPromptPart) and not _is_reminder_data(part):
-                text = _prompt_text(part.content)
+                text = user_prompt_text(part)
                 if text:
                     fragments.append(_quote('message', text, role='user'))
             elif isinstance(part, TextPart) and part.content:
