@@ -106,6 +106,9 @@ class TestIsPrivateIp:
             # IPv6 unique local
             'fc00::1',
             'fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff',
+            # IPv6 site-local (deprecated by RFC 3879)
+            'fec0::1',
+            'feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff',
             # IPv6 6to4 (can embed private IPv4)
             '2002::1',
             '2002:c0a8:0101::1',  # Embeds 192.168.1.1
@@ -252,6 +255,8 @@ class TestIsCloudMetadataIp:
             '100.100.100.200',  # Alibaba Cloud
             '192.0.0.192',  # Oracle Cloud (Classic)
             '169.254.42.42',  # Scaleway
+            '169.254.0.23',  # Tencent Cloud
+            '::ffff:169.254.0.23',  # IPv4-mapped form of Tencent Cloud metadata
             'fd00:ec2::254',  # AWS EC2 IMDS IPv6
             'fd00:ec2::23',  # AWS EKS Pod Identity Agent IPv6
             'fd20:ce::254',  # GCP IPv6 (IPv6-only instances)
@@ -600,6 +605,11 @@ class TestValidateAndResolveUrl:
         mock_dns.return_value = [(2, 1, 6, '', ('100.100.100.200', 0))]
         with pytest.raises(ValueError, match='Access to cloud metadata service'):
             await validate_and_resolve_url('http://metadata.aliyun.internal/path', allow_local=True)
+
+    async def test_tencent_cloud_metadata_always_blocked(self, mock_dns: AsyncMock) -> None:
+        mock_dns.return_value = [(2, 1, 6, '', ('169.254.0.23', 0))]
+        with pytest.raises(ValueError, match='Access to cloud metadata service'):
+            await validate_and_resolve_url('http://metadata.tencentyun.com/latest/meta-data/', allow_local=True)
 
     @pytest.mark.parametrize(
         'url',
