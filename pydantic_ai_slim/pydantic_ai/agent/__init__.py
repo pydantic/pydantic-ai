@@ -534,6 +534,19 @@ class _ResolvedSpec:
     tool_retries: int | None
 
 
+def _request_initial_compaction(state: _agent_graph.GraphAgentState, compact: bool | CompactionOptions) -> None:
+    """Request the compaction a run method's `compact=` asks for, served by the run's first model request attempt.
+
+    Like `RunContext.request_compaction` from a `before_run` hook.
+    """
+    if compact is False:
+        return
+    options: CompactionOptions = {} if compact is True else compact
+    state.compaction_requests.request(
+        RequestedCompaction(reason=options.get('reason', 'manual'), focus=options.get('focus'))
+    )
+
+
 @dataclasses.dataclass(init=False)
 class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     """Class for defining "agents" - a way to have a specific type of "conversation" with an LLM.
@@ -1835,13 +1848,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             conversation_unsaved=conversation_unsaved,
             conversation_unchecked=conversation_unchecked,
         )
-        if compact is not False:
-            options: CompactionOptions = {} if compact is True else compact
-            # Served by the run's first model request attempt, like `RunContext.request_compaction` from a
-            # `before_run` hook.
-            state.compaction_requests.request(
-                RequestedCompaction(reason=options.get('reason', 'manual'), focus=options.get('focus'))
-            )
+        _request_initial_compaction(state, compact)
 
         # The deadline is absolute wall-clock time. Inside a durable workflow or flow, the durability
         # capability supplies a replay-safe clock and start time, so a replayed or recovered run keeps
