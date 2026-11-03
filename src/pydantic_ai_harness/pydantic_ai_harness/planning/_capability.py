@@ -16,6 +16,7 @@ from pydantic_ai.messages import (
     ModelSource,
     TextContent,
     ToolReturnPart,
+    UserContent,
     UserPromptPart,
     post_compaction_window,
 )
@@ -387,12 +388,24 @@ def _latest_plan(messages: Sequence[ModelMessage]) -> str | None:
                     return plan
             elif isinstance(part, PlanReminderPart):
                 return frame_plan_text(part.content)
-            elif isinstance(part, UserPromptPart) and not isinstance(part.content, str):
-                for item in reversed(part.content):
-                    if (
-                        isinstance(item, TextContent)
-                        and is_str_dict(item.metadata)
-                        and item.metadata.get('origin') == PLAN_ORIGIN
-                    ):
-                        return item.content
+            elif (
+                isinstance(part, UserPromptPart)
+                and not isinstance(part.content, str)
+                and (recorded := _recorded_plan(part.content)) is not None
+            ):
+                return recorded
     return None
+
+
+def _recorded_plan(content: Sequence[UserContent]) -> str | None:
+    """The plan an earlier version of `Planning` recorded as user text in `content`, found by its metadata."""
+    return next(
+        (
+            item.content
+            for item in reversed(content)
+            if isinstance(item, TextContent)
+            and is_str_dict(item.metadata)
+            and item.metadata.get('origin') == PLAN_ORIGIN
+        ),
+        None,
+    )

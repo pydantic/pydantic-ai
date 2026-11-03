@@ -252,18 +252,7 @@ def event_family_schema(
     known_tags = frozenset(registry)
 
     late_class = _late_class_finder(registry, known_tags, tag_field) if late_registration is not None else None
-
-    def discriminator(value: Any) -> str | None:
-        if is_str_dict(value):
-            tag = value.get(tag_field)
-            if isinstance(tag, str) and tag in known_tags:
-                return tag
-            return _UNKNOWN_TAG
-        tag = getattr(value, tag_field, None)
-        if isinstance(tag, str) and tag in known_tags:
-            return tag
-        is_late = late_class is not None and late_class(value) is not None
-        return _UNKNOWN_TAG if isinstance(value, unknown_type) or is_late else None
+    discriminator = _tag_discriminator(known_tags, tag_field, unknown_type, late_class)
 
     unknown_schema = pydantic_core.core_schema.no_info_before_validator_function(
         _gather_unknown_payload(tag_field, unknown_type, envelope_fields, family),
@@ -283,6 +272,33 @@ def event_family_schema(
         choices[tag] = _canonicalizing_schema(handler, event_cls)
     choices[_UNKNOWN_TAG] = unknown_schema
     return pydantic_core.core_schema.tagged_union_schema(choices, discriminator)
+
+
+def _tag_discriminator(
+    known_tags: frozenset[str],
+    tag_field: str,
+    unknown_type: type[Any],
+    late_class: Callable[[Any], type[Any] | None] | None,
+) -> Callable[[Any], str | None]:
+    """The family union's discriminator: a value's tag when it is one of `known_tags`, else the unknown envelope's.
+
+    A dict with any other tag goes to the unknown envelope, and so does an object that is an `unknown_type` or, with
+    `late_class`, one whose class registered after `known_tags` was taken. Any other object matches no choice.
+    """
+
+    def discriminator(value: Any) -> str | None:
+        if is_str_dict(value):
+            tag = value.get(tag_field)
+            if isinstance(tag, str) and tag in known_tags:
+                return tag
+            return _UNKNOWN_TAG
+        tag = getattr(value, tag_field, None)
+        if isinstance(tag, str) and tag in known_tags:
+            return tag
+        is_late = late_class is not None and late_class(value) is not None
+        return _UNKNOWN_TAG if isinstance(value, unknown_type) or is_late else None
+
+    return discriminator
 
 
 def _late_class_finder(

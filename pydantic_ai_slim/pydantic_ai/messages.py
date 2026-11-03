@@ -4711,6 +4711,17 @@ class CapabilityPart:
                 f'{owner} has `voice={cls._voice!r}` from its base, so it cannot render with `voice={self.rendering.voice!r}`.'
             )
         _check_capability_rendering(owner, self.rendering)
+        self._check_voice(owner)
+        for name in self.rendering.attributes:
+            value = self._attribute_value(name)
+            if value is not None and (not isinstance(value, str | int) or isinstance(value, bool)):
+                raise UserError(f'{owner} renders `{name}` as an attribute, so it must be a string or an integer.')
+
+    def _check_voice(self, owner: str) -> None:
+        """Raise unless the content and scope fit the part's voice, and lower an instruction's source to its text's.
+
+        An instruction's content must be a string, and data can't be `'request'`-scoped.
+        """
         content = self.model_content()
         if self.rendering.voice == 'instruction':
             if not isinstance(content, str):
@@ -4724,10 +4735,6 @@ class CapabilityPart:
                 self.source = origin
         elif self.scope == 'request':
             raise UserError(f"{owner} is data; only an `InstructionCapabilityPart` can have `scope='request'`.")
-        for name in self.rendering.attributes:
-            value = self._attribute_value(name)
-            if value is not None and (not isinstance(value, str | int) or isinstance(value, bool)):
-                raise UserError(f'{owner} renders `{name}` as an attribute, so it must be a string or an integer.')
 
     def __init_subclass__(
         cls,

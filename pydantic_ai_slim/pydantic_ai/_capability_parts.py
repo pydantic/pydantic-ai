@@ -253,18 +253,21 @@ def _body_lookalikes(
     """
     author = part.source._author  # pyright: ignore[reportPrivateUsage]
     found: dict[LookalikeSource, list[str]] = {}
-
-    def check(source: LookalikeSource, text: str) -> None:
-        tags = lookalike_tags(text)
-        if frame_tag_lookalike(text, tag):
-            tags.append(tag)
-        if tags:
-            found.setdefault(source, []).extend(t for t in tags if t not in found.get(source, ()))
-
     for item in items:
         if author != 'application' and isinstance(item, str | TextContent):
-            check(author, item if isinstance(item, str) else item.content)
+            _record_body_lookalikes(found, author, item if isinstance(item, str) else item.content, tag)
     for item in items:
         if isinstance(item, BinaryContent) and _utils.is_text_like_media_type(item.media_type):
-            check('file', item.data.decode(errors='replace'))
+            _record_body_lookalikes(found, 'file', item.data.decode(errors='replace'), tag)
     return list(found.items())
+
+
+def _record_body_lookalikes(
+    found: dict[LookalikeSource, list[str]], source: LookalikeSource, text: str, tag: str
+) -> None:
+    """Add the tags `text` opens that resemble a framework frame or the part's own `tag` to `source`'s entry in `found`, once each."""
+    tags = lookalike_tags(text)
+    if frame_tag_lookalike(text, tag):
+        tags.append(tag)
+    if tags:
+        found.setdefault(source, []).extend(t for t in tags if t not in found.get(source, ()))

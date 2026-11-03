@@ -14,6 +14,7 @@ from pydantic_ai.messages import (
     DataCapabilityPart,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     ModelSource,
     TextContent,
@@ -576,18 +577,28 @@ def _latest_snapshot(messages: list[ModelMessage], metadata: dict[str, str]) -> 
         if not isinstance(message, ModelRequest):
             continue
         for part in reversed(message.parts):
-            if (
-                isinstance(part, MemorySnapshotPart)
-                and part.scope_hash == metadata['scope']
-                and part.memory_id == metadata['id']
-            ):
-                return part.content
-            if not isinstance(part, UserPromptPart) or isinstance(part.content, str):
-                continue
-            for item in reversed(part.content):
-                if isinstance(item, TextContent) and (item.metadata == metadata or item.metadata in legacy):
-                    # A legacy snapshot's body sits on lines of its own, between the tags.
-                    return item.content.removeprefix('<memory>\n').removesuffix('\n</memory>')
+            if (snapshot := _part_snapshot(part, metadata, legacy)) is not None:
+                return snapshot
+    return None
+
+
+def _part_snapshot(part: ModelRequestPart, metadata: dict[str, str], legacy: tuple[str, str]) -> str | None:
+    """The content of the snapshot for this scope that `part` is or holds, or `None` when it has none.
+
+    `legacy` is the plain-string metadata older versions marked a snapshot with.
+    """
+    if (
+        isinstance(part, MemorySnapshotPart)
+        and part.scope_hash == metadata['scope']
+        and part.memory_id == metadata['id']
+    ):
+        return part.content
+    if not isinstance(part, UserPromptPart) or isinstance(part.content, str):
+        return None
+    for item in reversed(part.content):
+        if isinstance(item, TextContent) and (item.metadata == metadata or item.metadata in legacy):
+            # A legacy snapshot's body sits on lines of its own, between the tags.
+            return item.content.removeprefix('<memory>\n').removesuffix('\n</memory>')
     return None
 
 

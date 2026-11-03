@@ -135,69 +135,69 @@ def _collect_text(messages: Sequence[ModelMessage]) -> list[str]:
 
 def _request_part_text(part: ModelRequestPart) -> list[str]:
     """Text segments a single request part contributes to the token estimate."""
-    if isinstance(part, UserPromptPart):
-        return [''.join(user_prompt_texts(part))]
-    elif isinstance(part, SystemPromptPart):
-        return [part.content]
-    elif isinstance(part, InstructionDeltaPart):
-        return [part.render()]
-    # Records what the request's instructions were made of, which are counted with the request.
-    elif isinstance(part, InstructionBaselinePart):
-        return []
-    elif isinstance(part, ToolReturnPart):
-        # Sent in full, a retried call's feedback included: a retry that answers a call travels as
-        # that call's return. The tool-search and capability-load returns subclass `ToolReturnPart`,
-        # so they arrive here too.
-        return [tool_return_text(part)]
-    elif isinstance(part, RetryFeedbackPart):
-        # Retry feedback that answers no tool call. It is stored model-neutral and translated at
-        # request time into a system prompt or a `<validation_errors>`-fenced user prompt, so it
-        # occupies the window like the parts above. `model_response()` rather than
-        # `str(part.content)`: the content is a list of `ErrorDetails` for a validation failure,
-        # and this renders it the way the model sees it.
-        return [part.model_response()]
-    # TODO(v3): remove RetryPromptPart
-    elif isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
-        # The part the two above replaced. A stored history loads as one of them, but code that
-        # builds one by hand and passes it as `message_history` still puts an instance here, and
-        # this reads the history before the model translates it.
-        return [str(part.content)]
-    # Control bookkeeping rather than message text: it records which tools became available or capabilities were loaded,
-    # and the schemas themselves travel in the request's tool definitions. Those schemas are not free -- this estimator
-    # counts no tool definitions at all, so revealing tools mid-run costs context it does not see (tracked separately);
-    # skipping the part is not a claim that the reveal was free.
-    elif isinstance(part, ToolAvailabilityDeltaPart | CapabilityLoadDeltaPart | ModelSettingsDeltaPart):
-        return []
-    elif isinstance(part, CompactionPart):
-        # A summary the application wrote, sent as text.
-        return [part.content or '']
-    elif isinstance(part, CapabilityPart):
-        # A capability's record, rendered on the way to the model: its content fills the window. The frame's tags and
-        # a kind's note aren't counted.
-        return [capability_part_text(part)]
-    elif isinstance(part, SpeechPart):
-        # A realtime turn arrives as spoken audio plus a transcript. Count the transcript -- the
-        # words the provider bills against the window -- not the binary audio, which has no
-        # character-count meaning (as with `FilePart`).
-        #
-        # `SpeechPart` is the last member of the union today, so pyright sees this `isinstance` as
-        # redundant, but it is kept explicit so the `else` stays a real branch at runtime rather
-        # than dead code -- see the `else` comment.
-        return [part.transcript or '']
-    else:
-        # A part pydantic-ai added after this was written. Skip rather than guess at its payload:
-        # this runs on every request to decide whether to compact, so an unrecognised part must
-        # not take the run down -- which is exactly what the old `str(part.content)` fallback did
-        # once a part without `content` existed (#577).
-        #
-        # `assert_never` sits under `TYPE_CHECKING` rather than in the branch body on purpose. It
-        # still makes the chain exhaustive at type-check time, so a new upstream part fails
-        # `make typecheck` and becomes a decision we make; but unlike the usual runtime form it
-        # cannot re-crash a user who upgrades pydantic-ai ahead of us, which is the failure this
-        # change exists to remove.
-        if TYPE_CHECKING:
-            assert_never(part)
-        return []  # pragma: no cover - reachable only on a pydantic-ai release newer than this one
+    match part:
+        case UserPromptPart():
+            return [''.join(user_prompt_texts(part))]
+        case SystemPromptPart():
+            return [part.content]
+        case InstructionDeltaPart():
+            return [part.render()]
+        # Records what the request's instructions were made of, which are counted with the request.
+        case InstructionBaselinePart():
+            return []
+        case ToolReturnPart():
+            # Sent in full, a retried call's feedback included: a retry that answers a call travels as
+            # that call's return. The tool-search and capability-load returns subclass `ToolReturnPart`,
+            # so they arrive here too.
+            return [tool_return_text(part)]
+        case RetryFeedbackPart():
+            # Retry feedback that answers no tool call. It is stored model-neutral and translated at
+            # request time into a system prompt or a `<validation_errors>`-fenced user prompt, so it
+            # occupies the window like the parts above. `model_response()` rather than
+            # `str(part.content)`: the content is a list of `ErrorDetails` for a validation failure,
+            # and this renders it the way the model sees it.
+            return [part.model_response()]
+        # TODO(v3): remove RetryPromptPart
+        case RetryPromptPart():  # pyright: ignore[reportDeprecated]
+            # The part the two above replaced. A stored history loads as one of them, but code that
+            # builds one by hand and passes it as `message_history` still puts an instance here, and
+            # this reads the history before the model translates it.
+            return [str(part.content)]
+        # Control bookkeeping rather than message text: it records which tools became available or capabilities were
+        # loaded, and the schemas themselves travel in the request's tool definitions. Those schemas are not free -- this
+        # estimator counts no tool definitions at all, so revealing tools mid-run costs context it does not see (tracked
+        # separately); skipping the part is not a claim that the reveal was free.
+        case ToolAvailabilityDeltaPart() | CapabilityLoadDeltaPart() | ModelSettingsDeltaPart():
+            return []
+        case CompactionPart():
+            # A summary the application wrote, sent as text.
+            return [part.content or '']
+        case CapabilityPart():
+            # A capability's record, rendered on the way to the model: its content fills the window. The frame's tags
+            # and a kind's note aren't counted.
+            return [capability_part_text(part)]
+        case SpeechPart():
+            # A realtime turn arrives as spoken audio plus a transcript. Count the transcript -- the
+            # words the provider bills against the window -- not the binary audio, which has no
+            # character-count meaning (as with `FilePart`).
+            #
+            # `SpeechPart` is the last member of the union today, but it is kept as its own case so
+            # `case _` stays a real branch at runtime rather than dead code -- see the `case _` comment.
+            return [part.transcript or '']
+        case _:  # pragma: no cover - reachable only on a pydantic-ai release newer than this one
+            # A part pydantic-ai added after this was written. Skip rather than guess at its payload:
+            # this runs on every request to decide whether to compact, so an unrecognised part must
+            # not take the run down -- which is exactly what the old `str(part.content)` fallback did
+            # once a part without `content` existed (#577).
+            #
+            # `assert_never` sits under `TYPE_CHECKING` rather than in the case body on purpose. It
+            # still makes the match exhaustive at type-check time, so a new upstream part fails
+            # `make typecheck` and becomes a decision we make; but unlike the usual runtime form it
+            # cannot re-crash a user who upgrades pydantic-ai ahead of us, which is the failure this
+            # change exists to remove.
+            if TYPE_CHECKING:
+                assert_never(part)
+            return []
 
 
 def _response_part_text(part: ModelResponsePart) -> list[str]:

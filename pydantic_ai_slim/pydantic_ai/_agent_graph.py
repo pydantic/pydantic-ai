@@ -3380,8 +3380,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         else:
             model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, list(messages))
             request_context.model_request_parameters = model_request_parameters
-            # `prepare_messages` renders capability parts, so a continuation never hands one to a model's adapter.
-            if _has_instruction_state(messages) or has_capability_parts(messages):
+            if _continuation_needs_prepare(messages):
                 # Projection can split a foreign native tool-search exchange into a trailing
                 # `ModelRequest` next to an existing one. Only merge: the suspended tail is the live
                 # frontier, so its tool calls must not get synthesized returns.
@@ -4684,6 +4683,15 @@ def _record_model_settings_changes(
     for request in requests:
         request.parts = [*request.parts, delta]
     ctx.state.event_stream_buffer.append(_messages.ModelSettingsDeltaEvent(part=delta))
+
+
+def _continuation_needs_prepare(messages: list[_messages.ModelMessage]) -> bool:
+    """Whether a continuation's history must go through `Model.prepare_messages` before it is sent.
+
+    Instruction state needs rendering, and so do capability parts: `prepare_messages` renders them, so a
+    continuation never hands one to a model's adapter.
+    """
+    return _has_instruction_state(messages) or has_capability_parts(messages)
 
 
 def _with_outgoing_reveal_state(

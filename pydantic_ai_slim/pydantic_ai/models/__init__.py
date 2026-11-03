@@ -2156,16 +2156,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             first_note = next((i for i, p in enumerate(parts) if isinstance(p, _FrameworkNote)), None)
             if first_note is not None:
                 rest = parts[first_note:]
-                # A capability part's note stays with the content it's about.
-                genuine = [
-                    p
-                    for p in rest
-                    if isinstance(p, SystemPromptPart)
-                    and not isinstance(p, _FrameworkNote)
-                    and id(p) not in capability_notes
-                ]
-                genuine_ids = {id(p) for p in genuine}
-                others = [p for p in rest if id(p) not in genuine_ids]
+                genuine = [p for p in rest if _is_genuine_system_prompt(p, capability_notes)]
+                others = [p for p in rest if not _is_genuine_system_prompt(p, capability_notes)]
                 parts = [*parts[:first_note], *genuine, *others]
             if sealed:
                 parts = _system_prompts_after_user_words(parts, leading=leading)
@@ -4217,6 +4209,16 @@ def _tool_results_first(
         new_authored.append(original)
         new_messages.append(message)
     return (new_authored, new_messages) if changed else (authored, messages)
+
+
+def _is_genuine_system_prompt(part: ModelRequestPart, capability_notes: set[int]) -> bool:
+    """Whether `part` is one of the application's own system prompts, not a framework note about another part.
+
+    A capability part's note, in `capability_notes` by identity, stays with the content it's about.
+    """
+    return (
+        isinstance(part, SystemPromptPart) and not isinstance(part, _FrameworkNote) and id(part) not in capability_notes
+    )
 
 
 _LookalikeSources: TypeAlias = list[tuple[LookalikeSource, list[str]]]
