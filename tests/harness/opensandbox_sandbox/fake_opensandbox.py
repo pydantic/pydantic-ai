@@ -1,7 +1,7 @@
 """A fake OpenSandbox server, behind the httpx transport the real SDK sends its requests through.
 
 The SDK runs unchanged: it builds the requests, parses execd's event stream and converts failures into its own
-exceptions. Only the server is fake. Its answers copy traffic recorded from `opensandbox-server` 1.2.0 with execd
+exceptions. Only the server is fake. Its core answers copy traffic recorded from `opensandbox-server` 1.2.0 with execd
 1.2.0 on 2026-10-29:
 
 - A create answers 202 with the sandbox; its endpoints point at execd, which answers `/ping` and streams
@@ -9,6 +9,7 @@ exceptions. Only the server is fake. Its answers copy traffic recorded from `ope
   output as it is written, newlines kept, then `execution_complete` for exit 0 or an `error` event carrying the
   exit code. A signal death reports `-1`. A missing `cwd` is refused with 400 before the command starts.
 - Errors are JSON bodies with a runtime-prefixed `code` and the HTTP status the server uses.
+- Secure endpoint headers model the published 1.2.0 gateway contract: a matching per-sandbox token is required.
 
 Commands run on the host, through `bash -c` like execd's, each leading a process group of its own; the backend's
 `/tmp/pydantic-ai` is redirected to `pid_dir`, so tests leave nothing in the host's `/tmp`. As in
@@ -67,6 +68,7 @@ class FakeSandbox:
     resource: dict[str, str]
     expires_at: str | None
     network_policy: dict[str, Any] | None = None
+    secure_access: bool = False
     state: str = 'Running'
     processes: dict[str, asyncio.subprocess.Process] = field(default_factory=lambda: {})
     streams: list[asyncio.Queue[tuple[str, Any]]] = field(default_factory=lambda: [])
@@ -147,7 +149,12 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
                     return _error(404, _NOT_FOUND, f'Sandbox {sandbox_id} not found.')
                 if self.endpoint_error is not None:
                     return _error(*self.endpoint_error, 'endpoint lookup failed')
-                return _json(200, {'endpoint': f'execd.{DOMAIN}/{sandbox_id}/proxy/{port}'})
+                headers = (
+                    {'OpenSandbox-Secure-Access': f'fake-token-{sandbox_id}'}
+                    if self.sandboxes[sandbox_id].secure_access
+                    else {}
+                )
+                return _json(200, {'endpoint': f'execd.{DOMAIN}/{sandbox_id}/proxy/{port}', 'headers': headers})
             # A request the backend never makes.
             case _:  # pragma: no cover
                 raise AssertionError(f'unexpected request {request.method} {path}')
@@ -161,6 +168,7 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
             env=body.get('env') or {},
             resource=body.get('resourceLimits') or {},
             network_policy=body.get('networkPolicy'),
+            secure_access=body.get('secureAccess', False),
             expires_at=None if timeout is None else (datetime.now(UTC) + timedelta(seconds=timeout)).isoformat(),
         )
         self.sandboxes[sandbox.id] = sandbox
@@ -235,6 +243,8 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
         sandbox = self.sandboxes.get(sandbox_id)
         if sandbox is None or sandbox.state == 'Pending':
             raise httpx.ConnectError('connection refused')
+        if sandbox.secure_access and request.headers.get('OpenSandbox-Secure-Access') != f'fake-token-{sandbox_id}':
+            return _error(401, 'UNAUTHORIZED', 'Missing or invalid sandbox endpoint token.')
         match rest:
             case ['ping']:
                 # A sandbox being deleted still answers for a few seconds, as on Kubernetes.

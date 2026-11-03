@@ -452,7 +452,7 @@ Python up to 3.14.
 
 ### OpenSandbox
 
-`OpenSandbox(*, image=None, connection=None, resource=None, allow_internet_access=True, sandbox_timeout=None, working_dir='/workspace', env=None)`
+`OpenSandbox(*, image=None, connection=None, resource=None, allow_internet_access=True, secure_access=False, sandbox_timeout=None, working_dir='/workspace', env=None)`
 (backend `OpenSandboxBackend`, extra `[opensandbox]`) runs commands and file operations in a sandbox on
 your own OpenSandbox server, which runs it as a Docker container or a Kubernetes pod.
 
@@ -468,6 +468,10 @@ your own OpenSandbox server, which runs it as a Docker container or a Kubernetes
 - `allow_internet_access=True` leaves network access to the server. `False` requests deny-all egress for a new
   sandbox only: it needs the server's egress sidecar and `dns+nft` mode for packet-level enforcement; the default
   `dns` mode only filters DNS lookups. Server-level allow/deny overrides still apply. asyncio only.
+- `secure_access=True` requests per-sandbox endpoint authentication on creation. It requires Kubernetes with an
+  ingress gateway; Docker rejects it. The SDK sends endpoint tokens automatically, including on attachment,
+  which does not change existing protection. The default is `False`: management API keys alone do not protect
+  direct sandbox endpoints, so restrict unsecured endpoints to trusted callers.
 
 ## Remote hosts and bubblewrap
 

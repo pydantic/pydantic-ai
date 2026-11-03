@@ -79,7 +79,7 @@ ref = result.workspace.ref  # store this, e.g. in your database
 later = agent.run_sync('Now make it print the first 100.', workspace=ref)
 ```
 
-The ref is `WorkspaceRef(provider='opensandbox', id=<sandbox id>)`. Pass `workspace='new'` to create a fresh sandbox even when the message history names one. `image`, `resource` and `allow_internet_access` only shape a new sandbox; `working_dir`, `env` and `sandbox_timeout` apply to an attached one too.
+The ref is `WorkspaceRef(provider='opensandbox', id=<sandbox id>)`. Pass `workspace='new'` to create a fresh sandbox even when the message history names one. `image`, `resource`, `allow_internet_access` and `secure_access` only shape a new sandbox; `working_dir`, `env` and `sandbox_timeout` apply to an attached one too.
 
 A ref is trusted input: whoever passes one runs commands in that sandbox, and the server serves every sandbox to every holder of its API key. Only pass refs your application stored itself.
 
@@ -137,6 +137,12 @@ sandbox = OpenSandbox(
 ```
 
 Each sandbox asks for one CPU and 2 GiB unless you pass `resource`. A pod that can't be scheduled leaves the create waiting; the SDK gives up after its 30-second request timeout while the server may still finish it, so the backend finds the sandbox by a tag it set and keeps its ref, and the next operation attaches to it.
+
+## Endpoint authentication
+
+On Kubernetes with the server's ingress gateway enabled (`[ingress]` with `mode = "gateway"`), pass `OpenSandbox(image='python:3.13-slim', secure_access=True)` to require a per-sandbox token for endpoint access. The SDK obtains and sends the token automatically, including when attaching to a secured sandbox. The setting only applies when creating a sandbox; attaching does not enable or disable its existing protection.
+
+The default is `False`; Docker rejects `secure_access=True`. A management API key alone does not protect direct sandbox endpoints. Restrict unsecured endpoints to trusted callers. See [OpenSandbox Secure Access](https://github.com/opensandbox-group/OpenSandbox/blob/main/docs/guides/secure-access.md) for gateway configuration and how endpoint authentication differs from execd's own access token.
 
 ## Network access
 
@@ -198,12 +204,13 @@ The sandbox's isolation is the server's runtime: a Docker container shares the h
 - `allow_internet_access=False` requests deny-all egress for new sandboxes. Enforcement depends on the server's egress configuration; see [Network access](#network-access).
 - With network access enabled, a Docker-backed sandbox can reach services on its host and LAN, including the OpenSandbox API if it is exposed there. To restrict that access, use `allow_internet_access=False` with `dns+nft`, or a server-side network policy that blocks those destinations.
 - Set `api_key` under `[server]` and authenticate clients with `OPEN_SANDBOX_API_KEY`. Keep the key out of the sandbox's `env`: it grants access to every sandbox on that server.
+- The management API key does not protect direct sandbox endpoints. Use `secure_access=True` with a Kubernetes ingress gateway before exposing them to untrusted clients; Docker requires separate endpoint restrictions. See [Endpoint authentication](#endpoint-authentication).
 - `env` values are sent to the server with every command.
 - `image` is pulled by tag; pin a digest, such as `python:3.13-slim@sha256:...`, to get the same image every time.
 
 ## Configuration
 
-[Agent specs](../agent.md#agent-specs) can set `image`, `resource`, `allow_internet_access`, `sandbox_timeout`, `working_dir` and `env`. Configure the server connection through `OPEN_SANDBOX_DOMAIN` and `OPEN_SANDBOX_API_KEY`; a custom `ConnectionConfig` is a Python-only option.
+[Agent specs](../agent.md#agent-specs) can set `image`, `resource`, `allow_internet_access`, `secure_access`, `sandbox_timeout`, `working_dir` and `env`. Configure the server connection through `OPEN_SANDBOX_DOMAIN` and `OPEN_SANDBOX_API_KEY`; a custom `ConnectionConfig` is a Python-only option.
 
 | Option | What it does |
 | --- | --- |
@@ -211,6 +218,7 @@ The sandbox's isolation is the server's runtime: a Docker container shares the h
 | `connection` | The SDK's `ConnectionConfig` for your server. Default: `None`, which reads `OPEN_SANDBOX_DOMAIN` and `OPEN_SANDBOX_API_KEY`. |
 | `resource` | Resource limits for a new sandbox, such as `{'cpu': '500m', 'memory': '1Gi'}`. Default: `None`, one CPU and 2 GiB. |
 | `allow_internet_access` | Default: `True`, which keeps the server's network configuration. `False` requests deny-all egress for new sandboxes; see [Network access](#network-access) for server requirements. |
+| `secure_access` | Default: `False`. `True` requires a per-sandbox endpoint token for new sandboxes on Kubernetes with an ingress gateway. Docker rejects `True`; attachment keeps existing protection. |
 | `sandbox_timeout` | Seconds a sandbox may go unused before the server deletes it, files included; every operation renews it, and a single command must finish within it. Default: `None`, kept until destroyed. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against, created on first use if missing. Default: `/workspace`; `None` uses the image's own. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox, and `env` is kept out of the capability's `repr`, but the agent's commands can read it. |

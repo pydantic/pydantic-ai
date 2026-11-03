@@ -197,6 +197,8 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
             SDK's default of one CPU and 2 GiB.
         allow_internet_access: Whether a new sandbox keeps the server's network policy. `False` requests deny-all
             egress; blocking direct IP connections requires the server's `dns+nft` egress mode. Ignored on attach.
+        secure_access: Require the gateway's per-sandbox token for new sandbox endpoints. Requires Kubernetes
+            with an ingress gateway; Docker rejects `True`. Ignored on attach.
         sandbox_timeout: Seconds a sandbox may go unused before the server deletes it, files included. Every
             operation renews it as it starts, so a single command must finish within it. `None` keeps it until it
             is destroyed.
@@ -212,6 +214,7 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
         env: Mapping[str, str] | None = None,
         resource: Mapping[str, str] | None = None,
         allow_internet_access: bool = True,
+        secure_access: bool = False,
         sandbox_timeout: int | None = None,
     ) -> None:
         if (image is None) == (ref is None):
@@ -230,6 +233,7 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
         self._env = dict(env or {})
         self._resource = dict(resource) if resource is not None else None
         self._allow_internet_access = allow_internet_access
+        self._secure_access = secure_access
         self._sandbox_timeout = sandbox_timeout
         self._sandbox: Sandbox | None = None
         self._resolved_working_dir: str | None = None
@@ -328,6 +332,7 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
                         ready_timeout=_CREATE_READY_TIMEOUT,
                         resource=self._resource,
                         network_policy=None if self._allow_internet_access else NetworkPolicy(defaultAction='deny'),
+                        secure_access=self._secure_access,
                         metadata={_CREATE_TAG: tag},
                         connection_config=self._connection,
                     )

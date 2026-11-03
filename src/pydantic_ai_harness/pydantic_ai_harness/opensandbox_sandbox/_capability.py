@@ -85,6 +85,13 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
     default DNS-only mode. Does not change the policy of an attached sandbox.
     """
 
+    secure_access: bool = False
+    """Require the gateway's per-sandbox token for new sandbox endpoints.
+
+    Requires Kubernetes with an ingress gateway; Docker rejects `True`. The SDK sends the token automatically,
+    including when attaching to a secured sandbox. Does not change the setting of an attached sandbox.
+    """
+
     sandbox_timeout: int | None = None
     """Seconds a sandbox may go unused before the server deletes it, files included. Every operation renews it as it
     starts, so a single command must finish within it. `None` keeps it until it is destroyed."""
@@ -113,6 +120,7 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
         image: str | None = None,
         resource: Mapping[str, str] | None = None,
         allow_internet_access: bool = True,
+        secure_access: bool = False,
         sandbox_timeout: int | None = None,
         working_dir: str | None = '/workspace',
         env: Mapping[str, str] | None = None,
@@ -129,6 +137,7 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
             image=image,
             resource=resource,
             allow_internet_access=allow_internet_access,
+            secure_access=secure_access,
             sandbox_timeout=sandbox_timeout,
             working_dir=working_dir,
             env=env,
@@ -165,6 +174,7 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
             env=self.env,
             resource=self.resource,
             allow_internet_access=self.allow_internet_access,
+            secure_access=self.secure_access,
             sandbox_timeout=self.sandbox_timeout,
         )
 

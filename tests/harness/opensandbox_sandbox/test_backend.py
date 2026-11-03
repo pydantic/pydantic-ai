@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import anyio
+import httpx
 import pytest
 from opensandbox.config import ConnectionConfig
 from opensandbox.exceptions import SandboxApiException, SandboxConnectionException, SandboxTimeoutException
@@ -167,6 +168,48 @@ class TestNetworkPolicy:
         await _create(server, working_dir, **settings).working_dir()
         [sandbox] = server.sandboxes.values()
         assert sandbox.network_policy == expected
+
+
+class TestSecureAccess:
+    @pytest.mark.parametrize(
+        ('settings', 'expected'),
+        [({}, False), ({'secure_access': False}, False), ({'secure_access': True}, True)],
+        ids=['default', 'disabled', 'enabled'],
+    )
+    async def test_creation_requests_secure_access(
+        self, server: FakeOpenSandbox, working_dir: str, settings: dict[str, bool], expected: bool
+    ) -> None:
+        await _create(server, working_dir, **settings).working_dir()
+        [sandbox] = server.sandboxes.values()
+        assert sandbox.secure_access is expected
+
+    @pytest.mark.parametrize('attach', [False, True], ids=['create', 'attach'])
+    async def test_the_sdk_authenticates_secured_command_endpoints(
+        self, server: FakeOpenSandbox, working_dir: str, attach: bool
+    ) -> None:
+        created = _create(server, working_dir, secure_access=True)
+        await created.working_dir()
+        backend = created
+        if attach:
+            assert created.ref is not None
+            backend = OpenSandboxBackend(ref=created.ref, connection=server.connection, working_dir=working_dir)
+        assert (await backend.run(['echo', 'authenticated'])).stdout == 'authenticated\n'
+
+    @pytest.mark.parametrize('token', [None, 'wrong'], ids=['missing-token', 'wrong-token'])
+    async def test_missing_or_wrong_endpoint_tokens_are_rejected(
+        self, server: FakeOpenSandbox, working_dir: str, token: str | None
+    ) -> None:
+        backend = _create(server, working_dir, secure_access=True)
+        await backend.working_dir()
+        assert backend.ref is not None
+        headers = {'open-sandbox-api-key': fake_opensandbox.API_KEY}
+        if token is not None:
+            headers['OpenSandbox-Secure-Access'] = token
+        async with httpx.AsyncClient(transport=server, headers=headers) as client:
+            response = await client.get(
+                f'http://execd.{DOMAIN}/{backend.ref.id}/proxy/{fake_opensandbox.EXECD_PORT}/ping'
+            )
+        assert response.status_code == 401
 
 
 class TestLifecycle:

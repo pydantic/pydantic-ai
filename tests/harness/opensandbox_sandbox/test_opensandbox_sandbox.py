@@ -67,6 +67,7 @@ class TestConfiguration:
             'image',
             'resource',
             'sandbox_timeout',
+            'secure_access',
             'working_dir',
         ]
 
@@ -77,6 +78,7 @@ class TestConfiguration:
             'image': 'python:3.13-slim',
             'resource': {'cpu': '500m', 'memory': '1Gi'},
             'allow_internet_access': False,
+            'secure_access': True,
             'sandbox_timeout': 60,
             'working_dir': '/project',
             'env': {'CONFIGURED': 'value'},
@@ -195,6 +197,37 @@ class TestDocs:
 
 
 class TestRuns:
+    async def test_secure_access_requests_authenticated_endpoints(
+        self, server: FakeOpenSandbox, working_dir: str
+    ) -> None:
+        capability = OpenSandbox[None](
+            image='fake-image', connection=server.connection, working_dir=working_dir, secure_access=True
+        )
+        await _agent(capability).run('where are you?')
+        [sandbox] = server.sandboxes.values()
+        assert sandbox.secure_access is True
+
+    @pytest.mark.parametrize('use_agent', [False, True], ids=['backend', 'agent'])
+    async def test_secure_access_does_not_change_an_existing_sandbox(
+        self, server: FakeOpenSandbox, working_dir: str, use_agent: bool
+    ) -> None:
+        created = OpenSandboxBackend(image='fake-image', connection=server.connection, working_dir=working_dir)
+        try:
+            sandbox = await created.get_sandbox()
+        finally:
+            await created.aclose()
+        capability = OpenSandbox[None](connection=server.connection, working_dir=working_dir, secure_access=True)
+        if use_agent:
+            await _agent(capability).run('where are you?', workspace=created.ref)
+        else:
+            assert created.ref is not None
+            backend = capability.backend(created.ref)
+            try:
+                await backend.working_dir()
+            finally:
+                await backend.aclose()
+        assert [(s.id, s.secure_access) for s in server.sandboxes.values()] == [(sandbox.id, False)]
+
     async def test_disabling_internet_requests_deny_all_on_creation(
         self, server: FakeOpenSandbox, working_dir: str
     ) -> None:
