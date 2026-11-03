@@ -1452,23 +1452,6 @@ def _tool_return_text(value: Any) -> str:
     return dumped.decode()
 
 
-def _serialize_content_items(
-    items: list[ToolReturnContent], mode: Literal['str', 'jsonable']
-) -> list[str | MultiModalContent] | list[Any | MultiModalContent]:
-    """Serialize a tool return's content items as `BaseToolReturnPart.content_items` does in `mode`, files as they are."""
-    result: list[str | MultiModalContent] | list[Any | MultiModalContent] = []
-    for item in items:
-        if is_multi_modal_content(item):
-            result.append(item)
-        elif isinstance(item, str):
-            result.append(item)
-        elif mode == 'str':
-            result.append(_tool_return_text(item))
-        else:
-            result.append(tool_return_ta.dump_python(item, mode='json', by_alias=True))
-    return result
-
-
 class _StrPassthrough:
     """The `str` arm of `ToolReturnContent`, matched entirely in Rust in both validation modes.
 
@@ -2272,7 +2255,24 @@ class BaseToolReturnPart(Generic[ContentT_co]):
                 else tool_return_ta.dump_python(items, mode='json', by_alias=True)
             ]
 
-        return _serialize_content_items(items, mode)
+        return self._serialize_content_items(items, mode)
+
+    @staticmethod
+    def _serialize_content_items(
+        items: list[ToolReturnContent], mode: Literal['str', 'jsonable']
+    ) -> list[str | MultiModalContent] | list[Any | MultiModalContent]:
+        """Serialize content items as `content_items` does in `mode`, files as they are."""
+        result: list[str | MultiModalContent] | list[Any | MultiModalContent] = []
+        for item in items:
+            if is_multi_modal_content(item):
+                result.append(item)
+            elif isinstance(item, str):
+                result.append(item)
+            elif mode == 'str':
+                result.append(_tool_return_text(item))
+            else:
+                result.append(tool_return_ta.dump_python(item, mode='json', by_alias=True))
+        return result
 
     def model_response_str(self, *, wrap_if_error: bool = True) -> str:
         """Return a string representation of the data content for the model.
@@ -5711,7 +5711,7 @@ def _sanitize_messages(
     state it wrote into the reserved namespace itself past the sanitization. Warnings point at the caller of
     the public function that called this one.
     """
-    sanitizer = _MessageSanitizer(
+    context = _SanitizeMessagesContext(
         strip_system_prompts=strip_system_prompts,
         strip_instructions=strip_instructions,
         allowed_schemes={scheme.lower() for scheme in allowed_file_url_schemes},
@@ -5725,9 +5725,9 @@ def _sanitize_messages(
     sources: list[int] = []
     for index, message in enumerate(messages):
         if isinstance(message, ModelRequest):
-            new_message = sanitizer.sanitize_request(message)
+            new_message = _sanitize_request(context, message)
         elif isinstance(message, ModelResponse):
-            new_message = sanitizer.sanitize_response(message)
+            new_message = _sanitize_response(context, message)
         else:
             assert_never(message)
         if new_message is not None:
@@ -5735,15 +5735,15 @@ def _sanitize_messages(
             sources.append(index)
     # This must stay the last step that drops or merges messages, here and in every caller: it can only
     # check the end of the history once that end is final. See `_strip_dangling_tail_tool_calls`.
-    _strip_dangling_tail_tool_calls(sanitized, resolved_ids, sanitizer.dangling_tool_call_names)
+    _strip_dangling_tail_tool_calls(sanitized, resolved_ids, context.dangling_tool_call_names)
     # Stripping only drops or rewrites messages at the end, so the remaining sources still line up.
     del sources[len(sanitized) :]
-    sanitizer.warn()
+    _warn_sanitized(context)
     return sanitized, sources
 
 
 @dataclass
-class _MessageSanitizer:
+class _SanitizeMessagesContext:
     """The options of one `_sanitize_messages` call, and what it dropped or reset, for its warnings."""
 
     strip_system_prompts: bool
@@ -5761,130 +5761,133 @@ class _MessageSanitizer:
     reserved_metadata_messages: list[ModelMessage] = field(default_factory=list[ModelMessage])
     dangling_tool_call_names: list[str] = field(default_factory=list[str])
 
-    def sanitize_request(self, message: ModelRequest) -> ModelRequest | None:
-        new_request_parts, request_stripped_system_prompt = _sanitize_request_parts(
-            message.parts,
-            strip_system_prompts=self.strip_system_prompts,
-            allowed_file_url_schemes=self.allowed_schemes,
-            allowed_file_url_force_download=self.allowed_force_download,
-            allow_uploaded_files=self.allow_uploaded_files,
-            disallowed_schemes=self.disallowed_url_schemes,
-            reset_force_download_values=self.reset_force_download_values,
-            dropped_uploaded_file_providers=self.dropped_uploaded_file_providers,
-            stripped_text_metadata=self.stripped_text_metadata,
+
+def _sanitize_request(context: _SanitizeMessagesContext, message: ModelRequest) -> ModelRequest | None:
+    new_request_parts, request_stripped_system_prompt = _sanitize_request_parts(
+        message.parts,
+        strip_system_prompts=context.strip_system_prompts,
+        allowed_file_url_schemes=context.allowed_schemes,
+        allowed_file_url_force_download=context.allowed_force_download,
+        allow_uploaded_files=context.allow_uploaded_files,
+        disallowed_schemes=context.disallowed_url_schemes,
+        reset_force_download_values=context.reset_force_download_values,
+        dropped_uploaded_file_providers=context.dropped_uploaded_file_providers,
+        stripped_text_metadata=context.stripped_text_metadata,
+    )
+    context.stripped_system_prompt = context.stripped_system_prompt or request_stripped_system_prompt
+    if not new_request_parts:
+        # Drop the request entirely so we don't leave an empty `ModelRequest(parts=[])` in history.
+        return None
+    # Reset silently: every request an agent run records carries the agent's own instructions, so
+    # a warning would fire on every turn of a normal round trip, and agent runs never send them.
+    instructions = None if context.strip_instructions else message.instructions
+    metadata = _without_reserved_metadata(message, context.reserved_metadata_messages)
+    return replace(message, parts=new_request_parts, instructions=instructions, metadata=metadata)
+
+
+def _sanitize_response(context: _SanitizeMessagesContext, message: ModelResponse) -> ModelResponse | None:
+    new_response_parts = _sanitize_response_parts(
+        message.parts,
+        allowed_file_url_schemes=context.allowed_schemes,
+        allowed_file_url_force_download=context.allowed_force_download,
+        allow_uploaded_files=context.allow_uploaded_files,
+        disallowed_schemes=context.disallowed_url_schemes,
+        reset_force_download_values=context.reset_force_download_values,
+        dropped_uploaded_file_providers=context.dropped_uploaded_file_providers,
+    )
+    if not new_response_parts:
+        # Drop the response entirely so we don't leave an empty `ModelResponse(parts=[])` in history.
+        return None
+    # Drop `workspace_ref`: a client that can set it could point a reconnecting
+    # capability at an environment it attaches to with server-side credentials.
+    workspace_ref = None if context.strip_workspace_refs else message.workspace_ref
+    metadata = _without_reserved_metadata(message, context.reserved_metadata_messages)
+    # Drop `model_id` too: Pydantic AI routes later requests by it.
+    return replace(message, parts=new_response_parts, model_id=None, workspace_ref=workspace_ref, metadata=metadata)
+
+
+def _warn_sanitized(context: _SanitizeMessagesContext) -> None:
+    """Warn about each kind of content the sanitization dropped or reset, at the caller of the public function."""
+    if context.stripped_system_prompt:
+        warnings.warn(
+            'Parts carrying the system voice were stripped from the client-submitted messages: system '
+            'prompts and instruction records, which a client can forge as easily as a round-trip brings '
+            'them back. Pass `strip_system_prompts=False` only when the client is trusted to own the '
+            "system prompt, or set `manage_system_prompt='client'` on a UI adapter.",
+            UserWarning,
+            stacklevel=4,
         )
-        self.stripped_system_prompt = self.stripped_system_prompt or request_stripped_system_prompt
-        if not new_request_parts:
-            # Drop the request entirely so we don't leave an empty `ModelRequest(parts=[])` in history.
-            return None
-        # Reset silently: every request an agent run records carries the agent's own instructions, so
-        # a warning would fire on every turn of a normal round trip, and agent runs never send them.
-        instructions = None if self.strip_instructions else message.instructions
-        metadata = _without_reserved_metadata(message, self.reserved_metadata_messages)
-        return replace(message, parts=new_request_parts, instructions=instructions, metadata=metadata)
 
-    def sanitize_response(self, message: ModelResponse) -> ModelResponse | None:
-        new_response_parts = _sanitize_response_parts(
-            message.parts,
-            allowed_file_url_schemes=self.allowed_schemes,
-            allowed_file_url_force_download=self.allowed_force_download,
-            allow_uploaded_files=self.allow_uploaded_files,
-            disallowed_schemes=self.disallowed_url_schemes,
-            reset_force_download_values=self.reset_force_download_values,
-            dropped_uploaded_file_providers=self.dropped_uploaded_file_providers,
+    if context.disallowed_url_schemes:
+        warnings.warn(
+            f'Client-submitted file URLs with scheme(s) {sorted(context.disallowed_url_schemes)!r} '
+            f'were dropped because those schemes are not in `allowed_file_url_schemes` '
+            f'(currently {sorted(context.allowed_schemes)!r}). Non-HTTP schemes like '
+            f'`s3://` or `gs://` are fetched by the model provider using the server-side IAM role, '
+            f'so they should only be accepted from trusted clients. To allow a scheme, add it to '
+            f'`allowed_file_url_schemes`.',
+            UserWarning,
+            stacklevel=4,
         )
-        if not new_response_parts:
-            # Drop the response entirely so we don't leave an empty `ModelResponse(parts=[])` in history.
-            return None
-        # Drop `workspace_ref`: a client that can set it could point a reconnecting
-        # capability at an environment it attaches to with server-side credentials.
-        workspace_ref = None if self.strip_workspace_refs else message.workspace_ref
-        metadata = _without_reserved_metadata(message, self.reserved_metadata_messages)
-        # Drop `model_id` too: Pydantic AI routes later requests by it.
-        return replace(message, parts=new_response_parts, model_id=None, workspace_ref=workspace_ref, metadata=metadata)
 
-    def warn(self) -> None:
-        """Warn about each kind of content the sanitization dropped or reset, at the caller of the public function."""
-        if self.stripped_system_prompt:
-            warnings.warn(
-                'Parts carrying the system voice were stripped from the client-submitted messages: system '
-                'prompts and instruction records, which a client can forge as easily as a round-trip brings '
-                'them back. Pass `strip_system_prompts=False` only when the client is trusted to own the '
-                "system prompt, or set `manage_system_prompt='client'` on a UI adapter.",
-                UserWarning,
-                stacklevel=4,
-            )
+    if context.reset_force_download_values:
+        warnings.warn(
+            f'Client-submitted file URLs with `force_download` value(s) '
+            f'{sorted(context.reset_force_download_values, key=repr)!r} were reset to `False` because '
+            f'those values are not in `allowed_file_url_force_download` '
+            f'(currently {sorted(context.allowed_force_download, key=repr)!r}). '
+            f"`'allow-local'` opts the URL out of the SSRF private-IP block and `True` makes "
+            f'the server fetch the file itself, so neither should be accepted from untrusted '
+            f'clients. To allow a value, add it to `allowed_file_url_force_download`, or set '
+            f'it only on trusted server-side `message_history` passed directly to `Agent.run`.',
+            UserWarning,
+            stacklevel=4,
+        )
 
-        if self.disallowed_url_schemes:
-            warnings.warn(
-                f'Client-submitted file URLs with scheme(s) {sorted(self.disallowed_url_schemes)!r} '
-                f'were dropped because those schemes are not in `allowed_file_url_schemes` '
-                f'(currently {sorted(self.allowed_schemes)!r}). Non-HTTP schemes like '
-                f'`s3://` or `gs://` are fetched by the model provider using the server-side IAM role, '
-                f'so they should only be accepted from trusted clients. To allow a scheme, add it to '
-                f'`allowed_file_url_schemes`.',
-                UserWarning,
-                stacklevel=4,
-            )
+    if context.dropped_uploaded_file_providers:
+        warnings.warn(
+            f'Client-submitted uploaded file(s) for provider(s) {sorted(context.dropped_uploaded_file_providers)!r} '
+            f'were dropped because `allow_uploaded_files` is `False` (the default). Like a non-HTTP file URL, '
+            f'an uploaded file references an object the model provider fetches using the server-side IAM role '
+            f'or service account, so it should only be accepted from trusted clients. To keep uploaded files '
+            f'from the client, set `allow_uploaded_files=True`, or pass them on trusted server-side '
+            f'`message_history` directly to `Agent.run`.',
+            UserWarning,
+            stacklevel=4,
+        )
 
-        if self.reset_force_download_values:
-            warnings.warn(
-                f'Client-submitted file URLs with `force_download` value(s) '
-                f'{sorted(self.reset_force_download_values, key=repr)!r} were reset to `False` because '
-                f'those values are not in `allowed_file_url_force_download` '
-                f'(currently {sorted(self.allowed_force_download, key=repr)!r}). '
-                f"`'allow-local'` opts the URL out of the SSRF private-IP block and `True` makes "
-                f'the server fetch the file itself, so neither should be accepted from untrusted '
-                f'clients. To allow a value, add it to `allowed_file_url_force_download`, or set '
-                f'it only on trusted server-side `message_history` passed directly to `Agent.run`.',
-                UserWarning,
-                stacklevel=4,
-            )
+    if context.reserved_metadata_messages:
+        warnings.warn(
+            f'Framework-reserved `__pydantic_ai__` metadata was dropped from '
+            f'{len(context.reserved_metadata_messages)} client-submitted message(s). '
+            f'Pydantic AI and its capabilities keep state there that they act on, '
+            f'so it is not accepted from untrusted clients. Your own metadata keys are kept. Pass history that '
+            f'should keep this state as trusted server-side `message_history` instead.',
+            UserWarning,
+            stacklevel=4,
+        )
 
-        if self.dropped_uploaded_file_providers:
-            warnings.warn(
-                f'Client-submitted uploaded file(s) for provider(s) {sorted(self.dropped_uploaded_file_providers)!r} '
-                f'were dropped because `allow_uploaded_files` is `False` (the default). Like a non-HTTP file URL, '
-                f'an uploaded file references an object the model provider fetches using the server-side IAM role '
-                f'or service account, so it should only be accepted from trusted clients. To keep uploaded files '
-                f'from the client, set `allow_uploaded_files=True`, or pass them on trusted server-side '
-                f'`message_history` directly to `Agent.run`.',
-                UserWarning,
-                stacklevel=4,
-            )
+    if context.stripped_text_metadata:
+        warnings.warn(
+            f'`TextContent.metadata` was dropped from {len(context.stripped_text_metadata)} client-submitted user '
+            f'prompt item(s). Metadata is never sent to the model, but application code and capabilities read it '
+            f'to recognize content they added themselves, so it is not accepted from untrusted clients. Pass '
+            f'history that carries your own metadata as trusted server-side `message_history` instead.',
+            UserWarning,
+            stacklevel=4,
+        )
 
-        if self.reserved_metadata_messages:
-            warnings.warn(
-                f'Framework-reserved `__pydantic_ai__` metadata was dropped from '
-                f'{len(self.reserved_metadata_messages)} client-submitted message(s). '
-                f'Pydantic AI and its capabilities keep state there that they act on, '
-                f'so it is not accepted from untrusted clients. Your own metadata keys are kept. Pass history that '
-                f'should keep this state as trusted server-side `message_history` instead.',
-                UserWarning,
-                stacklevel=4,
-            )
-
-        if self.stripped_text_metadata:
-            warnings.warn(
-                f'`TextContent.metadata` was dropped from {len(self.stripped_text_metadata)} client-submitted user '
-                f'prompt item(s). Metadata is never sent to the model, but application code and capabilities read it '
-                f'to recognize content they added themselves, so it is not accepted from untrusted clients. Pass '
-                f'history that carries your own metadata as trusted server-side `message_history` instead.',
-                UserWarning,
-                stacklevel=4,
-            )
-
-        if self.dangling_tool_call_names:
-            warnings.warn(
-                f'Client-submitted history ended with unresolved tool call(s) '
-                f'{sorted(set(self.dangling_tool_call_names))!r}, which were stripped. Tool calls are '
-                f'produced by the model on the server side, so an unresolved tool call at the end '
-                f'of client-supplied history does not correspond to a paused agent run. For '
-                f'human-in-the-loop resumption, pass matching tool call IDs to `resolved_tool_call_ids`, '
-                f'or pass matching `deferred_tool_results` to a UI adapter run method.',
-                UserWarning,
-                stacklevel=4,
-            )
+    if context.dangling_tool_call_names:
+        warnings.warn(
+            f'Client-submitted history ended with unresolved tool call(s) '
+            f'{sorted(set(context.dangling_tool_call_names))!r}, which were stripped. Tool calls are '
+            f'produced by the model on the server side, so an unresolved tool call at the end '
+            f'of client-supplied history does not correspond to a paused agent run. For '
+            f'human-in-the-loop resumption, pass matching tool call IDs to `resolved_tool_call_ids`, '
+            f'or pass matching `deferred_tool_results` to a UI adapter run method.',
+            UserWarning,
+            stacklevel=4,
+        )
 
 
 def _without_reserved_metadata(message: ModelMessage, stripped: list[ModelMessage]) -> dict[str, Any] | None:

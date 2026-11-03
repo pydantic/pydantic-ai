@@ -232,21 +232,24 @@ async def resolve_sourced_instructions(
     cache treatment applies only to its own text, while callable instructions are resolved lazily
     against the current `RunContext`.
     """
-    resolved = _ResolvedInstructions()
+    context = _ResolveInstructionsContext()
     for sourced in instructions:
         instruction = sourced.instruction
         if isinstance(instruction, InstructionPart):
-            resolved.add_part(instruction, sourced.id)
+            _add_instruction_part(context, instruction, sourced.id)
         elif isinstance(instruction, str):
-            resolved.add_text(instruction, sourced.id)
+            _add_instruction_text(context, instruction, sourced.id)
         elif (part := await resolve_instruction_function(sourced, instruction, run_context)) is not None:
-            resolved.add_function_result(part)
-    resolved.flush_group()
-    return resolved.parts
+            if context.group:
+                context.pending_parts.append(part)
+            else:
+                context.parts.append(part)
+    _flush_instruction_group(context)
+    return context.parts
 
 
 @dataclass
-class _ResolvedInstructions:
+class _ResolveInstructionsContext:
     """The parts `resolve_sourced_instructions` has resolved so far, and the run of literal strings it is joining."""
 
     parts: list[InstructionPart] = field(default_factory=list[InstructionPart])
@@ -255,33 +258,34 @@ class _ResolvedInstructions:
     """Function results resolved while `group` is open, which follow it."""
     group_key: InstructionId | None = None
 
-    def add_part(self, instruction: InstructionPart, instruction_id: InstructionId | None) -> None:
-        if not (content := instruction.content.strip()) and instruction.on_change != 'append':
-            return
-        self.flush_group()
-        self.group_key = None
-        self.parts.append(replace(instruction, content=content, id=instruction_id))
 
-    def add_text(self, text: str, instruction_id: InstructionId | None) -> None:
-        if not (content := text.strip()):
-            return
-        if self.group and (instruction_id is None or self.group_key != instruction_id):
-            self.flush_group()
-        self.group_key = instruction_id
-        self.group.append(InstructionPart(content=content, id=instruction_id))
+def _add_instruction_part(
+    context: _ResolveInstructionsContext, instruction: InstructionPart, instruction_id: InstructionId | None
+) -> None:
+    if not (content := instruction.content.strip()) and instruction.on_change != 'append':
+        return
+    _flush_instruction_group(context)
+    context.group_key = None
+    context.parts.append(replace(instruction, content=content, id=instruction_id))
 
-    def add_function_result(self, part: InstructionPart) -> None:
-        if self.group:
-            self.pending_parts.append(part)
-        else:
-            self.parts.append(part)
 
-    def flush_group(self) -> None:
-        if content := InstructionPart.join(self.group):
-            self.parts.append(InstructionPart(content=content, id=self.group[0].id))
-        self.group.clear()
-        self.parts.extend(self.pending_parts)
-        self.pending_parts.clear()
+def _add_instruction_text(
+    context: _ResolveInstructionsContext, text: str, instruction_id: InstructionId | None
+) -> None:
+    if not (content := text.strip()):
+        return
+    if context.group and (instruction_id is None or context.group_key != instruction_id):
+        _flush_instruction_group(context)
+    context.group_key = instruction_id
+    context.group.append(InstructionPart(content=content, id=instruction_id))
+
+
+def _flush_instruction_group(context: _ResolveInstructionsContext) -> None:
+    if content := InstructionPart.join(context.group):
+        context.parts.append(InstructionPart(content=content, id=context.group[0].id))
+    context.group.clear()
+    context.parts.extend(context.pending_parts)
+    context.pending_parts.clear()
 
 
 def normalize_instructions(
