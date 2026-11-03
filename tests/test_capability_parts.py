@@ -941,10 +941,9 @@ class TodaysPartsOnlyModel(Model):
         for message in messages:
             if isinstance(message, ModelRequest):
                 for part in message.parts:
-                    if isinstance(part, SystemPromptPart):
-                        self.seen.append(f'system: {part.content}')
-                    elif isinstance(part, UserPromptPart):
-                        self.seen.append(f'user: {part.content}')
+                    if isinstance(part, SystemPromptPart | UserPromptPart):
+                        role = 'system' if isinstance(part, SystemPromptPart) else 'user'
+                        self.seen.append(f'{role}: {part.content}')
                     else:
                         # What this model exists to show never happens.
                         raise NotImplementedError(f'Unknown request part {type(part).__name__}')  # pragma: no cover
