@@ -616,7 +616,9 @@ class DocumentUrl(FileUrl):
     @property
     def format(self) -> str:
         """The file format of the document, such as `'pdf'` or `'pptx'`: the extension its media type is known by."""
-        return _document_format(self.media_type)
+        if format := _document_format(self.media_type):
+            return format
+        raise ValueError(f'Unknown document media type: {self.media_type}')
 
 
 @dataclass(repr=False)
@@ -920,22 +922,22 @@ class BinaryContent:
             return True
         if self.is_audio or self.is_image or self.is_video or _utils.is_text_like_media_type(self.media_type):
             return False
-        return _mime_types.guess_extension(self.media_type) is not None
+        return _document_format(self.media_type) is not None
 
     @property
     def format(self) -> str:
         """The file format of the binary content."""
-        try:
-            if self.is_audio:
-                return _audio_format_lookup[self.media_type]
-            elif self.is_image:
-                return _image_format_lookup[self.media_type]
-            elif self.is_video:
-                return _video_format_lookup[self.media_type]
-            else:
-                return _document_format(self.media_type)
-        except KeyError as e:
-            raise ValueError(f'Unknown media type: {self.media_type}') from e
+        if self.is_audio:
+            format = _audio_format_lookup.get(self.media_type)
+        elif self.is_image:
+            format = _image_format_lookup.get(self.media_type)
+        elif self.is_video:
+            format = _video_format_lookup.get(self.media_type)
+        else:
+            format = _document_format(self.media_type)
+        if format is None:
+            raise ValueError(f'Unknown media type: {self.media_type}')
+        return format
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -1273,19 +1275,22 @@ _document_format_lookup: dict[str, DocumentFormat] = {
 }
 
 
-def _document_format(media_type: str) -> str:
-    """The file format of a document with `media_type`: the extension it's known by, without the dot.
+def _document_format(media_type: str) -> str | None:
+    """The file format of a document with `media_type`: the extension it's known by, without the dot, or `None`.
 
     `_document_format_lookup` holds the formats model APIs expect for the types they name (Bedrock's `format`, the
     `filename` OpenAI reads the type from); any other media type is looked up in `mimetypes`, so a document of any
-    type can be sent, and a model that doesn't read it rejects it. `_mime_types` registers the stdlib's own table
-    before the OS mime files and the Windows registry, so where several extensions are known its wins.
+    type can be sent, and a model that doesn't read it rejects it. Where `mimetypes` knows several extensions, the
+    one spelling the subtype wins (`application/xml` is `xml`, not the `xsl` the stdlib lists first), then the first
+    known: `_mime_types` registers the stdlib's own table before the OS mime files and the Windows registry.
     """
     if format := _document_format_lookup.get(media_type):
         return format
-    if extension := _mime_types.guess_extension(media_type):
-        return extension.removeprefix('.')
-    raise ValueError(f'Unknown document media type: {media_type}')
+    extensions = [extension.removeprefix('.') for extension in _mime_types.guess_all_extensions(media_type)]
+    if not extensions:
+        return None
+    subtype = media_type.partition('/')[2]
+    return subtype if subtype in extensions else extensions[0]
 
 
 _audio_format_lookup: dict[str, AudioFormat] = {

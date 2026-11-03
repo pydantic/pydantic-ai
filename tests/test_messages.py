@@ -521,6 +521,7 @@ _url_formats = [
     pytest.param(DocumentUrl('foobar.odp'), 'application/vnd.oasis.opendocument.presentation', 'odp', id='odp'),
     # Known only to `mimetypes`
     pytest.param(DocumentUrl('foobar.py'), 'text/x-python', 'py', id='py'),
+    pytest.param(DocumentUrl('foobar.xml'), 'application/xml', 'xml', id='xml'),
 ]
 if sys.version_info > (3, 11):  # pragma: no branch
     # This solves an issue with MIMEType on MacOS + python < 3.12. mimetypes.py added the text/markdown in 3.12, but on
@@ -547,7 +548,7 @@ def test_binary_content_unknown_media_type():
     binary_content = BinaryContent(data=b'Hello, world!', media_type='application/custom')
     # No extension is known for it, so it is no document: the model adapter refuses it as it did before
     assert binary_content.is_document is False
-    with pytest.raises(ValueError, match='Unknown document media type: application/custom'):
+    with pytest.raises(ValueError, match='Unknown media type: application/custom'):
         binary_content.format
 
 
@@ -556,6 +557,10 @@ def test_binary_content_text_like_is_not_a_document():
     json_content = BinaryContent(data=b'{}', media_type='application/json')
     assert json_content.is_document is False
     assert json_content.format == 'json'
+    xml_content = BinaryContent(data=b'<a/>', media_type='application/xml')
+    assert xml_content.is_document is False
+    # `mimetypes` lists `xsl` first for XML; the extension spelling the subtype wins
+    assert xml_content.format == 'xml'
 
 
 def test_binary_content_is_methods():
