@@ -248,6 +248,9 @@ deliver an out-of-band watchdog instruction:
 
 Delivery is reported as an [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] on
 the session's event stream, matching [standard runs](../message-history.md#injecting-messages-mid-run).
+Until it's delivered, queued content can be [withdrawn or reprioritized](../message-history.md#withdrawing-or-reprioritizing-a-queued-message)
+by its `enqueue_id`, with [`RealtimeSession.withdraw()`][pydantic_ai.realtime.RealtimeSession.withdraw] and
+[`RealtimeSession.reprioritize()`][pydantic_ai.realtime.RealtimeSession.reprioritize].
 
 ```python
 import asyncio

@@ -238,6 +238,27 @@ class PendingMessageQueue(list[PendingMessage]):
         with self._lock:
             return self._pop_priority(priority)
 
+    def withdraw(self, enqueue_id: str) -> bool:
+        """Remove the queued message `enqueue_id`, or return `False` if it isn't queued (any more)."""
+        with self._lock:
+            for index, pending in enumerate(self):
+                if pending.enqueue_id == enqueue_id:
+                    del self[index]
+                    return True
+            return False
+
+    def reprioritize(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
+        """Give the queued message `enqueue_id` a new priority, keeping its place, or return `False` if it isn't queued."""
+        with self._lock:
+            for pending in self:
+                if pending.enqueue_id == enqueue_id:
+                    pending.priority = priority
+                    if priority != 'asap':
+                        # Only `asap` content goes next to a tool call's return, as in `PendingMessage.from_content`.
+                        pending._tool_call = None  # pyright: ignore[reportPrivateUsage]
+                    return True
+            return False
+
     def append_capability_load(self, capability_id: str, records: Sequence[CapabilityLoadRecord]) -> bool:
         """Queue the records of a load of `capability_id`, delivered together with the next model request.
 
@@ -300,6 +321,23 @@ class PendingMessageQueue(list[PendingMessage]):
         selected = [pending for pending in self if pending.priority == priority]
         self[:] = [pending for pending in self if pending.priority != priority]
         return selected
+
+
+class EnqueueGuard(list[PendingMessage]):
+    """Replaces `ctx.pending_messages` inside a durable unit, where enqueueing can't be supported.
+
+    A durable unit's recorded output is replayed on recovery (DBOS), cache hit (Prefect), or
+    across the activity boundary (Temporal) without re-running the code, so messages enqueued
+    inside it would be silently dropped, and changes to queued messages lost; enqueueing raises an
+    explanatory `UserError` instead, and so does changing a queued message.
+    """
+
+    def __init__(self, message: str):
+        super().__init__()
+        self.message = message
+
+    def append(self, pending: PendingMessage) -> None:
+        raise UserError(self.message)
 
 
 def stamped_messages(

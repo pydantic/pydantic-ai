@@ -22,7 +22,7 @@ from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from . import _utils, messages as _messages
 from ._cancel import current_run_clock
 from ._context_size import context_tokens
-from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
+from ._enqueue import EnqueueContent, EnqueueGuard, PendingMessage, PendingMessagePriority, PendingMessageQueue
 from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import UserError
 
@@ -1037,6 +1037,60 @@ class RunContext(Generic[RunContextAgentDepsT]):
             return None
         self.pending_messages.append(pending)
         return pending.enqueue_id
+
+    def withdraw(self, enqueue_id: str) -> bool:
+        """Withdraw a message queued with [`enqueue`][pydantic_ai.tools.RunContext.enqueue] before it's delivered.
+
+        Safe to call from the same places as `enqueue`. The check and the removal happen under the
+        queue's lock, so a concurrent delivery and a withdrawal can't both succeed.
+
+        Args:
+            enqueue_id: The ID `enqueue` returned.
+
+        Returns:
+            `True` if the message was still queued and is now removed, or `False` if it was already
+            delivered, withdrawn, or never queued in this run. No
+            [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] is emitted for it.
+
+        Raises:
+            UserError: If this `RunContext` isn't backed by a running agent's queue, or it runs inside a
+                durable execution unit, where the change would be lost on replay.
+        """
+        return self._live_queue('withdraw').withdraw(enqueue_id)
+
+    def reprioritize(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
+        """Change when a message queued with [`enqueue`][pydantic_ai.tools.RunContext.enqueue] is delivered.
+
+        The message keeps its place among queued messages and its `enqueue_id`, so the
+        [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] for its delivery still
+        carries that ID. Promoting it to `'asap'` delivers it at the next model request, in its own
+        [`ModelRequest`][pydantic_ai.messages.ModelRequest]. Demoting content enqueued during a tool call
+        to `'when_idle'` means it's no longer put next to that call's result.
+
+        Args:
+            enqueue_id: The ID `enqueue` returned.
+            priority: The new priority, with the same meaning as in `enqueue`.
+
+        Returns:
+            `True` if the message was still queued, or `False` if it was already delivered, withdrawn,
+            or never queued in this run.
+
+        Raises:
+            UserError: If this `RunContext` isn't backed by a running agent's queue, or it runs inside a
+                durable execution unit, where the change would be lost on replay.
+        """
+        return self._live_queue('reprioritize').reprioritize(enqueue_id, priority)
+
+    def _live_queue(self, method: str) -> PendingMessageQueue:
+        queue = self.pending_messages
+        if isinstance(queue, EnqueueGuard):
+            raise UserError(queue.message)
+        if not isinstance(queue, PendingMessageQueue):
+            raise UserError(
+                f'`{method}` is only available during an agent run (from tools, capability hooks, or '
+                f'`AgentRun.{method}`). This `RunContext` has no pending-message queue to change.'
+            )
+        return queue
 
     def load_capability(self, capability: str | AbstractCapability[RunContextAgentDepsT]) -> bool:
         """Load an [on-demand capability](../capabilities/on-demand.md#loading-from-code) on the model request that follows.
