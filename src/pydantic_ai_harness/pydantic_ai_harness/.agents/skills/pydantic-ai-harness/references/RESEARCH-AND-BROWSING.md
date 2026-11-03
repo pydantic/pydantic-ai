@@ -305,9 +305,9 @@ cookies + localStorage object, for logged-in runs), `cdp_url=None` (attach to a 
 `blocked_domains=None`, `block_private_addresses=True`, `include_subdomains=True`,
 `allowlist_reach=frozenset({'navigation', 'data'})`, `resolved_kinds` (all kinds). Request kinds are
 `'navigation'`, `'subframe'`, `'data'` (fetch, XHR, WebSocket, beacon) and `'subresource'`
-(images, scripts, fonts). `refuse(request)` checks in order: private IP literal, URL with no host,
-`blocked_domains`, `allowed_domains` only for kinds in `allowlist_reach`, host that did not resolve,
-then private resolved address. A host the domain lists refuse is not looked up. Add `'subframe'` or
+(images, scripts, fonts). `refuse(request)` checks in order: private IP literal, host that did not
+resolve, private resolved address, `blocked_domains`, then `allowed_domains` only for kinds in
+`allowlist_reach`. A host the domain lists refuse is not looked up. Add `'subframe'` or
 `'subresource'` to `allowlist_reach` to bound those too, or subclass and override `refuse` (call
 `super().refuse(request)` for the default verdict).
 

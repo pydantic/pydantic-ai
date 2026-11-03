@@ -491,6 +491,12 @@ An override that narrows what `refuse` allows should override `describe` too:
 `describe` is what the model is told about its reach, and it reads only the
 fields.
 
+The built-in policy does not look up a host its domain lists refuse, but an
+override of `refuse` may permit such a host, so a policy that overrides `refuse`
+has every host looked up as before. If your override refuses some hosts by name,
+also override `needs_resolution` to return `False` for them, so they are not
+looked up.
+
 Neither policy is a general security boundary. Microsoft's own playwright-mcp
 disclaims its origin filter the same way. A page can still signal outward through
 the request kinds the allowlist leaves alone -- an image or script URL carries

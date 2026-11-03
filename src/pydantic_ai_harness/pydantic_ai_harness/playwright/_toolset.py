@@ -664,15 +664,13 @@ class EgressPolicy:
         host = _url_host(request.url)
         if host is not None and self.block_private_addresses and is_blocked_address(host):
             return _PRIVATE_ADDRESS_REASON
-        if host is None:
-            return None if request.kind in ('data', 'subresource') else 'URL with no host'
-        if (reason := self._domain_reason(host, request.kind)) is not None:
-            return reason
         if self.block_private_addresses and request.resolution_failed:
             return _UNRESOLVED_REASON
         if self.block_private_addresses and any(is_blocked_address(a) for a in request.resolved_addresses):
             return _PRIVATE_ADDRESS_REASON
-        return None
+        if host is None:
+            return None if request.kind in ('data', 'subresource') else 'URL with no host'
+        return self._domain_reason(host, request.kind)
 
     def _domain_reason(self, host: str, kind: RequestKind) -> str | None:
         """Why the domain lists refuse `host` for this kind of request, or `None` if they do not."""
@@ -703,10 +701,11 @@ class EgressPolicy:
         Asked before `refuse` so that `refuse` stays synchronous: an override needs
         no async machinery, and the lookup a name-based private address requires
         happens outside it. A host that is already an address needs none, and
-        neither does one the domain lists refuse, since `refuse` gives the
-        domain-list reason whatever the host resolves to. That holds only for this
+        neither does one the domain lists refuse, since `refuse` refuses it
+        whatever the host resolves to. That holds only for this
         class's own `refuse`: an override may permit what the lists refuse, so its
-        hosts are still resolved.
+        hosts are still resolved. An override that refuses some hosts by name should
+        override this too, returning `False` for them, so they are not looked up.
         """
         if not self.block_private_addresses or request.kind not in self.resolved_kinds:
             return False
