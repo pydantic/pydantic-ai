@@ -28,7 +28,7 @@ The judge delivers exactly one verdict per evaluation, as its output type:
 
     The steering stays in the conversation (the default `scope='conversation'`), so the correction keeps applying on later requests. To observe steering, use `on_verdict` (see [Observability](#observability)): it receives each `Steer(message=...)` as it is enqueued. Later evaluations recognize earlier steering by metadata the judge attaches to it, which survives merged requests and continued conversations, and show it to the judge as steering, so it can tell whether the agent followed it. Two limits apply. The metadata doesn't survive a round trip through the UI adapters ([identifying system prompts](../message-history.md#identifying-system-prompts)), so in history that comes back from a frontend the judge sees the message as an ordinary `user:` line. And on a model without inline system prompts, the judge reads the request as prepared for that model, where the framework note has become `<system>` user text with no metadata, so the note shows in the judge's transcript as a `user:` line; the message itself is still shown as steering.
 
-Steering is the judge's output, not a tool it calls, so each evaluation ends in exactly one verdict. `TrajectoryJudge` is exported from `pydantic_ai_harness`; the verdict types `AllGood` and `Steer` are imported from `pydantic_ai_harness.trajectory_judge`.
+Steering is the judge's output, not a tool it calls, so each evaluation ends in exactly one verdict.
 
 ```python
 from pydantic_ai import Agent
@@ -105,7 +105,7 @@ agent = Agent(
 
 ## Advanced: bring your own judge agent
 
-For anything beyond a model and a review focus (model settings, toolsets, fallback models, custom instructions), pass a full `Agent`. Every evaluation runs it with `output_type=[AllGood, Steer]`, so the verdict contract is enforced at the run boundary whatever output type the agent was configured with, and an existing agent can be reused as-is only when it is dependency-free; judge dependencies are not passed to evaluations. The judge agent must not have output validators, which are incompatible with a per-run `output_type`.
+For anything beyond a model and a review focus (model settings, toolsets, fallback models, custom instructions), pass a full `Agent`. Every evaluation runs it with `output_type=[AllGood, Steer]`, so the verdict contract is enforced at the run boundary whatever output type the agent was configured with, and an existing agent can be reused as-is only when it is dependency-free; judge dependencies are not passed to evaluations. The judge agent must not have output validators, which are incompatible with a per-run `output_type`. `AllGood` and `Steer` are imported from `pydantic_ai_harness.trajectory_judge`.
 
 ```python
 from pydantic_ai import Agent

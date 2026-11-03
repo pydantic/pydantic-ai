@@ -87,12 +87,12 @@ def _spills(action: Action | None) -> bool:
     while action is not None:
         if isinstance(action, Spill):
             return True
-        action = None if isinstance(action, Passthrough) else action.then
+        action = _next_action(action)
     return False
 
 
 def _default_bands() -> list[Band]:
-    """Lossless spill with a bounded truncation fallback: zero LLM cost, no silent drop."""
+    """Spill to the store, falling back to truncation when the store write fails."""
     return [Band(over=_DEFAULT_THRESHOLD, action=Spill(then=Truncate()))]
 
 
@@ -733,7 +733,7 @@ def _with_handles(
     """Stash spill handle(s) in `ToolReturn.metadata` (app-only, costs no model tokens)."""
     base: dict[str, object] = {}
     if _is_mapping(existing):
-        base.update(_copy_mapping(existing))
+        base.update({str(key): existing[key] for key in existing})
     elif existing is not None:
         base['original_metadata'] = existing
     if value_handle is not None:
@@ -742,11 +742,6 @@ def _with_handles(
     if content_handle is not None:
         base['overflow_content_handle'] = content_handle
     return base
-
-
-def _copy_mapping(source: Mapping[object, object]) -> dict[str, object]:
-    """Copy an arbitrary mapping with stringified keys (tool metadata is app-defined)."""
-    return {str(key): source[key] for key in source}
 
 
 def _build_spill_preview(handle: str, unit: _Unit, preview_chars: int, *, over_tokens: bool, read_hint: str) -> str:

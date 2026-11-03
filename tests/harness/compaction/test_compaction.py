@@ -3836,10 +3836,10 @@ class TestCompactWithSpan:
 # ---------------------------------------------------------------------------
 
 _BRIDGE_ANCHOR = 'produced by a different model'
-"""Stable fragment of the bridge-prefix wording; the full text is provisional (eval-rig pending)."""
+"""A fragment of the bridge-prefix wording, so the tests do not pin the full text."""
 
 _UPDATE_ANCHOR = 'Update it using the conversation above'
-"""Stable fragment of the incremental update instruction; likewise provisional."""
+"""A fragment of the incremental update instruction, so the tests do not pin the full text."""
 
 
 def _pinned_msg(text: str) -> ModelRequest:
