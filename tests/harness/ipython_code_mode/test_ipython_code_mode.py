@@ -689,7 +689,6 @@ class TestIPythonCodeModeKernelLifecycle:
     ) -> None:
         # Long enough for an interrupted cell to format its traceback and finish within the first escalation.
         monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel._SHUTDOWN_WAIT_SECS', 1.0)
-
         pids: list[int] = []
         started = anyio.Event()
 
