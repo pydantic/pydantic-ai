@@ -162,6 +162,19 @@ class TestSecretRedaction:
         assert time.perf_counter() - start < 1.0
         assert result.action == 'allow'
 
+    def test_a_run_of_backslashes_in_a_header_is_scanned_in_linear_time(self):
+        """A header value takes a backslash run in one step, so the run is not scanned again from each backslash.
+
+        A time bound, as in `test_a_run_of_header_lines_is_scanned_in_linear_time`. On this run, a pattern that looks
+        ahead from each backslash takes seconds.
+        """
+        text = '-----BEGIN PRIVATE KEY-----\nX: ' + '\\' * 50_000 + '\n'
+        start = time.perf_counter()
+        result = redact_secrets(text)
+
+        assert time.perf_counter() - start < 1.0
+        assert result.replacement == '[redacted:private_key]: ' + '\\' * 50_000 + '\n'
+
     def test_prose_naming_both_markers_is_not_a_key(self):
         """The newline after the header is what separates a real block from a sentence about one."""
         text = 'Paste everything between -----BEGIN PRIVATE KEY----- and -----END PRIVATE KEY----- in the field.'

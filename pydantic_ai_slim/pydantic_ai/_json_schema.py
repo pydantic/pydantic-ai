@@ -17,7 +17,8 @@ _JsonSchemaNode: TypeAlias = JsonSchema | bool
 MAX_INLINED_SCHEMA_VALUES = 250_000
 """The most JSON values inlining a schema's `$ref`s may copy into it.
 
-Each object, array, string, number, boolean and null in a copied definition counts as one value.
+Each object, array, string, number, boolean and null in a copied definition counts as one value, as the definition
+is written: what a transformer adds to a copy is not counted.
 """
 
 
@@ -25,7 +26,7 @@ Each object, array, string, number, boolean and null in a copied definition coun
 class InlinedValues:
     """A count of the JSON values that inlining `$ref`s copies into a schema, which stops at `MAX_INLINED_SCHEMA_VALUES`.
 
-    Every copy of a definition counts in full, so the count is the size of what inlining adds, and passing the limit
+    Every copy of a definition counts in full, so the count is the size of what inlining copies, and passing the limit
     stops the inlining before the rest is built.
     """
 

@@ -85,11 +85,12 @@ DEFAULT_SECRET_PATTERNS: Mapping[str, str] = {
     # after the key; it starts past any blank lines, as the terminated tail does.
     #
     # A header value stops at a line break in any of the spellings `_NEWLINE`
-    # accepts, so a run of header lines can be read only one way and the
-    # pattern runs in time linear in its input.
+    # accepts, and takes a run of backslashes in one step rather than looking
+    # ahead from each, so a run of header lines can be read only one way and
+    # the pattern runs in time linear in its input.
     'private_key': (
         rf'-----BEGIN[^-\n]*PRIVATE KEY(?: BLOCK)?-----[ \t]*{_NEWLINE}'
-        rf'(?:[A-Za-z-]+: (?:[^\r\n\\]|\r(?!\n)|\\(?!\\*n))*{_NEWLINE})*'
+        rf'(?:[A-Za-z-]+: (?:[^\r\n\\]|\r(?!\n)|\\++(?!n))*{_NEWLINE})*'
         rf'(?:[A-Za-z0-9+/=\s\\]*?-----END[^-\n]*PRIVATE KEY(?: BLOCK)?-----'
         rf'|(?:\s|\\+n)*(?:[A-Za-z0-9+/=]+(?:{_NEWLINE})?)+)'
     ),
