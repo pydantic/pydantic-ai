@@ -40,18 +40,23 @@ from pydantic_clai2.plugins.loader import PluginLoader
 pytestmark = pytest.mark.skipif(sys.platform == 'win32', reason='the hook commands here are POSIX shell commands')
 
 
-def make_host(workspace: Path, settings: dict[str, JsonValue], output: io.StringIO) -> PluginHost[None]:
+def make_host(
+    workspace: Path, settings: dict[str, JsonValue], output: io.StringIO, database: Path | None = None
+) -> PluginHost[None]:
     return PluginHost(
         name='hooks',
         console=Console(file=output, width=200),
         settings=settings,
+        settings_database=database,
         session_id=lambda: 'session-1',
         workspace=lambda: workspace,
     )
 
 
-def hooks_plugin(workspace: Path, settings: dict[str, JsonValue], output: io.StringIO) -> LoadedPlugin[None]:
-    return load_plugin(HooksPlugin, make_host(workspace, settings, output))
+def hooks_plugin(
+    workspace: Path, settings: dict[str, JsonValue], output: io.StringIO, database: Path | None = None
+) -> LoadedPlugin[None]:
+    return load_plugin(HooksPlugin, make_host(workspace, settings, output, database))
 
 
 def note_agent(plugin: LoadedPlugin[None], written: list[str]) -> Agent[None, str]:
@@ -523,9 +528,10 @@ async def test_a_project_program_path_is_relative_to_the_project_root(tmp_path: 
     script.parent.mkdir(exist_ok=True)
     script.write_text('#!/bin/sh\ntouch "$1"\n')
     script.chmod(0o755)
-    [declaration] = load_project_settings(repo / 'src').plugins
+    store = SettingsStore(tmp_path / 'config.db')
+    settings = await approve_project_table(store, repo / 'src')
     output = io.StringIO()
-    plugin = hooks_plugin(repo / 'src', declaration.settings, output)
+    plugin = hooks_plugin(repo / 'src', settings, output, store.path)
     await plugin.dispatch(TurnEnd(text='hello', outcome='completed'))
     assert (repo / 'src' / 'marked').exists(), 'the program from the root, run in the session folder'
     assert output.getvalue() == ''
@@ -534,6 +540,16 @@ async def test_a_project_program_path_is_relative_to_the_project_root(tmp_path: 
 def write_program(path: Path, marker: str) -> None:
     path.write_text(f'#!/bin/sh\ntouch {marker}\n', encoding='utf-8')
     path.chmod(0o755)
+
+
+async def approve_project_table(store: SettingsStore, workspace: Path) -> dict[str, JsonValue]:
+    """Approve the project's table with `/plugins enable project_hooks`; its settings, to build the plugin from."""
+    loader = project_loader(store, workspace, io.StringIO())
+    await loader.load_all()
+    await loader.command(['enable', PROJECT_HOOKS])
+    await loader.close('exit')
+    [declaration] = load_project_settings(workspace).plugins
+    return declaration.settings
 
 
 async def approve_and_end_turn(loader: PluginLoader[None]) -> None:
@@ -570,13 +586,22 @@ async def test_a_changed_project_program_waits_for_approval_again(tmp_path: Path
 
 
 @pytest.mark.parametrize('event', ['turn_end', 'before_tool'])
-async def test_a_program_changed_after_loading_does_not_run(tmp_path: Path, event: HookEvent) -> None:
-    """A guard edited mid-session stops the call, as an argument the OS cannot take does."""
+@pytest.mark.parametrize('changed', ['before loading', 'after loading'])
+async def test_a_program_changed_since_its_approval_does_not_run(
+    tmp_path: Path, event: HookEvent, changed: str
+) -> None:
+    """Each run is checked against the approval, so a guard edited mid-session stops the call.
+
+    A change landing after the loader checked the approval, but before the plugin loads, is caught the same way.
+    """
     repo = repository(tmp_path, 'repo', {event: [{'command': ['./mark.sh']}]})
     write_program(repo / 'mark.sh', 'first')
-    [declaration] = load_project_settings(repo).plugins
+    store = SettingsStore(tmp_path / 'config.db')
+    settings = await approve_project_table(store, repo)
+    if changed == 'before loading':
+        write_program(repo / 'mark.sh', 'second')
     output = io.StringIO()
-    plugin = hooks_plugin(repo, declaration.settings, output)
+    plugin = hooks_plugin(repo, settings, output, store.path)
     write_program(repo / 'mark.sh', 'second')
     written: list[str] = []
     if event == 'turn_end':
@@ -602,13 +627,29 @@ async def test_a_program_approval_saved_without_its_contents_is_asked_again(tmp_
     assert (repo / 'ran').exists()
 
 
-async def test_a_program_that_is_not_a_regular_file_never_blocks_loading(tmp_path: Path) -> None:
+@pytest.mark.parametrize('program', ['missing', 'directory', 'fifo'])
+async def test_a_program_that_cannot_be_read_cannot_be_approved(tmp_path: Path, program: str) -> None:
+    """Contents CLAI cannot read cannot be compared later, so they are never approved, and reading never blocks."""
     repo = repository(tmp_path, 'repo', {'turn_end': [{'command': ['./mark.sh']}]})
-    os.mkfifo(repo / 'mark.sh')
+    if program == 'directory':
+        (repo / 'mark.sh').mkdir()
+    elif program == 'fifo':
+        os.mkfifo(repo / 'mark.sh')
     store = SettingsStore(tmp_path / 'config.db')
     with anyio.fail_after(5):
-        await approve_and_end_turn(project_loader(store, repo, io.StringIO()))
-        await end_turn(project_loader(store, repo, io.StringIO()))
+        loader = project_loader(store, repo, io.StringIO())
+        await loader.load_all()
+        with pytest.raises(ValueError, match=r'mark\.sh'):
+            await loader.command(['enable', PROJECT_HOOKS])
+        await loader.close('exit')
+        assert store.plugins() == []
+
+        [declaration] = load_project_settings(repo).plugins
+        store.save_plugin(declaration.model_copy(update={'enabled': True}))
+        loader = project_loader(store, repo, io.StringIO())
+        await end_turn(loader)
+        [entry] = [entry for entry in loader.entries() if entry.name == PROJECT_HOOKS]
+        assert entry.state == 'disabled'
 
 
 async def test_removing_the_project_table_stops_an_approved_one(tmp_path: Path) -> None:

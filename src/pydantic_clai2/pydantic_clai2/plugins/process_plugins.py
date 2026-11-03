@@ -469,9 +469,12 @@ class ProcessPlugins(Generic[DepsT]):
         return all(self.store.approved_sha256(path) == file_sha256(path) for path in files)
 
     def approve(self, name: str, declaration: PluginSettings) -> None:
-        """Approve the contents the declaration's `project_files` have now."""
-        if files := self.project_files(name, declaration):
-            self.store.approve_files({path: file_sha256(path) for path in files})
+        """Approve the contents the declaration's `project_files` have now; none, if one of them cannot be read."""
+        digests = {path: file_sha256(path) for path in self.project_files(name, declaration)}
+        if unreadable := [str(path) for path, digest in digests.items() if not digest]:
+            raise ValueError(f'Cannot approve {name}: {", ".join(unreadable)} is missing or not a file CLAI can read.')
+        if digests:
+            self.store.approve_files(digests)
 
     def import_module(self, name: str, declaration: PluginSettings, *, fresh: bool) -> ModuleType:
         """The declaration's module: a drop-in file afresh, else the installed module, reloaded when `fresh`.

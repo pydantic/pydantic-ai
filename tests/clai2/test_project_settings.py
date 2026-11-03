@@ -298,6 +298,19 @@ async def test_a_changed_project_plugin_file_waits_for_approval_again(
     assert ran(tmp_path) == ['changed']
 
 
+async def test_a_project_plugin_file_that_cannot_be_read_cannot_be_approved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trusted = repository(tmp_path, 'trusted')
+    (trusted / 'plugins' / 'helper.py').unlink()
+    store = SettingsStore(tmp_path / 'config.db')
+    monkeypatch.chdir(trusted)
+    loader = plugin_loader(store, load_project_settings(trusted), io.StringIO())
+    with pytest.raises(ValueError, match=r'helper\.py'):
+        await loader.command(['enable', 'helper'])
+    assert store.plugins() == []
+
+
 async def test_a_plugin_approval_saved_without_its_contents_is_asked_again(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
