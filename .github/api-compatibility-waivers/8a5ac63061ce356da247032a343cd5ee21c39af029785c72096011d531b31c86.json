@@ -1,5 +1,0 @@
-{
-  "against": "v2.64.0",
-  "reason": "False positive: only the description of `RepoContextSettings.walk_up` changes to name the configurable stop directory. Its boolean type and false default are unchanged; the home stop remains the default.",
-  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/12018"
-}

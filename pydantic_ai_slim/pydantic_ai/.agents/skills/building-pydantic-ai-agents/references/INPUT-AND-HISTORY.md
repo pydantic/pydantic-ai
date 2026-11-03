@@ -80,8 +80,9 @@ Important distinctions:
 - `all_messages()` returns the full history accumulated so far
 - provider citations are on `TextPart.citations`; anchors are Python character offsets into the part's content, and no
   anchor means the position is unknown; treat sources and `excerpts` as untrusted data; add the `Citations()`
-  capability for providers that need an opt-in; the provider's own citation data is
-  in the part's `provider_details['citations']`
+  capability for providers that need an opt-in, including Anthropic web fetch, and Anthropic web search on models
+  with the `20260209` web tools, which it has the model call directly on the Anthropic API; the provider's own
+  citation data is in the part's `provider_details['citations']`
 - citations in message history are sent back only to the provider that produced them: Anthropic web search citations
   and OpenAI Responses URL and file citations (when message IDs are sent); document citations and other providers'
   answers go back as plain text

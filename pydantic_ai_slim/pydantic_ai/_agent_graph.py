@@ -30,6 +30,7 @@ from dataclasses import field, replace
 from datetime import datetime
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, TypeAlias, TypeGuard, assert_never, cast
+from weakref import WeakValueDictionary
 
 import anyio
 from opentelemetry.trace import Tracer
@@ -1008,6 +1009,17 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     Stamped onto `ModelRequestContext.model_id` so durable-execution capabilities can
     round-trip the original selection token across the activity/step/task boundary.
     """
+
+    failed_tool_nodes: WeakValueDictionary[int, CallToolsNode[DepsT, OutputDataT]] = dataclasses.field(
+        default_factory=WeakValueDictionary[int, 'CallToolsNode[DepsT, OutputDataT]'], init=False, repr=False
+    )
+    """Runtime-only replay nodes, held weakly so recovery does not extend their lifetime."""
+
+    def release_tool_error_caches(self) -> None:
+        """Break cached-error traceback cycles after run recovery and resource teardown finish."""
+        for node in self.failed_tool_nodes.values():
+            node._stream_error = None  # pyright: ignore[reportPrivateUsage]
+        self.failed_tool_nodes.clear()
 
 
 class AgentNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]]):
@@ -2844,7 +2856,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             if not isinstance(e, Exception):
                 raise
             outcome = e
-            recovered = await self._recover_model_request_error(ctx, run_context, request_context, e, failed, start)
+            try:
+                recovered = await self._recover_model_request_error(ctx, run_context, request_context, e, failed, start)
+            except BaseException:
+                # The escaping error's traceback holds this frame; its outcome alias would close a cycle.
+                del outcome
+                raise
             # Not billed, so its usage is committed with the step's response, without the attempts it carries.
             response = failed.log.attach(recovered)
         state.response = response
@@ -3655,6 +3672,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             failed.record_exhausted(request_context, error, start, unrecovered)
             ModelRequestNode._raise_usage_limit_exceeded(ctx, unrecovered)
             raise
+        finally:
+            # The error's traceback holds this frame; retaining error would keep the run's deps in a cycle.
+            del error
 
     @staticmethod
     def _raise_usage_limit_exceeded(
@@ -4035,6 +4055,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             raise
         except BaseException as e:
             self._stream_error = e
+            ctx.deps.failed_tool_nodes[id(self)] = self
             raise
 
     async def _handle_tool_calls(

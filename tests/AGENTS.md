@@ -175,10 +175,11 @@ Default for a test that asserts an outbound field: take the capture fixture and 
 
 #### Blocking-call detection
 - `blockbuster` (autouse) raises `BlockingError` when a scanned library frame blocks inside the event loop.
-- Scanned packages are `pydantic_ai`, `pydantic_graph`, `pydantic_evals`, and `clai`.
+- Scanned packages are `pydantic_ai`, `pydantic_ai_harness`, `pydantic_graph`, `pydantic_evals`, and `clai`.
 - Test-only and third-party stacks are ignored. User callbacks remain covered while a scanned library frame is below them.
 - Fix blocking calls by offloading with `anyio.to_thread.run_sync`.
 - Add legitimate blocking calls to `BLOCKBUSTER_EXEMPTIONS` in `tests/conftest.py` with a reason.
+- List a test double that serves a remote service from local files, processes, or SQLite in `BLOCKBUSTER_TEST_DOUBLES`. That exempts every frame in the file, and the code calling it stays checked.
 - Override `blockbuster_excluded_modules` when one integration module intentionally provides synchronous APIs.
 - Override `blockbuster_enabled` at the narrowest test or integration-module boundary that intentionally performs blocking work.
 - Use the narrowest module or test boundary. Do not replace the autouse `blockbuster` fixture.
@@ -308,6 +309,16 @@ When `PYTEST_COLLECT_BUDGET_SECONDS` is set (on the same CI leg), a test module 
 - Never mark a property test as an expected failure: it would then stop checking every other input.
 - Narrow the strategy only to leave out an input that providers and users never produce, or one whose shape needs its own strategy. List each narrowing with its reason in the `tests/history_strategies.py` module docstring.
 - Hypothesis settings are module-local; there is no suite-wide profile. `tests/test_history_properties.py` gives each property its `PROPERTY_SETTINGS`, a derandomized batch of 50 examples, so a run is reproducible and fits the per-test budget. Hunt for new failures with `HISTORY_PROPERTY_EXAMPLES=1000 uv run pytest tests/test_history_properties.py`, which draws 1000 randomized examples per test.
+
+## Proving a refactor keeps stream events
+
+A refactor of a streamed response (`StreamedResponse._get_event_iterator`, `__aiter__`, or what feeds them) must leave the events consumers receive unchanged. `tests/refactor_capture.py` records the streams each selected test iterates, once on a base commit and once on the working tree, and lists the tests whose streams differ:
+
+```bash
+uv run python -m tests.refactor_capture "$(git merge-base HEAD upstream/main)" <test nodes>
+```
+
+Select one or two test nodes that stream through each changed line, not whole files. The command exits non-zero when a test's streams differ or only one side has them; put its summary in the PR. The module docstring says what it records and normalizes.
 
 ## Directory Structure
 
