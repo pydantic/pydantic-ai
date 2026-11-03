@@ -86,13 +86,21 @@ DEFAULT_SECRET_PATTERNS: Mapping[str, str] = {
     #
     # A header value stops at a line break in any of the spellings `_NEWLINE`
     # accepts, and takes a run of backslashes in one step rather than looking
-    # ahead from each, so a run of header lines can be read only one way and
-    # the pattern runs in time linear in its input.
+    # ahead from each, so a run of header lines can be read only one way.
+    #
+    # A block that starts with header lines is first scanned straight to its
+    # END marker, whatever its header lines hold, so a header value broken
+    # across lines does not end the match early. The scan is tried once per
+    # BEGIN marker and stops at the next one, so scans never overlap and the
+    # pattern runs in time linear in its input. A block with no END marker
+    # gains nothing from the scan: it is taken as far as its header lines and
+    # body parse.
     'private_key': (
         rf'-----BEGIN[^-\n]*PRIVATE KEY(?: BLOCK)?-----[ \t]*{_NEWLINE}'
-        rf'(?:[A-Za-z-]+: (?:[^\r\n\\]|\r(?!\n)|\\++(?!n))*{_NEWLINE})*'
+        rf'(?:(?=[A-Za-z-]+: )(?:(?!-----BEGIN)[\s\S])*?-----END[^-\n]*PRIVATE KEY(?: BLOCK)?-----'
+        rf'|(?:[A-Za-z-]+: (?:[^\r\n\\]|\r(?!\n)|\\++(?!n))*{_NEWLINE})*'
         rf'(?:[A-Za-z0-9+/=\s\\]*?-----END[^-\n]*PRIVATE KEY(?: BLOCK)?-----'
-        rf'|(?:\s|\\+n)*(?:[A-Za-z0-9+/=]+(?:{_NEWLINE})?)+)'
+        rf'|(?:\s|\\+n)*(?:[A-Za-z0-9+/=]+(?:{_NEWLINE})?)+))'
     ),
 }
 """Credential shapes worth redacting, in the order they are applied.

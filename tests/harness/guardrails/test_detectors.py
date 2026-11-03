@@ -297,6 +297,22 @@ class TestKeyPastedFromAFile:
 
         assert redact_secrets(line).replacement == 'key="[redacted:private_key]\\nnext line"'
 
+    @pytest.mark.parametrize('newline', ['\\n', '\n', '\r\n'])
+    def test_a_key_with_a_header_value_broken_across_lines_is_taken_to_its_end_marker(self, newline: str):
+        """A line inside the header section that is not a header does not end the match before the END marker."""
+        lines = [
+            '-----BEGIN RSA PRIVATE KEY-----',
+            'Proc-Type: 4,ENCRYPTED',
+            'DEK-Info: DES-EDE3-CBC',
+            ',0123456789ABCDEF',
+            '',
+            self._BODY,
+            '-----END RSA PRIVATE KEY-----',
+        ]
+        line = f'key="{newline.join(lines)}"'
+
+        assert redact_secrets(line).replacement == 'key="[redacted:private_key]"'
+
 
 class TestPatternOrder:
     """`only` filters; it does not hand the application order to the caller's argument order."""
