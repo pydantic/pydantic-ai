@@ -52,7 +52,10 @@ def table_name(root: str) -> str:
 
 @pytest.fixture
 def store(table_name: str) -> PixeltableMemoryStore:
-    return PixeltableMemoryStore(table_name=table_name)
+    store = PixeltableMemoryStore(table_name=table_name)
+    # Create the table outside the event loop, so tests can patch `store.table` without blocking it.
+    store.table
+    return store
 
 
 def _intercept(
