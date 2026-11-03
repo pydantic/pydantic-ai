@@ -173,14 +173,16 @@ delete its source file yourself to remove it from disk.
 ### Repository instruction boundaries
 
 Use the built-in repo_context plugin's `walk_up` option to enable ancestor
-instructions; its default is false. Set the inclusive stop with
-`/set repo_context.walk_up_root /srv/projects` (default `~`, home). Authorize
-shared instruction targets with
+instructions; its default is false. List the inclusive stops with
+`/set repo_context.walk_up_roots '["~", "/srv/projects"]'` (default `["~"]`,
+home): roots are resolved, following symlinks, and the walk stops at the nearest
+one containing the workspace, or scans only the workspace when none does.
+Authorize shared instruction targets with
 `/set repo_context.autoload_symlink_roots '["~/agent-context"]'` (default `[]`).
 
-Use absolute paths, `~`, or `~/...`; quote paths containing spaces and
-single-quote the whole JSON list. Keep these user-only settings out of plugin
-JSON and `.clai/settings.json`; changes apply next run. Choose a directory
+Use absolute paths, `~`, or `~/...`, and single-quote the whole JSON list,
+which also covers paths containing spaces. Keep these user-only settings out of
+plugin JSON and `.clai/settings.json`; changes apply next run. Choose a directory
 containing only trusted instructions, not `/` or all of home. See the user
 reference's Repository instructions section for setup and path rules, and
 [Repo Context](https://pydantic.dev/docs/ai/harness/repo-context/#shared-instruction-symlinks)
@@ -654,7 +656,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai_harness.coder import Coder
 from pydantic_clai2 import chat
-from pydantic_clai2.customization import customization_guide
+from pydantic_clai2.clai_docs import ClaiDocs
 
 model = OpenAIChatModel(
     'my-model',
@@ -663,7 +665,7 @@ model = OpenAIChatModel(
         api_key=os.environ['MY_MODEL_API_KEY'],
     ),
 )
-agent = Agent(model, capabilities=[Coder(), customization_guide()])
+agent = Agent(model, capabilities=[Coder(), ClaiDocs()])
 asyncio.run(chat(agent, deps=None))
 ```
 

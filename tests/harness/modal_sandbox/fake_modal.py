@@ -220,7 +220,6 @@ _EXCEPTION_BASES: dict[str, type[Exception]] = {
     'AuthError': FakeModalError,
     'ConnectionError': FakeModalError,
     'ExecutionError': FakeModalError,
-    'FilesystemExecutionError': FakeModalError,
     'InternalError': FakeModalError,
     'ImageBuildError': FakeModalError,
     'NotFoundError': FakeModalError,

@@ -132,8 +132,7 @@ for its shell and write tools.
 ## Telemetry
 
 `Macroscope` emits no spans of its own. Core's instrumentation records each
-`run_macroscope_review` call as a tool span, and the capability makes no decision
-worth a span of its own.
+`run_macroscope_review` call as a tool span.
 
 ## Two of them
 
