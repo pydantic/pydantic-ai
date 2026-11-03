@@ -23,6 +23,7 @@ from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from functools import cache
+from typing import get_args
 
 import pydantic_core
 import pytest
@@ -63,6 +64,7 @@ from pydantic_ai.models import (
     _PartKind,  # pyright: ignore[reportPrivateUsage]
     _Projection,  # pyright: ignore[reportPrivateUsage]
     _ProjectionPass,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles import ModelProfile
@@ -566,6 +568,22 @@ def test_no_pass_drops_a_kind_a_later_pass_reads():
 def test_pass_names_are_unique():
     names = [projection_pass.name for projection_pass in _PROJECTION_PASSES]
     assert len(names) == len(set(names))
+
+
+def _request_part_kinds() -> set[type]:
+    (union, *_) = get_args(ModelRequestPart)
+    return {get_args(member)[0] for member in get_args(union)}
+
+
+def test_adapters_refuse_every_request_kind_a_pass_removes():
+    """Every request part kind a pass consumes or drops is one `_UnpreparedPart`, the adapters' one guard, refuses: a
+    model called directly, without `prepare_messages`, raises for it rather than sending something else. A
+    `SystemPromptPart` is the exception: every adapter maps one, and the `system_voice` pass consumes it only for
+    a model without mid-conversation system messages."""
+    request_kinds = _request_part_kinds()
+    assert {kind for kind in REMOVED_KINDS if kind in request_kinds} - {SystemPromptPart} <= set(
+        get_args(_UnpreparedPart)
+    )
 
 
 def _part_kinds(messages: list[ModelMessage]) -> set[type]:
