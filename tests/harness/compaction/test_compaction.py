@@ -2760,6 +2760,23 @@ class TestTieredCompaction:
         await cap.before_model_request(_make_ctx(rc.messages), rc)
         assert calls == ['t1', 't2']
 
+    async def test_escalation_survives_an_anchor_that_counts_less_than_the_heuristic(self):
+        # Repetitive tool output: the provider merges a line the 4-characters heuristic counts as ~87
+        # tokens down to ~50. Crediting the reclaim against the anchored baseline must not subtract more
+        # than the anchor ever counted and floor the estimate at 0 -- the text the tier left behind is
+        # still there, so the estimate has to stay above the target and t2 has to run.
+        calls: list[str] = []
+        t1 = _RecordingTier('t1', calls, drop=14)
+        t2 = _RecordingTier('t2', calls)
+        cap = TieredCompaction(tiers=[t1, t2], target_tokens=60)
+        messages: list[ModelMessage] = [_user('inspect the logs')]
+        for i in range(7):
+            messages.extend([_tool_call('grep', f'tc{i}'), _tool_return('grep', f'tc{i}', 'WARN retrying\n' * 25)])
+        messages.append(_assistant_with_usage('done', 400, 10))
+        rc = _make_request_context(messages)
+        await cap.before_model_request(_make_ctx(rc.messages), rc)
+        assert calls == ['t1', 't2']
+
     async def test_full_escalation(self):
         calls: list[str] = []
         t1 = _RecordingTier('t1', calls, drop=1)  # 5 -> 4 messages (~40 tokens) still > 15
