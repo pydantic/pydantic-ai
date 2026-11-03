@@ -12,8 +12,6 @@ REDO_KEYS = ('ctrl-y', 'ctrl-shift-z', 'super-shift-z')
 UNDO_LIMIT = 100
 """Undo steps kept per draft; the oldest is forgotten first."""
 _MOVES = ('left', 'right', 'home', 'ctrl-a', 'end', 'ctrl-e', 'alt-b', 'ctrl-left', 'alt-f', 'ctrl-right')
-_CELLS = {'\n': ' ', '\t': '    '}
-"""Draft characters painted as other cells: a newline under the cursor as a blank, a tab as four spaces."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -274,6 +272,8 @@ class PromptBuffer:
         cells = 0
         cursor_row = 0
         text, cursor = self.display()
+        # A newline under the cursor paints as a blank, a tab as four spaces.
+        painted = {'\n': ' ', '\t': '    '}
         for index, char in enumerate(text + ' '):
             is_cursor = index == cursor
             if index == len(text) and not is_cursor:
@@ -282,7 +282,7 @@ class PromptBuffer:
                 rows.append('')
                 cells = 0
                 continue
-            display = _CELLS.get(char, char if char.isprintable() else '?')
+            display = painted.get(char, char if char.isprintable() else '?')
             size = visible_length(display)
             if cells + size > width:
                 rows.append('')
