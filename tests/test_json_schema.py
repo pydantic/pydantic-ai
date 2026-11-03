@@ -9,8 +9,13 @@ from typing import Any
 import pytest
 from typing_extensions import TypeAliasType
 
-from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, Tool, UserError
-from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchema, JsonSchemaTransformer
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, Tool, UserError, _json_schema
+from pydantic_ai._json_schema import (
+    MAX_INLINED_SCHEMA_NODES,
+    InlineDefsJsonSchemaTransformer,
+    JsonSchema,
+    JsonSchemaTransformer,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.meta import meta_model_profile
@@ -529,6 +534,63 @@ def test_inline_defs_repeated_ref_with_siblings():
     assert result['properties']['described'] == {**pet, 'description': 'field-level description'}
     assert result['properties']['plain'] == pet
     assert result['properties']['defaulted'] == {**pet, 'default': None}
+
+
+def _doubling_chain(levels: int) -> JsonSchema:
+    """A schema whose definitions each refer to the one below twice, so inlining it doubles per level."""
+    defs: dict[str, Any] = {'D0': {'type': 'string'}}
+    for i in range(1, levels + 1):
+        ref = {'$ref': f'#/$defs/D{i - 1}'}
+        defs[f'D{i}'] = {'type': 'object', 'properties': {'a': ref, 'b': ref}}
+    return {'type': 'object', 'properties': {'x': {'$ref': f'#/$defs/D{levels}'}}, '$defs': defs}
+
+
+def test_inlining_past_the_node_limit_is_refused_before_the_request():
+    """A tool schema that would only grow past the limit once inlined is refused while the request is prepared.
+
+    `FunctionModel` rather than VCR: the profiles that inline `$defs` are served by many providers, and the limit is
+    reached while preparing the request, before any provider is involved.
+    """
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])  # pragma: no cover
+
+    def look_up(**kwargs: Any) -> str:
+        return 'found'  # pragma: no cover
+
+    # 2 ** (levels + 1) - 1 schema nodes once inlined, from a schema of a few dozen.
+    schema = _doubling_chain(MAX_INLINED_SCHEMA_NODES.bit_length())
+    tool = Tool.from_schema(look_up, name='look_up', description=None, json_schema=schema)
+    agent = Agent(FunctionModel(model_function, profile=meta_model_profile('llama-3.3-70b')), tools=[tool])
+
+    with pytest.raises(UserError, match=f'expand to more than {MAX_INLINED_SCHEMA_NODES:,} schema nodes'):
+        agent.run_sync('look it up')
+
+
+def test_inlining_counts_every_inlined_copy(monkeypatch: pytest.MonkeyPatch):
+    """The count is the inlined schema's size: a definition walked once still counts at each site it is copied to."""
+    wide = {'type': 'object', 'properties': {'p': {'type': 'string'}, 'q': {'type': 'string'}}}
+    schema = {
+        'type': 'object',
+        'properties': {name: {'$ref': '#/$defs/Wide'} for name in ('a', 'b', 'c')},
+        '$defs': {'Wide': wide},
+    }
+    # The root, then three copies of `Wide` and its two properties.
+    monkeypatch.setattr(_json_schema, 'MAX_INLINED_SCHEMA_NODES', 10)
+
+    assert InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()['properties'] == {'a': wide, 'b': wide, 'c': wide}
+
+    monkeypatch.setattr(_json_schema, 'MAX_INLINED_SCHEMA_NODES', 9)
+
+    with pytest.raises(UserError, match='expand to more than 9 schema nodes'):
+        InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
+
+
+def test_a_schema_kept_with_its_defs_is_not_limited():
+    """Without inlining, each definition is walked once and a `$ref` stays a `$ref`, so nothing expands."""
+    schema = _doubling_chain(MAX_INLINED_SCHEMA_NODES.bit_length())
+
+    assert _PassthroughTransformer(deepcopy(schema)).walk() == schema
 
 
 def test_inline_defs_skips_keywords_without_matching_type():

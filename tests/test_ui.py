@@ -79,7 +79,14 @@ from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import StreamingResponse
 
-from pydantic_ai.ui import DEFAULT_ALLOWED_CONTENT_TYPES, NativeEvent, OnCompleteFunc, UIAdapter, UIEventStream
+from pydantic_ai.ui import (
+    DEFAULT_ALLOWED_CONTENT_TYPES,
+    MessagesBuilder,
+    NativeEvent,
+    OnCompleteFunc,
+    UIAdapter,
+    UIEventStream,
+)
 from pydantic_ai.ui._adapter import (
     _ServerHeldTurn,  # pyright: ignore[reportPrivateUsage]
     _take_new_turn,  # pyright: ignore[reportPrivateUsage]
@@ -3310,3 +3317,37 @@ async def test_rejection_message_names_the_normalized_media_type():
         )
 
     assert exc_info.value.detail == snapshot('Expected `Content-Type: application/json`, got text/plain')
+
+
+def test_messages_builder_extends_its_own_parts_in_place():
+    """Each `add` to the same message appends to one list rather than copying it, so loading stays linear.
+
+    A unit test: the adapters only expose the finished messages, where a copy per part is invisible.
+    """
+    builder = MessagesBuilder()
+    builder.add(TextPart('a'))
+    builder.add(TextPart('b'))
+    parts = builder.messages[0].parts
+    builder.add(TextPart('c'))
+    builder.add(UserPromptPart('d'))
+    builder.add(UserPromptPart('e'))
+    request_parts = builder.messages[1].parts
+    builder.add(UserPromptPart('f'))
+
+    assert builder.messages[0].parts is parts
+    assert builder.messages[1].parts is request_parts
+    assert [len(message.parts) for message in builder.messages] == [3, 3]
+
+
+def test_messages_builder_copies_parts_it_did_not_make():
+    """A message passed in keeps its own parts list; `add` extends a copy of it."""
+    own_parts = [TextPart('a')]
+    message = ModelResponse(parts=own_parts)
+    builder = MessagesBuilder(messages=[message])
+    checkpoint = builder.checkpoint()
+    builder.add(TextPart('b'))
+    builder.add(TextPart('c'))
+
+    assert own_parts == [TextPart('a')]
+    assert message.parts == [TextPart('a'), TextPart('b'), TextPart('c')]
+    assert builder.last_modified(checkpoint, of_type=ModelResponse) is message

@@ -148,6 +148,16 @@ class TestSecretRedaction:
         """A body line ending in CRLF ends the run at the first line, leaving the rest of the key."""
         assert redact_secrets(text).replacement == expected
 
+    @pytest.mark.parametrize(('newline', 'lines'), [('\\n', 20), ('\r\n', 24)])
+    def test_a_run_of_header_lines_is_scanned_in_linear_time(self, newline: str, lines: int):
+        """Each header line ends at one place, so a failed match has only one way to read the lines before it."""
+        text = '-----BEGIN PRIVATE KEY-----' + newline + ('-: ' + newline) * lines
+        start = time.perf_counter()
+        result = redact_secrets(text)
+
+        assert time.perf_counter() - start < 1.0
+        assert result.action == 'allow'
+
     def test_prose_naming_both_markers_is_not_a_key(self):
         """The newline after the header is what separates a real block from a sentence about one."""
         text = 'Paste everything between -----BEGIN PRIVATE KEY----- and -----END PRIVATE KEY----- in the field.'
@@ -256,6 +266,19 @@ class TestKeyPastedFromAFile:
         line = f'key=-----BEGIN PRIVATE KEY-----\\n{self._BODY}'
 
         assert self._BODY not in str(redact_secrets(line).replacement)
+
+    def test_an_escaped_encrypted_key_with_no_end_marker_is_still_taken(self):
+        """The blank line after its headers is escaped too, and the body after it is still key material."""
+        line = f'key="-----BEGIN RSA PRIVATE KEY-----\\nProc-Type: 4,ENCRYPTED\\nDEK-Info: AES-256-CBC,AB\\n\\n{self._BODY}"'
+
+        assert redact_secrets(line).replacement == 'key="[redacted:private_key]"'
+
+    def test_an_escaped_encrypted_key_leaves_the_next_line_alone(self):
+        """A header value ends at the escaped newline, so it cannot reach past the END marker into what follows."""
+        pem = f'-----BEGIN RSA PRIVATE KEY-----\\nProc-Type: 4,ENCRYPTED\\n\\n{self._BODY}\\n-----END RSA PRIVATE KEY-----'
+        line = f'key="{pem}\\nnext line"'
+
+        assert redact_secrets(line).replacement == 'key="[redacted:private_key]\\nnext line"'
 
 
 class TestPatternOrder:

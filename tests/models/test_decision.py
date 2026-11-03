@@ -13,6 +13,7 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, JsonValue, WithJsonSchema, field_validator
 
 from pydantic_ai import Agent, BinaryContent, BoolCriteria, DocumentUrl, ModelRetry, RunContext, Tool, ToolOutput
+from pydantic_ai._json_schema import MAX_INLINED_SCHEMA_NODES
 from pydantic_ai.capabilities import FileUnderstanding, Instrumentation
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
@@ -1699,6 +1700,41 @@ async def test_a_boolean_schema_is_an_unsupported_argument(allow_model_requests:
 
     with pytest.raises(UnfillableRoute, match="picked 'look_up'"):
         await Agent(model, output_type=Triage, tools=[tool]).run('Where is my order?')
+
+
+def _doubling_definitions(combine: Literal['properties', 'anyOf']) -> dict[str, Any]:
+    """Definitions that each refer to the one below twice, so resolving them doubles per level.
+
+    As `properties`, every level doubles the fields; as `anyOf`, it doubles the options of a single field.
+    """
+    defs: dict[str, Any] = {'D0': {'type': 'string'}}
+    levels = MAX_INLINED_SCHEMA_NODES.bit_length()
+    for i in range(1, levels + 1):
+        ref = {'$ref': f'#/$defs/D{i - 1}'}
+        defs[f'D{i}'] = (
+            {'type': 'object', 'properties': {'a': ref, 'b': ref}} if combine == 'properties' else {'anyOf': [ref, ref]}
+        )
+    return {
+        'type': 'object',
+        'properties': {'query': {'$ref': f'#/$defs/D{levels}', 'description': 'What to look up.'}},
+        '$defs': defs,
+    }
+
+
+@pytest.mark.parametrize('combine', ['properties', 'anyOf'])
+async def test_arguments_past_the_node_limit_are_not_filled(
+    allow_model_requests: None, combine: Literal['properties', 'anyOf']
+):
+    """Arguments whose `$ref`s expand past the limit make the route unfillable, before a fill is asked for."""
+    tool = Tool.from_schema(
+        look_up, name='look_up', description='Look the order up.', json_schema=_doubling_definitions(combine)
+    )
+    model = RoutingDecisionModel({'Triage': 0.1, 'look_up': 0.9})
+
+    with pytest.raises(UnfillableRoute, match="picked 'look_up'"):
+        await Agent(model, output_type=Triage, tools=[tool]).run('Where is my order?')
+
+    assert [list(request.questions) for request in model.requests] == snapshot()
 
 
 @pytest.mark.parametrize('schema', [True, False, {'$ref': '#/$defs/Anything'}, {'$ref': '#/$defs/Nothing'}])

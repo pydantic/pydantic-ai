@@ -19,6 +19,7 @@ from typing_extensions import deprecated
 
 from .. import _utils, usage
 from .._instrumentation import model_attributes, open_request_policy, record_uncaught_errors, safe_to_json
+from .._json_schema import MAX_INLINED_SCHEMA_NODES
 from .._output import DEFAULT_OUTPUT_TOOL_DESCRIPTION, DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
@@ -1629,6 +1630,25 @@ def _ancestor(path: str, raw: dict[str, Any], defs: dict[str, Any]) -> list[str]
     return entries
 
 
+@dataclass
+class _ResolvedNodes:
+    """How many schema nodes `_fields` has resolved for one route, which stops at `MAX_INLINED_SCHEMA_NODES`.
+
+    Every field is resolved on its way to being flattened, so this also bounds how many fields there are.
+    """
+
+    route: str
+    count: int = 0
+
+    def add(self) -> None:
+        self.count += 1
+        if self.count > MAX_INLINED_SCHEMA_NODES:
+            raise UserError(
+                f'Output {self.route!r} is not supported by this model: its `$ref`s expand to more than '
+                f'{MAX_INLINED_SCHEMA_NODES:,} schema nodes. Refer to large definitions from fewer places.'
+            )
+
+
 def _fields(output_tool: ToolDefinition) -> _Fields:
     """The output schema's fields, flattened, with `$ref`s to `$defs` (how Pydantic renders an `Enum` or a model) resolved.
 
@@ -1646,8 +1666,10 @@ def _fields(output_tool: ToolDefinition) -> _Fields:
     schema = output_tool.parameters_json_schema
     defs: dict[str, Any] = schema.get('$defs', {})
     context: dict[str, list[str]] = {}
+    resolved = _ResolvedNodes(output_tool.name)
 
     def resolve(prop: dict[str, Any] | bool) -> dict[str, Any]:
+        resolved.add()
         prop = _schema(prop)
         if ref := prop.get('$ref'):
             prop = {**resolve(defs[ref.removeprefix('#/$defs/')]), **{k: v for k, v in prop.items() if k != '$ref'}}
