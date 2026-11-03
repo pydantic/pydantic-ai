@@ -1,7 +1,7 @@
 """Record what streamed model responses emit, per test node, to prove a refactor keeps it.
 
-The capture is off unless `REFACTOR_CAPTURE_DIR` is set: only then does `register`, which `tests/conftest.py` calls,
-register `RefactorCapture`. To compare a base commit with the working tree, run this from the repository root, over
+The capture is off unless pytest loads this module as a plugin, `-p tests.refactor_capture --refactor-capture=DIR`, so
+other runs never import it. To compare a base commit with the working tree, run this from the repository root, over
 one or two test nodes that stream through each changed line rather than whole test files:
 
     uv run python -m tests.refactor_capture "$(git merge-base HEAD upstream/main)" <test nodes>
@@ -56,7 +56,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponseStreamEvent
 from pydantic_ai.models import StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-CAPTURE_DIR_ENV = 'REFACTOR_CAPTURE_DIR'
+CAPTURE_OPTION = '--refactor-capture'
 SOURCE_FILE = 'source.json'
 GENERATED_VALUES = [
     (re.compile(r' at 0x[0-9a-f]+'), ' at 0x?'),
@@ -69,10 +69,15 @@ GENERATED_VALUES = [
 ISO_DATETIME = re.compile(r'"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)"')
 
 
-def register(config: pytest.Config) -> None:
-    """Register a `RefactorCapture` into `REFACTOR_CAPTURE_DIR` if it's set."""
-    if capture_dir := os.environ.get(CAPTURE_DIR_ENV):
-        config.pluginmanager.register(RefactorCapture(Path(capture_dir)))
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(CAPTURE_OPTION, metavar='DIR', help='new directory to record the streams each test iterates into')
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    capture_dir: str | None = config.getoption(CAPTURE_OPTION)
+    if capture_dir is None:
+        raise pytest.UsageError(f'`-p tests.refactor_capture` needs `{CAPTURE_OPTION}=DIR`.')
+    config.pluginmanager.register(RefactorCapture(Path(capture_dir)))
 
 
 class RefactorCapture:
@@ -291,8 +296,9 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover
     failed = False
     for side, sources in (('base', [out / 'base-src' / root for root in roots]), ('head', [])):
         pythonpath = os.pathsep.join([*map(str, sources), *filter(None, [os.environ.get('PYTHONPATH')])])
-        env = os.environ | {CAPTURE_DIR_ENV: str(out / side), 'PYTHONPATH': pythonpath}
-        code = subprocess.run([sys.executable, '-m', 'pytest', *args.pytest_args], cwd=repo, env=env).returncode
+        command = ['-m', 'pytest', '-p', 'tests.refactor_capture', f'{CAPTURE_OPTION}={out / side}', *args.pytest_args]
+        env = os.environ | {'PYTHONPATH': pythonpath}
+        code = subprocess.run([sys.executable, *command], cwd=repo, env=env).returncode
         print(f'{side} capture: pytest exited {code}')
         failed = failed or code != 0
     print(f'captures: {out}')

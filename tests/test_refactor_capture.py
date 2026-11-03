@@ -6,7 +6,6 @@ They test the capture tooling rather than model behavior, so no recording applie
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -18,12 +17,14 @@ from inline_snapshot import snapshot
 import pydantic_ai
 from pydantic_ai.models import StreamedResponse
 
-from .refactor_capture import CAPTURE_DIR_ENV, SOURCE_FILE, RefactorCapture, compare, normalized
+from .refactor_capture import CAPTURE_OPTION, SOURCE_FILE, RefactorCapture, compare, normalized
 
 pytest_plugins = ['pytester']
 
 # A capture of this session would record the streams of the sessions these tests run inside it.
-pytestmark = pytest.mark.skipif(bool(os.environ.get(CAPTURE_DIR_ENV)), reason=f'`{CAPTURE_DIR_ENV}` is set')
+pytestmark = pytest.mark.skipif(
+    f'config.getoption({CAPTURE_OPTION!r}, None) is not None', reason='runs inside a refactor capture'
+)
 
 RunCapture: TypeAlias = Callable[..., pytest.RunResult]
 
@@ -104,19 +105,15 @@ def test_no_stream():
 
 @pytest.fixture
 def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunCapture:
-    """Capture an in-process pytest session over `STREAMS`, streaming `text`, into `capture_dir`.
-
-    The session's conftest calls `register`, as `tests/conftest.py` does, with `REFACTOR_CAPTURE_DIR` set.
-    """
+    """Capture an in-process pytest session over `STREAMS`, streaming `text`, into `capture_dir`, as `main` does."""
     monkeypatch.setenv('PYTEST_DISABLE_PLUGIN_AUTOLOAD', '1')
     monkeypatch.delenv('PYTEST_XDIST_WORKER', raising=False)
-    pytester.makeconftest('from tests.refactor_capture import register as pytest_configure')
 
     def run(capture_dir: Path, *args: str, text: str = 'hello') -> pytest.RunResult:
         pytester.makepyfile(test_streams=STREAMS.format(text=text))
-        with monkeypatch.context() as patch:
-            patch.setenv(CAPTURE_DIR_ENV, str(capture_dir))
-            return pytester.runpytest_inprocess('-p', 'no:cacheprovider', *args)
+        return pytester.runpytest_inprocess(
+            '-p', 'no:cacheprovider', '-p', 'tests.refactor_capture', f'{CAPTURE_OPTION}={capture_dir}', *args
+        )
 
     return run
 
@@ -184,6 +181,20 @@ def test_capture_records_each_stream_per_test(run: RunCapture, tmp_path: Path):
             }
         ]
     )
+
+
+def test_capture_needs_the_plugin_and_its_directory(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch):
+    """Each half of `-p tests.refactor_capture --refactor-capture=DIR` without the other stops the run."""
+    monkeypatch.setenv('PYTEST_DISABLE_PLUGIN_AUTOLOAD', '1')
+    pytester.makepyfile(test_nothing='def test_nothing():\n    pass\n')
+
+    without_directory = pytester.runpytest_inprocess('-p', 'tests.refactor_capture')
+    assert without_directory.ret == pytest.ExitCode.USAGE_ERROR
+    without_directory.stderr.fnmatch_lines(['*`-p tests.refactor_capture` needs `--refactor-capture=DIR`*'])
+
+    without_plugin = pytester.runpytest_inprocess(f'{CAPTURE_OPTION}={pytester.path / "capture"}')
+    assert without_plugin.ret == pytest.ExitCode.USAGE_ERROR
+    without_plugin.stderr.fnmatch_lines(['*unrecognized arguments: --refactor-capture=*'])
 
 
 def test_capture_stops_the_run_when_it_misses_the_canary_stream(tmp_path: Path):
