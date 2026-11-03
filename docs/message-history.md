@@ -1083,8 +1083,11 @@ async def main():
         while not isinstance(node, End):
             if Agent.is_call_tools_node(node) and typo is not None:
                 # The user pressed "send now" on one message and "remove" on the other.
-                agent_run.reprioritize(follow_up, 'asap')
-                agent_run.withdraw(typo)
+                # `False` would mean the message was no longer queued, e.g. already delivered.
+                sent_now = agent_run.reprioritize(follow_up, 'asap')
+                removed = agent_run.withdraw(typo)
+                print(sent_now, removed)
+                #> True True
                 typo = None
             node = await agent_run.next(node)
 ```
