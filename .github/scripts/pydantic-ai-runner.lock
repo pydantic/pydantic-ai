@@ -22,7 +22,6 @@ listentome = false
 logfire = false
 logfire-api = false
 pillow = "2026-10-16T22:19:00Z"
-pixeltable = "2026-10-26T23:41:00Z"
 prefect = "2026-10-21T03:46:00Z"
 pydantic = false
 pydantic-ai-harness = false
