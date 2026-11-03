@@ -93,7 +93,7 @@ recalls it in a second run without the first run's chat history.
   become `null`, and `truncated` reports applied bounds. A cap below the minimal result envelope
   still returns that envelope. `list_tables` and `describe_table` are sized by the allowlist and schema.
 - Invalid requests, missing tables, and transient provider errors become
-  [`ModelRetry`](https://ai.pydantic.dev/tools-toolsets/tools-advanced/#tool-retries); infrastructure
+  [`ModelRetry`](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-retries); infrastructure
   and authorization failures propagate to the application.
 - The default instructions tell the model to describe unfamiliar tables first and to treat table
   contents as untrusted data. Pass `guidance='...'` to replace them, or `guidance=''` to add none.
@@ -141,7 +141,7 @@ The package adds no spans; core records tool calls and `Memory` emits `memory.*`
 
 ## Agent spec (YAML/JSON)
 
-`Pixeltable` works with Pydantic AI's [agent spec](https://ai.pydantic.dev/core-concepts/agent-spec/). The allowlist is
+`Pixeltable` works with Pydantic AI's [agent spec](https://pydantic.dev/docs/ai/core-concepts/agent-spec/). The allowlist is
 its one positional argument, so the short form passes it alone:
 
 ```yaml

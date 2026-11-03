@@ -69,5 +69,6 @@ with try_import():
             self.index += 1
             return {'word': word, 'shout': word.upper()}
 
-        def seek(self, pos: int, **kwargs: Any) -> None:  # pragma: no cover - required by `unstored_cols`, never read
+        # Required by `unstored_cols`; these reads never seek.
+        def seek(self, pos: int, **kwargs: Any) -> None:  # pragma: no cover
             self.index = pos
