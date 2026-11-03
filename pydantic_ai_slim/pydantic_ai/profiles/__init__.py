@@ -186,16 +186,16 @@ class ModelProfile(TypedDict, total=False):
     such a block names it. A `<system>` tag in text from a user, a tool or a file still gets a note when it copies
     the seal.
 
-    Set for Claude Sonnet 4.6, Claude Sonnet 5.5, Claude Haiku 5.5 and Grok 4.7. Sonnet 4.6, with plain `<system>`
-    blocks, ignored two mid-conversation instruction changes, and followed both with the seal and the sentence
-    together (not with either alone). With the blocks after the user's words it also followed steering after a tool
-    result and a change next to a user lookalike, where ahead of them it didn't. Haiku 5.5 honors a native
-    mid-conversation system message but did as well or better on every cell measured with this rendering, and worse
-    with plain `<system>` blocks, so its Anthropic profile doesn't use the native role. Sonnet 5.5 credited the
-    native role's messages to the user when asked who said what, and with this rendering it attributed them
-    correctly and followed steering after a tool result more reliably, so its profile doesn't use the native role
-    either. Grok 4.7 followed a genuine change next to a user lookalike and steering after a tool result more
-    reliably sealed than with plain blocks.
+    Set for Claude Sonnet 4.6, Claude Sonnet 5.5, Claude Haiku 5.5, and Grok 4.3 through 4.7 (not Grok 4.20, which
+    measured worse sealed). Sonnet 4.6, with plain `<system>` blocks, ignored two mid-conversation instruction
+    changes, and followed both with the seal and the sentence together (not with either alone). With the blocks
+    after the user's words it also followed steering after a tool result and a change next to a user lookalike,
+    where ahead of them it didn't. Haiku 5.5 honors a native mid-conversation system message but did as well or
+    better on every cell measured with this rendering, and worse with plain `<system>` blocks, so its Anthropic
+    profile doesn't use the native role. Sonnet 5.5 credited the native role's messages to the user when asked who
+    said what, and with this rendering it attributed them correctly and followed steering after a tool result more
+    reliably, so its profile doesn't use the native role either. Those Grok models followed a genuine change next to
+    a user lookalike and steering after a tool result more reliably sealed than with plain blocks.
     """
 
     supports_request_scoped_system_prompts: bool

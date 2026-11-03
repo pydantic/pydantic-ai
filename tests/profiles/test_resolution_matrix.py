@@ -1345,6 +1345,7 @@ def test_bedrock_xai_grok(region: str):
                 'grok_supports_builtin_tools': True,
                 'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
                 'supported_native_tools': frozenset(),
+                'needs_sealed_system_blocks': True,
                 'bedrock_supports_tool_choice': True,
                 'bedrock_thinking_variant': 'xai',
                 'bedrock_disallows_sampling_settings': True,
@@ -1767,6 +1768,7 @@ def test_github_copilot_xai_grok_4_5():
             'thinking_always_enabled': True,
             'grok_supports_builtin_tools': True,
             'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
+            'needs_sealed_system_blocks': True,
             'openai_chat_supports_max_completion_tokens': True,
         }
     )
