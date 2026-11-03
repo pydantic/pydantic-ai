@@ -17,7 +17,7 @@ capability ids, so it runs workflow-side in a durable run and can move into core
 
 from __future__ import annotations
 
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Iterator, Sequence
 from dataclasses import dataclass
 
 from pydantic_ai._deferred_capabilities import LoadExchanges
@@ -62,24 +62,40 @@ def _loads(messages: Sequence[ModelMessage]) -> dict[str, _Load]:
     loads: dict[str, _Load] = {}
     calls: dict[str, str] = {}
     """The capability each completed `load_capability` call loaded, by its `tool_call_id`."""
-    for message in post_compaction_window(messages):
-        from_code: CapabilityLoadDeltaPart | None = None
-        for part in message.parts:
-            if isinstance(part, ToolAvailabilityDeltaPart):
-                if from_code is not None and part.tool_call_id == from_code.tool_call_id:
-                    owner = from_code.loaded[-1]
-                else:
-                    owner = calls.get(part.tool_call_id) if part.tool_call_id is not None else None
-                if owner is not None:
-                    loads[owner] = _Load(owner, part.tools_added)
-            for capability_id in exchanges.loads(part):
-                # Moved to the end, so a capability loaded again keeps its latest place in the load order.
-                loads.pop(capability_id, None)
-                loads[capability_id] = _Load(capability_id, None)
-                if isinstance(part, LoadCapabilityReturnPart):
-                    calls[part.tool_call_id] = capability_id
-            from_code = part if isinstance(part, CapabilityLoadDeltaPart) and part.loaded else None
+    for part, previous in _parts_with_previous(post_compaction_window(messages)):
+        if isinstance(part, ToolAvailabilityDeltaPart) and (owner := _reveal_owner(part, previous, calls)):
+            loads[owner] = _Load(owner, part.tools_added)
+        for capability_id in exchanges.loads(part):
+            # Moved to the end, so a capability loaded again keeps its latest place in the load order.
+            loads.pop(capability_id, None)
+            loads[capability_id] = _Load(capability_id, None)
+            if isinstance(part, LoadCapabilityReturnPart):
+                calls[part.tool_call_id] = capability_id
     return loads
+
+
+def _parts_with_previous(
+    messages: Sequence[ModelMessage],
+) -> Iterator[tuple[ModelRequestPart | ModelResponsePart, ModelRequestPart | ModelResponsePart | None]]:
+    """Each part of *messages* with the one before it in the same message, if any."""
+    for message in messages:
+        previous: ModelRequestPart | ModelResponsePart | None = None
+        for part in message.parts:
+            yield part, previous
+            previous = part
+
+
+def _reveal_owner(
+    reveal: ToolAvailabilityDeltaPart, previous: ModelRequestPart | ModelResponsePart | None, calls: dict[str, str]
+) -> str | None:
+    """The capability whose load *reveal* belongs to, by `tool_call_id`: a load from code in *previous*, or a model's load."""
+    if (
+        isinstance(previous, CapabilityLoadDeltaPart)
+        and previous.loaded
+        and reveal.tool_call_id == previous.tool_call_id
+    ):
+        return previous.loaded[-1]
+    return calls.get(reveal.tool_call_id) if reveal.tool_call_id is not None else None
 
 
 def deferred_capability_ids(ctx: RunContext[AgentDepsT]) -> set[str] | None:
