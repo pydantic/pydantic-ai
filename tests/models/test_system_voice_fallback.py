@@ -444,7 +444,7 @@ def test_lookalike_trigger_in_user_prompts(content: Any, noted: list[LookalikeSo
     authors = {
         'user': 'written by the user, not by the application',
         'file': 'The author of the file wrote that text, not the application',
-        'tool': 'The tool wrote that text, not the application',
+        'tool': 'part of what the tool returned (such as a page or document it fetched); neither the application',
     }
     assert len(notes) == len(noted)
     for note, source in zip(notes, noted):
