@@ -114,16 +114,22 @@ class FallbackModel(Model):
                 If the first parameter is hinted as `ModelResponse`, it's a response handler.
                 Otherwise (including untyped handlers and lambdas), it's an exception handler.
 
+                Naming [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] also rejects a
+                refusal: any response with `finish_reason='content_filter'`, empty or with partial text. The
+                agent only raises the error after a response is accepted, so in `fallback_on` it stands for that
+                response.
+
                 Response handlers only apply to non-streamed requests. A streamed request accepts
                 the response as is and emits a `UserWarning`. A request is streamed whenever
                 something consumes the run's events, including `run()` with an
-                `event_stream_handler` or an event listener.
+                `event_stream_handler` or an event listener. A streamed refusal is accepted too, without a
+                warning, as whether the content filter ended a stream is only known once it was streamed.
         """
         super().__init__()
         self.models = [infer_model(default_model), *[infer_model(m) for m in fallback_models]]
         self._entered_count = 0
 
-        self._predicates = FallbackPredicates.parse(fallback_on, owner='FallbackModel')
+        self._predicates = FallbackPredicates.parse(fallback_on, owner='FallbackModel', default='(ModelAPIError,)')
 
     async def __aenter__(self) -> FallbackModel:
         """Enter all sub-models so their providers can manage HTTP client lifecycle."""
@@ -623,8 +629,9 @@ class FallbackModel(Model):
             start,
             parent=span,
             tracer=policy.tracer if policy else None,
-            # Only a `fallback_on` response handler rejects a response here, unlike in the agent's attempt loop.
-            rejected_status='Response rejected by a `fallback_on` response handler',
+            # Only `fallback_on` rejects a response here, by a response handler or `ContentFilterError`, unlike in the
+            # agent's attempt loop.
+            rejected_status='Response rejected by `fallback_on`',
         )
 
 

@@ -244,6 +244,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 | [Tool approval](../deferred-tools.md#human-in-the-loop-tool-approval) | Core | Flag tool calls that need human approval before they run |
 | [Tool Call Judge](tool-call-judge.md) | Harness | A second model answers one risk question per tool call and blocks the call before the tool function runs |
 | [Approval Reviewer](approval-reviewer.md) | Harness | A second model answers one risk question per call waiting for approval, approves the low-risk ones, and leaves the rest to a person |
+| [Permissions](permissions.md) | Harness | Ask a person before file writes and commands, by permission mode: full access, auto (asks before risky commands), or read-only |
 | [Handle Deferred Tool Calls](../capabilities/handle-deferred-tool-calls.md) | Core | Resolve approval-deferred tool calls programmatically |
 | [System Reminders](system-reminders.md) | Harness | Cache-safe re-injection of guidance mid-run to counter instruction fade |
 | [Detect Loops](detect-loops.md) | Harness | Notice repeated tool calls, results, alternations, or responses, and nudge the model, stop the run, or call your handler |

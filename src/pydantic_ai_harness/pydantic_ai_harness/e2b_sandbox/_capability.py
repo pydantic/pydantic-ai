@@ -9,7 +9,13 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._workspace_provider import check_env_types, check_integer, check_working_dir
+from pydantic_ai_harness._workspace_provider import (
+    check_env_types,
+    check_integer,
+    check_provider,
+    check_working_dir,
+    reject_defer_loading,
+)
 from pydantic_ai_harness.e2b_sandbox import _backend
 from pydantic_ai_harness.e2b_sandbox._backend import DEFAULT_SANDBOX_TIMEOUT, E2BSandboxBackend
 
@@ -52,11 +58,7 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
     """
 
     def __post_init__(self) -> None:
-        if self.defer_loading:
-            raise UserError(
-                '`E2BSandbox` does not support `defer_loading=True`: '
-                'the workspace is selected before deferred capabilities load.'
-            )
+        reject_defer_loading('E2BSandbox', self.defer_loading)
         check_integer('sandbox_timeout', self.sandbox_timeout)
         check_working_dir(self.working_dir)
         try:
@@ -72,8 +74,7 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
 
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Kill a sandbox by ID, including paused sandboxes, without attaching."""
-        if ref.provider != 'e2b':
-            raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'e2b'")
+        check_provider(ref, 'e2b')
         await _backend.kill_sandbox(ref.id)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
