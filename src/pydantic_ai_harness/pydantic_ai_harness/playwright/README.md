@@ -494,6 +494,8 @@ A host that needs resolving is asked about twice: first without
 lookup's result. An override that decides on the addresses should return `None`
 while they are empty, `resolution_failed` is false and
 `needs_resolution(request)` is true.
+Because of the two calls, the verdict must depend only on the request: an
+override must not memoize verdicts or count calls.
 
 Neither policy is a general security boundary. Microsoft's own playwright-mcp
 disclaims its origin filter the same way. A page can still signal outward through

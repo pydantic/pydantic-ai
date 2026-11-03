@@ -663,7 +663,9 @@ class EgressPolicy:
         `resolved_addresses`, and a refusal then stands without a lookup. An
         override that decides on `resolved_addresses` should return `None` while
         they are empty, `resolution_failed` is false and `needs_resolution(request)`
-        is true, and decide on the second call.
+        is true, and decide on the second call. Because of the two calls, the
+        verdict must depend only on `request`: an override must not memoize
+        verdicts or count calls.
         """
         if request.url == _BLANK_PAGE:
             return None

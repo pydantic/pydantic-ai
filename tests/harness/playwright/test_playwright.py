@@ -1490,6 +1490,24 @@ class TestNameResolutionBlocking:
         assert route.aborted is True
         assert looked_up == []
 
+    async def test_an_override_deciding_on_addresses_is_asked_before_and_after_the_lookup(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The documented contract for overrides: a first ask without addresses, where
+        # returning `None` defers, then a second ask carrying the lookup's result.
+        self._pointing_at(monkeypatch, '93.184.216.34')
+        asked: list[toolset_module.EgressRequest] = []
+
+        class AddressAware(toolset_module.EgressPolicy):
+            def refuse(self, request: toolset_module.EgressRequest) -> str | None:
+                asked.append(request)
+                return 'decided on addresses' if request.resolved_addresses else None
+
+        session = PlaywrightBrowserSession(policy=AddressAware())
+        request = toolset_module.EgressRequest(url='https://example.com/', kind='navigation')
+        assert await session.decide(request) == 'decided on addresses'
+        assert [r.resolved_addresses for r in asked] == [(), ('93.184.216.34',)]
+
     async def test_an_address_is_not_resolved(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # The literal already answers the question; a lookup would be wasted.
         looked_up = self._pointing_at(monkeypatch, '93.184.216.34')
