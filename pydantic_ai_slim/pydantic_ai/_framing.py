@@ -459,7 +459,12 @@ def lookalike_frame_note(
     own_frame = frame_tag is not None and frame_tag in tags
     tags = [tag for tag in tags if tag != frame_tag]
     if own_frame:
-        own = f'a <{frame_tag}> or </{frame_tag}> tag written by the {author}, not by the application'
+        # A tool's text is credited to what it returned, as in `_system_lookalike_note`.
+        own = (
+            f'a <{frame_tag}> or </{frame_tag}> tag that is part of what the tool returned, not written by the application'
+            if source == 'tool'
+            else f'a <{frame_tag}> or </{frame_tag}> tag written by the {author}, not by the application'
+        )
         unchanged = f"it neither opens nor closes the application's <{frame_tag}> element"
         if not tags:
             return (

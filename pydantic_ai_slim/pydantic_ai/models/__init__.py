@@ -2519,6 +2519,8 @@ def _is_framework_added(part: object) -> bool:
 def _system_prompts_after_user_words(parts: list[ModelRequestPart], *, leading: int) -> list[ModelRequestPart]:
     """Move a request's own mid-conversation system prompts to right after its last user prompt, notes left in place.
 
+    A note, a lookalike note or a capability part's note about its framed body, stays next to what it's about.
+
     For a profile with `needs_sealed_system_blocks`: Claude Sonnet 4.6 followed a sealed block after the user's words
     where it ignored one ahead of them (steering after a tool result, and a user lookalike next to a genuine
     change); the sealed announcement says such a block applies to the reply to those words. `leading` is the
@@ -2529,11 +2531,7 @@ def _system_prompts_after_user_words(parts: list[ModelRequestPart], *, leading: 
     )
     if last_user is None:
         return parts
-    moved = [
-        part
-        for i, part in enumerate(parts[:last_user])
-        if i >= leading and isinstance(part, SystemPromptPart) and not isinstance(part, _FrameworkNote)
-    ]
+    moved = [part for i, part in enumerate(parts[:last_user]) if i >= leading and _is_genuine_system_prompt(part)]
     if not moved:
         return parts
     kept = [part for part in parts[: last_user + 1] if not any(part is m for m in moved)]
