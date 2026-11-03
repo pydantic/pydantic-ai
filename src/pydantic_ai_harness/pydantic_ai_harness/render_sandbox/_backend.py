@@ -154,8 +154,6 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         except RateLimitError:
             raise
         except ClientError as error:
-            if error.__cause__ is not None:
-                raise
             raise WorkspaceUnavailableError('Could not create a Render sandbox') from error
         self._ref = WorkspaceRef(provider='render', id=sandbox.id)
         self._working_dir_pending = True
@@ -187,8 +185,6 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
             except RateLimitError:
                 raise
             except ClientError as error:
-                if error.__cause__ is not None:
-                    raise
                 raise WorkspaceUnavailableError('Render sandbox is missing or access was rejected') from error
             except TimeoutError as error:
                 raise TimeoutError('Render sandbox readiness exceeded its deadline') from error

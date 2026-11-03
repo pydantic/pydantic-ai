@@ -15,7 +15,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import anyio
-import httpx
 import pytest
 
 from ...conftest import no_leaked_tasks, try_import
@@ -23,7 +22,6 @@ from ...conftest import no_leaked_tasks, try_import
 with try_import() as imports_successful:
     from render import RenderAsync
     from render.client.errors import ClientError, RateLimitError
-    from render.client.util import handle_httpx_exception
     from render.sandbox import (
         NetworkPolicy,
         Sandbox,
@@ -370,26 +368,6 @@ async def test_create_deadline_is_not_a_terminal_workspace_error(
     monkeypatch.setattr('pydantic_ai_harness.render_sandbox._backend._OPERATION_TIMEOUT', 0)
     with pytest.raises(TimeoutError):
         await boundary.backend().working_dir()
-
-
-@pytest.mark.parametrize('phase', ['create', 'readiness'])
-async def test_acquisition_preserves_sdk_transport_errors(
-    boundary: ScriptedSDK, monkeypatch: pytest.MonkeyPatch, phase: str
-) -> None:
-    with pytest.raises(ClientError) as translated:
-        handle_httpx_exception(httpx.UnsupportedProtocol('transport failure'))
-    original = translated.value
-
-    async def failing_create(**kwargs: object) -> Sandbox:
-        raise original
-
-    if phase == 'create':
-        monkeypatch.setattr(boundary.client.sandboxes, 'create', failing_create)
-    else:
-        boundary.status_script = [original]
-    with pytest.raises(ClientError) as caught:
-        await boundary.backend().working_dir()
-    assert caught.value is original
 
 
 @pytest.mark.parametrize('operation_fails', [False, True])
