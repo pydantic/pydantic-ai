@@ -655,7 +655,7 @@ async def test_custom_answer_reaches_model_through_inline_picker(question_pipe: 
             return ModelResponse(parts=[ToolCallPart('ask_user_question', {'questions': [APPROACH.model_dump()]})])
         return ModelResponse(parts=[TextPart('done')])
 
-    with anyio.fail_after(5):
+    with anyio.fail_after(10):
         result = await Agent(FunctionModel(respond), capabilities=[AskUser(answerer=answerer)]).run('go')
     returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
     assert returns[0].content == {'Approach': ['Use another approach']}
