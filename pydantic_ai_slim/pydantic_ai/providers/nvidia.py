@@ -116,7 +116,7 @@ class NvidiaProvider(_OpenAISDKProvider):
             self._base_url = base_url or os.getenv('NVIDIA_BASE_URL') or _HOSTED_BASE_URL
             api_key = api_key or os.getenv('NVIDIA_API_KEY')
             if not api_key:
-                if self._base_url == _HOSTED_BASE_URL:
+                if self._base_url.rstrip('/') == _HOSTED_BASE_URL:
                     raise missing_api_key_error(
                         'Set the `NVIDIA_API_KEY` environment variable or pass it via '
                         '`NvidiaProvider(api_key=...)` to use the NVIDIA provider.'
