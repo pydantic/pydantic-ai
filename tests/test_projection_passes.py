@@ -57,13 +57,12 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import (
     _PROJECTION_PASSES,  # pyright: ignore[reportPrivateUsage]
-    _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
-    _REQUEST_SCOPED_TAIL_KEY,  # pyright: ignore[reportPrivateUsage]
     Model,
     ModelRequestParameters,
     _PartKind,  # pyright: ignore[reportPrivateUsage]
     _Projection,  # pyright: ignore[reportPrivateUsage]
     _ProjectionPass,  # pyright: ignore[reportPrivateUsage]
+    _request_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -238,7 +237,7 @@ async def _code_loaded_capability_across_instruction_windows() -> list[ModelMess
         capability = Capability[None](
             id='counter', defer_loading=True, description='Counting.', instructions='Count carefully.'
         )
-        agent = Agent(
+        agent = Agent[None, str](
             FunctionModel(model_fn, profile=ModelProfile(supports_inline_system_prompts=True)),
             instructions=instructions,
             capabilities=[capability],
@@ -407,10 +406,9 @@ class Rendered:
 
 async def _render(target: Target, history: list[ModelMessage]) -> Rendered:
     parameters, messages = _prepare(target.model(), history)
-    namespace = (messages[-1].metadata or {}).get(_PYDANTIC_AI_METADATA_KEY) or {}
     return Rendered(
         messages=[_message_json(message) for message in messages],
-        request_scoped_tail=namespace.get(_REQUEST_SCOPED_TAIL_KEY, 0),
+        request_scoped_tail=len(_request_scoped_tail_texts(messages)),
         body=await target.body(messages, parameters),
     )
 

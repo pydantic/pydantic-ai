@@ -4716,7 +4716,7 @@ def _model_settings_deltas_pass(model: Model, projection: _Projection) -> _Proje
     return projection.with_messages(
         _project_model_settings_deltas(
             projection.messages,
-            keep=model._renders_effort_deltas and model.profile.get('supports_mid_conversation_effort', False),
+            keep=model._renders_effort_deltas and model.profile.get('supports_mid_conversation_effort', False),  # pyright: ignore[reportPrivateUsage]
         )
     )
 
@@ -4745,9 +4745,9 @@ def _retry_feedback_pass(model: Model, projection: _Projection) -> _Projection:
     return projection.with_messages(
         _translate_retry_parts(
             projection.messages,
-            keep_feedback=model._renders_retry_feedback,
+            keep_feedback=model._renders_retry_feedback,  # pyright: ignore[reportPrivateUsage]
             # Without a system role, a retry that would join the standing prompt is a `<system>` block like the rest.
-            sealed=model._seals_system_blocks,
+            sealed=model._seals_system_blocks,  # pyright: ignore[reportPrivateUsage]
         )
     )
 
@@ -4771,7 +4771,7 @@ def _tool_call_ids_pass(model: Model, projection: _Projection) -> _Projection:
 
 
 def _lookalike_notes_pass(model: Model, projection: _Projection) -> _Projection:
-    return projection.with_messages(model._note_lookalike_frames(projection.authored, projection.messages))
+    return projection.with_messages(model._note_lookalike_frames(projection.authored, projection.messages))  # pyright: ignore[reportPrivateUsage]
 
 
 def _superseded_request_scoped_prompts_pass(model: Model, projection: _Projection) -> _Projection:
@@ -4781,11 +4781,11 @@ def _superseded_request_scoped_prompts_pass(model: Model, projection: _Projectio
 
 
 def _legacy_tool_reveals_pass(model: Model, projection: _Projection) -> _Projection:
-    return projection.with_messages(model._translate_legacy_tool_reveals(projection.messages, projection.params))
+    return projection.with_messages(model._translate_legacy_tool_reveals(projection.messages, projection.params))  # pyright: ignore[reportPrivateUsage]
 
 
 def _tool_availability_deltas_pass(model: Model, projection: _Projection) -> _Projection:
-    return projection.with_messages(model._render_tool_availability_deltas(projection.messages, projection.params))
+    return projection.with_messages(model._render_tool_availability_deltas(projection.messages, projection.params))  # pyright: ignore[reportPrivateUsage]
 
 
 def _local_tool_search_pass(model: Model, projection: _Projection) -> _Projection:
@@ -4814,7 +4814,7 @@ def _system_voice_pass(model: Model, projection: _Projection) -> _Projection:
         _wrap_non_leading_system_prompts(
             projection.messages,
             standing_prompt_count=projection.standing_prompt_count,
-            sealed=model._seals_system_blocks,
+            sealed=model._seals_system_blocks,  # pyright: ignore[reportPrivateUsage]
         )
     )
 
