@@ -30,6 +30,7 @@ from dataclasses import field, replace
 from datetime import datetime
 from functools import lru_cache, partial
 from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, TypeAlias, TypeGuard, assert_never, cast
+from weakref import WeakValueDictionary
 
 import anyio
 from opentelemetry.trace import Tracer
@@ -962,6 +963,14 @@ def _check_compaction_result(result: CompactionResult, given: Sequence[_messages
             f'The compaction by {handler!r} produced an empty summary, which would replace the history with nothing.'
         )
     holder = latest[0]
+    if isinstance(messages[holder], _messages.ModelRequest) and _standing_prompt_count(
+        messages
+    ) < _standing_prompt_count(given):
+        raise exceptions.UserError(
+            f'The history compacted by {handler!r} must open with the standing system prompt of the history it was '
+            'given, ahead of its `CompactionPart`: put the summary after the opening `SystemPromptPart`s, or the '
+            "system prompt is sent as user text to models that don't take it inline."
+        )
     if (kept_from := result.kept_from) is None:
         return _default_kept_from(messages, holder, given)
     if not _keeps_unchanged_tail(messages, holder, kept_from, given):
@@ -970,6 +979,20 @@ def _check_compaction_result(result: CompactionResult, given: Sequence[_messages
             'messages from there on must be the last messages of the history it was given, unchanged.'
         )
     return kept_from
+
+
+def _standing_prompt_count(messages: Sequence[_messages.ModelMessage]) -> int:
+    """How many `SystemPromptPart`s the standing system prompt of `messages` has, as the request to a model counts it.
+
+    That's the opening parts of its first request, after the requests at the start are merged into one, as they are
+    before they're sent.
+    """
+    parts: list[_messages.ModelRequestPart] = []
+    for message in messages:
+        if not isinstance(message, _messages.ModelRequest):
+            break
+        parts.extend(message.parts)
+    return models._standing_system_prompt_count(_messages.ModelRequest(parts=parts))  # pyright: ignore[reportPrivateUsage]
 
 
 def _is_empty_summary(part: _messages.CompactionPart) -> bool:
@@ -1301,6 +1324,17 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     Stamped onto `ModelRequestContext.model_id` so durable-execution capabilities can
     round-trip the original selection token across the activity/step/task boundary.
     """
+
+    failed_tool_nodes: WeakValueDictionary[int, CallToolsNode[DepsT, OutputDataT]] = dataclasses.field(
+        default_factory=WeakValueDictionary[int, 'CallToolsNode[DepsT, OutputDataT]'], init=False, repr=False
+    )
+    """Runtime-only replay nodes, held weakly so recovery does not extend their lifetime."""
+
+    def release_tool_error_caches(self) -> None:
+        """Break cached-error traceback cycles after run recovery and resource teardown finish."""
+        for node in self.failed_tool_nodes.values():
+            node._stream_error = None  # pyright: ignore[reportPrivateUsage]
+        self.failed_tool_nodes.clear()
 
 
 class AgentNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]]):
@@ -3221,14 +3255,19 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         Returns `error`, which the attempt is recorded as failing with should a hook move on from it, and the response
         the hooks recovered with. Cancellation and other errors that aren't failures are raised once counted.
         """
-        # The segments of a continued response were billed, however the request stopped: by an error, a usage limit,
-        # or the run being cancelled or timing out. So were the responses a `FallbackModel` rejected.
-        _record_carried_attempts(ctx, request_context, error)
-        if state.response is not None:
-            state.record(ctx, state.response, request_context)
-        if not isinstance(error, Exception):
-            raise error
-        recovered = await self._recover_model_request_error(ctx, run_context, request_context, error, failed, start)
+        try:
+            # The segments of a continued response were billed, however the request stopped: by an error, a usage
+            # limit, or the run being cancelled or timing out. So were the responses a `FallbackModel` rejected.
+            _record_carried_attempts(ctx, request_context, error)
+            if state.response is not None:
+                state.record(ctx, state.response, request_context)
+            if not isinstance(error, Exception):
+                raise error
+            recovered = await self._recover_model_request_error(ctx, run_context, request_context, error, failed, start)
+        except BaseException:
+            # The escaping error's traceback holds this frame; keeping `error` would close a cycle.
+            del error
+            raise
         # Not billed, so its usage is committed with the step's response, without the attempts it carries.
         return error, failed.log.attach(recovered)
 
@@ -3251,9 +3290,32 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         compacted request to send, or when the overflow came after output, the error hooks get the overflow instead,
         and an overflow on the resent request goes to them too.
         """
-        if retry_overflow is None or state.response is not None or not await retry_overflow(overflow):
-            return await self._recover_attempt_error(ctx, run_context, request_context, state, failed, start, overflow)
-        _record_carried_attempts(ctx, request_context, overflow)
+        try:
+            if retry_overflow is None or state.response is not None or not await retry_overflow(overflow):
+                return await self._recover_attempt_error(
+                    ctx, run_context, request_context, state, failed, start, overflow
+                )
+            _record_carried_attempts(ctx, request_context, overflow)
+            return await self._resend_attempt(
+                ctx, run_context, request_context, state, failed, start, on_progress, compaction
+            )
+        except BaseException:
+            # The escaping error's traceback holds this frame; keeping `overflow` would close a cycle.
+            del overflow
+            raise
+
+    async def _resend_attempt(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        run_context: RunContext[DepsT],
+        request_context: ModelRequestContext,
+        state: _HandlerState,
+        failed: _FailedAttempts,
+        start: AttemptStart,
+        on_progress: Callable[[_messages.ModelResponse], None],
+        compaction: _AttemptCompaction,
+    ) -> tuple[Exception | _messages.ModelResponse, _messages.ModelResponse]:
+        """Send an attempt compacted after a context overflow once more; the error hooks get what it fails with."""
         try:
             outcome = await self._send_attempt(ctx, run_context, request_context, state, on_progress, compaction)
             state.record(ctx, outcome, request_context)
@@ -4286,6 +4348,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             failed.record_exhausted(request_context, error, start, unrecovered)
             ModelRequestNode._raise_usage_limit_exceeded(ctx, unrecovered)
             raise
+        finally:
+            # The error's traceback holds this frame; retaining error would keep the run's deps in a cycle.
+            del error
 
     @staticmethod
     def _raise_usage_limit_exceeded(
@@ -4666,6 +4731,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             raise
         except BaseException as e:
             self._stream_error = e
+            ctx.deps.failed_tool_nodes[id(self)] = self
             raise
 
     async def _handle_tool_calls(

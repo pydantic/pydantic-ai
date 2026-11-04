@@ -99,25 +99,29 @@ class QuestionMenu:
             return self.edit_custom(key)
         if isinstance(key, Paste):
             return None
-        count = len(self.question.options)
         rows = self.other + 1
         if key in ('up', 'down', 'tab', 'backtab'):
             self.cursor = (self.cursor + (-1 if key in ('up', 'backtab') else 1)) % rows
         elif key == 'enter' or key in tuple(str(i) for i in range(1, rows + 1)):
             if key != 'enter':
                 self.cursor = int(key) - 1
-            if self.cursor == self.other:
-                self.editing_custom = True
-                return None
-            if not self.question.multi_select:
-                return (self.question.options[self.cursor].label,)
-            if self.cursor == count:
-                if self.selected:
-                    return tuple(option.label for i, option in enumerate(self.question.options) if i in self.selected)
-            elif self.cursor in self.selected:
-                self.selected.remove(self.cursor)
-            else:
-                self.selected.add(self.cursor)
+            return self._pick()
+        return None
+
+    def _pick(self) -> tuple[str, ...] | None:
+        """Act on the highlighted row: start typing on `Other`, answer with an option, or toggle and submit."""
+        if self.cursor == self.other:
+            self.editing_custom = True
+            return None
+        if not self.question.multi_select:
+            return (self.question.options[self.cursor].label,)
+        if self.cursor == len(self.question.options):
+            if self.selected:
+                return tuple(option.label for i, option in enumerate(self.question.options) if i in self.selected)
+        elif self.cursor in self.selected:
+            self.selected.remove(self.cursor)
+        else:
+            self.selected.add(self.cursor)
         return None
 
     def frame(self, *, width: int, height: int) -> tuple[str, ...]:
@@ -135,17 +139,9 @@ class QuestionMenu:
                 *self.custom.rows(width=width, limit=max(1, budget - 2 - len(question))),
                 theme.sgr(theme.MUTED) + truncate(self.hint, width) + '\x1b[0m',
             )
-        choices: list[str] = []
-        for index, option in enumerate(self.question.options):
-            marker = ('[x] ' if index in self.selected else '[ ] ') if self.question.multi_select else ''
-            description = f' - {option.description}' if option.description else ''
-            choices.append(f'{index + 1}. {marker}{option.label}{description}')
-        if self.question.multi_select:
-            choices.append(f'{len(choices) + 1}. Done' + ('' if self.selected else ' (select at least one)'))
-        choices.append(f'{len(choices) + 1}. Other (type answer)')
         lines: list[str] = []
         focus = 0
-        for index, choice in enumerate(choices):
+        for index, choice in enumerate(self._choices()):
             if index == self.cursor:
                 focus = len(lines)
             for line_index, line in enumerate(_wrap(choice, width=width - 2)):
@@ -162,6 +158,18 @@ class QuestionMenu:
             *lines[start : start + visible],
             theme.sgr(theme.MUTED) + truncate(self.hint, width) + '\x1b[0m',
         )
+
+    def _choices(self) -> list[str]:
+        """One numbered label per row: the options, `Done` when several can be picked, then `Other`."""
+        choices: list[str] = []
+        for index, option in enumerate(self.question.options):
+            marker = ('[x] ' if index in self.selected else '[ ] ') if self.question.multi_select else ''
+            description = f' - {option.description}' if option.description else ''
+            choices.append(f'{index + 1}. {marker}{option.label}{description}')
+        if self.question.multi_select:
+            choices.append(f'{len(choices) + 1}. Done' + ('' if self.selected else ' (select at least one)'))
+        choices.append(f'{len(choices) + 1}. Other (type answer)')
+        return choices
 
     def _question_rows(self, *, width: int, limit: int) -> list[str]:
         """The question's wrapped text, cut to `limit` rows with an ellipsis so the choices keep room."""

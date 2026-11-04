@@ -6665,7 +6665,14 @@ class PartEndEvent:
 
 @dataclass(repr=False, kw_only=True)
 class FinalResultEvent:
-    """An event indicating the response to the current model request matches the output schema and will produce a result."""
+    """An event indicating the response to the current model request matches the output schema and could produce a result.
+
+    [`Agent.run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] takes the first matching part as the final result.
+    Methods that run the agent graph to completion, like
+    [`Agent.run_stream_events`][pydantic_ai.agent.AbstractAgent.run_stream_events] and
+    [`Agent.iter`][pydantic_ai.agent.AbstractAgent.iter], can end with a different result,
+    for example from an output tool call that follows matching text.
+    """
 
     tool_name: str | None
     """The name of the output tool that was called. `None` if the result is from text content and not from a tool."""

@@ -1,4 +1,5 @@
 import datetime
+import json
 import os
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from copy import deepcopy
@@ -938,6 +939,92 @@ async def test_openrouter_streamed_reasoning_without_details_is_preserved(allow_
         ThinkingPart(content='Adding two and two.', id='reasoning', provider_name='openrouter'),
         TextPart(content='4'),
     ]
+
+
+@pytest.mark.vcr(ignore_hosts=['openrouter.example'])
+async def test_openrouter_earlier_tool_call_turn_renders_the_same_after_later_reasoning(
+    allow_model_requests: None,
+) -> None:
+    """A tool-call turn sent without `reasoning` doesn't gain `reasoning: ''` once a later response reasons.
+
+    The first step calls a tool without reasoning, the second reasons and calls a tool again. The second
+    request sends the first turn without the field, so the third has to as well, or its messages stop starting
+    with the previous request's. A mock transport stands in for a cassette: whether the model reasons on a given
+    step can't be chosen when recording, and the property spans two request bodies.
+    """
+    request_bodies: list[bytes] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        request_bodies.append(request.content)
+        step = len(request_bodies)
+        message: dict[str, Any] = {'role': 'assistant', 'content': None}
+        if step < 3:
+            message['tool_calls'] = [
+                {'id': f'call_{step}', 'type': 'function', 'function': {'name': 'lookup', 'arguments': '{}'}}
+            ]
+        else:
+            message['content'] = 'Done.'
+        if step == 2:
+            message['reasoning'] = 'One more lookup.'
+            message['reasoning_details'] = [
+                {
+                    'type': 'reasoning.text',
+                    'text': 'One more lookup.',
+                    'signature': 'sig',
+                    'format': 'anthropic-claude-v1',
+                }
+            ]
+        completion = {
+            'id': f'gen-{step}',
+            'object': 'chat.completion',
+            'created': 1704067200,
+            'model': 'anthropic/claude-haiku-4.5',
+            'provider': 'Anthropic',
+            'choices': [{'index': 0, 'finish_reason': 'tool_calls' if step < 3 else 'stop', 'message': message}],
+        }
+        return httpx2.Response(200, json=completion)
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://openrouter.example/api/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as client:
+        agent = Agent(OpenRouterModel('anthropic/claude-haiku-4.5', provider=OpenRouterProvider(openai_client=client)))
+
+        @agent.tool_plain
+        def lookup() -> str:
+            return 'ok'
+
+        await agent.run('Look it up.')
+
+    second, third = (json.loads(body)['messages'] for body in request_bodies[1:])
+    assert third[: len(second)] == second
+    assert [message for message in third if message['role'] == 'assistant'] == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'content': None,
+                'tool_calls': [{'id': 'call_1', 'type': 'function', 'function': {'name': 'lookup', 'arguments': '{}'}}],
+            },
+            {
+                'role': 'assistant',
+                'content': None,
+                'tool_calls': [{'id': 'call_2', 'type': 'function', 'function': {'name': 'lookup', 'arguments': '{}'}}],
+                'reasoning_details': [
+                    {
+                        'id': None,
+                        'format': 'anthropic-claude-v1',
+                        'index': None,
+                        'type': 'reasoning.text',
+                        'text': 'One more lookup.',
+                        'signature': 'sig',
+                    }
+                ],
+                'reasoning': '',
+            },
+        ]
+    )
 
 
 async def test_openrouter_no_openrouter_details(openrouter_api_key: str) -> None:

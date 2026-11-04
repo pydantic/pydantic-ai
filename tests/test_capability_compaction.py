@@ -54,7 +54,7 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.messages import LoadCapabilityCallPart, ModelRequestPart
+from pydantic_ai.messages import CapabilityLoadDeltaPart, LoadCapabilityCallPart, ModelRequestPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models._batch_model import BatchedModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -530,6 +530,54 @@ async def test_result_is_checked(build: CompactionBuilder, error: type[Exception
     )
     with pytest.raises(error, match=match):
         await agent.run('hi')
+
+
+def _summary_ahead_of_the_system_prompt(request: CompactionRequest) -> CompactionResult:
+    """A summary prepended to the history, ahead of the standing system prompt in the opening request."""
+    part = CompactionPart(content='summary')
+    return CompactionResult(messages=[ModelRequest(parts=[part]), request.messages[-1]], part=part, handler='h')
+
+
+def _summary_after_the_system_prompt(request: CompactionRequest) -> CompactionResult:
+    """A summary after the standing system prompt, which keeps opening the history."""
+    opening = request.messages[0]
+    assert isinstance(opening, ModelRequest)
+    [system_prompt, *_] = opening.parts
+    part = CompactionPart(content='summary')
+    return CompactionResult(
+        messages=[ModelRequest(parts=[system_prompt, part]), request.messages[-1]], part=part, handler='h'
+    )
+
+
+def _provider_part_ahead_of_the_system_prompt(request: CompactionRequest) -> CompactionResult:
+    """A provider's compaction response at the start, which the provider takes the place of the history with."""
+    part = CompactionPart(provider_name='openai', provider_details={'encrypted_content': 'gAAA'})
+    return CompactionResult(
+        messages=[ModelResponse(parts=[part], provider_name='openai'), request.messages[-1]],
+        part=part,
+        handler='native',
+    )
+
+
+async def test_a_summary_must_not_go_ahead_of_the_standing_system_prompt():
+    """A summary in a request before the standing system prompt would demote that prompt to user text."""
+    agent = Agent(
+        TestModel(),
+        system_prompt='You are a pirate.',
+        capabilities=[RequestOnce(), Returns(_summary_ahead_of_the_system_prompt)],
+    )
+    with pytest.raises(UserError, match="compacted by 'h' must open with the standing system prompt"):
+        await agent.run('hi')
+
+
+@pytest.mark.parametrize('build', [_summary_after_the_system_prompt, _provider_part_ahead_of_the_system_prompt])
+async def test_compactions_that_keep_the_standing_system_prompt_first_pass(build: CompactionBuilder):
+    """A summary after the standing system prompt is fine, and a provider's part in its response isn't checked."""
+    seen: list[list[ModelMessage]] = []
+    agent = Agent(seen_by(seen), system_prompt='You are a pirate.', capabilities=[RequestOnce(), Returns(build)])
+    result = await agent.run('hi')
+    assert result.output == 'hello'
+    assert len(result.compactions) == 1
 
 
 async def test_compaction_only_response_records_the_summary_size():
@@ -1217,8 +1265,9 @@ def load_then(*calls: str) -> tuple[FunctionModel, list[list[str]]]:
     offered: list[list[str]] = []
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # Counted by calls, not by the responses in the history, which a compaction shortens.
+        step = len(offered)
         offered.append(sorted(tool.name for tool in info.function_tools))
-        step = sum(isinstance(message, ModelResponse) for message in messages)
         if step == 0:
             return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'weather'})])
         if step <= len(calls):
@@ -1240,12 +1289,15 @@ def compaction_tools(agent: Agent[None, str]) -> None:
 
 
 def recorded_load_ids(messages: list[ModelMessage]) -> list[str]:
-    return [
-        str(part.args_as_dict()['id'])
-        for message in messages
-        for part in message.parts
-        if isinstance(part, LoadCapabilityCallPart)
-    ]
+    """The capabilities `messages` record as loaded, by an exchange or a `CapabilityLoadDeltaPart`."""
+    ids: list[str] = []
+    for message in messages:
+        for part in message.parts:
+            if isinstance(part, LoadCapabilityCallPart):
+                ids.append(str(part.args_as_dict()['id']))
+            elif isinstance(part, CapabilityLoadDeltaPart):
+                ids.extend(part.loaded)
+    return ids
 
 
 async def test_capability_loads_are_recorded_again_after_the_summary():
@@ -1261,7 +1313,7 @@ async def test_capability_loads_are_recorded_again_after_the_summary():
     assert recorded_load_ids(messages[1:3]) == ['weather']
     assert 'get_forecast' in offered[-1]
     [record] = result.compactions
-    assert (record.messages_before, record.messages_after, record.kept_from) == (5, 5, 3)
+    assert (record.messages_before, record.messages_after, record.kept_from) == (5, 4, 2)
     assert record.replaced is not None
     assert record.summarized == record.replaced[:3]
 
@@ -1288,8 +1340,8 @@ async def test_capability_loads_after_a_provider_compaction_end_the_kept_message
     result = await agent.run('hi')
 
     [record] = result.compactions
-    # The kept request right after the compaction response now comes before the records, so the tail starts after them.
-    assert (record.messages_before, record.messages_after, record.kept_from) == (7, 6, 4)
+    # The kept request right after the compaction response now comes before the record, so the tail starts after it.
+    assert (record.messages_before, record.messages_after, record.kept_from) == (7, 5, 3)
     assert recorded_load_ids(result.all_messages()[2:4]) == ['weather']
     assert 'get_forecast' in offered[-1]
 

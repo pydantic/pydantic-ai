@@ -6874,7 +6874,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_function_toolset.py::temporalize_function_toolset.call_tool_activity",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::_FunctionCallTransport.load",
         "src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/_transports.py::function_transport.load",
-        "src/pydantic_ai_harness/pydantic_ai_harness/render/_compat.py::resolve_function_tool_for_definition"
+        "src/pydantic_ai_harness/pydantic_ai_harness/render/_transports.py::RenderFunctionCallTransport.load"
       ]
     },
     "FunctionToolset.tools": {

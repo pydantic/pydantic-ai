@@ -1,4 +1,4 @@
-"""The batteries for your Pydantic AI agent -- the official capability library."""
+"""Capabilities for Pydantic AI agents."""
 
 from typing import TYPE_CHECKING
 
@@ -71,6 +71,7 @@ if TYPE_CHECKING:
     from .pydantic_ai_docs import PydanticAIDocs
     from .pylon import Pylon
     from .render import RenderWorkflows
+    from .render_sandbox import RenderSandbox, RenderSandboxBackend
     from .repo_context import RepoContext
     from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
@@ -160,6 +161,8 @@ __all__ = [
     'Pylon',
     'READ_ONLY_TOOL_NAMES',
     'RelevanceCompaction',
+    'RenderSandbox',
+    'RenderSandboxBackend',
     'RenderWorkflows',
     'ReportContextUsage',
     'RepoContext',
@@ -192,17 +195,21 @@ __all__ = [
     'YouSearch',
 ]
 
-_CAPABILITY_EXPORTS = {
+_LAZY_EXPORTS = {
     'AbsurdDurability': 'absurd',
     'Advisor': 'advisor',
     'ApprovalReviewer': 'approval_reviewer',
+    'ArtifactScanner': 'artifact_scanning',
     'AskUser': 'ask_user',
     'AzureDurableTaskDurability': 'azure_durable_task',
     'BackgroundTools': 'background_tools',
     'BoxdSandbox': 'boxd_sandbox',
+    'BoxdSandboxBackend': 'boxd_sandbox',
     'BoxLiteSandbox': 'boxlite_sandbox',
+    'BoxLiteSandboxBackend': 'boxlite_sandbox',
     'BrowserUse': 'browser_use',
     'BubblewrapSandbox': 'bubblewrap_sandbox',
+    'BubblewrapWorkspace': 'bubblewrap_sandbox',
     'CapabilityCreation': 'capability_creation',
     'ClampOversizedMessages': 'compaction',
     'ClearToolResults': 'compaction',
@@ -213,24 +220,39 @@ _CAPABILITY_EXPORTS = {
     'ConversationSearch': 'conversation_search',
     'DayAI': 'day_ai',
     'DaytonaSandbox': 'daytona_sandbox',
-    'DockerSandbox': 'docker_sandbox',
+    'DaytonaSandboxBackend': 'daytona_sandbox',
     'DeduplicateFileReads': 'compaction',
+    'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',
     'DetectLoops': 'detect_loops',
+    'DockerSandbox': 'docker_sandbox',
+    'DockerSandboxBackend': 'docker_sandbox',
     'DynamicWorkflow': 'dynamic_workflow',
     'E2BSandbox': 'e2b_sandbox',
+    'E2BSandboxBackend': 'e2b_sandbox',
     'ExaAgent': 'exa',
     'ExaSearch': 'exa',
     'FallbackCompaction': 'compaction',
     'FileSystem': 'filesystem',
     'Grain': 'grain',
+    'GuardrailError': 'guardrails',
+    'GuardrailResult': 'guardrails',
+    'InputBlocked': 'guardrails',
+    'InputGuardrail': 'guardrails',
+    'InputGuardrailFunc': 'guardrails',
     'IPythonCodeMode': 'ipython_code_mode',
+    'LLM_API_KEY_ENV_PATTERNS': 'shell',
     'LocalStack': 'localstack',
     'Macroscope': 'macroscope',
     'ManagedPrompt': 'logfire',
     'Memory': 'memory',
     'ModalSandbox': 'modal_sandbox',
+    'ModalSandboxBackend': 'modal_sandbox',
     'OpenSandbox': 'opensandbox_sandbox',
+    'OpenSandboxBackend': 'opensandbox_sandbox',
     'Ordinal': 'ordinal',
+    'OutputBlocked': 'guardrails',
+    'OutputGuardrail': 'guardrails',
+    'OutputGuardrailFunc': 'guardrails',
     'PGTaskDurability': 'pgtask',
     'Permissions': 'permissions',
     'Pixeltable': 'pixeltable',
@@ -239,21 +261,28 @@ _CAPABILITY_EXPORTS = {
     'PromptInjectionDefender': 'prompt_injection_defender',
     'PydanticAIDocs': 'pydantic_ai_docs',
     'Pylon': 'pylon',
+    'READ_ONLY_TOOL_NAMES': 'filesystem',
     'RelevanceCompaction': 'compaction',
+    'RenderSandbox': 'render_sandbox',
+    'RenderSandboxBackend': 'render_sandbox',
     'RenderWorkflows': 'render',
-    'ReportContextUsage': 'compaction',
     'RepoContext': 'repo_context',
+    'ReportContextUsage': 'compaction',
     'Researcher': 'researcher',
     'Shell': 'shell',
     'Skills': 'skills',
     'SlidingWindowCompaction': 'compaction',
     'SmartSearch': 'smart_search',
     'SmolSandbox': 'smol_sandbox',
+    'SmolSandboxBackend': 'smol_sandbox',
     'SpendLimits': 'spend',
     'SpritesSandbox': 'sprites_sandbox',
+    'SpritesSandboxBackend': 'sprites_sandbox',
     'SSHWorkspace': 'ssh_workspace',
+    'SSHWorkspaceBackend': 'ssh_workspace',
     'StackOne': 'stackone',
     'StepPersistence': 'step_persistence',
+    'SubAgent': 'subagents',
     'SubAgents': 'subagents',
     'SummarizingCompaction': 'compaction',
     'SystemReminders': 'system_reminders',
@@ -266,55 +295,21 @@ _CAPABILITY_EXPORTS = {
     'WarnOnCacheBusts': 'warn_on_cache_busts',
     'YouResearch': 'youdotcom',
     'YouSearch': 'youdotcom',
-}
-
-_CONSTANT_EXPORTS = {
-    'ArtifactScanner': 'artifact_scanning',
-    'BoxdSandboxBackend': 'boxd_sandbox',
-    'BoxLiteSandboxBackend': 'boxlite_sandbox',
-    'BubblewrapWorkspace': 'bubblewrap_sandbox',
-    'DaytonaSandboxBackend': 'daytona_sandbox',
-    'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',
-    'DockerSandboxBackend': 'docker_sandbox',
-    'E2BSandboxBackend': 'e2b_sandbox',
-    'LLM_API_KEY_ENV_PATTERNS': 'shell',
-    'ModalSandboxBackend': 'modal_sandbox',
-    'OpenSandboxBackend': 'opensandbox_sandbox',
-    'READ_ONLY_TOOL_NAMES': 'filesystem',
-    'SmolSandboxBackend': 'smol_sandbox',
-    'SpritesSandboxBackend': 'sprites_sandbox',
-    'SSHWorkspaceBackend': 'ssh_workspace',
-    'SubAgent': 'subagents',
-}
-
-_GUARDRAIL_EXPORTS = {
-    'GuardrailError',
-    'GuardrailResult',
-    'InputBlocked',
-    'InputGuardrail',
-    'InputGuardrailFunc',
-    'OutputBlocked',
-    'OutputGuardrail',
-    'OutputGuardrailFunc',
     # Pre-rename names; `pydantic_ai_harness.guardrails.__getattr__` emits the
     # deprecation warning when these resolve.
-    'GuardResult',
-    'InputGuard',
-    'InputGuardFunc',
-    'OutputGuard',
-    'OutputGuardFunc',
+    'GuardResult': 'guardrails',
+    'InputGuard': 'guardrails',
+    'InputGuardFunc': 'guardrails',
+    'OutputGuard': 'guardrails',
+    'OutputGuardFunc': 'guardrails',
 }
 
 
 def __getattr__(name: str) -> object:
-    module_name = _CAPABILITY_EXPORTS.get(name) or _CONSTANT_EXPORTS.get(name)
+    module_name = _LAZY_EXPORTS.get(name)
     if module_name is not None:
         from importlib import import_module
 
         module = import_module(f'.{module_name}', __name__)
         return getattr(module, name)
-    if name in _GUARDRAIL_EXPORTS:
-        from . import guardrails
-
-        return getattr(guardrails, name)
     raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
