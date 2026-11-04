@@ -516,6 +516,9 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
         (func, 'exa_py/utils.py', '_get_package_version')
         for func in ('os.stat', 'os.listdir', 'os.path.abspath', 'io.TextIOWrapper.read')
     ),
+    # Each Sprites exec opens a websocket with no `ssl` argument, and its SDK has no way to pass one, so asyncio builds
+    # the default TLS context on the event loop, about 0.2 ms on the CI runners. Only the live tier reaches this code.
+    ('os.stat', 'sprites/websocket.py', 'start'),
     # Render's SDK touches its local file on the event loop while downloading, with no public API that avoids it.
     # Only the live tier reaches this code; the deterministic tier replaces `copy_from`.
     ('os.stat', 'render/experimental/sandbox/files.py', 'resolve_file_dest'),
