@@ -52,7 +52,14 @@ Any capability hook or tool can ask for the history to be compacted with [`ctx.r
 ```python {title="keep_latest_turn.py"}
 from typing import Any
 
-from pydantic_ai import Agent, CompactionPart, ModelRequest, RunContext, UserPromptPart
+from pydantic_ai import (
+    Agent,
+    CompactionPart,
+    ModelRequest,
+    RunContext,
+    SystemPromptPart,
+    UserPromptPart,
+)
 from pydantic_ai.capabilities import AbstractCapability, CompactionRequest, CompactionResult
 
 
@@ -73,15 +80,22 @@ class KeepLatestTurn(AbstractCapability[Any]):
         if start == 0:
             return None
         part = CompactionPart(content=f'{start} earlier messages were left out.')
+        # The standing system prompt keeps opening the history, ahead of the summary.
+        first = request.messages[0]
+        system_prompt = [
+            p for p in first.parts if isinstance(p, SystemPromptPart) and p.scope != 'request'
+        ]
         return CompactionResult(
-            messages=[ModelRequest(parts=[part]), *request.messages[start:]],
+            messages=[ModelRequest(parts=[*system_prompt, part]), *request.messages[start:]],
             part=part,
             handler='keep_latest_turn',
             kept_from=1,
         )
 
 
-agent = Agent('{{ openai:medium }}', capabilities=[KeepLatestTurn()])
+agent = Agent(
+    '{{ openai:medium }}', system_prompt='Be concise.', capabilities=[KeepLatestTurn()]
+)
 
 
 @agent.tool
