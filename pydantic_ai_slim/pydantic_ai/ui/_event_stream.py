@@ -294,7 +294,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                         yield e
 
                     if on_complete is not None:
-                        async for e in self._dispatch_callback(on_complete, result):
+                        async for e in dispatch_callback(on_complete, result):
                             yield e
                 elif isinstance(event, FinalResultEvent):
                     self._final_result_event = event
@@ -390,7 +390,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             if cancelled is not None:
                 self._cancelled = cancelled
                 if on_cancel is not None:
-                    async for e in self._dispatch_callback(on_cancel, cancelled):
+                    async for e in dispatch_callback(on_cancel, cancelled):
                         yield e
                 async for e in self.on_cancelled(cancelled):
                     yield e
@@ -405,12 +405,6 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
         async for e in self.after_stream():
             yield e
-
-    async def _dispatch_callback(
-        self, callback: _CallbackFunc[_CallbackArgT, EventT], arg: _CallbackArgT
-    ) -> AsyncIterator[EventT]:
-        async for event in dispatch_callback(callback, arg):
-            yield event
 
     async def _turn_to(self, to_turn: Literal['request', 'response'] | None) -> AsyncIterator[EventT]:
         """Fire hooks when turning from request to response or vice versa."""

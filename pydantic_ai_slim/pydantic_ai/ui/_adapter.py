@@ -705,24 +705,6 @@ _CONVERSATION_LOAD_FAILED = 'The conversation could not be loaded, so this reque
 _CONVERSATION_SAVE_FAILED = 'The conversation could not be saved, so this turn was not saved. Try again later.'
 
 
-def _check_conversation_store_run(
-    message_history: Sequence[ModelMessage] | None, conversation_id: str | None, usage: RunUsage | None
-) -> None:
-    """Raise a `UserError` for a run that can't use a `conversation_store` as it was called."""
-    if message_history is not None:
-        raise UserError('Pass either `message_history` or a `conversation_store`, not both.')
-    if usage is not None:
-        raise UserError(
-            'Pass either `usage` or a `conversation_store`, not both: the run adds to the usage of the stored '
-            'conversation. To limit a run, pass `usage_limits`.'
-        )
-    if conversation_id is None or conversation_id == 'new':
-        raise UserError(
-            'A `conversation_store` needs the ID of the conversation to load: the request carries none, '
-            'so pass `conversation_id`.'
-        )
-
-
 def pending_tool_calls(message_history: Sequence[ModelMessage]) -> list[ToolCallPart]:
     """The tool calls of `message_history`'s last response that no request after it answers."""
     history = list(message_history)
@@ -1223,8 +1205,20 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         self, message_history: Sequence[ModelMessage] | None, conversation_id: str | None, usage: RunUsage | None
     ) -> None:
         """Raise a `UserError` for a run that can't use `conversation_store` as it was called."""
-        if self.conversation_store is not None:
-            _check_conversation_store_run(message_history, conversation_id, usage)
+        if self.conversation_store is None:
+            return
+        if message_history is not None:
+            raise UserError('Pass either `message_history` or a `conversation_store`, not both.')
+        if usage is not None:
+            raise UserError(
+                'Pass either `usage` or a `conversation_store`, not both: the run adds to the usage of the stored '
+                'conversation. To limit a run, pass `usage_limits`.'
+            )
+        if conversation_id is None or conversation_id == 'new':
+            raise UserError(
+                'A `conversation_store` needs the ID of the conversation to load: the request carries none, '
+                'so pass `conversation_id`.'
+            )
 
     async def _saving_conversation(self, events: AsyncIterator[NativeEvent]) -> AsyncIterator[NativeEvent]:
         """Pass `events` on, saving the run to `conversation_store` before its result."""
@@ -1272,19 +1266,31 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         return loaded
 
     async def _conversation_found(self, conversation_id: str | None) -> bool:
-        """Whether `dispatch_request` can run: without a store, or for a conversation `_conversation_available` allows.
+        """Whether `dispatch_request` can run: without a store, or for a conversation saved with `conversation_scope` or one the store doesn't have yet.
+
+        A conversation saved with another scope is reported as not found, as it would be if the store
+        didn't have it, rather than as a conflict that suggests reloading it. Without a `conversation_scope`,
+        only a conversation saved without one is found: unlike the store's own `scope=None`, which reaches
+        every scope, an adapter that names no scope can't reach a scoped conversation by its client-supplied ID.
 
         Without a conversation ID, the run itself reports the missing ID. A client naming the conversation
         `'new'` isn't missing one, though: it names a conversation no store can hold.
         """
-        if self.conversation_store is None:
+        if (store := self.conversation_store) is None:
             return True
         if conversation_id is None and self.conversation_id == 'new':
             return False
         conversation_id = conversation_id or self.conversation_id
-        return (
-            conversation_id is None or conversation_id == 'new' or await self._conversation_available(conversation_id)
-        )
+        if conversation_id is None or conversation_id == 'new':
+            return True
+        try:
+            record = await store.read_record(conversation_id)
+        except UserError:
+            raise
+        except Exception as e:
+            logger.exception('Checking conversation %r in the `conversation_store` failed.', conversation_id)
+            raise UserError(_CONVERSATION_LOAD_FAILED) from e
+        return record is None or record.scope == self.conversation_scope
 
     async def _load_in_scope(self, store: ConversationStore, conversation_id: str) -> Conversation | None:
         """Load the conversation if it was saved with `conversation_scope`, or `None` if the store doesn't have it.
@@ -1307,24 +1313,6 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         if loaded is not None and (record is None or record.revision != loaded.revision):
             raise UserError(_CONVERSATION_CHANGED_WHILE_LOADING)
         return loaded
-
-    async def _conversation_available(self, conversation_id: str) -> bool:
-        """Whether a run can use the conversation: one saved with `conversation_scope`, or one the store doesn't have yet.
-
-        A conversation saved with another scope is reported as not found, as it would be if the store
-        didn't have it, rather than as a conflict that suggests reloading it. Without a `conversation_scope`,
-        only a conversation saved without one is found: unlike the store's own `scope=None`, which reaches
-        every scope, an adapter that names no scope can't reach a scoped conversation by its client-supplied ID.
-        """
-        assert self.conversation_store is not None
-        try:
-            record = await self.conversation_store.read_record(conversation_id)
-        except UserError:
-            raise
-        except Exception as e:
-            logger.exception('Checking conversation %r in the `conversation_store` failed.', conversation_id)
-            raise UserError(_CONVERSATION_LOAD_FAILED) from e
-        return record is None or record.scope == self.conversation_scope
 
     async def _save_conversation(self, result: AgentRunResult[Any]) -> None:
         """Save what the run added to the stored conversation, keeping the stored entries for the client."""
