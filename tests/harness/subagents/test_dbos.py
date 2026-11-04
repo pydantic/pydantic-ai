@@ -91,12 +91,6 @@ async def test_background_task_survives_recovery(dbos: DBOS) -> None:
     with SetWorkflowID(workflow_id):
         output, *kinds = await workflow()
     assert 'from the worker' in output
-    assert kinds == [
-        'sub_agents.task_assigned',
-        'sub_agents.task_started',
-        'sub_agents.task_backgrounded',
-        'sub_agents.task_completed',
-    ]
     steps = await dbos.list_workflow_steps_async(workflow_id)
     assert 'subagents_background__capability__sub_agents.delegate' in {step['function_name'] for step in steps}
 
@@ -104,5 +98,12 @@ async def test_background_task_survives_recovery(dbos: DBOS) -> None:
     handle = await DBOS.fork_workflow_async(workflow_id, len(steps))
     recovered, *recovered_kinds = await handle.get_result(polling_interval_sec=0.01)
     assert 'from the worker' in recovered
-    assert recovered_kinds == kinds
+    # DBOS doesn't journal how the task interleaves with the delegating tool call, which announces the backgrounding.
+    for order in (kinds, recovered_kinds):
+        assert [kind for kind in order if kind != 'sub_agents.task_backgrounded'] == [
+            'sub_agents.task_assigned',
+            'sub_agents.task_started',
+            'sub_agents.task_completed',
+        ]
+        assert order.count('sub_agents.task_backgrounded') == 1
     assert WORKER_CALLS == ['worker'], 'recovery ran the background task again'
