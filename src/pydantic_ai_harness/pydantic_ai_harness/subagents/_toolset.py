@@ -14,7 +14,6 @@ from typing import Any, Generic, TypeVar
 from uuid import uuid4
 
 import anyio
-from typing_extensions import TypeIs
 
 from pydantic_ai import AgentStreamEvent, CapabilityEvent
 from pydantic_ai.agent import AbstractAgent, AgentRunResult, EventStreamHandler
@@ -43,6 +42,7 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
+from pydantic_ai_harness._models import is_request_response_model
 from pydantic_ai_harness._sub_agent_output import (
     ServingModelRecorder,
     cancel_pending_output,
@@ -162,11 +162,6 @@ def _vetoed_reply(what: str, event: ParentMessage | AgentCreatedEvent) -> str:
 
 
 _EventT = TypeVar('_EventT', bound=CapabilityEvent)
-
-
-def _is_request_response_model(model: object) -> TypeIs[Model]:
-    """Narrow a model without losing its provider client type."""
-    return isinstance(model, Model)
 
 
 # Signals that must always reach the parent run, even when a delegate has
@@ -1229,7 +1224,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         # back to `None` so the sub-agent uses its own default rather than being handed a
         # model it cannot run with.
         ctx_model = ctx.model
-        return (ctx_model if _is_request_response_model(ctx_model) else None), None
+        return (ctx_model if is_request_response_model(ctx_model) else None), None
 
     async def _stream_child(
         self,

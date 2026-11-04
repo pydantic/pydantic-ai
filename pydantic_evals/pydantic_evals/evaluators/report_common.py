@@ -4,7 +4,7 @@ from bisect import bisect_right
 from collections.abc import Iterator
 from dataclasses import dataclass
 from math import isnan
-from typing import Any, Literal, assert_never, cast
+from typing import Any, Literal, TypeVar, assert_never, cast
 
 from ..reporting import ReportCase
 from ..reporting.analyses import (
@@ -27,6 +27,9 @@ __all__ = (
     'ROCAUCEvaluator',
     'DEFAULT_REPORT_EVALUATORS',
 )
+
+
+_PointT = TypeVar('_PointT')
 
 
 # --- Shared helpers for binary classification evaluators ---
@@ -89,10 +92,7 @@ def _iter_threshold_counts(
 ) -> Iterator[tuple[float, int, int]]:
     # NaNs are unordered, so cumulative counts would change the comparison semantics.
     if any(isnan(score) for score, _ in scored_cases):
-        for threshold in thresholds:
-            tp = sum(1 for s, p in scored_cases if s >= threshold and p)
-            fp = sum(1 for s, p in scored_cases if s >= threshold and not p)
-            yield threshold, tp, fp
+        yield from _iter_threshold_counts_by_scan(scored_cases, thresholds)
         return
 
     sorted_cases = sorted(scored_cases, key=lambda case: case[0], reverse=True)
@@ -107,7 +107,16 @@ def _iter_threshold_counts(
         yield threshold, tp, fp
 
 
-def _downsample(points: list[tuple[float, ...]], n: int) -> list[tuple[float, ...]]:
+def _iter_threshold_counts_by_scan(
+    scored_cases: list[tuple[float, bool]], thresholds: list[float]
+) -> Iterator[tuple[float, int, int]]:
+    for threshold in thresholds:
+        tp = sum(1 for s, p in scored_cases if s >= threshold and p)
+        fp = sum(1 for s, p in scored_cases if s >= threshold and not p)
+        yield threshold, tp, fp
+
+
+def _downsample(points: list[_PointT], n: int) -> list[_PointT]:
     """Downsample a list of points to at most n evenly spaced entries."""
     if len(points) <= n or n <= 1:
         return points
@@ -174,19 +183,23 @@ class ConfusionMatrixEvaluator(ReportEvaluator):
         elif from_ == 'output':
             return str(case.output) if case.output is not None else None
         elif from_ == 'metadata':
-            if key is not None:
-                if isinstance(case.metadata, dict):
-                    metadata_dict = cast(dict[str, Any], case.metadata)  # pyright: ignore[reportUnknownMemberType]
-                    val = metadata_dict.get(key)
-                    return str(val) if val is not None else None
-                return None  # key requested but metadata isn't a dict — skip this case
-            return str(case.metadata) if case.metadata is not None else None
+            return ConfusionMatrixEvaluator._extract_metadata(case, key)
         elif from_ == 'labels':
             if key is None:
                 raise ValueError("'key' is required when from_='labels'")
             label_result = case.labels.get(key)
             return label_result.value if label_result else None
         assert_never(from_)
+
+    @staticmethod
+    def _extract_metadata(case: ReportCase[Any, Any, Any], key: str | None) -> str | None:
+        if key is not None:
+            if isinstance(case.metadata, dict):
+                metadata_dict = cast(dict[str, Any], case.metadata)  # pyright: ignore[reportUnknownMemberType]
+                val = metadata_dict.get(key)
+                return str(val) if val is not None else None
+            return None  # key requested but metadata isn't a dict — skip this case
+        return str(case.metadata) if case.metadata is not None else None
 
 
 @dataclass(repr=False)
@@ -236,13 +249,7 @@ class PrecisionRecallEvaluator(ReportEvaluator):
         auc = _trapezoidal_auc(auc_points)
 
         # Downsample for display
-        if len(all_points) <= self.n_thresholds or self.n_thresholds <= 1:
-            display_points = all_points
-        else:
-            indices = sorted(
-                {int(i * (len(all_points) - 1) / (self.n_thresholds - 1)) for i in range(self.n_thresholds)}
-            )
-            display_points = [all_points[i] for i in indices]
+        display_points = _downsample(all_points, self.n_thresholds)
 
         curve = PrecisionRecallCurve(name=ctx.name, points=display_points, auc=auc)
         return [

@@ -50,6 +50,7 @@ pydantic-monty = false
 pydantic-monty-client = false
 pydantic-monty-runtime = false
 pydantic-settings = false
+render = "2026-10-30T01:06:03Z"
 
 [manifest]
 members = [
@@ -7561,7 +7562,7 @@ requires-dist = [
     { name = "pydantic-monty", marker = "extra == 'dynamic-workflow'", specifier = ">=1.0.0,<2" },
     { name = "pymongo", marker = "extra == 'mongodb'", specifier = ">=4.17.0" },
     { name = "pyyaml", marker = "extra == 'skills'", specifier = ">=6.0.2" },
-    { name = "render", marker = "extra == 'render'", specifier = ">=1.2.0" },
+    { name = "render", marker = "extra == 'render'", specifier = ">=1.6.0" },
     { name = "ripgrep", marker = "sys_platform != 'android' and extra == 'coder'", specifier = "==14.1.0" },
     { name = "smolmachines", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'smol') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'smol') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'smol')", specifier = ">=1.22.2,<2" },
     { name = "sprites-py", marker = "extra == 'sprites'", specifier = ">=0.7.0,<0.8" },
@@ -9000,7 +9001,7 @@ wheels = [
 
 [[package]]
 name = "render"
-version = "1.2.0"
+version = "1.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -9008,9 +9009,9 @@ dependencies = [
     { name = "httpx" },
     { name = "python-dateutil" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5b/7f/ff8b32177bfa6b3b80de4a70066e3010f64dfee67b3856ddd9375278faaf/render-1.2.0.tar.gz", hash = "sha256:2186c32f7179719f71f2d9c4fbbbb3aa754417d3d1f07ad7ad0dfa2f2a56b011", size = 470393, upload-time = "2026-09-23T21:45:53.134Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ca/5e/a030cd5504438ba15cabe0e663953e0f532d9f3534130c0ff9225eea122c/render-1.6.0.tar.gz", hash = "sha256:24fa82e720863e52a2d31aa51e037cb3f9b703c5e50c03dd8b246d47a3a30c78", size = 539641, upload-time = "2026-10-30T01:06:01.039Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/82/43/69fedb0bb7e296b48e83acb3438caee181442b870fc2b0dc1e57fdf915b4/render-1.2.0-py3-none-any.whl", hash = "sha256:15d11ff29d2dfa306cc899757cae9db98dc749f4d8c22bd295ee854fcdfa0104", size = 939520, upload-time = "2026-09-23T21:45:51.58Z" },
+    { url = "https://files.pythonhosted.org/packages/13/7d/cb71fd044389fc85a066e3a64ea3d64ab5c2da0bc253a17bf60aa8519dfb/render-1.6.0-py3-none-any.whl", hash = "sha256:a4751912e1d94512b3922409f87fd96cb2a91df1f0da412141ac1f0c678aa15e", size = 1028329, upload-time = "2026-10-30T01:06:02.587Z" },
 ]
 
 [[package]]

@@ -1799,15 +1799,18 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 Framework callers pass it.
         """
         inline_system = self.profile.get('supports_inline_system_prompts', False)
-        messages = _drop_capability_load_deltas(messages)
         if _has_instruction_state(messages):
             # The same path choice as the prefix statement in `prepare_request`; on the fallback path
-            # `_wrap_non_leading_system_prompts` below `<system>`-wraps the update.
+            # `_wrap_non_leading_system_prompts` below `<system>`-wraps the update. Projection must run
+            # while the history still carries a code load's `CapabilityLoadDeltaPart`: it's the only
+            # record of that load, and folding it in is what keeps a code-loaded block rendered across
+            # instruction windows. The records go out only after, never in the messages the model sees.
             messages = _project_instruction_state(
                 messages,
                 inline_system=inline_system,
                 prefix=model_request_parameters.instruction_parts if model_request_parameters is not None else None,
             )
+        messages = _drop_capability_load_deltas(messages)
 
         messages = _render_system_prompt_contexts(
             messages,
@@ -3848,7 +3851,7 @@ def prepare_return_schemas(
 
 
 def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestParameters) -> FinalResultEvent | None:
-    """Return an appropriate FinalResultEvent if `e` corresponds to a part that will produce a final result."""
+    """Return an appropriate FinalResultEvent if `e` corresponds to a part that could produce a final result."""
     if isinstance(e, PartStartEvent):
         new_part = e.part
         if (isinstance(new_part, TextPart) and params.allow_text_output) or (

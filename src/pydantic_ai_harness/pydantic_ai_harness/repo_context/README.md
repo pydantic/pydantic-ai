@@ -52,6 +52,13 @@ same-directory symlink is labeled with its target's name, so `CLAUDE.md -> AGENT
 reaches the model as `AGENTS.md`. A file in an ancestor is labeled relative to the
 working directory, such as `../AGENTS.md`, not by its absolute path.
 
+A same-directory link loads only when it points to another instruction file,
+one named in `filenames` or `AGENTS.md`/`CLAUDE.md`: `CLAUDE.md -> AGENTS.md`
+works, while a link to any other file, such as `AGENTS.md -> CONTRIBUTING.md` or
+`AGENTS.md -> .env`, is skipped, so a repository can't use one to hand the model
+a file the file tools may deny. Make such a file a regular file, or rename its
+target, to load it.
+
 When `home_dir` is `None` (the default), only the working directory is scanned --
 no walk-up. Pass the workspace home path explicitly to walk up to it. For a remote
 sandbox, use its home (for example `home_dir='/home/user'` on E2B), not the agent
@@ -131,7 +138,8 @@ surfaces it again. The working directory's files are not surfaced again when
 the walk-up already loaded them. Every part of a note carries
 `{'origin': 'pydantic-ai-harness.repo_context.nested_note.v1', 'directory': ...}`
 in its `metadata`, which is how `RepoContext` and compaction recognize it.
-Same-directory instruction symlinks are named after their targets. Where the
+Same-directory instruction symlinks are named after their targets, and load
+only when the target is itself an instruction file, as in the walk-up. Where the
 backend resolves symlinks, external instruction symlinks are skipped, even when
 `autoload_symlink_roots` authorizes their targets for autoload.
 
@@ -148,7 +156,9 @@ the same types by importing `FileReadEvent` and `DirectoryListedEvent` from
 The traversed location is `root_dir / path`, so a `FileSystem` rooted at a
 subdirectory of the working directory still surfaces the right directory. A
 traversal that resolves outside the working directory is ignored: it is not nested in
-the workspace, so there is no nested context to surface.
+the workspace, so there is no nested context to surface. Each directory in the
+chain must itself resolve inside the working directory, so a symlinked directory
+in the path can't surface an instruction file from outside it.
 
 `traversal_tool_names` and `traversal_path_arg` are deprecated. Setting either
 to a non-default value emits `HarnessDeprecationWarning` and keeps the old
