@@ -147,7 +147,7 @@ def add_the_users_name(ctx: RunContext[str]) -> str:
     return f"The user's name is {ctx.deps}."
 
 
-@agent.instructions
+@agent.instructions(name='date', on_change='append')  # a new date is appended, keeping the cached prefix
 def add_the_date() -> str:
     return f'The date is {datetime.now(UTC).date()}.'
 

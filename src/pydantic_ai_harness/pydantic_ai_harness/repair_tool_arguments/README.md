@@ -50,6 +50,14 @@ Repair is heuristic: malformed input can be ambiguous, and inferred strings may 
 intent. The capability does not supply a schema to the repair library or bypass tool validation,
 approval, or execution checks. It has no configuration options.
 
+## Message history
+
+A repair is written back to the tool call in the message history, so the requests that follow replay
+the arguments that ran instead of the malformed JSON a provider may reject. The model's original
+arguments are kept in the call's `provider_details['original_args']`. The call's provider item ID
+moves to `provider_details['original_id']`: OpenAI Responses replays its own stored copy of a call
+that keeps that ID, so the repaired arguments would otherwise never reach the model.
+
 ## Telemetry
 
 Each repair attempt emits a `repair_tool_arguments` span through `ctx.tracer`. Valid JSON and parsed

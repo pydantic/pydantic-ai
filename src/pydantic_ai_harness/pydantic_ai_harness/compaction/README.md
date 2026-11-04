@@ -853,18 +853,19 @@ task state and scratchpads that live *in* the history.
 
 ## On-demand capabilities across compaction
 
-Pydantic AI counts an on-demand capability as loaded while its `load_capability` exchange is in the
-history after the latest compaction, so a strategy that summarizes or drops the exchange would unload it:
-its tools would leave the request and its instructions would no longer be sent, while the summary may
-still say it's loaded. `SummarizingCompaction`, `SlidingWindowCompaction` and `RelevanceCompaction` remove
-history, so when they remove a capability's load they record it again: a `load_capability` call and its
-return, with the original return's content, right after the summary (or ahead of the kept messages when
-there's no summary). The capability stays loaded, its tools stay in the request, and Pydantic AI states
-its current instructions again in the system voice. The recorded exchange carries
-`{'pydantic-ai-harness.compaction.recorded-load.v1': True}` in the `metadata` of its `ModelResponse` and
-of its `LoadCapabilityReturnPart`, which the model never sees. Summaries leave every `load_capability`
-exchange out, the model's own included: which capabilities are loaded is carried by the exchanges, recorded
-again after each compaction, never by the summary.
+Pydantic AI counts an on-demand capability as loaded while the record of its load is in the history
+after the latest compaction: the model's `load_capability` exchange, or the `CapabilityLoadDeltaPart` a
+load from code (`RunContext.load_capability`) leaves. A strategy that summarizes or drops that record would
+unload the capability: its tools would leave the request and its instructions would no longer be sent,
+while the summary may still say it's loaded. `SummarizingCompaction`, `SlidingWindowCompaction` and
+`RelevanceCompaction` remove history, so when they remove a capability's load they record it again, right
+after the summary (or ahead of the kept messages when there's no summary), as a load from code is recorded:
+a `CapabilityLoadDeltaPart` naming the capability, followed by the `ToolAvailabilityDeltaPart` revealing
+its tools, if the load revealed any. That's a framework record of what's loaded, not a `load_capability`
+call the model never made. The capability stays loaded, its tools stay in the request, and Pydantic AI
+states its current instructions again in the system voice. Summaries leave every load record out, the
+model's own exchanges included: which capabilities are loaded is carried by the records, recorded again
+after each compaction, never by the summary.
 Only capabilities the run still registers as on-demand are recorded. `compact_now`, which has no run to
 ask, records every load, and the next run ignores a load of a capability it doesn't register.
 
@@ -876,7 +877,7 @@ whose `TextContent.metadata` is
 summary treats it as data rather than as the user's words.
 
 `ClearToolResults`, `DeduplicateFileReads` and `ClampOversizedMessages` keep every message and leave
-`load_capability` calls and returns as they are, so loads survive them unchanged. Provider-native
+load records as they are, so loads survive them unchanged. Provider-native
 compaction (`OpenAICompaction`, `AnthropicCompaction`) runs no harness strategy, so it still unloads them.
 
 ## Keeping user messages (`keep_user_messages`)
@@ -894,6 +895,11 @@ newest tail message still survives.
 Each retained turn is bounded to `keep_user_messages_max_chars` (default 20k) with an explicit
 truncation marker when it overruns. The character budget applies per part, shared across the
 text items of a multi-part prompt; images, audio, and cache points pass through untouched.
+A retained copy is recognized by a marker on its text items, never by request metadata, which isn't
+trusted as a provenance marker, so a turn marked only there is summarized and bounded like any other.
+Copies kept by releases before 2.60 carry only that request-level marker, as does a copy whose text
+items already had metadata that isn't a dict, so the next compaction after upgrading summarizes them
+once more and keeps them again.
 Harness-added content on the user channel, such as a background tool's result, isn't a user turn: it is
 left out of what `keep_user_messages` and `preserve_first_user_message` carry over from the summarized
 prefix (including from a turn an earlier compaction kept), and summarized as data rather than as the

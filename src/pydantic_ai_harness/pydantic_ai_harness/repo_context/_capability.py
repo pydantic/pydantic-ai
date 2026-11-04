@@ -324,7 +324,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         raw_path = args.get(self.traversal_path_arg)
         if not isinstance(raw_path, str):
             return result
-        await self._enqueue_context(ctx, await self._resolve_directory(ctx.workspace, raw_path))
+        # The deprecated sniffer can name a directory outside the working directory on purpose, so only the
+        # directories between it and the working directory are confined.
+        await self._enqueue_context(ctx, await self._resolve_directory(ctx.workspace, raw_path), confine_target=False)
         return result
 
     @on_event(FileReadEvent, DirectoryListedEvent, FileWrittenEvent)
@@ -347,25 +349,43 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         await self._enqueue_context(ctx, directory, written_file=written_file)
 
     async def _enqueue_context(
-        self, ctx: RunContext[AgentDepsT], directory: Path, *, written_file: Path | None = None
+        self,
+        ctx: RunContext[AgentDepsT],
+        directory: Path,
+        *,
+        confine_target: bool = True,
+        written_file: Path | None = None,
     ) -> None:
         """Surface the instruction file of `directory` and of each directory between it and the working directory.
 
         Files are enqueued shallowest first, so the most specific file is the latest one the model reads.
         """
         working_dir = await self._working_dir(ctx.workspace)
+        real_working_dir: Path | None = None
         in_history = self._sync_surfaced_dirs(ctx.messages)
         for current in directories_up_to(directory, working_dir):
+            # Already surfaced, so it passed the check below then; skipping it first saves a `realpath`, which is a
+            # command round trip on shell-backed sandboxes.
+            if self._surfaced(str(current), in_history):
+                continue
+            # The tool authorized the file or directory it touched, not every directory in its lexical path: a
+            # symlinked directory there can take one of them, or the file's own parent, outside the project. So
+            # each must resolve inside the working directory too. The deprecated sniffer may name a directory
+            # outside the working directory on purpose; only that one is exempt.
+            if confine_target or current != directory or current.is_relative_to(working_dir):
+                if real_working_dir is None:
+                    real_working_dir = Path(await ctx.workspace.realpath(str(working_dir)))
+                if not Path(await ctx.workspace.realpath(str(current))).is_relative_to(real_working_dir):
+                    continue
             await self._enqueue_directory(ctx, current, in_history, written_file=written_file)
 
     async def _enqueue_directory(
         self, ctx: RunContext[AgentDepsT], directory: Path, in_history: set[str], *, written_file: Path | None = None
     ) -> None:
         key = str(directory)
-        if self._surfaced(key, in_history):
-            return
         context_file = await find_dir_context_file(ctx.workspace, directory, self.filenames)
-        # Parallel traversals can probe the same directory concurrently; re-check after the await.
+        # `_enqueue_context` skipped it if it was already surfaced, but parallel traversals can probe the same
+        # directory concurrently, so check again after the await.
         if context_file is None or self._surfaced(key, in_history):
             return
         self._pending_dirs.add(key)
