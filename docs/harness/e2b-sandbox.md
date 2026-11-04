@@ -164,6 +164,8 @@ E2B's client falls back to `E2B_API_KEY` when its key is empty or `None`. If tha
 
 Under [Temporal](../durable_execution/temporal.md), `deps` are serialized for every activity, which puts a key on them in the workflow's history. Put a user ID there instead, and have `get_workspace` look that user's key up on the worker. A client itself can't be on `deps` there at all.
 
+Destroy a user's sandbox with that user's key, as in `await E2BSandbox(client=E2B(api_key=user.e2b_api_key)).destroy(ref)`. A client for another account may not find the sandbox, and a sandbox that isn't found returns quietly, so it would keep running and billing with no error.
+
 ## Prepare a sandbox before the run
 
 To seed files or install packages before the agent starts, create the backend yourself, work in it through `Workspace`, and pass it to the run:
@@ -218,7 +220,7 @@ async def kill_sandbox(ref: WorkspaceRef) -> None:
     await E2BSandbox().destroy(ref)
 ```
 
-`E2BSandbox.backend(ref)` constructs an attached backend without I/O; `destroy(ref)` kills by ID without attaching. This kills a paused sandbox too, without resuming it. A sandbox you don't kill is paused when its `sandbox_timeout` runs out. See [E2B's sandbox lifecycle](https://docs.e2b.dev/sandbox).
+`E2BSandbox.backend(ref)` constructs an attached backend without I/O; `destroy(ref)` kills by ID with the instance's `client`, without attaching. This kills a paused sandbox too, without resuming it. A sandbox you don't kill is paused when its `sandbox_timeout` runs out. See [E2B's sandbox lifecycle](https://docs.e2b.dev/sandbox).
 
 A failed run returns no result, so there is no ref to store. To terminate its sandbox, clean up in an `on_run_error` hook; `after_run` doesn't run when a run fails:
 
