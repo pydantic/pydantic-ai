@@ -147,7 +147,8 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             parallel_execution_mode: Tool-call execution mode applied for the duration
                 of every run. Defaults to `'parallel_ordered_events'` so events
                 replay deterministically. Set to `'sequential'` for strict ordering.
-                With a workspace, only tools that run in a child workflow run in parallel.
+                A run with a workspace runs its tool calls sequentially, except that tools
+                that run in a child workflow run in parallel.
             register_legacy_workflows: Register the workflow names used by the deprecated
                 `DBOSAgent` so in-flight wrapper-era workflows can recover during migration.
         """
@@ -164,7 +165,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         self._event_step_contexts: dict[tuple[str | None, str | None], dict[int, deque[DBOSContext | None]]] = {}
         self._child_workflow_toolsets: dict[str, DurableFunctionToolset[AgentDepsT]] = {}
         self._child_workflow_metadata_capability = False
-        self._set_tool_metadata_capabilities: list[SetToolMetadata[AgentDepsT]] = []
         self._init_legacy_context_vars()
 
     def _init_legacy_context_vars(self) -> None:
@@ -206,7 +206,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         # --- MCP toolset wrapping ---
         self._register_toolsets(agent)
         self._child_workflow_metadata_capability = False
-        self._set_tool_metadata_capabilities = []
         agent.root_capability.apply(self._detect_child_workflow_metadata)
         self._child_workflow_toolsets = {}
         for toolset in agent.toolsets:
@@ -324,8 +323,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         # `SetToolMetadata` can select tools in any toolset, so it enables child workflows for all of them.
         if capability_selects_child_workflow(capability, 'dbos'):
             self._child_workflow_metadata_capability = True
-        if isinstance(capability, SetToolMetadata):
-            self._set_tool_metadata_capabilities.append(capability)
 
     def _register_child_workflow(self, toolset: AbstractToolset[AgentDepsT]) -> None:
         """Register the DBOS workflow that runs `toolset`'s tools with `child_workflow` metadata."""
@@ -444,14 +441,25 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     # --- Capability hooks ---
 
     async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-        """With a workspace, run each tool outside a child workflow alone.
+        """With a workspace and child-workflow tools, run each tool outside a child workflow alone.
 
         DBOS numbers steps as they start, so steps from concurrent tools could replay into the wrong call.
         """
-        if not (self.in_durable_context and ctx.workspace.attached):
+        if not (self._child_workflow_toolsets and self.in_durable_context and ctx.workspace.attached):
             return tool_defs
+        assert ctx.root_capability is not None
+        set_metadata: list[SetToolMetadata[AgentDepsT]] = []
+
+        def collect(capability: AbstractCapability[AgentDepsT]) -> None:
+            if isinstance(capability, SetToolMetadata):
+                set_metadata.append(capability)
+
+        # The run's capability tree, whose `SetToolMetadata` wrappers routing sees.
+        ctx.root_capability.apply(collect)
         return [
-            tool_def if await self._runs_in_child_workflow(ctx, tool_def) else replace(tool_def, sequential=True)
+            tool_def
+            if await self._runs_in_child_workflow(ctx, tool_def, set_metadata)
+            else replace(tool_def, sequential=True)
             for tool_def in tool_defs
         ]
 
@@ -460,12 +468,14 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     ) -> list[ToolDefinition]:
         return await self.prepare_tools(ctx, tool_defs)
 
-    async def _runs_in_child_workflow(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> bool:
+    async def _runs_in_child_workflow(
+        self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition, set_metadata: list[SetToolMetadata[AgentDepsT]]
+    ) -> bool:
         if tool_def.toolset_id not in self._child_workflow_toolsets:
             return False
         # `SetToolMetadata` wraps the toolset outside this hook, so merge its metadata as routing will see it.
         metadata = tool_def.metadata or {}
-        for capability in reversed(self._set_tool_metadata_capabilities):
+        for capability in reversed(set_metadata):
             if await matches_tool_selector(capability.tools, ctx, replace(tool_def, metadata=metadata)):
                 metadata = {**metadata, **capability.metadata}
         return selects_child_workflow(metadata, 'dbos')
@@ -480,6 +490,12 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         agent = self._agent
         if agent is None:  # pragma: no cover
             return await handler()
+        # DBOS numbers steps as they start; parallel tools making several workspace steps each could
+        # replay recorded results into the wrong calls on recovery. With child-workflow tools,
+        # `prepare_tools` runs every other tool alone instead.
+        mode = self._parallel_execution_mode
+        if self.in_durable_context and ctx.workspace.attached and not self._child_workflow_toolsets:
+            mode = 'sequential'
         key = (DBOS.workflow_id, ctx.run_id)
         reserve_events = (
             self.in_durable_context and self._event_stream_handler is not None and not self._in_legacy_workflow.get()
@@ -487,7 +503,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         if reserve_events:
             self._event_step_contexts[key] = {}
         try:
-            with agent.parallel_tool_call_execution_mode(self._parallel_execution_mode), using_durable_sleep():
+            with agent.parallel_tool_call_execution_mode(mode), using_durable_sleep():
                 return await handler()
         finally:
             if reserve_events:
