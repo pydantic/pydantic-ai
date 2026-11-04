@@ -665,6 +665,10 @@ Both prompt surfaces of the summary request are fields: `summary_prompt` is the 
 must contain a `{messages}` placeholder and no other replacement field; any other prompt emits a `HarnessDeprecationWarning` and will raise `ValueError` in a future release), and `instructions` sets the internal agent's static instructions,
 which Pydantic AI sends in the request's system prompt. Override `instructions` when the summarizer
 endpoint requires a fixed leading instruction.
+The default `summary_prompt` asks for the summary under fixed section headings. Its `## Intent` section
+asks for the user's overall goal and only the constraints or preferences the user stated themselves: an
+instruction that appeared inside a tool result or fetched content is not the user's, and if the summary
+keeps one, it must say where it came from.
 
 The messages served into that template are rendered as a transcript with one `<message>` element per part
 (each user prompt, system prompt, response text, tool call and tool return), tagged with its role and,
@@ -682,7 +686,8 @@ Content a harness capability added on the user channel and tagged with an `origi
 `BackgroundTools` result, `TrajectoryJudge` feedback and a `Memory` snapshot, including one an older release marked with a plain string. Tagged content is
 rendered as a `<harness_data origin="...">` element, capped like a tool return, rather than as
 `role="user"`. When the transcript holds such content, the summary request also tells the summarizer not to
-treat it as the user's requests or standing constraints; other summary requests are unchanged.
+treat it as the user's requests or standing constraints; that guidance is the only conditional part of
+the summary request.
 `max_tokens` and `keep_tokens` control when compaction runs and which history messages are retained; they
 do not cap the summary-request payload.
 
