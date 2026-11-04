@@ -192,6 +192,7 @@ if TYPE_CHECKING:
 __all__ = (
     'AbstractAgent',
     'Agent',
+    'AgentInstructions',
     'AgentModelSettings',
     'AgentRealtime',
     'AgentRetries',
@@ -2430,6 +2431,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
         native_tools: Sequence[AgentNativeTool[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         instructions: AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         retries: int | AgentRetries | _utils.Unset = _utils.UNSET,
@@ -2451,6 +2453,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instructions: The instructions to use instead of the instructions registered with the agent.
                 Note: this also replaces capability-contributed instructions (e.g. from
                 [`get_instructions`][pydantic_ai.capabilities.AbstractCapability.get_instructions]).
+            capabilities: The capabilities to use instead of the agent's configured capabilities. When set,
+                these replace (not merge with) the agent's existing capabilities. To add to the existing
+                set, include them explicitly:
+                `agent.override(capabilities=[*agent.root_capability.capabilities, extra])`.
             metadata: The metadata to use instead of the metadata passed to the agent constructor. When set, any
                 per-run `metadata` argument is ignored.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
@@ -2480,16 +2486,22 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         resolved = self._resolve_spec(spec)
 
-        # A spec capability replaces the agent's root capability for the duration of the
+        # A capability override replaces the agent's root capability for the duration of the
         # override. Build it before resolving an overridden model so custom model IDs can
-        # be preserved for that capability's async, deps-aware resolver.
-        if resolved is not None and resolved.capability is not None:
-            override_caps = list(resolved.capability.capabilities)
+        # be preserved for that capability's async, deps-aware resolver. Explicit params take
+        # precedence over spec values.
+        if _utils.is_set(capabilities):
+            override_caps = wrap_capability_funcs(capabilities)
             _inject_auto_capabilities(override_caps)
             _reject_second_of_a_kind(override_caps)
             override_capability: CombinedCapability[AgentDepsT] | None = CombinedCapability(override_caps).for_agent(
                 self
             )
+        elif resolved is not None and resolved.capability is not None:
+            override_caps = list(resolved.capability.capabilities)
+            _inject_auto_capabilities(override_caps)
+            _reject_second_of_a_kind(override_caps)
+            override_capability = CombinedCapability(override_caps).for_agent(self)
         else:
             override_capability = None
 
