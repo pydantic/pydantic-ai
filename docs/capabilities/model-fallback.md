@@ -43,20 +43,27 @@ Handlers may be sync or async. A handler whose first parameter is annotated as [
 !!! warning "A response handler on its own replaces the default"
     Passing only a response handler as `fallback_on` replaces the default `(ModelAPIError, ContentFilterError, OutputTokenLimitExceeded)`, so API errors, refusals and cut-off responses are no longer fallen back from. To keep falling back on them, pass both in a list, as below.
 
-Here the first model's response is cut off and rejected, the second model fails, and the third answers. The answering response lists both attempts it moved on from, and the rejected response's tokens count in the run's usage:
+Here the first model's answer is blank and rejected by a response handler, the second model fails, and the third answers. The answering response lists both attempts it moved on from, and the rejected response's tokens count in the run's usage:
 
 ```python {title="model_fallback_mixed_policy.py"}
-from pydantic_ai import Agent, ModelAPIError, ModelMessage, ModelResponse, TextPart
+from pydantic_ai import (
+    Agent,
+    ModelAPIError,
+    ModelMessage,
+    ModelResponse,
+    OutputTokenLimitExceeded,
+    TextPart,
+)
 from pydantic_ai.capabilities import ModelFallback
+from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 
 
-def truncated(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+def blank(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     return ModelResponse(
-        parts=[TextPart('The capital of France is')],
+        parts=[TextPart('\n\n')],
         usage=RequestUsage(input_tokens=60, output_tokens=100),
-        finish_reason='length',
     )
 
 
@@ -71,18 +78,18 @@ def complete(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     )
 
 
-def was_truncated(response: ModelResponse) -> bool:
-    return response.finish_reason == 'length'
+def is_blank(response: ModelResponse) -> bool:
+    return not (response.text or '').strip()
 
 
 agent = Agent(
     # These deterministic models stand in for three providers.
-    FunctionModel(truncated, model_name='primary'),
+    FunctionModel(blank, model_name='primary'),
     capabilities=[
         ModelFallback(
             FunctionModel(unavailable, model_name='second'),
             FunctionModel(complete, model_name='backup'),
-            fallback_on=[ModelAPIError, was_truncated],
+            fallback_on=[ModelAPIError, ContentFilterError, OutputTokenLimitExceeded, is_blank],
         )
     ],
 )
@@ -96,8 +103,6 @@ for attempt in result.response.failed_attempts or []:
     #> primary rejected RequestUsage(input_tokens=60, output_tokens=100)
     #> second error None
 ```
-
-The default's [`OutputTokenLimitExceeded`](#token-limit) already rejects a cut-off response; `was_truncated` stands in here for a check of your own.
 
 When every model has failed or been rejected, `ModelFallback` raises [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] with every exception, plus a [`ResponseRejected`][pydantic_ai.models.fallback.ResponseRejected] counting any rejected responses.
 
@@ -330,10 +335,10 @@ To move an agent to the capability, keep the first model as the agent's model an
 
 ```python {title="model_fallback_migration.py" test="skip" lint="skip"}
 # Before
-agent = Agent(FallbackModel(primary, backup, fallback_on=[ModelAPIError, was_truncated]))
+agent = Agent(FallbackModel(primary, backup, fallback_on=[ModelAPIError, is_blank]))
 
 # After
-agent = Agent(primary, capabilities=[ModelFallback(backup, fallback_on=[ModelAPIError, was_truncated])])
+agent = Agent(primary, capabilities=[ModelFallback(backup, fallback_on=[ModelAPIError, is_blank])])
 ```
 
 Everything a `FallbackModel` does carries over:

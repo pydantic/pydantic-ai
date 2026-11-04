@@ -638,7 +638,7 @@ The rejected responses' usage also counts when the request ends another way: a l
     Under [durable execution](../durable_execution/overview.md), a `FallbackModel` runs inside the durable model operation, and the error that ends its request reaches the workflow without its attempts, so the usage of the responses it rejected is only recorded when another model answers. [`ModelFallback`](../capabilities/model-fallback.md#durable-execution) makes each attempt a durable operation of its own and records the attempts on the workflow side, so it doesn't have this limitation.
 
 ```python {title="fallback_model_attempts.py"}
-from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart
+from pydantic_ai import Agent, ModelMessage, ModelResponse, OutputTokenLimitExceeded, TextPart
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
@@ -659,14 +659,10 @@ def complete(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     )
 
 
-def was_truncated(response: ModelResponse) -> bool:
-    return response.finish_reason == 'length'
-
-
 fallback_model = FallbackModel(
     FunctionModel(truncated, model_name='primary'),
     FunctionModel(complete, model_name='backup'),
-    fallback_on=was_truncated,
+    fallback_on=OutputTokenLimitExceeded,
 )
 agent = Agent(fallback_model)
 result = agent.run_sync('What is the capital of France?')
