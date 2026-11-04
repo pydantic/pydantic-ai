@@ -31,7 +31,7 @@ from pydantic_ai._utils import aclose_if_supported, get_union_args
 from pydantic_ai.agent import Agent, EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.agent.wrapper import WrapperAgent
-from pydantic_ai.capabilities import Instrumentation, ModelFallback, ProcessEventStream
+from pydantic_ai.capabilities import Instrumentation, ModelFallback, ProcessEventStream, SetToolMetadata
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     CapabilityOrdering,
@@ -201,6 +201,22 @@ def conversation_id_from_run_id(run_id: str) -> str:
     DBOS and Prefect capabilities return.
     """
     return str(uuid.uuid5(_CONVERSATION_ID_NAMESPACE, run_id))
+
+
+def selects_child_workflow(metadata: Mapping[str, Any] | None, key: str) -> bool:
+    """Whether tool metadata selects a child workflow with `{key: {'child_workflow': ...}}`."""
+    config = (metadata or {}).get(key)
+    return isinstance(config, dict) and 'child_workflow' in config
+
+
+def capability_selects_child_workflow(capability: AbstractCapability[Any], key: str) -> bool:
+    """Whether `capability` is a `SetToolMetadata` selecting child workflows, which can apply to tools in any toolset."""
+    return isinstance(capability, SetToolMetadata) and selects_child_workflow(capability.metadata, key)
+
+
+def toolset_selects_child_workflow(toolset: FunctionToolset[Any], key: str) -> bool:
+    """Whether a tool in `toolset` selects a child workflow in its own metadata."""
+    return any(selects_child_workflow(tool.metadata, key) for tool in toolset.tools.values())
 
 
 class _BoundModelOperations(NamedTuple):
