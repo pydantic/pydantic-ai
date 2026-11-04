@@ -15,6 +15,7 @@ import math
 import re
 import typing
 from collections import Counter
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, assert_never
 
@@ -90,6 +91,9 @@ SCOPE_DEFAULT_CHANGE_IMPACT = (
     'This transitional warning will be removed in the next breaking release; the conversation-scoped default will remain.'
 )
 """Why the `scope` default change matters, for the deprecation warning both public entry points emit."""
+
+HistorySearch = Callable[[str, str | None, str | None], Awaitable[str]]
+"""Searches the history for `query`, optionally within one `run_id` and one `conversation_id`."""
 
 _TOKENIZE_RE = re.compile(r'\w+')
 """Tokenizer regex: word runs (unicode letters, digits, underscore).
@@ -353,6 +357,7 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
         bm25_k1: float,
         bm25_b: float,
         scope: SearchScope | None = None,
+        search: HistorySearch | None = None,
     ) -> None:
         # `None` means the caller did not choose. It resolves to `conversation` and warns once
         # here, for the same reason `ConversationSearch` does: this default was `all`, and the
@@ -386,6 +391,7 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
         self._context_lines = context_lines
         self._params = _Bm25Params(k1=bm25_k1, b=bm25_b)
         self._scope: SearchScope = scope
+        self._search = search or self.search
         description = SEARCH_HISTORY_DESCRIPTION
         if scope == 'conversation':
             description += _CONVERSATION_SCOPE_NOTE
@@ -422,7 +428,10 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
                     "conversation's history from other conversations in the same store."
                 )
             conversation_id = ctx.conversation_id
+        return await self._search(query, run_id, conversation_id)
 
+    async def search(self, query: str, run_id: str | None, conversation_id: str | None) -> str:
+        """Search the history for `query`, within `run_id` when set, and within `conversation_id` when set."""
         sections = await self._load_sections(run_id, conversation_id)
         if run_id is not None and not sections:
             # Same answer whether the run is absent or out of scope: a distinct
@@ -447,6 +456,9 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
                 'on a shared store).'
             )
 
+        return self._render_matches(query, sections, total_messages)
+
+    def _render_matches(self, query: str, sections: list[_RunSection], total_messages: int) -> str:
         # Rank on the untruncated rendering so terms past the display cutoff stay
         # findable, then show excerpts clipped around the query terms. Documents are
         # index-aligned across the flattened sections; context windows stay within one section.

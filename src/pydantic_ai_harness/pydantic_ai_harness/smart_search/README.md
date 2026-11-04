@@ -59,6 +59,15 @@ inside the workspace's working directory. If no source may leave the machine, ju
 A search is capped at 200,000 files (counted after `glob`), 50 million lines and 2 GiB of source; past that it asks
 the model to narrow `directory` or `glob`.
 
+## Two of them
+
+`SmartSearch` declares the default `id` `'smart_search'`, under which durable execution records each search's
+judgments. Two `SmartSearch`s on one agent that share it become one when they agree, and the agent raises a
+`UserError` when it's built if they differ, since a merge could send the source to a judge neither chose. To keep
+two, give each its own `id` and wrap them in `PrefixTools`, since both register `smart_search`.
+
+Earlier releases declared no default `id`, so two always failed on the tool name when the run started.
+
 ## Telemetry
 
 Each search opens a `smart search` span under its tool call, on the run's tracer:

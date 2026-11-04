@@ -153,6 +153,15 @@ Under the default `request_limit` of 50, a run's first search judges 24 snippets
 128-snippet searches, for example with `agent.run(..., usage_limits=UsageLimits(request_limit=500))`. When no
 request is left to spend, the search fails and the model is told to use regular search.
 
+## Two of them
+
+`SmartSearch` declares the default `id` `'smart_search'`, under which durable execution records each search's
+judgments. Two `SmartSearch`s on one agent that share it become one when they agree, and the agent raises a
+`UserError` when it's built if they differ, since a merge could send the source to a judge neither chose. To keep
+two, give each its own `id` and wrap them in [PrefixTools](../capabilities/prefix-tools.md), since both register `smart_search`.
+
+Earlier releases declared no default `id`, so two always failed on the tool name when the run started.
+
 ## Telemetry
 
 Each search opens a `smart search` span under its tool call, on the run's tracer. The span has these

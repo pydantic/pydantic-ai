@@ -40,7 +40,9 @@ from pydantic_ai import Agent, AgentStreamEvent, RunContext, ToolDefinition
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, ValidatedToolArgs, durable_operation
 from pydantic_ai.messages import CapabilityEvent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai_harness.advisor import Advisor
 from pydantic_ai_harness.capability_creation import CapabilityCreation, CapabilityStore
+from pydantic_ai_harness.conversation_search import ConversationSearch, SnapshotHistorySource
 from pydantic_ai_harness.localstack import LocalStack
 from pydantic_ai_harness.memory import InMemoryStore, Memory
 from pydantic_ai_harness.planning import (
@@ -52,6 +54,8 @@ from pydantic_ai_harness.planning import (
     SqlitePlanStore,
 )
 from pydantic_ai_harness.shell import Shell
+from pydantic_ai_harness.smart_search import SmartSearch
+from pydantic_ai_harness.step_persistence import InMemoryStepStore
 from tests.conftest import detach_dbos_logging
 
 # Module scope builds the agents and registers their DBOS workflows, which DBOS requires before launch.
@@ -219,16 +223,36 @@ class _YouClient:
         )
 
 
-def _counting_aws_cli() -> str:
-    """An `aws` stand-in that counts its runs in the file named by `HARNESS_AWS_CLI_COUNT`."""
+_CLI_COUNTS: list[Path] = []
+"""The files the CLI stand-ins count their runs in, one line per run."""
+
+
+def _counting_cli(name: str, output: str) -> str:
+    """A `name` stand-in that prints `output` and counts its runs, whatever environment it runs in."""
     directory = Path(tempfile.mkdtemp(prefix='harness_durable_tool_io_'))
-    script = directory / 'aws'
-    script.write_text('#!/bin/sh\necho run >> "$HARNESS_AWS_CLI_COUNT"\necho ok\n')
+    script = directory / name
+    count = directory / 'count'
+    _CLI_COUNTS.append(count)
+    script.write_text(f'#!/bin/sh\necho {name} >> {count}\n{output}\n')
     script.chmod(script.stat().st_mode | stat.S_IXUSR)
     return str(script)
 
 
+def _counting_model(name: str, respond: Callable[[AgentInfo], ModelResponse]) -> FunctionModel:
+    def counted(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        _requests[name] += 1
+        return respond(info)
+
+    return FunctionModel(counted)
+
+
+def _relevant(info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'entity': 1, 'operation': 1})])
+
+
 _CREATION_DIRECTORY = Path(tempfile.mkdtemp(prefix='harness_durable_tool_io_creation_'))
+_SEARCH_DIRECTORY = Path(tempfile.mkdtemp(prefix='harness_durable_tool_io_search_'))
+(_SEARCH_DIRECTORY / 'config.py').write_text('def load(path):\n    # parse the config file\n    return path\n')
 _PLAN_DATABASE = Path(tempfile.mkdtemp(prefix='harness_durable_tool_io_plan_')) / 'plan.db'
 _AUTHORED = """
 from pydantic_ai.capabilities import AbstractCapability
@@ -240,10 +264,13 @@ class Marker(AbstractCapability):
 """
 
 
-def _agent(name: str, capability: AbstractCapability[None], *calls: tuple[str, dict[str, Any]]) -> Agent[None, str]:
-    extra: list[AbstractCapability[None]] = []
-    if isinstance(capability, CapabilityCreation):
-        extra.append(LocalWorkspace[None](str(_CREATION_DIRECTORY)))
+def _agent(
+    name: str,
+    capability: AbstractCapability[None],
+    *calls: tuple[str, dict[str, Any]],
+    workspace: Path | None = None,
+) -> Agent[None, str]:
+    extra: list[AbstractCapability[None]] = [] if workspace is None else [LocalWorkspace[None](str(workspace))]
     return Agent(
         _call_tools(*calls),
         name=name,
@@ -276,7 +303,7 @@ _AGENTS: dict[str, Agent[None, str]] = {
     ),
     'localstack': _agent(
         'localstack_agent',
-        LocalStack[None](aws_cli_path=_counting_aws_cli(), include_instructions=False),
+        LocalStack[None](aws_cli_path=_counting_cli('aws', 'echo ok'), include_instructions=False),
         ('aws_cli', {'command': 's3 ls'}),
     ),
     'capability_creation': _agent(
@@ -285,6 +312,7 @@ _AGENTS: dict[str, Agent[None, str]] = {
         ('author_capability', {'name': 'marker', 'code': _AUTHORED}),
         ('list_authored_capabilities', {}),
         ('disable_authored_capability', {'name': 'marker'}),
+        workspace=_CREATION_DIRECTORY,
     ),
     'memory': _agent(
         'memory_agent',
@@ -301,6 +329,24 @@ _AGENTS: dict[str, Agent[None, str]] = {
         ('write_plan', {'items': [{'id': 'first', 'content': 'Write the migration'}]}),
         ('add_task', {'content': 'Run the tests'}),
     ),
+    'advisor': _agent(
+        'advisor_agent',
+        Advisor[None](
+            _counting_model('advisor.model', lambda _: ModelResponse(parts=[TextPart('advice')])), mode='local'
+        ),
+        ('advisor', {'prompt': 'q'}),
+    ),
+    'smart_search': _agent(
+        'smart_search_agent',
+        SmartSearch[None](_counting_model('smart_search.judge', _relevant), guidance=''),
+        ('smart_search', {'query': 'parse the config'}),
+        workspace=_SEARCH_DIRECTORY,
+    ),
+    'conversation_search': _agent(
+        'conversation_search_agent',
+        ConversationSearch[None](SnapshotHistorySource(InMemoryStepStore()), scope='all', add_instructions=False),
+        ('search_conversation_history', {'query': 'tabs'}),
+    ),
 }
 
 
@@ -316,11 +362,11 @@ _WORKFLOWS = {key: _workflow(agent) for key, agent in _AGENTS.items()}
 
 
 @pytest.fixture
-def count_requests(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[[], Counter[str]]:
-    """Count every request the scenarios' fakes, the `aws` stand-in, and the authoring store make."""
+def count_requests(monkeypatch: pytest.MonkeyPatch) -> Callable[[], Counter[str]]:
+    """Count every request the scenarios' fakes, the CLI stand-ins, and the stores make."""
     _requests.clear()
-    aws_count = tmp_path / 'aws_cli_count'
-    monkeypatch.setenv('HARNESS_AWS_CLI_COUNT', str(aws_count))
+    for count in _CLI_COUNTS:
+        count.unlink(missing_ok=True)
 
     for method in ('write', 'list_all', 'disable'):
         original = getattr(CapabilityStore, method)
@@ -352,10 +398,19 @@ def count_requests(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[
 
         monkeypatch.setattr(SqlitePlanStore, method, counted_plan)
 
+    original_list_runs = SnapshotHistorySource.list_runs
+
+    async def counted_list_runs(self: SnapshotHistorySource) -> Any:
+        _requests['history.list_runs'] += 1
+        return await original_list_runs(self)
+
+    monkeypatch.setattr(SnapshotHistorySource, 'list_runs', counted_list_runs)
+
     def snapshot() -> Counter[str]:
         counts = Counter(_requests)
-        if aws_count.exists():
-            counts['aws_cli'] = len(aws_count.read_text().splitlines())
+        for count in _CLI_COUNTS:
+            if count.exists():
+                counts.update(count.read_text().splitlines())
         return counts
 
     return snapshot
@@ -374,6 +429,9 @@ _EXPECTED_STEPS: dict[str, Collection[str]] = {
     ],
     'memory': ['memory.write_memory', 'memory.read_memory', 'memory.search_memory', 'memory.delete_memory'],
     'planning': ['planning.set_items', 'planning.add_item'],
+    'advisor': ['advisor.consult'],
+    'smart_search': ['smart_search.judge'],
+    'conversation_search': ['conversation_search.search'],
 }
 
 
@@ -603,6 +661,12 @@ async def test_dbos_recovery_replays_plan_tool_events_in_recorded_order(
         pytest.param(lambda: YouResearch[None](client=_YouClient()), id='you_research'),
         pytest.param(lambda: LocalStack[None](), id='localstack'),
         pytest.param(lambda: CapabilityCreation[None](directory=_CREATION_DIRECTORY), id='capability_creation'),
+        pytest.param(lambda: Advisor[None]('test', mode='local'), id='advisor'),
+        pytest.param(lambda: SmartSearch[None]('test'), id='smart_search'),
+        pytest.param(
+            lambda: ConversationSearch[None](SnapshotHistorySource(InMemoryStepStore()), scope='all'),
+            id='conversation_search',
+        ),
     ],
 )
 def test_toolset_can_be_wrapped_by_engines_that_wrap_function_tools(

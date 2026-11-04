@@ -12,12 +12,14 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import WorkspaceError
 from pydantic_ai_harness._workspace import raise_tool_failure, require_workspace, supports_commands
+from pydantic_ai_harness.smart_search._chunks import Chunk
 from pydantic_ai_harness.smart_search._index import MAX_CACHED_INDEXES, SnippetIndexes
-from pydantic_ai_harness.smart_search._judge import JudgeModel
+from pydantic_ai_harness.smart_search._judge import JudgeModel, judge
 from pydantic_ai_harness.smart_search._search import (
     DEFAULT_CANDIDATES,
     MAX_CANDIDATES,
     MAX_LIMIT,
+    Judge,
     SmartSearchResult,
     search_code,
 )
@@ -74,6 +76,7 @@ class SmartSearchToolset(FunctionToolset[AgentDepsT]):
         cache_index: bool = False,
         guidance: str | None = None,
         id: str | None = None,
+        judge: Judge | None = None,
     ) -> None:
         validate_settings(threshold, concurrency)
         super().__init__(id=id)
@@ -82,6 +85,7 @@ class SmartSearchToolset(FunctionToolset[AgentDepsT]):
         self._threshold = threshold
         self._concurrency = concurrency
         self._indexes = SnippetIndexes(MAX_CACHED_INDEXES if cache_index else 0)
+        self._judge = judge or self._judge_inline
         self.add_function(self.smart_search, name=TOOL_NAME)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
@@ -144,7 +148,7 @@ class SmartSearchToolset(FunctionToolset[AgentDepsT]):
             try:
                 result = await search_code(
                     ctx,
-                    model,
+                    self._judge,
                     query,
                     directory,
                     indexes=self._indexes,
@@ -152,7 +156,6 @@ class SmartSearchToolset(FunctionToolset[AgentDepsT]):
                     limit=limit,
                     candidates=candidates,
                     threshold=self._threshold,
-                    concurrency=self._concurrency,
                     span=span,
                 )
             except WorkspaceError as error:
@@ -174,3 +177,6 @@ class SmartSearchToolset(FunctionToolset[AgentDepsT]):
                     }
                 )
             return result
+
+    async def _judge_inline(self, ctx: RunContext[AgentDepsT], query: str, chunks: list[Chunk]) -> list[float | None]:
+        return await judge(ctx, self._model, query, chunks, concurrency=self._concurrency)
