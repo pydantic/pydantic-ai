@@ -184,7 +184,8 @@ class FallbackPredicates:
         # Only the class itself and its subclasses: `UnexpectedModelBehavior` or `Exception` doesn't name refusals.
         if issubclass(exception_type, ContentFilterError):
             self.content_filter = True
-        if issubclass(exception_type, UnsupportedSettingWarning):
+        # Only the class itself: a model raises `UnsupportedSettingWarning`, which a subclass's handler wouldn't match.
+        if exception_type is UnsupportedSettingWarning:
             self.unsupported_setting = True
 
     def judging_settings(self) -> AbstractContextManager[None]:

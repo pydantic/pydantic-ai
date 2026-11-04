@@ -80,6 +80,7 @@ from pydantic_ai.exceptions import (
     RunTimedOut,
     ToolFailed,
     UnexpectedModelBehavior,
+    UnsupportedSettingWarning,
     UsageLimitExceeded,
     UserError,
 )
@@ -2877,6 +2878,36 @@ async def test_dbos_durability_sticky_fallback_goes_straight_to_the_candidate(db
 
     assert await run_durable_agent() == ['sticky_target'] * 4
     assert calls == ['primary', 'target', 'target', 'target', 'target']
+
+
+async def test_dbos_durability_fallback_on_unsupported_setting_warning(dbos: DBOS) -> None:
+    """A model that would ignore a setting the request relies on is moved on from inside a DBOS workflow too."""
+    calls: list[str] = []
+
+    class IgnoresStopSequences(FunctionModel):
+        unsupported_settings = frozenset({'stop_sequences'})
+
+    def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('called')
+        return ModelResponse(parts=[TextPart('answered')])
+
+    agent = Agent(
+        IgnoresStopSequences(answer, model_name='primary'),
+        name='durability_unsupported_setting_fallback',
+        model_settings={'stop_sequences': ['STOP']},
+        capabilities=[
+            ModelFallback('backup', fallback_on=(ModelAPIError, UnsupportedSettingWarning)),
+            DBOSDurability(models={'backup': FunctionModel(answer, model_name='backup')}),
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> tuple[str | None, list[str]]:
+        result = await agent.run('Hello DBOS')
+        return result.response.model_id, [f'{a.model_name} {a.outcome}' for a in result.response.failed_attempts or []]
+
+    assert await run_durable_agent() == ('backup', ['primary error'])
+    assert calls == ['called']
 
 
 async def test_dbos_durability_rejects_a_live_workspace_workflow_input(dbos: DBOS, tmp_path: Path) -> None:

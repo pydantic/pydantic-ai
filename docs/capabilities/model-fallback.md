@@ -189,7 +189,7 @@ for attempt in result.response.failed_attempts or []:
     #> primary error
 ```
 
-The model raises the warning as the attempt's error instead of emitting it, before anything is sent, so it's recorded in [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts] as an `error` and costs nothing. When every model would ignore a setting, the run ends with a [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] of the warnings. Only `UnsupportedSettingWarning` itself, or a subclass, turns this on: a supertype like `Exception` doesn't. [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] takes it the same way. Under [durable execution](#durable-execution), the warning is raised inside the model's durable unit and doesn't reach `ModelFallback` as `UnsupportedSettingWarning`, so use a `FallbackModel` there, which runs its whole chain inside one unit.
+The model raises the warning as the attempt's error instead of emitting it, before anything is sent, so it's recorded in [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts] as an `error` and costs nothing. When every model would ignore a setting, the run ends with a [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] of the warnings. Only `UnsupportedSettingWarning` itself turns this on: neither a subclass nor a supertype like `Exception` does. [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] takes it the same way. Under [durable execution](#durable-execution), the warning reaches `ModelFallback` from the model's durable unit as itself, and Temporal doesn't retry the activity, since the same model would raise it again.
 
 ## In agent specs {#agent-specs}
 
@@ -203,7 +203,7 @@ capabilities:
 
 As in Python, the spec's `model:` is attempted first, and a spec without one uses the first of `ModelFallback`'s models for the first attempt.
 
-To choose when to fall back, give the models and `fallback_on` as keyword arguments. In a spec, `fallback_on` takes the names of [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] and its subclasses in [`pydantic_ai.exceptions`][pydantic_ai.exceptions], such as [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError] and [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError], [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] and [`UnsupportedSettingWarning`](#unsupported-settings). Exception and response handlers can only be passed in Python:
+To choose when to fall back, give the models and `fallback_on` as keyword arguments. In a spec, `fallback_on` takes the names of [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] and its subclasses in [`pydantic_ai.exceptions`][pydantic_ai.exceptions], such as [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError] and [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError], [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] and [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning] (see [Falling back when a model would ignore a setting](#unsupported-settings)). Exception and response handlers can only be passed in Python:
 
 ```yaml {title="fallback_on_agent.yaml" test="skip"}
 model: {{ openai:medium }}
