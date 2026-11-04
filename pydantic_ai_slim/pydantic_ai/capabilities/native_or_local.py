@@ -7,7 +7,7 @@ from typing import Any, TypeVar, cast
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai._warnings import suppress_provider_field_warnings
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.native_tools import AbstractNativeTool
+from pydantic_ai.native_tools import AbstractNativeTool, ImageGenerationTool
 from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -29,15 +29,9 @@ def _apply_native_overrides(tool: _NativeToolT, overrides: dict[str, Any]) -> _N
     """
     if not overrides:
         return tool
-    settings: dict[str, dict[str, Any]] | None = getattr(tool, 'provider_settings', None)
-    if settings:
-        overrides = {
-            **overrides,
-            'provider_settings': {
-                system: {option: value for option, value in options.items() if option not in overrides}
-                for system, options in settings.items()
-            },
-        }
+    if isinstance(tool, ImageGenerationTool) and (openai := (tool.provider_settings or {}).get('openai')):
+        kept = {option: value for option, value in openai.items() if option not in overrides}
+        overrides = {**overrides, 'provider_settings': {'openai': kept}}
     with suppress_provider_field_warnings():
         return replace(tool, **overrides)
 

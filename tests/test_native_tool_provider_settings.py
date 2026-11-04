@@ -280,6 +280,19 @@ def test_moved_field_on_a_tool_passed_to_a_spec_warns_once() -> None:
     assert len(warnings) == 1
 
 
+def test_each_model_reads_only_its_own_settings() -> None:
+    tool = WebSearchTool(
+        provider_settings={'anthropic': {'response_inclusion': 'excluded'}, 'openrouter': {'engine': 'exa'}}
+    )
+
+    anthropic_tool = _anthropic_request_tool(tool)
+    assert anthropic_tool['response_inclusion'] == 'excluded'
+    assert 'engine' not in anthropic_tool
+    openrouter_parameters = _openrouter_request_parameters(tool)
+    assert openrouter_parameters['engine'] == 'exa'
+    assert 'response_inclusion' not in openrouter_parameters
+
+
 @pytest.mark.parametrize('option', ['engine', 'mode'])
 def test_value_openrouter_adds_later_is_forwarded(option: str) -> None:
     tool = WebSearchTool(provider_settings={'openrouter': {option: 'added-later'}})  # pyright: ignore[reportArgumentType]
