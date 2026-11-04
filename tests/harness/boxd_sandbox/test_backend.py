@@ -145,8 +145,9 @@ class TestCreate:
         backend = BoxdSandboxBackend()
         async with anyio.create_task_group() as group:
             group.start_soon(backend.run, ['true'])
-            while not host.machines:
-                await anyio.sleep(0)
+            with anyio.fail_after(30):
+                while not host.machines:
+                    await anyio.sleep(0)
             # Only the create runs out of time; the wait for the machine it left behind has a real probe to run.
             monkeypatch.setattr(f'{_MODULE}._LIFECYCLE_TIMEOUT', 120.0)
         assert backend.ref == _ref(host.only.id)

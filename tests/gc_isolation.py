@@ -51,7 +51,7 @@ def pytest_runtest_protocol() -> Generator[None, object, object]:
 def _finalize_this_tests_garbage(request: pytest.FixtureRequest) -> Iterator[None]:
     """Set up before the function-scoped fixtures of `tests/` and the test module, so it collects after they are torn down.
 
-    Garbage from an autouse fixture of a plugin registered earlier, such as `pytest-recording`'s `cassette`, stays frozen.
+    Garbage from an autouse fixture of a plugin registered earlier, such as `cassetter`'s `cassette`, stays frozen.
     pytest holds fixture values in `funcargs` until after teardown, which would keep a leaked one out of this collection.
     """
     yield
@@ -71,7 +71,7 @@ def _collect_what_outlived_its_test() -> None:
     leaks: list[object] = []
 
     def record(unraisable: sys.UnraisableHookArgs) -> None:
-        leaks.append(repr(unraisable.exc_value))
+        leaks.append(repr(unraisable.exc_value))  # pragma: lax no cover
 
     with pytest.MonkeyPatch.context() as patch, warnings.catch_warnings(record=True) as warned:
         patch.setattr(sys, 'unraisablehook', record)

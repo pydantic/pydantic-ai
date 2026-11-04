@@ -10,7 +10,6 @@ import re
 import secrets
 import socket
 import sys
-import time
 import warnings
 from collections.abc import AsyncIterator, Callable, Generator, Iterator, Sequence
 from contextlib import contextmanager, suppress
@@ -19,6 +18,7 @@ from datetime import datetime
 from decimal import Decimal
 from functools import cache
 from pathlib import Path
+from time import monotonic
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, cast, overload
 
@@ -114,14 +114,14 @@ __all__ = (
 
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
-_test_started_at = time.monotonic()
-"""When the running test's setup began, as a `time.monotonic()` reading. `IsNow` allows for the time since then."""
+_test_started_at = monotonic()
+"""When the running test's setup began, as a `monotonic()` reading. `IsNow` allows for the time since then."""
 
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_runtest_setup() -> None:
     global _test_started_at
-    _test_started_at = time.monotonic()
+    _test_started_at = monotonic()
 
 
 os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
@@ -178,9 +178,9 @@ else:
         allowed_types = Decimal
 
     def IsNow(*args: Any, **kwargs: Any):
-        # A timestamp from anywhere in this test matches, so a runner that stalls between making one and comparing it
-        # can't fail the test, however long the stall. One older than the test by more than `delta` still fails.
-        kwargs['delta'] = kwargs.get('delta', 10) + (time.monotonic() - _test_started_at)
+        # This allows for the time since the test began, so a runner that stalls between making a timestamp and building
+        # this comparison can't fail the test. One older than the test by more than `delta` still fails.
+        kwargs['delta'] = kwargs.get('delta', 10) + (monotonic() - _test_started_at)
         return _IsNow(*args, **kwargs)
 
     class IsSameStr(IsStr):

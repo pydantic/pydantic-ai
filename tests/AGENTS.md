@@ -310,9 +310,9 @@ When `PYTEST_COLLECT_BUDGET_SECONDS` is set (on the same CI leg), a test module 
 - A leak can still be blamed on the wrong test, or on none:
   - An object in no cycle is freed as soon as it's dropped, so its warning lands in whichever test drops it.
   - A background thread that outlives its test creates garbage in the next one.
-  - A higher-scoped parametrized fixture finishes its old value in the next test's setup, so that test is blamed for it.
+  - A higher-scoped parametrized fixture finishes its old value in the next test's setup, so that test is blamed for it if the value is in no cycle. One in a cycle is reported as described next.
   - An object in a cycle that's still referenced when its test ends, such as one a module-scoped fixture holds, is collected after the last test if it's dropped later. It's reported on stderr as `Leaked by a test, and dropped after it ended`, without failing anything or naming a test. Until then it keeps whatever it holds, so close resources explicitly in higher-scoped fixtures.
-  - A leak in an `xfail` test counts as the expected failure.
+  - A leak finalized in an `xfail` test's teardown is reported as `xfail`, not as an error.
 
 ## Property tests
 
