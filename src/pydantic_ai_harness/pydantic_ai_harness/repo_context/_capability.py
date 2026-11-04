@@ -377,7 +377,10 @@ class RepoContext(AbstractCapability[AgentDepsT]):
                     real_working_dir = Path(await ctx.workspace.realpath(str(working_dir)))
                 if not Path(await ctx.workspace.realpath(str(current))).is_relative_to(real_working_dir):
                     continue
-            await self._enqueue_directory(ctx, current, in_history, written_file=written_file)
+            # Only the target directory can hold the file just written, so the others skip `_same_file`'s `realpath`s.
+            await self._enqueue_directory(
+                ctx, current, in_history, written_file=written_file if current == directory else None
+            )
 
     async def _enqueue_directory(
         self, ctx: RunContext[AgentDepsT], directory: Path, in_history: set[str], *, written_file: Path | None = None
