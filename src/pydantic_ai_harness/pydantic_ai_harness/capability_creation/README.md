@@ -50,7 +50,8 @@ agent = Agent('anthropic:claude-sonnet-5', capabilities=[LocalWorkspace('.'), cr
 ```
 
 `directory` is a path on the machine running the agent, relative to the process's current
-directory, not a workspace path.
+directory, not a workspace path, and it must have `'operator'` authority in the run's workspace
+(see [Trust boundary](#trust-boundary)).
 
 `CapabilityCreation` also contributes static, cache-stable system-prompt guidance
 explaining these tools. Leave `guidance=None` for the default text, or pass your own
