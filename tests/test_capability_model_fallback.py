@@ -2947,6 +2947,20 @@ async def test_a_model_that_would_ignore_a_setting_still_answers_unless_named(ow
     assert calls == ['primary']
 
 
+async def test_a_nested_fallback_model_is_moved_on_from_as_a_whole():
+    """The outer `fallback_on` applies to the whole nested chain, whose own `fallback_on` doesn't name the warning."""
+    calls: list[str] = []
+    nested = FallbackModel(_ignoring_stop('primary', calls), _answering_streams('honors', calls))
+    agent = Agent(
+        nested, capabilities=[ModelFallback(_answering_streams('backup', calls), fallback_on=_SKIPS_IGNORING)]
+    )
+
+    result = await agent.run('x', model_settings=_STOP)
+
+    assert result.output == 'backup answered'
+    assert calls == ['backup']
+
+
 @_OWNERS
 def test_a_subclass_of_unsupported_setting_warning_in_fallback_on_is_refused(owner: str):
     """A model raises `UnsupportedSettingWarning` itself, so a subclass in `fallback_on` could never match."""
