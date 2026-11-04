@@ -367,7 +367,8 @@ At registration, the resolver receives `tool=None` and `tool_name=''` for the to
 
 Returning `False` for a function tool runs it inside the calling task run instead of starting a chained task run, as
 `metadata={'render_workflows': False}` on the tool does. The shared toolset definitions remain registered. `False` is
-rejected for MCP and dynamic tools.
+rejected for MCP and dynamic tools. The harness `FileSystem` write tools opt out this way, so their file-change
+requests reach listeners in the parent task.
 
 ## Execution limits
 

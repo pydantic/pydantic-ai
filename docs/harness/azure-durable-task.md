@@ -266,7 +266,8 @@ are agent control flow, not activity failures. `UserError` and serialization fai
 `None` to keep `tool_options`, or `False` to run a function tool inline in the orchestrator. A function
 tool can also opt out with `metadata={'azure_durable_task': False}`. Inline tools must be deterministic
 and do no I/O outside `ctx.workspace`, whose calls still run as activities. The harness `FileSystem`
-write tools opt out this way, so their file-change requests reach listeners in the orchestrator. MCP and dynamic tools always run as activities.
+write tools opt out this way, so their file-change requests reach listeners in the orchestrator. MCP
+and dynamic tools always run as activities.
 
 `name=` sets the activity name prefix (the agent's `name` by default), `models=` registers extra models
 by ID for `agent.run(model=...)`, and `event_stream_handler=` runs a handler as activities.
