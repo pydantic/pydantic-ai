@@ -23,7 +23,7 @@ import pydantic_ai_harness
 from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai.capabilities import AbstractCapability, Capability, LocalWorkspace, ToolSearch, Toolset
 from pydantic_ai.capabilities.abstract import leaf_capabilities
-from pydantic_ai.messages import ModelMessage, TextContent, ToolCallPart
+from pydantic_ai.messages import ModelMessage, TextContent, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
@@ -187,6 +187,51 @@ def _forecasting() -> AbstractCapability[Any]:
     return Capability(
         id='forecasting', description='Weather forecasts.', tools=[Tool(_forecast, name='forecast')], defer_loading=True
     )
+
+
+def _open_forecasting(ctx: RunContext[Any]) -> str:
+    """Open the forecasting capability."""
+    ctx.load_capability('forecasting')
+    return 'Opened.'
+
+
+def _summarized_load(
+    load: tuple[str, dict[str, Any]], *extra: AbstractCapability[Any]
+) -> Callable[[Path], tuple[list[AbstractCapability[Any]], Scenario, Callable[[ConversationResult], None]]]:
+    """Load `forecasting` and call `forecast` in the first run; the continued run compacts, then calls it again.
+
+    A load the summary replaced is recorded again right after it as a `CapabilityLoadDeltaPart` and the reveal of its
+    tools (#11770), whether the model or code loaded it, so the requests after the compaction only append, and the
+    model's call to the tool the load revealed still runs.
+    """
+    scenario = Scenario(
+        turns=(
+            Turn(calls=(load,)),
+            Turn(calls=(('forecast', {'city': 'Paris'}),)),
+            Turn(text='Sunny in Paris.'),
+            # The second run's second request compacts, and the model then calls the tool the load revealed.
+            Turn(calls=(('look_up', {'topic': 'sports'}),)),
+            Turn(calls=(('forecast', {'city': 'Brest'}),)),
+            Turn(text='Sunny in Brest.'),
+        ),
+    )
+
+    def still_loaded(result: ConversationResult) -> None:
+        returns = [
+            part.content
+            for message in result.history
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'forecast'
+        ]
+        assert returns[-1] == 'Sunny in Brest.', f'the call after the compaction was refused: {returns[-1]!r}'
+
+    def conversation(
+        tmp_path: Path,
+    ) -> tuple[list[AbstractCapability[Any]], Scenario, Callable[[ConversationResult], None]]:
+        compaction = SummarizingCompaction(TestModel(), max_messages=8, keep_messages=2)
+        return [compaction, _forecasting(), *extra], scenario, still_loaded
+
+    return conversation
 
 
 def _tidal() -> AbstractCapability[Any]:
@@ -463,6 +508,22 @@ ALLOWED: dict[str, Allowed] = {
     # one-token tail judges and rewrites it: two in this conversation.
     'RelevanceCompaction': Allowed(_COMPACTION, _HISTORY, max_moves=2),
     'SlidingWindowCompaction': Allowed(_COMPACTION, _HISTORY),
+    # The compaction, which removes the load's reveal of `forecast` (sent as a system message) with the rest, and on
+    # Chat Completions, which has no deferred-tool channel, the first run's reveal adding `forecast` to `tools`
+    # (docs/tools-advanced.md). The load recorded again after the summary, and the statement of the capability's
+    # instructions that follows it, must move nothing more. Only Chat Completions needs the second move, but
+    # `Allowed` can't vary `max_moves` by provider.
+    **{
+        name: Allowed(
+            f'{_COMPACTION}; on Chat Completions a load also adds its tools to `tools`, as documented',
+            (*_HISTORY, ('messages', 'system-prompt'), ('tools', 'tool:forecast')),
+            max_moves=2,
+        )
+        for name in (
+            'SummarizingCompaction+Capability(defer_loading=True)',
+            'SummarizingCompaction+RunContext.load_capability',
+        )
+    },
     'SummarizingCompaction': Allowed(_COMPACTION, _HISTORY),
     # With a 10-token target every request is over it, so the tier clears each tool result as it ages out of
     # `keep_pairs`: one on the third request and one on the fifth.
@@ -624,7 +685,15 @@ def _delegation_reports(
     return capabilities, scenario, delivered_once
 
 
-CONVERSATIONS = {'DelegationReports': _delegation_reports}
+CONVERSATIONS = {
+    'DelegationReports': _delegation_reports,
+    'SummarizingCompaction+Capability(defer_loading=True)': _summarized_load(
+        ('load_capability', {'id': 'forecasting'})
+    ),
+    'SummarizingCompaction+RunContext.load_capability': _summarized_load(
+        ('open_forecasting', {}), Toolset(FunctionToolset([Tool(_open_forecasting, name='open_forecasting')]))
+    ),
+}
 """Capabilities whose behavior needs a conversation of its own, with the check it must also pass."""
 
 
@@ -633,7 +702,7 @@ def test_every_capability_has_a_case():
     tables = (
         FIXTURES.keys() | EXEMPT.keys() | SCENARIOS.keys() | KNOWN.keys() | ALLOWED.keys() | ENV.keys()
     ) | OPTIONAL_DEPENDENCIES.keys()
-    stale = (tables | CONVERSATIONS.keys()) - CAPABILITIES.keys() - VARIANTS.keys()
+    stale = tables - CAPABILITIES.keys() - VARIANTS.keys() - CONVERSATIONS.keys()
     assert not stale, f'entries for capabilities that no longer exist: {sorted(stale)}'
 
 
@@ -653,7 +722,10 @@ def test_only_coder_repairs_tool_arguments_by_default(name: str, tmp_path: Path,
 
 
 @pytest.mark.parametrize('provider', PROVIDERS)
-@pytest.mark.parametrize('name', sorted(CAPABILITIES.keys() - EXEMPT.keys()) + sorted(VARIANTS))
+@pytest.mark.parametrize(
+    'name',
+    sorted(CAPABILITIES.keys() - EXEMPT.keys()) + sorted(VARIANTS.keys() | CONVERSATIONS.keys() - CAPABILITIES.keys()),
+)
 async def test_conversation_only_appends(
     name: str, provider: Provider, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
 ):

@@ -1699,7 +1699,7 @@ def add_the_users_name(ctx: RunContext[str]) -> str:
     return f"The user's name is {ctx.deps}."
 
 
-@agent.instructions
+@agent.instructions(name='date', on_change='append')
 def add_the_date() -> str:  # (4)!
     return f'The date is {date.today()}.'
 
@@ -1714,7 +1714,7 @@ print(result.output)
 3. Dynamic instructions defined via a decorator with [`RunContext`][pydantic_ai.tools.RunContext],
    this is called just after `run_sync`, not when the agent is created, so can benefit from runtime
    information like the dependencies used on that run.
-4. Another dynamic instruction, instructions don't have to have the `RunContext` parameter.
+4. Another dynamic instruction, instructions don't have to have the `RunContext` parameter. The date changes between runs of a conversation, so [`on_change='append'`](#appending-instruction-changes) adds the new date to the history instead of rewriting the instructions, and the provider can keep reusing the conversation it cached.
 
 _(This example is complete, it can be run "as is")_
 
