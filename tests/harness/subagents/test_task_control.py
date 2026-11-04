@@ -2500,6 +2500,39 @@ class SandboxWorkspace(WorkspaceBackend):
 
 
 class TestTaskControlBoundaries:
+    async def test_a_recorded_delegation_keeps_the_delegating_level(self) -> None:
+        poet_tools: list[list[str]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if (info.instructions or '').startswith('Write.'):
+                poet_tools.append([tool.name for tool in info.function_tools])
+                return ModelResponse(parts=[TextPart('a poem')])
+            returns = tool_returns(messages)
+            first = messages[0].parts[-1]
+            if isinstance(first, UserPromptPart) and first.content == 'Top.':
+                return text('Done.') if returns else call('delegate_task', agent_name='self', task='Inner.')
+            if not returns:
+                return call('create_agent', name='poet', description='d', instructions='Write.')
+            return call('delegate_task', agent_name='poet', task='Go.') if len(returns) == 1 else text('Inner done.')
+
+        def factory(spec: DynamicAgentSpec) -> Agent[Any, str]:
+            return Agent(
+                FunctionModel(respond), instructions=spec.instructions, capabilities=[SubAgents(include_self=True)]
+            )
+
+        parent = Agent(
+            FunctionModel(respond),
+            name='durable',
+            capabilities=[
+                SubAgents(include_self=True, dynamic_agents=DynamicAgents(factory=factory)),
+                RecordingDurability(isolated=True),
+            ],
+        )
+        with anyio.fail_after(WAIT):
+            await parent.run('Top.')
+        # The poet runs at the third level, the default `max_depth`, so it gets no delegate tool.
+        assert poet_tools == [[]]
+
     async def test_task_control_and_owned_dynamic_agents_refuse_durable_execution(self) -> None:
         agent = Agent(TestModel(), name='durable', capabilities=[controlled(), RecordingDurability()])
         with pytest.raises(UserError, match='not supported under durable execution'):

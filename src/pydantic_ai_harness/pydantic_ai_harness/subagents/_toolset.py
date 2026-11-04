@@ -283,9 +283,10 @@ class RecordedDelegation:
 
 
 RecordDelegation = Callable[
-    [RunContext[Any], str, str, str | None, DynamicAgentSpec | None], Awaitable[RecordedDelegation]
+    [RunContext[Any], str, str, str | None, DynamicAgentSpec | None, int], Awaitable[RecordedDelegation]
 ]
-"""Runs one delegation in a durable unit of its own: context, agent name, task, model key, created agent's spec."""
+"""Runs one delegation in a durable unit of its own: context, agent name, task, model key, created agent's spec, and
+the delegating run's level in its delegation tree."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -698,18 +699,30 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if record is None or not ctx.in_durable_context or (self._include_self and agent_name == SELF_AGENT_NAME):
             return None
         created = self._created.get(ctx.run_id or '', {}).get(agent_name)
-        recorded = await record(ctx, agent_name, task, key, created[0] if created else None)
+        recorded = await record(ctx, agent_name, task, key, created[0] if created else None, _depth.get())
         if recorded.retry:
             raise ModelRetry(recorded.output)
         return recorded.output
 
     async def run_recorded(
-        self, ctx: RunContext[AgentDepsT], agent_name: str, task: str, key: str | None, spec: DynamicAgentSpec | None
+        self,
+        ctx: RunContext[AgentDepsT],
+        agent_name: str,
+        task: str,
+        key: str | None,
+        spec: DynamicAgentSpec | None,
+        level: int,
     ) -> RecordedDelegation:
-        """Run a delegation inside the durable unit that records it, rebuilding a created agent from its spec."""
+        """Run a delegation inside the durable unit that records it, rebuilding a created agent from its spec.
+
+        A worker doesn't inherit the delegating run's context, so the run's `level` is set again.
+        """
         sub_agent = self._agents[agent_name] if spec is None else self._build_created(spec)
         try:
-            output = await self._run_delegation(ctx, agent_name, sub_agent, task=task, key=key, workspace=ctx.workspace)
+            with delegation_level(level):
+                output = await self._run_delegation(
+                    ctx, agent_name, sub_agent, task=task, key=key, workspace=ctx.workspace
+                )
         except ModelRetry as exc:
             return RecordedDelegation(exc.message, retry=True)
         return RecordedDelegation(output)
