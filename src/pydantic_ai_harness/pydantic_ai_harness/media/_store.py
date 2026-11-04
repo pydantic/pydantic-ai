@@ -17,9 +17,11 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
-from typing import Protocol, TypeGuard, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 import anyio.to_thread
+
+from pydantic_ai_harness._typeguards import is_object_dict
 
 _URI_SCHEME = 'media+sha256://'
 _HEX_RE = re.compile(r'^[0-9a-f]{64}$')
@@ -299,12 +301,8 @@ def _write_atomically(path: Path, data: bytes) -> None:
         tmp.unlink(missing_ok=True)
 
 
-def _is_object_dict(raw: object) -> TypeGuard[dict[object, object]]:
-    return isinstance(raw, dict)
-
-
 def coerce_metadata_mapping(raw: object) -> Mapping[str, str]:
-    if not _is_object_dict(raw):
+    if not is_object_dict(raw):
         raise ValueError(f'metadata payload must be a JSON object, got {type(raw).__name__}')
     out: dict[str, str] = {}
     for key, value in raw.items():

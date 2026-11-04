@@ -34,6 +34,7 @@ from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._durable import in_durable_context
 from pydantic_ai_harness._judge import claim_offset_limits, render_part
+from pydantic_ai_harness._message_text import CHARS_PER_TOKEN, user_prompt_text
 
 if TYPE_CHECKING:
     from pydantic_ai.agent import AgentRunResult
@@ -55,12 +56,6 @@ class Steer:
 
 TrajectoryVerdict: TypeAlias = AllGood | Steer
 """What one evaluation concludes: the run is on track, or it needs the enclosed correction."""
-
-# Same ~4 characters-per-token heuristic as `pydantic_ai_harness.compaction`'s
-# `estimate_token_count`. Duplicated here because that helper budgets `ModelMessage`s while
-# the window here is clamped on the rendered transcript string; fold the two together if a
-# shared text-budget helper ever lands.
-_CHARS_PER_TOKEN = 4
 
 _JUDGE_INSTRUCTIONS = (
     "You are a trajectory judge: you review another AI agent's run while it is still in "
@@ -448,7 +443,7 @@ def _judge_prompt(messages: Sequence[ModelMessage], window: int, run_id: str | N
     """
     earlier, request, rest = (html.escape(part, quote=False) for part in _render_transcript(messages, run_id))
     transcript = '\n'.join(part for part in (earlier, request, rest) if part)
-    max_chars = window * _CHARS_PER_TOKEN
+    max_chars = window * CHARS_PER_TOKEN
     if len(transcript) <= max_chars:
         return _prompt_with(transcript)
     request_budget = max_chars // 2
@@ -504,9 +499,9 @@ def _render_lines(messages: Sequence[ModelMessage]) -> tuple[list[str], list[str
             user_lines = lines
         for part in message.parts:
             if isinstance(part, UserPromptPart) and (judge := _steering_judge(part)) is not None:
-                lines.append(f'trajectory judge {judge} steered: {_prompt_text(part.content)}')
+                lines.append(f'trajectory judge {judge} steered: {user_prompt_text(part)}')
             elif isinstance(part, UserPromptPart):
-                text = _prompt_text(part.content)
+                text = user_prompt_text(part)
                 if text:
                     user_lines.append(f'user: {text}')
             elif (line := render_part(part)) is not None:
@@ -515,16 +510,3 @@ def _render_lines(messages: Sequence[ModelMessage]) -> tuple[list[str], list[str
                     user_lines = lines
                 (user_lines if isinstance(part, SpeechPart) and part.speaker == 'user' else lines).append(line)
     return request, lines
-
-
-def _prompt_text(content: str | Sequence[object]) -> str:
-    """The text of a user prompt; non-text content (images, files) is omitted."""
-    if isinstance(content, str):
-        return content
-    texts: list[str] = []
-    for item in content:
-        if isinstance(item, str):
-            texts.append(item)
-        elif isinstance(item, TextContent):
-            texts.append(item.content)
-    return ' '.join(texts)

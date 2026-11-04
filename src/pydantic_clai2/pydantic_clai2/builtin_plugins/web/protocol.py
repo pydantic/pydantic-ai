@@ -10,7 +10,7 @@ import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import Literal
+from typing import Literal, assert_never
 
 from pydantic import JsonValue, TypeAdapter
 from typing_extensions import TypeIs
@@ -27,6 +27,7 @@ from pydantic_ai.messages import (
     EnqueuedMessagesEvent,
     ModelMessage,
     ModelRequest,
+    ModelResponse,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -1198,53 +1199,92 @@ def history_entries(messages: Sequence[ModelMessage], *, image_ids: ImageIds | N
     Tool results join their calls; turns are grouped as `/usage` groups them. A live session passes its `image_ids`,
     so prompts list their images; see `user_item`.
     """
-    entries: list[Item | TurnSummary] = []
-    tools: dict[str, Item] = {}
-    edits: dict[str, EditFileCallPart] = {}
-    usage = RunUsage()
+    history = _HistoryEntriesContext(image_ids=image_ids)
     rewindable = {point.message_index for point in rewind_points(messages) if not point.reason}
-
-    def end_turn() -> None:
-        if usage.requests:
-            entries.append(TurnSummary(id=f'h{len(entries)}', usage=usage_info(usage)))
-
     for index, message in enumerate(messages):
         if isinstance(message, ModelRequest):
             if starts_turn(message):
-                end_turn()
-                usage = RunUsage()
-            run_id = message.run_id if index in rewindable else None
-            for part in message.parts:
-                if isinstance(part, UserPromptPart):
-                    if is_typed_prompt(part):
-                        entries.append(user_item(part, id=f'h{len(entries)}', image_ids=image_ids, run_id=run_id))
-                        run_id = None
-                elif isinstance(part, ToolReturnPart) and (tool := tools.get(part.tool_call_id)):
-                    tool.text = tool_result_text(part)
-                    tool.state = tool_result_state(part)
-                    tool.diffs = _edit_diffs(edits.get(part.tool_call_id), part)
+                _end_turn(history)
+                history.usage = RunUsage()
+            _add_request_entries(history, message, run_id=message.run_id if index in rewindable else None)
             continue
-        usage.incr(message.usage)
-        usage.requests += 1
-        for part in message.parts:
-            if isinstance(part, TextPart) and part.content:
-                entries.append(Item(id=f'h{len(entries)}', kind='assistant', text=part.content))
-            elif isinstance(part, ThinkingPart) and part.content:
-                entries.append(Item(id=f'h{len(entries)}', kind='thinking', text=part.content))
-            elif isinstance(part, ToolCallPart):
-                tool = Item(
-                    id=part.tool_call_id,
-                    kind='tool',
-                    name=part.tool_name,
-                    args=part.args_as_json_str(),
-                    state='interrupted',
+        history.usage.incr(message.usage)
+        history.usage.requests += 1
+        _add_response_entries(history, message)
+    _end_turn(history)
+    return history.entries
+
+
+@dataclass(kw_only=True)
+class _HistoryEntriesContext:
+    """What `history_entries` builds across a history's messages, and what a later message's parts are joined to."""
+
+    image_ids: ImageIds | None
+    entries: list[Item | TurnSummary] = field(default_factory=list[Item | TurnSummary])
+    tools: dict[str, Item] = field(default_factory=dict[str, Item])
+    """Each tool call's item, by its call ID."""
+    edits: dict[str, EditFileCallPart] = field(default_factory=dict[str, EditFileCallPart])
+    """Each `edit_file` call, by its call ID."""
+    usage: RunUsage = field(default_factory=RunUsage)
+    """The usage of the turn so far."""
+
+
+def _end_turn(history: _HistoryEntriesContext) -> None:
+    """Follow the turn with its usage line, when it made a request."""
+    if history.usage.requests:
+        history.entries.append(TurnSummary(id=f'h{len(history.entries)}', usage=usage_info(history.usage)))
+
+
+def _add_request_entries(history: _HistoryEntriesContext, request: ModelRequest, *, run_id: str | None) -> None:
+    """Add `request`'s typed prompts, the first with `run_id`, and join its tool results to their calls."""
+    for part in request.parts:
+        match part:
+            case UserPromptPart() if is_typed_prompt(part):
+                history.entries.append(
+                    user_item(part, id=f'h{len(history.entries)}', image_ids=history.image_ids, run_id=run_id)
                 )
-                tools[part.tool_call_id] = tool
-                entries.append(tool)
-                if isinstance(part, EditFileCallPart):
-                    edits[part.tool_call_id] = part
-    end_turn()
-    return entries
+                run_id = None
+            case ToolReturnPart():
+                _join_tool_result(history, part)
+            case _:
+                pass
+
+
+def _join_tool_result(history: _HistoryEntriesContext, part: ToolReturnPart) -> None:
+    """Give `part`'s result to its call's item, when the history holds the call."""
+    if tool := history.tools.get(part.tool_call_id):
+        tool.text = tool_result_text(part)
+        tool.state = tool_result_state(part)
+        tool.diffs = _edit_diffs(history.edits.get(part.tool_call_id), part)
+
+
+def _add_response_entries(history: _HistoryEntriesContext, response: ModelResponse) -> None:
+    """Add `response`'s text, thinking, and tool calls."""
+    for part in response.parts:
+        match part:
+            case TextPart() if part.content:
+                history.entries.append(Item(id=f'h{len(history.entries)}', kind='assistant', text=part.content))
+            case ThinkingPart() if part.content:
+                history.entries.append(Item(id=f'h{len(history.entries)}', kind='thinking', text=part.content))
+            case ToolCallPart():
+                _add_tool_call(history, part)
+            case _:
+                pass
+
+
+def _add_tool_call(history: _HistoryEntriesContext, part: ToolCallPart) -> None:
+    """Add `part`'s tool item, interrupted until its result joins it."""
+    tool = Item(
+        id=part.tool_call_id,
+        kind='tool',
+        name=part.tool_name,
+        args=part.args_as_json_str(),
+        state='interrupted',
+    )
+    history.tools[part.tool_call_id] = tool
+    history.entries.append(tool)
+    if isinstance(part, EditFileCallPart):
+        history.edits[part.tool_call_id] = part
 
 
 def questions_info(request: AskUserRequest, *, asker: str | None, approval: ApprovalInfo | None = None) -> Questions:
@@ -1400,26 +1440,29 @@ class ItemLog:
         item = self.items.get(message.id)
         if item is None:
             return
-        if isinstance(message, TextDelta):
-            item.text += message.text
-        elif isinstance(message, ArgsDelta):
-            item.args += message.text
-        elif isinstance(message, ToolArgs):
-            item.args = message.args
-        elif isinstance(message, ToolOutput):
-            item.output += message.text
-        elif isinstance(message, ToolDone):
-            item.text, item.state = message.text, message.state
-        elif isinstance(message, ShellDone):
-            item.exit_code = message.exit_code
-        elif isinstance(message, DiffAdded):
-            item.diffs.append(message.diff)
-        elif isinstance(message, SubCallAdded):
-            item.calls.append(replace(message.call))
-        else:
-            for call in item.calls:
-                if call.id == message.call_id:
-                    if isinstance(message, SubCallOutput):
-                        call.output += message.text
-                    else:
-                        call.text, call.state = message.text, message.state
+        match message:
+            case TextDelta():
+                item.text += message.text
+            case ArgsDelta():
+                item.args += message.text
+            case ToolArgs():
+                item.args = message.args
+            case ToolOutput():
+                item.output += message.text
+            case ToolDone():
+                item.text, item.state = message.text, message.state
+            case ShellDone():
+                item.exit_code = message.exit_code
+            case DiffAdded():
+                item.diffs.append(message.diff)
+            case SubCallAdded():
+                item.calls.append(replace(message.call))
+            case SubCallOutput() | SubCallDone():
+                for call in item.calls:
+                    if call.id == message.call_id:
+                        if isinstance(message, SubCallOutput):
+                            call.output += message.text
+                        else:
+                            call.text, call.state = message.text, message.state
+            case _:
+                assert_never(message)
