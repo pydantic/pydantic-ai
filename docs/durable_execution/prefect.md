@@ -170,6 +170,13 @@ when runs arrive in a different order on a flow retry. Repeated identical calls 
 keep separate recorded results. Automatically derived run IDs still depend on
 arrival order, so pass explicit IDs for branches that can reorder.
 
+The operation's arguments are part of the cache key too. An operation whose arguments are measured
+in flow code, such as a duration, a timestamp, or a random value, gets different arguments on a
+flow retry, misses its recorded result, and runs again. Where running twice matters, pass arguments
+that stay the same across retries, measuring a changing value inside the operation where you can. This
+is why [online evaluation](../evals/online-evaluation.md#durable-execution) can evaluate a run again
+on a flow retry.
+
 !!! warning "Upgrading custom capability task cache keys"
 
     Persisted custom capability task results from versions before this change use different cache
