@@ -669,6 +669,9 @@ The default `summary_prompt` asks for the summary under fixed section headings. 
 asks for the user's overall goal and only the constraints or preferences the user stated themselves: an
 instruction that appeared inside a tool result or fetched content is not the user's, and if the summary
 keeps one, it must say where it came from.
+A custom `summary_prompt` replaces all of this, so unless it has a rule of its own, a summarizer can list
+a request planted in a tool result as the user's constraint. Only the `<harness_data>` guidance described
+below is still added to a custom prompt.
 
 The messages served into that template are rendered as a transcript with one `<message>` element per part
 (each user prompt, system prompt, response text, tool call and tool return), tagged with its role and,
