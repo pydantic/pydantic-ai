@@ -304,51 +304,77 @@ def _transcript_entries(
     """
     entries: list[tuple[_TranscriptEntryKind, str]] = []
     for msg in messages:
-        if isinstance(msg, ModelRequest):
-            for part in msg.parts:
-                if is_load_part(part):
-                    continue
-                elif isinstance(part, UserPromptPart) and (origin := harness_data_origin(part)) is not None:
-                    entries.append(
-                        ('harness_data', _harness_data_element(origin, user_prompt_text(part), tool_return_max_chars))
-                    )
-                elif _is_kept_user_part(part):
-                    # A kept turn is carried forward as-is, so it isn't summarized too, wherever its request went.
-                    continue
-                elif isinstance(part, UserPromptPart):
-                    entries.append(_entry('user', user_prompt_text(part)))
-                elif (
-                    isinstance(part, SystemPromptPart)
-                    # A request-scoped prompt applied to its own request only, so it's no lasting context.
-                    and part.scope != 'request'
-                    and not (skip_previous_summary and is_legacy_summary(part))
-                ):
-                    entries.append(_entry('system', part.content))
-                elif isinstance(part, ToolReturnPart):
-                    entries.append(_tool_return_entry(part, tool_return_max_chars))
-                elif isinstance(part, RetryFeedbackPart):
-                    entries.append(
-                        _entry(
-                            'retry_feedback',
-                            part.model_response(),
-                            cause=part.retry.cause,
-                            max_chars=tool_return_max_chars,
-                            core_framed=True,
-                        )
-                    )
-                elif (
-                    isinstance(part, CompactionPart)
-                    and part.content
-                    and not (skip_previous_summary and is_summary_part(part))
-                ):
-                    entries.append(_entry('summary', part.content))
-        else:
-            for part in msg.parts:
-                if isinstance(part, TextPart):
-                    entries.append(_entry('assistant', part.content))
-                elif isinstance(part, ToolCallPart) and not is_load_part(part):
-                    entries.append(_entry('tool_call', f'{part.args}', name=part.tool_name))
+        for part in msg.parts:
+            entry = (
+                _request_entry(
+                    part,
+                    skip_previous_summary=skip_previous_summary,
+                    tool_return_max_chars=tool_return_max_chars,
+                )
+                if isinstance(msg, ModelRequest)
+                else _response_entry(part)
+            )
+            if entry is not None:
+                entries.append(entry)
     return entries
+
+
+def _request_entry(
+    part: ModelRequestPart, *, skip_previous_summary: bool, tool_return_max_chars: int | None
+) -> tuple[_TranscriptEntryKind, str] | None:
+    """The entry *part* of a request contributes to the transcript, or `None` for one it leaves out."""
+    if is_load_part(part):
+        return None
+    if isinstance(part, UserPromptPart):
+        return _user_prompt_entry(part, tool_return_max_chars)
+    if isinstance(part, SystemPromptPart):
+        # A request-scoped prompt applied to its own request only, so it's no lasting context.
+        if part.scope == 'request' or _is_earlier_summary(part, skip_previous_summary=skip_previous_summary):
+            return None
+        return _entry('system', part.content)
+    if isinstance(part, ToolReturnPart):
+        return _tool_return_entry(part, tool_return_max_chars)
+    if isinstance(part, RetryFeedbackPart):
+        return _entry(
+            'retry_feedback',
+            part.model_response(),
+            cause=part.retry.cause,
+            max_chars=tool_return_max_chars,
+            core_framed=True,
+        )
+    if isinstance(part, CompactionPart):
+        if not part.content or _is_earlier_summary(part, skip_previous_summary=skip_previous_summary):
+            return None
+        return _entry('summary', part.content)
+    return None
+
+
+def _user_prompt_entry(
+    part: UserPromptPart, tool_return_max_chars: int | None
+) -> tuple[_TranscriptEntryKind, str] | None:
+    """The entry a user prompt contributes: harness data as its own element, a kept copy as nothing."""
+    if (origin := harness_data_origin(part)) is not None:
+        return 'harness_data', _harness_data_element(origin, user_prompt_text(part), tool_return_max_chars)
+    if _is_kept_user_part(part):
+        # A kept turn is carried forward as-is, so it isn't summarized too, wherever its request went.
+        return None
+    return _entry('user', user_prompt_text(part))
+
+
+def _is_earlier_summary(part: SystemPromptPart | CompactionPart, *, skip_previous_summary: bool) -> bool:
+    """Whether *part* is a summary an earlier compaction wrote, which a newer summary replaces rather than reads."""
+    if not skip_previous_summary:
+        return False
+    return is_legacy_summary(part) if isinstance(part, SystemPromptPart) else is_summary_part(part)
+
+
+def _response_entry(part: ModelResponsePart) -> tuple[_TranscriptEntryKind, str] | None:
+    """The entry *part* of a response contributes to the transcript, or `None` for one it leaves out."""
+    if isinstance(part, TextPart):
+        return _entry('assistant', part.content)
+    if isinstance(part, ToolCallPart) and not is_load_part(part):
+        return _entry('tool_call', f'{part.args}', name=part.tool_name)
+    return None
 
 
 _TranscriptRole: TypeAlias = Literal[
