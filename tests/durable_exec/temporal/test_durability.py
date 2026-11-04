@@ -731,6 +731,44 @@ async def test_durability_retry_owns_model_errors_over_the_activity_retry_policy
     assert len([e for e in history.events if e.HasField('timer_started_event_attributes')]) == 1
 
 
+no_retry_durable_agent = Agent(
+    FunctionModel(_fallback_target_fn, model_name='no_retry'),
+    name='durability_no_retry_agent',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class RunLevelRetryDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await no_retry_durable_agent.run(prompt, capabilities=[RetryOnModelErrors()])).output
+
+
+async def test_durability_rejects_a_run_level_retry_on_model_errors(client: Client):
+    """A `RetryOnModelErrors` passed to the run comes after the model activity's retry policy was set at bind time.
+
+    Rather than have the activity and the capability both retry model errors, the run fails with a `UserError`.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RunLevelRetryDurableAgentWorkflow],
+        plugins=[AgentPlugin(no_retry_durable_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                RunLevelRetryDurableAgentWorkflow.run,
+                args=['hello'],
+                id=RunLevelRetryDurableAgentWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+                execution_timeout=timedelta(seconds=30),
+            )
+    cause = _workflow_failure_cause(exc_info.value)
+    assert cause.type == UserError.__name__
+    assert 'must be one of the capabilities the agent is built with' in str(cause)
+
+
 _backup_streamed: list[str] = []
 
 
