@@ -134,14 +134,14 @@ Already have an `e2b.AsyncSandbox`? Pass `workspace=E2BSandboxBackend(sandbox=sa
 
 `E2BSandbox(client=E2B(api_key=...))` sets one client for the capability, in place of `E2B_API_KEY` and the rest of the environment. The environment holds one key for the whole process, so it can't serve several users at once. When each user has their own E2B account, supply the workspace from a capability of your own, which builds the client from the run's `deps`:
 
-```python {test="skip"}
+```python {names="defined"}
 from dataclasses import dataclass
 
 from e2b import E2B
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness import Coder
+from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.e2b_sandbox import E2BSandboxBackend
 
 
