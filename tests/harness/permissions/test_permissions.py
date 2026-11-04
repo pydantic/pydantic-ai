@@ -307,8 +307,12 @@ class TestPermissions:
     @pytest.mark.parametrize(
         ('returned', 'metadata', 'asks'),
         [
-            ('hi', {'permissions': {'subject': 'echo hi'}}, 2),
-            (ToolReturn('hi', metadata={'kept': True}), {'kept': True, 'permissions': {'subject': 'echo hi'}}, 2),
+            ('hi', {'permissions': {'conversation_id': 'c', 'subject': 'echo hi'}}, 2),
+            (
+                ToolReturn('hi', metadata={'kept': True}),
+                {'kept': True, 'permissions': {'conversation_id': 'c', 'subject': 'echo hi'}},
+                2,
+            ),
             (ToolReturn('hi', metadata='note'), 'note', 3),
         ],
     )
@@ -334,11 +338,36 @@ class TestPermissions:
             ],
         )
 
-        result = await agent.run('go')
+        result = await agent.run('go', conversation_id='c')
 
         assert remembered == set()
         assert len(person.asked) == asks
         assert _return_metadata(result.all_messages())[0] == metadata
+
+    async def test_remember_inside_durable_execution_holds_in_its_conversation_only(self, tmp_path: Path) -> None:
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
+                return ModelResponse(parts=[TextPart('done')])
+            return ModelResponse(parts=[ToolCallPart('run_command', {'command': 'echo hi'})])
+
+        person = _Person(*[PermissionDecision(approved=True, remember=True)] * 2)
+        agent = Agent[None, str](
+            FunctionModel(respond),
+            deps_type=type(None),
+            capabilities=[
+                _DBOSDurability(),
+                LocalWorkspace(tmp_path),
+                Shell(denied_commands=[]),
+                Permissions('read-only'),
+                HandleDeferredToolCalls[None](handler=lambda ctx, requests: ask_permissions(requests, person)),
+            ],
+        )
+        first = await agent.run('go', conversation_id='c')
+
+        await agent.run('again', message_history=first.all_messages(), conversation_id='c')
+        assert len(person.asked) == 1
+        await agent.run('again', message_history=first.all_messages(), conversation_id='other')
+        assert len(person.asked) == 2
 
     async def test_remember_inside_durable_execution_ignores_calls_it_does_not_hold(self) -> None:
         async def approve_remembering(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:

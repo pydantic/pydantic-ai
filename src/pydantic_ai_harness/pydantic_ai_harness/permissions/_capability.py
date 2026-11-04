@@ -75,6 +75,7 @@ class _AnsweredMetadata(BaseModel):
 
 
 class _Remembered(BaseModel):
+    conversation_id: str | None
     subject: str
 
 
@@ -206,7 +207,9 @@ class Permissions(AbstractCapability[AgentDepsT]):
             return args
         if in_durable_context(ctx):
             # In-process memory would not survive a replay or a move to another worker; history does.
-            if _remembered_in(ctx.messages, call.tool_name, asked.subject):
+            if _remembered_in(
+                ctx.messages, _Remembered(conversation_id=ctx.conversation_id, subject=asked.subject), call.tool_name
+            ):
                 return args
         elif RememberedApproval(ctx.conversation_id, call.tool_name, asked.subject) in self.remembered:
             return args
@@ -231,8 +234,10 @@ class Permissions(AbstractCapability[AgentDepsT]):
         existing: object = {} if tool_return.metadata is None else tool_return.metadata
         if not isinstance(existing, dict):
             return tool_return
-        metadata = _RememberedMetadata(permissions=_Remembered(subject=asked.subject)).model_dump()
-        return replace(tool_return, metadata={**cast(dict[str, Any], existing), **metadata})
+        remembered = _RememberedMetadata(
+            permissions=_Remembered(conversation_id=ctx.conversation_id, subject=asked.subject)
+        )
+        return replace(tool_return, metadata={**cast(dict[str, Any], existing), **remembered.model_dump()})
 
     def _asks(self, ctx: RunContext[AgentDepsT], *, tool_def: ToolDefinition, args: dict[str, Any]) -> _Asked | None:
         """What to ask about this call in the current mode, or `None` to run it."""
@@ -269,16 +274,15 @@ def _command(tool_def: ToolDefinition, args: dict[str, Any]) -> str | None:
     return command if isinstance(command, str) else None
 
 
-def _remembered_in(messages: Sequence[ModelMessage], tool_name: str, subject: str) -> bool:
+def _remembered_in(messages: Sequence[ModelMessage], remembered: _Remembered, tool_name: str) -> bool:
     for message in messages:
         for part in message.parts:
             if isinstance(part, ToolReturnPart) and part.tool_name == tool_name:
                 try:
-                    remembered = _RememberedMetadata.model_validate(part.metadata).permissions
+                    if _RememberedMetadata.model_validate(part.metadata).permissions == remembered:
+                        return True
                 except ValidationError:
                     continue
-                if remembered.subject == subject:
-                    return True
     return False
 
 
