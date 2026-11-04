@@ -2500,10 +2500,16 @@ class SandboxWorkspace(WorkspaceBackend):
 
 
 class TestTaskControlBoundaries:
-    async def test_task_control_refuses_durable_execution(self) -> None:
+    async def test_task_control_and_owned_dynamic_agents_refuse_durable_execution(self) -> None:
         agent = Agent(TestModel(), name='durable', capabilities=[controlled(), RecordingDurability()])
-        with pytest.raises(UserError, match='`task_control` is not supported under durable execution'):
+        with pytest.raises(UserError, match='not supported under durable execution'):
             await agent.run('Go.')
+        dynamic = SubAgents(agents=[researcher()], dynamic_agents=DynamicAgents())
+        agent = Agent(TestModel(), name='durable', capabilities=[dynamic, RecordingDurability()])
+        owner = DelegationTasks()
+        async with owner.opened():
+            with owner.bind(), pytest.raises(UserError, match='not supported under durable execution'):
+                await agent.run('Go.')
 
     async def test_dynamic_agents_record_each_delegation_under_durable_execution(self) -> None:
         def crash(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

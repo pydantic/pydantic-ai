@@ -201,7 +201,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     # field after it, which would take `tool_retries` and `contain_errors` off the positional
     # contract they already have.
     id: str | None = field(default='sub_agents', kw_only=True)
-    """Fixed, since an agent exposes a single delegate tool.
+    """Fixed, since an agent exposes a single delegate tool. Durable execution requires one.
 
     Two `SubAgents` capabilities would register the same `tool_name` and collide. The shared id
     makes them merge instead, unioning their rosters, so a packaged harness that delegates can
@@ -514,9 +514,14 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         if self.include_self:
             self._require_bound_to(ctx.agent)
         try:
-            if self.task_control is not None and ctx.in_durable_context:
-                raise UserError('`SubAgents` `task_control` is not supported under durable execution.')
             owner = DelegationTasks.current()
+            if ctx.in_durable_context and (
+                self.task_control is not None or (self.dynamic_agents is not None and owner is not None)
+            ):
+                raise UserError(
+                    '`SubAgents` `task_control`, and `dynamic_agents` within a `DelegationTasks` owner, are not '
+                    'supported under durable execution.'
+                )
             task = owner.delegation_of(ctx.run_id) if owner is not None else None
             if self.task_control is None or self._delegation_off:
                 return await self._run_plain(ctx, handler, owner, task)

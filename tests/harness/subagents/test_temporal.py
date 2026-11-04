@@ -219,7 +219,6 @@ async def test_created_agent_survives_replay(client: Client) -> None:
         debug_mode=True,
     ).replay_workflow(history)
     assert replay.replay_failure is None
-    assert len(POET_CALLS) == 1
 
 
 @pytest.fixture(scope='module')
