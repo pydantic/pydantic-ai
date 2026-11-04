@@ -87,6 +87,8 @@ class CommandContext:
         match args:
             case [] | ['list']:
                 return _project_listing(project, stored)
+            case ['approve', _, *_] if root is None:
+                raise ValueError('No project file to approve: /project revoke removes the approvals saved here.')
             case ['approve', *names] if names and root is not None:
                 keys = _project_keys(names, project.pending, verb='approve')
                 with self.edits:

@@ -1036,8 +1036,12 @@ def test_revoke_works_after_the_repository_removes_its_file(tmp_path: Path) -> N
     (repo / 'src').mkdir()
     context = shell_in(repo / 'src', store).context
     assert context.project_command([]).startswith('No project file.\n')
-    with pytest.raises(ValueError, match='Usage: /project'):
+    with pytest.raises(
+        ValueError, match='No project file to approve: /project revoke removes the approvals saved here'
+    ):
         context.project_command(['approve', 'all'])
+    with pytest.raises(ValueError, match='Usage: /project'):
+        context.project_command(['approve'])
     assert context.project_command(['revoke', 'all']) == f'Revoked permissions, tool_retries for {repo}.'
     assert store.approved_project_settings(repo) == {}
     assert restored_permissions(repo, store) == 'read-only'
