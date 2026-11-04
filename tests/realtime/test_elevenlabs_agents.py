@@ -360,6 +360,7 @@ def test_profile() -> None:
         async_tool_call_mode='never',
         supports_async_tool_calls=False,
         supports_tool_return_schema=False,
+        supports_tool_updates=False,
         emits_input_speech_events=False,
         output_speech_timestamp_granularity='word',
         synthesizes_turn_boundary=False,

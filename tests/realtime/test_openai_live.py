@@ -189,6 +189,7 @@ def test_profile(model: OpenAILiveModel) -> None:
         # `thinking` sets the delegated backend's reasoning effort.
         supports_thinking=True,
         supports_tool_return_schema=False,
+        supports_tool_updates=True,
         emits_input_speech_events=False,
         output_speech_timestamp_granularity=None,
         # The one model in the repo that infers its turn boundary rather than reading it off the wire.

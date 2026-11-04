@@ -23,6 +23,7 @@ from opentelemetry.context import Context
 from typing_extensions import TypeAliasType
 
 from .. import _agent_graph, _instructions, _system_prompt
+from .._deferred_capabilities import LoadCapabilityCallPart, registered_loaded_capability_ids
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
 from .._framing import SYSTEM_TAG, wrap
 from .._instrumentation import annotate_tool_call_otel_metadata
@@ -82,8 +83,11 @@ from ..messages import (
     SpeechPartDelta,
     SystemPromptPart,
     TextContent,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
+    ToolPartKind,
     ToolReturnPart,
+    ToolSearchReturnPart,
     UserContent,
     UserPromptPart,
 )
@@ -93,6 +97,7 @@ from ..models import (
 from ..native_tools import SUPPORTED_NATIVE_TOOLS
 from ..run import AgentRunResult
 from ..tool_manager import ToolManager
+from ..toolsets._tool_search import parse_discovered_tools
 from ..usage import RequestUsage, RunUsage, UsageLimits
 from ._core import (
     MAX_CUTTABLE_OUTPUT_ITEMS,
@@ -130,6 +135,8 @@ from ._utils import (
     SystemPromptText,
     render_instruction_change,
     replay_recorded_system_prompts_in_place,
+    resolve_advertised_tools,
+    resolve_realtime_request_tools,
     seed_pcm_audio,
 )
 from .codec import (
@@ -155,6 +162,7 @@ from .codec import (
     ToolCallCancelled,
     ToolResult,
     TruncateOutput,
+    UpdateTools,
 )
 from .model import RealtimeError
 from .profiles import DEFAULT_AUDIO_SAMPLE_RATE, RealtimeModelProfile
@@ -163,7 +171,7 @@ from .settings import AudioRetention, RealtimeModelSettings
 if TYPE_CHECKING:
     from ..messages import AgentStreamEvent
     from ..models.instrumented import InstrumentationSettings
-    from ..tools import DeferredToolRequests, DeferredToolResults, RunContext
+    from ..tools import DeferredToolRequests, DeferredToolResults, RunContext, ToolDefinition
     from ..toolsets import AbstractToolset
     from .model import RealtimeModel, RealtimeProviderSession
 
@@ -275,6 +283,7 @@ _FULL_PROFILE = RealtimeModelProfile(
     supports_interruption=True,
     supports_output_truncation=True,
     supports_session_seeding=True,
+    supports_tool_updates=True,
     supported_native_tools=SUPPORTED_NATIVE_TOOLS,
     audio_input_sample_rate=DEFAULT_AUDIO_SAMPLE_RATE,
     audio_output_sample_rate=DEFAULT_AUDIO_SAMPLE_RATE,
@@ -440,28 +449,36 @@ _TranslatableEvent: TypeAlias = (
     | PartEndEvent
     | RealtimeSessionErrorEvent
 )
-_SettledToolResult: TypeAlias = tuple[ToolReturnPart, str | Sequence[UserContent] | None]
+_SettledToolResult: TypeAlias = tuple[ToolReturnPart, str | Sequence[UserContent] | None, list[str]]
+"""A settled call's history part, the content it follows its result with, and the tools it revealed (`ToolReturn.tools`)."""
+
+
+def _tool_kinds(tools: Sequence[ToolDefinition]) -> dict[str, ToolPartKind]:
+    """The `tool_kind` of each tool that has one, by name."""
+    return {tool.name: tool.tool_kind for tool in tools if tool.tool_kind is not None}
 
 
 def _build_session_tool_return(
     tool_result: Any, call_part: ToolCallPart, tool_manager: ToolManager[Any]
-) -> tuple[ToolReturnPart, str | Sequence[UserContent] | None]:
-    """Translate a settled session tool result into its history part, rejecting mid-session reveals."""
+) -> _SettledToolResult:
+    """Translate a settled session tool result into its history part, and the tools it reveals."""
     tool_def = tool_manager.get_tool_def(call_part.tool_name)
     result_part, user_content, tools_added = build_tool_return_part(
         tool_result,
         call=call_part,
         tool_kind=tool_def.tool_kind if tool_def else None,
     )
-    if tools_added:
-        # Mirrors the graph (`_tool_execution._call_tool`), which rejects only a name owned by an
-        # unloaded capability and treats every other name — a typo, an already-visible tool — as a
-        # silent no-op. Killing the session over any reveal at all was harsher than the graph *and*
-        # unreachable-by-design harshness: a session refuses `defer_loading=True` tools and
-        # tool-contributing deferred capabilities when it opens, so it holds nothing that a reveal
-        # could have surfaced. Nothing is silently lost by dropping the request here.
-        _reject_unloaded_capability_reveals(tools_added, tool_manager)
-    return result_part, user_content
+    if not tools_added:
+        return result_part, user_content, []
+    # As in the graph (`_tool_execution._call_tool`): `load_capability` reveals its own capability's tools, a name
+    # another capability owns is refused until that capability loads, and any other name (a typo, a tool the model
+    # can already call) changes nothing.
+    _reject_unloaded_capability_reveals(
+        tools_added,
+        tool_manager,
+        activating_capability_id=call_part.capability_id if isinstance(call_part, LoadCapabilityCallPart) else None,
+    )
+    return result_part, user_content, list(dict.fromkeys(tools_added))
 
 
 def _chain_context(error: BaseException, context: BaseException) -> None:
@@ -735,6 +752,14 @@ class RealtimeSession:
         # `model_request_parameters` is what makes the session's configured native tools inspectable.
         self._model_request_parameters = model_request_parameters
         self._model_settings = model_settings
+        # The function tools the model can call: the ones the connection opened with, then each revealed since (see
+        # `_reveal_tools`). Only grows, and only by a reveal: the tools of each turn otherwise change only locally.
+        self._advertised_tools: list[ToolDefinition] = list(
+            (model_request_parameters or ModelRequestParameters()).function_tools
+        )
+        # The `tool_kind` of each of those tools that has one, which the core promotes calls to their typed part with.
+        self._tool_kinds: dict[str, ToolPartKind] = _tool_kinds(self._advertised_tools)
+        self._warned_undelivered_reveal = False
         self._wrap_event_stream = wrap_event_stream
         self._instructions = instructions
         # What the agent's instructions resolve to, re-resolved before each model turn (see `_refresh_instructions`), and
@@ -812,6 +837,8 @@ class RealtimeSession:
 
         # The conversation the session was opened with: the core's history starts from it.
         self._seeded: list[ModelMessage] = list(message_history or [])
+        # Every tool name history has revealed, so a reveal is recorded once, by the call that made it first.
+        self._revealed_tool_names: set[str] = parse_discovered_tools(self._seeded)
         # The request holding the agent's system prompt that the agent opens a fresh conversation with (and
         # already configured the connection with), recorded first as a standard run's first request holds it.
         self._opening = _opening_request
@@ -949,6 +976,7 @@ class RealtimeSession:
             opening=self._opening,
             usage=self.usage,
             annotate_response=self._annotate_response,
+            tool_kinds=self._tool_kinds,
         )
 
     def _replayable_messages(self) -> Sequence[ModelMessage]:
@@ -2464,8 +2492,14 @@ class RealtimeSession:
         call_part: ToolCallPart,
         result_part: ToolReturnPart,
         content: str | Sequence[UserContent] | None = None,
+        tools_added: Sequence[str] = (),
     ) -> list[RealtimeEvent]:
         request_parts: list[ModelRequestPart] = [result_part]
+        if tools_added:
+            # Where the graph records a reveal, so history continued by a standard run reveals the same tools.
+            request_parts.append(
+                ToolAvailabilityDeltaPart(tools_added=list(tools_added), tool_call_id=call_part.tool_call_id)
+            )
         if content:
             request_parts.append(UserPromptPart(content=content))
         request = self._new_request(request_parts)
@@ -2666,11 +2700,19 @@ class RealtimeSession:
                     # A run step here is one model turn: `_tool_run_step` increments when a
                     # `ModelResponse` is finalized, so this re-prepares the *local* manager once per
                     # turn — refreshing prepare hooks, availability filters, and retry state exactly
-                    # as the graph does per model request. It never re-advertises tools mid-call: the
-                    # tool list the provider sees is fixed at connect (`session.update` is sent
-                    # once), so a prepare filter changing here only affects whether a call the model
-                    # makes is accepted or settled as unknown-tool.
+                    # as the graph does per model request. It doesn't change the tools the model has:
+                    # only a reveal does (`_reveal_tools`), so a prepare filter changing here only
+                    # affects whether a call the model makes is accepted or settled as unknown-tool.
                     if ctx.run_step < run_step:
+                        # What the model has loaded and had revealed is read off history, as the graph reads
+                        # it before each request, so the tools a reveal gave the model can be called.
+                        # In place: every copy of the context shares these sets.
+                        ctx.loaded_capability_ids.clear()
+                        ctx.loaded_capability_ids.update(
+                            registered_loaded_capability_ids(ctx.messages, ctx.capabilities.keys())
+                        )
+                        ctx.discovered_tool_names.clear()
+                        ctx.discovered_tool_names.update(parse_discovered_tools(ctx.messages))
                         self._tool_manager = await self._tool_manager.for_run_step(replace(ctx, run_step=run_step))
                 # Pin the step-synchronized manager for this call: a concurrent tool task can swap
                 # `self._tool_manager` (its own `for_run_step` advance) between here and the calls below,
@@ -2686,6 +2728,7 @@ class RealtimeSession:
         except ToolRetryError as e:
             result_part = tool_bound_retry_part(e)
             user_content = None
+            tools_added = []
         except ToolFailedError as e:
             # A tool that raised `ToolFailed` yields a `failed` result rather than a retry. Send it
             # back so the model sees the failure — error-key-wrapped below (via
@@ -2693,11 +2736,13 @@ class RealtimeSession:
             # providers have no native failed-tool flag.
             result_part = e.tool_failed
             user_content = None
+            tools_added = []
         except (ApprovalRequired, CallDeferred, RunCancelled) as e:
             result_part = _unsettled_call_return(call_part, e)
             user_content = None
+            tools_added = []
         else:
-            result_part, user_content = _build_session_tool_return(tool_result, call_part, tool_manager)
+            result_part, user_content, tools_added = _build_session_tool_return(tool_result, call_part, tool_manager)
         finally:
             # The call has settled: on success `handle_call` has already recorded it on
             # `usage.tool_calls` in this same event-loop segment (so no limit check can observe the
@@ -2716,7 +2761,7 @@ class RealtimeSession:
             # The session closed while the tool ran: it hung up with `close()` and then swallowed the
             # `CancelledError`. Its call already has an interrupted return in history and there is no
             # provider left to send to, so the result goes nowhere (`_run_tool` drops it too).
-            return result_part, user_content
+            return result_part, user_content, []
         if not response_usage_follows:
             # A message the tool enqueued goes out ahead of its result. A response that went on past the call isn't
             # waited for: the result ends it.
@@ -2724,16 +2769,76 @@ class RealtimeSession:
         failed = result_part.outcome in ERROR_OUTCOMES
         # The result asks for the next response, so what the tool changed in the instructions goes out ahead of it.
         await self._refresh_instructions()
-        await self._send_tool_result(call_part, output, wire_content, failed=failed)
-        return result_part, user_content
+        # So do the tools it revealed, in the same send as the result, so the model never hears of a tool it can't call
+        # yet. Taken up with no wait before the send queues: reveals then go out in the order they were taken up, each
+        # with every tool the ones before it gave the model.
+        recorded, update = self._reveal_tools(result_part, tools_added, tool_manager)
+        await self._send_tool_result(call_part, output, wire_content, failed=failed, update=update)
+        return result_part, user_content, recorded
+
+    def _reveal_tools(
+        self, result_part: ToolReturnPart, tools_added: list[str], tool_manager: ToolManager[Any]
+    ) -> tuple[list[str], UpdateTools | None]:
+        """Take up the tools a settled call reveals: the names its result records, and the update giving them to the model.
+
+        A call reveals tools with `ToolReturn.tools`, which `load_capability` returns its capability's tools in, or as a
+        tool search's matches. Its history records the `ToolReturn.tools` names that history doesn't show revealed yet,
+        as the graph does (a search result records its own matches). A revealed tool the model can't call yet goes out
+        with every other tool it can, when its profile says it takes new tools mid-session; otherwise the session warns
+        once, as the model will never see it.
+        """
+        recorded = [name for name in tools_added if name not in self._revealed_tool_names]
+        revealed = list(tools_added)
+        if isinstance(result_part, ToolSearchReturnPart):
+            revealed.extend(match['name'] for match in result_part.discovered_tools)
+        self._revealed_tool_names.update(revealed)
+        if not (added := self._unadvertised_tools(revealed, tool_manager)):
+            return recorded, None
+        if not self._profile.get('supports_tool_updates', False):
+            if not self._warned_undelivered_reveal:
+                self._warned_undelivered_reveal = True
+                formatted_names = ', '.join(repr(tool.name) for tool in added)
+                warnings.warn(
+                    f'A tool call revealed {formatted_names} during a realtime session, but the model keeps the tools '
+                    "the session opened with (its profile's `supports_tool_updates` is `False`), so it can't call "
+                    'them. Reveal them before the session opens, or use a model that supports tool updates.',
+                    UserWarning,
+                    stacklevel=1,
+                )
+            return recorded, None
+        self._advertised_tools = [*self._advertised_tools, *added]
+        self._tool_kinds.update(_tool_kinds(added))
+        tools, _ = resolve_advertised_tools(self._advertised_tools, (self._model_settings or {}).get('tool_choice'))
+        return recorded, UpdateTools(tools=tools)
+
+    def _unadvertised_tools(self, revealed: Sequence[str], tool_manager: ToolManager[Any]) -> list[ToolDefinition]:
+        """The deferred tools among `revealed` that the model hasn't been given, as they'd have gone out when the session opened."""
+        advertised = {tool.name for tool in self._advertised_tools}
+        if not (names := {name for name in revealed if name not in advertised}):
+            return []
+        parameters = resolve_realtime_request_tools(
+            ModelRequestParameters(
+                function_tools=tool_manager.tool_defs,
+                native_tools=self._model_request_parameters.native_tools if self._model_request_parameters else [],
+                revealed_tool_names=names,
+            ),
+            self._profile,
+        )
+        return [tool for tool in parameters.declared_function_tools if tool.name in names and tool.defer_loading]
 
     async def _send_tool_result(
-        self, call_part: ToolCallPart, output: str, wire_content: list[UserContent], *, failed: bool = False
+        self,
+        call_part: ToolCallPart,
+        output: str,
+        wire_content: list[UserContent],
+        *,
+        failed: bool = False,
+        update: UpdateTools | None = None,
     ) -> None:
         result = ToolResult(
             tool_call_id=call_part.tool_call_id, output=output, content=wire_content or None, failed=failed
         )
-        await self._send_frame(result)
+        await self._send_frame(*((update,) if update is not None else ()), result)
 
     async def _send_failed_result(
         self, call_part: ToolCallPart, result_part: ToolReturnPart, error: BaseException
@@ -2880,7 +2985,7 @@ class RealtimeSession:
     ) -> None:
         """Run a tool and feed its completion (or failure) back through the queue."""
         try:
-            result_part, content = await self._execute_tool(
+            result_part, content, tools_added = await self._execute_tool(
                 call_part,
                 validation_done=validation_done,
                 execution_prerequisites=execution_prerequisites,
@@ -2915,7 +3020,7 @@ class RealtimeSession:
             # in history. Reached by a tool that hung up with `close()` and then swallowed the
             # `CancelledError`: recording its result too would leave two returns for one call.
             return
-        events = self._complete_tool_call(call_part, result_part, content)
+        events = self._complete_tool_call(call_part, result_part, content, tools_added)
         if ordered_events:
             # Held until nothing is still running, then released in call order — the graph waits for a
             # whole segment (`ALL_COMPLETED`) and replays it by index for the same reason. The release
@@ -3000,10 +3105,11 @@ class RealtimeSession:
         # its request. Read at execution time instead, a call held behind a `sequential` barrier
         # could observe a later response's advance and land a step ahead of its own batch.
         tool_run_step = self._tool_run_step
-        call_part = ToolCallPart(
-            tool_name=event.tool_name,
-            args=event.args,
-            tool_call_id=event.tool_call_id,
+        # Promoted to its typed part as the core records it (see `SessionCore`), so a `load_capability` call names the
+        # capability it loads.
+        call_part = ToolCallPart.narrow_type(
+            ToolCallPart(tool_name=event.tool_name, args=event.args, tool_call_id=event.tool_call_id),
+            tool_kind=self._tool_kinds.get(event.tool_name),
         )
         mode = self._tool_manager.get_parallel_execution_mode()
         is_barrier = mode == 'sequential' or self._tool_manager.is_sequential(call_part)

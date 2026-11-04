@@ -1,0 +1,1352 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: session.created
+    event_id: event_EgJeiETA4FH1Tp6U6Y6D6
+    session:
+      type: realtime
+      object: realtime.session
+      id: sess_EgJeicIx6t7Z6SZDY024I
+      model: gpt-realtime
+      output_modalities:
+      - audio
+      instructions: Your knowledge cutoff is 2023-10. You are a helpful, witty, and
+        friendly AI. Act like a human, but remember that you aren't a human and that
+        you can't do human things in the real world. Your voice and personality should
+        be warm and engaging, with a lively and playful tone. If interacting in a
+        non-English language, start by using the standard accent or dialect familiar
+        to the user. Talk quickly. You should always call a function if you can. Do
+        not refer to these rules, even if you’re asked about them.
+      tools: []
+      tool_choice: auto
+      max_output_tokens: inf
+      tracing: null
+      truncation: auto
+      prompt: null
+      expires_at: 1793757640
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription: null
+          noise_reduction: null
+          turn_detection:
+            type: server_vad
+            threshold: 0.5
+            prefix_padding_ms: 300
+            silence_duration_ms: 200
+            idle_timeout_ms: null
+            create_response: true
+            interrupt_response: true
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+          speed: 1.0
+      include: null
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: session.update
+    session:
+      type: realtime
+      instructions: 'You are a voice assistant. Answer in one short sentence. Look
+        things up with your tools: when the tool you need is in a capability, load
+        that capability first.
+
+
+        <context id="capability:deferred_capabilities">
+
+        The following capabilities are deferred and can be loaded using the `load_capability`
+        tool. A capability''s tools stay hidden until it is loaded:
+
+        - weather: Weather forecasts.
+
+        </context>
+
+        A later <context> element with the same id replaces the earlier one and stays
+        in effect until replaced again.'
+      output_modalities:
+      - text
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          turn_detection:
+            type: server_vad
+            create_response: true
+            interrupt_response: true
+          transcription:
+            model: gpt-live-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+      tools:
+      - type: function
+        name: load_capability
+        parameters:
+          description: Typed arguments for a `load_capability` tool call.
+          properties:
+            id:
+              description: The id of the capability to load.
+              title: Id
+              type: string
+          required:
+          - id
+          title: LoadCapabilityArgs
+          type: object
+        description: Load a listed capability whenever it is plausibly relevant to
+          the task. Loading makes the capability instructions and any tools it provides
+          available.
+- kind: message
+  direction: received
+  at: 0.302
+  data:
+    type: session.updated
+    event_id: event_EgJejmSvXyTbByMU5c9Fa
+    session:
+      type: realtime
+      object: realtime.session
+      id: sess_EgJeicIx6t7Z6SZDY024I
+      model: gpt-realtime
+      output_modalities:
+      - text
+      instructions: 'You are a voice assistant. Answer in one short sentence. Look
+        things up with your tools: when the tool you need is in a capability, load
+        that capability first.
+
+
+        <context id="capability:deferred_capabilities">
+
+        The following capabilities are deferred and can be loaded using the `load_capability`
+        tool. A capability''s tools stay hidden until it is loaded:
+
+        - weather: Weather forecasts.
+
+        </context>
+
+        A later <context> element with the same id replaces the earlier one and stays
+        in effect until replaced again.'
+      tools:
+      - type: function
+        name: load_capability
+        description: Load a listed capability whenever it is plausibly relevant to
+          the task. Loading makes the capability instructions and any tools it provides
+          available.
+        parameters:
+          description: Typed arguments for a `load_capability` tool call.
+          properties:
+            id:
+              description: The id of the capability to load.
+              title: Id
+              type: string
+          required:
+          - id
+          title: LoadCapabilityArgs
+          type: object
+      tool_choice: auto
+      max_output_tokens: inf
+      tracing: null
+      truncation: auto
+      prompt: null
+      expires_at: 1793757640
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription:
+            model: gpt-live-transcribe
+            language: null
+            languages: null
+            prompt: null
+          noise_reduction: null
+          turn_detection:
+            type: server_vad
+            threshold: 0.5
+            prefix_padding_ms: 300
+            silence_duration_ms: 200
+            idle_timeout_ms: null
+            create_response: true
+            interrupt_response: true
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+          speed: 1.0
+      include: null
+- kind: message
+  direction: sent
+  at: 0.302
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.0
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What will the weather be in Paris tomorrow?
+- kind: message
+  direction: sent
+  at: 0.302
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.0
+    response:
+      metadata:
+        pydantic_ai_inputs: '0'
+- kind: message
+  direction: received
+  at: 0.577
+  data:
+    type: conversation.item.added
+    event_id: event_EgJejlMG9OxcKEXhIuXcx
+    previous_item_id: null
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: What will the weather be in Paris tomorrow?
+- kind: message
+  direction: received
+  at: 0.58
+  data:
+    type: conversation.item.done
+    event_id: event_EgJejUsgdC95vcShb1Mbj
+    previous_item_id: null
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: What will the weather be in Paris tomorrow?
+- kind: message
+  direction: received
+  at: 0.587
+  data:
+    type: response.created
+    event_id: event_EgJejN7mq1Pe50wqXMG4k
+    response:
+      object: realtime.response
+      id: resp_EgJejHr1ThgVTJ0XegSVG
+      status: in_progress
+      status_details: null
+      output: []
+      conversation_id: conv_EgJeiZIilydra7HS2vO52
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage: null
+      metadata:
+        pydantic_ai_inputs: '0'
+- kind: message
+  direction: received
+  at: 0.791
+  data:
+    type: response.output_item.added
+    event_id: event_EgJejFxAphByyESmZL6jC
+    response_id: resp_EgJejHr1ThgVTJ0XegSVG
+    output_index: 0
+    item:
+      id: item_EgJejJ2sHPBkjHbbI9Ua4
+      type: function_call
+      status: in_progress
+      name: load_capability
+      call_id: call_4vzylYiYHkkIjs7l
+      arguments: ''
+- kind: message
+  direction: received
+  at: 0.792
+  data:
+    type: conversation.item.added
+    event_id: event_EgJejn4UxiWoSYuvWgHI9
+    previous_item_id: pydantic_ai_item_0
+    item:
+      id: item_EgJejJ2sHPBkjHbbI9Ua4
+      type: function_call
+      status: in_progress
+      name: load_capability
+      call_id: call_4vzylYiYHkkIjs7l
+      arguments: ''
+- kind: message
+  direction: received
+  at: 0.792
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EgJejLTgsNEdsxvcg4njw
+    response_id: resp_EgJejHr1ThgVTJ0XegSVG
+    item_id: item_EgJejJ2sHPBkjHbbI9Ua4
+    output_index: 0
+    call_id: call_4vzylYiYHkkIjs7l
+    delta: '{'
+    obfuscation: BJf5f7iH2ieEPjV
+- kind: message
+  direction: received
+  at: 0.799
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EgJejscjaP3Nvo3VRi0C0
+    response_id: resp_EgJejHr1ThgVTJ0XegSVG
+    item_id: item_EgJejJ2sHPBkjHbbI9Ua4
+    output_index: 0
+    call_id: call_4vzylYiYHkkIjs7l
+    delta: "  \n"
+    obfuscation: t3fjMlid1seRe
+- kind: message
+  direction: received
+  at: 0.807
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EgJej7nGxvhvu1og7ltqp
+    response_id: resp_EgJejHr1ThgVTJ0XegSVG
+    item_id: item_EgJejJ2sHPBkjHbbI9Ua4
+    output_index: 0
+    call_id: call_4vzylYiYHkkIjs7l
+    delta: ' '
+    obfuscation: yhJlKRSgLQfy6OJ
+- kind: message
+  direction: received
+  at: 0.812
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EgJejhDU2S5aYxEUkd6V4
+    response_id: resp_EgJejHr1ThgVTJ0XegSVG
+    item_id: item_EgJejJ2sHPBkjHbbI9Ua4
+    output_index: 0
+    call_id: call_4vzylYiYHkkIjs7l
+    delta: ' "'
+    obfuscation: NwQ39ADxeazjJj
+- kind: message
+  direction: received
+  at: 0.817
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EgJejFn7XRrAmKbkRt3Ll
+    response_id: resp_EgJejHr1ThgVTJ0XegSVG
+    item_id: item_EgJejJ2sHPBkjHbbI9Ua4
+    output_index: 0
+    call_id: call_4vzylYiYHkkIjs7l
+    delta: id
+    obfuscation: HI33lwwJabBOzi
+- kind: message
+  direction: received
+  at: 0.826
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EgJejpkiyjzwDvSKu5AMN
+    response_id: resp_EgJejHr1ThgVTJ0XegSVG
+    item_id: item_EgJejJ2sHPBkjHbbI9Ua4
+    output_index: 0
+    call_id: call_4vzylYiYHkkIjs7l
+    delta: '":'
+    obfuscation: tu1z1SNTFOWDQy
+- kind: message
+  direction: received
+  at: 0.839
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EgJejY1NDoRENCxDL1Jlx
+    response_id: resp_EgJejHr1ThgVTJ0XegSVG
+    item_id: item_EgJejJ2sHPBkjHbbI9Ua4
+    output_index: 0
+    call_id: call_4vzylYiYHkkIjs7l
+    delta: ' "'
+    obfuscation: PrIe8Kzra7t4dC
+- kind: message
+  direction: received
+  at: 0.86
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EgJejli1XXe0wwPR80wSF
+    response_id: resp_EgJejHr1ThgVTJ0XegSVG
+    item_id: item_EgJejJ2sHPBkjHbbI9Ua4
+    output_index: 0
+    call_id: call_4vzylYiYHkkIjs7l
+    delta: weather
+    obfuscation: mihZGOm0c
+- kind: message
+  direction: received
+  at: 0.875
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EgJejabVMbCp7b2yiAo8F
+    response_id: resp_EgJejHr1ThgVTJ0XegSVG
+    item_id: item_EgJejJ2sHPBkjHbbI9Ua4
+    output_index: 0
+    call_id: call_4vzylYiYHkkIjs7l
+    delta: '"'
+    obfuscation: VrLxZIRM7bzNkuD
+- kind: message
+  direction: received
+  at: 0.903
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EgJejtXsxeGuotFwF9o11
+    response_id: resp_EgJejHr1ThgVTJ0XegSVG
+    item_id: item_EgJejJ2sHPBkjHbbI9Ua4
+    output_index: 0
+    call_id: call_4vzylYiYHkkIjs7l
+    delta: " \n"
+    obfuscation: bkjqAdyWIJIU4p
+- kind: message
+  direction: received
+  at: 0.904
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EgJejZFegLQ5kG2MwzoUn
+    response_id: resp_EgJejHr1ThgVTJ0XegSVG
+    item_id: item_EgJejJ2sHPBkjHbbI9Ua4
+    output_index: 0
+    call_id: call_4vzylYiYHkkIjs7l
+    delta: '}'
+    obfuscation: vraKXcETyTxjz78
+- kind: message
+  direction: received
+  at: 0.904
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EgJej4H5GeNRwaE07k9gb
+    response_id: resp_EgJejHr1ThgVTJ0XegSVG
+    item_id: item_EgJejJ2sHPBkjHbbI9Ua4
+    output_index: 0
+    call_id: call_4vzylYiYHkkIjs7l
+    delta: "  \n"
+    obfuscation: r2SfPn7KqKWTU
+- kind: message
+  direction: received
+  at: 0.905
+  data:
+    type: response.function_call_arguments.done
+    event_id: event_EgJejs58aVjFQlYClXqNL
+    response_id: resp_EgJejHr1ThgVTJ0XegSVG
+    item_id: item_EgJejJ2sHPBkjHbbI9Ua4
+    output_index: 0
+    call_id: call_4vzylYiYHkkIjs7l
+    name: load_capability
+    arguments: "{  \n  \"id\": \"weather\" \n}  \n"
+- kind: message
+  direction: received
+  at: 0.906
+  data:
+    type: conversation.item.done
+    event_id: event_EgJejwrGyUkxVkAMszqZA
+    previous_item_id: null
+    item:
+      id: item_EgJejJ2sHPBkjHbbI9Ua4
+      type: function_call
+      status: completed
+      name: load_capability
+      call_id: call_4vzylYiYHkkIjs7l
+      arguments: "{  \n  \"id\": \"weather\" \n}  \n"
+- kind: message
+  direction: sent
+  at: 0.906
+  data:
+    type: session.update
+    session:
+      tools:
+      - type: function
+        name: load_capability
+        parameters:
+          description: Typed arguments for a `load_capability` tool call.
+          properties:
+            id:
+              description: The id of the capability to load.
+              title: Id
+              type: string
+          required:
+          - id
+          title: LoadCapabilityArgs
+          type: object
+        description: Load a listed capability whenever it is plausibly relevant to
+          the task. Loading makes the capability instructions and any tools it provides
+          available.
+      - type: function
+        name: get_forecast
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        description: Look up tomorrow's weather forecast for a city.
+      type: realtime
+- kind: message
+  direction: sent
+  at: 0.906
+  data:
+    type: conversation.item.create
+    item:
+      type: function_call_output
+      call_id: call_4vzylYiYHkkIjs7l
+      output: '{"message":"Capability ''weather'' loaded. Its instructions, if any,
+        follow."}'
+- kind: message
+  direction: received
+  at: 0.906
+  data:
+    type: response.output_item.done
+    event_id: event_EgJejFNA4dGbQuE19WQdb
+    response_id: resp_EgJejHr1ThgVTJ0XegSVG
+    output_index: 0
+    item:
+      id: item_EgJejJ2sHPBkjHbbI9Ua4
+      type: function_call
+      status: completed
+      name: load_capability
+      call_id: call_4vzylYiYHkkIjs7l
+      arguments: "{  \n  \"id\": \"weather\" \n}  \n"
+- kind: message
+  direction: received
+  at: 0.906
+  data:
+    type: response.done
+    event_id: event_EgJejMYp6oo7LUfJuwk8E
+    response:
+      object: realtime.response
+      id: resp_EgJejHr1ThgVTJ0XegSVG
+      status: completed
+      status_details: null
+      output:
+      - id: item_EgJejJ2sHPBkjHbbI9Ua4
+        type: function_call
+        status: completed
+        name: load_capability
+        call_id: call_4vzylYiYHkkIjs7l
+        arguments: "{  \n  \"id\": \"weather\" \n}  \n"
+      conversation_id: conv_EgJeiZIilydra7HS2vO52
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage:
+        total_tokens: 225
+        input_tokens: 202
+        output_tokens: 23
+        input_token_details:
+          text_tokens: 202
+          audio_tokens: 0
+          image_tokens: 0
+          cached_tokens: 0
+          cached_tokens_details:
+            text_tokens: 0
+            audio_tokens: 0
+            image_tokens: 0
+        output_token_details:
+          text_tokens: 23
+          audio_tokens: 0
+      metadata:
+        pydantic_ai_inputs: '0'
+- kind: message
+  direction: sent
+  at: 0.907
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.2
+    response:
+      metadata:
+        pydantic_ai_inputs: '2'
+- kind: message
+  direction: received
+  at: 0.91
+  data:
+    type: rate_limits.updated
+    event_id: event_EgJejorlwgVLO50NR0dFN
+    rate_limits:
+    - name: tokens
+      limit: 15000000
+      remaining: 14999714
+      reset_seconds: 0.001
+- kind: message
+  direction: received
+  at: 1.18
+  data:
+    type: session.updated
+    event_id: event_EgJekhwzuzE2RrEupoF3A
+    session:
+      type: realtime
+      object: realtime.session
+      id: sess_EgJeicIx6t7Z6SZDY024I
+      model: gpt-realtime
+      output_modalities:
+      - text
+      instructions: 'You are a voice assistant. Answer in one short sentence. Look
+        things up with your tools: when the tool you need is in a capability, load
+        that capability first.
+
+
+        <context id="capability:deferred_capabilities">
+
+        The following capabilities are deferred and can be loaded using the `load_capability`
+        tool. A capability''s tools stay hidden until it is loaded:
+
+        - weather: Weather forecasts.
+
+        </context>
+
+        A later <context> element with the same id replaces the earlier one and stays
+        in effect until replaced again.'
+      tools:
+      - type: function
+        name: load_capability
+        description: Load a listed capability whenever it is plausibly relevant to
+          the task. Loading makes the capability instructions and any tools it provides
+          available.
+        parameters:
+          description: Typed arguments for a `load_capability` tool call.
+          properties:
+            id:
+              description: The id of the capability to load.
+              title: Id
+              type: string
+          required:
+          - id
+          title: LoadCapabilityArgs
+          type: object
+      - type: function
+        name: get_forecast
+        description: Look up tomorrow's weather forecast for a city.
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+      tool_choice: auto
+      max_output_tokens: inf
+      tracing: null
+      truncation: auto
+      prompt: null
+      expires_at: 1793757640
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription:
+            model: gpt-live-transcribe
+            language: null
+            languages: null
+            prompt: null
+          noise_reduction: null
+          turn_detection:
+            type: server_vad
+            threshold: 0.5
+            prefix_padding_ms: 300
+            silence_duration_ms: 200
+            idle_timeout_ms: null
+            create_response: true
+            interrupt_response: true
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+          speed: 1.0
+      include: null
+- kind: message
+  direction: received
+  at: 1.186
+  data:
+    type: conversation.item.added
+    event_id: event_EgJekZBWTaW2nBh0Yr5Oa
+    previous_item_id: item_EgJejJ2sHPBkjHbbI9Ua4
+    item:
+      id: item_EgJekKet9xoN0MNBMQufD
+      type: function_call_output
+      call_id: call_4vzylYiYHkkIjs7l
+      output: '{"message":"Capability ''weather'' loaded. Its instructions, if any,
+        follow."}'
+- kind: message
+  direction: received
+  at: 1.19
+  data:
+    type: conversation.item.done
+    event_id: event_EgJekuzqo00cI6o8w7mVU
+    previous_item_id: item_EgJejJ2sHPBkjHbbI9Ua4
+    item:
+      id: item_EgJekKet9xoN0MNBMQufD
+      type: function_call_output
+      call_id: call_4vzylYiYHkkIjs7l
+      output: '{"message":"Capability ''weather'' loaded. Its instructions, if any,
+        follow."}'
+- kind: message
+  direction: received
+  at: 1.198
+  data:
+    type: response.created
+    event_id: event_EgJek0zk5WfQ9UlaQPcmm
+    response:
+      object: realtime.response
+      id: resp_EgJekOJDXQSs350DrBaTz
+      status: in_progress
+      status_details: null
+      output: []
+      conversation_id: conv_EgJeiZIilydra7HS2vO52
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage: null
+      metadata:
+        pydantic_ai_inputs: '2'
+- kind: message
+  direction: received
+  at: 1.394
+  data:
+    type: response.output_item.added
+    event_id: event_EgJek9mGSz15yivimR2mR
+    response_id: resp_EgJekOJDXQSs350DrBaTz
+    output_index: 0
+    item:
+      id: item_EgJekrXE78c9ySxJbCmV6
+      type: function_call
+      status: in_progress
+      name: get_forecast
+      call_id: call_lJoI5SFeNRQRAEGr
+      arguments: ''
+- kind: message
+  direction: received
+  at: 1.394
+  data:
+    type: conversation.item.added
+    event_id: event_EgJekAOmQCeTYxJjux86M
+    previous_item_id: item_EgJekKet9xoN0MNBMQufD
+    item:
+      id: item_EgJekrXE78c9ySxJbCmV6
+      type: function_call
+      status: in_progress
+      name: get_forecast
+      call_id: call_lJoI5SFeNRQRAEGr
+      arguments: ''
+- kind: message
+  direction: received
+  at: 1.395
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EgJekLkaAxSC797XX0wfn
+    response_id: resp_EgJekOJDXQSs350DrBaTz
+    item_id: item_EgJekrXE78c9ySxJbCmV6
+    output_index: 0
+    call_id: call_lJoI5SFeNRQRAEGr
+    delta: '{'
+    obfuscation: s0illAf1R63yCS2
+- kind: message
+  direction: received
+  at: 1.401
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EgJekPPBTt59lkZRDzp6r
+    response_id: resp_EgJekOJDXQSs350DrBaTz
+    item_id: item_EgJekrXE78c9ySxJbCmV6
+    output_index: 0
+    call_id: call_lJoI5SFeNRQRAEGr
+    delta: "  \n"
+    obfuscation: isz00NO63p4a8
+- kind: message
+  direction: received
+  at: 1.408
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EgJekmTPDHAahlaUCnixS
+    response_id: resp_EgJekOJDXQSs350DrBaTz
+    item_id: item_EgJekrXE78c9ySxJbCmV6
+    output_index: 0
+    call_id: call_lJoI5SFeNRQRAEGr
+    delta: ' '
+    obfuscation: zWe39xRkkgUnhFK
+- kind: message
+  direction: received
+  at: 1.415
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EgJeksGi2PrjcbroW2drF
+    response_id: resp_EgJekOJDXQSs350DrBaTz
+    item_id: item_EgJekrXE78c9ySxJbCmV6
+    output_index: 0
+    call_id: call_lJoI5SFeNRQRAEGr
+    delta: ' "'
+    obfuscation: FHdj2BfRADZCFd
+- kind: message
+  direction: received
+  at: 1.422
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EgJekee7dFolEXKt9wrhw
+    response_id: resp_EgJekOJDXQSs350DrBaTz
+    item_id: item_EgJekrXE78c9ySxJbCmV6
+    output_index: 0
+    call_id: call_lJoI5SFeNRQRAEGr
+    delta: city
+    obfuscation: xA2cLkVEjcK8
+- kind: message
+  direction: received
+  at: 1.429
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EgJek76aitltm6iS7rfc1
+    response_id: resp_EgJekOJDXQSs350DrBaTz
+    item_id: item_EgJekrXE78c9ySxJbCmV6
+    output_index: 0
+    call_id: call_lJoI5SFeNRQRAEGr
+    delta: '":'
+    obfuscation: CBrovnHdtp0pL1
+- kind: message
+  direction: received
+  at: 1.44
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EgJek25EV7sHL1qZ11bqQ
+    response_id: resp_EgJekOJDXQSs350DrBaTz
+    item_id: item_EgJekrXE78c9ySxJbCmV6
+    output_index: 0
+    call_id: call_lJoI5SFeNRQRAEGr
+    delta: ' "'
+    obfuscation: aDZjCbhoXQvX1R
+- kind: message
+  direction: received
+  at: 1.454
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EgJekQmjNgQkwhaDJMj9c
+    response_id: resp_EgJekOJDXQSs350DrBaTz
+    item_id: item_EgJekrXE78c9ySxJbCmV6
+    output_index: 0
+    call_id: call_lJoI5SFeNRQRAEGr
+    delta: Paris
+    obfuscation: SnLwqPEZ3OD
+- kind: message
+  direction: received
+  at: 1.459
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EgJekmHWUn5w1stYuYy38
+    response_id: resp_EgJekOJDXQSs350DrBaTz
+    item_id: item_EgJekrXE78c9ySxJbCmV6
+    output_index: 0
+    call_id: call_lJoI5SFeNRQRAEGr
+    delta: '"'
+    obfuscation: qah4lthS3ugWIxi
+- kind: message
+  direction: received
+  at: 1.459
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EgJek61TDvquiaGYTuw4V
+    response_id: resp_EgJekOJDXQSs350DrBaTz
+    item_id: item_EgJekrXE78c9ySxJbCmV6
+    output_index: 0
+    call_id: call_lJoI5SFeNRQRAEGr
+    delta: " \n"
+    obfuscation: GIMZZR5NItQTjC
+- kind: message
+  direction: received
+  at: 1.466
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EgJekERLmmtneL5u31fxc
+    response_id: resp_EgJekOJDXQSs350DrBaTz
+    item_id: item_EgJekrXE78c9ySxJbCmV6
+    output_index: 0
+    call_id: call_lJoI5SFeNRQRAEGr
+    delta: '}'
+    obfuscation: vJlXQNHUZG0pNbL
+- kind: message
+  direction: received
+  at: 1.473
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EgJekZbZ5F5Zc4akRK5N9
+    response_id: resp_EgJekOJDXQSs350DrBaTz
+    item_id: item_EgJekrXE78c9ySxJbCmV6
+    output_index: 0
+    call_id: call_lJoI5SFeNRQRAEGr
+    delta: "  \n"
+    obfuscation: 22n5KIQ5VXkub
+- kind: message
+  direction: received
+  at: 1.494
+  data:
+    type: response.function_call_arguments.done
+    event_id: event_EgJekCQWiH3mMykUFso6e
+    response_id: resp_EgJekOJDXQSs350DrBaTz
+    item_id: item_EgJekrXE78c9ySxJbCmV6
+    output_index: 0
+    call_id: call_lJoI5SFeNRQRAEGr
+    name: get_forecast
+    arguments: "{  \n  \"city\": \"Paris\" \n}  \n"
+- kind: message
+  direction: sent
+  at: 1.495
+  data:
+    type: conversation.item.create
+    item:
+      type: function_call_output
+      call_id: call_lJoI5SFeNRQRAEGr
+      output: It will be sunny and 24 degrees in Paris tomorrow.
+- kind: message
+  direction: received
+  at: 1.495
+  data:
+    type: conversation.item.done
+    event_id: event_EgJekJ9bFz0Szf5iOF5MI
+    previous_item_id: item_EgJekKet9xoN0MNBMQufD
+    item:
+      id: item_EgJekrXE78c9ySxJbCmV6
+      type: function_call
+      status: completed
+      name: get_forecast
+      call_id: call_lJoI5SFeNRQRAEGr
+      arguments: "{  \n  \"city\": \"Paris\" \n}  \n"
+- kind: message
+  direction: received
+  at: 1.495
+  data:
+    type: response.output_item.done
+    event_id: event_EgJeklLJ8Lx5zBhNk9kEI
+    response_id: resp_EgJekOJDXQSs350DrBaTz
+    output_index: 0
+    item:
+      id: item_EgJekrXE78c9ySxJbCmV6
+      type: function_call
+      status: completed
+      name: get_forecast
+      call_id: call_lJoI5SFeNRQRAEGr
+      arguments: "{  \n  \"city\": \"Paris\" \n}  \n"
+- kind: message
+  direction: received
+  at: 1.501
+  data:
+    type: response.done
+    event_id: event_EgJekKUmJlt6mHezNhRUQ
+    response:
+      object: realtime.response
+      id: resp_EgJekOJDXQSs350DrBaTz
+      status: completed
+      status_details: null
+      output:
+      - id: item_EgJekrXE78c9ySxJbCmV6
+        type: function_call
+        status: completed
+        name: get_forecast
+        call_id: call_lJoI5SFeNRQRAEGr
+        arguments: "{  \n  \"city\": \"Paris\" \n}  \n"
+      conversation_id: conv_EgJeiZIilydra7HS2vO52
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage:
+        total_tokens: 299
+        input_tokens: 276
+        output_tokens: 23
+        input_token_details:
+          text_tokens: 276
+          audio_tokens: 0
+          image_tokens: 0
+          cached_tokens: 0
+          cached_tokens_details:
+            text_tokens: 0
+            audio_tokens: 0
+            image_tokens: 0
+        output_token_details:
+          text_tokens: 23
+          audio_tokens: 0
+      metadata:
+        pydantic_ai_inputs: '2'
+- kind: message
+  direction: sent
+  at: 1.501
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.3
+    response:
+      metadata:
+        pydantic_ai_inputs: '3'
+- kind: message
+  direction: received
+  at: 1.508
+  data:
+    type: rate_limits.updated
+    event_id: event_EgJekxCMAhdrW8YeDN0p8
+    rate_limits:
+    - name: tokens
+      limit: 15000000
+      remaining: 14999714
+      reset_seconds: 0.001
+- kind: message
+  direction: received
+  at: 1.76
+  data:
+    type: conversation.item.added
+    event_id: event_EgJekj5fPG9RFuU5ADVvd
+    previous_item_id: item_EgJekrXE78c9ySxJbCmV6
+    item:
+      id: item_EgJekwved21iwU6mEGmoR
+      type: function_call_output
+      call_id: call_lJoI5SFeNRQRAEGr
+      output: It will be sunny and 24 degrees in Paris tomorrow.
+- kind: message
+  direction: received
+  at: 1.761
+  data:
+    type: conversation.item.done
+    event_id: event_EgJekK84334tC02xLWf8B
+    previous_item_id: item_EgJekrXE78c9ySxJbCmV6
+    item:
+      id: item_EgJekwved21iwU6mEGmoR
+      type: function_call_output
+      call_id: call_lJoI5SFeNRQRAEGr
+      output: It will be sunny and 24 degrees in Paris tomorrow.
+- kind: message
+  direction: received
+  at: 1.773
+  data:
+    type: response.created
+    event_id: event_EgJekDF1tKKUInrfzr4jW
+    response:
+      object: realtime.response
+      id: resp_EgJekm6epA3Xji7uAaALE
+      status: in_progress
+      status_details: null
+      output: []
+      conversation_id: conv_EgJeiZIilydra7HS2vO52
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage: null
+      metadata:
+        pydantic_ai_inputs: '3'
+- kind: message
+  direction: received
+  at: 1.911
+  data:
+    type: response.output_item.added
+    event_id: event_EgJekQYM7wpPP3vGyf5Ka
+    response_id: resp_EgJekm6epA3Xji7uAaALE
+    output_index: 0
+    item:
+      id: item_EgJekmKqo9MEJPWhI2nQj
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  at: 1.912
+  data:
+    type: conversation.item.added
+    event_id: event_EgJekeCML5QsM0PQqEm72
+    previous_item_id: item_EgJekwved21iwU6mEGmoR
+    item:
+      id: item_EgJekmKqo9MEJPWhI2nQj
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  at: 1.912
+  data:
+    type: response.content_part.added
+    event_id: event_EgJekYvxOvybVfiSF4HDr
+    response_id: resp_EgJekm6epA3Xji7uAaALE
+    item_id: item_EgJekmKqo9MEJPWhI2nQj
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: ''
+- kind: message
+  direction: received
+  at: 1.912
+  data:
+    type: response.output_text.delta
+    event_id: event_EgJekh6QdAday1KIOTO0h
+    response_id: resp_EgJekm6epA3Xji7uAaALE
+    item_id: item_EgJekmKqo9MEJPWhI2nQj
+    output_index: 0
+    content_index: 0
+    delta: It
+    obfuscation: qABRQpNUN0pZS7
+- kind: message
+  direction: received
+  at: 1.917
+  data:
+    type: response.output_text.delta
+    event_id: event_EgJekDxp86BSxg379F0CP
+    response_id: resp_EgJekm6epA3Xji7uAaALE
+    item_id: item_EgJekmKqo9MEJPWhI2nQj
+    output_index: 0
+    content_index: 0
+    delta: ' will'
+    obfuscation: YJrbzABodRe
+- kind: message
+  direction: received
+  at: 1.925
+  data:
+    type: response.output_text.delta
+    event_id: event_EgJek7oIqyDcA2CZnOvwZ
+    response_id: resp_EgJekm6epA3Xji7uAaALE
+    item_id: item_EgJekmKqo9MEJPWhI2nQj
+    output_index: 0
+    content_index: 0
+    delta: ' be'
+    obfuscation: luZWvey0nrDp8
+- kind: message
+  direction: received
+  at: 1.934
+  data:
+    type: response.output_text.delta
+    event_id: event_EgJekTkEynB1fhMsfZ1aD
+    response_id: resp_EgJekm6epA3Xji7uAaALE
+    item_id: item_EgJekmKqo9MEJPWhI2nQj
+    output_index: 0
+    content_index: 0
+    delta: ' sunny'
+    obfuscation: lDIyeZU07x
+- kind: message
+  direction: received
+  at: 1.937
+  data:
+    type: response.output_text.delta
+    event_id: event_EgJekWi3hRSxhD3yzeqVJ
+    response_id: resp_EgJekm6epA3Xji7uAaALE
+    item_id: item_EgJekmKqo9MEJPWhI2nQj
+    output_index: 0
+    content_index: 0
+    delta: ' and'
+    obfuscation: WgqxDHYFb3Fp
+- kind: message
+  direction: received
+  at: 1.946
+  data:
+    type: response.output_text.delta
+    event_id: event_EgJekJZKaximlwjw3KtkY
+    response_id: resp_EgJekm6epA3Xji7uAaALE
+    item_id: item_EgJekmKqo9MEJPWhI2nQj
+    output_index: 0
+    content_index: 0
+    delta: ' '
+    obfuscation: fLEdThj8LUZJ4N8
+- kind: message
+  direction: received
+  at: 1.953
+  data:
+    type: response.output_text.delta
+    event_id: event_EgJekYH4FV4v8qbstf39s
+    response_id: resp_EgJekm6epA3Xji7uAaALE
+    item_id: item_EgJekmKqo9MEJPWhI2nQj
+    output_index: 0
+    content_index: 0
+    delta: '24'
+    obfuscation: FzF1BePLbZeqdN
+- kind: message
+  direction: received
+  at: 1.96
+  data:
+    type: response.output_text.delta
+    event_id: event_EgJek1MbEq1VcQJ4aM0tJ
+    response_id: resp_EgJekm6epA3Xji7uAaALE
+    item_id: item_EgJekmKqo9MEJPWhI2nQj
+    output_index: 0
+    content_index: 0
+    delta: ' degrees'
+    obfuscation: 4IfZqqCk
+- kind: message
+  direction: received
+  at: 1.971
+  data:
+    type: response.output_text.delta
+    event_id: event_EgJekHRb7pFW9iis7m4UF
+    response_id: resp_EgJekm6epA3Xji7uAaALE
+    item_id: item_EgJekmKqo9MEJPWhI2nQj
+    output_index: 0
+    content_index: 0
+    delta: ' in'
+    obfuscation: o0rZbbDwMgBPA
+- kind: message
+  direction: received
+  at: 1.973
+  data:
+    type: response.output_text.delta
+    event_id: event_EgJekHQbkhgZCUWK4Xg9C
+    response_id: resp_EgJekm6epA3Xji7uAaALE
+    item_id: item_EgJekmKqo9MEJPWhI2nQj
+    output_index: 0
+    content_index: 0
+    delta: ' Paris'
+    obfuscation: a3rcs0qNml
+- kind: message
+  direction: received
+  at: 1.982
+  data:
+    type: response.output_text.delta
+    event_id: event_EgJekBcFJOpyZZZsDsBj6
+    response_id: resp_EgJekm6epA3Xji7uAaALE
+    item_id: item_EgJekmKqo9MEJPWhI2nQj
+    output_index: 0
+    content_index: 0
+    delta: ' tomorrow'
+    obfuscation: 3VVPcJK
+- kind: message
+  direction: received
+  at: 1.987
+  data:
+    type: response.output_text.delta
+    event_id: event_EgJek64VgPZr25paMna2i
+    response_id: resp_EgJekm6epA3Xji7uAaALE
+    item_id: item_EgJekmKqo9MEJPWhI2nQj
+    output_index: 0
+    content_index: 0
+    delta: .
+    obfuscation: uD5TCQfecmN53LO
+- kind: message
+  direction: received
+  at: 2.008
+  data:
+    type: response.output_text.done
+    event_id: event_EgJekPPnEBs0wpzIZDNQE
+    response_id: resp_EgJekm6epA3Xji7uAaALE
+    item_id: item_EgJekmKqo9MEJPWhI2nQj
+    output_index: 0
+    content_index: 0
+    text: It will be sunny and 24 degrees in Paris tomorrow.
+- kind: message
+  direction: received
+  at: 2.01
+  data:
+    type: response.content_part.done
+    event_id: event_EgJekcepJEFtuKW2QRWJS
+    response_id: resp_EgJekm6epA3Xji7uAaALE
+    item_id: item_EgJekmKqo9MEJPWhI2nQj
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: It will be sunny and 24 degrees in Paris tomorrow.
+- kind: message
+  direction: received
+  at: 2.011
+  data:
+    type: conversation.item.done
+    event_id: event_EgJekVW54GsdhFsbQqEts
+    previous_item_id: item_EgJekwved21iwU6mEGmoR
+    item:
+      id: item_EgJekmKqo9MEJPWhI2nQj
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: It will be sunny and 24 degrees in Paris tomorrow.
+- kind: message
+  direction: received
+  at: 2.012
+  data:
+    type: response.output_item.done
+    event_id: event_EgJekprmMTJgpbGa6FnMW
+    response_id: resp_EgJekm6epA3Xji7uAaALE
+    output_index: 0
+    item:
+      id: item_EgJekmKqo9MEJPWhI2nQj
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: It will be sunny and 24 degrees in Paris tomorrow.
+- kind: message
+  direction: received
+  at: 2.014
+  data:
+    type: response.done
+    event_id: event_EgJekCXircqPevdunF6Xt
+    response:
+      object: realtime.response
+      id: resp_EgJekm6epA3Xji7uAaALE
+      status: completed
+      status_details: null
+      output:
+      - id: item_EgJekmKqo9MEJPWhI2nQj
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: output_text
+          text: It will be sunny and 24 degrees in Paris tomorrow.
+      conversation_id: conv_EgJeiZIilydra7HS2vO52
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage:
+        total_tokens: 333
+        input_tokens: 319
+        output_tokens: 14
+        input_token_details:
+          text_tokens: 319
+          audio_tokens: 0
+          image_tokens: 0
+          cached_tokens: 256
+          cached_tokens_details:
+            text_tokens: 256
+            audio_tokens: 0
+            image_tokens: 0
+        output_token_details:
+          text_tokens: 14
+          audio_tokens: 0
+      metadata:
+        pydantic_ai_inputs: '3'

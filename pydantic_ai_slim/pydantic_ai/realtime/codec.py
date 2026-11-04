@@ -40,6 +40,7 @@ from ..messages import (
     ToolCallPart,
     UserContent,
 )
+from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._lifecycle import LifecycleEvent, RealtimeFrame, StaleEvent
 from .profiles import DEFAULT_AUDIO_SAMPLE_RATE, DEFAULT_REALTIME_PROFILE, merge_realtime_profile
@@ -73,6 +74,26 @@ class ToolResult:
     `output` already says so, so it reaches every provider; one whose protocol also flags a failed call
     (ElevenLabs' `is_error`) sets the flag too, as a standard run does on a model that has one.
     """
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class UpdateTools:
+    """Replace the function tools the model can call, mid-session.
+
+    Sent by [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] when a tool call reveals tools the session
+    didn't open with, such as an [on-demand capability](../capabilities/on-demand.md)'s tools as it loads, ahead of
+    that call's [`ToolResult`][pydantic_ai.realtime.codec.ToolResult] and in the same send, so the model can call
+    them as soon as it hears the result. Only sent to a model whose profile sets
+    [`supports_tool_updates`][pydantic_ai.realtime.RealtimeModelProfile.supports_tool_updates].
+
+    The connection should keep the new tools for a reconnect too, as it keeps the ones it opened with.
+    """
+
+    tools: Sequence[ToolDefinition]
+    """Every function tool the model can call from now on, not only the new ones, already narrowed by the session's
+    [`tool_choice`][pydantic_ai.realtime.RealtimeModelSettings.tool_choice]."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -140,13 +161,13 @@ system prompt added mid-session, delivered on the provider's channel for the ope
 Turn-control verbs (`CommitAudio`, `ClearAudio`, `CreateResponse`, `CancelResponse`,
 `TruncateOutput`) are connection-level vocabulary driven through the dedicated `RealtimeSession`
 methods (`commit_audio()`, `clear_audio()`, `create_response()`, `interrupt()`), and
-[`ToolResult`][pydantic_ai.realtime.codec.ToolResult] is sent by the session itself when a tool
-completes — neither is accepted by `send()`.
+[`ToolResult`][pydantic_ai.realtime.codec.ToolResult] and [`UpdateTools`][pydantic_ai.realtime.codec.UpdateTools] are
+sent by the session itself when a tool completes — none of these is accepted by `send()`.
 """
 
 RealtimeInput = TypeAliasType(
     'RealtimeInput',
-    'str | TextContext | BinaryAudio | BinaryImage | CommitAudio | ClearAudio | CreateResponse | CancelResponse | TruncateOutput | ToolResult',
+    'str | TextContext | BinaryAudio | BinaryImage | CommitAudio | ClearAudio | CreateResponse | CancelResponse | TruncateOutput | ToolResult | UpdateTools',
 )
 """Union of content types accepted by [`RealtimeConnection.send`][pydantic_ai.realtime.codec.RealtimeConnection.send].
 
@@ -156,8 +177,8 @@ already normalized: a `str` is a complete text turn that solicits a response,
 [`BinaryAudio`][pydantic_ai.messages.BinaryAudio] carries a raw mono PCM16 chunk at the model's
 [`audio_input_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_input_sample_rate]
 (`media_type='audio/pcm'`), and a [`BinaryImage`][pydantic_ai.messages.BinaryImage] an image frame.
-The connection additionally accepts the turn-control verbs and
-[`ToolResult`][pydantic_ai.realtime.codec.ToolResult], which
+The connection additionally accepts the turn-control verbs,
+[`ToolResult`][pydantic_ai.realtime.codec.ToolResult], and [`UpdateTools`][pydantic_ai.realtime.codec.UpdateTools], which
 [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] sends on the caller's behalf.
 """
 
@@ -723,6 +744,7 @@ __all__ = (
     'InputTranscript',
     'ToolCall',
     'ToolResult',
+    'UpdateTools',
     'ToolCallCancelled',
     'ResponseDone',
     'ConversationCreated',

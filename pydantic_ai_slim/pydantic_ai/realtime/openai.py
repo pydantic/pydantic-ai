@@ -156,6 +156,7 @@ from .codec import (
     ToolCall,
     ToolResult,
     TruncateOutput,
+    UpdateTools,
 )
 from .model import RealtimeClientSecret, RealtimeModel, RealtimeProviderSession, WebRTCAnswer
 from .profiles import DEFAULT_AUDIO_SAMPLE_RATE, RealtimeModelProfileSpec
@@ -490,8 +491,12 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         prune_tool_items: bool = False,
         keep_tool_items: AbstractSet[str] = frozenset(),
         manual_turns: bool = False,
+        session_config: dict[str, Any] | None = None,
     ) -> None:
         self._ws = ws
+        # The `session.update` the handshake configured the session with, which a re-dial sends again: `UpdateTools`
+        # rewrites its `tools` in place, so a reconnect advertises the tools revealed since.
+        self._session_config: dict[str, Any] = session_config if session_config is not None else {}
         # See `OpenAIRealtimeModelSettings.openai_prune_tool_items` and `openai_keep_tool_items`.
         self._prune_tool_items = prune_tool_items
         self._keep_tool_items = keep_tool_items
@@ -634,75 +639,100 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         """Send content to the OpenAI Realtime API.
 
         Accepts `BinaryAudio` (raw PCM16, 24kHz, mono), a `str` text turn, `TextContext` (text added
-        without soliciting a reply), `BinaryImage`, `ToolResult`, and the control verbs `CommitAudio`, `ClearAudio`, `CreateResponse`,
-        `CancelResponse`, and `TruncateOutput`.
+        without soliciting a reply), `BinaryImage`, `ToolResult`, `UpdateTools`, and the control verbs `CommitAudio`,
+        `ClearAudio`, `CreateResponse`, `CancelResponse`, and `TruncateOutput`.
         """
         input_index = self._inputs_received
         self._inputs_received += 1
-        if isinstance(content, BinaryAudio):
-            require_pcm_audio(content, provider_name=self._provider_label)
-            await self._send_event(
-                {
-                    'type': INPUT_AUDIO_BUFFER_APPEND_EVENT,
-                    'audio': base64.b64encode(content.data).decode('ascii'),
-                }
-            )
-        elif isinstance(content, (SystemPromptText, SystemPromptContext)):
-            await self._send_text(
-                content.system_prompt, role='system', respond=isinstance(content, str), input_index=input_index
-            )
-        elif isinstance(content, (str, TextContext)):
-            text = content if isinstance(content, str) else content.text
-            await self._send_text(text, role='user', respond=isinstance(content, str), input_index=input_index)
-        elif isinstance(content, ToolResult):
-            await self._send_tool_result(content, input_index=input_index)
-        elif isinstance(content, BinaryImage):
-            # An image is added as conversation context (like a video frame), not a turn of its own,
-            # so it doesn't trigger a response — drive that with audio (VAD) or `CreateResponse`.
-            data_uri = content.data_uri
-            self._lifecycle.message_sent(input_index)
-            await self._send_event(
-                {
-                    'type': CONVERSATION_ITEM_CREATE_EVENT,
-                    'event_id': client_event_id('content', (input_index,)),
-                    'item': {
-                        'id': client_item_id(input_index),
-                        'type': 'message',
-                        'role': 'user',
-                        'content': [{'type': 'input_image', 'image_url': data_uri}],
-                    },
-                }
-            )
-        elif isinstance(content, CommitAudio):
-            # Under its own `event_id`, which an `input_audio_buffer_commit_empty` error refusing it echoes. (Not a
-            # `client_event_id`: a refused commit takes back no input.)
-            await self._send_event(
-                {'type': INPUT_AUDIO_BUFFER_COMMIT_EVENT, 'event_id': f'pydantic_ai.commit.{input_index}'}
-            )
-        elif isinstance(content, ClearAudio):
-            await self._send_event({'type': INPUT_AUDIO_BUFFER_CLEAR_EVENT})
-        elif isinstance(content, CreateResponse):
-            await self._solicit_response((input_index,))
-        elif isinstance(content, CancelResponse):
-            # Only cancel when a response is actually active: with server VAD the provider may have
-            # already cancelled on the user's barge-in, and a redundant cancel raises a session error.
-            if self._response_active and not self._cancel_sent:
-                await self._send_event({'type': RESPONSE_CANCEL_EVENT})
-                self._cancel_sent = True
-                # Suppress the cancelled response's trailing deltas until its `response.done` arrives.
-                self._cancelled_response_id = self._active_response_id
-                # The cancelled response's output item is gone; forget it so a following
-                # `interrupt(played_ms=...)` before the next turn's first audio doesn't truncate a stale
-                # item (server-initiated cancels clear it via `response.done`, but a client cancel doesn't).
-                self._current_item_id = None
-                self._generated_audio_bytes = 0
-            if not self._observes_output_audio and self._output_audio_playing and not self._output_speech_clear_sent:
-                await self._send_event({'type': _OUTPUT_AUDIO_BUFFER_CLEAR_EVENT})
-                self._output_speech_clear_sent = True
-        elif isinstance(content, TruncateOutput):
-            await self._truncate_output(content)
-        else:
-            raise UserError(f'{self._provider_label} does not support {type(content).__name__} input.')
+        match content:
+            case BinaryAudio():
+                await self._append_audio(content)
+            case SystemPromptText() | SystemPromptContext():
+                await self._send_text(
+                    content.system_prompt, role='system', respond=isinstance(content, str), input_index=input_index
+                )
+            case str():
+                await self._send_text(content, role='user', respond=True, input_index=input_index)
+            case TextContext():
+                await self._send_text(content.text, role='user', respond=False, input_index=input_index)
+            case ToolResult():
+                await self._send_tool_result(content, input_index=input_index)
+            case BinaryImage():
+                await self._add_image(content, input_index=input_index)
+            case CommitAudio():
+                # Under its own `event_id`, which an `input_audio_buffer_commit_empty` error refusing it echoes. (Not a
+                # `client_event_id`: a refused commit takes back no input.)
+                await self._send_event(
+                    {'type': INPUT_AUDIO_BUFFER_COMMIT_EVENT, 'event_id': f'pydantic_ai.commit.{input_index}'}
+                )
+            case ClearAudio():
+                await self._send_event({'type': INPUT_AUDIO_BUFFER_CLEAR_EVENT})
+            case CreateResponse():
+                await self._solicit_response((input_index,))
+            case CancelResponse():
+                await self._cancel_response()
+            case TruncateOutput():
+                await self._truncate_output(content)
+            case UpdateTools():
+                await self._update_tools(content)
+            case _:
+                raise UserError(f'{self._provider_label} does not support {type(content).__name__} input.')
+
+    async def _append_audio(self, content: BinaryAudio) -> None:
+        require_pcm_audio(content, provider_name=self._provider_label)
+        await self._send_event(
+            {
+                'type': INPUT_AUDIO_BUFFER_APPEND_EVENT,
+                'audio': base64.b64encode(content.data).decode('ascii'),
+            }
+        )
+
+    async def _add_image(self, content: BinaryImage, *, input_index: int) -> None:
+        # An image is added as conversation context (like a video frame), not a turn of its own,
+        # so it doesn't trigger a response — drive that with audio (VAD) or `CreateResponse`.
+        data_uri = content.data_uri
+        self._lifecycle.message_sent(input_index)
+        await self._send_event(
+            {
+                'type': CONVERSATION_ITEM_CREATE_EVENT,
+                'event_id': client_event_id('content', (input_index,)),
+                'item': {
+                    'id': client_item_id(input_index),
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [{'type': 'input_image', 'image_url': data_uri}],
+                },
+            }
+        )
+
+    async def _cancel_response(self) -> None:
+        # Only cancel when a response is actually active: with server VAD the provider may have
+        # already cancelled on the user's barge-in, and a redundant cancel raises a session error.
+        if self._response_active and not self._cancel_sent:
+            await self._send_event({'type': RESPONSE_CANCEL_EVENT})
+            self._cancel_sent = True
+            # Suppress the cancelled response's trailing deltas until its `response.done` arrives.
+            self._cancelled_response_id = self._active_response_id
+            # The cancelled response's output item is gone; forget it so a following
+            # `interrupt(played_ms=...)` before the next turn's first audio doesn't truncate a stale
+            # item (server-initiated cancels clear it via `response.done`, but a client cancel doesn't).
+            self._current_item_id = None
+            self._generated_audio_bytes = 0
+        if not self._observes_output_audio and self._output_audio_playing and not self._output_speech_clear_sent:
+            await self._send_event({'type': _OUTPUT_AUDIO_BUFFER_CLEAR_EVENT})
+            self._output_speech_clear_sent = True
+
+    async def _update_tools(self, content: UpdateTools) -> None:
+        tools = [tool_def_to_openai(tool) for tool in content.tools]
+        # Only the tools: the rest of the configuration stands, and once the model has spoken OpenAI refuses an
+        # update that sends its voice again. The GA configuration needs its `type`, which xAI's and Voice Live's lack.
+        session: dict[str, Any] = {'tools': tools}
+        if (session_type := self._session_config.get('type')) is not None:
+            session['type'] = session_type
+        # Kept before it goes out, so a re-dial after the send fails advertises them too.
+        self._session_config['tools'] = tools
+        # No waiting for `session.updated`: the frames that follow on this socket are taken after it.
+        await self._send_event({'type': SESSION_UPDATE_EVENT, 'session': session})
 
     async def _truncate_output(self, content: TruncateOutput) -> None:
         if content.item_id is None:
@@ -1805,6 +1835,7 @@ class OpenAIRealtimeModel(RealtimeModel):
                 prune_tool_items=settings.get('openai_prune_tool_items', False),
                 keep_tool_items=settings.get('openai_keep_tool_items', frozenset()),
                 manual_turns=config_has_manual_turns(session_config),
+                session_config=session_config,
             )
             connection._history_items_sent(seed)  # pyright: ignore[reportPrivateUsage]
             yield connection
@@ -1918,4 +1949,5 @@ class OpenAIRealtimeModel(RealtimeModel):
             prune_tool_items=settings.get('openai_prune_tool_items', False),
             keep_tool_items=settings.get('openai_keep_tool_items', frozenset()),
             manual_turns=config_has_manual_turns(session_config),
+            session_config=session_config,
         )

@@ -22,6 +22,8 @@ import anyio
 import pytest
 
 from pydantic_ai import Agent
+from pydantic_ai._deferred_capabilities import LoadCapabilityCallPart
+from pydantic_ai.capabilities import Capability
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -32,11 +34,13 @@ from pydantic_ai.messages import (
     SpeechPart,
     SystemPromptPart,
     TextPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.realtime import RealtimeModel, RealtimeModelSettings, RealtimeSession, RealtimeTurnCompleteEvent
+from pydantic_ai.toolsets import FunctionToolset
 
 from ..conftest import try_import
 from .conversation import Utterance, assert_conversation_invariants, load_utterance, speak_continuously
@@ -119,6 +123,8 @@ class RealtimeParityCase:
     its default formats, which is 16 kHz both ways."""
     labels_phase: bool = False
     """Whether the model labels each assistant message `commentary` or `final_answer` (its `phase`)."""
+    supports_tool_updates: bool = False
+    """Whether the model takes new tools mid-session, so loading a deferred capability can give it the capability's tools."""
 
 
 # Adding a supported model generation is one row. Gateway routes intentionally have their own rows:
@@ -135,6 +141,7 @@ REALTIME_PARITY_CASES = [
         supports_interruption=True,
         supports_native_tools=False,
         labels_phase=True,
+        supports_tool_updates=True,
     ),
     RealtimeParityCase(
         id='openai-previous',
@@ -145,6 +152,7 @@ REALTIME_PARITY_CASES = [
         supports_manual_turn_control=True,
         supports_interruption=True,
         supports_native_tools=False,
+        supports_tool_updates=True,
     ),
     RealtimeParityCase(
         id='openai-live',
@@ -159,6 +167,7 @@ REALTIME_PARITY_CASES = [
         supports_text_output=False,
         drives_turns_with_text=False,
         synthesizes_turn_boundary=True,
+        supports_tool_updates=True,
     ),
     RealtimeParityCase(
         id='azure-current',
@@ -169,6 +178,7 @@ REALTIME_PARITY_CASES = [
         supports_manual_turn_control=True,
         supports_interruption=True,
         supports_native_tools=False,
+        supports_tool_updates=True,
     ),
     RealtimeParityCase(
         id='xai-current',
@@ -180,6 +190,7 @@ REALTIME_PARITY_CASES = [
         supports_interruption=True,
         supports_native_tools=False,
         supports_text_output=False,  # Grok Voice always speaks
+        supports_tool_updates=True,
     ),
     RealtimeParityCase(
         id='xai-pinned',
@@ -191,6 +202,7 @@ REALTIME_PARITY_CASES = [
         supports_interruption=True,
         supports_native_tools=False,
         supports_text_output=False,  # Grok Voice always speaks
+        supports_tool_updates=True,
     ),
     RealtimeParityCase(
         id='elevenlabs-current',
@@ -236,6 +248,7 @@ REALTIME_PARITY_CASES = [
         supports_manual_turn_control=True,
         supports_interruption=True,
         supports_native_tools=False,
+        supports_tool_updates=True,
     ),
     RealtimeParityCase(
         id='gateway-google',
@@ -306,6 +319,11 @@ _INSTRUCTION_CHANGE_CASES = [
 _AUDIO_CASES = [
     pytest.param((case, case.route), id=case.id, marks=_marks(case, unrecorded_on_azure=True))
     for case in REALTIME_PARITY_CASES
+]
+_TOOL_UPDATE_CASES = [
+    pytest.param((case, case.route), id=case.id, marks=_marks(case, unrecorded_on_azure=True))
+    for case in REALTIME_PARITY_CASES
+    if case.drives_turns_with_text and case.supports_tool_updates
 ]
 
 
@@ -389,6 +407,7 @@ async def test_text_tool_round_parity(
     assert profile.get('supports_session_seeding', False) is case.supports_session_seeding
     assert profile.get('audio_input_sample_rate', 24000) == case.audio_input_sample_rate
     assert profile.get('audio_output_sample_rate', 24000) == case.audio_output_sample_rate
+    assert profile.get('supports_tool_updates', False) is case.supports_tool_updates
 
     agent = Agent(instructions='Always call get_weather for a weather question, then answer in one short sentence.')
 
@@ -622,6 +641,69 @@ async def test_instruction_change_parity(
     answer = part.transcript if isinstance(part, SpeechPart) else part.content
     assert answer is not None
     assert 'orange' in answer.lower()
+
+
+@pytest.mark.parametrize('parity_ws_cassette', _TOOL_UPDATE_CASES, indirect=True)
+async def test_capability_tool_reveal_parity(
+    parity_ws_cassette: tuple[RealtimeParityCase, Provider[Any], RealtimeCassette],
+) -> None:
+    """Loading a deferred capability mid-session gives the model the capability's tools, which it then calls.
+
+    The session sends the tools ahead of the load's result, and history records the reveal as a standard run does.
+    A model that keeps the tools it opened with refuses such an agent before connecting (see `test_tool_reveals.py`).
+    """
+    case, provider, _ = parity_ws_cassette
+    model = _model(case, provider, text_output=True)
+    forecasts = FunctionToolset[None]()
+
+    @forecasts.tool_plain
+    async def get_forecast(city: str) -> str:
+        """Look up tomorrow's weather forecast for a city."""
+        return f'It will be sunny and 24 degrees in {city} tomorrow.'
+
+    agent = Agent(
+        instructions=(
+            'You are a voice assistant. Answer in one short sentence. Look things up with your tools: when the tool '
+            'you need is in a capability, load that capability first.'
+        ),
+        capabilities=[
+            Capability(id='weather', description='Weather forecasts.', toolsets=[forecasts], defer_loading=True)
+        ],
+    )
+
+    async with agent.realtime(model).session() as session:
+        await session.send('What will the weather be in Paris tomorrow?')
+        events: list[Any] = []
+        answered = False
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, FunctionToolResultEvent) and event.part.tool_name == 'get_forecast':
+                    answered = True
+                elif (
+                    isinstance(event, RealtimeTurnCompleteEvent)
+                    and answered
+                    and isinstance(session.all_messages()[-1], ModelResponse)
+                    and session.all_messages()[-1].parts
+                ):
+                    break
+
+    assert not any(isinstance(event, RealtimeSessionErrorEvent) for event in events)
+    results = [event.part for event in events if isinstance(event, FunctionToolResultEvent)]
+    assert [(part.tool_name, part.outcome) for part in results] == [
+        ('load_capability', 'success'),
+        ('get_forecast', 'success'),
+    ]
+    messages = session.all_messages()
+    assert any(isinstance(part, LoadCapabilityCallPart) for message in messages for part in message.parts)
+    reveals = [part for message in messages for part in message.parts if isinstance(part, ToolAvailabilityDeltaPart)]
+    assert [reveal.tools_added for reveal in reveals] == [['get_forecast']]
+    final = messages[-1]
+    assert isinstance(final, ModelResponse)
+    part = final.parts[-1]
+    assert isinstance(part, (SpeechPart, TextPart))
+    answer = part.transcript if isinstance(part, SpeechPart) else part.content
+    assert answer is not None and 'sunny' in answer.lower()
 
 
 @pytest.mark.parametrize('parity_ws_cassette', _AUDIO_CASES, indirect=True)

@@ -1,0 +1,1283 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: session.created
+    event_id: 249d5677-5eee-4e2e-b5d2-0ae40e330d92
+    session:
+      id: d1261fb7a9e34e169f3530da5860ec7e
+      object: realtime.session
+      instructions: ''
+      voice: xai_ara
+      modalities:
+      - audio
+      turn_detection:
+        type: null
+      tools: []
+      model: grok-voice-3.0
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: session.update
+    session:
+      instructions: 'You are a voice assistant. Answer in one short sentence. Look
+        things up with your tools: when the tool you need is in a capability, load
+        that capability first.
+
+
+        <context id="capability:deferred_capabilities">
+
+        The following capabilities are deferred and can be loaded using the `load_capability`
+        tool. A capability''s tools stay hidden until it is loaded:
+
+        - weather: Weather forecasts.
+
+        </context>
+
+        A later <context> element with the same id replaces the earlier one and stays
+        in effect until replaced again.'
+      turn_detection:
+        type: server_vad
+        create_response: true
+        interrupt_response: true
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription:
+            model: grok-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+      tools:
+      - type: function
+        name: load_capability
+        parameters:
+          description: Typed arguments for a `load_capability` tool call.
+          properties:
+            id:
+              description: The id of the capability to load.
+              title: Id
+              type: string
+          required:
+          - id
+          title: LoadCapabilityArgs
+          type: object
+        description: Load a listed capability whenever it is plausibly relevant to
+          the task. Loading makes the capability instructions and any tools it provides
+          available.
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: conversation.created
+    event_id: d0e0b9df-f2ca-4d87-859a-8629d09e9b7a
+    conversation:
+      id: 390cfc4d-7494-44b6-b6c6-40cd939c59d5
+      object: realtime.conversation
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: ping
+    event_id: d0fdb49d-c559-4ca6-b22e-6825fce94f7b
+    timestamp: 1793754035037
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.147
+  data:
+    session:
+      instructions: 'You are a voice assistant. Answer in one short sentence. Look
+        things up with your tools: when the tool you need is in a capability, load
+        that capability first.
+
+
+        <context id="capability:deferred_capabilities">
+
+        The following capabilities are deferred and can be loaded using the `load_capability`
+        tool. A capability''s tools stay hidden until it is loaded:
+
+        - weather: Weather forecasts.
+
+        </context>
+
+        A later <context> element with the same id replaces the earlier one and stays
+        in effect until replaced again.'
+      enable_noise_suppression: false
+      turn_detection:
+        type: server_vad
+        create_response: true
+      model: grok-voice-3.0
+      tools:
+      - type: function
+        function:
+          name: load_capability
+          description: Load a listed capability whenever it is plausibly relevant
+            to the task. Loading makes the capability instructions and any tools it
+            provides available.
+          parameters:
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                title: Id
+                type: string
+            required:
+            - id
+            title: LoadCapabilityArgs
+            type: object
+      keep_context: false
+      enable_phonetic_spelling: false
+      input_audio_transcription:
+        model: grok-transcribe
+      modalities:
+      - audio
+      input_audio_format: not specified
+      output_audio_format: not specified
+      tool_choice: auto
+      temperature: -1.0
+      max_response_output_tokens: inf
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transport: json
+          transcription:
+            model: grok-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transport: json
+    type: session.updated
+    event_id: fa69a625-4f92-469f-992d-77d28dcdf531
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 0.148
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.0
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What will the weather be in Paris tomorrow?
+- kind: message
+  direction: sent
+  at: 0.148
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.0
+    response:
+      metadata:
+        pydantic_ai_inputs: '0'
+- kind: message
+  direction: received
+  at: 0.213
+  data:
+    type: conversation.item.added
+    event_id: 1789191d-c204-4cb4-8065-bca142101b2f
+    item:
+      id: pydantic_ai_item_0
+      object: realtime.item
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: What will the weather be in Paris tomorrow?
+      replayed: false
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.216
+  data:
+    type: response.created
+    event_id: 10b78cbb-81e7-4fe4-aaa9-c300af7cc74c
+    response:
+      id: e50aa71a-d812-473b-9481-49c6afa5fd08
+      object: realtime.response
+      output: []
+      status: in_progress
+      metadata:
+        pydantic_ai_inputs: '0'
+      status_details: unimplemented
+      usage: {}
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.516
+  data:
+    type: response.output_item.added
+    event_id: 05deb555-b012-4ec5-8884-6a942ba29425
+    item:
+      id: cc289508-bfef-4577-a05e-fbb9fe5a29dd
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      replayed: false
+    response_id: e50aa71a-d812-473b-9481-49c6afa5fd08
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.516
+  data:
+    type: conversation.item.added
+    event_id: fb425e8c-301d-4a98-9819-a52f541cdda1
+    item:
+      id: cc289508-bfef-4577-a05e-fbb9fe5a29dd
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      replayed: false
+    previous_item_id: pydantic_ai_item_0
+- kind: message
+  direction: received
+  at: 0.516
+  data:
+    type: response.content_part.added
+    event_id: 413cc712-dc23-45ac-b1b9-9c85c75c2ae3
+    item_id: cc289508-bfef-4577-a05e-fbb9fe5a29dd
+    previous_item_id: '0'
+    part:
+      type: audio
+      transcript: ''
+    response_id: e50aa71a-d812-473b-9481-49c6afa5fd08
+    content_index: 0
+    output_index: 0
+- kind: message
+  direction: received
+  at: 0.71
+  data:
+    type: response.output_audio.delta
+    event_id: 2b78f436-2fd6-464e-a1fd-1f299b907ba5
+    item_id: cc289508-bfef-4577-a05e-fbb9fe5a29dd
+    response_id: e50aa71a-d812-473b-9481-49c6afa5fd08
+    delta: DwAUABcAFgAQAAsACQAJAA0AFAAbAB0AGwAYABUAEgAP
+    content_index: 0
+    output_index: 0
+    rid: 4565e400-0361-40b1-ad9b-b51f9d04bbce
+    latency: '0.46'
+    audio_duration_ms: 489
+    ts: 1793754035724
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.71
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: 4565e400-0361-40b1-ad9b-b51f9d04bbce
+    item_id: cc289508-bfef-4577-a05e-fbb9fe5a29dd
+    response_id: e50aa71a-d812-473b-9481-49c6afa5fd08
+    delta: I'll check the forecast for Paris.
+    content_index: 0
+    output_index: 0
+    rid: 4565e400-0361-40b1-ad9b-b51f9d04bbce
+    start_time: 0.0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.771
+  data:
+    type: response.output_audio.delta
+    event_id: 918b87c6-9029-441b-ba09-161a5e238b89
+    item_id: cc289508-bfef-4577-a05e-fbb9fe5a29dd
+    response_id: e50aa71a-d812-473b-9481-49c6afa5fd08
+    delta: qfVp9275r/si/EX8/fvB/FP9nfyh+2j6g/nW+C72BPWS
+    content_index: 0
+    output_index: 0
+    rid: 4565e400-0361-40b1-ad9b-b51f9d04bbce
+    audio_duration_ms: 918
+    ts: 1793754035786
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.783
+  data:
+    type: response.output_audio.delta
+    event_id: f175c406-1b75-42b0-9801-8e8792a28174
+    item_id: cc289508-bfef-4577-a05e-fbb9fe5a29dd
+    response_id: e50aa71a-d812-473b-9481-49c6afa5fd08
+    delta: bf6F/rL+7/5N/67/9P9DAIEAyQA/AasBGwJ/Aq8C2AL4
+    content_index: 0
+    output_index: 0
+    rid: 4565e400-0361-40b1-ad9b-b51f9d04bbce
+    audio_duration_ms: 336
+    ts: 1793754035830
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.783
+  data:
+    type: response.output_audio.delta
+    event_id: 4cb3334c-78de-481b-b7a8-bbcb4e73b2bc
+    item_id: cc289508-bfef-4577-a05e-fbb9fe5a29dd
+    response_id: e50aa71a-d812-473b-9481-49c6afa5fd08
+    delta: +//5//f/9f/z//L/8P/w/+7/7v/u/+//7//v//D/8P/x
+    content_index: 0
+    output_index: 0
+    rid: 4565e400-0361-40b1-ad9b-b51f9d04bbce
+    audio_duration_ms: 61
+    ts: 1793754035835
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.789
+  data:
+    type: response.output_audio.delta
+    event_id: e788ed8b-2352-4ef6-8116-63729303aa58
+    item_id: cc289508-bfef-4577-a05e-fbb9fe5a29dd
+    response_id: e50aa71a-d812-473b-9481-49c6afa5fd08
+    delta: 8P/x//L/8//0//b/+P/6//z//f/+//////8AAP/////+
+    content_index: 0
+    output_index: 0
+    rid: 4565e400-0361-40b1-ad9b-b51f9d04bbce
+    audio_duration_ms: 106
+    ts: 1793754035836
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.789
+  data:
+    type: response.output_audio_transcript.done
+    event_id: ac0c2e76-507d-4247-a76d-feb3784f81a6
+    item_id: cc289508-bfef-4577-a05e-fbb9fe5a29dd
+    transcript: I'll check the forecast for Paris.
+    response_id: e50aa71a-d812-473b-9481-49c6afa5fd08
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.789
+  data:
+    type: response.content_part.done
+    event_id: c956aab6-2ed0-499d-a846-b76a29ad8a88
+    item_id: cc289508-bfef-4577-a05e-fbb9fe5a29dd
+    response_id: e50aa71a-d812-473b-9481-49c6afa5fd08
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.79
+  data:
+    type: response.output_audio.done
+    event_id: fac3c95b-ea59-42f5-a2a1-24251c54d856
+    item_id: cc289508-bfef-4577-a05e-fbb9fe5a29dd
+    response_id: e50aa71a-d812-473b-9481-49c6afa5fd08
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.79
+  data:
+    type: response.output_item.done
+    event_id: 331d17f3-f5a5-4a8d-b12a-57a96d8c6884
+    item:
+      id: cc289508-bfef-4577-a05e-fbb9fe5a29dd
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      replayed: false
+    response_id: e50aa71a-d812-473b-9481-49c6afa5fd08
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.79
+  data:
+    type: response.output_item.added
+    event_id: d212d676-4345-4211-8760-e31af2cb4653
+    item:
+      id: 99b2b559-6d00-41b4-8c43-c4df0116cdba
+      object: realtime.item
+      type: function_call
+      status: in_progress
+      role: user
+      call_id: call-6ac8869c-9b28-439e-a573-50f68536724b-0
+      name: load_capability
+      arguments: ''
+      replayed: false
+    response_id: e50aa71a-d812-473b-9481-49c6afa5fd08
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.79
+  data:
+    type: conversation.item.added
+    event_id: c4304a3b-cd6a-4fae-9221-01ecf505aea6
+    item:
+      id: 99b2b559-6d00-41b4-8c43-c4df0116cdba
+      object: realtime.item
+      type: function_call
+      status: in_progress
+      role: tool
+      call_id: call-6ac8869c-9b28-439e-a573-50f68536724b-0
+      name: load_capability
+      arguments: ''
+      replayed: false
+    previous_item_id: cc289508-bfef-4577-a05e-fbb9fe5a29dd
+- kind: message
+  direction: received
+  at: 0.79
+  data:
+    type: response.function_call_arguments.delta
+    event_id: b80def77-cb3e-44e8-9ef6-d1e1b70b19ea
+    item_id: 99b2b559-6d00-41b4-8c43-c4df0116cdba
+    response_id: e50aa71a-d812-473b-9481-49c6afa5fd08
+    delta: '{"id":"weather"}'
+    call_id: call-6ac8869c-9b28-439e-a573-50f68536724b-0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.79
+  data:
+    type: response.function_call_arguments.done
+    event_id: d95b7890-14bd-4d49-8ec3-66b49c531a24
+    item_id: 99b2b559-6d00-41b4-8c43-c4df0116cdba
+    response_id: e50aa71a-d812-473b-9481-49c6afa5fd08
+    output_index: 0
+    call_id: call-6ac8869c-9b28-439e-a573-50f68536724b-0
+    name: load_capability
+    arguments: '{"id":"weather"}'
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.79
+  data:
+    type: response.output_item.done
+    event_id: ebaffe4f-2697-4f2a-8359-a835bcfe7899
+    item:
+      id: 99b2b559-6d00-41b4-8c43-c4df0116cdba
+      object: realtime.item
+      type: function_call
+      status: completed
+      role: user
+      call_id: call-6ac8869c-9b28-439e-a573-50f68536724b-0
+      name: load_capability
+      arguments: '{"id":"weather"}'
+      replayed: false
+    response_id: e50aa71a-d812-473b-9481-49c6afa5fd08
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.79
+  data:
+    type: response.done
+    event_id: c9048e5d-9718-4e39-8429-dd8cea920a03
+    response:
+      id: e50aa71a-d812-473b-9481-49c6afa5fd08
+      object: realtime.response
+      output:
+      - id: cc289508-bfef-4577-a05e-fbb9fe5a29dd
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: audio
+          transcript: I'll check the forecast for Paris.
+        replayed: false
+      - id: 99b2b559-6d00-41b4-8c43-c4df0116cdba
+        object: realtime.item
+        type: function_call
+        status: completed
+        role: user
+        call_id: call-6ac8869c-9b28-439e-a573-50f68536724b-0
+        name: load_capability
+        arguments: '{"id":"weather"}'
+        replayed: false
+      status: completed
+      metadata:
+        pydantic_ai_inputs: '0'
+      status_details: unimplemented
+      usage: {}
+    response_id: e50aa71a-d812-473b-9481-49c6afa5fd08
+    usage:
+      input_tokens: 9
+      input_token_details:
+        text_tokens: 9
+        audio_tokens: 0
+        grok_tokens: 0
+      output_tokens: 103
+      output_token_details:
+        text_tokens: 7
+        audio_tokens: 96
+        grok_tokens: 0
+      total_tokens: 112
+      output_audio_seconds: 1.92
+      billable_audio_seconds: 1
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 0.792
+  data:
+    type: session.update
+    session:
+      tools:
+      - type: function
+        name: load_capability
+        parameters:
+          description: Typed arguments for a `load_capability` tool call.
+          properties:
+            id:
+              description: The id of the capability to load.
+              title: Id
+              type: string
+          required:
+          - id
+          title: LoadCapabilityArgs
+          type: object
+        description: Load a listed capability whenever it is plausibly relevant to
+          the task. Loading makes the capability instructions and any tools it provides
+          available.
+      - type: function
+        name: get_forecast
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        description: Look up tomorrow's weather forecast for a city.
+- kind: message
+  direction: sent
+  at: 0.792
+  data:
+    type: conversation.item.create
+    item:
+      type: function_call_output
+      call_id: call-6ac8869c-9b28-439e-a573-50f68536724b-0
+      output: '{"message":"Capability ''weather'' loaded. Its instructions, if any,
+        follow."}'
+- kind: message
+  direction: sent
+  at: 0.792
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.2
+    response:
+      metadata:
+        pydantic_ai_inputs: '2'
+- kind: message
+  direction: received
+  at: 0.86
+  data:
+    session:
+      enable_noise_suppression: false
+      model: grok-voice-3.0
+      tools:
+      - type: function
+        function:
+          name: load_capability
+          description: Load a listed capability whenever it is plausibly relevant
+            to the task. Loading makes the capability instructions and any tools it
+            provides available.
+          parameters:
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                title: Id
+                type: string
+            required:
+            - id
+            title: LoadCapabilityArgs
+            type: object
+      - type: function
+        function:
+          name: get_forecast
+          description: Look up tomorrow's weather forecast for a city.
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+      keep_context: true
+      enable_phonetic_spelling: false
+      modalities:
+      - audio
+      input_audio_format: not specified
+      output_audio_format: not specified
+      tool_choice: auto
+      temperature: -1.0
+      max_response_output_tokens: inf
+      input_audio_transcription: null
+    type: session.updated
+    event_id: aca22500-d9c7-47a6-bd63-c2ddf1fd26e5
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.862
+  data:
+    type: conversation.item.added
+    event_id: dd9c72c5-441b-4754-bbbe-4d0b3e76d97f
+    item:
+      id: dbb23dcb-7347-4cd8-a780-a80648a56f97
+      object: realtime.item
+      type: function_call_output
+      status: completed
+      role: tool
+      call_id: call-6ac8869c-9b28-439e-a573-50f68536724b-0
+      output: '{"message":"Capability ''weather'' loaded. Its instructions, if any,
+        follow."}'
+      replayed: false
+    previous_item_id: 99b2b559-6d00-41b4-8c43-c4df0116cdba
+- kind: message
+  direction: received
+  at: 0.864
+  data:
+    type: response.created
+    event_id: dfd25110-cb24-4c52-ba59-8439b58230ca
+    response:
+      id: be211df4-fa0c-457f-bdb8-32f6e7194c29
+      object: realtime.response
+      output: []
+      status: in_progress
+      metadata:
+        pydantic_ai_inputs: '2'
+      status_details: unimplemented
+      usage: {}
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.104
+  data:
+    type: response.output_item.added
+    event_id: 8a670ad9-ddc9-4287-9dd9-189e118abd72
+    item:
+      id: 5376546c-9b8c-4e71-94e2-796ccb5099e4
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      replayed: false
+    response_id: be211df4-fa0c-457f-bdb8-32f6e7194c29
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.104
+  data:
+    type: conversation.item.added
+    event_id: 758d8674-5eeb-4eef-9f01-7caf4ea3f2bb
+    item:
+      id: 5376546c-9b8c-4e71-94e2-796ccb5099e4
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      replayed: false
+    previous_item_id: dbb23dcb-7347-4cd8-a780-a80648a56f97
+- kind: message
+  direction: received
+  at: 1.104
+  data:
+    type: response.content_part.added
+    event_id: 4a03a494-c0d6-41d9-8cd4-a7837ee75b83
+    item_id: 5376546c-9b8c-4e71-94e2-796ccb5099e4
+    previous_item_id: '0'
+    part:
+      type: audio
+      transcript: ''
+    response_id: be211df4-fa0c-457f-bdb8-32f6e7194c29
+    content_index: 0
+    output_index: 0
+- kind: message
+  direction: received
+  at: 1.339
+  data:
+    type: response.output_audio.delta
+    event_id: e304e401-bfac-4c72-8a6f-808f679ff14d
+    item_id: 5376546c-9b8c-4e71-94e2-796ccb5099e4
+    response_id: be211df4-fa0c-457f-bdb8-32f6e7194c29
+    delta: BwANABIAEQALAAcABgAHAAsAEgAZABoAFgAUABAACwAI
+    content_index: 0
+    output_index: 0
+    rid: 29df899b-efa3-4da1-ac54-1b443c6f3bda
+    latency: '0.47'
+    audio_duration_ms: 489
+    ts: 1793754036384
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.339
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: 29df899b-efa3-4da1-ac54-1b443c6f3bda
+    item_id: 5376546c-9b8c-4e71-94e2-796ccb5099e4
+    response_id: be211df4-fa0c-457f-bdb8-32f6e7194c29
+    delta: Getting that now.
+    content_index: 0
+    output_index: 0
+    rid: 29df899b-efa3-4da1-ac54-1b443c6f3bda
+    start_time: 0.0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.427
+  data:
+    type: response.output_audio.delta
+    event_id: 45d61161-9a9f-4565-8cf3-d229b78b4a04
+    item_id: 5376546c-9b8c-4e71-94e2-796ccb5099e4
+    response_id: be211df4-fa0c-457f-bdb8-32f6e7194c29
+    delta: 8v/2//n/AQAJABMAIgBAAGgAiQCXAJQAigCAAHMAYQBL
+    content_index: 0
+    output_index: 0
+    rid: 29df899b-efa3-4da1-ac54-1b443c6f3bda
+    audio_duration_ms: 275
+    ts: 1793754036475
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.428
+  data:
+    type: response.output_audio.delta
+    event_id: 48bf22a0-2ee2-4fec-8c56-50c88a9a6f5e
+    item_id: 5376546c-9b8c-4e71-94e2-796ccb5099e4
+    response_id: be211df4-fa0c-457f-bdb8-32f6e7194c29
+    delta: EAEkAUEBXQFvAXYBfQGJAY4BhgF0AWEBVAFFATEBGwEL
+    content_index: 0
+    output_index: 0
+    rid: 29df899b-efa3-4da1-ac54-1b443c6f3bda
+    audio_duration_ms: 61
+    ts: 1793754036479
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.435
+  data:
+    type: response.output_audio.delta
+    event_id: 13dcb0cb-4a49-4864-9bbc-92001d258085
+    item_id: 5376546c-9b8c-4e71-94e2-796ccb5099e4
+    response_id: be211df4-fa0c-457f-bdb8-32f6e7194c29
+    delta: HQAYABcAFQARAAsACAAJAAYAAAD4//T/9//8//z/+//+
+    content_index: 0
+    output_index: 0
+    rid: 29df899b-efa3-4da1-ac54-1b443c6f3bda
+    audio_duration_ms: 124
+    ts: 1793754036481
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.435
+  data:
+    type: response.output_audio_transcript.done
+    event_id: fae7ce4c-e5ba-4b2a-8d88-a018a6406155
+    item_id: 5376546c-9b8c-4e71-94e2-796ccb5099e4
+    transcript: Getting that now.
+    response_id: be211df4-fa0c-457f-bdb8-32f6e7194c29
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.435
+  data:
+    type: response.content_part.done
+    event_id: 636fa99a-008b-4dec-b9f2-ac4632ce29b9
+    item_id: 5376546c-9b8c-4e71-94e2-796ccb5099e4
+    response_id: be211df4-fa0c-457f-bdb8-32f6e7194c29
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.435
+  data:
+    type: response.output_audio.done
+    event_id: 8a8390b3-dffc-4117-a2f8-68dd92701c88
+    item_id: 5376546c-9b8c-4e71-94e2-796ccb5099e4
+    response_id: be211df4-fa0c-457f-bdb8-32f6e7194c29
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.435
+  data:
+    type: response.output_item.done
+    event_id: 44052485-3556-4887-8a38-14736f41be1e
+    item:
+      id: 5376546c-9b8c-4e71-94e2-796ccb5099e4
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      replayed: false
+    response_id: be211df4-fa0c-457f-bdb8-32f6e7194c29
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.435
+  data:
+    type: response.output_item.added
+    event_id: df5808d6-7414-43a0-91bd-09dd62fe7577
+    item:
+      id: 2a241aac-a296-4c51-9dbf-09824f788dd2
+      object: realtime.item
+      type: function_call
+      status: in_progress
+      role: user
+      call_id: call-b7dcdb5a-1640-4820-a66e-ccf89e504efc-1
+      name: get_forecast
+      arguments: ''
+      replayed: false
+    response_id: be211df4-fa0c-457f-bdb8-32f6e7194c29
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.435
+  data:
+    type: conversation.item.added
+    event_id: c1daf874-f270-4021-8b67-ba40857b4f02
+    item:
+      id: 2a241aac-a296-4c51-9dbf-09824f788dd2
+      object: realtime.item
+      type: function_call
+      status: in_progress
+      role: tool
+      call_id: call-b7dcdb5a-1640-4820-a66e-ccf89e504efc-1
+      name: get_forecast
+      arguments: ''
+      replayed: false
+    previous_item_id: 5376546c-9b8c-4e71-94e2-796ccb5099e4
+- kind: message
+  direction: received
+  at: 1.435
+  data:
+    type: response.function_call_arguments.delta
+    event_id: fd2b68b7-d32a-46cf-aa29-28fe6d944d56
+    item_id: 2a241aac-a296-4c51-9dbf-09824f788dd2
+    response_id: be211df4-fa0c-457f-bdb8-32f6e7194c29
+    delta: '{"city":"Paris"}'
+    call_id: call-b7dcdb5a-1640-4820-a66e-ccf89e504efc-1
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.435
+  data:
+    type: response.function_call_arguments.done
+    event_id: 1458251d-8756-4225-89b1-ef3357a6c842
+    item_id: 2a241aac-a296-4c51-9dbf-09824f788dd2
+    response_id: be211df4-fa0c-457f-bdb8-32f6e7194c29
+    output_index: 0
+    call_id: call-b7dcdb5a-1640-4820-a66e-ccf89e504efc-1
+    name: get_forecast
+    arguments: '{"city":"Paris"}'
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.436
+  data:
+    type: response.output_item.done
+    event_id: dfa29e7e-eb39-4987-b8e4-9817e3153faf
+    item:
+      id: 2a241aac-a296-4c51-9dbf-09824f788dd2
+      object: realtime.item
+      type: function_call
+      status: completed
+      role: user
+      call_id: call-b7dcdb5a-1640-4820-a66e-ccf89e504efc-1
+      name: get_forecast
+      arguments: '{"city":"Paris"}'
+      replayed: false
+    response_id: be211df4-fa0c-457f-bdb8-32f6e7194c29
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.436
+  data:
+    type: response.done
+    event_id: 864ea301-5dc2-4a62-b4f3-339920d0d14c
+    response:
+      id: be211df4-fa0c-457f-bdb8-32f6e7194c29
+      object: realtime.response
+      output:
+      - id: 5376546c-9b8c-4e71-94e2-796ccb5099e4
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: audio
+          transcript: Getting that now.
+        replayed: false
+      - id: 2a241aac-a296-4c51-9dbf-09824f788dd2
+        object: realtime.item
+        type: function_call
+        status: completed
+        role: user
+        call_id: call-b7dcdb5a-1640-4820-a66e-ccf89e504efc-1
+        name: get_forecast
+        arguments: '{"city":"Paris"}'
+        replayed: false
+      status: completed
+      metadata:
+        pydantic_ai_inputs: '2'
+      status_details: unimplemented
+      usage: {}
+    response_id: be211df4-fa0c-457f-bdb8-32f6e7194c29
+    usage:
+      input_tokens: 0
+      input_token_details:
+        text_tokens: 0
+        audio_tokens: 0
+        grok_tokens: 0
+      output_tokens: 52
+      output_token_details:
+        text_tokens: 4
+        audio_tokens: 48
+        grok_tokens: 0
+      total_tokens: 52
+      output_audio_seconds: 0.96
+      billable_audio_seconds: 1
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 1.437
+  data:
+    type: conversation.item.create
+    item:
+      type: function_call_output
+      call_id: call-b7dcdb5a-1640-4820-a66e-ccf89e504efc-1
+      output: It will be sunny and 24 degrees in Paris tomorrow.
+- kind: message
+  direction: sent
+  at: 1.437
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.3
+    response:
+      metadata:
+        pydantic_ai_inputs: '3'
+- kind: message
+  direction: received
+  at: 1.502
+  data:
+    type: conversation.item.added
+    event_id: a41faba5-e57c-49a6-bc09-6f613ece1516
+    item:
+      id: 90872ea9-7289-4441-a2fe-4d6ddb2bde5c
+      object: realtime.item
+      type: function_call_output
+      status: completed
+      role: tool
+      call_id: call-b7dcdb5a-1640-4820-a66e-ccf89e504efc-1
+      output: It will be sunny and 24 degrees in Paris tomorrow.
+      replayed: false
+    previous_item_id: 2a241aac-a296-4c51-9dbf-09824f788dd2
+- kind: message
+  direction: received
+  at: 1.506
+  data:
+    type: response.created
+    event_id: a89a3365-ac56-4c32-97ef-fdc22ec93126
+    response:
+      id: c1e9cb69-ac6e-4d54-96d4-7b362cd1975d
+      object: realtime.response
+      output: []
+      status: in_progress
+      metadata:
+        pydantic_ai_inputs: '3'
+      status_details: unimplemented
+      usage: {}
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.743
+  data:
+    type: response.output_item.added
+    event_id: 9867e2f8-def4-4e6f-b432-eb46f20dd6bc
+    item:
+      id: b3d77bd8-c2e9-475d-be3f-7952b770ca90
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      replayed: false
+    response_id: c1e9cb69-ac6e-4d54-96d4-7b362cd1975d
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.743
+  data:
+    type: conversation.item.added
+    event_id: 020f57b0-7fc4-4e43-8eb4-c11f9481d39b
+    item:
+      id: b3d77bd8-c2e9-475d-be3f-7952b770ca90
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      replayed: false
+    previous_item_id: 90872ea9-7289-4441-a2fe-4d6ddb2bde5c
+- kind: message
+  direction: received
+  at: 1.743
+  data:
+    type: response.content_part.added
+    event_id: dd98f7b0-7a2c-42f9-8242-a6f898f453c6
+    item_id: b3d77bd8-c2e9-475d-be3f-7952b770ca90
+    previous_item_id: '0'
+    part:
+      type: audio
+      transcript: ''
+    response_id: c1e9cb69-ac6e-4d54-96d4-7b362cd1975d
+    content_index: 0
+    output_index: 0
+- kind: message
+  direction: received
+  at: 2.426
+  data:
+    type: response.output_audio.delta
+    event_id: cc49ff7d-a101-4e64-9932-2f953ba734f0
+    item_id: b3d77bd8-c2e9-475d-be3f-7952b770ca90
+    response_id: c1e9cb69-ac6e-4d54-96d4-7b362cd1975d
+    delta: CAAOABQAEgANAAcABAACAAQACwARABIADwAMAAkABwAF
+    content_index: 0
+    output_index: 0
+    rid: 5235559c-cb5f-4b91-95ad-2a841ee11ace
+    latency: '0.88'
+    audio_duration_ms: 489
+    ts: 1793754037441
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.427
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: 5235559c-cb5f-4b91-95ad-2a841ee11ace
+    item_id: b3d77bd8-c2e9-475d-be3f-7952b770ca90
+    response_id: c1e9cb69-ac6e-4d54-96d4-7b362cd1975d
+    delta: Tomorrow in Paris looks sunny and 24
+    content_index: 0
+    output_index: 0
+    rid: 5235559c-cb5f-4b91-95ad-2a841ee11ace
+    start_time: 0.0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.489
+  data:
+    type: response.output_audio.delta
+    event_id: 60d7fa90-13c7-40df-a2e5-9da4ba4c73fb
+    item_id: b3d77bd8-c2e9-475d-be3f-7952b770ca90
+    response_id: c1e9cb69-ac6e-4d54-96d4-7b362cd1975d
+    delta: //8AAAAAAQACAAEAAgAEAAQAAgAAAAEAAQAAAAAA/f/8
+    content_index: 0
+    output_index: 0
+    rid: 5235559c-cb5f-4b91-95ad-2a841ee11ace
+    audio_duration_ms: 918
+    ts: 1793754037504
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.606
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: d630e8b4-22bf-4a9e-a852-5e67a19ee009
+    item_id: b3d77bd8-c2e9-475d-be3f-7952b770ca90
+    response_id: c1e9cb69-ac6e-4d54-96d4-7b362cd1975d
+    delta: ' degrees.'
+    content_index: 0
+    output_index: 0
+    rid: d630e8b4-22bf-4a9e-a852-5e67a19ee009
+    start_time: 2.56
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.773
+  data:
+    type: response.output_audio.delta
+    event_id: 29a92d83-9f1f-4c4b-8bdf-02bbb91d533c
+    item_id: b3d77bd8-c2e9-475d-be3f-7952b770ca90
+    response_id: c1e9cb69-ac6e-4d54-96d4-7b362cd1975d
+    delta: B/r69+v0b/Ea7q7rlurE6QjpyujO6F/qtOya70zyH/Xc
+    content_index: 0
+    output_index: 0
+    rid: 5235559c-cb5f-4b91-95ad-2a841ee11ace
+    audio_duration_ms: 979
+    ts: 1793754037812
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.81
+  data:
+    type: response.output_audio.delta
+    event_id: 37ef2a2b-eae2-4d85-ae59-537e421bb5c2
+    item_id: b3d77bd8-c2e9-475d-be3f-7952b770ca90
+    response_id: c1e9cb69-ac6e-4d54-96d4-7b362cd1975d
+    delta: Y/ph+nD64/qO+7P8lP3B/fL9VP6j/tT+OP/X/7sAYgGo
+    content_index: 0
+    output_index: 0
+    rid: 5235559c-cb5f-4b91-95ad-2a841ee11ace
+    audio_duration_ms: 61
+    ts: 1793754037861
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.826
+  data:
+    type: response.output_audio.delta
+    event_id: c129ef17-18c4-4fe8-a41b-f16828625a7e
+    item_id: b3d77bd8-c2e9-475d-be3f-7952b770ca90
+    response_id: c1e9cb69-ac6e-4d54-96d4-7b362cd1975d
+    delta: JwCc/yMA3//t/5D/7v/n/xIA3P8cAKX/WgDO/2n/cwDp
+    content_index: 0
+    output_index: 0
+    rid: d630e8b4-22bf-4a9e-a852-5e67a19ee009
+    audio_duration_ms: 918
+    ts: 1793754037868
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.827
+  data:
+    type: response.output_audio.delta
+    event_id: d164b60d-3b71-4979-a517-6bab6ad406c6
+    item_id: b3d77bd8-c2e9-475d-be3f-7952b770ca90
+    response_id: c1e9cb69-ac6e-4d54-96d4-7b362cd1975d
+    delta: /f/8//z/+//7//n/+v/6//v//P/9//7///8AAAAAAAAB
+    content_index: 0
+    output_index: 0
+    rid: d630e8b4-22bf-4a9e-a852-5e67a19ee009
+    audio_duration_ms: 61
+    ts: 1793754037872
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.827
+  data:
+    type: response.output_audio.delta
+    event_id: b106a11a-08e6-4469-a7eb-26b199a1a495
+    item_id: b3d77bd8-c2e9-475d-be3f-7952b770ca90
+    response_id: c1e9cb69-ac6e-4d54-96d4-7b362cd1975d
+    delta: +f/6//r/+//8//3//v//////AAAAAAAAAAAAAP///v/+
+    content_index: 0
+    output_index: 0
+    rid: d630e8b4-22bf-4a9e-a852-5e67a19ee009
+    audio_duration_ms: 85
+    ts: 1793754037873
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.827
+  data:
+    type: response.output_audio_transcript.done
+    event_id: 3cab683c-dc74-40e3-8a0c-555b63987f5e
+    item_id: b3d77bd8-c2e9-475d-be3f-7952b770ca90
+    transcript: Tomorrow in Paris looks sunny and 24 degrees.
+    response_id: c1e9cb69-ac6e-4d54-96d4-7b362cd1975d
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.827
+  data:
+    type: response.content_part.done
+    event_id: 4350544b-332f-4f3c-8e92-37b98d6a3e4c
+    item_id: b3d77bd8-c2e9-475d-be3f-7952b770ca90
+    response_id: c1e9cb69-ac6e-4d54-96d4-7b362cd1975d
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.827
+  data:
+    type: response.output_audio.done
+    event_id: a04b6e65-8587-4384-879a-db241607b773
+    item_id: b3d77bd8-c2e9-475d-be3f-7952b770ca90
+    response_id: c1e9cb69-ac6e-4d54-96d4-7b362cd1975d
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.827
+  data:
+    type: response.output_item.done
+    event_id: b1c81e81-08b7-4a82-b241-88bb07a1352a
+    item:
+      id: b3d77bd8-c2e9-475d-be3f-7952b770ca90
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      replayed: false
+    response_id: c1e9cb69-ac6e-4d54-96d4-7b362cd1975d
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.827
+  data:
+    type: response.done
+    event_id: 3b0e5bd6-37a6-419e-94e3-588b94831846
+    response:
+      id: c1e9cb69-ac6e-4d54-96d4-7b362cd1975d
+      object: realtime.response
+      output:
+      - id: b3d77bd8-c2e9-475d-be3f-7952b770ca90
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: audio
+          transcript: Tomorrow in Paris looks sunny and 24 degrees.
+        replayed: false
+      status: completed
+      metadata:
+        pydantic_ai_inputs: '3'
+      status_details: unimplemented
+      usage: {}
+    response_id: c1e9cb69-ac6e-4d54-96d4-7b362cd1975d
+    usage:
+      input_tokens: 0
+      input_token_details:
+        text_tokens: 0
+        audio_tokens: 0
+        grok_tokens: 0
+      output_tokens: 186
+      output_token_details:
+        text_tokens: 10
+        audio_tokens: 176
+        grok_tokens: 0
+      total_tokens: 186
+      output_audio_seconds: 3.52
+      billable_audio_seconds: 3
+    previous_item_id: null

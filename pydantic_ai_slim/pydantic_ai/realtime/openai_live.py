@@ -152,6 +152,7 @@ from .codec import (
     ToolCall,
     ToolResult,
     TruncateOutput,
+    UpdateTools,
 )
 from .model import RealtimeClientSecret, RealtimeModel, RealtimeProviderSession, WebRTCAnswer, WebRTCSession
 from .profiles import RealtimeModelProfileSpec
@@ -1034,20 +1035,8 @@ class OpenAILiveConnection(RealtimeConnection):
                 del self._unacknowledged_text[event_id]
                 raise
             return True
-        if isinstance(content, InstructionChangeContext):
-            # The agent's instructions are the backend's, not Live's (see `OpenAILiveResponsesDelegation`), and only
-            # the backend's settings can be updated once the session has started. Its instructions can only be
-            # replaced, so the change is appended to them, as a standard model would receive it after its prefix.
-            instructions = '\n\n'.join(
-                text for text in (self._backend.get('instructions'), content.system_prompt) if text
-            )
-            await self._send_event(
-                {
-                    'type': _SESSION_UPDATE_EVENT,
-                    'session': {'delegation': {'type': 'responses', 'responses': {'instructions': instructions}}},
-                }
-            )
-            self._backend['instructions'] = instructions
+        if isinstance(content, (InstructionChangeContext, UpdateTools)):
+            await self._update_backend(content)
             return True
         if isinstance(content, TextContext):
             # Context that `thinking` carries without prompting speech itself. The model may still
@@ -1095,6 +1084,31 @@ class OpenAILiveConnection(RealtimeConnection):
                 self._input_audio_end, self._audio_end = booked
                 raise
         return True
+
+    async def _update_backend(self, content: InstructionChangeContext | UpdateTools) -> None:
+        """Update the delegation backend's instructions or tools, the agent's, with `session.update`.
+
+        The agent's instructions and tools are the backend's, not Live's (see `OpenAILiveResponsesDelegation`), and only
+        the backend's settings can be updated once the session has started. A redial starts the new session with the
+        update too.
+        """
+        responses: dict[str, Any]
+        if isinstance(content, InstructionChangeContext):
+            # The backend's instructions can only be replaced, so the change is appended to them, as a standard model
+            # would receive it after its prefix.
+            instructions = '\n\n'.join(
+                text for text in (self._backend.get('instructions'), content.system_prompt) if text
+            )
+            responses = {'instructions': instructions}
+        else:
+            # The backend calls the tools, so its list is the one replaced. It also holds the native tools, which stay.
+            tools = [tool_def_to_live(tool) for tool in content.tools]
+            tools += [tool for tool in self._backend.get('tools', ()) if tool['type'] != 'function']
+            responses = {'tools': tools}
+        await self._send_event(
+            {'type': _SESSION_UPDATE_EVENT, 'session': {'delegation': {'type': 'responses', 'responses': responses}}}
+        )
+        self._backend.update(responses)
 
     def _start_idle_audio(self) -> None:
         """Stream silence whenever the application sends no audio, until the connection closes.
