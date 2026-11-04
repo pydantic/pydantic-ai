@@ -581,6 +581,8 @@ class RealtimeConnectContext:
     be modified in place either.
     """
 
+    _: KW_ONLY
+
     model: RealtimeModel
     """The realtime model the session connects to. Read-only."""
 

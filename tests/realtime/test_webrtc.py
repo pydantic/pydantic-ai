@@ -214,10 +214,13 @@ async def test_agent_realtime_offer_carries_the_processed_history() -> None:
     the history.
     """
     history = [ModelRequest(parts=[UserPromptPart(content='My code is secret-42.')])]
-    redacted = [ModelRequest(parts=[UserPromptPart(content='[redacted]')])]
+    redacted: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='[redacted]')])]
     model = _SignalingModel()
 
-    agent = Agent(capabilities=[ProcessHistory(lambda messages: redacted)])
+    def redact(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return redacted
+
+    agent = Agent(capabilities=[ProcessHistory(redact)])
     await agent.realtime(model, message_history=history).answer_webrtc_offer(SAMPLE_SDP_OFFER)
     assert model.message_history == redacted
 

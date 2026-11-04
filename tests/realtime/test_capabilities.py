@@ -647,7 +647,7 @@ async def test_before_realtime_connect_changes_the_seed() -> None:
         calls.append(f'before_realtime_connect: {_CONNECT_AMBIENT.get()}')
         assert ctx.realtime_session is None
         assert connect_context.model is model
-        assert connect_context.model_settings == RealtimeModelSettings(voice='alloy')
+        assert connect_context.model_settings == RealtimeModelSettings(max_tokens=100)
         assert [tool.name for tool in connect_context.model_request_parameters.function_tools] == ['lookup']
         assert connect_context.messages == _SECRET_HISTORY
         return replace(connect_context, messages=trimmed)
@@ -658,7 +658,7 @@ async def test_before_realtime_connect_changes_the_seed() -> None:
     async def lookup() -> str:
         return 'found'  # pragma: no cover
 
-    model = _RecordingModel(settings=RealtimeModelSettings(voice='alloy'))
+    model = _RecordingModel(settings=RealtimeModelSettings(max_tokens=100))
     async with agent.realtime(model, message_history=_SECRET_HISTORY).session() as session:
         async for _ in session:
             pass
@@ -696,7 +696,7 @@ def _replace_model(connect_context: RealtimeConnectContext) -> RealtimeConnectCo
 
 
 def _assign_model_settings(connect_context: RealtimeConnectContext) -> RealtimeConnectContext:
-    connect_context.model_settings = RealtimeModelSettings(voice='alloy')
+    connect_context.model_settings = RealtimeModelSettings(max_tokens=100)
     return connect_context
 
 
@@ -715,7 +715,7 @@ async def test_before_realtime_connect_read_only_fields(
 
     model = _RecordingModel()
     with pytest.raises(UserError, match='`before_realtime_connect` can only change `messages`'):
-        await _drain(Agent(capabilities=[Hooks[None](before_realtime_connect=change)]), model)
+        await _drain(Agent(capabilities=[Hooks[None](before_realtime_connect=change)], deps_type=type(None)), model)
     assert model.messages is None
 
 
@@ -735,7 +735,7 @@ async def test_before_realtime_connect_error_goes_through_on_run_error() -> None
 
     model = _RecordingModel()
     with pytest.raises(RuntimeError, match='seed rejected'):
-        await _drain(Agent(capabilities=[hooks]), model, message_history=_SECRET_HISTORY)
+        await _drain(Agent(capabilities=[hooks], deps_type=type(None)), model, message_history=_SECRET_HISTORY)
     assert [str(error) for error in errors] == ['seed rejected']
     assert model.messages is None
 
