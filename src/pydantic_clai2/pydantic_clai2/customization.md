@@ -175,11 +175,11 @@ delete its source file yourself to remove it from disk.
 
 ### Repository instruction boundaries
 
-Use the built-in repo_context plugin's `walk_up` option to enable ancestor
-instructions; its default is false. List the inclusive stops with
+The built-in repo_context plugin's `walk_up` option, on by default, loads ancestor
+instructions. List the inclusive stops with
 `/set repo_context.walk_up_roots '["~", "/srv/projects"]'` (default `["~"]`,
 home): roots are resolved, following symlinks, and the walk stops at the nearest
-one containing the workspace, or scans only the workspace when none does.
+one containing the workspace, or at the repository root when none does.
 Authorize shared instruction targets with
 `/set repo_context.autoload_symlink_roots '["~/agent-context"]'` (default `[]`).
 

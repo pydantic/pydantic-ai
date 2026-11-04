@@ -108,7 +108,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `sessions.naming` | `true` | Name saved sessions in the background using a model. |
 | `sessions.naming_model` | `null` | Naming model override; null uses the current model. |
 | `updates.channel` | `stable` | Where /update looks: stable PyPI releases, or main for the newest CLAI commit on main. |
-| `repo_context.walk_up_roots` | `["~"]` | User-only JSON list of inclusive stops for instruction autoload when the plugin's `walk_up` is on; the nearest one containing the workspace applies. |
+| `repo_context.walk_up_roots` | `["~"]` | User-only JSON list of inclusive stops for instruction autoload when the plugin's `walk_up` is on; the nearest one containing the workspace applies, and with none the walk stops at the repository root. |
 | `repo_context.autoload_symlink_roots` | `[]` | User-only JSON list of authorized external instruction-symlink target directories, for autoload only. |
 | `worktrees.remove_commands` | `{}` | User-only repository-to-argv map for confirmed exit cleanup. See [Register a worktree removal command](#register-a-worktree-removal-command). |
 
@@ -476,29 +476,40 @@ next start. In the `/set` menu a value the project
 sets carries a muted `project` mark after it, and the details panel names the
 origin. CLAI prints the file it found when it starts.
 
-`AGENTS.md` or `CLAUDE.md` in the launch directory is read automatically by the
-built-in `repo_context` plugin (harness `RepoContext`), which is separate from
-the project file. `/plugins disable repo_context` turns it off, for this and
+The built-in `repo_context` plugin (harness `RepoContext`), which is separate
+from the project file, reads instruction files automatically: one per directory,
+`AGENTS.md` else `CLAUDE.md`, from the launch directory and the directories above
+it. Under your home the walk-up stops at `~`;
+elsewhere it stops at the repository root (see
+[Repository instructions](#repository-instructions)). A subdirectory's file is added the first time
+the agent reads or lists something in it. `/plugins disable repo_context` turns it off, for this and
 every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](../PLUGINS.md#the-built-in-plugins) for its settings.
 
 ### Repository instructions
 
-By default, `repo_context` reads only the workspace's `CLAUDE.md` and `AGENTS.md`.
-Enable its existing `walk_up` option to read ancestors too:
+`repo_context` reads the workspace's instruction file and those above it. Two
+user-only settings set where that walk stops, and which shared directories an
+instruction symlink may point into:
 
 ```text
-/plugins add repo_context pydantic_clai2.builtin_plugins.repo_context '{"walk_up": true}'
 /set repo_context.walk_up_roots '["~", "/srv/projects"]'
 /set repo_context.autoload_symlink_roots '["~/agent-context"]'
 ```
 
-`walk_up` defaults to `false`; setting roots does not turn it on. When enabled,
-it reads ancestors up to the nearest listed root that contains the workspace,
-inclusive: with the list above, a workspace under `/srv/projects` stops there and
-one elsewhere under your home stops at `~`. `repo_context.walk_up_roots` defaults
-to `["~"]`, your home. When no listed root contains the workspace, only the
-workspace is scanned. `repo_context.autoload_symlink_roots` defaults to `[]`; set
+The walk reads ancestors up to the nearest listed root that contains the
+workspace, inclusive: with the list above, a workspace under `/srv/projects`
+stops there and one elsewhere under your home stops at `~`.
+`repo_context.walk_up_roots` defaults to `["~"]`, your home. When no listed root
+contains the workspace, as in a container's `/app`, the walk stops at the
+repository root, the nearest directory with a `.git`. Avoid listing a root other
+users can write to, such as `/tmp`. To scan only the workspace, turn the walk off:
+
+```text
+/plugins add repo_context pydantic_clai2.builtin_plugins.repo_context '{"walk_up": false}'
+```
+
+`repo_context.autoload_symlink_roots` defaults to `[]`; set
 it to a JSON list of directories if your instruction files are symlinks into a
 shared directory.
 
@@ -2858,8 +2869,10 @@ The coding tools,
 default, `/plugins disable coder` for a chat-only shell. The model can also ask
 you multiple-choice questions mid-run through the built-in `ask_user` plugin;
 see [Questions from the model](#questions-from-the-model). The built-in
-`repo_context` plugin reads `AGENTS.md` or `CLAUDE.md` from the launch directory
-into the agent's instructions; `/plugins disable repo_context` turns that off.
+`repo_context` plugin reads the instruction files (`AGENTS.md`, else `CLAUDE.md`)
+of the launch directory and its ancestors into the agent's
+instructions, and a subdirectory's as the agent works there; `/plugins disable
+repo_context` turns that off.
 On Windows, CLAI does not provide an agent workspace or repository context yet.
 `coder` clears old tool results as the context fills. The built-in `compaction`
 plugin, [described in Compacting the conversation](#compacting-the-conversation), is on by default beside it:
@@ -3220,7 +3233,8 @@ The agent has the `coder`, `repo_context`, and `compaction` built-ins,
 configured as in `clai2`, except that `coder`'s `task_control` is off: pass
 `plugin_settings={'coder': {'task_control': True}}` to give the model the task
 tools and background delegation. The file and shell tools work in `workspace`,
-and `AGENTS.md` or `CLAUDE.md` is read from it. A capability you pass that
+and the instruction files (`AGENTS.md`, else `CLAUDE.md`) of `workspace` and its
+ancestors are read, plus a subdirectory's as the agent works there. A capability you pass that
 supplies a workspace, such as a sandbox, takes its place, and a run's own
 `workspace=` replaces it for that run. Commands get this process's environment
 minus LLM provider API keys. Model names resolve as in `clai2`, the agent's own
