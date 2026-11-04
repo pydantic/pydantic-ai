@@ -1045,27 +1045,49 @@ def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[_ToolPair]:
     pairs: list[_ToolPair] = []
     for message_index, msg in enumerate(messages):
         if isinstance(msg, ModelResponse):
-            for part_index, part in enumerate(msg.parts):
-                if isinstance(part, ToolCallPart) and part.tool_call_id:
-                    open_calls.setdefault(part.tool_call_id, deque()).append(((message_index, part_index), part))
+            _queue_calls(msg, message_index, open_calls)
         elif isinstance(msg, ModelRequest):  # pragma: no branch
-            for part_index, part in enumerate(msg.parts):
-                if isinstance(part, ToolReturnPart):
-                    pending = open_calls.get(part.tool_call_id)
-                    if pending:
-                        call_position, call = pending.popleft()
-                        if part.outcome != 'retried':
-                            pairs.append(
-                                _ToolPair(
-                                    part.tool_call_id,
-                                    call.tool_name,
-                                    call,
-                                    len(pairs),
-                                    call_position,
-                                    (message_index, part_index),
-                                )
-                            )
+            _settle_returns(msg, message_index, open_calls, pairs)
     return pairs
+
+
+def _queue_calls(
+    response: ModelResponse,
+    message_index: int,
+    open_calls: dict[str, deque[tuple[tuple[int, int], ToolCallPart]]],
+) -> None:
+    """Queue *response*'s calls by ID, oldest first, so a later return answers them in order."""
+    for part_index, part in enumerate(response.parts):
+        if isinstance(part, ToolCallPart) and part.tool_call_id:
+            open_calls.setdefault(part.tool_call_id, deque()).append(((message_index, part_index), part))
+
+
+def _settle_returns(
+    request: ModelRequest,
+    message_index: int,
+    open_calls: dict[str, deque[tuple[tuple[int, int], ToolCallPart]]],
+    pairs: list[_ToolPair],
+) -> None:
+    """Answer the oldest open call of each return in *request*, pairing it unless that return was retried."""
+    for part_index, part in enumerate(request.parts):
+        if not isinstance(part, ToolReturnPart):
+            continue
+        pending = open_calls.get(part.tool_call_id)
+        if not pending:
+            continue
+        call_position, call = pending.popleft()
+        if part.outcome == 'retried':
+            continue
+        pairs.append(
+            _ToolPair(
+                part.tool_call_id,
+                call.tool_name,
+                call,
+                len(pairs),
+                call_position,
+                (message_index, part_index),
+            )
+        )
 
 
 CLEARED_TOOL_RESULT_METADATA = 'pydantic-ai-harness.compaction.cleared-tool-result.v1'
