@@ -23,7 +23,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.ask_user import AskUser, AskUserRequest, AskUserResponse
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
-from pydantic_clai2._app import DEFAULT_PLUGINS
+from pydantic_clai2.app import DEFAULT_PLUGINS
 from pydantic_clai2.builtin_plugins import aoe
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
@@ -38,7 +38,7 @@ from pydantic_clai2.plugins import (
     TurnStart,
     load_plugin,
 )
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.session_runtime import create_shell
 
 # AoE only starts CLAI in a tmux pane on a POSIX system; the fakes and hook-file checks assume one too.
@@ -46,7 +46,9 @@ pytestmark = pytest.mark.skipif(sys.platform == 'win32', reason='AoE and its hoo
 
 READINESS_WAIT_TIMEOUT = 10
 INSTANCE = 'abcd1234ef567890'
-PANE_PID = 4242
+FAKE_PID = 1 << 22
+"""Above every process ID Linux (under `2**22`) and macOS assign, so no fake process is this one."""
+PANE_PID = FAKE_PID + 4242
 
 
 @dataclass
@@ -258,7 +260,9 @@ async def test_inert_outside_an_aoe_agent_session(env: Fixture, monkeypatch: pyt
         system.pane_pid = 'not-a-pid'
     else:
         system.processes = (
-            f'{os.getpid()} 300 python\n300 200 /bin/sh -c pytest\n200 {PANE_PID} /usr/bin/python3 /usr/bin/clai2\n'
+            f'{os.getpid()} {FAKE_PID + 300} python\n'
+            f'{FAKE_PID + 300} {FAKE_PID + 200} /bin/sh -c pytest\n'
+            f'{FAKE_PID + 200} {PANE_PID} /usr/bin/python3 /usr/bin/clai2\n'
         )
     loaded = await load()
     assert not reporting(loaded)

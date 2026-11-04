@@ -9,39 +9,36 @@ import re
 import secrets
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Annotated, Any, Protocol, TypeAlias, runtime_checkable
+from typing import TYPE_CHECKING, Annotated, Any, TypeAlias
 
 from pydantic import Field, TypeAdapter
 
 from pydantic_ai import Agent
+from pydantic_ai._framing import neutralize_tags
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
-    ModelRequestPart,
     ModelResponse,
-    ModelResponsePart,
-    NativeToolCallPart,
-    NativeToolReturnPart,
     RetryFeedbackPart,
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SystemPromptPart,
     TextContent,
-    TextPart,
-    ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai_harness._durable import in_durable_context
+from pydantic_ai_harness._judge import claim_offset_limits, render_part
+from pydantic_ai_harness._message_text import CHARS_PER_TOKEN, user_prompt_text
 
 if TYPE_CHECKING:
     from pydantic_ai.agent import AgentRunResult
     from pydantic_ai.models import ModelRequestContext
-    from pydantic_ai.usage import UsageLimits
 
 
 @dataclass
@@ -59,12 +56,6 @@ class Steer:
 
 TrajectoryVerdict: TypeAlias = AllGood | Steer
 """What one evaluation concludes: the run is on track, or it needs the enclosed correction."""
-
-# Same ~4 characters-per-token heuristic as `pydantic_ai_harness.compaction`'s
-# `estimate_token_count`. Duplicated here because that helper budgets `ModelMessage`s while
-# the window here is clamped on the rendered transcript string; fold the two together if a
-# shared text-budget helper ever lands.
-_CHARS_PER_TOKEN = 4
 
 _JUDGE_INSTRUCTIONS = (
     "You are a trajectory judge: you review another AI agent's run while it is still in "
@@ -87,8 +78,7 @@ _STEERING_ORIGIN = 'pydantic-ai-harness.trajectory_judge.steering.v1'
 
 The framework note is a `SystemPromptPart` and the judge's message a `TextContent`; both carry
 `{'origin': _STEERING_ORIGIN, 'judge': name, 'ref': ref}`, where `ref` is the random id the note names its
-frame by. Identify steering by this metadata, never by its
-model-visible text.
+frame by. Identify steering by this metadata, never by its model-visible text.
 """
 
 _STEERING_TAG = 'judge_feedback'
@@ -112,16 +102,17 @@ def _steering_note(ref: str) -> str:
     )
 
 
-# TODO: switch to `pydantic_ai._framing.wrap()` once it lands (#10547); this matches its escaping of
-# data frames, which neutralizes the framework's `system` voice tag as well as the frame's own tag.
+# TODO: switch to `wrap()` from the public `pydantic_ai.framing` module once it lands (#10957), registering
+# `judge_feedback` as a framing tag there.
 # The slash is grouped with the whitespace after it, so the two whitespace runs can't overlap and
 # backtrack quadratically on a long run of spaces after a `<`. A tag name at the very end of the
 # message also matches: the wrapper's own text right after it would otherwise complete the tag.
-_NEUTRALIZED_TAG_OPENER = re.compile(rf'<(?=\s*(?:/\s*)?(?:system|{_STEERING_TAG})(?:[\s/>]|$))', re.IGNORECASE)
-"""The `<` that opens anything a parser could read as a `system` or `judge_feedback` tag, opening or closing.
+_STEERING_TAG_OPENER = re.compile(rf'<(?=\s*(?:/\s*)?{_STEERING_TAG}(?:[\s/>]|$))', re.IGNORECASE)
+"""The `<` that opens anything a parser could read as a `judge_feedback` tag, opening or closing.
 
-`system` is the framework's voice tag: on a model without inline system prompts, real framework notes
-reach it as `<system>…</system>` user text, so a judge message must not be able to imitate one.
+Core's own framing tags, `system` among them, are left to `neutralize_tags`. `system` is the framework's
+voice tag: on a model without inline system prompts, real framework notes reach it as `<system>…</system>`
+user text, so a judge message must not be able to imitate one.
 """
 
 
@@ -132,13 +123,12 @@ _positive_int_adapter: TypeAdapter[int] = TypeAdapter(Annotated[int, Field(stric
 class TrajectoryJudge(AbstractCapability[AgentDepsT]):
     """Review a live run with a second model on a cadence, and steer it mid-run.
 
-    Long-horizon runs drift: instructions fade, unsupported claims compound, and the agent
-    wanders off the goal. A `TrajectoryJudge` evaluates the most recent `window` tokens of
-    the run's trajectory every `every` model requests, concurrently with the run, and
-    delivers exactly one verdict per evaluation: `AllGood`, or `Steer` with a corrective
-    message. Steering is enqueued into the run (`RunContext.enqueue`, `'asap'` priority) as a
-    framework note in system voice followed by the judge's message as quoted data, attributed to
-    the judge, so the running agent course-corrects while recovery is still cheap.
+    A `TrajectoryJudge` evaluates the most recent `window` tokens of the run's trajectory
+    every `every` model requests, concurrently with the run, and delivers exactly one
+    verdict per evaluation: `AllGood`, or `Steer` with a corrective message. Steering is
+    enqueued into the run (`RunContext.enqueue`, `'asap'` priority) as a framework note in
+    system voice followed by the judge's message as quoted data, attributed to the judge, so
+    the running agent can course-correct.
 
     At most one evaluation per judge is in flight at a time; a cadence tick that finds one
     still running is skipped. An evaluation still in flight when the run ends is cancelled.
@@ -253,7 +243,7 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
         durable-capable agent run outside its workflow or flow is unaffected, matching how
         core's durability capabilities scope their own `before_run` rejections.
         """
-        if _in_durable_context(ctx):
+        if in_durable_context(ctx):
             raise UserError(
                 '`TrajectoryJudge` cannot be used inside a durable workflow or flow: the judge '
                 'evaluation runs in orchestration context, so its model calls are not checkpointed '
@@ -353,7 +343,7 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
                 output_type=[AllGood, Steer],
                 conversation_id=ctx.conversation_id,
                 usage=ctx.usage,
-                usage_limits=_claim_offset_limits(ctx.usage_limits),
+                usage_limits=claim_offset_limits(ctx.usage_limits),
             )
         finally:
             self._release_claim(ctx)
@@ -404,28 +394,15 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
         return None
 
 
-def _claim_offset_limits(limits: UsageLimits | None) -> UsageLimits | None:
-    """The run's limits with `request_limit` raised by the one request the launch claimed.
-
-    The claim already occupies a slot in the shared `usage.requests`, so against the
-    unadjusted limit the judge's own preflight would count its in-flight request twice and
-    refuse a call the budget affords. Raising the limit by exactly the claim keeps the
-    judge's effective budget identical to the run's.
-    """
-    if limits is None or limits.request_limit is None:
-        return limits
-    return replace(limits, request_limit=limits.request_limit + 1)
-
-
 def _steering_parts(judge: str, message: str) -> tuple[SystemPromptPart, TextContent]:
     """A framework note in system voice, followed by the judge's steering as data.
 
     The note is the framework's own fixed wording, so it is a `SystemPromptPart`. The message comes
     from the judge model, which read the run's tool results, so it is untrusted and goes on the user
-    channel, quoted in a `<judge_feedback>` tag. It can't forge that tag's end, or the `<system>` tag the framework's own
-    voice is rendered in on models without inline system prompts. Both keep the default
-    conversation scope: a course correction should keep applying on later requests, not only the
-    one it arrives with. Both carry the same metadata, which survives merged requests and
+    channel, quoted in a `<judge_feedback>` tag. It can't write that tag's end, any other framing tag core
+    writes, or the `<system>` tag the framework's own voice is rendered in on models without inline system
+    prompts. Both keep the default conversation scope: a course correction should keep applying on later
+    requests, not only the one it arrives with. Both carry the same metadata, which survives merged requests and
     continued conversations.
 
     A random `ref`, made once here, ties the note to its frame. Both parts store it in their text (and in
@@ -433,7 +410,7 @@ def _steering_parts(judge: str, message: str) -> tuple[SystemPromptPart, TextCon
     """
     ref = secrets.token_hex(8)
     metadata = {'origin': _STEERING_ORIGIN, 'judge': judge, 'ref': ref}
-    body = _NEUTRALIZED_TAG_OPENER.sub('&lt;', message)
+    body = _STEERING_TAG_OPENER.sub('&lt;', neutralize_tags(message))
     data = f'<{_STEERING_TAG} judge="{html.escape(judge)}" ref="{ref}">\n{body}\n</{_STEERING_TAG}>'
     return SystemPromptPart(_steering_note(ref), metadata=metadata), TextContent(data, metadata=dict(metadata))
 
@@ -466,7 +443,7 @@ def _judge_prompt(messages: Sequence[ModelMessage], window: int, run_id: str | N
     """
     earlier, request, rest = (html.escape(part, quote=False) for part in _render_transcript(messages, run_id))
     transcript = '\n'.join(part for part in (earlier, request, rest) if part)
-    max_chars = window * _CHARS_PER_TOKEN
+    max_chars = window * CHARS_PER_TOKEN
     if len(transcript) <= max_chars:
         return _prompt_with(transcript)
     request_budget = max_chars // 2
@@ -512,18 +489,6 @@ def _run_start(messages: Sequence[ModelMessage], run_id: str | None) -> int:
     return 0
 
 
-def _feedback_line(part: ModelRequestPart | ModelResponsePart) -> str | None:
-    """Render retry feedback that answers no tool call, or `None` for any other part."""
-    if isinstance(part, RetryFeedbackPart):
-        return f'retry (output): {part.model_response()}'
-    # TODO(v3): remove RetryPromptPart
-    if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
-        # A hand-built history passed as `message_history` can still hold one; the model
-        # translates it only when the request goes out.
-        return f'retry ({part.tool_name or "output"}): {part.model_response()}'
-    return None
-
-
 def _render_lines(messages: Sequence[ModelMessage]) -> tuple[list[str], list[str]]:
     """Render messages as lines, split into the opening user request and everything after it."""
     request: list[str] = []
@@ -534,62 +499,14 @@ def _render_lines(messages: Sequence[ModelMessage]) -> tuple[list[str], list[str
             user_lines = lines
         for part in message.parts:
             if isinstance(part, UserPromptPart) and (judge := _steering_judge(part)) is not None:
-                lines.append(f'trajectory judge {judge} steered: {_prompt_text(part.content)}')
+                lines.append(f'trajectory judge {judge} steered: {user_prompt_text(part)}')
             elif isinstance(part, UserPromptPart):
-                text = _prompt_text(part.content)
+                text = user_prompt_text(part)
                 if text:
                     user_lines.append(f'user: {text}')
-            elif isinstance(part, ToolReturnPart):
-                user_lines = lines
-                lines.append(
-                    f'retry ({part.tool_name}): {part.model_response_str(wrap_if_error=False)}'
-                    if part.outcome == 'retried'
-                    else f'tool {part.tool_name} returned: {part.model_response_str()}'
-                )
-            elif isinstance(part, NativeToolReturnPart):
-                lines.append(f'native tool {part.tool_name} returned: {part.model_response_str()}')
-            elif (retry := _feedback_line(part)) is not None:
-                user_lines = lines
-                lines.append(retry)
-            elif isinstance(part, TextPart):
-                if part.content:
-                    lines.append(f'assistant: {part.content}')
-            elif isinstance(part, ToolCallPart):
-                lines.append(f'assistant called tool {part.tool_name} with {part.args_as_json_str()}')
-            elif isinstance(part, NativeToolCallPart):
-                lines.append(f'assistant called native tool {part.tool_name} with {part.args_as_json_str()}')
-            elif isinstance(part, SpeechPart) and part.transcript:
-                (user_lines if part.speaker == 'user' else lines).append(f'{part.speaker}: {part.transcript}')
+            elif (line := render_part(part)) is not None:
+                # A tool return or retry is the agent's activity, so it ends the opening request.
+                if isinstance(part, ToolReturnPart | RetryFeedbackPart | RetryPromptPart):  # pyright: ignore[reportDeprecated]
+                    user_lines = lines
+                (user_lines if isinstance(part, SpeechPart) and part.speaker == 'user' else lines).append(line)
     return request, lines
-
-
-@runtime_checkable
-class _Durability(Protocol):
-    """The part of the durable-execution capabilities' shared base this check needs."""
-
-    in_durable_context: bool
-
-
-# `_monty_exec.in_temporal_workflow` asks Temporal directly, because only Temporal replays
-# `run_code`. This one covers every engine because the judge launch is unsafe under all of them.
-def _in_durable_context(ctx: RunContext[AgentDepsT]) -> bool:
-    """Whether this run executes inside a durable workflow or flow, without importing the optional extras."""
-    return any(
-        any(base.__module__.startswith('pydantic_ai.durable_exec') for base in type(capability).__mro__)
-        and isinstance(capability, _Durability)
-        and capability.in_durable_context
-        for capability in ctx.capabilities.values()
-    )
-
-
-def _prompt_text(content: str | Sequence[object]) -> str:
-    """The text of a user prompt; non-text content (images, files) is omitted."""
-    if isinstance(content, str):
-        return content
-    texts: list[str] = []
-    for item in content:
-        if isinstance(item, str):
-            texts.append(item)
-        elif isinstance(item, TextContent):
-            texts.append(item.content)
-    return ' '.join(texts)

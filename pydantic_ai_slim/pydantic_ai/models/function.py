@@ -41,7 +41,6 @@ from ..profiles import ModelProfile, ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
-    Model,
     ModelRequestParameters,
     StreamedResponse,
     _has_instruction_state,  # pyright: ignore[reportPrivateUsage]
@@ -50,10 +49,11 @@ from . import (
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
 )
+from ._in_memory_batch import InMemoryBatchModel
 
 
 @dataclass(init=False)
-class FunctionModel(Model):
+class FunctionModel(InMemoryBatchModel):
     """A model controlled by a local function.
 
     Apart from `__init__`, all methods are private or match those of the base class.
@@ -64,6 +64,9 @@ class FunctionModel(Model):
     # instead of requiring a subclass to restate what the profile already says.
     supported_tool_deferral_modes = frozenset({'standalone', 'with_tool_search'})
     supported_tool_addition_modes = frozenset({'by_reference', 'with_definitions'})
+    # Nor is there a model to tell what the `<system>` tag means, and the announcement would show up in every
+    # history a test inspects.
+    _announces_system_voice = False
 
     function: FunctionDef | None
     stream_function: StreamFunctionDef | None
@@ -379,14 +382,13 @@ class FunctionStreamedResponse(StreamedResponse):
                         if delta.json_args:
                             response_tokens = _estimate_string_tokens(delta.json_args)
                             self._usage += usage.RequestUsage(output_tokens=response_tokens)
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                        for event in self._parts_manager.handle_tool_call_delta_events(
                             vendor_part_id=dtc_index,
                             tool_name=delta.name,
                             args=delta.json_args,
                             tool_call_id=delta.tool_call_id,
-                        )
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
+                        ):
+                            yield event
                     elif isinstance(delta, NativeToolCallPart):
                         if content := delta.args_as_json_str():  # pragma: no branch
                             response_tokens = _estimate_string_tokens(content)
@@ -478,6 +480,7 @@ def _estimate_usage(  # noqa: C901
                 elif isinstance(part, FilePart):
                     response_tokens += _estimate_string_tokens([part.content])
                 elif isinstance(part, CompactionPart):
+                    # A provider's own compaction item is opaque state, not text the model reads.
                     pass
                 elif isinstance(part, SpeechPart):
                     response_tokens += _estimate_string_tokens(part.content)

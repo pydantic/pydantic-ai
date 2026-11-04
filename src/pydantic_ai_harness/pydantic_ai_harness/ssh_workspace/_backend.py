@@ -85,6 +85,16 @@ def _not_started(timeout: float) -> WorkspaceTimeoutError:
     )
 
 
+def _remaining(timeout: float | None, started: float) -> float | None:
+    """Return what is left of `timeout` since `started`, or raise `WorkspaceTimeoutError` if none is."""
+    if timeout is None:
+        return None
+    remaining = timeout - (anyio.current_time() - started)
+    if remaining <= 0:
+        raise _not_started(timeout)
+    return remaining
+
+
 class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
     """Run commands on a remote host with the system's OpenSSH `ssh` client.
 
@@ -185,12 +195,7 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
         # The first command also resolves the working directory, within the same timeout.
         started = anyio.current_time()
         directory = await self._resolve_working_dir(timeout=timeout)
-        if timeout is not None:
-            remaining = timeout - (anyio.current_time() - started)
-            if remaining <= 0:
-                raise _not_started(timeout)
-            timeout = remaining
-        return await self._remote(directory, line, env=merged_env, timeout=timeout)
+        return await self._remote(directory, line, env=merged_env, timeout=_remaining(timeout, started))
 
     async def _remote(
         self, directory: str, line: str, *, env: Mapping[str, str], timeout: float | None
@@ -200,6 +205,7 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
         # A fresh nonce per command: the marker text is otherwise a constant a child of the command can print.
         nonce = secrets.token_hex(16)
         marker = f'__pydantic_ai_ssh_done_{nonce}__'
+        pattern = re.compile(rf'\n{re.escape(marker)}(\d+)\n')
         # The shell parses a `{ ...; }` group whole before running it, so the script has been read when the
         # command starts, and the command's stdin is at EOF like a local one's rather than the script's rest.
         script = (
@@ -236,8 +242,10 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
             raise
         except WorkspaceTimeoutError as error:
             await self._stop(tag)
+            # The command can have finished, and the wrapper written its marker, while `ssh` still waits for a
+            # background child that holds the output open.
             raise WorkspaceTimeoutError(
-                str(error), stdout=_after_ready(error.stdout), stderr=_after_ready(error.stderr)
+                str(error), stdout=_after_ready(error.stdout), stderr=pattern.sub('', _after_ready(error.stderr))
             ) from error
         except WorkspaceOutputLimitError as error:
             await self._stop(tag)
@@ -246,7 +254,7 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
                 'and read part of it instead',
                 limit=error.limit,
                 stdout=_after_ready(error.stdout),
-                stderr=_after_ready(error.stderr),
+                stderr=pattern.sub('', _after_ready(error.stderr)),
             ) from error
         before, ready, stderr = result.stderr.partition(_READY)
         if not ready:
@@ -255,17 +263,11 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
                 # `-n`, `-f` and `StdinNull` give `ssh` an empty input. From now on the script goes on the remote
                 # command line, which caps how long a command can be, within the time this attempt left.
                 self._script_on_stdin = False
-                if timeout is not None:
-                    remaining = timeout - (anyio.current_time() - started)
-                    if remaining <= 0:
-                        raise _not_started(timeout)
-                    timeout = remaining
-                return await self._remote(directory, line, env=env, timeout=timeout)
+                return await self._remote(directory, line, env=env, timeout=_remaining(timeout, started))
             reason = before.strip() or f'`ssh` exited with code {result.exit_code}'
             raise WorkspaceUnavailableError(f'SSH workspace {self._ref.id} is unavailable: {reason}')
         # The marker carries the status because `ssh` uses exit 255 for a lost connection, and a command can too.
         # Any other process exit is the command's: a child can print a marker after the wrapper has written its own.
-        pattern = re.compile(rf'\n{re.escape(marker)}(\d+)\n')
         markers = list(pattern.finditer(stderr))
         if not markers:
             if _GONE in stderr:

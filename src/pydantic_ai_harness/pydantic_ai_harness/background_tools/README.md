@@ -37,6 +37,8 @@ By default, any tool with `metadata={'background': True}` runs in the background
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+![The model calls slow_research, a tool marked to run in the background. BackgroundTools answers at once with a started message and a task ID, so the model keeps working on other calls while the tool runs. When the tool finishes, its result arrives as a follow-up user message wrapped in a tool_result tag that names the tool and the call, and the next model request uses it. A normal run waits for its background tools before it ends.](https://pydantic.dev/docs/ai/img/harness/background-tools.svg)
+
 ## Selecting which tools run in the background
 
 `BackgroundTools(tools=...)` accepts the standard [`ToolSelector`](https://ai.pydantic.dev/api/tools/#pydantic_ai.tools.ToolSelector):
@@ -114,24 +116,28 @@ is then an ordinary user prompt.
 The follow-up wraps what the tool returned in `<tool_result tool_name="..." tool_call_id="...">`
 tags, the same tags Pydantic AI puts around tool files it sends on the user channel. This tells the
 model the text is the tool's output rather than something the user said, and which pending call it
-completes. A closing `</tool_result>` tag inside the output is escaped, so the output cannot end the
-frame early. A failed call is framed the same way with `outcome="failed"`, wrapping the message from
-`ModelRetry` or `ToolFailed`.
+completes. The `<` of every opening or closing framing tag inside the output (`<tool_result>`,
+`<system>` and the rest) is escaped, so the output stays inside its frame. A failed call is framed
+the same way with `outcome="failed"`, wrapping the message from `ModelRetry` or `ToolFailed`.
 
 Text and files returned by the tool are sent to the model. `ToolReturn.metadata` is discarded.
 `ModelRetry`, `ToolFailed`, approval, and deferral errors are reported to the model as text, also
 when a `before_tool_execute` or `after_tool_execute` hook raises them. A `ValidationError` from
 such a hook is reported too, as a sequential tool retries it. Any other tool exception ends the
 run with the original exception, as it does for a sequential tool.
+A `ModelRetry` or `ValidationError` counts toward the tool's `retries` when its follow-up is
+delivered, however long the tool ran, and a result resets the count. The started message does
+neither, so `ctx.retry` and `ctx.last_attempt` behave as they do for a sequential tool.
 Running out of retries or raising `CancelledError` also ends the run. The run ends at its next step, so
 a model request already in progress finishes first. A tool can call `ctx.cancel()` to stop the run and
 the other background tools.
 
 A normal run waits for its background tools to finish. A pending call counts toward
 `tool_calls_limit`. If the run pauses for deferred tools or stops early, unfinished tools are
-cancelled, and results that have not been delivered yet are dropped, even from tools that finished.
-Resuming the run does not deliver them. Async tools must allow cancellation; ignoring it can prevent
-the run from stopping.
+cancelled. Results of tools that finished before a deferred-tool pause are kept in the message
+history, so a resumed run sees them, unless every call in the paused step was deferred. Results
+that have not been delivered when a run stops early are dropped. Async tools must allow
+cancellation; ignoring it can prevent the run from stopping.
 
 > [!WARNING]
 > Python cannot stop a synchronous tool before it returns. Cancelling the run will still wait for
@@ -148,9 +154,6 @@ the run from stopping.
 - A sequential tool can overlap background work that started earlier. Tools that must not overlap
   should protect their shared data or should not run in the background.
 - Realtime sessions already run tools concurrently, so `BackgroundTools` leaves them unchanged.
-- A `ModelRetry` from a background tool, or from its execute hooks, counts against the tool's
-  `retries` only when the tool finishes before the agent's next step. A slower tool's retries are
-  not counted, so `UsageLimits.request_limit` is what bounds a model that keeps retrying it.
 - `after_tool_execute`, `on_tool_execute_error`, and the `wrap_tool_execute` hooks of capabilities
   listed after `BackgroundTools` run inside the background task and see the real result.
   `wrap_tool_execute` hooks of capabilities listed before it, and tool result events, see the

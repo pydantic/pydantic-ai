@@ -17,7 +17,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RunCancelled, RunContext, RunTimedOut
 from pydantic_ai._cancel import RunCancellation
-from pydantic_ai.capabilities import AbstractCapability, SelectModel, WrapperCapability
+from pydantic_ai.capabilities import AbstractCapability, ModelFallback, SelectModel, WrapperCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
@@ -32,7 +32,8 @@ from pydantic_ai.models import ModelSelectionContext
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .conftest import IsDatetime, IsNow, IsStr
 
@@ -125,6 +126,76 @@ async def test_timeout_during_model_request():
     )
 
 
+@pytest.mark.parametrize('stop', ['timeout', 'cancel'])
+@pytest.mark.parametrize('via', ['FallbackModel', 'wrapped FallbackModel', 'ModelFallback'])
+async def test_stop_during_a_fallback_keeps_the_rejected_response_usage(stop: str, via: str):
+    """A rejected response's usage counts when the run stops while the next model is running."""
+    contexts: list[RunContext[object]] = []
+
+    def rejected(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('rejected')], usage=RequestUsage(input_tokens=1000, output_tokens=500))
+
+    async def stop_then_block(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if stop == 'timeout':
+            _expire(contexts[-1])
+        else:
+            contexts[-1].cancel()
+        return await _never_returns(messages, info)
+
+    def reject_primary(response: ModelResponse) -> bool:
+        return response.model_name == 'primary'
+
+    primary = FunctionModel(rejected, model_name='primary')
+    backup = FunctionModel(stop_then_block, model_name='backup')
+    if via == 'ModelFallback':
+        agent = Agent(primary, capabilities=[ModelFallback(backup, fallback_on=reject_primary)])
+    else:
+        model = FallbackModel(primary, backup, fallback_on=reject_primary)
+        # A wrapper, like the one instrumentation adds, passes the attempts on too.
+        agent = Agent(WrapperModel(model) if via == 'wrapped FallbackModel' else model)
+
+    @agent.instructions
+    def capture_context(ctx: RunContext[object]) -> None:
+        contexts.append(ctx)
+
+    with pytest.raises(RunCancelled) as exc_info:
+        await agent.run('go', timeout=LONG_TIMEOUT)
+    assert isinstance(exc_info.value, RunTimedOut) == (stop == 'timeout')
+    assert exc_info.value.usage == snapshot(RunUsage(input_tokens=1000, output_tokens=500))
+
+
+@pytest.mark.parametrize('stop', ['timeout', 'cancel'])
+async def test_stop_during_a_continuation_keeps_the_suspended_segment_usage(stop: str):
+    """A suspended response's usage counts when the run stops while the request continuing it is in flight."""
+    contexts: list[RunContext[object]] = []
+    calls = 0
+
+    async def suspend_then_stop(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[TextPart('partial')], usage=RequestUsage(input_tokens=10, output_tokens=2), state='suspended'
+            )
+        if stop == 'timeout':
+            _expire(contexts[-1])
+        else:
+            contexts[-1].cancel()
+        return await _never_returns(messages, info)
+
+    agent = Agent(FunctionModel(suspend_then_stop))
+
+    @agent.instructions
+    def capture_context(ctx: RunContext[object]) -> None:
+        contexts.append(ctx)
+
+    with pytest.raises(RunCancelled) as exc_info:
+        await agent.run('go', timeout=LONG_TIMEOUT)
+    assert isinstance(exc_info.value, RunTimedOut) == (stop == 'timeout')
+    assert calls == 2
+    assert exc_info.value.usage == snapshot(RunUsage(input_tokens=10, output_tokens=2))
+
+
 async def test_timeout_during_tool_call_keeps_resumable_state():
     agent = Agent(FunctionModel(_call_slow_tool))
 
@@ -150,6 +221,7 @@ async def test_timeout_during_tool_call_keeps_resumable_state():
                 parts=[ToolCallPart(tool_name='slow_tool', args={}, tool_call_id='call_slow')],
                 usage=RequestUsage(input_tokens=51, output_tokens=2),
                 model_name='function:_call_slow_tool:',
+                model_id='function:function:_call_slow_tool:',
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -476,10 +548,10 @@ _FIXED_NOW = datetime(2030, 1, 1, tzinfo=UTC)
 class _ReplaySafeClock(AbstractCapability[object]):
     """Stands in for a durability capability's replay-safe clock and recorded start time."""
 
-    def _run_clock(self) -> Callable[[], datetime] | None:
+    def get_run_clock(self) -> Callable[[], datetime] | None:
         return lambda: _FIXED_NOW
 
-    async def _run_start_time(self, run_id: str) -> datetime | None:
+    async def get_run_start_time(self, run_id: str) -> datetime | None:
         return _FIXED_NOW - timedelta(seconds=10)
 
 
@@ -546,7 +618,7 @@ class _AdjustableClock(AbstractCapability[object]):
 
     now: datetime = _FIXED_NOW
 
-    def _run_clock(self) -> Callable[[], datetime] | None:
+    def get_run_clock(self) -> Callable[[], datetime] | None:
         return lambda: self.now
 
 

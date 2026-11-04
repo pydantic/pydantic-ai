@@ -50,6 +50,7 @@ from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 from pydantic_ai.usage import RequestUsage
+from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsStr, strip_logfire_metrics, try_import
@@ -492,6 +493,7 @@ def test_logfire(
                         'allow_text_output': True,
                         'allow_image_output': False,
                         'instruction_parts': None,
+                        'instruction_visibility': None,
                         'thinking': None,
                         'cache': None,
                     }
@@ -1131,6 +1133,7 @@ def test_stable_instructions_across_tool_calls_do_not_set_variable_instructions(
     'settings',
     [deprecated_instrumentation_settings(version=2), deprecated_instrumentation_settings(version=3)],
 )
+@pytest.mark.moves_cache_prefix(reason=INSTRUCTIONS_CHANGE_MID_RUN)
 def test_dynamic_instructions_toggling_from_none_sets_variable_instructions(
     get_logfire_summary: Callable[[], LogfireSummary],
     settings: InstrumentationSettings,
@@ -1320,6 +1323,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                                 'part_kind': 'instruction',
                             }
                         ],
+                        'instruction_visibility': None,
                         'thinking': None,
                         'cache': None,
                     }
@@ -1599,6 +1603,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                         'allow_text_output': True,
                         'allow_image_output': False,
                         'instruction_parts': None,
+                        'instruction_visibility': None,
                         'thinking': None,
                         'cache': None,
                     },
@@ -3232,6 +3237,7 @@ def test_run_span_records_history_instructions_when_before_run_fails(
     'instrument',
     [deprecated_instrumentation_settings(version=2), deprecated_instrumentation_settings(version=3)],
 )
+@pytest.mark.moves_cache_prefix(reason=INSTRUCTIONS_CHANGE_MID_RUN)
 def test_dynamic_function_instructions_in_agent_run_span(
     get_logfire_summary: Callable[[], LogfireSummary], instrument: InstrumentationSettings
 ) -> None:

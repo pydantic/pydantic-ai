@@ -19,15 +19,19 @@ every probe aborts before a response. For the same reason it doesn't use the `re
 that records only path, body and headers on a live transport, while `timeout` is observable only in
 `Request.extensions` and the probe needs a `MockTransport` to fail the call without a network.
 
-`tool_choice` and `thinking` are excluded and stay hand-maintained, for different reasons:
+`citations`, `tool_choice`, and `thinking` are excluded and stay hand-maintained, for different reasons:
+
+- `citations` changes only requests that contain an inline document, a Web Fetch tool or, on Anthropic, a web search
+  tool, while this harness deliberately uses one plain text request for every model. The provider-specific tests
+  assert the request shapes for Anthropic, Bedrock, and xAI.
 
 - `tool_choice` reaches every adapter through `resolve_tool_choice`, and the adapters that cannot
   express a named subset honor it by *filtering the tool list* instead (Cohere, Mistral). A payload
   diff therefore cannot tell "sent `tool_choice`" from "dropped tools", and no single probe value
   stands in for a field whose value space spans a scalar, a list of names, and `ToolOrOutput`.
 - `thinking` is gated per model *name*, not per model class: `Model.prepare_request` only forwards it
-  when the resolved profile sets `supports_thinking`, and a `thinking_always_enabled` model (Cohere,
-  Mistral's magistral) supports it while sending nothing at all. "Payload unchanged" is therefore not
+  when the resolved profile sets `supports_thinking`, and a `thinking_always_enabled` model with no
+  effort setting (Mistral's dated magistral ids) supports it while sending nothing at all. "Payload unchanged" is therefore not
   evidence of non-support, which is exactly what this harness reads it as.
 - `cache` is excluded for the same reason as `thinking`: it is gated per model name via
   `supports_cache`, and a provider that caches implicitly (OpenAI's automatic caching; Google,
@@ -159,8 +163,11 @@ WARNED_SETTINGS = frozenset(
 )
 """The settings a model warns with `UnsupportedSettingWarning` about ignoring, rather than ignoring silently."""
 
-HAND_MAINTAINED = frozenset({'tool_choice', 'thinking', 'cache'})
+HAND_MAINTAINED = frozenset({'citations', 'tool_choice', 'thinking', 'cache'})
 """Fields a payload diff cannot adjudicate; see the module docstring."""
+
+FRAMEWORK_ENFORCED = frozenset({'request_timeout', 'first_event_timeout'})
+"""Fields Pydantic AI enforces itself for every model, so no model sends them or declares that it ignores them."""
 
 ATTEMPT_COUNTED = frozenset({'max_retries'})
 """Fields that change how many times a request is sent rather than what it carries; see `RETRY_CASES`."""
@@ -172,6 +179,7 @@ PROBE_VALUES: dict[str, tuple[object, ...]] = {
     'top_k': (4242,),
     'timeout': (987.654,),
     'request_timeout': (876.543,),
+    'first_event_timeout': (765.432,),
     'parallel_tool_calls': (False, True),
     'seed': (424242,),
     'presence_penalty': (0.345678,),
@@ -835,7 +843,7 @@ async def test_supported_by_lists_match_the_wire(case: Case, allow_model_request
     undocumented = {
         name
         for name in [*PROBE_VALUES, *ATTEMPT_COUNTED]
-        if name != 'request_timeout' and not set(SUPPORTED_BY_LISTS[name]) & set(case.names)
+        if name not in FRAMEWORK_ENFORCED and not set(SUPPORTED_BY_LISTS[name]) & set(case.names)
     }
     unsupported = baseline_result.observed.unsupported
     assert unsupported == undocumented - case.holds_without_sending, (
@@ -860,7 +868,15 @@ def test_every_documented_name_is_probed():
 
 
 _NOT_API_BACKED = frozenset(
-    {'WrapperModel', 'InstrumentedModel', 'ConcurrencyLimitedModel', 'FallbackModel', 'FunctionModel', 'TestModel'}
+    {
+        'WrapperModel',
+        'InstrumentedModel',
+        'ConcurrencyLimitedModel',
+        'FallbackModel',
+        'FunctionModel',
+        'TestModel',
+        'BatchedModel',
+    }
 )
 """Model classes that wrap or stand in for another model, so they have no wire of their own to probe."""
 
@@ -963,7 +979,7 @@ def _google_with_client_retries(client: httpx2.AsyncClient) -> Model:
 def _mistral_with_client_retries(client: httpx2.AsyncClient) -> Model:
     """Mistral makes no retries by default; give the client a `retry_config` bounded by elapsed time."""
     retry_config = MistralRetryConfig('backoff', BackoffStrategy(1, 1, 1.0, 50), retry_connection_errors=True)
-    mistral = Mistral(api_key=PROBE_KEY, async_client=client, retry_config=retry_config)  # pyright: ignore[reportArgumentType]
+    mistral = Mistral(api_key=PROBE_KEY, async_client=client, retry_config=retry_config)
     return MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mistral))
 
 

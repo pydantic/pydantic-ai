@@ -14,10 +14,12 @@ from typing import Any, ClassVar, Literal, TypeAlias, assert_never, cast
 from opentelemetry.trace import INVALID_SPAN, Span, SpanKind
 from opentelemetry.util.types import AttributeValue
 from pydantic import JsonValue
+from pydantic_core import to_jsonable_python
 from typing_extensions import deprecated
 
 from .. import _utils, usage
 from .._instrumentation import model_attributes, open_request_policy, record_uncaught_errors, safe_to_json
+from .._json_schema import InlinedValues
 from .._output import DEFAULT_OUTPUT_TOOL_DESCRIPTION, DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
@@ -42,6 +44,7 @@ from ..messages import (
     RetryFeedbackPart,
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
+    StructuredContent,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -1644,11 +1647,15 @@ def _fields(output_tool: ToolDefinition) -> _Fields:
     schema = output_tool.parameters_json_schema
     defs: dict[str, Any] = schema.get('$defs', {})
     context: dict[str, list[str]] = {}
+    # Resolving a `$ref` inlines its definition into the field, so each one counts as an inlined copy.
+    inlined = InlinedValues(f'The JSON schema of {output_tool.kind} tool {output_tool.name!r}')
 
     def resolve(prop: dict[str, Any] | bool) -> dict[str, Any]:
         prop = _schema(prop)
         if ref := prop.get('$ref'):
-            prop = {**resolve(defs[ref.removeprefix('#/$defs/')]), **{k: v for k, v in prop.items() if k != '$ref'}}
+            definition = defs[ref.removeprefix('#/$defs/')]
+            inlined.add_copy(definition)
+            prop = {**resolve(definition), **{k: v for k, v in prop.items() if k != '$ref'}}
         if 'items' in prop:
             prop = {**prop, 'items': resolve(prop['items'])}
         if 'anyOf' in prop:
@@ -2270,6 +2277,20 @@ def _image_label(item: MultiModalContent, images: list[BinaryContent | ImageUrl]
     return f'<image {len(images)}>'
 
 
+def _structured_prompt(parts: Sequence[UserPromptPart]) -> StructuredContent | None:
+    """The structured item a prompt consists of, when it has nothing else, to be judged as the value it holds.
+
+    A prompt that mixes it with text or other items is judged as the text it renders to, like any other text.
+    """
+    items = [
+        item
+        for part in parts
+        for item in ([part.content] if isinstance(part.content, str) else part.content)
+        if not isinstance(item, CachePoint)
+    ]
+    return items[0] if len(items) == 1 and isinstance(items[0], StructuredContent) else None
+
+
 def _prompt_text(part: UserPromptPart, images: list[BinaryContent | ImageUrl] | None) -> str:
     texts: list[str] = []
     for item in [part.content] if isinstance(part.content, str) else part.content:
@@ -2308,7 +2329,8 @@ def _request_entry(part: ModelRequestPart, images: list[BinaryContent | ImageUrl
         # material to judge and not a question to ask. What the model is asked comes from `instructions`.
         return {'system': part.content}
     elif isinstance(part, UserPromptPart):
-        return {'user': _prompt_text(part, images)}
+        structured = _structured_prompt([part])
+        return {'user': _prompt_text(part, images) if structured is None else to_jsonable_python(structured.value)}
     elif isinstance(part, ToolReturnPart):
         return _tool_return_entry(part, images)
     elif isinstance(part, RetryFeedbackPart):
@@ -2319,6 +2341,9 @@ def _request_entry(part: ModelRequestPart, images: list[BinaryContent | ImageUrl
         return _request_entry(_translate_legacy_retry_part(part), images)
     elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):  # pragma: no cover
         raise _unprojected_instruction_delta_error()
+    elif isinstance(part, CompactionPart):
+        # A summary standing in for earlier turns: the same entry a response-side summary gets.
+        return {'summary': part.content or ''}
     elif isinstance(part, _UnpreparedPart):  # pragma: no cover
         raise _unprepared_part_error(part)
     elif isinstance(part, SpeechPart):  # pragma: no cover
@@ -2373,15 +2398,20 @@ def _map_messages(
     — the calls, their results, the retries, and anything else in the turn — so the request stays the text being
     judged while the steps taken for it are told apart from it. Every entry lands in exactly one of the three,
     however the messages arrived: a run's own, or a `message_history` passed in that ends partway through a turn.
+
+    A prompt that is a single `StructuredContent` is judged as the value it holds, in place of text: the whole state
+    on its own, otherwise under `state` where the text would be under `text`, and as the `user` entry in `history`.
     """
     if turn and any(isinstance(part, UserPromptPart) for message in messages for part in message.parts):
         return _map_turn(messages, images)
     history: list[JsonValue] = []
+    prompts: list[UserPromptPart] = []
     prompt_parts: list[str] = []
     for message in messages:
         if isinstance(message, ModelRequest):
             for part in message.parts:
                 if isinstance(part, UserPromptPart) and message is messages[-1]:
+                    prompts.append(part)
                     prompt_parts.append(_prompt_text(part, images))
                 else:
                     history.append(_request_entry(part, images))
@@ -2390,6 +2420,9 @@ def _map_messages(
         else:
             assert_never(message)
 
+    if (structured := _structured_prompt(prompts)) is not None:
+        value = to_jsonable_python(structured.value)
+        return {'history': history, 'state': value} if history else value
     text = '\n\n'.join(prompt_parts)
     if not (text or history):
         raise UserError('A request without user text is not supported by this model: it needs text to judge.')
@@ -2409,6 +2442,7 @@ def _map_turn(messages: list[ModelMessage], images: list[BinaryContent | ImageUr
         if isinstance(message, ModelRequest) and any(isinstance(part, UserPromptPart) for part in message.parts)
     )
     history: list[JsonValue] = []
+    prompts: list[UserPromptPart] = []
     prompt_parts: list[str] = []
     done: list[JsonValue] = []
     for index, message in enumerate(messages):
@@ -2424,8 +2458,13 @@ def _map_turn(messages: list[ModelMessage], images: list[BinaryContent | ImageUr
         last_prompt = max(i for i, part in enumerate(message.parts) if isinstance(part, UserPromptPart))
         for i, part in enumerate(message.parts):
             if isinstance(part, UserPromptPart):
+                prompts.append(part)
                 prompt_parts.append(_prompt_text(part, images))
             else:
                 (history if i < last_prompt else done).append(_request_entry(part, images))
     state: dict[str, JsonValue] = {'history': history} if history else {}
-    return {**state, 'text': '\n\n'.join(prompt_parts), 'done': done}
+    if (structured := _structured_prompt(prompts)) is not None:
+        state['state'] = to_jsonable_python(structured.value)
+    else:
+        state['text'] = '\n\n'.join(prompt_parts)
+    return {**state, 'done': done}

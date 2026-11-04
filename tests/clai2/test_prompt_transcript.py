@@ -21,7 +21,7 @@ from pydantic_clai2.ui.prompt.prompt_transcript import (
     style_prefix,
 )
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._branding import print_banner
+from pydantic_clai2.ui.rendering.branding import print_banner
 from pydantic_clai2.ui.rendering.recolor import recolor
 
 

@@ -14,7 +14,7 @@ from pydantic_ai_harness.subagents import DelegationTask
 from pydantic_clai2.runtime.tasks import Tasks, task_tree
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 
@@ -59,7 +59,8 @@ class TaskMenu:
         text = (
             f'{record.agent_name} · {record.id}\n{record.outcome or record.status} · '
             f'{"background" if record.background else "foreground"}\n'
-            f'{self.notice}\n\nTask: {record.prompt}\n\n'
+            + (f'Directory: {record.working_directory}\n' if record.working_directory is not None else '')
+            + f'{self.notice}\n\nTask: {record.prompt}\n\n'
             + conversation_text(record.messages)
             + (f'\n\nResult ({record.outcome}):\n{record.output}' if record.status == 'finished' else '')
         )
@@ -171,7 +172,7 @@ async def open_tasks(tasks: Tasks, *, runners: Runners = TERMINAL) -> str:
             await tasks.owner.cancel(task_id)
             await tasks.owner.save(tasks.owner.records[task_id])
         else:
-            tasks.owner.background(task_id)
+            tasks.background(task_id)
 
     def run() -> None:
         picker = TaskMenu(

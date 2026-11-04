@@ -1,6 +1,7 @@
 """Tests for the ExaAgent capability, ExaAgentToolset, and agent_run_result."""
 
 import asyncio
+import inspect
 import json
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -9,6 +10,7 @@ from typing import TypeVar
 import anyio
 import httpx
 import pytest
+from exa_py import AsyncExa
 from exa_py.agent.types import (
     AgentEffort,
     AgentError,
@@ -382,6 +384,11 @@ class TestExaAgent:
         monkeypatch.setenv('EXA_API_KEY', 'test-key')
         toolset = ExaAgent[None]().get_toolset()
         assert isinstance(toolset, ExaAgentToolset)
+
+    def test_exa_py_runs_client_is_cancellable(self) -> None:
+        """Reads `cancel` from the installed exa-py, so a rename or a sync `cancel` there fails here."""
+        runs = AsyncExa(api_key='test-key').agent.runs
+        assert inspect.iscoroutinefunction(runs.cancel)
 
     async def test_default_runs_client_is_built_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Each `AsyncExa` owns an httpx connection pool, so one run must not build one per request."""
@@ -776,6 +783,13 @@ class TestAgentSpec:
 
     def test_from_spec_sets_a_distinct_id(self) -> None:
         assert ExaAgent[None].from_spec(effort='low', id='low_effort_agent').id == 'low_effort_agent'
+
+    def test_from_spec_sets_the_base_capability_fields(self) -> None:
+        """`id`, `description` and `defer_loading` live on `AbstractCapability`, so a spec must name them too."""
+        definitions = AgentSpec.model_json_schema_with_capabilities([ExaAgent])['$defs']
+        assert {'id', 'description', 'defer_loading'} <= definitions['spec_params_ExaAgent']['properties'].keys()
+        capability = ExaAgent[None].from_spec(id='second', description='The second one.', defer_loading=True)
+        assert (capability.id, capability.description, capability.defer_loading) == ('second', 'The second one.', True)
 
     def test_agent_loads_from_spec_file(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv('EXA_API_KEY', 'test-key')

@@ -107,6 +107,15 @@ When you ask for thinking explicitly on an `anthropic/` model, an explicit `tool
 
 If a resolved choice named a single tool, the available tool list is filtered to that tool while `tool_choice` remains `'auto'`. The model may therefore answer with text instead of calling it; when an output tool is required, Pydantic AI retries with a prompt to call a tool.
 
+## Mid-conversation system prompts
+
+A [mid-conversation system prompt](../message-history.md#mid-conversation-system-prompts) is sent as a `system` message on the routes where OpenRouter keeps one in place:
+
+- `openai/` models, except the open-weight `gpt-oss` models, which other hosts serve.
+- `anthropic/` models that [take the message natively](anthropic.md#mid-conversation-system-messages) on Anthropic's own API: Claude Fable 5 and 5.1, Mythos 5, Opus 4.8, Opus 5 and 5.5, Sonnet 5.5 and Haiku 5.5. OpenRouter keeps the message native only right before the model's turn, so Pydantic AI moves it past the user messages and tool results that follow it, as it does on the [Anthropic API](anthropic.md#mid-conversation-system-messages).
+
+Other routes get a `<system>`-tagged user message instead. On Gemini and older Claude models, OpenRouter moves a mid-conversation system message into the top-level system prompt, which invalidates the cached prefix after it.
+
 ## Prompt Caching
 
 OpenRouter supports [prompt caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching) for downstream providers that implement it.
@@ -121,9 +130,9 @@ Pydantic AI's OpenRouter cache settings control explicit `cache_control` breakpo
 4. **Fine-Grained Control with [`CachePoint`][pydantic_ai.messages.CachePoint]**: Insert a `CachePoint` marker in user messages to cache everything before it
 
 !!! note "Provider Differences"
-    - **Anthropic** models support prefix-based caching for both system instructions and message content. TTL values (`'5m'`, `'1h'`) are passed through to the provider.
+    - **Anthropic** models support prefix-based caching for both system instructions and message content. TTL values (`'5m'`, `'1h'`) are passed through to the provider. As on [Anthropic](anthropic.md#smart-instruction-caching), `openrouter_cache_instructions` places one breakpoint after the static instructions and a second one after any [`on_change='append'`](../agent.md#appending-instruction-changes) instructions, which is the first dropped when a request has more than four.
     - **Gemini** models support caching for system instructions and normal message content, but [OpenRouter uses only the last breakpoint across normal message content for Gemini caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching#how-gemini-prompt-caching-works-on-openrouter).
-      Use `openrouter_cache_messages` or [`CachePoint`][pydantic_ai.messages.CachePoint] when that final message boundary is intentional; use `openrouter_cache_instructions` only for fully static system context. TTL values are ignored by Gemini.
+      That breakpoint goes on the closest user or assistant message before the final message: with one at the very end of the request, OpenRouter's Google Vertex endpoint bills the cached prefix and then the same prefix again, and one on a tool result isn't used. So `openrouter_cache_messages` caches the conversation up to the previous turn, and a [`CachePoint`][pydantic_ai.messages.CachePoint] with content after it stays where it is. This applies on every Gemini route, including one pinned to Google AI Studio with [`openrouter_provider`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_provider], since the endpoint isn't known when the request is built. TTL values are ignored by Gemini.
       Cached Gemini `systemInstruction` content is immutable, so put dynamic prompt segments in a later user message instead of after cached system instructions.
     - **OpenAI GPT-5.6** models use OpenAI's `prompt_cache_options` and `prompt_cache_breakpoint` protocol, not `cache_control`. See [OpenAI GPT-5.6 explicit caching](#openai-gpt-56-explicit-caching) below.
     - **Minimum token thresholds** apply; see OpenRouter's [minimum token requirements](https://openrouter.ai/docs/guides/best-practices/prompt-caching#minimum-token-requirements) for current provider-specific values.
@@ -213,7 +222,7 @@ Pass the prompt list to `agent.run_sync(prompt)`. Everything before the `CachePo
 A `CachePoint` that opens a user message marks the end of the previous user message instead, keeping a longer TTL already there. Unlike on Anthropic, Bedrock and OpenAI, a tool result in between doesn't carry it, since OpenRouter doesn't document `cache_control` on tool results; with no earlier user message the breakpoint is dropped. One with nothing but system instructions before it (or nothing at all), or with nothing after it in its message, raises a [`UserError`][pydantic_ai.exceptions.UserError].
 
 !!! warning "Anthropic cache-breakpoint ordering"
-    Anthropic processes cache breakpoints in a fixed order — tool definitions, then system instructions, then messages — and rejects a `'1h'` breakpoint that appears *after* a `'5m'` one in that sequence. When mixing TTLs across `CachePoint` markers or the cache settings on an Anthropic model, place the longer (`'1h'`) breakpoints before the shorter (`'5m'`) ones. Anthropic also allows at most four explicit breakpoints per request; excess breakpoints are dropped (oldest first) before the request is sent.
+    Anthropic processes cache breakpoints in a fixed order — tool definitions, then system instructions, then messages — and rejects a `'1h'` breakpoint that appears *after* a `'5m'` one in that sequence. When mixing TTLs across `CachePoint` markers or the cache settings on an Anthropic model, place the longer (`'1h'`) breakpoints before the shorter (`'5m'`) ones. Anthropic also allows at most four explicit breakpoints per request; excess breakpoints are dropped before the request is sent: the one after append-mode instructions first when another one ends the static instructions, then the oldest message breakpoints.
 
 ## Web Search
 

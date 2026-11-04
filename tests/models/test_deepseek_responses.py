@@ -45,6 +45,7 @@ from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsDecimal, IsStr, legacy_retry_prompt_part, try_import
+from .conftest import RequestCapture
 
 with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -126,6 +127,7 @@ CASES = [
                         cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
+                    model_id='deepseek:deepseek-v4-flash',
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
@@ -187,6 +189,7 @@ CASES = [
                         cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
+                    model_id='deepseek:deepseek-v4-flash',
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
@@ -252,6 +255,7 @@ CASES = [
                         cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
+                    model_id='deepseek:deepseek-v4-flash',
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
@@ -298,6 +302,7 @@ CASES = [
                         cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
+                    model_id='deepseek:deepseek-v4-flash',
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
@@ -381,6 +386,7 @@ CASES = [
                         cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
+                    model_id='deepseek:deepseek-v4-flash',
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
@@ -425,6 +431,7 @@ CASES = [
                         cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
+                    model_id='deepseek:deepseek-v4-flash',
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
@@ -551,6 +558,7 @@ CASES = [
                         cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
+                    model_id='deepseek:deepseek-v4-flash',
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
@@ -595,6 +603,7 @@ CASES = [
                         cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
+                    model_id='deepseek:deepseek-v4-flash',
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
@@ -722,6 +731,7 @@ CASES = [
                         cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
+                    model_id='deepseek:deepseek-v4-flash',
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
@@ -813,6 +823,7 @@ CASES = [
                         cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
+                    model_id='deepseek:deepseek-v4-flash',
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
@@ -879,6 +890,7 @@ CASES = [
                         cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
+                    model_id='deepseek:deepseek-v4-flash',
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
@@ -960,6 +972,26 @@ async def test_deepseek_responses(case: Case, allow_model_requests: None, deepse
     assert output == case.expected_output
     assert messages == case.expected_messages
     assert sent_bodies == case.expected_request_bodies
+
+
+@pytest.mark.parametrize('model_name', ['deepseek-flash', 'deepseek-v4-flash'])
+async def test_deepseek_responses_thinking_off(
+    model_name: str,
+    allow_model_requests: None,
+    deepseek_api_key: str,
+    request_capture: RequestCapture,
+) -> None:
+    model = OpenAIResponsesModel(
+        model_name, provider=DeepSeekProvider(api_key=deepseek_api_key, http_client=request_capture.client)
+    )
+    agent = Agent(model, model_settings=OpenAIResponsesModelSettings(thinking=False))
+
+    result = await agent.run('What is 17 * 23? Reply only with digits.')
+
+    assert result.output == '391'
+    body = request_capture.body('/responses')
+    assert body['model'] == model_name
+    assert body['reasoning'] == {'effort': 'none'}
 
 
 async def test_deepseek_responses_replay_unsent_item_ids(allow_model_requests: None, deepseek_api_key: str) -> None:

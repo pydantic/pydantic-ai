@@ -68,11 +68,11 @@ try:
         ChatCompletionInputMessage,
         ChatCompletionInputMessageChunk,
         ChatCompletionInputTool,
-        ChatCompletionInputToolCall,
         ChatCompletionInputToolChoiceClass,
         ChatCompletionInputURL,
         ChatCompletionOutput,
         ChatCompletionOutputMessage,
+        ChatCompletionOutputToolCall,
         ChatCompletionStreamOutput,
         TextGenerationOutputFinishReason,
     )
@@ -437,7 +437,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                     hf_messages.append(item)
             elif isinstance(message, ModelResponse):
                 texts: list[str] = []
-                tool_calls: list[ChatCompletionInputToolCall] = []
+                tool_calls: list[ChatCompletionOutputToolCall] = []
                 for item in message.parts:
                     if isinstance(item, TextPart):
                         texts.append(item.content)
@@ -480,8 +480,9 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         return hf_messages
 
     @staticmethod
-    def _map_tool_call(t: ToolCallPart) -> ChatCompletionInputToolCall:
-        return ChatCompletionInputToolCall.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
+    def _map_tool_call(t: ToolCallPart) -> ChatCompletionOutputToolCall:
+        # `ChatCompletionInputToolCall`'s function type has no `arguments` field, so they'd be dropped from the body.
+        return ChatCompletionOutputToolCall.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
             {
                 'id': _guard_tool_call_id(t=t),
                 'type': 'function',
@@ -621,14 +622,13 @@ class HuggingFaceStreamedResponse(StreamedResponse):
 
                 for dtc in choice.delta.tool_calls or []:
                     # The SDK declares `function` as required, but the API can send chunks without it.
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                    for event in self._parts_manager.handle_tool_call_delta_events(
                         vendor_part_id=dtc.index,
                         tool_name=dtc.function.name if dtc.function is not None else None,  # pyright: ignore[reportUnnecessaryComparison]
                         args=dtc.function.arguments if dtc.function is not None else None,  # pyright: ignore[reportUnnecessaryComparison]
                         tool_call_id=dtc.id,
-                    )
-                    if maybe_event is not None:
-                        yield maybe_event
+                    ):
+                        yield event
 
     @property
     def model_name(self) -> str:

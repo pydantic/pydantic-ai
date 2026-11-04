@@ -11,6 +11,8 @@ description: Connect a Pydantic AI agent to Ordinal's hosted MCP server to draft
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![Inside your agent, the Ordinal capability connects to Ordinal's hosted MCP server at app.tryordinal.com/mcp with an OAuth access token. The model sees the server's tool names unchanged. It starts with ordinal_get_workspace_context, which returns the workspaceSlug every other Ordinal tool needs. Wrapping the toolset with approval_required() pauses calls that publish or schedule posts for review.](../img/harness/ordinal.svg)
+
 ## Before you start
 
 Ordinal MCP needs the Pro plan or higher, the same as the REST API. You need an Ordinal account with access to at least one workspace. Ordinal MCP takes an OAuth access token; there is no API key to copy.
@@ -78,7 +80,13 @@ Each run connects as its own user, so concurrent runs never share an account.
 
 Your app gets each user's token, stores it, and refreshes it. For example, a "Connect Ordinal" button that runs the OAuth flow from [Before you start](#before-you-start) and saves the token to their account. Before each run, put it in the deps, or load it in an async `auth` function.
 
-With durable execution such as Temporal, read the token from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `ordinal`, so `defer_loading=True` works without one. To add more than one `Ordinal` to an agent, give each a distinct `id` and wrap them in [PrefixTools](../capabilities/prefix-tools.md), since their tool names are the same; two that share an `id` but differ raise an error.
+With durable execution such as Temporal, read the token from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `ordinal`, so `defer_loading=True` works without one. To add more than one `Ordinal` to an agent, give each a distinct `id` and `tool_prefix`; two that share an `id` but differ raise an error.
+
+## Tool names
+
+`Ordinal` has no default prefix, unlike most hosted MCP capabilities: the server's tool names already start with the service, as in `ordinal_get_workspace_context`, so a default prefix would repeat it (`ordinal_ordinal_get_workspace_context`). The agent sees the names as they are. Set `tool_prefix` to put a prefix and `_` in front of them, for example `tool_prefix='work'` gives `work_ordinal_get_workspace_context`.
+
+A [toolset wrapper](../toolsets.md) on `capability.get_toolset()`, such as `filtered()`, sees the names the agent sees, prefix included.
 
 ## Tool selection and approval
 
@@ -101,7 +109,7 @@ Handle the approval requests with the [deferred tools workflow](../deferred-tool
 
 ## Connection customization
 
-Use `auth` in almost every case. Pass `client` only when you need control of the connection itself: your own FastMCP client or transport, for example one with a proxy or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth` raises an error. `include_instructions=False` stops the server's own instructions from reaching the agent.
+Pass `client` when you need control of the connection itself: your own FastMCP client or transport, for example one with a proxy or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth` raises an error. `include_instructions=False` stops the server's own instructions from reaching the agent.
 
 A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately.
 
@@ -126,8 +134,6 @@ from pydantic_ai_harness import Ordinal
 
 agent = Agent.from_file('agent.yaml', custom_capability_types=[Ordinal])
 ```
-
-Pass `custom_capability_types` so the loader can create `Ordinal` from the file.
 
 ## API reference
 

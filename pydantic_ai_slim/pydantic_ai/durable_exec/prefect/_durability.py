@@ -120,17 +120,17 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     def in_durable_context(self) -> bool:
         return FlowRunContext.get() is not None
 
-    def _default_run_id(self) -> str | None:
+    def get_default_run_id(self) -> str | None:
         context = FlowRunContext.get()
         if context is None:
             return None
         assert context.flow_run is not None
         return f'{context.flow_run.id}:{_next_flow_sequence(context, "pydantic_ai:default_run_id")}'
 
-    def _default_conversation_id(self, run_id: str) -> str | None:
+    def get_default_conversation_id(self, run_id: str) -> str | None:
         return conversation_id_from_run_id(run_id) if self.in_durable_context else None
 
-    async def _run_start_time(self, run_id: str) -> datetime | None:
+    async def get_run_start_time(self, run_id: str) -> datetime | None:
         context = FlowRunContext.get()
         if context is None:
             return None

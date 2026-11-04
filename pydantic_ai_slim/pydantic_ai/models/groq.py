@@ -11,6 +11,7 @@ from pydantic import BaseModel, ValidationError
 from pydantic_core import from_json
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _model_errors, _utils, usage
+from .._gateway_cost import gateway_reported_cost
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
@@ -127,6 +128,10 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'groq') -> Genera
             ) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
+        if isinstance(cause := e.__cause__, httpx.HTTPStatusError):
+            # A retrying transport raises this for a status it gave up on, and `groq` wraps it as if the connection
+            # had failed, though the provider responded.
+            raise _model_errors.transport_status_error(model_name, cause.response) from e
         raise _model_errors.connection_error(model_name, e.message, e, timeout=isinstance(e, APITimeoutError)) from e
     except APIError as e:
         # The SDK raises the base `APIError` for an error object inside a stream, after the HTTP 200 has already
@@ -355,7 +360,13 @@ class GroqModel(Model[AsyncGroq]):
                 # qwen3 truly disables reasoning via `reasoning_effort='none'` (set in `extra_body`),
                 # so no reasoning format is needed.
                 return NOT_GIVEN
-            # Other reasoning models have no true disable; 'hidden' only suppresses reasoning output.
+            if self.profile.get('thinking_always_enabled', False) and not self.profile.get(
+                'groq_supports_graded_reasoning_effort', False
+            ):
+                # An always-on model with no effort knob has nothing to turn down, so nothing is sent.
+                return NOT_GIVEN
+            # Other reasoning models have no true disable: gpt-oss reasons at its lowest `reasoning_effort` (set in
+            # `extra_body`), and 'hidden' keeps the reasoning out of the response.
             return 'hidden'
         if thinking is not None:
             return 'parsed'
@@ -435,7 +446,10 @@ class GroqModel(Model[AsyncGroq]):
             thinking = model_request_parameters.thinking
             if thinking is True:
                 effort = 'medium'
-            elif thinking is not None and thinking is not False:
+            elif thinking is False:
+                # gpt-oss can't turn reasoning off (`'none'` is a 400), so it reasons as little as it can.
+                effort = GROQ_GPT_OSS_REASONING_EFFORT_MAP['minimal']
+            elif thinking is not None:
                 effort = GROQ_GPT_OSS_REASONING_EFFORT_MAP[thinking]
         if effort is not None:
             # `reasoning_effort` isn't a named param in the Groq SDK, so it's passed via `extra_body`.
@@ -840,14 +854,13 @@ class GroqStreamedResponse(StreamedResponse):
 
                     # Handle the tool calls
                     for dtc in choice.delta.tool_calls or []:
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                        for event in self._parts_manager.handle_tool_call_delta_events(
                             vendor_part_id=dtc.index,
                             tool_name=dtc.function.name if dtc.function is not None else None,
                             args=dtc.function.arguments if dtc.function is not None else None,
                             tool_call_id=dtc.id,
-                        )
-                        if maybe_event is not None:
-                            yield maybe_event
+                        ):
+                            yield event
             except APIError as e:
                 # The Groq SDK tries to be helpful by raising an exception when generated tool arguments don't match the schema,
                 # but we'd rather handle it ourselves so we can tell the model to retry the tool call
@@ -923,13 +936,18 @@ def _map_usage(
     completion_tokens_details: dict[str, Any] = usage_data.get('completion_tokens_details') or {}
     details.update({k: v for k, v in completion_tokens_details.items() if isinstance(v, int)})
 
-    return usage.RequestUsage.extract(
+    request_usage = usage.RequestUsage.extract(
         dict(model=model, usage=usage_data),
         provider=provider,
         provider_url=provider_url,
         provider_fallback='groq',
         details=details or None,
     )
+    # The Gateway injects cost into top-level usage; Groq's token counts live in x_groq.usage.
+    if isinstance(completion, chat.ChatCompletionChunk) and completion.usage is not None:
+        if (cost := gateway_reported_cost({'usage': completion.usage.model_dump(exclude_none=True)})) is not None:
+            request_usage.cost = cost
+    return request_usage
 
 
 class _GroqToolUseFailedGeneration(BaseModel):

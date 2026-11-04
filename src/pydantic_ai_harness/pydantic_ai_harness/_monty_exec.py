@@ -56,9 +56,8 @@ except ImportError as _import_error:  # pragma: no cover
         'pip install "pydantic-ai-harness[code-mode]" or "pydantic-ai-harness[dynamic-workflow]"'
     ) from _import_error
 
-# Dispatch callback: given the sandbox function name and keyword arguments,
-# perform the host-side work (tool call or sub-agent run) and return the result.
 DispatchFn = Callable[[str, dict[str, Any]], Coroutine[Any, Any, Any]]
+"""Given a sandbox function name and its keyword arguments, do the host-side work (a tool call or sub-agent run)."""
 
 _T = TypeVar('_T')
 _Args = TypeVarTuple('_Args')
@@ -129,12 +128,14 @@ class MontyRunState:
     """A Monty worker pool and its checked-out REPL session, opened lazily and closed together.
 
     Workers are local subprocesses from `AsyncMonty`, or remote ones dialed through
-    `AsyncMontyWebsocket` when `monty_sandbox_url` is set. Inside a Temporal workflow every Monty
-    call goes through `portal`, opened with the pool and closed after it.
+    `AsyncMontyWebsocket` when `monty_sandbox_url` or `pool_factory` is set. Inside a Temporal workflow
+    every Monty call goes through `portal`, opened with the pool and closed after it.
     """
 
     monty_sandbox_url: str | None = field(default=None, repr=False)
     """May carry credentials, so it stays out of `repr`."""
+    pool_factory: Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None = None
+    """Builds the remote pool, sync or async, in place of `monty_sandbox_url`, with its own URL, headers, and timeouts."""
     pool: AsyncMonty | AsyncMontyWebsocket | None = None
     session: AsyncMontySession | None = None
     portal: BlockingPortal | None = None
@@ -155,7 +156,11 @@ class MontyRunState:
             try:
                 if in_temporal_workflow:
                     self.portal = self._pool_stack.enter_context(start_blocking_portal())
-                if self.monty_sandbox_url is None:
+                if self.pool_factory is not None:
+                    pool = self.pool_factory()
+                    if inspect.isawaitable(pool):
+                        pool = await pool
+                elif self.monty_sandbox_url is None:
                     pool = AsyncMonty()
                 else:
                     max_feed_duration_secs = limits.get('max_feed_duration_secs')

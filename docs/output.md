@@ -8,7 +8,7 @@ The output is wrapped in [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] or
 
 Both `AgentRunResult` and `StreamedRunResult` are generic in the data they wrap, so typing information about the data returned by the agent is preserved.
 
-A run ends when the model responds with one of the output types, or, if no output type is specified or `str` is one of the allowed options, when a plain text response is received. A run can also be cancelled if usage limits are exceeded, see [Usage Limits](agent.md#usage-limits).
+A run ends when the model responds with one of the output types, or, if no output type is specified or `str` is one of the allowed options, when a plain text response is received. A run can also be cancelled if usage limits are exceeded, see [Usage Limits](agent.md#usage-limits). With [`DeferredToolRequests`](deferred-tools.md) or [`PendingModelResponse`](batch.md#ending-a-run-while-it-waits) in the output type, a run can also end early, so you can approve its tools or wait for a model request the provider is still processing, like a batch request, and resume it later.
 
 Here's an example using a Pydantic model as the `output_type`, forcing the model to respond with data matching our specification:
 
@@ -372,7 +372,7 @@ _(This example is complete, it can be run "as is")_
 
 #### Native Output
 
-Native Output mode uses a model's native "Structured Outputs" feature (aka "JSON Schema response format"), where the model is forced to only output text matching the provided JSON schema. Note that this is not supported by all models, and sometimes comes with restrictions. For example, [Gemini 3](https://ai.google.dev/gemini-api/docs/structured-output#structured_outputs_with_tools) supports Native Output alongside function and native tools, while earlier Gemini models cannot combine Native Output with function tools.
+Native Output mode uses a model's native "Structured Outputs" feature (aka "JSON Schema response format"), where the model is forced to only output text matching the provided JSON schema. Note that this is not supported by all models, and sometimes comes with restrictions. For example, [Gemini 3](https://ai.google.dev/gemini-api/docs/structured-output#structured_outputs_with_tools) supports Native Output alongside function and native tools, while earlier Gemini models cannot combine Native Output with function tools. On [Anthropic](models/anthropic.md#schema-complexity-limits), the schema is compiled into a grammar with complexity limits that a large schema can exceed, and on a request that thinks, a structured `output_type` uses Native Output even without the marker class, unless its schema is over those limits. On [OpenAI](models/openai.md#structured-output-schemas), a schema over the strict-mode size limits is sent without strict mode.
 
 To use this mode, you can wrap the output type(s) in the [`NativeOutput`][pydantic_ai.output.NativeOutput] marker class that also lets you specify a `name` and `description` if the name and docstring of the type or function are not sufficient.
 
@@ -456,7 +456,7 @@ A run ends when the model produces a final result. That result usually comes fro
 !!! warning "Priority of output and deferred tools in streaming methods"
     The [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] methods will consider the first output that matches the [output type](output.md#structured-output) (which could be text, an [output tool](output.md#tool-output) call, or a [deferred](deferred-tools.md) tool call) to be the final output of the agent run, even when the model generates (additional) tool calls after this "final" output.
 
-    This means that if the model calls deferred tools before output tools when using these methods, the deferred tool calls determine the agent run's final output, while the other [run methods](agent.md#running-agents) would have prioritized the tool output. Regardless of `end_strategy`, these methods commit the first matching output the instant it streams, so they behave like `'early'`: that result is locked in, and the [retry-after-tool-failure](#retrying-after-a-tool-failure) behavior below does not apply.
+    This means that if the model streams text (with an output type like `str | Foo`, see [Streamed Results](#streamed-results)) or calls deferred tools before output tools when using these methods, that text or those deferred tool calls determine the agent run's final output, while the other [run methods](agent.md#running-agents) would have prioritized the tool output. Regardless of `end_strategy`, these methods commit the first matching output the instant it streams, so they behave like `'early'`: that result is locked in, and the [retry-after-tool-failure](#retrying-after-a-tool-failure) behavior below does not apply.
 
 | Strategy | Output tools | Function tools — output succeeded | Function tools — every output failed |
 |---|---|---|---|
@@ -896,6 +896,10 @@ There two main challenges with streamed results:
 !!! note
     As the `run_stream()` method will consider the first output matching the `output_type` to be the final output,
     it will stop running the agent graph and will not execute any tool calls made by the model after this "final" output.
+
+    That first output can be text. With an output type that allows both text and [tool output](#tool-output), like `output_type=str | Foo`,
+    text the model streams before it calls the output tool becomes the run's output, and the output tool call is not used.
+    [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], `run_stream_events()` and `iter()` return the output tool's result.
 
     If you want to always run the agent graph to completion and stream all events from the model's streaming response and the agent's execution of tools,
     use [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] ([docs](agent.md#streaming-all-events)) or [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] ([docs](agent.md#streaming-all-events-and-output)) instead.

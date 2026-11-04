@@ -9,7 +9,7 @@ from rich.console import Console
 
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.usage import UsageLimits
-from pydantic_clai2._app import DEFAULT_PLUGINS, STOCK_PLUGINS, create_stock_agent as create_agent
+from pydantic_clai2.app import DEFAULT_PLUGINS, STOCK_PLUGINS, create_stock_agent as create_agent
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore

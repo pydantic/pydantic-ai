@@ -16,6 +16,7 @@ from pydantic_ai import Agent, BinaryContent, BoolCriteria, DocumentUrl, ModelRe
 from pydantic_ai.capabilities import FileUnderstanding, Instrumentation
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
+    CachePoint,
     FilePart,
     ModelMessage,
     ModelRequest,
@@ -23,6 +24,7 @@ from pydantic_ai.messages import (
     NativeToolReturnPart,
     RetryFeedbackPart,
     RetryInfo,
+    StructuredContent,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -1699,6 +1701,77 @@ async def test_a_boolean_schema_is_an_unsupported_argument(allow_model_requests:
         await Agent(model, output_type=Triage, tools=[tool]).run('Where is my order?')
 
 
+_VALUE_LIMIT = 1_000
+"""The limit these tests patch in, so their schemas stay small."""
+
+
+def _doubling_definitions(combine: Literal['properties', 'anyOf']) -> dict[str, Any]:
+    """Definitions that each refer to the one below twice, so resolving them doubles per level, past `_VALUE_LIMIT`.
+
+    As `properties`, every level doubles the fields; as `anyOf`, it doubles the options of a single field.
+    """
+    defs: dict[str, Any] = {'D0': {'type': 'boolean'}}
+    levels = _VALUE_LIMIT.bit_length()
+    for i in range(1, levels + 1):
+        ref = {'$ref': f'#/$defs/D{i - 1}'}
+        defs[f'D{i}'] = (
+            {'type': 'object', 'properties': {'a': ref, 'b': ref}} if combine == 'properties' else {'anyOf': [ref, ref]}
+        )
+    return {
+        'type': 'object',
+        'properties': {'query': {'$ref': f'#/$defs/D{levels}', 'description': 'What to look up.'}},
+        '$defs': defs,
+    }
+
+
+async def test_arguments_past_the_value_limit_are_not_filled(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+):
+    """Arguments whose `$ref`s expand past the limit make the route unfillable, before a fill is asked for.
+
+    Only as `properties`: as `anyOf`, the field is one no fill could answer anyway, limit or not.
+    """
+    monkeypatch.setattr('pydantic_ai._json_schema.MAX_INLINED_SCHEMA_VALUES', _VALUE_LIMIT, raising=False)
+    tool = Tool.from_schema(
+        look_up, name='look_up', description='Look the order up.', json_schema=_doubling_definitions('properties')
+    )
+    model = RoutingDecisionModel({'Triage': 0.1, 'look_up': 0.9})
+
+    with pytest.raises(UnfillableRoute, match="picked 'look_up'"):
+        await Agent(model, output_type=Triage, tools=[tool]).run('Where is my order?')
+
+    assert [list(request.questions) for request in model.requests] == snapshot(
+        [['Triage.urgent', 'Triage.action', 'route']]
+    )
+
+
+@pytest.mark.parametrize('combine', ['properties', 'anyOf'])
+async def test_an_output_type_past_the_value_limit_is_refused(
+    allow_model_requests: None, combine: Literal['properties', 'anyOf'], monkeypatch: pytest.MonkeyPatch
+):
+    """Alone, an output type whose `$ref`s expand past the limit is refused before a request is sent."""
+    monkeypatch.setattr('pydantic_ai._json_schema.MAX_INLINED_SCHEMA_VALUES', _VALUE_LIMIT, raising=False)
+    output_tool = ToolDefinition(
+        name='final_result',
+        description='Look the order up.',
+        kind='output',
+        parameters_json_schema=_doubling_definitions(combine),
+    )
+    model = InMemoryDecisionModel()
+
+    with pytest.raises(
+        UserError,
+        match=f"The JSON schema of output tool 'final_result' is too large: .* more than {_VALUE_LIMIT:,} JSON values",
+    ):
+        await model.request(
+            [ModelRequest(parts=[UserPromptPart('Where is my order?')])],
+            None,
+            ModelRequestParameters(output_tools=[output_tool], output_mode='tool', allow_text_output=False),
+        )
+
+    assert model.requests == []
+
+
 @pytest.mark.parametrize('schema', [True, False, {'$ref': '#/$defs/Anything'}, {'$ref': '#/$defs/Nothing'}])
 async def test_a_boolean_schema_is_an_unsupported_output_field(allow_model_requests: None, schema: Any):
     output_tool = ToolDefinition(
@@ -2089,6 +2162,92 @@ async def test_a_tool_result_with_no_prompt_before_it_is_all_history(allow_model
             ]
         }
     )
+
+
+@pytest.mark.parametrize(
+    'value',
+    [
+        pytest.param({'question': 'What is 2 + 2?', 'expected': '4', 'answer': 'Four'}, id='object'),
+        pytest.param(['4', 'Four'], id='array'),
+        pytest.param(4, id='scalar'),
+        pytest.param(None, id='null'),
+        pytest.param({}, id='empty'),
+    ],
+)
+async def test_a_structured_prompt_is_judged_as_its_value(allow_model_requests: None, value: JsonValue):
+    """A prompt that is one `StructuredContent` is the whole state as the value itself, not the text it renders to.
+
+    A null or empty value is still a value to judge, not a missing prompt.
+    """
+    model = InMemoryDecisionModel()
+    await Agent(model, output_type=bool, instructions='Are the answers equivalent?').run(
+        [StructuredContent(value), CachePoint()]
+    )
+    assert model.requests[0].state == value
+
+
+async def test_a_structured_prompt_is_judged_as_json_compatible_data(allow_model_requests: None):
+    """A Pydantic model is sent as the JSON-compatible data it dumps to, which is what a backend can take."""
+
+    class Answers(BaseModel):
+        expected: str
+        answer: str
+
+    model = InMemoryDecisionModel()
+    await Agent(model, output_type=bool, instructions='Are the answers equivalent?').run(
+        [StructuredContent(Answers(expected='4', answer='Four'))]
+    )
+    assert model.requests[0].state == snapshot({'expected': '4', 'answer': 'Four'})
+
+
+async def test_a_structured_prompt_after_a_conversation_goes_under_state(allow_model_requests: None):
+    """With history before it, the value goes under `state`, beside the history rather than merged into it.
+
+    An earlier structured prompt is a `user` entry holding its value, and the caller's keys stay the caller's,
+    even ones named like the envelope's.
+    """
+    model = InMemoryDecisionModel()
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart([StructuredContent({'url': '/products/41'})])]),
+        ModelResponse(parts=[TextPart('That one is out of stock.')]),
+    ]
+    await Agent(model, output_type=bool, instructions='Is the product in stock?').run(
+        [StructuredContent({'url': '/products/42', 'history': 'mine'})], message_history=history
+    )
+    assert model.requests[0].state == snapshot(
+        {
+            'history': [{'user': {'url': '/products/41'}}, {'assistant': 'That one is out of stock.'}],
+            'state': {'url': '/products/42', 'history': 'mine'},
+        }
+    )
+
+
+async def test_after_a_tool_returns_a_structured_prompt_stays_the_state(allow_model_requests: None):
+    """Once a tool has returned, the value is still what is judged, under `state`, with the calls under `done`."""
+    model = RoutingDecisionModel({'Triage': 0.4, 'look_up_order': 0.6})
+    await Agent(model, output_type=Triage, tools=[look_up_order]).run([StructuredContent({'order': 1})])
+    assert model.requests[-1].state == snapshot(
+        {
+            'state': {'order': 1},
+            'done': [
+                {'tool_call': {'name': 'look_up_order', 'args': {}}},
+                {'tool_return': {'name': 'look_up_order', 'content': 'Order #1 shipped yesterday.'}},
+            ],
+        }
+    )
+
+
+async def test_a_structured_prompt_with_text_beside_it_is_judged_as_text(allow_model_requests: None):
+    """A prompt that mixes a structured value with text has no single value to send, so it is sent as text."""
+    model = InMemoryDecisionModel()
+    await Agent(model, output_type=bool, instructions='Is the question answered?').run(
+        [StructuredContent({'cart_total': 949}, tag='ui_state'), 'Too high?']
+    )
+    assert model.requests[0].state == snapshot("""\
+<ui_state>{"cart_total":949}</ui_state>
+
+Too high?\
+""")
 
 
 class HandsOffFirstDecisionModel(InMemoryDecisionModel):
