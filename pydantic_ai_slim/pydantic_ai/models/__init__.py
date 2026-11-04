@@ -92,6 +92,7 @@ from .._instructions import (
     window_boundary_index,
 )
 from .._json_schema import (
+    InlinedSchemaTooLargeError,
     JsonSchemaTransformer,
     JsonSchemaTransformerWithOutputOverride,
 )
@@ -817,7 +818,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     _announces_lookalike_notes: ClassVar[bool] = True
     """Whether the model is told what the notes on text that resembles a framework frame mean (`lookalike_note_announcement`).
 
-    Where the profile's `supports_inline_system_prompts` is `False`, the announcement goes at the end of the
+    Where the profile's `supports_inline_system_prompts` is `False`, the announcement goes at the start of the
     instructions; elsewhere it's a mid-conversation `SystemPromptPart` in the first request that has a frame or a
     lookalike note. `False` for a model with no provider system field the sentence reliably reaches a model in: the
     test doubles, which have no wire, and `MCPSamplingModel`, whose client picks the model and gets the system
@@ -1929,7 +1930,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             messages = _move_request_scoped_prompts_to_tail(messages)
 
         if not inline_system:
-            # The announcement goes at the end of the instructions; see `_get_instruction_parts`.
+            # The announcement goes at the start of the instructions; see `_get_instruction_parts`.
             messages = _wrap_non_leading_system_prompts(
                 messages,
                 standing_prompt_count=standing_prompt_count,
@@ -2001,7 +2002,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         say its API needs it, and is worded "following" or "preceding" to match.
 
         On a model with inline system messages, the first request with a frame on the user channel or a note also
-        gets the announcement, as a mid-conversation `SystemPromptPart` (on the others it ends the
+        gets the announcement, as a mid-conversation `SystemPromptPart` (on the others it opens the
         instructions instead; see `_get_instruction_parts`). The frames counted are the retry feedback fences, a
         compaction summary, a tool's files moved onto the user channel and reasoning carried into a user turn. The
         request is found from the history alone, so the announcement stays in the same place on every later request.
@@ -2173,12 +2174,17 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     def _system_prompts_placed_for_notes(
         self, parts: list[ModelRequestPart], *, leading: int
     ) -> list[ModelRequestPart]:
-        """`parts` with the request's own system prompts placed for its notes, on a model without a system role.
+        """`parts` with the request's own system prompts placed for its notes.
 
-        They go ahead of the first note (`_system_prompts_before_notes`), and on a profile with
-        `needs_sealed_system_blocks` after the user's words (`_system_prompts_after_user_words`).
+        With a system role, where the adapter sends the request's system entries after its user turn, they go after
+        the last note (`_system_prompts_after_notes`), so they end that entry; elsewhere a note goes right ahead of
+        the item it describes, so they stay put. Without a system role, they go ahead of the first note
+        (`_system_prompts_before_notes`), and on a profile with `needs_sealed_system_blocks` after the user's words
+        (`_system_prompts_after_user_words`).
         """
         if self.profile.get('supports_inline_system_prompts', False):
+            if self._system_entries_follow_user_turn:
+                return _system_prompts_after_notes(parts, leading=leading)
             return parts
         parts = _system_prompts_before_notes(parts)
         if self._seals_system_blocks:
@@ -2473,8 +2479,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         `model.request()` calls).
 
         Where the profile's `supports_inline_system_prompts` is `False` and there's a standing prompt, the
-        announcement is the last part. It's marked `dynamic` so the instruction cache points stay where they'd be
-        without it, ahead of it. A request made inside `second_model_prompt()` doesn't get it.
+        announcement is the first part, so the application's own instructions keep the last word in the system
+        prompt: with the announcement after them, Gemini acted more often on requests quoted in a tool result that
+        an operator instruction seemed to cover (numbers in #11813). It goes out unchanged on every request from the
+        first, so it's literal (not `dynamic`) and part of the cached prefix. A request made inside
+        `second_model_prompt()` doesn't get it.
         """
         parts = _instruction_parts_of(messages, model_request_parameters)
         if (
@@ -2484,7 +2493,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             and (parts or _first_request_has_standing_prompt(messages))
         ):
             announcement = lookalike_note_announcement(system_role=False, sealed=self._seals_system_blocks)
-            parts = [*(parts or []), _FrameworkInstructionPart(content=announcement, dynamic=True)]
+            parts = [_FrameworkInstructionPart(content=announcement), *(parts or [])]
         return parts
 
 
@@ -2511,7 +2520,7 @@ class _FrameworkUserPromptPart(UserPromptPart, _FrameworkAdded):
 
 @dataclass(repr=False)
 class _FrameworkInstructionPart(InstructionPart, _FrameworkAdded):
-    """The announcement at the end of the instructions, on a model without inline system messages."""
+    """The announcement at the start of the instructions, on a model without inline system messages."""
 
 
 def _is_framework_added(part: object) -> bool:
@@ -3560,7 +3569,14 @@ def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: Tool
     If the tool definition has `strict` set to None, the strictness will be inferred from the transformer.
     """
     schema_transformer = transformer(tool_def.parameters_json_schema, strict=tool_def.strict)
-    parameters_json_schema = schema_transformer.walk()
+    try:
+        parameters_json_schema = schema_transformer.walk()
+    except InlinedSchemaTooLargeError:
+        raise InlinedSchemaTooLargeError(
+            f'The JSON schema of tool {tool_def.name!r}',
+            'Refer to large definitions from fewer places, or leave the tool out of the request with `prepare_tools` '
+            'or a `FilteredToolset`.',
+        ) from None
     return replace(
         tool_def,
         parameters_json_schema=parameters_json_schema,
@@ -3572,7 +3588,10 @@ def _customize_output_object(
     transformer: type[JsonSchemaTransformer], output_object: OutputObjectDefinition
 ) -> OutputObjectDefinition:
     schema_transformer = transformer(output_object.json_schema, strict=output_object.strict)
-    json_schema = schema_transformer.walk()
+    try:
+        json_schema = schema_transformer.walk()
+    except InlinedSchemaTooLargeError:
+        raise InlinedSchemaTooLargeError('The output JSON schema') from None
     return replace(
         output_object,
         json_schema=json_schema,
@@ -4238,7 +4257,7 @@ def _wrap_non_leading_system_prompts(
     `sealed` gives each block the `seal` attribute, for a profile that sets `needs_sealed_system_blocks`.
 
     The content goes in as written; a `<system>` tag in text the user or a tool wrote gets a note instead, as the
-    announcement at the end of the instructions says.
+    announcement at the start of the instructions says.
 
     The run's standing system prompt is left alone; the provider's `_map_messages` hoists it. Which
     parts those are is `_standing_system_prompt_count`'s question, and it is not simply "everything
@@ -4344,6 +4363,25 @@ def _is_user_channel_frame(original: ModelRequestPart, part: ModelRequestPart) -
     if isinstance(original, RetryFeedbackPart | RetryPromptPart):  # pyright: ignore[reportDeprecated]
         return True
     return not isinstance(part.content, str) and any(is_framework_frame(item) for item in part.content)
+
+
+def _system_prompts_after_notes(parts: list[ModelRequestPart], *, leading: int) -> list[ModelRequestPart]:
+    """Move the request's own mid-conversation system prompts that precede its last lookalike note to right after it.
+
+    With a system role, a note is a system message too, and Claude Fable 5.1 read a note following the application's
+    change in the same system entry as displacing it: the change was followed far less often, and a lookalike in the
+    user's words more often. With the change after the notes, it's followed as with no note at all. `leading` is the
+    number of the first request's standing system prompts, which stay where they are.
+    """
+    last_note = max((i for i, p in enumerate(parts) if isinstance(p, _FrameworkNote)), default=None)
+    if last_note is None:
+        return parts
+    head = parts[leading : last_note + 1]
+    genuine = [p for p in head if isinstance(p, SystemPromptPart) and not isinstance(p, _FrameworkNote)]
+    if not genuine:
+        return parts
+    others = [p for p in head if not isinstance(p, SystemPromptPart) or isinstance(p, _FrameworkNote)]
+    return [*parts[:leading], *others, *genuine, *parts[last_note + 1 :]]
 
 
 def _system_prompts_before_notes(parts: list[ModelRequestPart]) -> list[ModelRequestPart]:

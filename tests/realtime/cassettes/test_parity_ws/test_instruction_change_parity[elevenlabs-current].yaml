@@ -1,0 +1,856 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: session.created
+    session:
+      type: realtime
+      model: eleven_realtime_v1_mini
+      instructions: ''
+      output_modalities:
+      - audio
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription: null
+          turn_detection:
+            type: semantic_vad
+            eagerness: medium
+            create_response: true
+            interrupt_response: true
+            threshold: null
+            prefix_padding_ms: null
+            silence_duration_ms: null
+            turn_timeout: -1.0
+          pacing: realtime
+        output:
+          format:
+            type: audio/pcm
+          voice: brian
+      tools: []
+      tool_choice: auto
+      temperature: 0.7
+      max_response_output_tokens: 4096
+      max_duration_seconds: 600
+      tracing: null
+      id: conv_7001m651cwwtf359x9dn394nyca5
+      object: realtime.session
+      expires_at: null
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000001
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: session.update
+    session:
+      type: realtime
+      instructions: 'You are a voice assistant. Answer in one short sentence.
+
+
+        <context id="agent:code_word">
+
+        The code word is BLUE. Tell the user when they ask for it.
+
+        </context>
+
+        A later <context> element with the same id replaces the earlier one and stays
+        in effect until replaced again.'
+      output_modalities:
+      - audio
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          turn_detection:
+            type: semantic_vad
+            create_response: true
+            interrupt_response: true
+        output:
+          format:
+            type: audio/pcm
+      model: eleven_realtime_v1_mini
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: conversation.created
+    conversation:
+      id: conv_7001m651cwwtf359x9dn394nyca5
+      object: realtime.conversation
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000002
+- kind: message
+  direction: received
+  at: 0.991
+  data:
+    type: session.updated
+    session:
+      type: realtime
+      model: eleven_realtime_v1_mini
+      instructions: 'You are a voice assistant. Answer in one short sentence.
+
+
+        <context id="agent:code_word">
+
+        The code word is BLUE. Tell the user when they ask for it.
+
+        </context>
+
+        A later <context> element with the same id replaces the earlier one and stays
+        in effect until replaced again.'
+      output_modalities:
+      - audio
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription: null
+          turn_detection:
+            type: semantic_vad
+            eagerness: medium
+            create_response: true
+            interrupt_response: true
+            threshold: null
+            prefix_padding_ms: null
+            silence_duration_ms: null
+            turn_timeout: -1.0
+          pacing: realtime
+        output:
+          format:
+            type: audio/pcm
+          voice: brian
+      tools: []
+      tool_choice: auto
+      temperature: 0.7
+      max_response_output_tokens: 4096
+      max_duration_seconds: 600
+      tracing: null
+      id: conv_7001m651cwwtf359x9dn394nyca5
+      object: realtime.session
+      expires_at: null
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000003
+- kind: message
+  direction: sent
+  at: 0.992
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.0
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is the code word?
+- kind: message
+  direction: sent
+  at: 0.992
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.0
+    response:
+      metadata:
+        pydantic_ai_inputs: '0'
+- kind: message
+  direction: received
+  at: 1.055
+  data:
+    type: conversation.item.added
+    previous_item_id: null
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is the code word?
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000004
+- kind: message
+  direction: received
+  at: 1.055
+  data:
+    type: conversation.item.done
+    previous_item_id: null
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is the code word?
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000005
+- kind: message
+  direction: received
+  at: 1.247
+  data:
+    type: response.created
+    response:
+      id: resp_6301m651cy47ebd87pmyr9ykhrpq
+      object: realtime.response
+      status: in_progress
+      conversation_id: conv_7001m651cwwtf359x9dn394nyca5
+      output: []
+      usage: null
+      output_modalities:
+      - audio
+      voice: brian
+      output_audio_format: audio/pcm
+      temperature: 0.7
+      max_output_tokens: 4096
+      metadata:
+        pydantic_ai_inputs: '0'
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000006
+- kind: message
+  direction: received
+  at: 1.247
+  data:
+    type: response.output_item.added
+    response_id: resp_6301m651cy47ebd87pmyr9ykhrpq
+    output_index: 0
+    item:
+      id: item_8801m651cy48f1xbsy24gavh5fwy
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000007
+- kind: message
+  direction: received
+  at: 1.247
+  data:
+    type: conversation.item.added
+    previous_item_id: pydantic_ai_item_0
+    item:
+      id: item_8801m651cy48f1xbsy24gavh5fwy
+      type: message
+      role: assistant
+      content: []
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: in_progress
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000008
+- kind: message
+  direction: received
+  at: 1.247
+  data:
+    type: response.content_part.added
+    response_id: resp_6301m651cy47ebd87pmyr9ykhrpq
+    item_id: item_8801m651cy48f1xbsy24gavh5fwy
+    output_index: 0
+    content_index: 0
+    part:
+      type: audio
+      audio: ''
+      transcript: null
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000009
+- kind: message
+  direction: received
+  at: 1.247
+  data:
+    type: response.output_audio_transcript.delta
+    response_id: resp_6301m651cy47ebd87pmyr9ykhrpq
+    item_id: item_8801m651cy48f1xbsy24gavh5fwy
+    output_index: 0
+    content_index: 0
+    delta: The code word is BLUE.
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000010
+- kind: message
+  direction: received
+  at: 1.32
+  data:
+    type: response.output_audio.delta
+    response_id: resp_6301m651cy47ebd87pmyr9ykhrpq
+    item_id: item_8801m651cy48f1xbsy24gavh5fwy
+    output_index: 0
+    content_index: 0
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000011
+- kind: message
+  direction: received
+  at: 1.33
+  data:
+    type: response.output_audio.delta
+    response_id: resp_6301m651cy47ebd87pmyr9ykhrpq
+    item_id: item_8801m651cy48f1xbsy24gavh5fwy
+    output_index: 0
+    content_index: 0
+    delta: AQABAAEAAQABAAEAAQABAAEAAQABAAEAAQABAAEAAQAB
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000012
+- kind: message
+  direction: received
+  at: 1.357
+  data:
+    type: response.output_audio.delta
+    response_id: resp_6301m651cy47ebd87pmyr9ykhrpq
+    item_id: item_8801m651cy48f1xbsy24gavh5fwy
+    output_index: 0
+    content_index: 0
+    delta: LwiwB/8GcQTFA3oJEhDDEjwWfhQLC9AALvxr/Oj+mgEL
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000013
+- kind: message
+  direction: received
+  at: 1.361
+  data:
+    type: response.output_audio.delta
+    response_id: resp_6301m651cy47ebd87pmyr9ykhrpq
+    item_id: item_8801m651cy48f1xbsy24gavh5fwy
+    output_index: 0
+    content_index: 0
+    delta: Wv+N/qwApgHWAkQCOQSDAaz+/vy5/uP/mgMTBS4E6wiL
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000014
+- kind: message
+  direction: received
+  at: 1.4
+  data:
+    type: response.output_audio.delta
+    response_id: resp_6301m651cy47ebd87pmyr9ykhrpq
+    item_id: item_8801m651cy48f1xbsy24gavh5fwy
+    output_index: 0
+    content_index: 0
+    delta: Hft5/nT/ZAAfAjoHxQqLCAcGDgHP/wn+rfe99Vz1LvoB
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000015
+- kind: message
+  direction: received
+  at: 1.525
+  data:
+    type: response.output_audio.delta
+    response_id: resp_6301m651cy47ebd87pmyr9ykhrpq
+    item_id: item_8801m651cy48f1xbsy24gavh5fwy
+    output_index: 0
+    content_index: 0
+    delta: BenE6uXolulm6vDr1Owi78HxPvTm+EL7AwA+A2gFcAoB
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000016
+- kind: message
+  direction: received
+  at: 1.646
+  data:
+    type: response.output_audio.delta
+    response_id: resp_6301m651cy47ebd87pmyr9ykhrpq
+    item_id: item_8801m651cy48f1xbsy24gavh5fwy
+    output_index: 0
+    content_index: 0
+    delta: XQZ0BoQGkwahBqsGswa9BsIGxQbGBsQGwwa/BrkGrwak
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000017
+- kind: message
+  direction: received
+  at: 3.305
+  data:
+    type: response.output_audio.done
+    response_id: resp_6301m651cy47ebd87pmyr9ykhrpq
+    item_id: item_8801m651cy48f1xbsy24gavh5fwy
+    output_index: 0
+    content_index: 0
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000018
+- kind: message
+  direction: received
+  at: 3.305
+  data:
+    type: response.output_audio_transcript.done
+    response_id: resp_6301m651cy47ebd87pmyr9ykhrpq
+    item_id: item_8801m651cy48f1xbsy24gavh5fwy
+    output_index: 0
+    content_index: 0
+    transcript: The code word is BLUE.
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000019
+- kind: message
+  direction: received
+  at: 3.305
+  data:
+    type: response.content_part.done
+    response_id: resp_6301m651cy47ebd87pmyr9ykhrpq
+    item_id: item_8801m651cy48f1xbsy24gavh5fwy
+    output_index: 0
+    content_index: 0
+    part:
+      type: audio
+      audio: ''
+      transcript: The code word is BLUE.
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000020
+- kind: message
+  direction: received
+  at: 3.305
+  data:
+    type: conversation.item.done
+    previous_item_id: pydantic_ai_item_0
+    item:
+      id: item_8801m651cy48f1xbsy24gavh5fwy
+      type: message
+      role: assistant
+      content:
+      - type: output_audio
+        text: null
+        audio: ''
+        transcript: The code word is BLUE.
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000021
+- kind: message
+  direction: received
+  at: 3.305
+  data:
+    type: response.output_item.done
+    response_id: resp_6301m651cy47ebd87pmyr9ykhrpq
+    output_index: 0
+    item:
+      id: item_8801m651cy48f1xbsy24gavh5fwy
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_audio
+        audio: ''
+        transcript: The code word is BLUE.
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000022
+- kind: message
+  direction: received
+  at: 3.305
+  data:
+    type: response.done
+    response:
+      id: resp_6301m651cy47ebd87pmyr9ykhrpq
+      object: realtime.response
+      status: completed
+      conversation_id: conv_7001m651cwwtf359x9dn394nyca5
+      output:
+      - id: item_8801m651cy48f1xbsy24gavh5fwy
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: output_audio
+          audio: ''
+          transcript: The code word is BLUE.
+      usage: null
+      output_modalities:
+      - audio
+      voice: brian
+      output_audio_format: audio/pcm
+      temperature: 0.7
+      max_output_tokens: 4096
+      metadata:
+        pydantic_ai_inputs: '0'
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000023
+- kind: message
+  direction: received
+  at: 3.306
+  data:
+    type: rate_limits.updated
+    rate_limits: []
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000024
+- kind: message
+  direction: sent
+  at: 3.306
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.1
+    item:
+      id: pydantic_ai_item_1
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: '<system><context id="agent:code_word">
+
+          The code word is ORANGE. Tell the user when they ask for it.
+
+          </context></system>'
+- kind: message
+  direction: sent
+  at: 3.306
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.2
+    item:
+      id: pydantic_ai_item_2
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is the code word now?
+- kind: message
+  direction: sent
+  at: 3.307
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.2
+    response:
+      metadata:
+        pydantic_ai_inputs: '2'
+- kind: message
+  direction: received
+  at: 3.353
+  data:
+    type: conversation.item.added
+    previous_item_id: item_8801m651cy48f1xbsy24gavh5fwy
+    item:
+      id: pydantic_ai_item_1
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: '<system><context id="agent:code_word">
+
+          The code word is ORANGE. Tell the user when they ask for it.
+
+          </context></system>'
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000025
+- kind: message
+  direction: received
+  at: 3.353
+  data:
+    type: conversation.item.done
+    previous_item_id: item_8801m651cy48f1xbsy24gavh5fwy
+    item:
+      id: pydantic_ai_item_1
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: '<system><context id="agent:code_word">
+
+          The code word is ORANGE. Tell the user when they ask for it.
+
+          </context></system>'
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000026
+- kind: message
+  direction: received
+  at: 3.354
+  data:
+    type: conversation.item.added
+    previous_item_id: pydantic_ai_item_1
+    item:
+      id: pydantic_ai_item_2
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is the code word now?
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000027
+- kind: message
+  direction: received
+  at: 3.354
+  data:
+    type: conversation.item.done
+    previous_item_id: pydantic_ai_item_1
+    item:
+      id: pydantic_ai_item_2
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is the code word now?
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000028
+- kind: message
+  direction: received
+  at: 3.511
+  data:
+    type: response.created
+    response:
+      id: resp_4101m651d0azetjrvzh2zzdz0w8s
+      object: realtime.response
+      status: in_progress
+      conversation_id: conv_7001m651cwwtf359x9dn394nyca5
+      output: []
+      usage: null
+      output_modalities:
+      - audio
+      voice: brian
+      output_audio_format: audio/pcm
+      temperature: 0.7
+      max_output_tokens: 4096
+      metadata:
+        pydantic_ai_inputs: '2'
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000029
+- kind: message
+  direction: received
+  at: 3.511
+  data:
+    type: response.output_item.added
+    response_id: resp_4101m651d0azetjrvzh2zzdz0w8s
+    output_index: 0
+    item:
+      id: item_0101m651d0b0eb4r2yhs6bac1bxx
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000030
+- kind: message
+  direction: received
+  at: 3.511
+  data:
+    type: conversation.item.added
+    previous_item_id: pydantic_ai_item_2
+    item:
+      id: item_0101m651d0b0eb4r2yhs6bac1bxx
+      type: message
+      role: assistant
+      content: []
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: in_progress
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000031
+- kind: message
+  direction: received
+  at: 3.511
+  data:
+    type: response.content_part.added
+    response_id: resp_4101m651d0azetjrvzh2zzdz0w8s
+    item_id: item_0101m651d0b0eb4r2yhs6bac1bxx
+    output_index: 0
+    content_index: 0
+    part:
+      type: audio
+      audio: ''
+      transcript: null
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000032
+- kind: message
+  direction: received
+  at: 3.511
+  data:
+    type: response.output_audio_transcript.delta
+    response_id: resp_4101m651d0azetjrvzh2zzdz0w8s
+    item_id: item_0101m651d0b0eb4r2yhs6bac1bxx
+    output_index: 0
+    content_index: 0
+    delta: The code word is ORANGE.
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000033
+- kind: message
+  direction: received
+  at: 3.585
+  data:
+    type: response.output_audio.delta
+    response_id: resp_4101m651d0azetjrvzh2zzdz0w8s
+    item_id: item_0101m651d0b0eb4r2yhs6bac1bxx
+    output_index: 0
+    content_index: 0
+    delta: AgABAAEAAAAAAAEAAQABAAAAAQABAAIAAAABAAEAAAAB
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000034
+- kind: message
+  direction: received
+  at: 3.59
+  data:
+    type: response.output_audio.delta
+    response_id: resp_4101m651d0azetjrvzh2zzdz0w8s
+    item_id: item_0101m651d0b0eb4r2yhs6bac1bxx
+    output_index: 0
+    content_index: 0
+    delta: AQABAAEAAgAAAAEAAQAAAAEAAQAAAAEAAAABAAEAAQAA
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000035
+- kind: message
+  direction: received
+  at: 3.619
+  data:
+    type: response.output_audio.delta
+    response_id: resp_4101m651d0azetjrvzh2zzdz0w8s
+    item_id: item_0101m651d0b0eb4r2yhs6bac1bxx
+    output_index: 0
+    content_index: 0
+    delta: wAv4DsMLTghwBWAGzAi+CrAMxApJCNIGNATDAk0D1gRI
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000036
+- kind: message
+  direction: received
+  at: 3.639
+  data:
+    type: response.output_audio.delta
+    response_id: resp_4101m651d0azetjrvzh2zzdz0w8s
+    item_id: item_0101m651d0b0eb4r2yhs6bac1bxx
+    output_index: 0
+    content_index: 0
+    delta: aACj/bf/af4KAVr/5gLOAhUC9/8MAboAIwK+AkkBXQSI
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000037
+- kind: message
+  direction: received
+  at: 3.683
+  data:
+    type: response.output_audio.delta
+    response_id: resp_4101m651d0azetjrvzh2zzdz0w8s
+    item_id: item_0101m651d0b0eb4r2yhs6bac1bxx
+    output_index: 0
+    content_index: 0
+    delta: Iewl5qjmn+v88Ff3If0wAiIT7BxRHJ8jdCfqJ1QtnDT1
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000038
+- kind: message
+  direction: received
+  at: 3.809
+  data:
+    type: response.output_audio.delta
+    response_id: resp_4101m651d0azetjrvzh2zzdz0w8s
+    item_id: item_0101m651d0b0eb4r2yhs6bac1bxx
+    output_index: 0
+    content_index: 0
+    delta: hu1p7KLqg+rB6u/qAuuz69LsFu568GzyJ/XA9pL4Zvql
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000039
+- kind: message
+  direction: received
+  at: 3.94
+  data:
+    type: response.output_audio.delta
+    response_id: resp_4101m651d0azetjrvzh2zzdz0w8s
+    item_id: item_0101m651d0b0eb4r2yhs6bac1bxx
+    output_index: 0
+    content_index: 0
+    delta: AAABAAEAAQACAAEAAQACAAEAAQABAAEAAgABAAIAAQAB
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000040
+- kind: message
+  direction: received
+  at: 5.795
+  data:
+    type: response.output_audio.done
+    response_id: resp_4101m651d0azetjrvzh2zzdz0w8s
+    item_id: item_0101m651d0b0eb4r2yhs6bac1bxx
+    output_index: 0
+    content_index: 0
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000041
+- kind: message
+  direction: received
+  at: 5.795
+  data:
+    type: response.output_audio_transcript.done
+    response_id: resp_4101m651d0azetjrvzh2zzdz0w8s
+    item_id: item_0101m651d0b0eb4r2yhs6bac1bxx
+    output_index: 0
+    content_index: 0
+    transcript: The code word is ORANGE.
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000042
+- kind: message
+  direction: received
+  at: 5.795
+  data:
+    type: response.content_part.done
+    response_id: resp_4101m651d0azetjrvzh2zzdz0w8s
+    item_id: item_0101m651d0b0eb4r2yhs6bac1bxx
+    output_index: 0
+    content_index: 0
+    part:
+      type: audio
+      audio: ''
+      transcript: The code word is ORANGE.
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000043
+- kind: message
+  direction: received
+  at: 5.795
+  data:
+    type: conversation.item.done
+    previous_item_id: pydantic_ai_item_2
+    item:
+      id: item_0101m651d0b0eb4r2yhs6bac1bxx
+      type: message
+      role: assistant
+      content:
+      - type: output_audio
+        text: null
+        audio: ''
+        transcript: The code word is ORANGE.
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000044
+- kind: message
+  direction: received
+  at: 5.795
+  data:
+    type: response.output_item.done
+    response_id: resp_4101m651d0azetjrvzh2zzdz0w8s
+    output_index: 0
+    item:
+      id: item_0101m651d0b0eb4r2yhs6bac1bxx
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_audio
+        audio: ''
+        transcript: The code word is ORANGE.
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000045
+- kind: message
+  direction: received
+  at: 5.795
+  data:
+    type: response.done
+    response:
+      id: resp_4101m651d0azetjrvzh2zzdz0w8s
+      object: realtime.response
+      status: completed
+      conversation_id: conv_7001m651cwwtf359x9dn394nyca5
+      output:
+      - id: item_0101m651d0b0eb4r2yhs6bac1bxx
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: output_audio
+          audio: ''
+          transcript: The code word is ORANGE.
+      usage: null
+      output_modalities:
+      - audio
+      voice: brian
+      output_audio_format: audio/pcm
+      temperature: 0.7
+      max_output_tokens: 4096
+      metadata:
+        pydantic_ai_inputs: '2'
+    event_id: evt_conv_7001m651cwwtf359x9dn394nyca5_000046

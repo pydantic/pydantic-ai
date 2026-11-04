@@ -650,6 +650,16 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     The summary agent has no `deps`, so these are `AbstractCapability[None]`.
     """
 
+    retries: int = field(default=1, kw_only=True)
+    """Retry budget for the summary agent, covering output retries and tool calls alike.
+
+    Core's default of 1 absorbs one failure: a whitespace-only summary, or one imitation of a tool
+    call read from the transcript it summarizes. A second consecutive failure raises
+    `UnexpectedModelBehavior` that escapes the compaction and kills the run being compacted. The
+    agent is toolless, so raising this burns nothing but requests -- every retry is a real request
+    charged to the run's usage, so a finite `request_limit` still binds first.
+    """
+
     max_messages: int | None = None
     """Trigger compaction when message count exceeds this value."""
 
@@ -1123,6 +1133,7 @@ async def write_summary(
         instructions=summarizer.instructions,
         model_settings=summarizer.model_settings,
         capabilities=list(summarizer.summarization_capabilities),
+        retries=summarizer.retries,
     )
     with second_model_prompt():
         result = await agent.run(

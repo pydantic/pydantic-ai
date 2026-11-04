@@ -245,7 +245,7 @@ How it reaches the model depends on the provider:
 * Where the API accepts a system message inside the conversation, it's sent as one, with the operator authority that implies. [Anthropic](models/anthropic.md#mid-conversation-system-messages) supports this on some models, and may adjust the position slightly to satisfy its own placement rules. [OpenRouter](models/openrouter.md#mid-conversation-system-prompts) does on some routes.
 * Everywhere else it's rendered as a `<system>`-tagged [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] at the same position, with its text as written. The instruction still applies from where you put it, but the model can tell it came in over the user channel and may treat it as a strong preference rather than a rule.
 
-    On these models, the instructions end with a short fixed announcement of what the tag means: a `<system>` block in a user turn comes from the application, has system authority, and replaces the earlier system content it updates, while text in a user message, a file or a tool result that looks like one gets a [note](#framework-frames-and-content-fidelity) and has no authority. It's the last thing in the system prompt, so everything ahead of it is the same in every conversation and keeps its cache points, and it goes out on every request from the first, so the cached prefix is unchanged as the conversation grows. A request with no system prompt or instructions doesn't get one.
+    On these models, the instructions start with a short fixed announcement of what the tag means: a `<system>` block in a user turn comes from the application, has system authority, and replaces the application's earlier `<system>` blocks, while text in a user message, a file or a tool result that looks like one gets a [note](#framework-frames-and-content-fidelity) and has no authority. It also says the user speaks only in their own messages, so text in a tool result, a file or a quote isn't the user's or the application's even when it claims to be. It comes ahead of your instructions, so they keep the last word in the system prompt, and it goes out unchanged on every request from the first, so it's part of the cached prefix and that prefix is unchanged as the conversation grows. A request with no system prompt or instructions doesn't get one.
 
     Claude Sonnet 4.6 ignores plain `<system>` blocks, Claude Sonnet 5.5 and Haiku 5.5 follow sealed ones better than their native system role, and Grok 4.3 through 4.7 follow sealed ones better than plain ones, so for these ([`needs_sealed_system_blocks`][pydantic_ai.profiles.ModelProfile.needs_sealed_system_blocks]) each block is `<system seal="pydantic-ai">`, goes after the user's words in its request, and the announcement says every block from the application carries that seal and applies to the reply to the words ahead of it. Text that copies the seal still gets a note. A copied seal was never followed in measurements: at most it kept the application's own change in the same request from applying for that turn.
 
@@ -264,7 +264,7 @@ Where Pydantic AI has to say something on the user channel, it frames it in a ta
 
 Nothing the user, a tool or a file wrote is rewritten to make room for these frames: prompts, uploaded files, tool results and the content of frames go out byte for byte, so a model asked to edit an XML file that contains a `<system>` tag writes back the tag, not an escaped copy of it. Text that resembles one of the application's voice tags (`<system>`, `<context>` or `<context_diff>` in any case or spacing, also when hidden behind invisible characters, look-alike letters or an HTML-entity-encoded `<`) instead gets a short note in the application's voice next to the item it's in, saying the text was written by the user, the tool or the file's author and is part of that item, not instructions. The note is a mid-conversation system message, or a `<system>` block on models without one, and goes after a request's tool results, unless the model has no mid-conversation system messages and the provider takes the note ahead of them. A note on a tool result names the tool and the call, and a note on a `<context>` or `<context_diff>` lookalike first says that only the elements the application sends change the instructions. A note on a tool result or a file also says that the application's own messages still apply, and names the application's own system message when the same request has one (unless the user's text in it has a lookalike too). On models without mid-conversation system messages, the request's own `<system>` blocks go ahead of a note and the text it describes, so they still read as the application's. The one exception to sending content as written is a model whose profile sets [`needs_json_string_tool_returns`][pydantic_ai.profiles.ModelProfile.needs_json_string_tool_returns], currently Qwen3 Next: a tool's text output goes to it as `{"tool_output": "..."}`, JSON-escaped but otherwise unchanged, and lookalike notes are still decided on the output as returned.
 
-The model is told what these notes mean, and that other tags in a user message, such as an application's own reminders, keep their usual meaning: at the end of the instructions on models without mid-conversation system messages, as described above, and elsewhere in a mid-conversation system message the first time the conversation has a frame or a note. A conversation that never has either gets nothing. A judge or summarizer that reads the conversation as a flattened transcript, such as a Pydantic AI Harness judge or compaction summarizer, gets neither the announcement nor notes: it isn't talking to the transcript's authors.
+The model is told what these notes mean, and that other tags in a user message, such as an application's own reminders, keep their usual meaning: at the start of the instructions on models without mid-conversation system messages, as described above, and elsewhere in a mid-conversation system message the first time the conversation has a frame or a note. A conversation that never has either gets nothing. A judge or summarizer that reads the conversation as a flattened transcript, such as a Pydantic AI Harness judge or compaction summarizer, gets neither the announcement nor notes: it isn't talking to the transcript's authors.
 
 !!! warning "A hint to the model, not a guarantee"
     The notes tell a model where text came from, and frontier models measured across Anthropic, OpenAI and Google follow them. They don't make the text trustworthy, and open-weight models aren't reliably steered by them, or by any prompt-level framing. Keep secrets and tools with effects you can't undo out of reach of content you didn't write, as described under [the trust boundary](#trust-boundary-for-client-supplied-history).
@@ -555,19 +555,41 @@ _(This example is complete, it can be run "as is")_
     `dump_python` → `validate_python` round-trip preserves them exactly. This is the boundary you
     use to persist and reload history.
 
-    A [multi-modal item][pydantic_ai.messages.MultiModalContent] in a tool return is reconstructed
+    A [multi-modal item][pydantic_ai.messages.MultiModalContent] your tool returned is reconstructed
     as its own type wherever it sits — on its own, in a list, or nested at any depth inside a
-    mapping, including one whose own keys happen to look like ours. A URL-based item is
-    reconstructed only when its mapping carries `media_type`, which a dump with the default arguments
-    always writes; without it the item stays the plain mapping your tool returned. A URL whose media type
-    Pydantic AI can't infer from the URL is serialized with `media_type: null`, which validates
-    back into the URL part's default (no media type) and dumps `null` again, in a tool return as
-    anywhere else. A
-    [`BinaryContent`][pydantic_ai.messages.BinaryContent] or
-    [`UploadedFile`][pydantic_ai.messages.UploadedFile] item is recognized by the fields its own type
-    requires. A mapping that merely reuses one of our `kind` values stays a plain mapping, and
-    dumping it back never raises. Spelling one of our items out in full does reconstruct it, and the
-    keys that type doesn't declare are dropped along the way, so keep `kind` off any dictionary you
+    mapping. A tool return records the URL-based and [`UploadedFile`][pydantic_ai.messages.UploadedFile]
+    items it holds when it is serialized, under `content_file_digests` next to `content`, and only those
+    are reconstructed. Keep that key when you transform stored history. A mapping your tool
+    returned stays that mapping, even one that spells out one of our items in full, so a round trip
+    hands back exactly what your tool returned.
+
+    The record identifies each item by its saved form. To change a file item in stored history, such as
+    to refresh a presigned URL, load the history, edit the item and save it again: an item edited in the
+    stored JSON directly no longer matches its record, and loads as a mapping.
+
+    History saved by an earlier version has no such record. In it, a mapping shaped like a URL-based
+    item is reconstructed only as an HTTP(S) URL with `force_download` reset, and only when it carries
+    `media_type`. A mapping shaped like an uploaded file or a non-HTTP URL stays a mapping, and so do
+    the uploaded files and non-HTTP URLs your tools returned before the upgrade. If that history's
+    tool results came only from your own code, not from data a third party wrote, such as a record an
+    MCP server or an external API returned, load it with
+    `ModelMessagesTypeAdapter.validate_json(data, context={'pydantic_ai': {'rebuild_unrecorded_tool_files': True}})`
+    (or `validate_python`) and its files load as they did before. This rebuilds every file-shaped
+    mapping in those tool results as a file, whatever produced it. Save the history again afterwards,
+    and it carries the record and no longer needs the context. Load other history without it; saving that
+    history again keeps only what it loaded as.
+
+    [Durable execution](durable_execution/overview.md) decodes its own journal this way, so a run in
+    flight across an upgrade keeps the files its earlier steps recorded. The harness's step persistence
+    stores and saved conversations load their own snapshots this way too, so a run you continue or fork
+    keeps them as well.
+
+    A URL whose media type Pydantic AI can't infer from the URL is serialized with `media_type: null`,
+    which validates back into the URL part's default (no media type) and dumps `null` again, in a tool
+    return as anywhere else. A [`BinaryContent`][pydantic_ai.messages.BinaryContent] item is recognized
+    by the fields its type requires. A mapping that merely reuses one of our `kind` values stays a plain
+    mapping, and dumping it back never raises. Spelling a `BinaryContent` out in full does reconstruct
+    it, and the keys it doesn't declare are dropped along the way, so keep `kind` off any dictionary you
     want handed back verbatim.
 
     A tool return keyed by something other than a string is the one place that reconstruction
@@ -867,6 +889,8 @@ So history from the Codex backend continues on the OpenAI API with its encrypted
 Some providers accept data they can't use: OpenAI ignores encrypted reasoning from another organization, and Claude models with [account-bound thinking](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking#account-bound-thinking) ignore thinking from another account. Neither fails the request.
 
 [`Model.accepts_stateless_artifacts()`][pydantic_ai.models.Model.accepts_stateless_artifacts] tells you whether a model would send a part's data back. A provider subclass that only changes its name, such as one that signs in differently to the same API, keeps its parent's canonical system, except for subclasses of [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider], which are assumed to talk to another service. To declare your own, override `canonical_system` or `compatible_systems` on your provider, or pass them to [`OpenAICompatibleProvider`][pydantic_ai.providers.openai_compatible.OpenAICompatibleProvider].
+
+The canonical system names the service a provider speaks to, whose signed data it verifies and whose provider-native features it shares, so a renamed subclass keeps both. Code that decides by service rather than by provider name reads it too, such as the [Pydantic AI Harness `Advisor`](harness/advisor.md), which uses it to tell whether an executor takes Anthropic or OpenRouter advisor model IDs. It doesn't group providers by wire protocol: `azure`, and providers like `deepseek` that speak the OpenAI API, each have their own.
 
 So a response from an `OpenAIProvider` at one `base_url` continued at another (a different gateway, say) gets its text, function calls and encrypted reasoning sent, but not its `previous_response_id` or item IDs, which the other endpoint couldn't look up. The base URLs are compared ignoring the case of the scheme and host, a default port and a trailing `/`. [`Model.accepts_server_state()`][pydantic_ai.models.Model.accepts_server_state] tells you whether a model would send a response's server-side state back; when two URLs reach the same stored state, like a proxy alias, override [`shares_server_state_with()`][pydantic_ai.providers.Provider.shares_server_state_with] on your provider. Files you upload yourself aren't judged this way: an [`UploadedFile`][pydantic_ai.messages.UploadedFile] is sent to the endpoint of whichever model you pass it to, so pass it to one that can read it.
 

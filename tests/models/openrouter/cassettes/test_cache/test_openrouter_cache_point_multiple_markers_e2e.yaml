@@ -60,7 +60,7 @@ interactions:
       access-control-allow-origin:
       - "*"
       access-control-expose-headers:
-      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      - X-Generation-Id,x-openrouter-error-origin,X-Provider-Name,request-id,cf-ray
       alt-svc:
       - h3=":443"; ma=86400
       connection:
@@ -78,9 +78,9 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1793320338-gX5fuzrKTILqc4LZTFUp
+        id: gen-1793763585-qdyy1bokseLivS0ba8V3
         object: chat.completion
-        created: 1793320338
+        created: 1793763585
         model: anthropic/claude-sonnet-5.5
         provider: Claude Platform on AWS
         system_fingerprint: null
@@ -93,16 +93,16 @@ interactions:
           message:
             role: assistant
             content: >-
-              The text is just a repeated placeholder, with "First chunk of context to cache"
-              appearing 20 times and "Second chunk of context to cache" appearing 16 times,
-              and it contains no real information beyond that.
+              The message consists of two chunks of placeholder text, each repeating a line
+              that says it is context to cache (20 repetitions of the first chunk's line and 16
+              of the second's), and it contains no real information beyond that.
             refusal: null
             reasoning: null
         usage:
           prompt_tokens: 438
-          completion_tokens: 67
-          total_tokens: 505
-          cost: 0.001546
+          completion_tokens: 68
+          total_tokens: 506
+          cost: 0.001556
           is_byok: false
           prompt_tokens_details:
             cached_tokens: 0
@@ -110,11 +110,11 @@ interactions:
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 0.001546
+            upstream_inference_cost: 0.001556
             upstream_inference_prompt_cost: 0.000876
-            upstream_inference_completions_cost: 0.00067
+            upstream_inference_completions_cost: 0.00068
           completion_tokens_details:
             reasoning_tokens: 0
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-30T00:32:19.411228+00:00
+  recorded_at: 2026-11-04T03:39:46.929694+00:00
