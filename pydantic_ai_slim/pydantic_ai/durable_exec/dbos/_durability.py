@@ -11,14 +11,20 @@ from weakref import WeakKeyDictionary
 
 from dbos import DBOS, SetWorkflowTimeout
 from dbos._error import DBOSWorkflowCancelledError, DBOSWorkflowConflictIDError
+from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai._cancel import provide_run_deadline
 from pydantic_ai._utils import now_utc
 from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.agent.abstract import AbstractAgent
-from pydantic_ai.capabilities import SetToolMetadata
 from pydantic_ai.capabilities.abstract import AbstractCapability, WrapRunHandler
-from pydantic_ai.durable_exec._base import BaseDurabilityCapability, conversation_id_from_run_id
+from pydantic_ai.durable_exec._base import (
+    BaseDurabilityCapability,
+    capability_selects_child_workflow,
+    conversation_id_from_run_id,
+    selects_child_workflow,
+    toolset_selects_child_workflow,
+)
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
 from pydantic_ai.durable_exec._operation import EventStreamHandlerParams, ToolsetCallToolId, ToolsetKind
 from pydantic_ai.durable_exec._run_context import DurableRunContext
@@ -297,7 +303,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         """The wrapper that dispatches `ts`'s `child_workflow` tools; toolsets without them stay unwrapped, as before."""
         if not isinstance(ts, FunctionToolset):
             return None
-        if not self._child_workflow_metadata_capability and not _has_child_workflow_tool(ts):
+        if not self._child_workflow_metadata_capability and not toolset_selects_child_workflow(ts, 'dbos'):
             return None
         child = self._child_workflow_toolsets.get(ts._explicit_id or '')  # pyright: ignore[reportPrivateUsage]
         if child is not None and child.wrapped is ts:
@@ -312,7 +318,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
 
     def _detect_child_workflow_metadata(self, capability: AbstractCapability[AgentDepsT]) -> None:
         # `SetToolMetadata` can select tools in any toolset, so it enables child workflows for all of them.
-        if isinstance(capability, SetToolMetadata) and _selects_child_workflow(capability.metadata):
+        if capability_selects_child_workflow(capability, 'dbos'):
             self._child_workflow_metadata_capability = True
 
     def _register_child_workflow(self, toolset: AbstractToolset[AgentDepsT]) -> None:
@@ -322,7 +328,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             not isinstance(toolset, FunctionToolset)
             or toolset_id is None
             or toolset_id in self._child_workflow_toolsets
-            or not (self._child_workflow_metadata_capability or _has_child_workflow_tool(toolset))
+            or not (self._child_workflow_metadata_capability or toolset_selects_child_workflow(toolset, 'dbos'))
         ):
             # DBOS hashes registered workflows into the application version, so only opted-in toolsets register one.
             return
@@ -457,33 +463,24 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
                 self._event_step_contexts.pop(key)
 
 
-def _selects_child_workflow(metadata: Mapping[str, Any] | None) -> bool:
-    config = (metadata or {}).get('dbos')
-    return isinstance(config, dict) and 'child_workflow' in config
-
-
-def _has_child_workflow_tool(toolset: FunctionToolset[Any]) -> bool:
-    return any(_selects_child_workflow(tool.metadata) for tool in toolset.tools.values())
+_child_workflow_config_adapter = TypeAdapter(ChildWorkflowConfig)
 
 
 def _child_workflow_config(tool: ToolsetTool[Any] | None, name: str) -> ChildWorkflowConfig | Literal[False]:
-    if tool is None or not _selects_child_workflow(tool.tool_def.metadata):
+    if tool is None or not selects_child_workflow(tool.tool_def.metadata, 'dbos'):
         return False
-    config: dict[str, Any] = cast(dict[str, Any], tool.tool_def.metadata)['dbos']
-    child_config = config['child_workflow']
-    if (
-        len(config) != 1
-        or not isinstance(child_config, dict)
-        or not cast(dict[str, Any], child_config).keys() <= ChildWorkflowConfig.__annotations__.keys()
-    ):
-        raise UserError(
-            f'Tool {name!r} has invalid DBOS metadata: expected `{{"child_workflow": ChildWorkflowConfig(...)}}`.'
-        )
+    config = (tool.tool_def.metadata or {})['dbos']
+    if len(config) != 1:
+        raise UserError(f'Tool {name!r} has invalid DBOS metadata: `child_workflow` must be the only key.')
+    try:
+        child_config = _child_workflow_config_adapter.validate_python(config['child_workflow'])
+    except ValidationError as e:
+        raise UserError(f'Invalid DBOS `ChildWorkflowConfig` in tool {name!r} metadata: {e}') from e
     if not (isinstance(tool, FunctionToolsetTool) and tool.is_async):
         raise UserError(
             f'DBOS metadata for tool {name!r} selects a child workflow, but only async function tools can run as one.'
         )
-    return cast(ChildWorkflowConfig, child_config)
+    return child_config
 
 
 async def _reject_unregistered_child_workflow(

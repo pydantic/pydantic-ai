@@ -3019,28 +3019,24 @@
   "pydantic_ai_slim/pydantic_ai/capabilities/set_tool_metadata.py": {
     "SetToolMetadata": {
       "engines": [
-        "dbos",
-        "temporal"
+        "durable_exec"
       ],
       "kinds": [
         "import"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::<module>",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::<module>"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>"
       ]
     },
     "SetToolMetadata.metadata": {
       "engines": [
-        "dbos",
-        "temporal"
+        "durable_exec"
       ],
       "kinds": [
         "attribute_read"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability._detect_child_workflow_metadata",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::TemporalDurability._detect_child_workflow_metadata"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::capability_selects_child_workflow"
       ]
     }
   },
@@ -6817,18 +6813,15 @@
     },
     "FunctionToolset.tools": {
       "engines": [
-        "dbos",
         "durable_exec",
-        "render",
-        "temporal"
+        "render"
       ],
       "kinds": [
         "attribute_read"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::toolset_selects_child_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_runtime_toolsets.py::reject_unsupported_runtime_toolsets.collect",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::_has_child_workflow_tool",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::TemporalDurability._selects_child_workflow",
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_operation_backend.py::RenderOperationBackend._validate_tool_options"
       ]
     },

@@ -6453,12 +6453,13 @@ async def test_dbos_child_workflow_via_set_tool_metadata(dbos: DBOS) -> None:
         (
             {'child_workflow': {}, 'retries': 1},
             True,
-            """Tool 'tool' has invalid DBOS metadata: expected `{"child_workflow": ChildWorkflowConfig(...)}`.""",
+            "Tool 'tool' has invalid DBOS metadata: `child_workflow` must be the only key.",
         ),
+        ({'child_workflow': {'timeout': 1}}, True, "Invalid DBOS `ChildWorkflowConfig` in tool 'tool' metadata:"),
         (
-            {'child_workflow': {'timeout': 1}},
+            {'child_workflow': {'workflow_timeout_sec': 'soon'}},
             True,
-            """Tool 'tool' has invalid DBOS metadata: expected `{"child_workflow": ChildWorkflowConfig(...)}`.""",
+            "Invalid DBOS `ChildWorkflowConfig` in tool 'tool' metadata:",
         ),
         (
             {'child_workflow': {}},
@@ -6482,7 +6483,7 @@ async def test_dbos_child_workflow_metadata_errors(
     async def run_agent() -> None:
         await agent.run('Go.')
 
-    with workflow_raises(UserError, error):
+    with pytest.raises(UserError, match=f'^{re.escape(error)}'):
         await run_agent()
 
 
