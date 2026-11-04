@@ -9,6 +9,7 @@ from pydantic_clai2.config import (
     PERMISSION_MODES,
     PERMISSIONS_SETTING,
     SETTING_FIELDS,
+    SETTING_KEYS,
     PluginSettings,
     resolve_settings,
 )
@@ -21,8 +22,6 @@ PROJECT_FILE = Path('.clai') / 'settings.json'
 _FILE: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
 _PLUGINS: TypeAdapter[list[PluginSettings]] = TypeAdapter(list[PluginSettings])
 _HOOKS: TypeAdapter[HookTable] = TypeAdapter(HookTable)
-_SET_KEYS = {name: key for key, name in SETTING_FIELDS.items()}
-"""`Settings` field name to `/set` key, so the file uses the model's own names."""
 SAFE_PROJECT_KEYS = frozenset(key for key in SETTING_FIELDS if key.startswith('display.'))
 """Keys a project file sets at once: how CLAI shows things, which cannot change what the agent may do or is told.
 
@@ -195,7 +194,7 @@ def load_project_settings(workspace: Path, *, store: SettingsStore | None = None
         ):
             if name in raw:
                 raise ValueError(f'`{name}` is user-only and cannot be set in a project file')
-        overrides = {_SET_KEYS[name]: value for name, value in raw.items() if name in _SET_KEYS}
+        overrides = {SETTING_KEYS[name]: value for name, value in raw.items() if name in SETTING_KEYS}
         resolve_settings(overrides)
     except (OSError, ValueError) as exc:
         raise ValueError(f'{path}: {exc}') from exc
@@ -204,6 +203,6 @@ def load_project_settings(workspace: Path, *, store: SettingsStore | None = None
         path=path,
         pending=overrides,
         plugins=(*(_unapproved(plugin, root=root) for plugin in plugins), *_hooks(hooks, root=root)),
-        unknown=tuple(sorted(raw.keys() - _SET_KEYS.keys())),
+        unknown=tuple(sorted(raw.keys() - SETTING_KEYS.keys())),
     )
     return with_current_approvals(project, store=store)

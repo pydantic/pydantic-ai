@@ -228,6 +228,9 @@ SETTING_FIELDS = {
     'worktrees.remove_commands': 'worktree_remove_commands',
 }
 
+SETTING_KEYS = {name: key for key, name in SETTING_FIELDS.items()}
+"""`Settings` field name to `/set` key, so a project file can use the model's own names."""
+
 STRING_SETTINGS = frozenset(
     {
         'model',

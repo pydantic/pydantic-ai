@@ -222,7 +222,12 @@ def create_shell(
         shell.show_model()
 
     context = CommandContext(
-        settings=settings, store=store, apply_setting=apply_setting, project=project, settings_for=settings_for
+        settings=settings,
+        store=store,
+        apply_setting=apply_setting,
+        project=project,
+        settings_for=settings_for,
+        workspace=lambda: Path(session.workspace),
     )
     session.project_instructions = lambda: ProjectInstructions[DepsT].pending(context.project)
     models.pool_accounts = lambda: context.settings.pool_accounts

@@ -544,7 +544,7 @@ async def test_project_command_approves_applies_and_revokes(tmp_path: Path) -> N
     # The project's 0, then your saved 5; the project's auto, then your saved read-only.
     assert text.index('\n0\n') < text.index('\n5\n')
     assert text.index('\nauto\n') < text.index('\nread-only\n')
-    assert f'Approved permissions, tool_retries, model for {tmp_path}. Applied, unless a launch flag sets it.' in text
+    assert f'Approved model, permissions, tool_retries for {tmp_path}. Applied, unless a launch flag sets it.' in text
     assert '\ntest:project\n' in text
     assert 'Nothing to approve.' in text
     assert (
@@ -829,6 +829,7 @@ def shell_in(directory: Path, store: SettingsStore) -> SessionRuntime[None, str]
         builtin_plugins=(),
         project=project,
         headless=True,
+        workspace=directory,
     )
 
 
@@ -964,3 +965,79 @@ async def test_chat_and_web_sessions_get_the_settings_they_start_with(
     monkeypatch.setattr(web, '_serve_web', serve)
     await web.run_web(settings_for=settings_for, store=store, project=project, console=Console(file=io.StringIO()))
     assert seen == [settings_for, settings_for]
+
+
+def approved_then_dropped(repo: Path, store: SettingsStore) -> None:
+    """Approve a wider `permissions` and `tool_retries`, then have the repository stop setting `permissions`."""
+    store.set('run.permissions', 'read-only')
+    write(repo, {'permissions': 'full', 'tool_retries': 0})
+    shell_in(repo, store).context.project_command(['approve', 'all'])
+    write(repo, {'tool_retries': 0})
+
+
+def restored_permissions(repo: Path, store: SettingsStore) -> str:
+    """The mode CLAI starts with once the repository sets the wider `permissions` again."""
+    write(repo, {'permissions': 'full', 'tool_retries': 0})
+    project = load_project_settings(repo, store=store)
+    assert project.pending.get('run.permissions') == 'full', 'it waits for a fresh approval'
+    return cli._settings_for(store, model=None, request_limit=None)(project).permissions  # pyright: ignore[reportPrivateUsage]
+
+
+def test_revoke_all_removes_an_approval_the_file_no_longer_sets(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    approved_then_dropped(tmp_path, store)
+    message = shell_in(tmp_path, store).context.project_command(['revoke', 'all'])
+    assert message == f'Revoked permissions, tool_retries for {tmp_path}.'
+    assert store.approved_project_settings(tmp_path) == {}
+    assert restored_permissions(tmp_path, store) == 'read-only'
+
+
+def test_revoke_by_name_removes_an_approval_the_file_no_longer_sets(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    approved_then_dropped(tmp_path, store)
+    context = shell_in(tmp_path, store).context
+    assert list(context.project_completions(['revoke', ''])) == ['all', 'permissions', 'tool_retries']
+    assert 'permissions (approved earlier, the file does not set this value now): "full"' in context.project_command([])
+    assert context.project_command(['revoke', 'permissions']) == f'Revoked permissions for {tmp_path}.'
+    assert store.approved_project_settings(tmp_path) == {'run.tool_retries': '0'}
+    assert context.settings.tool_retries == 0, 'the other approval stays'
+    assert restored_permissions(tmp_path, store) == 'read-only'
+
+
+def test_revoke_removes_an_approval_of_a_value_the_file_changed(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    store.set('run.permissions', 'read-only')
+    write(tmp_path, {'permissions': 'auto'})
+    shell_in(tmp_path, store).context.project_command(['approve', 'permissions'])
+    write(tmp_path, {'permissions': 'full'})
+    context = shell_in(tmp_path, store).context
+    assert context.project_command(['revoke', 'permissions']) == f'Revoked permissions for {tmp_path}.'
+    assert store.approved_project_settings(tmp_path) == {}
+    assert context.project.pending == {'run.permissions': 'full'}, 'it still waits'
+
+
+def test_revoke_works_after_the_repository_removes_its_file(tmp_path: Path) -> None:
+    repo = tmp_path / 'repo'
+    (repo / '.git').mkdir(parents=True)
+    store = SettingsStore(tmp_path / 'config.db')
+    approved_then_dropped(repo, store)
+    (repo / PROJECT_FILE).unlink()
+    (repo / 'src').mkdir()
+    context = shell_in(repo / 'src', store).context
+    assert context.project_command([]).startswith('No project file.\n')
+    with pytest.raises(ValueError, match='Usage: /project'):
+        context.project_command(['approve', 'all'])
+    assert context.project_command(['revoke', 'all']) == f'Revoked permissions, tool_retries for {repo}.'
+    assert store.approved_project_settings(repo) == {}
+    assert restored_permissions(repo, store) == 'read-only'
+    with pytest.raises(ValueError, match='Nothing to revoke'):
+        shell_in(repo, store).context.project_command(['revoke', 'all'])
+
+
+def test_revoke_names_a_stored_key_this_build_does_not_know(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    write(tmp_path, {'thinking': False})
+    store.approve_project_settings(tmp_path, {'former.key': 1})
+    context = shell_in(tmp_path, store).context
+    assert 'former.key (approved earlier, the file does not set this value now): 1' in context.project_command([])
+    assert context.project_command(['revoke', 'all']) == f'Revoked former.key for {tmp_path}.'

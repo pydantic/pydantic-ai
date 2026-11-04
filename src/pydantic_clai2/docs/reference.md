@@ -418,8 +418,10 @@ a file that sets it stops startup. Until you approve
 one, CLAI uses your own setting for it and names it under the banner at startup.
 `/project` lists what the file sets, with each value and whether it applies;
 `/project approve NAME...` (or `all`) applies those keys now and in every later
-session in that repository, and `/project revoke NAME...` (or `all`) returns to
-your own settings. An approval is kept in your user settings, for the folder
+session in that repository, and `/project revoke NAME...` (or `all`) removes saved
+approvals and returns to your own settings, including an approval of a key or value
+the file no longer sets, or of a file that is gone, which would otherwise apply
+again if the repository brought it back. An approval is kept in your user settings, for the folder
 that holds `.clai` and for the value you approved: once the file changes that
 value, as after a pull, it waits for your approval again. You approve at the
 prompt; `clai2` has no subcommand for it. A headless `clai2 -p` run or `clai2 --web`

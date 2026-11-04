@@ -420,7 +420,8 @@ class SettingsStore:
         """The project-file values `/project approve` approved for `root`, as `setting_json` text by `/set` key."""
         with self._connect() as connection:
             rows = connection.execute(
-                'SELECT key, value_json FROM approved_project_settings WHERE root = ?', (str(root.resolve()),)
+                'SELECT key, value_json FROM approved_project_settings WHERE root = ? ORDER BY key',
+                (str(root.resolve()),),
             ).fetchall()
         return dict(rows)
 
