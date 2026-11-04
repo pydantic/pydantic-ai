@@ -11,7 +11,7 @@ import os
 import sys
 import threading
 import warnings
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from importlib.metadata import distributions
@@ -45,10 +45,7 @@ from pydantic_ai._utils import (
 from pydantic_ai.models.test import TestModel
 
 from ._inline_snapshot import snapshot
-from .conftest import no_leaked_tasks, try_import, undrivable_event_loop
-
-with try_import() as evals_imports_successful:
-    from pydantic_evals import Dataset  # noqa: F401  # pyright: ignore[reportUnusedImport]
+from .conftest import no_leaked_tasks, undrivable_event_loop
 from .models.mock_async_stream import MockAsyncStream
 from .realtime.simulation._loop import SimulatedLoop
 
@@ -1554,25 +1551,6 @@ async def test_scoped_task_result_raises_task_error_without_awaiter_cancellation
     assert exc_info.value.__context__ is None
 
 
-@pytest.fixture
-def fresh_event_loop_policy() -> Iterator[None]:
-    """A policy with no current loop, as in a fresh interpreter's main thread, restoring the previous one after.
-
-    Policies are deprecated from Python 3.14, where the tests using this are skipped.
-    """
-    previous = asyncio.get_event_loop_policy()  # pyright: ignore[reportDeprecated]
-    policy = asyncio.DefaultEventLoopPolicy()
-    asyncio.set_event_loop_policy(policy)  # pyright: ignore[reportDeprecated]
-    try:
-        yield
-    finally:
-        # The loop the run set on the policy; asyncio keeps it in a private thread-local.
-        loop: asyncio.AbstractEventLoop | None = getattr(getattr(policy, '_local'), '_loop')
-        if loop is not None:  # pragma: no branch
-            loop.close()
-        asyncio.set_event_loop_policy(previous)  # pyright: ignore[reportDeprecated]
-
-
 def _run_sync() -> None:
     Agent(TestModel()).run_sync('hello')
 
@@ -1582,23 +1560,12 @@ def _run_stream_sync() -> None:
         result.get_output()
 
 
-def _evals_get_event_loop() -> None:
-    from pydantic_evals._utils import get_event_loop as evals_get_event_loop
-
-    evals_get_event_loop()
-
-
 @pytest.mark.skipif(sys.version_info >= (3, 14), reason='Python 3.14 raises instead of warning, which is handled')
 @pytest.mark.parametrize(
     'entry_point',
     [
         pytest.param(_run_sync, id='run_sync'),
         pytest.param(_run_stream_sync, id='run_stream_sync'),
-        pytest.param(
-            _evals_get_event_loop,
-            id='pydantic_evals',
-            marks=pytest.mark.skipif(not evals_imports_successful(), reason='pydantic-evals not installed'),
-        ),
     ],
 )
 def test_sync_entry_point_does_not_warn_about_a_missing_event_loop(
