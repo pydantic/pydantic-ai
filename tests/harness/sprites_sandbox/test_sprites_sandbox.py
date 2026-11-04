@@ -1114,11 +1114,15 @@ class TestSpritesSandbox:
         async with anyio.create_task_group() as group:
             group.start_soon(run)
             # Opening the FIFO returns once the command opens it too, after it has printed. The frozen clock
-            # cannot bound that wait, so the join does, in real time. Hang guard only.
-            reader = threading.Thread(target=printed.read_bytes, daemon=True)
-            reader.start()
-            await anyio.to_thread.run_sync(reader.join, 120, abandon_on_cancel=True)
-            assert not reader.is_alive()
+            # cannot bound that wait, so the event's own timeout does, in real time. Hang guard only.
+            read = threading.Event()
+
+            def read_fifo() -> None:
+                printed.read_bytes()
+                read.set()
+
+            threading.Thread(target=read_fifo, daemon=True).start()
+            assert await anyio.to_thread.run_sync(read.wait, 120, abandon_on_cancel=True)
             now += 0.5
         assert caught[0].stderr == 'ready'
         assert not Path(transport.execs[0].query['cmd'][4]).exists()
