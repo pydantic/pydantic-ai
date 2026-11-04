@@ -1053,12 +1053,12 @@ class RealtimeSession:
                 return
             request = self._new_request([*statements, *update.parts])
             text = self._render_instruction_change(history, request)
-            frame: RealtimeInput = (
-                InstructionChangeContext(wrap(SYSTEM_TAG, text), system_prompt=text)
+            instruction_frame: RealtimeInput = (
+                InstructionChangeContext(frame(SYSTEM_TAG, text), system_prompt=text)
                 if self._profile.get('supports_system_messages', False)
-                else TextContext(wrap(SYSTEM_TAG, text))
+                else TextContext(frame(SYSTEM_TAG, text))
             )
-            await self._send_frame(frame, request=request)
+            await self._send_frame(instruction_frame, request=request)
             self._instruction_changes.append(request)
 
     async def __aenter__(self) -> RealtimeSession:
