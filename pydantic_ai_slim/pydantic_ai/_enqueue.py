@@ -357,7 +357,15 @@ def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestCon
     [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, in the order the content lands in history,
     describing it exactly as delivered. A UI adapter streams them in that order and its client loads them
     back in that order, so the client's history renders like the server's.
+
+    A request that resumes a suspended response is left alone, so its content waits for the request after
+    it: that request re-sends the history ending in the suspended response, which has to stay the tail as
+    the provider's continuation seed, so there is nowhere to put new content.
     """
+    tail = request_context.messages[-1] if request_context.messages else None
+    if isinstance(tail, ModelResponse) and tail.state == 'suspended':
+        return request_context
+
     drained = run_queue(ctx).pop_priority('asap')
     if not drained:
         return request_context
