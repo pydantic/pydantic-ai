@@ -15,6 +15,11 @@ from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, cast
 # `EventStreamHandler` holds the forward reference `'AsyncIterable[_messages.AgentStreamEvent]'`, which the
 # `AgentSpec` schema resolves against this module's globals.
 from pydantic_ai import messages as _messages  # noqa: F401  # pyright: ignore[reportUnusedImport]
+from pydantic_ai._capability_loads import (
+    deferred_capability_ids,
+    is_load_part,
+    keep_capability_loads,
+)
 from pydantic_ai._framing import neutralize_tags
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.agent import EventStreamHandler
@@ -43,11 +48,6 @@ from pydantic_ai_harness._message_text import tool_return_text, user_prompt_text
 from pydantic_ai_harness._provenance import harness_origin
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
-from pydantic_ai_harness.compaction._capability_loads import (
-    deferred_capability_ids,
-    is_load_part,
-    keep_capability_loads,
-)
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import is_pinned, reinject_pinned
 from pydantic_ai_harness.compaction._receipts import (

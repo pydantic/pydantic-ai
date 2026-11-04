@@ -10,9 +10,10 @@ replaced it, as a `CapabilityLoadDeltaPart` rather than an exchange the model ne
 delivers the capability's current instructions again. With `preserve_loaded_capabilities=False`, it leaves
 them unloaded and says so instead.
 
-This module imports only Pydantic AI, and `keep_capability_loads` is a plain function of messages and
-capability ids, so it runs workflow-side in a durable run and can move into core's compaction step
-(#11454), which will call it once per attempt after whichever compaction ran, a provider's included.
+Core's compaction step calls `keep_capability_loads` once per attempt, after whichever `compact_history` hook
+compacted, a provider's included. Harness strategies that compact in their own hooks call it too, which is a no-op
+on a history it already recorded the loads in. It's a plain function of messages and capability ids, so it runs
+workflow-side in a durable run.
 """
 
 from __future__ import annotations
@@ -206,7 +207,7 @@ def keep_capability_loads(
 
     TODO: tool search discoveries follow the same window rule and are lost the same way (#11264). A local
     `search_tools` exchange could be recorded again like a load; a provider's native search can't be, so
-    that's left for the core compaction step (#11454) to settle.
+    that's still open.
     """
     after = _loads(compacted)
     lost = [

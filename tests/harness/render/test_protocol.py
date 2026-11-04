@@ -509,6 +509,7 @@ async def test_run_context_serialization_is_exhaustive() -> None:
         'capabilities',  # live capability objects; `active_capability_ids` crosses as a snapshot instead
         'root_capability',  # live capability chain, reattached from the worker's agent on load
         'pending_messages',  # live run queue; replaced by an `EnqueueGuard` on load
+        '_compaction_requests',  # live run state; `request_compaction` raises inside a child task
         'messages',  # full history would ride in every child task payload
         'prompt',  # multi-modal content would ride in every child task payload
         'validation_context',  # arbitrary user object; rebuilt from the worker's agent on load
