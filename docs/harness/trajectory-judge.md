@@ -19,7 +19,7 @@ Over a long run, an agent can lose track of its instructions, build on unsupport
 
 ## The solution
 
-`TrajectoryJudge` reviews the run's recent trajectory with a second model on a cadence: every `every` model requests, the most recent `window` tokens of the conversation (user messages, assistant messages, tool calls, and tool results, rendered as a transcript) go to the judge model for evaluation. The evaluation runs concurrently with the agent, so the run is never blocked waiting on a judge.
+`TrajectoryJudge` reviews the run's recent trajectory with a second model on a cadence: every `every` model requests, the most recent `window` tokens of the conversation (user messages, assistant messages, tool calls, and tool results, rendered as a transcript) go to the judge model for evaluation. Outside durable execution, the evaluation runs concurrently with the agent, so the run is never blocked waiting on a judge.
 
 The judge delivers exactly one verdict per evaluation, as its output type:
 
@@ -134,7 +134,7 @@ agent = Agent(
 
 - The judge's model usage is threaded onto the run's `usage` and respects the run's `usage_limits`: each launch claims one request on the shared usage before the evaluation starts, so the parent's next request and concurrent judges account for in-flight evaluations and the shared request limit cannot be exceeded. A launch the request budget cannot fit skips the tick, like one that finds an evaluation still in flight. The judge run is filed under the judged run's `conversation_id`.
 - An evaluation failure is raised on the run at the next cadence tick or at run end. To have a judge degrade instead, pass an `agent` that falls back to another model (for example with the [`ModelFallback`](../capabilities/model-fallback.md) capability).
-- Inside a [durable execution](../durable_execution/overview.md) workflow or flow (Temporal, DBOS, Prefect), each evaluation is the durable operation `<agent>__capability__<id>.evaluate`, awaited before the run continues instead of running concurrently, so a replay reuses the recorded verdict and delivers the same steering at the same point. `on_verdict` runs again on replay. A judge on a durable-capable agent needs an explicit `id`, distinct per judge.
+- Inside a [durable execution](../durable_execution/overview.md) workflow or flow (Temporal, DBOS, Prefect), each evaluation is the durable operation `<agent>__capability__<id>.evaluate`, awaited before the run continues instead of running concurrently (so a failure is raised at once), and a replay reuses the recorded verdict and delivers the same steering at the same point. `on_verdict` runs again on replay. A judge on a durable-capable agent needs an explicit `id`, distinct per judge.
 
 ## Observability
 

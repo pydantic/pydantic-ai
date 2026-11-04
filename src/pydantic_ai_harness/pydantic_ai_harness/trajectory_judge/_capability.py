@@ -322,8 +322,9 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
         coroutine starts never reaches the `finally`, so `_discard_in_flight` releases the
         claim instead.
 
-        Provider failures propagate out of this task as-is (`ModelAPIError` subclasses from
-        the model layer) and are re-raised on the run by `_collect_finished`.
+        Provider failures propagate as-is (`ModelAPIError` subclasses from the model layer):
+        re-raised on the run by `_collect_finished`, or directly when awaited inline under
+        durable execution.
         """
         try:
             verdict, ref = await self._judge_verdict(ctx, prompt)

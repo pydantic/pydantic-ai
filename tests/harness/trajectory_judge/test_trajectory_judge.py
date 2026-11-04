@@ -1629,7 +1629,7 @@ class TestDurableExecution:
         assert seen[1].endswith(_steering('trajectory-judge', 'cite the file'))
 
     async def test_durable_capable_agent_outside_its_container_is_judged(self) -> None:
-        """Only the durable container is rejected; the same agent run plainly keeps its judge."""
+        """Outside its durable container the judge still runs as a background task, not a durable operation."""
 
         class DBOSDurability(AbstractCapability[None]):
             in_durable_context = False

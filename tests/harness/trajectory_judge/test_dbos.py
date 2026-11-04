@@ -9,7 +9,9 @@ from pathlib import Path
 import pytest
 
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import FunctionModel
+from pydantic_ai_harness.trajectory_judge import TrajectoryJudge
 from tests.conftest import detach_dbos_logging, try_import
 
 from ._durable_agent import judge_calls, judge_respond, respond, steering, trajectory_judge, work
@@ -45,6 +47,16 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
     finally:
         DBOS.destroy()
         detach_dbos_logging()
+
+
+def test_a_judge_without_an_id_cannot_bind_to_a_durable_agent() -> None:
+    with pytest.raises(UserError, match='needs an explicit `id`'):
+        Agent(
+            FunctionModel(respond),
+            name='unnamed_trajectory_judge',
+            deps_type=type(None),
+            capabilities=[TrajectoryJudge(model=FunctionModel(judge_respond)), DBOSDurability[None]()],
+        )
 
 
 async def test_replay_reuses_the_recorded_evaluation(dbos: DBOS) -> None:
