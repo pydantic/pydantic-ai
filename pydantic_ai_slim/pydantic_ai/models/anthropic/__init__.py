@@ -263,6 +263,7 @@ try:
 
     from . import _batch
     from ._bedrock_count_tokens import BEDROCK_ANTHROPIC_VERSION, count_tokens_via_bedrock
+    from ._betas import extends_max_output, requested_betas
     from ._cache_control import (
         ANTHROPIC_CACHEABLE_PARAM_TYPES,
         add_cache_control_param,
@@ -910,17 +911,6 @@ class _PreparedMessagesCreate:
     initial_effective_thinking: dict[str, object] | Omit
 
 
-def _extends_max_output(model_settings: AnthropicModelSettings) -> bool:
-    """Whether the request asks for a beta that raises the maximum output, like `output-300k-2026-03-24` on batches.
-
-    Then `anthropic_max_output_tokens` isn't the limit, so a larger `max_tokens` is left for the API to judge.
-    """
-    betas = [str(beta) for beta in model_settings.get('anthropic_betas') or []]
-    if header := (model_settings.get('extra_headers') or {}).get('anthropic-beta'):
-        betas.extend(beta.strip() for beta in header.split(','))
-    return any(beta.startswith('output-') for beta in betas)
-
-
 def _default_max_tokens(thinking: dict[str, object] | Omit, profile: AnthropicModelProfile) -> int:
     """The `max_tokens` to send when the request doesn't set one.
 
@@ -1500,7 +1490,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
         if exceeded := self._strict_schema_limit_exceeded(prepared_settings, model_request_parameters):
             raise limit_exceeded_error(exceeded, self.model_name)
-        if not _extends_max_output(cast(AnthropicModelSettings, prepared_settings or {})):
+        if not extends_max_output(cast(AnthropicModelSettings, prepared_settings or {})):
             prepared_settings = cap_max_tokens(prepared_settings, profile.get('anthropic_max_output_tokens'))
         if profile.get('anthropic_disallows_sampling_settings', False) and prepared_settings:
             filtered: ModelSettings = {**prepared_settings}
@@ -1906,11 +1896,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if model_settings.get('anthropic_speed') == 'fast' and self._client_supports_fast_speed(anthropic_profile):
             betas.add('fast-mode-2026-02-01')
 
-        if betas_from_setting := model_settings.get('anthropic_betas'):
-            betas.update(str(b) for b in betas_from_setting)
-
-        if beta_header := extra_headers.pop('anthropic-beta', None):
-            betas.update({stripped_beta for beta in beta_header.split(',') if (stripped_beta := beta.strip())})
+        betas.update(requested_betas(model_settings))
+        extra_headers.pop('anthropic-beta', None)
 
         if self._messages_use_anthropic_uploaded_file(messages):
             betas.add(_ANTHROPIC_FILES_API_BETA)
