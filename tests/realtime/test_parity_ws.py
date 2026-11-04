@@ -661,7 +661,8 @@ async def test_capability_tool_reveal_parity(
         """Look up tomorrow's weather forecast for a city."""
         return f'It will be sunny and 24 degrees in {city} tomorrow.'
 
-    agent = Agent(
+    agent: Agent[None, str] = Agent(
+        deps_type=type(None),
         instructions=(
             'You are a voice assistant. Answer in one short sentence. Look things up with your tools: when the tool '
             'you need is in a capability, load that capability first.'

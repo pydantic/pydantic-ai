@@ -2686,6 +2686,8 @@ class RealtimeSession:
         async def on_inline_deferred(requests: DeferredToolRequests, results: DeferredToolResults) -> None:
             self._queue_put(DeferredToolResultsEvent(results))
 
+        # Replaced by the step-synchronized manager below, before the call runs.
+        tool_manager = self._tool_manager
         try:
             async with self._tool_manager_lock:
                 ctx = self._tool_manager.ctx

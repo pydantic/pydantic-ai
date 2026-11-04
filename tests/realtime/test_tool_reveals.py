@@ -108,7 +108,7 @@ async def test_loading_a_capability_reveals_its_tools() -> None:
     """The capability's tools go out ahead of the load's result, in the same send, and the model can call them."""
     connection = _ScriptedConnection()
     model = FakeRealtimeModel(connection, profile=_UPDATES)
-    agent = Agent(capabilities=[_forecast_capability()])
+    agent: Agent[None, str] = Agent(deps_type=type(None), capabilities=[_forecast_capability()])
 
     async with agent.realtime(model).session() as session:
         events = await _converse(
@@ -145,7 +145,7 @@ async def test_a_standard_run_continues_a_session_that_revealed_tools() -> None:
     """History from a session that loaded a capability is history a standard run treats as loaded too."""
     connection = _ScriptedConnection()
     capability = _forecast_capability()
-    agent = Agent(capabilities=[capability])
+    agent: Agent[None, str] = Agent(deps_type=type(None), capabilities=[capability])
     async with agent.realtime(FakeRealtimeModel(connection, profile=_UPDATES)).session() as session:
         await _converse(session, connection, [_call('load_capability', '{"id": "weather"}', call_id='load'), _ANSWER])
 
@@ -169,7 +169,7 @@ async def test_a_seeded_load_advertises_its_tools_at_connect_on_any_model() -> N
             return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'weather'})])
         return ModelResponse(parts=[TextPart('Loaded.')])
 
-    agent = Agent(capabilities=[capability])
+    agent: Agent[None, str] = Agent(deps_type=type(None), capabilities=[capability])
     history = (await agent.run('Hi.', model=FunctionModel(load_then_answer))).all_messages()
 
     connection = _ScriptedConnection()
@@ -189,7 +189,7 @@ async def test_a_seeded_load_advertises_its_tools_at_connect_on_any_model() -> N
 async def test_loading_an_already_loaded_capability_is_refused() -> None:
     """A session knows what it loaded, so a second load is refused as in a standard run, and reveals nothing again."""
     connection = _ScriptedConnection()
-    agent = Agent(capabilities=[_forecast_capability()])
+    agent: Agent[None, str] = Agent(deps_type=type(None), capabilities=[_forecast_capability()])
     async with agent.realtime(FakeRealtimeModel(connection, profile=_UPDATES)).session() as session:
         events = await _converse(
             session,
@@ -209,7 +209,7 @@ async def test_loading_an_already_loaded_capability_is_refused() -> None:
 async def test_tool_search_reveals_a_deferred_tool() -> None:
     """A `defer_loading=True` tool is found by `search_tools`, and goes out with its result."""
     connection = _ScriptedConnection()
-    agent = Agent()
+    agent: Agent[None, str] = Agent(deps_type=type(None))
 
     @agent.tool_plain(defer_loading=True)
     async def get_stock_price(ticker: str) -> str:
@@ -243,7 +243,7 @@ async def test_tool_search_reveals_a_deferred_tool() -> None:
 async def test_a_tool_return_reveals_a_deferred_tool_once() -> None:
     """`ToolReturn.tools` reveals a tool as in a standard run, and a second reveal of it changes nothing."""
     connection = _ScriptedConnection()
-    agent = Agent()
+    agent: Agent[None, str] = Agent(deps_type=type(None))
 
     @agent.tool_plain
     async def unlock() -> ToolReturn[str]:
@@ -285,7 +285,7 @@ async def test_a_tool_return_reveals_a_deferred_tool_once() -> None:
 async def test_a_revealed_tool_outside_the_tool_choice_stays_hidden() -> None:
     """The update is narrowed by `tool_choice`, as the tools the session opened with were."""
     connection = _ScriptedConnection()
-    agent = Agent(capabilities=[_forecast_capability()])
+    agent: Agent[None, str] = Agent(deps_type=type(None), capabilities=[_forecast_capability()])
 
     @agent.tool_plain
     async def other() -> str:  # pragma: no cover
@@ -304,7 +304,7 @@ async def test_a_revealed_tool_outside_the_tool_choice_stays_hidden() -> None:
 async def test_revealing_an_unloaded_capabilitys_tool_is_refused() -> None:
     """A tool another capability owns is revealed by loading that capability, as in a standard run."""
     connection = _ScriptedConnection()
-    agent = Agent(capabilities=[_forecast_capability()])
+    agent: Agent[None, str] = Agent(deps_type=type(None), capabilities=[_forecast_capability()])
 
     @agent.tool_plain
     async def peek() -> ToolReturn[str]:
@@ -318,7 +318,7 @@ async def test_revealing_an_unloaded_capabilitys_tool_is_refused() -> None:
 async def test_a_reveal_a_model_cant_take_warns_once() -> None:
     """On a model that keeps the tools it opened with, a reveal the open couldn't foresee is recorded, and warned about."""
     connection = _ScriptedConnection()
-    agent = Agent()
+    agent: Agent[None, str] = Agent(deps_type=type(None))
     revealable = {'ready': False}
 
     @agent.toolset(per_run_step=True)
@@ -372,7 +372,7 @@ async def test_an_instruction_only_capability_needs_no_update() -> None:
             return 'Speak like a pirate.'
 
     connection = _ScriptedConnection()
-    agent = Agent(capabilities=[Pirate()])
+    agent: Agent[None, str] = Agent(deps_type=type(None), capabilities=[Pirate()])
     async with agent.realtime(FakeRealtimeModel(connection, profile=_NO_UPDATES)).session() as session:
         await _converse(session, connection, [_call('load_capability', '{"id": "pirate"}', call_id='load'), _ANSWER])
 
@@ -384,7 +384,7 @@ async def test_an_instruction_only_capability_needs_no_update() -> None:
 
 async def test_tools_still_unrevealed_on_a_model_without_updates_are_refused_at_open() -> None:
     """Of the deferred tools, only those history didn't reveal make a session on a model without updates refuse to open."""
-    agent: Agent[None, str] = Agent()
+    agent: Agent[None, str] = Agent(deps_type=type(None))
 
     @agent.tool_plain(defer_loading=True)
     async def revealed() -> str:  # pragma: no cover

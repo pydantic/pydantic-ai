@@ -390,7 +390,8 @@ async def test_deferred_capability_tools_are_revealed_mid_session(
         """Look up tomorrow's weather forecast for a city."""
         return f'It will be sunny and 24 degrees in {city} tomorrow.'
 
-    agent = Agent(
+    agent: Agent[None, str] = Agent(
+        deps_type=type(None),
         instructions='Answer in one short sentence. When the tool you need is in a capability, load it first.',
         capabilities=[
             Capability(id='weather', description='Weather forecasts.', toolsets=[forecasts], defer_loading=True)
