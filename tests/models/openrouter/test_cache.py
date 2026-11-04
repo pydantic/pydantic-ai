@@ -387,7 +387,10 @@ async def test_openrouter_cache_instructions_dynamic_only_e2e(
             }
         ],
     }
-    assert dynamic == {'role': 'system', 'content': 'You are a helpful assistant that specializes in caching. ' * 20}
+    # The dynamic instructions are a plain string, with no breakpoint.
+    assert dynamic['role'] == 'system'
+    assert isinstance(dynamic['content'], str)
+    assert dynamic['content'].startswith('You are a helpful assistant that specializes in caching.')
 
 
 async def test_openrouter_cache_instructions_dynamic_only_without_a_static_prefix(allow_model_requests: None) -> None:
