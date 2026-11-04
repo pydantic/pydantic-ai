@@ -92,7 +92,7 @@ class CommandContext:
                 with self.edits:
                     self.store.approve_project_settings(root, {key: project.pending[key] for key in keys})
                     self._use_project(with_current_approvals(project, store=self.store))
-                return f'Approved {_file_names(keys)} for {terminal_text(str(root))}. Applied, unless a launch flag sets it.'
+                return f'Approved {_file_names(keys)} for {_one_line(root)}. Applied, unless a launch flag sets it.'
             case ['revoke', *names] if names:
                 return self._revoke_project(names, stored)
             case _:
@@ -106,7 +106,7 @@ class CommandContext:
             for folder in touched:
                 self.store.revoke_project_settings(folder, keys)
             self._use_project(with_current_approvals(self.project, store=self.store))
-        folders = ', '.join(terminal_text(str(folder)) for folder in touched)
+        folders = ', '.join(_one_line(folder) for folder in touched)
         return f'Revoked {_file_names(keys)} for {folders}.'
 
     def project_completions(self, args: list[str]) -> Iterable[str]:
@@ -271,6 +271,11 @@ class CommandContext:
 PROJECT_USAGE = 'Usage: /project [approve NAME...|all | revoke NAME...|all]'
 
 
+def _one_line(path: Path) -> str:
+    """A path as inert text: directory names come from the repository, and a line break would forge a row."""
+    return terminal_text(str(path), keep='')
+
+
 def _file_names(keys: Iterable[str]) -> str:
     """Keys as the project file spells them."""
     return ', '.join(SETTING_FIELDS.get(key, key) for key in keys)
@@ -291,7 +296,7 @@ def _project_keys(names: list[str], candidates: Collection[str], *, verb: str) -
 
 def _project_listing(project: ProjectSettings, stored: dict[Path, dict[str, str]]) -> str:
     """What `/project` shows: the file, each key it sets and whether it applies, and approvals it no longer matches."""
-    lines = [f'Project settings: {project.path}' if project.path is not None else 'No project file.']
+    lines = [f'Project settings: {_one_line(project.path)}' if project.path is not None else 'No project file.']
     for key, value in project.overrides.items():
         state = 'approved' if key in project.approved else 'applied'
         lines.append(f'  {SETTING_FIELDS[key]} ({state}): {setting_json(value)}')
@@ -305,7 +310,7 @@ def _project_listing(project: ProjectSettings, stored: dict[Path, dict[str, str]
         )
     if project.pending:
         lines.append('/project approve NAME... (or all) applies them here and in later sessions in this repository.')
-    # A value's JSON still holds C1 controls, and the path comes from directory names in the repository.
+    # A value's JSON still holds C1 controls.
     return terminal_text('\n'.join(lines))
 
 

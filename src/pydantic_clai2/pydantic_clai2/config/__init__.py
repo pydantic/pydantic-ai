@@ -231,6 +231,16 @@ SETTING_FIELDS = {
 SETTING_KEYS = {name: key for key, name in SETTING_FIELDS.items()}
 """`Settings` field name to `/set` key, so a project file can use the model's own names."""
 
+USER_ONLY_SETTINGS = frozenset(
+    {
+        'repo_context_walk_up_roots',
+        'repo_context_autoload_symlink_roots',
+        'worktree_remove_commands',
+        'update_channel',
+    }
+)
+"""`Settings` fields a project file cannot set, even with approval; a file that sets one stops startup."""
+
 STRING_SETTINGS = frozenset(
     {
         'model',

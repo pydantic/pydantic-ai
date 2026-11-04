@@ -30,7 +30,14 @@ from pydantic_clai2 import chat
 from pydantic_clai2.app import _opener, create_stock_agent  # pyright: ignore[reportPrivateUsage]
 from pydantic_clai2.cli import cli, headless, web
 from pydantic_clai2.commands import Commands
-from pydantic_clai2.config import SETTING_FIELDS, PluginSettings, Settings, resolve_settings
+from pydantic_clai2.config import (
+    SETTING_FIELDS,
+    SETTING_KEYS,
+    USER_ONLY_SETTINGS,
+    PluginSettings,
+    Settings,
+    resolve_settings,
+)
 from pydantic_clai2.config.project_settings import (
     PROJECT_FILE,
     SAFE_PROJECT_KEYS,
@@ -370,21 +377,14 @@ async def test_a_plugin_approval_saved_without_its_contents_is_asked_again(
     assert ran(tmp_path) == ['trusted']
 
 
-@pytest.mark.parametrize(
-    'field', ['repo_context_walk_up_roots', 'repo_context_autoload_symlink_roots', 'update_channel']
-)
+@pytest.mark.parametrize('field', sorted(USER_ONLY_SETTINGS))
 def test_user_only_settings_cannot_be_set_in_a_project_file(tmp_path: Path, field: str) -> None:
     write(tmp_path, {field: ['/']})
     with pytest.raises(ValueError, match=rf'`{field}` is user-only and cannot be set in a project file'):
         load_project_settings(tmp_path)
 
 
-USER_ONLY = {
-    'repo_context.walk_up_roots',
-    'repo_context.autoload_symlink_roots',
-    'worktrees.remove_commands',
-    'updates.channel',
-}
+USER_ONLY = {SETTING_KEYS[name] for name in USER_ONLY_SETTINGS}
 """Rejected in a project file outright."""
 APPROVED_ONLY: dict[str, JsonValue] = {
     'model': 'test:project',
@@ -852,7 +852,7 @@ def test_a_session_applies_what_another_approved_when_it_next_decides(tmp_path: 
 
 
 def test_project_output_makes_control_characters_inert(tmp_path: Path) -> None:
-    repo = tmp_path / 'repo\x1b[31m'
+    repo = tmp_path / 'repo\x1b[31m\n  model (approved): 1'
     write(repo, {'instructions': 'Rule\x9b31m', 'tool_retries': 0})
     store = SettingsStore(tmp_path / 'config.db')
     context = shell_in(repo, store).context
@@ -862,7 +862,7 @@ def test_project_output_makes_control_characters_inert(tmp_path: Path) -> None:
     output = io.StringIO()
     print_welcome(context.project, Console(file=output, width=300))
     for text in (listing, approved, revoked, output.getvalue()):
-        assert 'repo\\x1b[31m' in text
+        assert 'repo\\x1b[31m\\x0a  model (approved): 1' in text
     assert '\x1b' not in listing + approved + revoked and '\x9b' not in listing
     assert 'Rule\\x9b31m' in listing
 
@@ -1044,9 +1044,9 @@ def test_revoke_names_a_stored_key_this_build_does_not_know(tmp_path: Path) -> N
 
 
 def test_the_banner_prints_unknown_keys_as_written_and_inert(tmp_path: Path) -> None:
-    write(tmp_path, {'[red]key[/red]': 1, 'esc\x1b]0;title': 2})
+    write(tmp_path, {'[red]key[/red]': 1, 'esc\x1b]0;title': 2, 'line\nbreak': 3})
     output = io.StringIO()
     print_welcome(load_project_settings(tmp_path), Console(file=output, width=300))
     text = output.getvalue()
-    assert 'Ignoring unknown settings: [red]key[/red], esc\\x1b]0;title\n' in text
+    assert 'Ignoring unknown settings: [red]key[/red], esc\\x1b]0;title, line\\x0abreak\n' in text
     assert '\x1b' not in text

@@ -10,6 +10,7 @@ from pydantic_clai2.config import (
     PERMISSIONS_SETTING,
     SETTING_FIELDS,
     SETTING_KEYS,
+    USER_ONLY_SETTINGS,
     PluginSettings,
     resolve_settings,
 )
@@ -186,12 +187,7 @@ def load_project_settings(workspace: Path, *, store: SettingsStore | None = None
             raise ValueError(
                 f'declare hooks with the `hooks` key, not as a plugin ({PROJECT_HOOKS} or {HOOKS_FACTORY})'
             )
-        for name in (
-            'repo_context_walk_up_roots',
-            'repo_context_autoload_symlink_roots',
-            'worktree_remove_commands',
-            'update_channel',
-        ):
+        for name in sorted(USER_ONLY_SETTINGS):
             if name in raw:
                 raise ValueError(f'`{name}` is user-only and cannot be set in a project file')
         overrides = {SETTING_KEYS[name]: value for name, value in raw.items() if name in SETTING_KEYS}
