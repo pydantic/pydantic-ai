@@ -34,6 +34,7 @@ from pydantic_ai import (
 from pydantic_ai.agent import AgentRunResult, CompactionOptions, WrapperAgent
 from pydantic_ai.capabilities import (
     AbstractCapability,
+    CompactionModelRequest,
     CompactionRequest,
     CompactionResult,
     ModelFallback,
@@ -42,18 +43,19 @@ from pydantic_ai.capabilities import (
     on_event,
 )
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
-from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import CompactionInstructionsMode, ModelProfile
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, try_import
 
 with try_import() as openai_available:
-    from pydantic_ai.models.openai import OpenAICompaction
+    from pydantic_ai.models.openai import OpenAICompaction, OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 COMPACTION_USAGE = RequestUsage(input_tokens=1000, output_tokens=50)
 TIMESTAMP = datetime(2026, 1, 1, tzinfo=UTC)
@@ -590,6 +592,40 @@ async def test_stateful_openai_compaction_leaves_requested_compaction_to_the_nex
     result = await agent.run('hi', message_history=history())
 
     assert result.compactions[0].handler == 'summarize'
+
+
+@pytest.mark.skipif(not openai_available(), reason='openai not installed')
+@pytest.mark.parametrize('instructions_mode', ['system_prompt', None])
+async def test_stateless_openai_compaction_drops_a_focus_it_cannot_send(
+    instructions_mode: CompactionInstructionsMode | None,
+):
+    """A focus merged in from elsewhere doesn't stop stateless `OpenAICompaction` compacting at its own trigger."""
+    compacted: list[str | None] = []
+
+    class Responses(OpenAIResponsesModel):
+        async def compact_messages(
+            self, request_context: ModelRequestContext, *, instructions: str | None = None
+        ) -> ModelResponse:
+            compacted.append(instructions)
+            return ModelResponse(parts=[CompactionPart(content='summary')], timestamp=TIMESTAMP)
+
+    model = Responses(
+        'gpt-5.4-nano',
+        provider=OpenAIProvider(api_key='test'),
+        profile=ModelProfile(compaction_instructions=instructions_mode),
+    )
+    request = CompactionRequest(
+        reason='threshold',
+        messages=[*history(), ModelRequest(parts=[UserPromptPart('What is my name?')])],
+        conversation_request=CompactionModelRequest(model=model, settings=None, parameters=ModelRequestParameters()),
+        focus='the name',
+    )
+    ctx = RunContext[None](deps=None, model=model, usage=RunUsage())
+
+    result = await OpenAICompaction(message_count_threshold=2).compact_history(ctx, request)
+
+    assert result is not None and result.handler == 'native'
+    assert compacted == [None]
 
 
 @pytest.mark.skipif(not openai_available(), reason='openai not installed')
