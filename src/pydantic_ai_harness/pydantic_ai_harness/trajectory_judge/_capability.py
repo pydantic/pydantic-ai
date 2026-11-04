@@ -125,7 +125,7 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
     """Review a live run with a second model on a cadence, and steer it mid-run.
 
     A `TrajectoryJudge` evaluates the most recent `window` tokens of the run's trajectory
-    every `every` model requests, concurrently with the run, and delivers exactly one
+    every `every` model requests, concurrently with the run outside durable execution, and delivers exactly one
     verdict per evaluation: `AllGood`, or `Steer` with a corrective message. Steering is
     enqueued into the run (`RunContext.enqueue`, `'asap'` priority) as a framework note in
     system voice followed by the judge's message as quoted data, attributed to the judge, so
@@ -136,9 +136,10 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
     The judge's model and tool usage are threaded onto the run's `usage` and respect its
     `usage_limits`: each launch claims one request on the shared usage before the
     evaluation starts, so the parent's next preflight and sibling launches account for the
-    in-flight call, and a launch the request budget cannot fit is skipped. An evaluation
-    failure is raised on the run at the next cadence tick or at run end; give the judge a
-    fallback model (via `agent`) if you need it to degrade instead.
+    in-flight call, and a launch the request budget cannot fit is skipped. Outside durable
+    execution, an evaluation failure is raised on the run at the next cadence tick or at run
+    end; inside a workflow or flow it is raised from the request that launched it. Give the
+    judge a fallback model (via `agent`) if you need it to degrade instead.
 
     ```python
     from pydantic_ai import Agent

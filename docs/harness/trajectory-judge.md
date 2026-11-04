@@ -133,7 +133,7 @@ agent = Agent(
 ## Cost and failure semantics
 
 - The judge's model usage is threaded onto the run's `usage` and respects the run's `usage_limits`: each launch claims one request on the shared usage before the evaluation starts, so the parent's next request and concurrent judges account for in-flight evaluations and the shared request limit cannot be exceeded. A launch the request budget cannot fit skips the tick, like one that finds an evaluation still in flight. The judge run is filed under the judged run's `conversation_id`.
-- An evaluation failure is raised on the run at the next cadence tick or at run end. To have a judge degrade instead, pass an `agent` that falls back to another model (for example with the [`ModelFallback`](../capabilities/model-fallback.md) capability).
+- Outside durable execution, an evaluation failure is raised on the run at the next cadence tick or at run end; inside a workflow or flow it is raised from the request that launched it. To have a judge degrade instead, pass an `agent` that falls back to another model (for example with the [`ModelFallback`](../capabilities/model-fallback.md) capability).
 
 ## Durable execution
 
