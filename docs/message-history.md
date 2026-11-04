@@ -548,7 +548,8 @@ _(This example is complete, it can be run "as is")_
     A [multi-modal item][pydantic_ai.messages.MultiModalContent] your tool returned is reconstructed
     as its own type wherever it sits — on its own, in a list, or nested at any depth inside a
     mapping. A tool return records the URL-based and [`UploadedFile`][pydantic_ai.messages.UploadedFile]
-    items it holds when it is serialized, and only those are reconstructed. A mapping your tool
+    items it holds when it is serialized, under `content_file_digests` next to `content`, and only those
+    are reconstructed. Keep that key when you transform stored history. A mapping your tool
     returned stays that mapping, even one that spells out one of our items in full, so a round trip
     hands back exactly what your tool returned.
 
