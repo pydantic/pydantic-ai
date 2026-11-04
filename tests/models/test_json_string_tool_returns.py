@@ -28,9 +28,10 @@ from pydantic_ai import (
 from pydantic_ai._file_input import unsupported_file_note
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelMessagesTypeAdapter
-from pydantic_ai.models import Model
+from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.tools import ToolDefinition
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
@@ -249,7 +250,7 @@ async def test_a_model_without_the_flag_sends_the_output_as_returned(allow_model
 
 
 def test_only_successful_string_returns_are_wrapped():
-    """A failed or denied call's text and a structured return keep their own rendering."""
+    """A failed or denied call's text, a structured return and an output tool's status text keep their own rendering."""
     model = FunctionModel(
         lambda _messages, _info: ModelResponse(parts=[TextPart('ok')]),
         profile=ModelProfile(needs_json_string_tool_returns=True),
@@ -261,6 +262,7 @@ def test_only_successful_string_returns_are_wrapped():
                 ToolCallPart('a', {}, tool_call_id='1'),
                 ToolCallPart('b', {}, tool_call_id='2'),
                 ToolCallPart('c', {}, tool_call_id='3'),
+                ToolCallPart('final_result', {'answer': 42}, tool_call_id='4'),
             ]
         ),
         ModelRequest(
@@ -268,17 +270,20 @@ def test_only_successful_string_returns_are_wrapped():
                 ToolReturnPart('a', 'plain', tool_call_id='1'),
                 ToolReturnPart('b', {'status': 'ok'}, tool_call_id='2'),
                 ToolReturnPart('c', 'Not allowed.', tool_call_id='3', outcome='denied'),
+                ToolReturnPart('final_result', 'Final result processed.', tool_call_id='4'),
             ]
         ),
     ]
+    params = ModelRequestParameters(output_tools=[ToolDefinition(name='final_result')])
 
-    [request] = model.prepare_messages(messages)[-1:]
+    [request] = model.prepare_messages(messages, params)[-1:]
 
     assert isinstance(request, ModelRequest)
     assert [part.content for part in request.parts if isinstance(part, ToolReturnPart)] == [
         '{"tool_output": "plain"}',
         {'status': 'ok'},
         'Not allowed.',
+        'Final result processed.',
     ]
 
 
