@@ -128,7 +128,9 @@ class ExamplesConfig(BaseExamplesConfig):
         return config
 
 
-RUNNABLE_HARNESS_PAGES = frozenset({'artifact-scanning.md', 'detect-loops.md', 'memory.md', 'permissions.md'})
+RUNNABLE_HARNESS_PAGES = frozenset(
+    {'artifact-scanning.md', 'azure-durable-task.md', 'detect-loops.md', 'memory.md', 'permissions.md'}
+)
 """`docs/harness` pages whose examples run here; the rest are skipped until they are made runnable."""
 
 
@@ -183,6 +185,8 @@ def find_filter_examples() -> Iterable[ParameterSet]:
                 if path == Path('docs/workspace.md') or title == 'mcp_client_sampling.py'
                 else []
             )
+            if _is_harness_page(ex.path) and ex.path.name == 'azure-durable-task.md':
+                marks.append(pytest.mark.skipif(find_spec('durabletask') is None, reason='durabletask not installed'))
             if title in _MOVES_CACHE_PREFIX:
                 marks.append(pytest.mark.moves_cache_prefix(reason=_MOVES_CACHE_PREFIX[title]))
             yield pytest.param(ex, id=test_id, marks=marks)
@@ -875,6 +879,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Now redesign its auth layer.': 'Start from the threat model: who can mint a token, and what it is scoped to.',
     'hello': 'Hello! How can I help you today?',
     'What time is it?': 'The current time is 3:45 PM.',
+    "What is today's date?": 'Today is January 2, 2032.',
     "What's Jane's contact info?": 'You can reach Jane at jane@example.com or 555-123-4567.',
     'Say hi!': "Bonjour ! Comment puis-je vous aider aujourd'hui ?",
     'first run': 'Response to first run.',
