@@ -1,0 +1,293 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "566"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              Take the country that borders both France and Austria and whose capital is not
+              its largest city. Give me information about its largest city.
+            type: text
+        model: claude-sonnet-4-6
+        output_config:
+          format:
+            type: json_schema
+            schema:
+              type: object
+              properties:
+                city:
+                  type: string
+                country:
+                  type: string
+                population:
+                  type: integer
+              additionalProperties: false
+              required:
+              - city
+              - country
+              - population
+          effort: high
+        stream: true
+        thinking:
+          type: adaptive
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-c38ffbd9c34ff2550747b1bcc0879ae7-99cb1c871cfbb4e0-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011CfY3gYKy5F2qgogG6ZJWW","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":219,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":7,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}           }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}       }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" me think about this."}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" I need to find a country that"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":":\n1. Borders both"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" France and Austria\n2. Its"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" capital is not its largest city"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\nCountries"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" that border France"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":": Belgium"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":", Luxembourg, Germany"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":", Switzerland"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":", Italy, Monaco"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":","}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" Andorra, Spain"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"."}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\nCountries that border Austria: Germany"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":", Czech"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" Republic, Slovakia, Hungary"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":", Slovenia, Italy"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":", Switzerland"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":", Liechtenstein."}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\nCountries"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" that border"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" BOTH France and"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" Austria:"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n- Germany"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" ("}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"borders"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" France"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":":"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" yes"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":", borders Austria: yes)"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n- Switzerland"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" (borders France: yes, borders"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" Austria: yes)\n- Italy"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" (borders France: yes, borders"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" Austria: yes)\n-"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" Liechtenstein borders"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" Austria but"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" does"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" not border France directly"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"."}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Checking each candidate:"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" Germany's capital"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" Berlin is"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" also its largest city, and"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" Italy's capital R"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ome is also its largest city,"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" so neither fits. Swit"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"zerland st"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ands out though—Bern is"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" the capital,"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" but Zurich is the larg"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"est city, making it"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" the answer,"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" with Zurich's pro"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"per population around 415,000-"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"420,000."}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\n"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"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"}             }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0      }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"{\""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"city\":\""}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Zurich\",\"country\":\"Switzerland"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\",\"population\":415215}"}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1     }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":219,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":522,"output_tokens_details":{"thinking_tokens":500}}             }
+
+        event: message_stop
+        data: {"type":"message_stop"    }
+
+  recorded_at: 2026-09-29T16:29:11.141470+00:00

@@ -5,12 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-import pytest
-
 from pydantic_graph import GraphBuilder, StepContext, TypeExpression
 from pydantic_graph.graph_builder import build_mermaid_graph
-
-pytestmark = pytest.mark.anyio
 
 
 @dataclass

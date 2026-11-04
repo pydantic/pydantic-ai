@@ -1,26 +1,30 @@
 from __future__ import annotations as _annotations
 
 import argparse
+import functools
 import json
+import shutil
 import sys
-from collections.abc import Sequence
-from contextlib import ExitStack
-from datetime import datetime, timezone
+from collections.abc import Generator, Sequence
+from contextlib import AsyncExitStack, ExitStack, contextmanager, suppress
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import anyio
 from pydantic import ImportString, TypeAdapter, ValidationError
 
-from .. import __version__, models, usage as _usage
+from .. import __version__, _display, models, usage as _usage
 from .._run_context import AgentDepsT
 from ..agent import AbstractAgent, Agent
 from ..exceptions import UserError
-from ..messages import ModelMessage, ModelResponse
+from ..messages import AgentStreamEvent, FunctionToolCallEvent, FunctionToolResultEvent, ModelMessage, ModelResponse
 from ..models import infer_model, known_model_names
 from ..native_tools import NATIVE_TOOLS_REQUIRING_CONFIG, SUPPORTED_NATIVE_TOOLS
 from ..output import OutputDataT
 from ..settings import ModelSettings
+from ..toolsets import AbstractToolset
 
 try:
     import argcomplete
@@ -123,7 +127,7 @@ def load_agent(agent_path: str) -> Agent[Any, Any] | None:
 
 @cli_agent.system_prompt
 def cli_system_prompt() -> str:
-    now_utc = datetime.now(timezone.utc)
+    now_utc = datetime.now(UTC)
     tzinfo = now_utc.astimezone().tzinfo
     tzname = tzinfo.tzname(now_utc) if tzinfo else ''
     return f"""\
@@ -135,6 +139,64 @@ The user is running {sys.platform}."""
 def cli_exit(prog_name: str = 'clai'):  # pragma: no cover
     """Run the CLI and exit."""
     sys.exit(cli(prog_name=prog_name))
+
+
+def _print_intro(
+    console: Console,
+    agent: Agent[Any, Any],
+    model: models.Model | models.KnownModelName | str | None = None,
+    *,
+    agent_path: str | None = None,
+    toolsets: Sequence[AbstractToolset[Any]] | None = None,
+) -> None:
+    """Print the intro a chat session opens with.
+
+    Left to itself, the first run would print the banner into the middle of the answer to the first
+    prompt. A chat session knows what the agent is before then, so it shows the same banner up front.
+
+    What the session will actually do is resolved here the way a run resolves it, rather than read
+    off the agent as configured: an `override()` in force, or instrumentation switched on globally
+    by `Agent.instrument_all()`, would otherwise have the banner describe a different session than
+    the one the user is about to have.
+
+    Args:
+        console: Console to print to.
+        agent: The agent the session will run.
+        model: Model the session was asked to use, if not the agent's own.
+        agent_path: How the user asked for the agent, for one that doesn't name itself.
+        toolsets: Toolsets the session will pass to each run, which aren't on the agent — `clai`
+            loads `--mcp-config` into these, so leaving them out would undercount the session.
+    """
+    details = agent._startup_banner_details(model, toolsets)  # pyright: ignore[reportPrivateUsage]
+
+    try:
+        banner = _display.render_banner(
+            # A loaded agent doesn't always name itself, so fall back to how the user asked for it.
+            name=agent.name or agent_path,
+            model=details.model,
+            output_type=agent.output_type,
+            tools=details.tools,
+            capabilities=details.capabilities,
+            observability=not details.instrumented,
+            logfire_cli_available=shutil.which('uvx') is not None,
+            # The console already knows how wide the terminal is, `COLUMNS` and all, and re-asks it
+            # every time. Without one it answers 80 whether it read that off `COLUMNS` or had nothing
+            # to go on, so the width comes from the stream instead, which tells those two apart.
+            width=console.width if console.is_terminal else _display.terminal_width(console.file),
+        )
+        # Rendered by the console but written by hand: a write rich fails on stays in its buffer, so
+        # the next thing the session printed would re-emit the banner and fail outside this guard.
+        with console.capture() as capture:
+            # The banner arrives laid out in columns and pre-coloured, so rich reads its ANSI back
+            # rather than re-highlighting or re-wrapping it; `list[str]` as an output type isn't markup.
+            console.print(Text.from_ansi(banner), soft_wrap=True)
+        console.file.write(capture.get())
+    except Exception:
+        # Laying the banner out is inside the guard as well as writing it, the way the plain path
+        # has it: `render_banner` reads an output type's own `repr` and the console's width, neither
+        # of which is ours. A terminal whose encoding can't take the logo (`LC_ALL=C`) is no reason
+        # to fail a session before it starts; the chat opens without a header rather than not at all.
+        pass
 
 
 def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'clai', default_model: str = 'openai:gpt-5') -> int:
@@ -207,6 +269,10 @@ def _cli_web(args_list: list[str], prog_name: str, default_model: str, qualified
 
     from .web import run_web_command
 
+    # The web UI prints its own startup lines; a banner would arrive later, in the server log,
+    # triggered by whenever someone first sends a message in the browser.
+    _display.claim_banner()
+
     return run_web_command(
         agent_path=args.agent,
         host=args.host,
@@ -266,6 +332,10 @@ subcommands:
         default='dark',
     )
     parser.add_argument('--no-stream', action='store_true', help='Disable streaming from the model')
+    parser.add_argument(
+        '--mcp-config',
+        help='Path to MCP servers configuration file (JSON, using the same mcpServers shape as Claude Desktop, Claude Code, and Cursor).',
+    )
     argcomplete.autocomplete(parser)
     args = parser.parse_args(args_list)
 
@@ -285,6 +355,25 @@ subcommands:
     return _run_chat_command(args, console, name_version, default_model, prog_name)
 
 
+def _load_mcp_toolsets_for_cli(config_path: str, console: Console) -> Sequence[AbstractToolset[Any]] | None:
+    """Load the `--mcp-config` toolsets, or print a friendly error and return `None`."""
+    # An empty value (`--mcp-config=`, or `--mcp-config="$UNSET_VAR"` in a script) is falsy, so a
+    # truthiness check would skip MCP entirely and leave the user thinking their servers loaded.
+    if not config_path:
+        console.print('[red]Error: --mcp-config needs a path to a configuration file[/red]')
+        return None
+
+    from ..mcp import load_mcp_toolsets
+
+    try:
+        return load_mcp_toolsets(config_path)
+    # `OSError` rather than `FileNotFoundError`: a path that exists but can't be read as a file
+    # (a directory, or one without read permission) raises a sibling `OSError` subclass.
+    except (OSError, ValidationError, ValueError) as e:
+        console.print(f'[red]Error: Could not load MCP config from {config_path}:\n{e}[/red]')
+        return None
+
+
 def _run_chat_command(
     args: argparse.Namespace, console: Console, name_version: str, default_model: str, prog_name: str
 ) -> int:
@@ -297,6 +386,12 @@ def _run_chat_command(
             return 1
         agent = loaded
 
+    toolsets: Sequence[AbstractToolset[Any]] | None = None
+    if args.mcp_config is not None:
+        toolsets = _load_mcp_toolsets_for_cli(args.mcp_config, console)
+        if toolsets is None:
+            return 1
+
     model_arg_set = args.model is not None
     if agent.model is None or model_arg_set:
         try:
@@ -306,35 +401,53 @@ def _run_chat_command(
             return 1
 
     model_name = agent.model if isinstance(agent.model, str) else agent.model.model_id
-    if args.agent and model_arg_set:
-        console.print(
-            f'{name_version} using custom agent [magenta]{args.agent}[/magenta] with [magenta]{model_name}[/magenta]',
-            highlight=False,
-        )
-    elif args.agent:
-        console.print(f'{name_version} using custom agent [magenta]{args.agent}[/magenta]', highlight=False)
-    else:
-        console.print(f'{name_version} with [magenta]{model_name}[/magenta]', highlight=False)
+    _print_clai_intro(
+        console, agent, name_version, model_name, agent_path=args.agent, model_arg_set=model_arg_set, toolsets=toolsets
+    )
 
     stream = not args.no_stream
-    if args.code_theme == 'light':
-        code_theme = 'default'
-    elif args.code_theme == 'dark':
-        code_theme = 'monokai'
-    else:
-        code_theme = args.code_theme  # pragma: no cover
+    match args.code_theme:
+        case 'light':
+            code_theme = 'default'
+        case 'dark':
+            code_theme = 'monokai'
+        case _:  # pragma: no cover
+            code_theme = args.code_theme
 
     if args.prompt:
-        try:
-            anyio.run(ask_agent, agent, args.prompt, stream, console, code_theme)
-        except KeyboardInterrupt:
-            pass
+        with suppress(KeyboardInterrupt):
+            anyio.run(functools.partial(ask_agent, agent, args.prompt, stream, console, code_theme, toolsets=toolsets))
         return 0
 
     try:
-        return anyio.run(run_chat, stream, agent, console, code_theme, prog_name)
+        return anyio.run(functools.partial(run_chat, stream, agent, console, code_theme, prog_name, toolsets=toolsets))
     except KeyboardInterrupt:  # pragma: no cover
         return 0
+
+
+def _print_clai_intro(
+    console: Console,
+    agent: Agent[object, str],
+    name_version: str,
+    model_name: str,
+    *,
+    agent_path: str | None,
+    model_arg_set: bool,
+    toolsets: Sequence[AbstractToolset[Any]] | None,
+) -> None:
+    """Print the banner the chat command opens with, or a line naming its agent and model when the banner isn't available."""
+    # Nothing can print a second one later: `ask_agent` claims it before every run.
+    if _display.banner_available(is_terminal=console.is_terminal):
+        _print_intro(console, agent, agent_path=agent_path, toolsets=toolsets)
+    elif agent_path and model_arg_set:
+        console.print(
+            f'{name_version} using custom agent [magenta]{agent_path}[/magenta] with [magenta]{model_name}[/magenta]',
+            highlight=False,
+        )
+    elif agent_path:
+        console.print(f'{name_version} using custom agent [magenta]{agent_path}[/magenta]', highlight=False)
+    else:
+        console.print(f'{name_version} with [magenta]{model_name}[/magenta]', highlight=False)
 
 
 async def run_chat(
@@ -349,7 +462,19 @@ async def run_chat(
     model: models.Model | models.KnownModelName | str | None = None,
     model_settings: ModelSettings | None = None,
     usage_limits: _usage.UsageLimits | None = None,
+    toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
 ) -> int:
+    # `Agent.to_cli()` arrives here with nothing printed yet, so this is where its session gets the
+    # banner. `clai` printed its own intro and claimed the banner already, so it doesn't get a second.
+    # A session with no model at all has nothing to say about one, and its first prompt will fail on
+    # that anyway; `_print_intro` resolves which model it will be, overrides included.
+    if (
+        isinstance(agent, Agent)
+        and agent._has_model(model)  # pyright: ignore[reportPrivateUsage]
+        and _display.banner_available(is_terminal=console.is_terminal)
+    ):
+        _print_intro(console, agent, model, toolsets=toolsets)
+
     prompt_history_path = (config_dir or PYDANTIC_AI_HOME) / PROMPT_HISTORY_FILENAME
     prompt_history_path.parent.mkdir(parents=True, exist_ok=True)
     prompt_history_path.touch(exist_ok=True)
@@ -360,25 +485,34 @@ async def run_chat(
     session_usage = _usage.RunUsage()
     session_turns = 0
 
-    while True:
-        try:
-            auto_suggest = CustomAutoSuggest(['/markdown', '/multiline', '/usage', '/exit', '/cp'])
-            text = await session.prompt_async(f'{prog_name} ➤ ', auto_suggest=auto_suggest, multiline=multiline)
-        except (KeyboardInterrupt, EOFError):  # pragma: no cover
-            return 0
+    async with AsyncExitStack() as toolset_stack:
+        # Hold the toolsets open for the whole chat rather than per turn. Each run still enters
+        # them, but `MCPToolset` ref-counts, so those become no-ops instead of a fresh subprocess
+        # and `tools/list` handshake on every message, and server-side session state survives the
+        # turn. An unreachable server therefore fails at startup rather than on the first message.
+        for toolset in toolsets or ():
+            await toolset_stack.enter_async_context(toolset)
 
-        if not text.strip():
-            continue
-
-        ident_prompt = text.lower().strip().replace(' ', '-')
-        if ident_prompt.startswith('/'):
-            exit_value, multiline = handle_slash_command(
-                ident_prompt, messages, multiline, console, code_theme, usage=session_usage, turns=session_turns
-            )
-            if exit_value is not None:
-                return exit_value
-        else:
+        while True:
             try:
+                auto_suggest = CustomAutoSuggest(['/markdown', '/multiline', '/usage', '/exit', '/cp'])
+                text = await session.prompt_async(f'{prog_name} ➤ ', auto_suggest=auto_suggest, multiline=multiline)
+            except (KeyboardInterrupt, EOFError):  # pragma: no cover
+                return 0
+
+            if not text.strip():
+                continue
+
+            ident_prompt = text.lower().strip().replace(' ', '-')
+            if ident_prompt.startswith('/'):
+                exit_value, multiline = handle_slash_command(
+                    ident_prompt, messages, multiline, console, code_theme, usage=session_usage, turns=session_turns
+                )
+                if exit_value is not None:
+                    return exit_value
+                continue
+
+            with _report_turn_errors(console):
                 messages = await ask_agent(
                     agent,
                     text,
@@ -390,16 +524,24 @@ async def run_chat(
                     model=model,
                     model_settings=model_settings,
                     usage_limits=usage_limits,
+                    toolsets=toolsets,
                     usage=session_usage,
                 )
                 session_turns += 1
-            except anyio.get_cancelled_exc_class():  # pragma: no cover
-                console.print('[dim]Interrupted[/dim]')
-            except Exception as e:  # pragma: no cover
-                cause = getattr(e, '__cause__', None)
-                console.print(f'\n[red]{type(e).__name__}:[/red] {e}')
-                if cause:
-                    console.print(f'[dim]Caused by: {cause}[/dim]')
+
+
+@contextmanager
+def _report_turn_errors(console: Console) -> Generator[None]:
+    """Print the error a chat turn fails with, and let the session go on to the next prompt."""
+    try:
+        yield
+    except anyio.get_cancelled_exc_class():
+        console.print('[dim]Interrupted[/dim]')  # pragma: no cover
+    except Exception as e:
+        cause = getattr(e, '__cause__', None)
+        console.print(f'\n[red]{type(e).__name__}:[/red] {e}')
+        if cause:
+            console.print(f'[dim]Caused by: {cause}[/dim]')
 
 
 async def ask_agent(
@@ -413,9 +555,14 @@ async def ask_agent(
     model: models.Model | models.KnownModelName | str | None = None,
     model_settings: ModelSettings | None = None,
     usage_limits: _usage.UsageLimits | None = None,
+    toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     *,
     usage: _usage.RunUsage | None = None,
 ) -> list[ModelMessage]:
+    # A chat session owns the terminal: it has already printed whatever intro it wanted, and a
+    # banner from the run itself would land in the middle of the answer to this prompt.
+    _display.claim_banner()
+
     status = Status('[dim]Working on it…[/dim]', console=console)
 
     # Count this turn into a fresh `RunUsage` so `usage_limits` stays per-run, then merge it into the
@@ -431,6 +578,7 @@ async def ask_agent(
                     model=model,
                     model_settings=model_settings,
                     usage_limits=usage_limits,
+                    toolsets=toolsets,
                     usage=turn_usage,
                 )
             content = str(result.output)
@@ -445,23 +593,77 @@ async def ask_agent(
                 model=model,
                 model_settings=model_settings,
                 usage_limits=usage_limits,
+                toolsets=toolsets,
                 usage=turn_usage,
             ) as agent_run:
                 live = Live('', refresh_per_second=15, console=console, vertical_overflow='ellipsis')
+                display = _StreamedRunDisplay(live, code_theme)
+                live_started = False
+
                 async for node in agent_run:
                     if Agent.is_model_request_node(node):
                         async with node.stream(agent_run.ctx) as handle_stream:
-                            status.stop()  # stopping multiple times is idempotent
-                            stack.enter_context(live)  # entering multiple times is idempotent
+                            # Inside the `async with`, so the spinner survives request preparation
+                            # and time-to-first-byte rather than handing the user a blank display.
+                            # The first `ModelRequestNode` always precedes any tool-call node, so
+                            # `live` is entered before any tool-call node needs it — and the flag
+                            # enters it exactly once.
+                            if not live_started:
+                                status.stop()
+                                stack.enter_context(live)
+                                live_started = True
 
                             async for content in handle_stream.stream_output(debounce_by=None):
-                                live.update(Markdown(str(content), code_theme=code_theme))
+                                display.show_text(str(content))
+
+                    elif Agent.is_call_tools_node(node):
+                        display.freeze_text()
+                        async with node.stream(agent_run.ctx) as handle_stream:
+                            async for event in handle_stream:
+                                display.show_tool_event(event)
 
             assert agent_run.result is not None
             return agent_run.result.all_messages()
     finally:
         if usage is not None:
-            usage.incr(turn_usage)
+            usage.incr(turn_usage)  # usage-attribution: the CLI's own cross-turn total, not a run's usage
+
+
+@dataclass
+class _StreamedRunDisplay:
+    """What `ask_agent` shows while a streamed run is in flight: the text streamed so far and the tool calls it made."""
+
+    live: Live
+    code_theme: str
+    content_pieces: list[str] = field(default_factory=list[str])
+    # Tool calls run concurrently and can return out of order, so in-flight calls are
+    # keyed by call id — rendering only the latest would erase the others' indicators.
+    pending_calls: dict[str, str] = field(default_factory=dict[str, str])
+    updated_content: str = ''
+
+    def show_text(self, content: str) -> None:
+        self.updated_content = content
+        self.live.update(Markdown('\n\n'.join([*self.content_pieces, content]), code_theme=self.code_theme))
+
+    def freeze_text(self) -> None:
+        """Freeze the text streamed so far, so tool-call lines append below it rather than overwriting it on the next model request node."""
+        if self.updated_content:
+            self.content_pieces.append(self.updated_content)
+            self.updated_content = ''
+
+    def show_tool_event(self, event: AgentStreamEvent) -> None:
+        if isinstance(event, FunctionToolCallEvent):
+            # `args_valid is None`: the call won't run, e.g. it was skipped
+            # because a final result was already processed.
+            if event.args_valid is not None:
+                self.pending_calls[event.tool_call_id] = event.part.tool_name
+        elif isinstance(event, FunctionToolResultEvent):
+            # Pop on any result, a retried one included: it would otherwise stay
+            # pending and pin its indicator for the rest of the run.
+            if self.pending_calls.pop(event.tool_call_id, None) is not None:
+                self.content_pieces.append(f'> Called tool `{event.part.tool_name}`.')
+        calling = [f'> _Calling tool `{name}`…_' for name in self.pending_calls.values()]
+        self.live.update(Markdown('\n\n'.join([*self.content_pieces, *calling]), code_theme=self.code_theme))
 
 
 class CustomAutoSuggest(AutoSuggestFromHistory):
@@ -469,7 +671,7 @@ class CustomAutoSuggest(AutoSuggestFromHistory):
         super().__init__()
         self.special_suggestions = special_suggestions or []
 
-    def get_suggestion(self, buffer: Buffer, document: Document) -> Suggestion | None:  # pragma: no cover
+    def get_suggestion(self, buffer: Buffer, document: Document) -> Suggestion | None:
         # Get the suggestion from history
         suggestion = super().get_suggestion(buffer, document)
 
@@ -521,56 +723,63 @@ def handle_slash_command(
     usage: _usage.RunUsage | None = None,
     turns: int = 0,
 ) -> tuple[int | None, bool]:
-    if ident_prompt == '/markdown':
-        try:
-            parts = messages[-1].parts
-        except IndexError:
-            console.print('[dim]No markdown output available.[/dim]')
-        else:
-            console.print('[dim]Markdown output of last question:[/dim]\n')
-            for part in parts:
-                if part.part_kind == 'text':
-                    console.print(
-                        Syntax(
-                            part.content,
-                            lexer='markdown',
-                            theme=code_theme,
-                            word_wrap=True,
-                            background_color='default',
-                        )
-                    )
-
-    elif ident_prompt == '/multiline':
-        multiline = not multiline
-        if multiline:
-            console.print(
-                'Enabling multiline mode. [dim]Press [Meta+Enter] or [Esc] followed by [Enter] to accept input.[/dim]'
-            )
-        else:
-            console.print('Disabling multiline mode.')
-        return None, multiline
-    elif ident_prompt == '/exit':
-        console.print('[dim]Exiting…[/dim]')
-        return 0, multiline
-    elif ident_prompt == '/cp':
-        if not messages or not isinstance(messages[-1], ModelResponse):
-            console.print('[dim]No output available to copy.[/dim]')
-        else:
-            text_to_copy = messages[-1].text
-            if text_to_copy and (text_to_copy := text_to_copy.strip()):
-                pyperclip.copy(text_to_copy)
-                console.print('[dim]Copied last output to clipboard.[/dim]')
+    match ident_prompt:
+        case '/markdown':
+            _print_last_markdown(messages, console, code_theme)
+        case '/multiline':
+            multiline = not multiline
+            if multiline:
+                console.print(
+                    'Enabling multiline mode. [dim]Press [Meta+Enter] or [Esc] followed by [Enter] to accept input.[/dim]'
+                )
             else:
-                console.print('[dim]No text content to copy.[/dim]')
-    elif ident_prompt == '/usage' or ident_prompt.startswith('/usage-'):
-        # A flag is separated by a space, which is replaced with `-` upstream, so `/usage --json`
-        # arrives as `/usage---json`. Requiring the `/usage-` prefix keeps `/usagex` an unknown command.
-        option = ident_prompt[len('/usage') :].strip('-')
-        if option in ('', 'json'):
-            # `soft_wrap` keeps the JSON on a single line for piping; the text has no markup to render.
-            console.print(format_usage(usage or _usage.RunUsage(), turns, as_json=option == 'json'), soft_wrap=True)
-        else:
-            console.print(f'[red]Unknown `/usage` option[/red] [magenta]`{ident_prompt}`[/magenta]')
-    else:
-        console.print(f'[red]Unknown command[/red] [magenta]`{ident_prompt}`[/magenta]')
+                console.print('Disabling multiline mode.')
+        case '/exit':
+            console.print('[dim]Exiting…[/dim]')
+            return 0, multiline
+        case '/cp':
+            _copy_last_output(messages, console)
+        case _ if ident_prompt == '/usage' or ident_prompt.startswith('/usage-'):
+            # A flag is separated by a space, which is replaced with `-` upstream, so `/usage --json`
+            # arrives as `/usage---json`. Requiring the `/usage-` prefix keeps `/usagex` an unknown command.
+            option = ident_prompt[len('/usage') :].strip('-')
+            if option in ('', 'json'):
+                # `soft_wrap` keeps the JSON on a single line for piping; the text has no markup to render.
+                console.print(format_usage(usage or _usage.RunUsage(), turns, as_json=option == 'json'), soft_wrap=True)
+            else:
+                console.print(f'[red]Unknown `/usage` option[/red] [magenta]`{ident_prompt}`[/magenta]')
+        case _:
+            console.print(f'[red]Unknown command[/red] [magenta]`{ident_prompt}`[/magenta]')
     return None, multiline
+
+
+def _print_last_markdown(messages: list[ModelMessage], console: Console, code_theme: str) -> None:
+    try:
+        parts = messages[-1].parts
+    except IndexError:
+        console.print('[dim]No markdown output available.[/dim]')
+        return
+    console.print('[dim]Markdown output of last question:[/dim]\n')
+    for part in parts:
+        if part.part_kind == 'text':
+            console.print(
+                Syntax(
+                    part.content,
+                    lexer='markdown',
+                    theme=code_theme,
+                    word_wrap=True,
+                    background_color='default',
+                )
+            )
+
+
+def _copy_last_output(messages: list[ModelMessage], console: Console) -> None:
+    if not messages or not isinstance(messages[-1], ModelResponse):
+        console.print('[dim]No output available to copy.[/dim]')
+        return
+    text_to_copy = messages[-1].text
+    if text_to_copy and (text_to_copy := text_to_copy.strip()):
+        pyperclip.copy(text_to_copy)
+        console.print('[dim]Copied last output to clipboard.[/dim]')
+    else:
+        console.print('[dim]No text content to copy.[/dim]')

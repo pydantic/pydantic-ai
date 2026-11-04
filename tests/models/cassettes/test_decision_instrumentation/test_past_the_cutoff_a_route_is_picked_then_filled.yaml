@@ -1,0 +1,161 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '325'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        route:
+          criteria:
+            BillingReview: Review a billing complaint in full.
+            OutageReport: Report a service outage the customer ran into.
+          instructions: Which of these does this call for?
+          type: choice
+      state: You charged me twice this month. Refund it or I cancel.
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '226'
+      content-type:
+      - application/json
+      x-typesafe-request-id:
+      - req_01a0d6b4be047fafbac08217fb6a3ce2
+    parsed_body:
+      answers:
+        route:
+          choice: BillingReview
+          confidence: 1.0
+          probabilities:
+            BillingReview: 1.0
+            OutageReport: 0.0
+          type: choice
+      model: jev-1.13.0
+      usage:
+        input_tokens: 343
+        output_tokens: 42
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1657'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        angry:
+          instructions:
+            field: angry
+            premise: 'If the user''s request calls for BillingReview: Review a billing complaint in full.'
+            question: Does the customer sound angry, rather than just frustrated?
+          type: noul
+        channel:
+          criteria:
+            chat: null
+            email: null
+            phone: null
+          instructions:
+            field: channel
+            premise: 'If the user''s request calls for BillingReview: Review a billing complaint in full.'
+            question: How would the customer like to be contacted?
+          type: choice
+        churn_risk:
+          instructions:
+            field: churn_risk
+            premise: 'If the user''s request calls for BillingReview: Review a billing complaint in full.'
+            question: Does the customer say or hint that they may cancel their subscription?
+          type: noul
+        duplicate:
+          instructions:
+            field: duplicate
+            premise: 'If the user''s request calls for BillingReview: Review a billing complaint in full.'
+            question: Does the customer say they were charged more than once for the same thing?
+          type: noul
+        plan:
+          criteria:
+            enterprise: null
+            starter: null
+            team: null
+          instructions:
+            field: plan
+            premise: 'If the user''s request calls for BillingReview: Review a billing complaint in full.'
+            question: Which plan is the customer on?
+          type: choice
+        refund_due:
+          instructions:
+            field: refund_due
+            premise: 'If the user''s request calls for BillingReview: Review a billing complaint in full.'
+            question: Is the customer owed money back, going by what they describe?
+          type: noul
+      state: You charged me twice this month. Refund it or I cancel.
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '539'
+      content-type:
+      - application/json
+      x-typesafe-request-id:
+      - req_01a0d6b4be817a05a81b8db2e0f79251
+    parsed_body:
+      answers:
+        angry:
+          noul: 0.85
+          type: noul
+        channel:
+          choice: chat
+          confidence: 0.73
+          probabilities:
+            chat: 0.82
+            email: 0.16
+            phone: 0.02
+          type: choice
+        churn_risk:
+          noul: 0.99
+          type: noul
+        duplicate:
+          noul: 0.95
+          type: noul
+        plan:
+          choice: starter
+          confidence: 0.71
+          probabilities:
+            enterprise: 0.11
+            starter: 0.81
+            team: 0.08
+          type: choice
+        refund_due:
+          noul: 0.74
+          type: noul
+      model: jev-1.13.0
+      usage:
+        input_tokens: 684
+        output_tokens: 143
+    status:
+      code: 200
+      message: OK
+version: 1

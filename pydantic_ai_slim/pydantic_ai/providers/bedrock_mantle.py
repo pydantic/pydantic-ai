@@ -1,9 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import Literal, overload
-
-from typing_extensions import assert_never
+from typing import Literal, assert_never, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
@@ -21,7 +19,7 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 BedrockMantleInterface = Literal['chat', 'responses', 'openai-responses']
@@ -92,11 +90,17 @@ def _mantle_origin(base_url: str) -> str:
     return origin
 
 
-class BedrockMantleProvider(_OpenAICompatibleProvider):
+class BedrockMantleProvider(_OpenAISDKProvider):
     """Provider for the Amazon Bedrock Mantle OpenAI-compatible API."""
 
     @property
     def name(self) -> str:
+        return 'bedrock-mantle'
+
+    @property
+    def canonical_system(self) -> str:
+        # Fixed, so a subclass that only renames itself keeps sharing encrypted reasoning. Mantle doesn't accept
+        # OpenAI's encrypted reasoning or compaction items.
         return 'bedrock-mantle'
 
     @property

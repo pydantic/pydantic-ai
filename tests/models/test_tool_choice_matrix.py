@@ -9,12 +9,11 @@ Tests verify that the correct tool_choice value is sent to each provider's API.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, assert_never
 
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
-from typing_extensions import assert_never
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
@@ -27,8 +26,8 @@ from pydantic_ai.usage import UsageLimits
 
 from ..cassette_utils import (
     get_bedrock_tool_names_from_cassette,
-    get_cohere_tool_names_from_cassette,
     get_first_post_body,
+    get_function_tool_names_from_cassette,
 )
 from ..conftest import try_import
 
@@ -67,7 +66,6 @@ with try_import() as cohere_available:
     from pydantic_ai.providers.cohere import CohereProvider
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -152,7 +150,7 @@ SKIP_REASONS: dict[tuple[str, Scenario], SkipReason] = {
 MODEL_CONFIGS: dict[str, tuple[str, Any]] = {
     'openai': ('gpt-5-mini', openai_available),
     'openai_responses': ('gpt-5-mini', openai_available),
-    'anthropic': ('claude-sonnet-4-5', anthropic_available),
+    'anthropic': ('claude-sonnet-5', anthropic_available),
     'groq': ('meta-llama/llama-4-scout-17b-16e-instruct', groq_available),
     'mistral': ('mistral-large-latest', mistral_available),
     'google': ('gemini-2.5-flash', google_available),
@@ -175,7 +173,11 @@ def create_model(
     elif provider == 'openai_responses':
         return OpenAIResponsesModel(model_name, provider=OpenAIProvider(api_key=api_keys['openai']))
     elif provider == 'anthropic':
-        return AnthropicModel(model_name, provider=AnthropicProvider(api_key=api_keys['anthropic']))
+        # Sonnet 5 thinks by default, which would turn the output rows' `CityInfo` into Native Output and leave
+        # their output tool unforced. Thinking off keeps them on the forced Tool Output choice this matrix pins.
+        return AnthropicModel(
+            model_name, provider=AnthropicProvider(api_key=api_keys['anthropic']), settings={'thinking': False}
+        )
     elif provider == 'groq':
         return GroqModel(model_name, provider=GroqProvider(api_key=api_keys['groq']))
     elif provider == 'mistral':
@@ -326,7 +328,18 @@ EXPECTED_TOOL_CHOICE: dict[tuple[str, Scenario], Any] = {
     ('openai', 'required'): snapshot('required'),
     ('openai', 'list_single'): snapshot({'type': 'function', 'function': {'name': 'get_weather'}}),
     ('openai', 'none_with_output'): snapshot({'type': 'function', 'function': {'name': 'final_result'}}),
-    ('openai', 'tools_plus_output'): snapshot('required'),
+    ('openai', 'tools_plus_output'): snapshot(
+        {
+            'type': 'allowed_tools',
+            'allowed_tools': {
+                'mode': 'required',
+                'tools': [
+                    {'type': 'function', 'function': {'name': 'get_weather'}},
+                    {'type': 'function', 'function': {'name': 'final_result'}},
+                ],
+            },
+        }
+    ),
     ('openai_responses', 'auto'): snapshot('auto'),
     ('openai_responses', 'none'): snapshot('none'),
     ('openai_responses', 'required'): snapshot('required'),
@@ -336,7 +349,7 @@ EXPECTED_TOOL_CHOICE: dict[tuple[str, Scenario], Any] = {
         {
             'type': 'allowed_tools',
             'mode': 'required',
-            'tools': [{'type': 'function', 'name': 'final_result'}, {'type': 'function', 'name': 'get_weather'}],
+            'tools': [{'type': 'function', 'name': 'get_weather'}, {'type': 'function', 'name': 'final_result'}],
         }
     ),
     ('anthropic', 'auto'): snapshot('auto'),
@@ -354,8 +367,8 @@ EXPECTED_TOOL_CHOICE: dict[tuple[str, Scenario], Any] = {
     ('mistral', 'auto'): snapshot('auto'),
     ('mistral', 'none'): snapshot(None),
     ('mistral', 'required'): snapshot('any'),
-    ('mistral', 'list_single'): snapshot('any'),
-    ('mistral', 'none_with_output'): snapshot('any'),
+    ('mistral', 'list_single'): snapshot({'type': 'function', 'function': {'name': 'get_weather'}}),
+    ('mistral', 'none_with_output'): snapshot({'type': 'function', 'function': {'name': 'final_result'}}),
     ('mistral', 'tools_plus_output'): snapshot('any'),
     ('google', 'auto'): snapshot('AUTO'),
     ('google', 'none'): snapshot('NONE'),
@@ -496,14 +509,19 @@ async def test_tool_choice_matrix(
         # `tool_choice='none'` + output tool with no direct output resolves to ('required', {final_result}),
         # which now skips the tool_defs filter (cache preservation) — the function tool stays in the wire payload.
         assert get_bedrock_tool_names_from_cassette(vcr) == ['get_weather', 'final_result']
+    elif provider == 'mistral' and scenario == 'list_single':
+        # Mistral names the single forced tool natively, so the full tools array stays on the wire.
+        assert get_function_tool_names_from_cassette(vcr) == ['get_weather', 'get_time']
+    elif provider == 'mistral' and scenario == 'none_with_output':
+        assert get_function_tool_names_from_cassette(vcr) == ['get_weather', 'final_result']
     elif provider == 'cohere' and scenario == 'list_single':
         # Cohere can't target a tool by name, so the named subset is sent by filtering the tools
         # array down to the chosen tool — `get_time` is dropped.
-        assert get_cohere_tool_names_from_cassette(vcr) == ['get_weather']
+        assert get_function_tool_names_from_cassette(vcr) == ['get_weather']
     elif provider == 'cohere' and scenario == 'none_with_output':
         # `tool_choice='none'` + output tool resolves to ('required', {final_result}). Cohere has no
         # prompt cache to preserve, so it filters the tools to the subset — `get_weather` is dropped.
-        assert get_cohere_tool_names_from_cassette(vcr) == ['final_result']
+        assert get_function_tool_names_from_cassette(vcr) == ['final_result']
 
 
 # Standalone (outside the `(provider, scenario)` matrix): a native-tool-only request has no

@@ -12,6 +12,7 @@ from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 try:
     from openai import AsyncOpenAI
@@ -23,11 +24,11 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 
-class FireworksProvider(_OpenAICompatibleProvider):
+class FireworksProvider(_OpenAISDKProvider):
     """Provider for Fireworks AI API."""
 
     @property
@@ -63,9 +64,21 @@ class FireworksProvider(_OpenAICompatibleProvider):
                     profile = profile_func(model_name)
                     break
 
+        # Fireworks spells GLM-5.3 `glm-5p3`, and also serves it through routers, e.g. `accounts/fireworks/routers/glm-5p3-fast`.
+        model_name = model_name.removeprefix('accounts/fireworks/routers/')
+        if model_name.startswith('glm-5p3'):
+            profile = _glm_5_3_schema_profile(model_name.replace('glm-5p3', 'glm-5.3', 1))
+
         # As the Fireworks API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer,
-        # unless json_schema_transformer is set explicitly
-        return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile)
+        # unless json_schema_transformer is set explicitly.
+        # Native output support wins on top: Fireworks enforces `response_format` JSON schemas on the
+        # platform, so `NativeOutput` works for families whose own profiles don't claim support.
+        # `supports_json_object_output` stays with the family profile, so `PromptedOutput` requests are unchanged.
+        return merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+            profile,
+            ModelProfile(supports_json_schema_output=True),
+        )
 
     @overload
     def __init__(self) -> None: ...

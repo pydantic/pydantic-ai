@@ -1,14 +1,7 @@
 """Collect public dataclasses whose constructor takes two or more positional fields.
 
-Run as a script by `test_public_interface_contracts.py`, which parses the JSON object printed to
-stdout. The logic lives in a real module rather than inline in the test so that ruff and pyright
-check it like any other code — an enforcement guard that silently decays into one that always
-passes is worse than no guard.
-
-The test runs this out of process with the `COVERAGE_*` environment scrubbed: walking the package
-imports every module, including ones whose optional dependency is missing in the current
-environment, which executes their `raise ImportError` guards. Those lines are marked
-`pragma: no cover`, so covering them here would fail CI's strict pragma audit.
+The fixture pauses coverage while it walks the package. Missing optional dependencies execute
+`pragma: no cover` import guards, which would otherwise fail the strict pragma audit.
 
 Modules that fail to import are reported in `skipped` rather than dropped, so a walk that shrinks
 because an optional dependency is absent is visible to the caller instead of quietly reducing the
@@ -20,11 +13,30 @@ from __future__ import annotations
 import dataclasses
 import importlib
 import inspect
-import json
 import pkgutil
+from typing import Any
+
+import pytest
+from coverage import Coverage
 
 import pydantic_ai
 from pydantic_ai.models import StreamedResponse
+
+
+def _constructor_parameters(cls: type) -> list[inspect.Parameter]:
+    """The parameters a caller may pass to `cls(...)`.
+
+    Normally read off the class itself, which resolves construction through whichever of `__new__`
+    and `__init__` defines it. A `__new__` that adds nothing to construction breaks that reading:
+    `@deprecated` installs one that `functools.wraps` the `__new__` it replaces, so for a class that
+    had none of its own, `inspect.signature` follows the wrapper down to `object.__new__` and reports
+    `(*args, **kwargs)` -- every deprecated class reads as taking arbitrarily many positional
+    arguments whatever its fields are. When the class's own `__new__` unwraps to `object.__new__`,
+    read `__init__` instead, minus its `self`: that is where the signature came from before.
+    """
+    if '__new__' in cls.__dict__ and inspect.unwrap(cls.__new__) is object.__new__:
+        return list(inspect.signature(cls.__init__).parameters.values())[1:]
+    return list(inspect.signature(cls).parameters.values())
 
 
 def _takes_two_positional_arguments(cls: type) -> bool | None:
@@ -35,7 +47,7 @@ def _takes_two_positional_arguments(cls: type) -> bool | None:
     private attribute is needed to tell them apart.
     """
     try:
-        parameters = inspect.signature(cls).parameters.values()
+        parameters = _constructor_parameters(cls)
     except (TypeError, ValueError):
         return None
     positional = 0
@@ -49,55 +61,76 @@ def _takes_two_positional_arguments(cls: type) -> bool | None:
     return positional >= 2
 
 
-def collect() -> dict[str, list[str]]:
-    offenders: set[str] = set()
-    skipped: list[str] = []
-    unreadable: list[str] = []
+# Module-scoped: walking imports every `pydantic_ai` module, provider SDKs included, which is shared setup rather than
+# the test's own cost (see "Test cost" in `tests/AGENTS.md`).
+@pytest.fixture(scope='module')
+def public_dataclasses() -> dict[str, list[str]]:
+    coverage = Coverage.current()
+    # Coverage has no public API for pausing and resuming an active collector.
+    collector = coverage._collector if coverage is not None else None  # pyright: ignore[reportPrivateUsage]
+    if collector is not None:
+        collector.pause()
 
-    for module_info in pkgutil.walk_packages(
-        pydantic_ai.__path__,
-        'pydantic_ai.',
-        # Without `onerror`, a package whose `__init__` raises `ImportError` takes its whole subtree
-        # out of the walk silently: those modules reach neither `offenders` nor the `import_module`
-        # guard below, so the gate would pass on a walk that quietly shrank. The callback is handed
-        # the package name, not the exception -- the reason for that package's own failure is what
-        # the guard below records.
-        onerror=lambda name: skipped.append(f'{name}: package failed to import, subtree not walked'),
-    ):
-        try:
-            module = importlib.import_module(module_info.name)
-        except ImportError as exc:
-            skipped.append(f'{module_info.name}: {exc}')
-            continue
+    try:
+        offenders: set[str] = set()
+        skipped: list[str] = []
+        unreadable: list[str] = []
 
-        for obj in vars(module).values():
-            if not (isinstance(obj, type) and dataclasses.is_dataclass(obj)):
-                continue
-            if obj.__module__ != module_info.name:
-                continue
-
-            name = f'{obj.__module__}.{obj.__qualname__}'
-            # A leading underscore anywhere in the path means the module or the class is private.
-            # The convention being enforced is about public construction breaking when a field is
-            # added; internals can be refactored freely, and gating them would bury the real
-            # signal under entries no caller can construct.
-            if any(part.startswith('_') for part in name.split('.')):
-                continue
-            # `StreamedResponse` subclasses are the streaming protocol's implementation types: the
-            # framework constructs them inside `Model.request_stream()` and the user only ever
-            # receives one. Gating them would fail every new-provider PR and push each new
-            # provider into a shape inconsistent with its siblings.
-            if issubclass(obj, StreamedResponse):
+        for module_info in pkgutil.walk_packages(
+            pydantic_ai.__path__,
+            'pydantic_ai.',
+            # Without `onerror`, a package whose `__init__` raises `ImportError` takes its whole subtree
+            # out of the walk silently: those modules reach neither `offenders` nor the `import_module`
+            # guard below, so the gate would pass on a walk that quietly shrank. The callback is handed
+            # the package name, not the exception -- the reason for that package's own failure is what
+            # the guard below records.
+            onerror=lambda name: skipped.append(f'{name}: package failed to import, subtree not walked'),
+        ):
+            try:
+                module = importlib.import_module(module_info.name)
+            except ImportError as exc:
+                skipped.append(f'{module_info.name}: {exc}')
                 continue
 
-            takes_positional_pair = _takes_two_positional_arguments(obj)
-            if takes_positional_pair is None:
-                unreadable.append(name)
-            elif takes_positional_pair:
-                offenders.add(name)
+            for obj in vars(module).values():
+                if not (isinstance(obj, type) and dataclasses.is_dataclass(obj)):
+                    continue
+                if obj.__module__ != module_info.name:
+                    continue
 
-    return {'offenders': sorted(offenders), 'skipped': sorted(skipped), 'unreadable': sorted(unreadable)}
+                name = f'{obj.__module__}.{obj.__qualname__}'
+                # A leading underscore anywhere in the path means the module or the class is private.
+                # The convention being enforced is about public construction breaking when a field is
+                # added; internals can be refactored freely, and gating them would bury the real
+                # signal under entries no caller can construct.
+                if any(part.startswith('_') for part in name.split('.')):
+                    continue
+                # `StreamedResponse` subclasses are the streaming protocol's implementation types: the
+                # framework constructs them inside `Model.request_stream()` and the user only ever
+                # receives one. Gating them would fail every new-provider PR and push each new
+                # provider into a shape inconsistent with its siblings.
+                if issubclass(obj, StreamedResponse):
+                    continue
 
+                takes_positional_pair = _takes_two_positional_arguments(obj)
+                if takes_positional_pair is None:
+                    unreadable.append(name)
+                elif takes_positional_pair:
+                    offenders.add(name)
 
-if __name__ == '__main__':
-    print(json.dumps(collect()))
+        return {'offenders': sorted(offenders), 'skipped': sorted(skipped), 'unreadable': sorted(unreadable)}
+    finally:
+        if collector is not None:
+            # Pausing frees the tracer's `sys.monitoring` tool id (the default core on Python 3.12+),
+            # dropping the per-code-object events it had installed. Resuming reinstalls them lazily,
+            # but only for code objects the tracer hasn't seen yet, so every function that already
+            # ran stays unmonitored for the rest of the process: lines it reaches for the first time
+            # after the walk are silently reported as uncovered. Dropping the tracer's per-code cache
+            # makes it re-arm each code object on its next call. Cleared before resuming, while the
+            # tracer is still detached: clearing afterwards could drop an entry a callback had just
+            # installed, and coverage's line callback looks entries up without a fallback.
+            for tracer in collector.tracers:
+                code_infos: dict[int, Any] | None = getattr(tracer, 'code_infos', None)
+                if code_infos is not None:
+                    code_infos.clear()
+            collector.resume()

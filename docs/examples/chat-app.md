@@ -1,6 +1,10 @@
+---
+description: "Build a simple chat app with FastAPI and Pydantic AI that stores chat history between requests, serializes messages, and streams responses to the browser."
+---
+
 # Chat App with FastAPI
 
-Simple chat app example build with FastAPI.
+A simple chat app example built with FastAPI.
 
 Demonstrates:
 

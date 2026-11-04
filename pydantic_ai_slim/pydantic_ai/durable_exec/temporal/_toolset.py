@@ -6,15 +6,16 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, cast, get_type_hints
+from typing import TYPE_CHECKING, Any, Literal, Required, Self, cast, get_type_hints
 
+import anyio
 from pydantic import ConfigDict, TypeAdapter, ValidationError, with_config
 from pydantic.errors import PydanticUserError
 from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError
-from temporalio.workflow import ActivityConfig
-from typing_extensions import Self, TypedDict
+from temporalio.workflow import ActivityConfig, ChildWorkflowConfig
+from typing_extensions import TypedDict, TypeIs
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.durable_exec._toolset import (
@@ -27,6 +28,12 @@ from pydantic_ai.durable_exec._toolset import (
 from pydantic_ai.exceptions import FallbackExceptionGroup, UnexpectedModelBehavior, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.workspaces import (
+    WorkspaceOutputLimitError,
+    WorkspaceReadOnlyError,
+    WorkspaceTimeoutError,
+    WorkspaceUnavailableError,
+)
 
 from ._run_context import TemporalRunContext
 
@@ -34,13 +41,13 @@ if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
 
 
-@dataclass
+@dataclass(kw_only=True)
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class GetToolsParams:
     serialized_run_context: Any
 
 
-@dataclass
+@dataclass(kw_only=True)
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class CallToolParams:
     name: str
@@ -76,7 +83,7 @@ async def heartbeating() -> AsyncGenerator[None]:
         interval = timeout.total_seconds() / 2 if timeout else 5.0
         while True:
             activity.heartbeat()
-            await asyncio.sleep(interval)
+            await anyio.sleep(interval)
 
     task = asyncio.create_task(beat())
     try:
@@ -156,21 +163,54 @@ both this guard and the non-retryable entry below. The core-stamped name has no 
 """
 
 
+NON_RETRYABLE_ERRORS: tuple[type[Exception], ...] = (
+    UserError,
+    PydanticUserError,
+    UnexpectedModelBehavior,
+    FallbackExceptionGroup,
+    # A retry cannot fix a workspace timeout, output flood, read-only refusal, or lost environment;
+    # restarting a command could repeat its already-completed side effects.
+    WorkspaceTimeoutError,
+    WorkspaceOutputLimitError,
+    WorkspaceReadOnlyError,
+    WorkspaceUnavailableError,
+)
+"""The errors a retry can't fix, which `with_non_retryable_errors` adds to a retry policy, subclasses included."""
+
+
 def with_non_retryable_errors(retry_policy: RetryPolicy | None) -> RetryPolicy:
-    """Return a copy of `retry_policy` with the framework's non-retryable errors ensured."""
+    """Return a copy of `retry_policy` with the framework's non-retryable errors ensured.
+
+    The policy names each class, and `non_retryable_subclasses_as_application_errors` covers their subclasses.
+    """
     retry_policy = copy.copy(retry_policy) if retry_policy else RetryPolicy()
     existing = retry_policy.non_retryable_error_types or []
     additional = [
-        UserError.__name__,
-        PydanticUserError.__name__,
-        UnexpectedModelBehavior.__name__,
-        FallbackExceptionGroup.__name__,
+        *(error_type.__name__ for error_type in NON_RETRYABLE_ERRORS),
         # An over-limit payload is deterministic, so Temporal's default unlimited retries would resend the
         # same oversized result forever and hang the workflow instead of ever surfacing an error (#7110).
         *PAYLOAD_SIZE_ERROR_TYPES,
     ]
     retry_policy.non_retryable_error_types = [*existing, *(name for name in additional if name not in existing)]
     return retry_policy
+
+
+@contextmanager
+def non_retryable_subclasses_as_application_errors() -> Generator[None]:
+    """Raise a subclass of one of `NON_RETRYABLE_ERRORS` as a non-retryable `ApplicationError`.
+
+    A retry policy's `non_retryable_error_types` matches the exact name of the error's class, so naming
+    `UnexpectedModelBehavior` doesn't cover `ContentFilterError`, and naming `UserError` doesn't cover an
+    application's own subclass of it. The `ApplicationError` keeps the error's class name and message, which is
+    what Temporal reports for an exception it converts, and has the error as its cause. An error of a listed class
+    itself is raised unchanged, as the policy already names it.
+    """
+    try:
+        yield
+    except NON_RETRYABLE_ERRORS as error:
+        if type(error) in NON_RETRYABLE_ERRORS:
+            raise
+        raise ApplicationError(str(error), type=type(error).__name__, non_retryable=True) from error
 
 
 @contextmanager
@@ -233,13 +273,12 @@ def model_response_payload_errors(model_name: str) -> Generator[None]:
     """Guard a model-request activity's response against Temporal's payload size limit."""
     with payload_size_errors(
         f'The response from model {model_name!r} is too large for Temporal',
-        'A generated image is the usual cause, so ask the model for a smaller one through the model '
-        'settings; a streamed segment can also overflow on its buffered events alone.',
+        'A generated image is the usual cause, so ask the model for a smaller one through the model settings.',
     ):
         yield
 
 
-_ValidatedActivityConfig = with_config(ConfigDict(extra='forbid'))(
+_ValidatedActivityConfig = with_config(ConfigDict(extra='forbid', arbitrary_types_allowed=True))(
     TypedDict(
         '_ValidatedActivityConfig',
         # The functional syntax is intentionally dynamic so new Temporal keys are included.
@@ -276,6 +315,35 @@ def validate_activity_config(config: ActivityConfig, source: str) -> ActivityCon
         return _activity_config_adapter.validate_python(config)
     except ValidationError as e:
         raise UserError(f'Invalid Temporal `ActivityConfig` in {source}: {e}') from e
+
+
+_ValidatedChildWorkflowConfig = with_config(ConfigDict(extra='forbid', arbitrary_types_allowed=True))(
+    TypedDict(
+        '_ValidatedChildWorkflowConfig',
+        get_type_hints(ChildWorkflowConfig, include_extras=True),  # pyright: ignore[reportArgumentType]
+        total=ChildWorkflowConfig.__total__,
+    )
+)
+_child_workflow_config_adapter = cast('TypeAdapter[ChildWorkflowConfig]', TypeAdapter(_ValidatedChildWorkflowConfig))
+
+
+class ChildWorkflowOperationConfig(TypedDict, total=False):
+    """Select a child workflow for a tool-call operation."""
+
+    child_workflow: Required[ChildWorkflowConfig]
+
+
+def is_child_workflow_metadata(value: object) -> TypeIs[ChildWorkflowOperationConfig]:
+    """Whether a tool's `'temporal'` metadata value selects a child workflow."""
+    return isinstance(value, dict) and 'child_workflow' in value
+
+
+def validate_child_workflow_config(config: ChildWorkflowConfig, source: str) -> ChildWorkflowConfig:
+    """Return `config` validated into Temporal's own types, or raise a `UserError`."""
+    try:
+        return _child_workflow_config_adapter.validate_python(config)
+    except ValidationError as e:
+        raise UserError(f'Invalid Temporal `ChildWorkflowConfig` in {source}: {e}') from e
 
 
 def resolve_tool_activity_config(

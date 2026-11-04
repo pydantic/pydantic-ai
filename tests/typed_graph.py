@@ -8,8 +8,7 @@ and [`Graph`][pydantic_graph.Graph].
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
-
-from typing_extensions import assert_type
+from typing import assert_type
 
 from pydantic_graph import BaseNode, End, Graph, GraphBuilder, GraphRunContext, StepContext
 

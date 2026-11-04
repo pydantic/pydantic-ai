@@ -1,0 +1,239 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "9190"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: |-
+              A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result.
+              What is the pydantic/pydantic-ai repository?
+            type: text
+        - role: assistant
+          content:
+          - id: mcptoolu_01AbCdEfGhIjKlMnOpQrStUv
+            type: mcp_tool_use
+            server_name: deepwiki
+            name: ask_question
+            input:
+              repoName: pydantic/pydantic-ai
+              question: What is it?
+          - content:
+            - citations: null
+              text: Pydantic AI is an agent framework.
+              type: text
+            is_error: false
+            tool_use_id: mcptoolu_01AbCdEfGhIjKlMnOpQrStUv
+            type: mcp_tool_result
+            cache_control:
+              type: ephemeral
+              ttl: 5m
+        - role: user
+          content:
+          - text: Summarize that in five words.
+            type: text
+        model: claude-sonnet-5-5
+        mcp_servers:
+        - type: url
+          name: deepwiki
+          url: https://mcp.deepwiki.com/mcp
+        stream: true
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=1175
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-093bce8ae00a57a946b83c6f22a45cd2-f474c1727225fa1e-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgNPWowKVLpaLtJ6nGkbq","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":15,"cache_creation_input_tokens":3578,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":3578,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}              }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}  }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS4AkKEAgTGAI4AUIIdGhpbmtpbmcSDJNM7rVivCVel27K1RoMjuwUN0srXQhj+GRuIjBOWtDhqFdkKhqaQTSARdf3JwRU8A9ni44Gkd9kDrBn0q52UtoOvrT+c8MioFl8Qt0q/QhNGZm6jalDsg6RCImo5ODYAiV+doMeljWaNA0knfBnkSyeOBhDGsrZuucYLffAuk0hgztH/Ucd/loqwbckB/58ReZNwvGA/I38qSpHLNh9qORzk7b7ls5Q+o7H+aFKotc6pvWStXYR2f2SxAUjRLBdlrnBJZGgW2YYJz3/BdojRnzqD/RyVs+It1cb+QSyXbxYqWl38DfqvR3fGKYkM7nDflfoKX5w/WUKReeyDLULyknusukG4MIt6qFQT0fmVyZ1YCmta18KMcFFHFnVcKoOk8QJqUkGX9FIfVR8BwRQNPhwJmP+51ajKwy7Svas4ty3zoMOLpbv6cMOiGGpA5SjzVFSe2inRANesPn2YKFlvNiUbyjQUajnfXPOtWV1QaYp47gGjkoGW92UNAgKtZwjwguNjtUm/97N3q4FvXJ4mN5WroxSKEV1z6nzDzkvazssueNDHFh226RnJz6mzO/izTuIBbrwX2X4hpyTbmzdvzPso2BcRDFsct3A0Tk5TsO5tfa4ibULzf7UmiASDu2fIHrpzIlpxqgTVjO6tUnJISQqS7C8H9srhQKj8R98lyYVbPYuLhrNIaIe55YvJJfvq+T2M7GN+WF0+/YNgjEG6jq45XzRpPVTMnekvMNEvGzqhlLMrtztx6J9LXZ3vQO1AQUa6y0jDXFLVIwLg4uV7D7IRHiSZ904uj+Q/0yaE5axrmYuUpMQL3CZQTdhZm7ptuLj7XXNpTmBlaDGOcc4w+gfl1LTPnuj7o+bYHDZthAVXDQvD33M3DAP1+mQBagyMbk/lgOiyMSP+sfbOglpBcswPANGVPq2GTiOy44szDtsQD+pO9NBl9q9CFGfO6dxXbUujmp4Yb1hLjinSzu8C8txYtM93u2olqpO50ZMxLuETYszLSqegvzDFWGLmkb+XrBWeVa9o45NoBOtEuDYNx3f38Gz775sunEtVoCrrkarTlIQQX7063WkI2IaoEYvdBKn8kLadi01a7ZBkCpZ4gLb7IjZ9xtS6bzaaRat+cF4XMBXTmUkPVC2N6VJctQxuTxjwOVA9ImBKLBrOU7fAwv7CdrRiGaKVKUPqvA6Peo3Tb7IajLwndIpSBOfe+CYWLz/zfNVqBSPZFWsONU9HLSomIY8i6ttD8JUuc8IDnt43En9aR7okvyxoQYlX7vigRn+8DNUEURY0mI7lL7Ppez3wOTp+5TO8rLx9HaDnLfreFWdZEurkla7u7rGxe3bH8OrWS8bPuRARjda9epkijoS4mVoh2xUSChvM/ByO9zDA1woR+NBt03cexJx9uGZ1CV8ns05kNtCidJUjVUSrhYDbuAMbQmhsapdfkPoMIGmlxJqoqYm1nHuZ9jzXbG6CsbnT2I1DSN04F+EoE+siMa9uNNhl2gAvNmJmyZz+k2G4R7dMxhW325GnW6Doh+oOkzW4V8+scaeA9G+94PADT2OmTvXPgYbgwJSxUWuLGipAojRQmYvImewAuQ5xp5A8i62P/V56j/+iQf0uzqYVz9dCJHD4NROazD7JHwYAQ=="}    }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0         }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Pydantic's framework for"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" building agents."}       }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1              }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":15,"cache_creation_input_tokens":3578,"cache_read_input_tokens":0,"output_tokens":246,"output_tokens_details":{"thinking_tokens":231}} }
+
+        event: message_stop
+        data: {"type":"message_stop" }
+
+  recorded_at: 2026-10-25T05:17:39.966491+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "9190"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: |-
+              A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result. A leading cache point lands on the replayed MCP result.
+              What is the pydantic/pydantic-ai repository?
+            type: text
+        - role: assistant
+          content:
+          - id: mcptoolu_01AbCdEfGhIjKlMnOpQrStUv
+            type: mcp_tool_use
+            server_name: deepwiki
+            name: ask_question
+            input:
+              repoName: pydantic/pydantic-ai
+              question: What is it?
+          - content:
+            - citations: null
+              text: Pydantic AI is an agent framework.
+              type: text
+            is_error: false
+            tool_use_id: mcptoolu_01AbCdEfGhIjKlMnOpQrStUv
+            type: mcp_tool_result
+            cache_control:
+              type: ephemeral
+              ttl: 5m
+        - role: user
+          content:
+          - text: Summarize that in five words.
+            type: text
+        model: claude-sonnet-5-5
+        mcp_servers:
+        - type: url
+          name: deepwiki
+          url: https://mcp.deepwiki.com/mcp
+        stream: true
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=1111
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-d004c3ca1277c1ddcd11b6e50ae9c2cf-8b68b836bd00aad2-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgNPX6tHsZyoNZUM5iFSd","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":15,"cache_creation_input_tokens":0,"cache_read_input_tokens":3578,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}             }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}     }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQSrQgKEAgTGAI4AUIIdGhpbmtpbmcSDFtY5rcaiX/cmRf3WRoMmj8QWg+BX1dWlV/2IjAz3oo6kBSEf/DupPk/4NlLA15d3Dn/NwlPM2IY1iRho2ZqPKoPfTPUDEogiIF0uZoqygd9swpuhztBQP82A3WxbiG4k0A1Gtmkkd7lYkxQHoVKGQLtyP/Zp0a+FAC+uBpZq4RlurnoF52GVv74mImOv+WMAU4l1WQPUyvj14xUvER3S2/AcJu0o3wxaNRVE4HeCPn+4senLppwBYKgaLgmJfla301p6tyL9kBcQvkiPkWEgKrmN4MtsabBCiWal82u6ntza54BwjYxXTiplfNP6Ho4OnWXsgANF70aeEsn9foqmqgxFxZjJ34aHOvYFBDuVyIwQ7GKLtYJCKwqCeK+Za4+4X9nm1nDayq1HUYk+/Lbo57ejPNFCJT+SnUtcFl4FmmocEOl/peHvLHJ5smZYgDZepPB7NOhrVrB5H/ToW2ztedRIcd/HgQKlk9GZ/mn4Fc6wG6KX1PPYhccxoxRiHgRBH7XmHeRY2LpyZBdBwMvphzmchyzhogA2h5LLtqUZgpna3SuMVhSI66p1ewWR7dNGzbhby12IfAxO4PJJfvmEdy3NN9ZTEusNmRFq15/v2hhUCMIqLqe+gcc+xOhyjuFGRfDoW3IXf/OH2iyn6ozLlpx4TacH+Ql5MciQb4xar+LLHUIybbp/ShvzUK6TxyU+xScELaGUqzoC501RJROYKXst2eyMroGSZae/wvnhx1GXwhNnESs2KABT4Tl0faRPjmqr5kW7fC2lOazWvnDO8UqP6We6pJgS9F07mGqZmXT+hPYOIfDw98aIgaKmCIBboJ0CgR3A5AnMuqBqkWup0SLjKbcOuHRF1o5EW3LCQKcH0DSpweKGoBseginsdJ/skH03C1NFRetyudGgV+gxk4PCGqA2d7PvaGC2aUBKXk5FqvEzF+KgoDoXBDzk930easN9g3q5TMGRusvKxasA9FAIbZ6mgnZ9X9Yh39v65UnPhJsSmh2CKeUGUV+J7EPGWLOnJ9+dofchstyquvotxdFA7A9Yx7JDea+9wjlrR/ykeGtLbB0GH7QfscTgdgTyHliZpK56WNUp02IoNUWdX2izDqTZ6m/ncX37BqrOlRHjxCbLFupN3VXTzCJkz83yVBb6olMHuQSzcgPVY9pt1XIpsU8SCgeI9k9dpCnV81cvi6Kv+dZHxv4H5x2dYanxniAJNYu76Bt+1lKYCZ+gBQCnkNupBtR0eEcAEXFBCvFvYR3kj2zon+JoKDYVoMYlUdbAHjAyfwdTIcpfv2+I15zmrJmqDZKLccXE04D+uwSfNBljfBvdxwulVdZUIeJZ+ZcCefyxfOjlNTrlREdHvAv2Aau0zTogTUbXwo7/kVBJKQKUmlJxrboGAE="}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Python"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" agent framework by Pyd"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"antic."}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1       }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":15,"cache_creation_input_tokens":0,"cache_read_input_tokens":3578,"output_tokens":187,"output_tokens_details":{"thinking_tokens":172}}}
+
+        event: message_stop
+        data: {"type":"message_stop"              }
+
+  recorded_at: 2026-10-25T05:17:42.988984+00:00

@@ -1,0 +1,413 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: session.created
+    session:
+      type: realtime
+      model: eleven_realtime_v1_mini
+      instructions: ''
+      output_modalities:
+      - audio
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription: null
+          turn_detection:
+            type: semantic_vad
+            eagerness: medium
+            create_response: true
+            interrupt_response: true
+            threshold: null
+            prefix_padding_ms: null
+            silence_duration_ms: null
+            turn_timeout: -1.0
+          pacing: realtime
+        output:
+          format:
+            type: audio/pcm
+          voice: brian
+      tools: []
+      tool_choice: auto
+      temperature: 0.7
+      max_response_output_tokens: 4096
+      max_duration_seconds: 600
+      tracing: null
+      id: conv_0501m5d24wm4e7psnan3jypstkke
+      object: realtime.session
+      expires_at: null
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000001
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: session.update
+    session:
+      type: realtime
+      instructions: Answer in two or three words.
+      output_modalities:
+      - audio
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          turn_detection:
+            type: semantic_vad
+            create_response: true
+            interrupt_response: true
+        output:
+          format:
+            type: audio/pcm
+      model: eleven_realtime_v1_mini
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: conversation.created
+    conversation:
+      id: conv_0501m5d24wm4e7psnan3jypstkke
+      object: realtime.conversation
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000002
+- kind: message
+  direction: received
+  at: 1.26
+  data:
+    type: session.updated
+    session:
+      type: realtime
+      model: eleven_realtime_v1_mini
+      instructions: Answer in two or three words.
+      output_modalities:
+      - audio
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription: null
+          turn_detection:
+            type: semantic_vad
+            eagerness: medium
+            create_response: true
+            interrupt_response: true
+            threshold: null
+            prefix_padding_ms: null
+            silence_duration_ms: null
+            turn_timeout: -1.0
+          pacing: realtime
+        output:
+          format:
+            type: audio/pcm
+          voice: brian
+      tools: []
+      tool_choice: auto
+      temperature: 0.7
+      max_response_output_tokens: 4096
+      max_duration_seconds: 600
+      tracing: null
+      id: conv_0501m5d24wm4e7psnan3jypstkke
+      object: realtime.session
+      expires_at: null
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000003
+- kind: message
+  direction: sent
+  at: 1.26
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.0
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: Say a short greeting.
+- kind: message
+  direction: sent
+  at: 1.26
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.0
+    response:
+      metadata:
+        pydantic_ai_inputs: '0'
+- kind: message
+  direction: received
+  at: 1.308
+  data:
+    type: conversation.item.added
+    previous_item_id: null
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: Say a short greeting.
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000004
+- kind: message
+  direction: received
+  at: 1.309
+  data:
+    type: conversation.item.done
+    previous_item_id: null
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: Say a short greeting.
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000005
+- kind: message
+  direction: received
+  at: 1.691
+  data:
+    type: response.created
+    response:
+      id: resp_5201m5d24yamfxnbftk6h2dt7wcn
+      object: realtime.response
+      status: in_progress
+      conversation_id: conv_0501m5d24wm4e7psnan3jypstkke
+      output: []
+      usage: null
+      output_modalities:
+      - audio
+      voice: brian
+      output_audio_format: audio/pcm
+      temperature: 0.7
+      max_output_tokens: 4096
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000006
+- kind: message
+  direction: received
+  at: 1.691
+  data:
+    type: response.output_item.added
+    response_id: resp_5201m5d24yamfxnbftk6h2dt7wcn
+    output_index: 0
+    item:
+      id: item_5901m5d24yanftftqth528zx0d45
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000007
+- kind: message
+  direction: received
+  at: 1.691
+  data:
+    type: conversation.item.added
+    previous_item_id: pydantic_ai_item_0
+    item:
+      id: item_5901m5d24yanftftqth528zx0d45
+      type: message
+      role: assistant
+      content: []
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: in_progress
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000008
+- kind: message
+  direction: received
+  at: 1.692
+  data:
+    type: response.content_part.added
+    response_id: resp_5201m5d24yamfxnbftk6h2dt7wcn
+    item_id: item_5901m5d24yanftftqth528zx0d45
+    output_index: 0
+    content_index: 0
+    part:
+      type: audio
+      audio: ''
+      transcript: null
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000009
+- kind: message
+  direction: received
+  at: 1.692
+  data:
+    type: response.output_audio_transcript.delta
+    response_id: resp_5201m5d24yamfxnbftk6h2dt7wcn
+    item_id: item_5901m5d24yanftftqth528zx0d45
+    output_index: 0
+    content_index: 0
+    delta: Hello there
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000010
+- kind: message
+  direction: received
+  at: 1.793
+  data:
+    type: response.output_audio.delta
+    response_id: resp_5201m5d24yamfxnbftk6h2dt7wcn
+    item_id: item_5901m5d24yanftftqth528zx0d45
+    output_index: 0
+    content_index: 0
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000011
+- kind: message
+  direction: received
+  at: 1.817
+  data:
+    type: response.output_audio.delta
+    response_id: resp_5201m5d24yamfxnbftk6h2dt7wcn
+    item_id: item_5901m5d24yanftftqth528zx0d45
+    output_index: 0
+    content_index: 0
+    delta: 1vqQ+tX3W/mJ/NQC6AjSBfYHZQ3+DK8MmBDCEJ8PrQ2e
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000012
+- kind: message
+  direction: received
+  at: 1.829
+  data:
+    type: response.output_audio.delta
+    response_id: resp_5201m5d24yamfxnbftk6h2dt7wcn
+    item_id: item_5901m5d24yanftftqth528zx0d45
+    output_index: 0
+    content_index: 0
+    delta: wPYH+kL7qvxIAE4B/QTlBdoDCgn5DeMPaBqnIiofTCBc
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000013
+- kind: message
+  direction: received
+  at: 1.863
+  data:
+    type: response.output_audio.delta
+    response_id: resp_5201m5d24yamfxnbftk6h2dt7wcn
+    item_id: item_5901m5d24yanftftqth528zx0d45
+    output_index: 0
+    content_index: 0
+    delta: Iwl3CdUJdgqfCiwKQwqmCm4KWwqcCqgKNQqfCdYJigmX
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000014
+- kind: message
+  direction: received
+  at: 1.898
+  data:
+    type: response.output_audio.delta
+    response_id: resp_5201m5d24yamfxnbftk6h2dt7wcn
+    item_id: item_5901m5d24yanftftqth528zx0d45
+    output_index: 0
+    content_index: 0
+    delta: vgB/AMUBZwGvAuECGgMnAzoC5AE8AdoAfv9e/4v+OP4i
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000015
+- kind: message
+  direction: received
+  at: 2.747
+  data:
+    type: response.output_audio.done
+    response_id: resp_5201m5d24yamfxnbftk6h2dt7wcn
+    item_id: item_5901m5d24yanftftqth528zx0d45
+    output_index: 0
+    content_index: 0
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000016
+- kind: message
+  direction: received
+  at: 2.747
+  data:
+    type: response.output_audio_transcript.done
+    response_id: resp_5201m5d24yamfxnbftk6h2dt7wcn
+    item_id: item_5901m5d24yanftftqth528zx0d45
+    output_index: 0
+    content_index: 0
+    transcript: Hello there
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000017
+- kind: message
+  direction: received
+  at: 2.747
+  data:
+    type: response.content_part.done
+    response_id: resp_5201m5d24yamfxnbftk6h2dt7wcn
+    item_id: item_5901m5d24yanftftqth528zx0d45
+    output_index: 0
+    content_index: 0
+    part:
+      type: audio
+      audio: ''
+      transcript: Hello there
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000018
+- kind: message
+  direction: received
+  at: 2.747
+  data:
+    type: conversation.item.done
+    previous_item_id: pydantic_ai_item_0
+    item:
+      id: item_5901m5d24yanftftqth528zx0d45
+      type: message
+      role: assistant
+      content:
+      - type: output_audio
+        text: null
+        audio: ''
+        transcript: Hello there
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000019
+- kind: message
+  direction: received
+  at: 2.747
+  data:
+    type: response.output_item.done
+    response_id: resp_5201m5d24yamfxnbftk6h2dt7wcn
+    output_index: 0
+    item:
+      id: item_5901m5d24yanftftqth528zx0d45
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_audio
+        audio: ''
+        transcript: Hello there
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000020
+- kind: message
+  direction: received
+  at: 2.747
+  data:
+    type: response.done
+    response:
+      id: resp_5201m5d24yamfxnbftk6h2dt7wcn
+      object: realtime.response
+      status: completed
+      conversation_id: conv_0501m5d24wm4e7psnan3jypstkke
+      output:
+      - id: item_5901m5d24yanftftqth528zx0d45
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: output_audio
+          audio: ''
+          transcript: Hello there
+      usage: null
+      output_modalities:
+      - audio
+      voice: brian
+      output_audio_format: audio/pcm
+      temperature: 0.7
+      max_output_tokens: 4096
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000021

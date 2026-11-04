@@ -1,3 +1,138 @@
 {
-  "allowed_breakages": []
+  "model_name_literals": [
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/__init__.py",
+      "symbol": "KnownEmbeddingModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/bedrock.py",
+      "symbol": "LatestBedrockEmbeddingModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/cohere.py",
+      "symbol": "LatestCohereEmbeddingModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/google.py",
+      "symbol": "LatestGoogleGLAEmbeddingModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/google.py",
+      "symbol": "LatestGoogleVertexEmbeddingModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/voyageai.py",
+      "symbol": "LatestVoyageAIEmbeddingModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/images/__init__.py",
+      "symbol": "KnownImageGenerationModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/images/google.py",
+      "symbol": "LatestGoogleImageGenerationModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/_known_model_names.py",
+      "symbol": "KnownModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/bedrock.py",
+      "symbol": "LatestBedrockModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/bedrock_mantle.py",
+      "symbol": "LatestBedrockMantleModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/cohere.py",
+      "symbol": "LatestCohereModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/google.py",
+      "symbol": "LatestGoogleModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/groq.py",
+      "symbol": "PreviewGroqModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/groq.py",
+      "symbol": "ProductionGroqModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/mistral.py",
+      "symbol": "LatestMistralModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/openai.py",
+      "symbol": "OpenAIModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/openai_decisions.py",
+      "symbol": "OpenAIDecisionsModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/typesafe.py",
+      "symbol": "LatestTypeSafeModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/xai.py",
+      "symbol": "XaiModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/native_tools/__init__.py",
+      "symbol": "AdvisorModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/native_tools/__init__.py",
+      "symbol": "ImageGenerationModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/providers/deepseek.py",
+      "symbol": "DeepSeekModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/providers/meta.py",
+      "symbol": "MetaModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/providers/moonshotai.py",
+      "symbol": "MoonshotAIModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/realtime/elevenlabs.py",
+      "symbol": "LatestElevenLabsRealtimeModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/realtime/model.py",
+      "symbol": "KnownRealtimeModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/realtime/openai_live.py",
+      "symbol": "LatestOpenAILiveModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/realtime/settings.py",
+      "symbol": "KnownRealtimeTranscriptionModelName"
+    }
+  ],
+  "growing_collections": [
+    {
+      "path": "src/pydantic_clai2/pydantic_clai2/config/features.py",
+      "symbol": "SUPPORTED_FEATURES"
+    },
+    {
+      "path": "src/pydantic_clai2/pydantic_clai2/config/__init__.py",
+      "symbol": "SETTING_FIELDS"
+    },
+    {
+      "path": "src/pydantic_clai2/pydantic_clai2/config/__init__.py",
+      "symbol": "STRING_SETTINGS"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/capabilities/__init__.py",
+      "symbol": "CAPABILITY_TYPES"
+    }
+  ]
 }
