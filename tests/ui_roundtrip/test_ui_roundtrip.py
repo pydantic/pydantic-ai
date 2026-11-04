@@ -661,11 +661,6 @@ _APPEND_INSTRUCTIONS = (
     "which the adapter strips from client history in `manage_system_prompt='server'`, so every turn re-renders "
     'the baseline from current state and rewrites the prefix; no issue yet'
 )
-_LOADED_INSTRUCTIONS = (
-    "a loaded capability's instructions are stated as an `InstructionDeltaPart`, system voice the adapter strips "
-    'from client history, so the next request states them again after its last message instead of after the load; '
-    "a model's `load_capability` call shows the same; #11771"
-)
 _FEEDBACK_NOT_STREAMED = (
     "retry feedback (`RetryFeedbackPart`) isn't streamed, so the client keeps the rejected and the accepted "
     'answer as one response; no issue yet'
@@ -776,7 +771,6 @@ SCENARIOS = [
                 ('wire', 'dump', 'agui'),
                 ('wire', 'stream', 'agui'),
             ),
-            **_gaps(_LOADED_INSTRUCTIONS, ('wire', 'dump', 'vercel'), ('wire', 'stream', 'vercel')),
         },
     ),
     Scenario(
@@ -1025,8 +1019,6 @@ class Client(ABC):
     def sanitize(self, adapter: UIAdapter[Any, Any, Any, Any, Any], messages: list[ModelMessage]) -> list[ModelMessage]:
         with warnings.catch_warnings():
             warnings.filterwarnings('ignore', 'Parts carrying the system voice were stripped', UserWarning)
-            # `expected` is the server's own history, whose framework state a client never has to send back.
-            warnings.filterwarnings('ignore', 'Framework-reserved `__pydantic_ai__` metadata was dropped', UserWarning)
             return adapter.sanitize_messages(messages)
 
     async def turn(

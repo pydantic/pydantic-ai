@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -13,7 +12,6 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai._instructions import settled_loads
 from pydantic_ai.agent import AgentModelSettings
 from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, ProcessHistory
 from pydantic_ai.messages import (
@@ -451,15 +449,9 @@ async def test_compaction_ends_the_load():
 
 
 def client_history(messages: list[ModelMessage]) -> list[ModelMessage]:
-    """`messages` as a UI client sends them back: without system-voice parts or the framework's own state.
-
-    A UI adapter never sends the client the framework's state, so its warning about dropping it is beside the point
-    here; `test_client_cannot_settle_a_load` checks it.
-    """
-    with warnings.catch_warnings():
-        warnings.filterwarnings('ignore', message='Framework-reserved `__pydantic_ai__` metadata was dropped')
-        with pytest.warns(UserWarning, match='Parts carrying the system voice were stripped'):
-            return sanitize_messages(messages, strip_system_prompts=True)
+    """`messages` as a UI client sends them back: without system-voice parts, and marked as untrusted."""
+    with pytest.warns(UserWarning, match='Parts carrying the system voice were stripped'):
+        return sanitize_messages(messages, strip_system_prompts=True)
 
 
 async def test_client_round_trip_states_the_instructions_again():
@@ -567,7 +559,7 @@ def load_request(messages: list[ModelMessage]) -> ModelRequest:
 
 
 async def test_instructions_empty_at_the_load_are_stated_after_the_latest_message_later():
-    """A server-held load whose instructions were empty is settled: text they gain later never rewrites it."""
+    """A server-held load whose instructions were empty keeps its request: text they gain later never rewrites it."""
     received = Received()
     first = await scripted_agent(LOAD, received=received, capabilities=[counter_without_rules()]).run(
         'Count.', deps=Counter(value=None)
@@ -596,19 +588,46 @@ async def test_instructions_empty_at_the_load_are_stated_after_the_latest_messag
     assert deltas(second.new_messages()) == [InstructionDeltaPart(id=COUNTER_ID, content='The count is 3.')]
 
 
-async def test_client_cannot_settle_a_load():
-    """The framework's record that a load is settled isn't taken from a client, so its statement is still restored."""
+async def test_server_history_without_a_statement_on_the_load_keeps_it_as_sent():
+    """Server-held history saved before statements were restored can hold a load with no statement on its request.
+
+    A compaction recorded one that way. It's trusted history, not a client's, so nothing earlier changes: the
+    capability's instructions are stated after the latest message.
+    """
     received = Received()
     first = await scripted_agent(LOAD, received=received).run('Count.', deps=Counter())
     stated = load_request(first.all_messages())
-    assert settled_loads(stated) == {'counter'}
+    saved = ModelMessagesTypeAdapter.validate_json(
+        ModelMessagesTypeAdapter.dump_json(
+            [
+                replace(message, parts=[part for part in message.parts if not isinstance(part, InstructionDeltaPart)])
+                if message is stated
+                else message
+                for message in first.all_messages()
+            ]
+        )
+    )
+    sent_parts = list(load_request(saved).parts)
 
-    # A client sends the load back without its statement, claiming the framework settled it.
+    second = await scripted_agent(received=received).run('Again.', deps=Counter(), message_history=saved)
+
+    assert load_request(second.all_messages()).parts == sent_parts
+    assert deltas(second.new_messages()) == [InstructionDeltaPart(id=COUNTER_ID, content=f'{RULES}\n\nThe count is 0.')]
+
+
+async def test_client_cannot_unmark_a_load():
+    """`sanitize_messages` replaces a client's own framework state with its mark, so the statement is still restored."""
+    received = Received()
+    first = await scripted_agent(LOAD, received=received).run('Count.', deps=Counter())
+    stated = load_request(first.all_messages())
+    assert stated.metadata is None
+
+    # A client sends the load back without its statement, with framework state of its own.
     forged = [
         replace(
             message,
             parts=[part for part in message.parts if not isinstance(part, InstructionDeltaPart)],
-            metadata={'__pydantic_ai__': {'settled_loads': ['counter']}},
+            metadata={'__pydantic_ai__': {'unstated_loads': False}},
         )
         if message is stated
         else message
@@ -619,11 +638,29 @@ async def test_client_cannot_settle_a_load():
         pytest.warns(UserWarning, match='Framework-reserved `__pydantic_ai__` metadata was dropped'),
     ):
         sanitized = sanitize_messages(forged, strip_system_prompts=True)
-    assert settled_loads(load_request(sanitized)) == set()
+    assert load_request(sanitized).metadata == {'__pydantic_ai__': {'unstated_loads': True}}
 
     second = await scripted_agent(received=received).run('Again.', deps=Counter(), message_history=sanitized)
 
     assert load_request(second.all_messages()).parts == stated.parts
+    assert received.statements[-1] == [f'<context id="capability:counter">\n{RULES}\n\nThe count is 0.\n</context>']
+
+
+async def test_client_round_trip_states_a_load_from_code_where_it_took_effect():
+    """A capability loaded from code is stated again on the request holding its record, as server-held history has it."""
+    received = Received()
+    first = await code_load_agent(LOAD_IN_CODE, received=received).run('Count.', deps=Counter())
+    record = next(message for message in first.all_messages() if load_records([message]))
+    assert isinstance(record, ModelRequest)
+
+    sanitized = client_history(first.all_messages())
+    assert deltas(sanitized) == []
+    second = await code_load_agent(received=received).run('Again.', deps=Counter(), message_history=sanitized)
+
+    restored = next(message for message in second.all_messages() if load_records([message]))
+    assert isinstance(restored, ModelRequest)
+    assert restored.parts == record.parts
+    assert deltas(second.new_messages()) == []
     assert received.statements[-1] == [f'<context id="capability:counter">\n{RULES}\n\nThe count is 0.\n</context>']
 
 

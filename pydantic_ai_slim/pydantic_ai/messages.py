@@ -5561,7 +5561,9 @@ def sanitize_messages(
       keep state there that they act on in later runs, so it is only honored on trusted server-side
       `message_history`. On client-held history that state is computed again where it's needed: a
       file [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding] described is described
-      again, for example.
+      again, for example. A request holding an [on-demand capability](../capabilities/on-demand.md)'s load is
+      marked there instead, so the next request states the capability's current instructions on it again, where
+      server-held history states them.
     - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s at the end of the history that aren't in
       `resolved_tool_call_ids`. An unresolved tool call at the end of client-supplied history doesn't
       correspond to a paused agent run and shouldn't be executed.
@@ -5676,7 +5678,7 @@ def _sanitize_messages(
                 # Reset silently: every request an agent run records carries the agent's own instructions, so
                 # a warning would fire on every turn of a normal round trip, and agent runs never send them.
                 instructions = None if strip_instructions else message.instructions
-                metadata = _without_reserved_metadata(message, reserved_metadata_messages)
+                metadata = _sanitized_request_metadata(message, new_request_parts, reserved_metadata_messages)
                 sanitized.append(
                     replace(message, parts=new_request_parts, instructions=instructions, metadata=metadata)
                 )
@@ -5797,6 +5799,32 @@ def _sanitize_messages(
         )
 
     return sanitized, sources
+
+
+_UNSTATED_LOADS_KEY = 'unstated_loads'
+"""Marks a request from untrusted history that holds a capability load, in the reserved namespace.
+
+The history came from a client, which doesn't keep the framework's instruction records, so a load it holds with no
+statement of the capability's instructions after it lost that statement: the next request restores it there. Only
+[`sanitize_messages`][pydantic_ai.messages.sanitize_messages] sets it, after dropping the client's own reserved
+metadata, so server-held history never carries it and is never rewritten.
+"""
+
+
+def _sanitized_request_metadata(
+    request: ModelRequest, parts: Sequence[ModelRequestPart], stripped: list[ModelMessage]
+) -> dict[str, Any] | None:
+    """The metadata of an untrusted request keeping `parts`: without the reserved key, marked if it holds a load."""
+    metadata = _without_reserved_metadata(request, stripped)
+    if not any(isinstance(part, (LoadCapabilityReturnPart, CapabilityLoadDeltaPart)) for part in parts):
+        return metadata
+    return {**(metadata or {}), _PYDANTIC_AI_METADATA_KEY: {_UNSTATED_LOADS_KEY: True}}
+
+
+def _holds_unstated_loads(message: ModelMessage) -> bool:
+    """Whether `message` holds loads from untrusted history, as `sanitize_messages` marked it."""
+    namespace = (message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+    return _utils.is_str_dict(namespace) and namespace.get(_UNSTATED_LOADS_KEY) is True
 
 
 def _without_reserved_metadata(message: ModelMessage, stripped: list[ModelMessage]) -> dict[str, Any] | None:

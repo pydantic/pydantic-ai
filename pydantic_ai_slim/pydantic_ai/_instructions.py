@@ -4,14 +4,13 @@ import warnings
 from collections import Counter
 from collections.abc import Collection, Iterator, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import Generic, TypeGuard, cast
+from typing import Generic, TypeGuard
 
 from pydantic_ai._deferred_capabilities import LoadCapabilityReturnPart, LoadExchanges
 from pydantic_ai._run_context import AgentDepsT, RunContext
-from pydantic_ai._utils import dataclasses_no_defaults_repr, is_str_dict
+from pydantic_ai._utils import dataclasses_no_defaults_repr
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
-    _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     CapabilityInstructionSource,
     CompactionPart,
     InstructionBaselinePart,
@@ -26,6 +25,7 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     ModelResponsePart,
     ModelSettingsDeltaPart,
+    _holds_unstated_loads,  # pyright: ignore[reportPrivateUsage]
     _instruction_text_hash,  # pyright: ignore[reportPrivateUsage]
     _post_compaction_window_start,  # pyright: ignore[reportPrivateUsage]
 )
@@ -456,21 +456,18 @@ class LoadedInstructionValues:
                 loaded.apply(part)
             else:
                 for capability_id in loaded.observe(part):
-                    # A model's load is stated on the request holding its return. A load from code isn't anchored yet.
-                    # A load the framework already settled has nothing missing, even when its instructions were empty.
-                    if (
-                        isinstance(part, LoadCapabilityReturnPart)
-                        and loaded.values[capability_id] is None
-                        and capability_id not in settled_loads(messages[index])
-                    ):
+                    # A load is stated on the request holding it. Only a client's history, which `sanitize_messages`
+                    # marks, can have lost that statement: server-held history is never rewritten, even for a load
+                    # whose instructions were empty. A load return from an earlier version states them itself.
+                    if loaded.values[capability_id] is None and _holds_unstated_loads(messages[index]):
                         loaded._unstated[capability_id] = index
         return loaded
 
     def unstated_load_index(self, capability_id: str) -> int | None:
         """The index of the message holding `capability_id`'s load, if nothing has stated its instructions since.
 
-        That message is where they're stated: the request after the load. A load return from an earlier version,
-        which states them itself, has none, and neither has a load the framework settled (see `settle_loads`).
+        That message is where they're stated: the request holding the load's return or its
+        `CapabilityLoadDeltaPart`. Only a request from a client's history, which `sanitize_messages` marks, has one.
         """
         return self._unstated.get(capability_id)
 
@@ -589,26 +586,26 @@ def update_loaded_instruction_history(
     [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart], in load order, and one whose parts
     are all empty is withdrawn.
 
-    A block is first stated on the request holding its load. When that's an earlier request, because the
-    history came from a client that doesn't keep instruction records, the statement is restored there, in both
-    `messages` and the persisted `history`, rather than added after the latest message: every request then
-    states it at the same place, as one keeping its history on the server does. Its text is the capability's
-    current instructions; only the place comes from the history.
+    A block is first stated on the request holding its load. When that's an earlier request from a client's
+    history, which doesn't keep instruction records and which `sanitize_messages` marks, the statement is
+    restored there, in both `messages` and the persisted `history`, rather than added after the latest message:
+    every request then states it at the same place, as one keeping its history on the server does. Its text is
+    the capability's current instructions; only the place comes from the history. Server-held history is never
+    rewritten: a change to a load's instructions, even one that was empty at the load, is added after the latest
+    message.
 
     A loaded block with no parts at all is withdrawn too, because the capability's instructions resolved to
     nothing or it is no longer configured, unless it's in `keep_without_parts`: a capability that's eager
     again, whose instructions are back in the prefix.
     """
-    changes, restored, settled = _loaded_instruction_changes(
+    changes, restored = _loaded_instruction_changes(
         messages, _loaded_texts(parts), targets, keep_without_parts=keep_without_parts
     )
     for index, statements in restored.items():
         _restore_statements(messages, history, index, statements)
-    for target in targets:
-        if changes:
+    if changes:
+        for target in targets:
             target.parts = [*target.parts, *changes]
-        if settled:
-            settle_loads(target, settled)
 
 
 def _loaded_instruction_changes(
@@ -617,21 +614,17 @@ def _loaded_instruction_changes(
     targets: Sequence[ModelRequest],
     *,
     keep_without_parts: Collection[str],
-) -> tuple[list[InstructionDeltaPart], dict[int, list[InstructionDeltaPart]], list[str]]:
+) -> tuple[list[InstructionDeltaPart], dict[int, list[InstructionDeltaPart]]]:
     """What `update_loaded_instruction_history` records, given each loaded block's `current` text.
 
-    The changes for `targets`, the statements to restore on earlier requests by their index in `messages`, and the
-    capabilities whose loads `targets` hold and so settle.
+    The changes for `targets`, and the statements to restore on earlier requests by their index in `messages`.
     """
     loaded = LoadedInstructionValues.of(messages)
     changes: list[InstructionDeltaPart] = []
     restored: dict[int, list[InstructionDeltaPart]] = {}
-    settled: list[str] = []
     for capability_id, previous in loaded.values.items():
         index = loaded.unstated_load_index(capability_id)
         on_target = index is not None and any(messages[index] is target for target in targets)
-        if on_target:
-            settled.append(capability_id)
         if capability_id not in current and capability_id in keep_without_parts:
             continue
         if (content := current.get(capability_id)) == previous:
@@ -641,40 +634,7 @@ def _loaded_instruction_changes(
             restored.setdefault(index, []).append(change)
         else:
             changes.append(change)
-    return changes, restored, settled
-
-
-def settle_loads(request: ModelRequest, capability_ids: Collection[str]) -> None:
-    """Record that `request` settles the statement of the loads of `capability_ids` it holds.
-
-    The framework settles a load on the request holding it when it states the capability's instructions there, or
-    finds they resolved to nothing. A compaction that records a load again settles the recorded copy: the statement
-    the original load had is delivered after the latest message, as for any other change. Only an unsettled load
-    with no statement, which a UI client's history has, gets its statement restored on the request holding it.
-
-    The record is framework state in `metadata['__pydantic_ai__']`, which the model never receives and
-    [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] drops from a client's history, so a client can't
-    claim it.
-    """
-    metadata = dict(request.metadata or {})
-    namespace = metadata.get(_PYDANTIC_AI_METADATA_KEY)
-    namespace = dict(namespace) if is_str_dict(namespace) else {}
-    namespace[_SETTLED_LOADS_KEY] = list(dict.fromkeys([*settled_loads(request), *capability_ids]))
-    metadata[_PYDANTIC_AI_METADATA_KEY] = namespace
-    request.metadata = metadata
-
-
-def settled_loads(message: ModelMessage) -> set[str]:
-    """The capabilities whose loads `message` settles, as `settle_loads` recorded them."""
-    namespace = (message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
-    settled = namespace.get(_SETTLED_LOADS_KEY) if is_str_dict(namespace) else None
-    if not isinstance(settled, list):
-        return set()
-    # `metadata` holds any JSON, so the list's items are checked one by one.
-    return {item for item in cast(list[object], settled) if isinstance(item, str)}
-
-
-_SETTLED_LOADS_KEY = 'settled_loads'
+    return changes, restored
 
 
 def _restore_statements(
