@@ -562,12 +562,9 @@ def _split_content_parts(content: object) -> tuple[object, list[object]]:
     return ''.join(texts) or None, others
 
 
-_MAPPED_COMPLETION_EXTRA_FIELDS = frozenset({'tool_usage'})
-"""Vendor fields on a completion or chunk that the Chat Completions mapping already reads."""
-
-_MAPPED_MESSAGE_EXTRA_FIELDS = frozenset({'reasoning', 'reasoning_content'})
+_MAPPED_MESSAGE_EXTRA_FIELDS = frozenset({'reasoning', 'reasoning_content', 'annotations'})
 """Vendor fields on a message or delta that the Chat Completions mapping already reads, besides the profile's
-`openai_chat_thinking_field`."""
+`openai_chat_thinking_field`. (`annotations` is declared on a message, but arrives as an extra on a delta.)"""
 
 
 def _unmapped_extra_fields(obj: object, mapped: frozenset[str] = frozenset()) -> dict[str, Any]:
@@ -577,13 +574,21 @@ def _unmapped_extra_fields(obj: object, mapped: frozenset[str] = frozenset()) ->
 
 
 def _unmapped_choice_data(
-    response: object, choice: object, message: object, *, message_key: str, thinking_field: str | None
+    response: object,
+    choice: object,
+    message: object,
+    content_parts: list[object],
+    *,
+    message_key: str,
+    thinking_field: str | None,
 ) -> dict[str, Any]:
-    """The data of one completion or chunk that the mapping doesn't read, keyed by where it came from."""
+    """The data of one validated completion or chunk that the mapping doesn't read, keyed by where it came from.
+
+    Read from the validated objects, so fields a subclass's response type declares (and maps) aren't extras.
+    """
     mapped_message_fields = _MAPPED_MESSAGE_EXTRA_FIELDS | ({thinking_field} if thinking_field else set())
-    _, content_parts = _split_content_parts(getattr(message, 'content', None))
     data = {
-        'response': _unmapped_extra_fields(response, _MAPPED_COMPLETION_EXTRA_FIELDS),
+        'response': _unmapped_extra_fields(response),
         'choice': _unmapped_extra_fields(choice),
         message_key: _unmapped_extra_fields(message, mapped_message_fields),
         'content_parts': content_parts,
@@ -1996,13 +2001,18 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """
         return _map_provider_details(response.choices[0])
 
-    def _unmapped_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any]:
-        """`provider_details['unmapped']` for `openai_include_unmapped_response_data`, read before validation."""
-        choice = response.choices[0] if response.choices else None
+    def _unmapped_provider_details(
+        self, response: chat.ChatCompletion, content_parts: list[object], *, include: bool
+    ) -> dict[str, Any]:
+        """`provider_details['unmapped']` for `openai_include_unmapped_response_data`, from the validated response."""
+        if not include:
+            return {}
+        choice = response.choices[0]
         data = _unmapped_choice_data(
             response,
             choice,
-            getattr(choice, 'message', None),
+            choice.message,
+            content_parts,
             message_key='message',
             thinking_field=self.profile.get('openai_chat_thinking_field', None),
         )
@@ -2043,7 +2053,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         # Read before validation, which joins a list `content` into its text. The SDK doesn't validate the response, so a
         # choice can lack a `message` here; validation below reports that.
-        unmapped_details = self._unmapped_provider_details(response) if include_unmapped_response_data else {}
+        raw_message = getattr(response.choices[0], 'message', None) if response.choices else None
+        _, content_parts = _split_content_parts(getattr(raw_message, 'content', None))
 
         try:
             response = self._validate_completion(response)
@@ -2063,7 +2074,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             provider_details['moderation'] = response.moderation.model_dump()
         if response.service_tier:
             provider_details['service_tier'] = response.service_tier
-        provider_details.update(unmapped_details)
+        provider_details.update(
+            self._unmapped_provider_details(response, content_parts, include=include_unmapped_response_data)
+        )
 
         # Handle refusal responses (structured output safety filter)
         if choice.message.refusal:
@@ -6429,10 +6442,13 @@ class OpenAIStreamedResponse(StreamedResponse):
         if not (self._model_settings and self._model_settings.get('openai_include_unmapped_response_data')):
             return
         choice = chunk.choices[0] if chunk.choices else None
+        delta = getattr(choice, 'delta', None)
+        _, content_parts = _split_content_parts(getattr(delta, 'content', None))
         data = _unmapped_choice_data(
             chunk,
             choice,
-            getattr(choice, 'delta', None),
+            delta,
+            content_parts,
             message_key='delta',
             thinking_field=self._model_profile.get('openai_chat_thinking_field', None),
         )

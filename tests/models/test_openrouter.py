@@ -1050,6 +1050,24 @@ async def test_openrouter_no_openrouter_details(openrouter_api_key: str) -> None
     )
 
 
+def test_openrouter_unmapped_response_data_omits_fields_openrouter_maps(openrouter_api_key: str) -> None:
+    """Fields `OpenRouterModel`'s response type declares, like `provider` and `native_finish_reason`, aren't unmapped."""
+    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=OpenRouterProvider(api_key=openrouter_api_key))
+    choice = Choice.model_construct(
+        index=0,
+        message={'role': 'assistant', 'content': 'test', 'vendor_note': 'x'},
+        finish_reason='stop',
+        native_finish_reason='stop',
+    )
+    response = ChatCompletion.model_construct(
+        id='test', choices=[choice], created=1704067200, object='chat.completion', model='test', provider='TestProvider'
+    )
+
+    result = model._process_response(response, include_unmapped_response_data=True)  # type: ignore[reportPrivateUsage]
+
+    assert (result.provider_details or {}).get('unmapped') == snapshot({'message': {'vendor_note': 'x'}})
+
+
 async def test_openrouter_google_nested_schema(allow_model_requests: None, openrouter_api_key: str) -> None:
     """Test that nested schemas with $defs/$ref work correctly with OpenRouter + Gemini.
 

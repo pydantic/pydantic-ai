@@ -680,7 +680,7 @@ async def test_stream_text_from_list_content(allow_model_requests: None):
     stream = [
         list_chunk(['hello ']),
         list_chunk([{'type': 'text', 'text': 'world'}, {'type': 'reference', 'reference_ids': [1]}], vendor_score=0.5),
-        list_chunk([{'type': 'reference', 'reference_ids': [2]}], reasoning_content=''),
+        list_chunk([{'type': 'reference', 'reference_ids': [2]}], reasoning_content='', annotations=[]),
         chunk([]),
     ]
 
@@ -698,7 +698,7 @@ async def test_stream_text_from_list_content(allow_model_requests: None):
         if not include_unmapped:
             assert unmapped is None
             continue
-        # `reasoning_content` is mapped (to thinking), so it isn't repeated here.
+        # `reasoning_content` and `annotations` are mapped (to thinking and citations), so they aren't repeated here.
         assert unmapped == snapshot(
             {
                 'chunks': [
@@ -750,10 +750,10 @@ async def test_request_unmapped_response_data(allow_model_requests: None):
 
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
-    # `reasoning_content` and `tool_usage` are mapped elsewhere, so they aren't repeated here.
+    # `reasoning_content` is mapped (to thinking), so it isn't repeated here.
     assert (response.provider_details or {})['unmapped'] == snapshot(
         {
-            'response': {'prompt_filter': 'none'},
+            'response': {'prompt_filter': 'none', 'tool_usage': {}},
             'choice': {'stop_reason': 'eos'},
             'message': {'citations': [{'id': 1, 'url': 'https://example.com'}]},
             'content_parts': [{'type': 'reference', 'reference_ids': [1]}],
