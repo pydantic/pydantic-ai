@@ -25,8 +25,9 @@ on:
   roles: [admin, maintainer, write]
 # PRs whose head branch is listed in the `UI_SECURITY_REVIEW_SKIP_BRANCHES`
 # repository variable skip this review. List branch names separated by commas,
-# with no spaces; the match ignores case. A dispatch has no `head_ref`, so the
-# check exempts it: an unset variable formats to `,,`, which matches an empty branch.
+# with no spaces; the match ignores case. A dispatch has an empty `head_ref`,
+# which the first clause exempts. Without that clause, an unset variable formats
+# to `,,`, matches the empty `head_ref`, and skips every dispatch.
 if: ${{ github.head_ref == '' || !contains(format(',{0},', vars.UI_SECURITY_REVIEW_SKIP_BRANCHES), format(',{0},', github.head_ref)) }}
 permissions:
   contents: read
