@@ -37,6 +37,12 @@ pass them to the tool's `provider_settings` field under the model system key. Th
 has a closed set of known systems, and each value has its own `TypedDict`, so type checkers and IDEs
 can validate and complete both levels. Each model reads only its own system entry; other entries are
 ignored.
+
+The key follows the model class you use, not who makes the underlying model: Claude through
+`OpenRouterModel` reads the `openrouter` entry, not `anthropic`. Unknown keys and invalid values raise
+an error when the tool is built, so a typo can't silently do nothing. Settings that restrict what a
+tool may do, such as `allowed_domains`, stay top-level fields, because a model that can't apply them
+must not run the tool without them.
 See the [Anthropic web tool settings](models/anthropic.md#web-tool-settings),
 [OpenRouter web search settings](models/openrouter.md#web-search-parameters), and
 [OpenRouter advisor settings](models/openrouter.md#advisor).
