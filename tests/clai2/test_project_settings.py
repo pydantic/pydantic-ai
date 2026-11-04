@@ -1041,3 +1041,12 @@ def test_revoke_names_a_stored_key_this_build_does_not_know(tmp_path: Path) -> N
     context = shell_in(tmp_path, store).context
     assert 'former.key (approved earlier, the file does not set this value now): 1' in context.project_command([])
     assert context.project_command(['revoke', 'all']) == f'Revoked former.key for {tmp_path}.'
+
+
+def test_the_banner_prints_unknown_keys_as_written_and_inert(tmp_path: Path) -> None:
+    write(tmp_path, {'[red]key[/red]': 1, 'esc\x1b]0;title': 2})
+    output = io.StringIO()
+    print_welcome(load_project_settings(tmp_path), Console(file=output, width=300))
+    text = output.getvalue()
+    assert 'Ignoring unknown settings: [red]key[/red], esc\\x1b]0;title\n' in text
+    assert '\x1b' not in text

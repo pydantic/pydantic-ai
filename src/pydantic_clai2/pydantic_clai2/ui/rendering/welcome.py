@@ -30,6 +30,7 @@ def _report_project(project: ProjectSettings, console: Console) -> None:
         return
     console.print(f'Project settings: {terminal_text(str(project.path))}', style=theme.color(theme.MUTED), markup=False)
     if project.unknown:
-        console.print(f'Ignoring unknown settings: {", ".join(project.unknown)}', style=theme.color(theme.WARNING))
+        names = terminal_text(', '.join(project.unknown))
+        console.print(f'Ignoring unknown settings: {names}', style=theme.color(theme.WARNING), markup=False)
     if project.pending_notice is not None:
         console.print(project.pending_notice, style=theme.color(theme.WARNING), markup=False)
