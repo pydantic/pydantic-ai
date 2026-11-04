@@ -211,14 +211,12 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
 }
 
 
-def _normalize(profile: Any) -> dict[str, Any] | None:
+def _normalize(profile: Any) -> dict[str, Any]:
     """Reduce a `ModelProfile` `TypedDict` to a dict of non-default fields.
 
     Strips keys whose value matches `_CANONICAL_DEFAULTS`, so each snapshot
     shows only what the provider/gateway actually contributes.
     """
-    if profile is None:
-        return None
     return {k: v for k, v in profile.items() if k not in _CANONICAL_DEFAULTS or v != _CANONICAL_DEFAULTS[k]}
 
 

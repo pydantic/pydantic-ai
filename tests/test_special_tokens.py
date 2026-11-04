@@ -46,7 +46,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import Model, ModelRequestParameters
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.batch import BatchRequest, BatchResult
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaToolCall, FunctionModel
@@ -752,15 +752,7 @@ async def test_instrumented_wrapper_delegates():
 
 
 async def test_a_router_without_a_profile_of_its_own():
-    class Router(Model):
-        @property
-        def model_name(self) -> str:
-            return 'router'
-
-        @property
-        def system(self) -> str:
-            return 'router'
-
+    class Router(FunctionModel):
         @cached_property
         def profile(self) -> ModelProfile:
             raise NotImplementedError
