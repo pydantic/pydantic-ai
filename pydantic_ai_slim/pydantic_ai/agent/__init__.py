@@ -143,12 +143,12 @@ from ..tools import (
     ToolsPrepareFunc,
 )
 from ..toolsets import AbstractToolset, AgentToolset
-from ..toolsets._deferred_capability_loader import resolve_loaded_capability_instructions
+from ..toolsets._deferred_capability_loader import capability_load_window, resolve_loaded_capability_instructions
 from ..toolsets._dynamic import (
     DynamicToolset,
     ToolsetFunc,
 )
-from ..toolsets._instruction_collection import collect_toolset_instructions, framework_appended_toolset_sources
+from ..toolsets._instruction_collection import collect_toolset_instructions
 from ..toolsets._tool_search import parse_discovered_tools
 from ..toolsets.abstract import AGENT_TOOLSET_ID
 from ..toolsets.combined import CombinedToolset
@@ -277,7 +277,9 @@ async def _run_lifecycle_hooks(  # noqa: C901
     async def _do_run() -> AgentRunResult[Any]:
         nonlocal _wrap_context
         with set_current_run_context(run_ctx):
-            await run_capability.before_run(run_ctx)
+            # A load from code in `before_run` takes effect on the run's first request.
+            with capability_load_window(run_ctx.pending_messages):
+                await run_capability.before_run(run_ctx)
             current_ctx = contextvars.copy_context()
         # Capture context vars set by wrap_run/before_run so they can be propagated to the
         # caller's task, where the run body and any child tasks execute.
@@ -1608,8 +1610,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
-        message_history, usage, conversation_id = _agent_graph.resolve_conversation(
-            conversation, message_history=message_history, usage=usage, conversation_id=conversation_id
+        message_history, usage, conversation_id, conversation_revision, conversation_unsaved, conversation_unchecked = (
+            _agent_graph.resolve_conversation(
+                conversation, message_history=message_history, usage=usage, conversation_id=conversation_id
+            )
         )
 
         if infer_name and self.name is None:
@@ -1621,6 +1625,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
             conversation_id=conversation_id,
+            conversation_revision=conversation_revision,
+            conversation_unsaved=conversation_unsaved,
+            conversation_unchecked=conversation_unchecked,
             run_id=run_id,
             model=model,
             instructions=instructions,
@@ -1648,6 +1655,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        conversation_revision: str | None = None,
+        conversation_unsaved: list[_messages.ModelMessage] | None = None,
+        conversation_unchecked: bool = False,
         run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[AgentDepsT] = None,
@@ -1808,6 +1818,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 message_history,
                 default=bootstrap_capability.get_default_conversation_id(resolved_run_id),
             ),
+            conversation_revision=conversation_revision,
+            conversation_unsaved=conversation_unsaved,
+            conversation_unchecked=conversation_unchecked,
         )
 
         # The deadline is absolute wall-clock time. Inside a durable workflow or flow, the durability
@@ -4300,47 +4313,35 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             sourced_instructions = self._get_instructions(
                 additional_instructions=instructions, cap_instructions=resolved_caps.instructions
             )
-            # Build `InstructionPart`s (static parts first, then dynamic functions, then dynamic toolset
-            # instructions) and join with the canonical `InstructionPart.join` — same double-newline
-            # separator, static-before-dynamic ordering, and per-source `id`s as the graph run.
-            # KEEP IN SYNC with the graph's `_get_instructions` / `ModelRequestNode`.
-            instruction_parts = await _instructions.resolve_sourced_instructions(sourced_instructions, run_context)
-            instruction_parts.extend(await collect_toolset_instructions(tool_manager.toolset, run_context))
-            if appended := _instructions.explicitly_appended_blocks(
-                sourced_instructions,
-                instruction_parts,
-                framework_toolset_sources=framework_appended_toolset_sources(tool_manager.toolset),
-            ):
-                warnings.warn(
-                    "`on_change='append'` is not supported by realtime sessions, so instruction blocks "
-                    f'{", ".join(map(repr, appended))} are sent as session instructions and their changes are not '
-                    'appended.',
-                    UserWarning,
-                    stacklevel=2,
-                )
-            if appending_system_prompts := [
-                runner.context_id for runner in self._system_prompt_functions if runner.context_id is not None
-            ]:
-                warnings.warn(
-                    "`on_change='append'` is not supported by realtime sessions, so dynamic system prompts "
-                    f'{", ".join(map(repr, appending_system_prompts))} are re-evaluated in place and their changes '
-                    'are not appended.',
-                    UserWarning,
-                    stacklevel=2,
-                )
-            # Nothing appends here, so an empty append-mode block has no withdrawal to record.
-            instruction_parts = _messages.InstructionPart.sorted([part for part in instruction_parts if part.content])
             # A standard run states a loaded deferred capability's instructions in history, after its load return,
             # which seeding skips: a session has no channel for them. They join the session's own instructions
             # instead, after the rest, resolved as the graph resolves them before each request.
             # KEEP IN SYNC with the graph's `_get_loaded_instructions`.
-            for capability_id in _instructions.LoadedInstructionValues.of(message_history or ()).stated_in_history:
-                capability = run_context.capabilities.get(capability_id)
-                if capability is not None and capability.defer_loading is True:
-                    loaded_parts = await resolve_loaded_capability_instructions(
-                        capability_id, tool_manager.toolset, run_context
-                    )
-                    instruction_parts.extend(part for part in loaded_parts if part.content)
+            loaded_capability_ids = [
+                capability_id
+                for capability_id in _instructions.LoadedInstructionValues.of(message_history or ()).stated_in_history
+                if (capability := run_context.capabilities.get(capability_id)) is not None
+                and capability.defer_loading is True
+            ]
+
+            async def resolve_instruction_parts(
+                ctx: RunContext[AgentDepsT], toolset: AbstractToolset[AgentDepsT]
+            ) -> list[_messages.InstructionPart]:
+                """Resolve the session's instructions, at connect and again before each model turn.
+
+                Built from `InstructionPart`s (static parts first, then dynamic functions, then dynamic toolset
+                instructions) with the same per-source `id`s as the graph run, every block that can change appending
+                its changes: see `session_instruction_parts`.
+                KEEP IN SYNC with the graph's `_get_instructions` / `ModelRequestNode`.
+                """
+                parts = await _instructions.resolve_sourced_instructions(sourced_instructions, ctx)
+                parts.extend(await collect_toolset_instructions(toolset, ctx))
+                loaded_parts: list[_messages.InstructionPart] = []
+                for capability_id in loaded_capability_ids:
+                    loaded_parts.extend(await resolve_loaded_capability_instructions(capability_id, toolset, ctx))
+                return _instructions.session_instruction_parts(parts, loaded_parts)
+
+            instruction_parts = await resolve_instruction_parts(run_context, tool_manager.toolset)
             resolved_instructions = _messages.InstructionPart.join(instruction_parts)
             # As in a standard run (`UserPromptNode`), the agent's system prompts open a fresh conversation,
             # while seeded history is taken to carry its own, with its dynamic system prompts re-evaluated.
@@ -4444,6 +4445,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 run_id=run_id,
                 wrap_event_stream=wrap_event_stream,
                 lifecycle=lifecycle_state,
+                resolve_instructions=resolve_instruction_parts,
+                appending_system_prompts={
+                    ref: runner
+                    for ref, runner in self._system_prompt_dynamic_functions.items()
+                    if runner.context_id is not None
+                },
             )
             try:
                 yield resolution
@@ -4665,6 +4672,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     model_request_parameters=resolved.model_request_parameters,
                     model_settings=session_settings,
                     wrap_event_stream=resolved.wrap_event_stream,
+                    _resolve_instructions=resolved.resolve_instructions,
+                    _appending_system_prompts=resolved.appending_system_prompts,
                 )
                 lifecycle.session = session
                 resolved.run_context.realtime_session = session
@@ -4978,6 +4987,8 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 graph_deps.cancellation.release_issued()
 
         async with AsyncExitStack() as stack:
+            # Keep errors replayable through recovery and teardown, then break their traceback cycles last.
+            stack.callback(graph_deps.release_tool_error_caches)
             # Enter first so cancellation is classified only after every other context has torn down.
             await stack.enter_async_context(_translate_cancellation())
             stack.callback(lambda: graph_deps.tool_manager._release_context())  # pyright: ignore[reportPrivateUsage]
@@ -5086,6 +5097,9 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 # when this run is on another event loop. A durable run sends its requests from the engine's
                 # activities, steps or tasks instead, and a Temporal workflow's event loop isn't theirs.
                 self.model._refresh_http_client()  # pyright: ignore[reportPrivateUsage]
+                # The run holds the connections the model opens on demand without entering it, which would close the
+                # provider's HTTP client when the run ends.
+                await stack.enter_async_context(self.model._run_scope())  # pyright: ignore[reportPrivateUsage]
 
             async def _finalize_result(result: AgentRunResult[Any]) -> None:
                 self.usage_limits.check_cost(result.usage)

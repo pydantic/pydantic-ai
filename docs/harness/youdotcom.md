@@ -324,13 +324,13 @@ from pydantic_ai_harness import YouResearch, YouSearch
 agent = Agent.from_file('agent.yaml', custom_capability_types=[YouSearch, YouResearch])
 ```
 
-Pass `custom_capability_types` so the spec loader knows how to instantiate the
-capabilities. The `client` field is not spec-serializable; spec-loaded
+The `client` field is not spec-serializable; spec-loaded
 instances always build the default client from `YDC_API_KEY`. In specs,
 `output_schema` takes the JSON-schema dict form.
 
 ## Further reading
 
+- [You.com is now a Pydantic AI capability](https://pydantic.dev/articles/youdotcom-pydantic-ai-harness) (Pydantic)
 - [Pydantic AI capabilities](../capabilities/overview.md)
 - [Toolsets](../toolsets.md)
 - [You.com API documentation](https://documentation.you.com)

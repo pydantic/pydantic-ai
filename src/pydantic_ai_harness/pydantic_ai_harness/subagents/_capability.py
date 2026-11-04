@@ -14,7 +14,8 @@ import anyio
 from pydantic_ai._instructions import SourcedInstruction, append_on_change_by_default
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.agent import Agent, AgentRunResult, EventStreamHandler
-from pydantic_ai.capabilities import AbstractCapability, AgentCapability, WrapRunHandler
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability, WrapRunHandler, durable_operation
+from pydantic_ai.durable_exec import BaseDurabilityCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputContext
@@ -24,7 +25,14 @@ from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness._workspace import require_workspace, secondary_workspace, workspace_path
-from pydantic_ai_harness.subagents._control import RUN_OWNER, DynamicAgents, RemoteSubAgent, TaskControl, run_owned
+from pydantic_ai_harness.subagents._control import (
+    RUN_OWNER,
+    DynamicAgents,
+    DynamicAgentSpec,
+    RemoteSubAgent,
+    TaskControl,
+    run_owned,
+)
 from pydantic_ai_harness.subagents._disk import AgentOverride, DiskDefinition, load_definitions
 from pydantic_ai_harness.subagents._models import ModelOption, as_option, model_label, validate_restriction
 from pydantic_ai_harness.subagents._tasks import DelegationTask, DelegationTasks, enqueue_while_open, isolated
@@ -33,6 +41,7 @@ from pydantic_ai_harness.subagents._toolset import (
     CREATE_AGENT_TOOL_NAME,
     DEFAULT_MAX_DEPTH,
     SELF_AGENT_NAME,
+    RecordedDelegation,
     SubAgent,
     SubAgentToolset,
     WorkspaceResolver,
@@ -86,53 +95,15 @@ later merges silently by default, which is the wrong way round for a decision no
 class SubAgents(AbstractCapability[AgentDepsT]):
     """Let an agent delegate self-contained tasks to named sub-agents.
 
-    Exposes a single `delegate_task(agent_name, task)` tool. Each delegation
-    runs the chosen sub-agent in a fresh, isolated run (it never sees the parent
-    conversation), and the available sub-agents are listed in the system prompt,
-    stable within a run; a change between runs of a conversation is appended
-    rather than rewritten.
+    Exposes a single `delegate_task(agent_name, task)` tool. Each delegation runs the chosen
+    sub-agent in a fresh run that does not see the parent conversation. The available sub-agents
+    are listed in the system prompt; a change to the listing between runs of a conversation is
+    appended rather than rewritten.
 
-    Sub-agents are passed as a sequence of `SubAgent` entries, each pairing an
-    agent with its per-delegate run controls (a `usage_limits` budget, a
-    wall-clock `timeout_seconds`, a per-run `max_calls` budget, an `on_failure`
-    steering message, and optional `name`/`description` overrides). A delegate's
-    name is its `SubAgent.name`, or the agent's own `name` when unset; two
-    explicitly-passed delegates resolving to the same name is an error.
-
-    Delegations run on the sub-agent's own model unless a `models` menu is
-    configured, in which case `delegate_task` also takes a `model` argument naming
-    one of the menu's keys, so the parent routes each task to the model that fits
-    it. A `SubAgent` can restrict which keys it accepts (`SubAgent.models`).
-
-    Sub-agents can also be loaded from disk: each Markdown or standalone TOML definition under
-    `agent_folders` in the run's workspace becomes a delegate, built with the
-    parent's model. Folders are read at the start of every run, through
-    `ctx.workspace`, or through `workspace` when set. Disk delegates get no tools
-    by default; pass a `tool_resolver` to map their frontmatter tool names.
-    Disk delegates coexist with explicitly-passed ones; explicitly-passed agents take
-    precedence. Convention folders use `.agents/`, then `.claude/`, then `.codex/`; explicit folder sequences use
-    earlier folders before later ones. A disk delegate whose
-    name is already taken is skipped with a warning. Configure or disable this with
-    `agent_folders`; see also `agent_overrides` and `tool_resolver`.
-
-    Standalone TOML requires Python 3.11+ and nonempty string `name`, `description`,
-    and `developer_instructions`. Optional `tools` or `allowed-tools` accepts a list
-    of nonempty strings or a comma-separated string, resolved by `tool_resolver`.
-    Model/effort/display fields (`model`, `effort`, `model_reasoning_effort`, `color`)
-    are ignored with a warning. Other TOML fields cause the file to be skipped,
-    including unsupported permission/sandbox settings and legacy `[agents.name]`
-    `config_file` declarations. Malformed files warn without blocking valid files.
-
-    With `include_self=True`, the roster also lists the running agent itself, as `self`:
-    a delegation starts a fresh run of `RunContext.agent`, so the delegate has every
-    capability, tool, and instruction bound to that agent, including guardrails and
-    approval hooks added next to this one. Delegations nest at most `max_depth` levels.
-
-    The parent's `deps` are forwarded to each sub-agent (sub-agents therefore
-    share the parent's `AgentDepsT`), and by default the parent's `usage` is
-    shared so usage limits apply across the whole agent tree. Extra capabilities
-    can be applied to every sub-agent run (`shared_capabilities`), and sub-agent
-    events can be streamed to a handler (`event_stream_handler`).
+    Delegates come from `agents`, from Markdown or TOML definitions under `agent_folders`, and,
+    with `include_self=True`, from the running agent itself. With a `models` menu, `delegate_task`
+    also takes a `model` argument naming one of its keys. The parent's `deps` are forwarded to
+    each sub-agent, and delegations nest at most `max_depth` levels.
 
     ```python
     from pydantic_ai import Agent
@@ -188,10 +159,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
       this machine.
     - `None`: no disk loading (the default).
 
-    Missing folders are skipped. Within a folder every `*.md` file is a candidate.
-
-    Earlier releases defaulted to `'agents'`; pass it to keep loading the
-    conventional folders."""
+    Missing folders are skipped. Within a folder every `*.md` and `*.toml` file is a candidate."""
 
     agent_overrides: Mapping[str, AgentOverride] = field(default_factory=dict[str, AgentOverride])
     """Per-disk-agent overrides keyed by the agent's name. An entry can set the
@@ -230,16 +198,15 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     tool_name: str = 'delegate_task'
     """Name of the delegate tool exposed to the model."""
 
+    # Keyword-only on the field rather than through a `KW_ONLY` marker: a marker applies to every
+    # field after it, which would take `tool_retries` and `contain_errors` off the positional
+    # contract they already have.
     id: str | None = field(default='sub_agents', kw_only=True)
-    """One-off: an agent exposes a single delegate tool, so the id is fixed.
+    """Fixed, since an agent exposes a single delegate tool. Durable execution requires one.
 
-    `tool_name` is one name, so two `SubAgents` capabilities register the same tool and collide.
-    Declaring the id here is what makes two of them merge instead, unioning their rosters -- which
-    is what lets a packaged harness that delegates compose with another that does the same.
-
-    Keyword-only on the field rather than through a `KW_ONLY` marker: a marker applies to every
-    field after it, which would take `tool_retries` and `contain_errors` off the positional
-    contract they already have.
+    Two `SubAgents` capabilities would register the same `tool_name` and collide. The shared id
+    makes them merge instead, unioning their rosters, so a packaged harness that delegates can
+    compose with another that does the same.
     """
 
     tool_retries: int | None = 2
@@ -263,8 +230,8 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     """A workspace to read `agent_folders` from instead of the run's, such as
     `LocalWorkspaceBackend('/app')` for definitions that ship with the application.
 
-    A backend, not the `LocalWorkspace` capability. It is used in-process only in this release: a
-    durable engine does not route it through its workflow machinery."""
+    A backend, not the `LocalWorkspace` capability. It is used in-process only: a durable engine
+    does not route it through its workflow machinery."""
 
     workspace_resolver: WorkspaceResolver[AgentDepsT] | None = field(default=None, kw_only=True)
     """Opt into `delegate_task(working_directory=...)` with an async callback receiving the parent
@@ -347,7 +314,9 @@ class SubAgents(AbstractCapability[AgentDepsT]):
 
     dynamic_agents: DynamicAgents[AgentDepsT] | None = field(default=None, kw_only=True)
     """Let the model create sub-agents during a run, with a `create_agent` tool. Off by default.
-    Only one `SubAgents` on an agent can set it. Not supported under durable execution, where a run raises a `UserError`."""
+    Only one `SubAgents` on an agent can set it. On Temporal and DBOS, every delegation other than to `self` runs in a
+    durable unit of its own, so recovery rebuilds the created agents and reuses the delegations' results. Other durable
+    engines, and a bound `DelegationTasks` owner under any of them, raise a `UserError`."""
 
     _call_counts: dict[str, dict[str, int]] = field(
         default_factory=dict[str, 'dict[str, int]'], init=False, repr=False, compare=False
@@ -355,10 +324,13 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     """Run-scoped delegation counts (run_id -> name -> count), shared with the
     toolset and cleared per run in `wrap_run`. Backs `SubAgent.max_calls`."""
 
-    _created: dict[str, dict[str, SubAgent[AgentDepsT]]] = field(
-        default_factory=dict[str, 'dict[str, SubAgent[AgentDepsT]]'], init=False, repr=False, compare=False
+    _created: dict[str, dict[str, tuple[DynamicAgentSpec, SubAgent[AgentDepsT]]]] = field(
+        default_factory=dict[str, 'dict[str, tuple[DynamicAgentSpec, SubAgent[AgentDepsT]]]'],
+        init=False,
+        repr=False,
+        compare=False,
     )
-    """Run-scoped sub-agents created with `create_agent` (run_id -> name -> sub-agent), shared with the
+    """Run-scoped sub-agents created with `create_agent` (run_id -> name -> spec and sub-agent), shared with the
     toolset and cleared per run in `wrap_run`."""
 
     def __post_init__(self) -> None:
@@ -544,11 +516,9 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         if self.include_self:
             self._require_bound_to(ctx.agent)
         try:
-            if (self.task_control is not None or self.dynamic_agents is not None) and ctx.in_durable_context:
-                raise UserError(
-                    '`SubAgents` `task_control` and `dynamic_agents` are not supported under durable execution.'
-                )
             owner = DelegationTasks.current()
+            if ctx.in_durable_context:
+                self._require_durable_support(ctx, owner)
             task = owner.delegation_of(ctx.run_id) if owner is not None else None
             if self.task_control is None or self._delegation_off:
                 return await self._run_plain(ctx, handler, owner, task)
@@ -566,6 +536,23 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         finally:
             self._call_counts.pop(ctx.run_id or '', None)
             self._created.pop(ctx.run_id or '', None)
+
+    def _require_durable_support(self, ctx: RunContext[AgentDepsT], owner: DelegationTasks | None) -> None:
+        if self.task_control is not None:
+            raise UserError('`SubAgents` `task_control` is not supported under durable execution.')
+        if self.dynamic_agents is None:
+            return
+        durability = BaseDurabilityCapability.from_agent(ctx.agent) if ctx.agent is not None else None
+        assert durability is not None, 'Only called in a durable context.'
+        spec = durability.engine_spec
+        # Replay rebuilds the roster only if `create_agent` runs in workflow code: an engine that runs function tools
+        # there, or Temporal, which honors the toolset's `{'temporal': False}`.
+        in_workflow = 'function' not in spec.wrapped_toolset_kinds or spec.tool_config_key == 'temporal'
+        if owner is not None or not in_workflow:
+            raise UserError(
+                '`SubAgents` `dynamic_agents` is only supported under durable execution on an engine that runs its '
+                'tools in workflow code, such as Temporal or DBOS, outside a `DelegationTasks` owner.'
+            )
 
     async def _run_plain(
         self,
@@ -778,7 +765,23 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             dynamic_agents=self.dynamic_agents,
             created=self._created,
             workspace_resolver=self.workspace_resolver,
+            _record_delegation=self._delegate if self.dynamic_agents is not None else None,
         )
+
+    @durable_operation('delegate')
+    async def _delegate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        agent_name: str,
+        task: str,
+        model: str | None,
+        spec: DynamicAgentSpec | None,
+        level: int,
+    ) -> RecordedDelegation:
+        """Run a delegation in a durable unit of its own, so recovery reuses its result."""
+        toolset = self._run_toolset if self._per_run else self._toolset
+        assert toolset is not None, 'Only a capability with delegates offers the delegate tool.'
+        return await toolset._run_recorded(ctx, agent_name, task, model, spec, level)  # pyright: ignore[reportPrivateUsage]
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
@@ -790,8 +793,8 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         """Compose the rosters, and require everything else to already agree.
 
         Two packaged harnesses on one agent each bring their delegates, and composing them is what
-        the shared `id` is for. Only `agents` and `models` are composed. Every other field decides
-        how the delegates *run* -- what capabilities they are handed, whether they see the parent's
+        the shared `id` is for. Only `agents`, `models`, and `include_self` are composed. Every other
+        field decides how the delegates *run* -- what capabilities they are handed, whether they see the parent's
         tools, what the delegate tool is called, where delegates are loaded from -- so merging it
         would apply one harness's policy to the other's sub-agents, which neither author asked for.
         Those must agree, and say so when they do not.

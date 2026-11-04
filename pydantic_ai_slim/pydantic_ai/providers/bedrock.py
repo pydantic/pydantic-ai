@@ -136,17 +136,7 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
         if schema_type == 'object':
             schema['additionalProperties'] = False
 
-        incompatible: dict[str, object] = {}
-        if isinstance(schema_type, str):
-            for key in self._unsupported_keys_by_type.get(schema_type, ()):
-                if key in schema:
-                    incompatible[key] = schema[key]
-            if schema_type == 'array' and schema.get('minItems', 0) > 1:
-                incompatible['minItems'] = schema['minItems']
-        pattern = schema.get('pattern')
-        if isinstance(pattern, str) and _regex_contains_unsupported_syntax(pattern):
-            incompatible['pattern'] = pattern
-
+        incompatible = self._strict_incompatible_keys(schema, schema_type)
         if incompatible:
             notes: list[str] = []
             for key, value in incompatible.items():
@@ -157,6 +147,20 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
             schema['description'] = notes_str if not desc else f'{desc} ({notes_str})'
 
         return schema
+
+    def _strict_incompatible_keys(self, schema: JsonSchema, schema_type: object) -> dict[str, object]:
+        """The keys of `schema` that Bedrock rejects in strict mode, with their values."""
+        incompatible: dict[str, object] = {}
+        if isinstance(schema_type, str):
+            for key in self._unsupported_keys_by_type.get(schema_type, ()):
+                if key in schema:
+                    incompatible[key] = schema[key]
+            if schema_type == 'array' and schema.get('minItems', 0) > 1:
+                incompatible['minItems'] = schema['minItems']
+        pattern = schema.get('pattern')
+        if isinstance(pattern, str) and _regex_contains_unsupported_syntax(pattern):
+            incompatible['pattern'] = pattern
+        return incompatible
 
 
 class _BedrockJsonSchemaTransformerWithoutContains(BedrockJsonSchemaTransformer):

@@ -41,7 +41,6 @@ from ._compat import (
     model_settings_from_json,
     model_settings_to_json,
     prepare_function_call_params,
-    resolve_function_tool_for_definition,
     resolve_mcp_tool_for_definition,
 )
 
@@ -53,7 +52,6 @@ __all__ = (
     'RenderCapabilityOperationTransport',
     'RenderCompactMessagesTransport',
     'RenderDynamicCallTransport',
-    'RenderDynamicGetToolsTransport',
     'RenderEventStreamHandlerTransport',
     'RenderFunctionCallTransport',
     'RenderGetToolsTransport',
@@ -145,12 +143,7 @@ class RenderFunctionCallTransport(Generic[AgentDepsT], RenderJsonTransport[Tools
         ctx = self._context_codec.load(decoded.run_context)
         try:
             tool = (
-                resolve_function_tool_for_definition(
-                    self._toolset,
-                    decoded.tool_def,
-                    ctx=ctx,
-                    original_name=decoded.original_name,
-                )
+                self._toolset.tool_for_tool_def(decoded.tool_def, ctx=ctx, original_name=decoded.original_name)
                 if decoded.tool_def is not None
                 else None
             )
@@ -179,11 +172,6 @@ class RenderGetToolsTransport(Generic[AgentDepsT], RenderJsonTransport[ToolsetGe
         del runtime
         decoded = load_json_type(_ContextPayload, payload)
         return ToolsetGetToolsParams(self._context_codec.load(decoded.run_context))
-
-
-class RenderDynamicGetToolsTransport(RenderGetToolsTransport[AgentDepsT]):
-    def __init__(self, context_codec: RenderRunContextCodec[AgentDepsT]) -> None:
-        super().__init__(context_codec, result_type=DynamicToolsResult)
 
 
 class RenderMCPCallTransport(Generic[AgentDepsT], RenderJsonTransport[ToolsetCallToolParams]):
@@ -447,8 +435,8 @@ class RenderParameterTransports(ParameterTransports):
     def get_instructions(self, toolset: AbstractToolset[Any]) -> RenderGetToolsTransport[Any]:
         return RenderGetToolsTransport(self._codec(), result_type=Instructions)
 
-    def dynamic_get_tools(self, toolset: DynamicToolset[Any]) -> RenderDynamicGetToolsTransport[Any]:
-        return RenderDynamicGetToolsTransport(self._codec())
+    def dynamic_get_tools(self, toolset: DynamicToolset[Any]) -> RenderGetToolsTransport[Any]:
+        return RenderGetToolsTransport(self._codec(), result_type=DynamicToolsResult)
 
     def dynamic_call(self, toolset: DynamicToolset[Any]) -> RenderDynamicCallTransport[Any]:
         return RenderDynamicCallTransport(self._codec())

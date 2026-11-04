@@ -28,11 +28,13 @@ from contextvars import ContextVar, copy_context
 from dataclasses import MISSING, dataclass, fields, is_dataclass
 from datetime import UTC, datetime
 from enum import Enum
+from functools import partial
 from types import GenericAlias
 from typing import (
     TYPE_CHECKING,
     Any,
     Generic,
+    Literal,
     TypeAlias,
     TypeGuard,
     get_args,
@@ -181,10 +183,25 @@ def abandon_threads_on_cancel() -> Generator[None]:
 
 
 async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
-    def call_with_sync_agent_guard() -> _R:
+    @overload
+    def call_with_sync_agent_guard(return_outcome: Literal[False] = False) -> _R: ...
+
+    @overload
+    def call_with_sync_agent_guard(
+        return_outcome: Literal[True],
+    ) -> tuple[Literal[True], _R] | tuple[Literal[False], BaseException]: ...
+
+    def call_with_sync_agent_guard(
+        return_outcome: bool = False,
+    ) -> _R | tuple[Literal[True], _R] | tuple[Literal[False], BaseException]:
         token = _in_sync_callback.set(True)
         try:
-            return func(*args, **kwargs)
+            value = func(*args, **kwargs)
+            return (True, value) if return_outcome else value
+        except BaseException as exc:
+            if return_outcome:
+                return False, exc
+            raise
         finally:
             _in_sync_callback.reset(token)
 
@@ -197,7 +214,15 @@ async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.k
         ctx = copy_context()
         return await loop.run_in_executor(executor, ctx.run, call_with_sync_agent_guard)
 
-    return await run_sync(call_with_sync_agent_guard, abandon_on_cancel=_abandon_on_cancel.get())
+    # AnyIO's worker future retains a raised error in its own traceback. Relay an outcome only here:
+    # ThreadPoolExecutor needs a propagated exception to clear its worker frame.
+    outcome = await run_sync(partial(call_with_sync_agent_guard, True), abandon_on_cancel=_abandon_on_cancel.get())
+    try:
+        if outcome[0] is True:
+            return outcome[1]
+        raise outcome[1]
+    finally:
+        del outcome
 
 
 def is_model_like(type_: Any) -> bool:
@@ -1233,6 +1258,15 @@ def get_event_loop() -> asyncio.AbstractEventLoop:
 def is_str_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
     """Check if obj is a dict, narrowing the type to `dict[str, Any]`."""
     return isinstance(obj, dict)
+
+
+def is_google_files_api_url(url: str) -> bool:
+    """Whether a URL uses the Google Files API prefix recognized by the Google adapters.
+
+    This is a literal, case-sensitive prefix check, not URL validation: the bare prefix and
+    suffixes without a path separator also match.
+    """
+    return url.startswith('https://generativelanguage.googleapis.com/v1beta/files')
 
 
 def is_text_like_media_type(media_type: str) -> bool:

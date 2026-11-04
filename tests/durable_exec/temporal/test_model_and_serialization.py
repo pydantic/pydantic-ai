@@ -9,9 +9,10 @@ from collections.abc import AsyncGenerator, AsyncIterable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any, Literal
-from unittest.mock import Mock, patch
+from typing import Annotated, Any, Literal, cast
+from unittest.mock import AsyncMock, Mock, patch
 
+import httpx2
 import pytest
 from pydantic import BaseModel, TypeAdapter
 from pydantic_core import to_jsonable_python
@@ -25,6 +26,7 @@ from pydantic_ai import (
     DocumentUrl,
     FilePart,
     FunctionToolset,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -119,7 +121,10 @@ try:
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
     from temporalio.workflow import ActivityConfig
 
-    from pydantic_ai.durable_exec._toolset import CallToolResult
+    from pydantic_ai.durable_exec._toolset import (
+        CallToolResult,
+        _ToolReturn,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
         LogfirePlugin,
@@ -205,9 +210,11 @@ with workflow.unsafe.imports_passed_through():
     # https://github.com/temporalio/sdk-python/blob/3244f8bffebee05e0e7efefb1240a75039903dda/tests/test_client.py#L112C1-L113C1
 
     from ..._inline_snapshot import snapshot
+    from ...append_only import drain_events
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
     from ...conftest import IsDatetime, IsStr, try_import
+    from ..responses_websocket import responses_reply, websocket_model
 
     # `_shared` loads the same sandbox-sensitive modules, so import it passed-through as well.
     from ._shared import (
@@ -1930,6 +1937,40 @@ async def test_temporal_activities_manage_inferred_model_lifecycle(monkeypatch: 
         'cancel',
         'exit',
     ]
+
+
+async def test_temporal_model_activities_use_http_for_responses_websocket(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An activity without an external model owner uses HTTP instead of opening a socket for one request."""
+    pytest.importorskip('websockets')
+    connect = AsyncMock()
+    monkeypatch.setattr('openai.lib._websocket._WebSocketConnect', connect)
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(responses_reply)) as client:
+        responses_model = websocket_model(client)
+        temporal_model = TemporalModel(
+            responses_model,
+            activity_name_prefix='test__responses_websocket',
+            activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+            deps_type=type(None),
+            event_stream_handler=drain_events,
+        )
+        ctx = RunContext[None](deps=None, model=responses_model, usage=RunUsage(), run_id='responses-websocket')
+        params = _RequestParams(
+            messages=[ModelRequest.user_text_prompt('hello')],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+            serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+            model_id=None,
+        )
+        response = await ActivityEnvironment().run(temporal_model.request_activity, params, None)
+        stream_response = await ActivityEnvironment().run(
+            temporal_model.request_stream_activity,
+            params,
+            None,  # pyright: ignore[reportArgumentType]
+        )
+    assert response.text == stream_response.text == 'from HTTP'
+    connect.assert_not_called()
 
 
 @pytest.mark.parametrize('legacy_payload', [True, False])
@@ -3831,3 +3872,24 @@ def test_an_activity_failure_without_an_application_error_is_raised_unchanged():
         with rebuilt_model_errors():
             raise activity_error
     assert raised.value is activity_error
+
+
+def test_payload_converter_decodes_journal_entries_written_before_records():
+    """A tool-call result an earlier worker journaled has no file record, and still decodes with every file.
+
+    The application's own worker wrote it, so a workflow in flight across an upgrade keeps its tool results.
+    """
+    files: list[DocumentUrl | ImageUrl | UploadedFile] = [
+        UploadedFile('file-1', 'openai'),
+        DocumentUrl('s3://bucket/report.pdf'),
+        ImageUrl('https://example.com/chart.png', force_download=True),
+    ]
+    result = _ToolReturn(result=files)
+    journaled = TypeAdapter[Any](CallToolResult).dump_python(result, mode='json')
+    del journaled['content_file_digests']
+    payload = temporalio.api.common.v1.Payload(
+        metadata={'encoding': b'json/plain'}, data=json.dumps(journaled).encode()
+    )
+
+    converter = temporal_payload_converter.PydanticAIJSONPlainPayloadConverter()
+    assert converter.from_payload(payload, cast(type, CallToolResult)) == result

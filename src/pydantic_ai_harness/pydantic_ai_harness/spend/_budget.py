@@ -38,7 +38,7 @@ def delimited(*parts: str) -> str:
     the boundary between two. Plain joining is enough where every part is checked for the
     separator first, as `store_key`'s are; it is not enough for a provider's response id
     or a caller's run id, where a collision would let one response be mistaken for another
-    and silently dropped as a replay.
+    and dropped as a replay.
     """
     return SEPARATOR.join(f'{len(part)}:{part}' for part in parts)
 
@@ -122,7 +122,7 @@ class Budget(Generic[AgentDepsT]):
     """
 
     def __post_init__(self) -> None:
-        """Reject configurations that would quietly misbehave rather than fail.
+        """Reject configurations that would misbehave rather than fail.
 
         A ceiling of zero or less makes a budget exhausted before anything is
         spent, so the first request is refused with no way to tell that from a
@@ -226,7 +226,7 @@ def bucket(window: Window, ctx: RunContext[Any] | None, now: datetime) -> str | 
 
 
 def _run_identity(identity: str | None, window: Window) -> str:
-    """The run or conversation id, refusing to silently share a bucket when it is absent."""
+    """The run or conversation id, refusing to share a bucket when it is absent."""
     if identity is None:
         raise UserError(
             f"A Budget with window='{window}' needs the run's {window} id, but this run reports none. "
