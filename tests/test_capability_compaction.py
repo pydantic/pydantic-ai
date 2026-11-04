@@ -736,8 +736,8 @@ async def test_history_written_while_the_compacted_attempt_ran_is_kept():
     async def after(
         ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
     ) -> ModelResponse:
-        if ctx.run_step == 1:
-            ctx.messages.append(note)
+        # The run makes a single request, the compacted one.
+        ctx.messages.append(note)
         return response
 
     agent = Agent(TestModel(), capabilities=[RequestOnce(), Summarize(), Hooks(after_model_request=after)])
