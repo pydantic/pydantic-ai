@@ -443,7 +443,7 @@ class ScopedTask(Generic[T]):
         try:
             await asyncio.wait((self.task,))
         except asyncio.CancelledError as cancellation:
-            message = cancellation.args[0] if cancellation.args else None
+            message = self._cancellation_message(cancellation)
             shielded = False
             while not self.task.done():
                 if not shielded and in_cancelled_anyio_scope():
@@ -459,9 +459,14 @@ class ScopedTask(Generic[T]):
                     try:
                         await asyncio.wait((self.task,))
                     except asyncio.CancelledError as exc:
-                        message = exc.args[0] if exc.args else None
+                        message = self._cancellation_message(exc)
             return cancellation
         return None
+
+    @staticmethod
+    def _cancellation_message(cancellation: asyncio.CancelledError) -> object:
+        """The message a cancellation was raised with, to pass on with it."""
+        return cancellation.args[0] if cancellation.args else None
 
 
 def raise_if_cancelling() -> None:
@@ -579,6 +584,70 @@ async def aclose_all(streams: Iterable[AsyncIterable[Any]]) -> None:
         raise BaseExceptionGroup('Errors closing async iterables', errors)
 
 
+@dataclass
+class _TemporalGroups(Generic[T]):
+    """The groups `group_by_temporal` yields, with the pending pull its cleanup cancels."""
+
+    aiterator: AsyncIterator[T]
+    # we might wait for the next item more than once, so we store the task to await next time
+    task: asyncio.Task[T] | None = None
+
+    async def ungrouped(self) -> AsyncIterator[list[T]]:
+        async for item in self.aiterator:
+            yield [item]
+
+    async def debounced(self, soft_max_interval: float) -> AsyncIterator[list[T]]:
+        assert soft_max_interval >= 0, 'soft_max_interval must be a positive number'
+        buffer: list[T] = []
+        group_start_time: float | None = None
+
+        while True:
+            done = await self._wait_for_next(soft_max_interval, group_start_time)
+
+            if done:
+                # the one task we waited for completed
+                try:
+                    item = done.pop().result()
+                except StopAsyncIteration:
+                    # if the task raised StopAsyncIteration, we're done iterating
+                    if buffer:
+                        yield buffer
+                    self.task = None
+                    break
+                else:
+                    # we got an item, add it to the buffer and set task to None to get the next item
+                    buffer.append(item)
+                    self.task = None
+                    # if this is the first item in the group, set the group start time
+                    if group_start_time is None:
+                        group_start_time = time.monotonic()
+            elif buffer:
+                # otherwise if the task timeout expired and we have items in the buffer, yield the buffer
+                yield buffer
+                # clear the buffer and reset the group start time ready for the next group
+                buffer = []
+                group_start_time = None
+
+    async def _wait_for_next(self, soft_max_interval: float, group_start_time: float | None) -> set[asyncio.Task[T]]:
+        """Wait for the next item until the group's interval is up, and return the pull if it finished."""
+        if group_start_time is None:
+            # group hasn't started, we just wait for the maximum interval
+            wait_time = soft_max_interval
+        else:
+            # wait for the time remaining in the group
+            wait_time = soft_max_interval - (time.monotonic() - group_start_time)
+
+        # if there's no current task, we get the next one
+        if self.task is None:
+            # anext(aiter) returns an Awaitable[T], not a Coroutine which asyncio.create_task expects
+            # so far, this doesn't seem to be a problem
+            self.task = asyncio.create_task(anext(self.aiterator))  # pyright: ignore[reportArgumentType]
+
+        # we use asyncio.wait to avoid cancelling the coroutine if it's not done
+        done, _ = await asyncio.wait((self.task,), timeout=wait_time)
+        return done
+
+
 @asynccontextmanager
 async def group_by_temporal(
     aiterable: AsyncIterable[T], soft_max_interval: float | None
@@ -607,72 +676,11 @@ async def group_by_temporal(
     Returns:
         A context manager usable as an async iterable of lists of items produced by the input async iterable.
     """
-    # we might wait for the next item more than once, so we store the task to await next time
-    task: asyncio.Task[T] | None = None
-    aiterator = aiter(aiterable)
-
-    if soft_max_interval is None:
-
-        async def async_iter_groups() -> AsyncIterator[list[T]]:
-            async for item in aiterator:
-                yield [item]
-
-    else:
-
-        async def async_iter_groups() -> AsyncIterator[list[T]]:
-            nonlocal task
-
-            assert soft_max_interval is not None and soft_max_interval >= 0, (
-                'soft_max_interval must be a positive number'
-            )
-            buffer: list[T] = []
-            group_start_time: float | None = None
-
-            while True:
-                if group_start_time is None:
-                    # group hasn't started, we just wait for the maximum interval
-                    wait_time = soft_max_interval
-                else:
-                    # wait for the time remaining in the group
-                    wait_time = soft_max_interval - (time.monotonic() - group_start_time)
-
-                # if there's no current task, we get the next one
-                if task is None:
-                    # anext(aiter) returns an Awaitable[T], not a Coroutine which asyncio.create_task expects
-                    # so far, this doesn't seem to be a problem
-                    task = asyncio.create_task(anext(aiterator))  # pyright: ignore[reportArgumentType,reportUnknownVariableType]
-
-                # we use asyncio.wait to avoid cancelling the coroutine if it's not done
-                done, _ = await asyncio.wait((task,), timeout=wait_time)
-
-                if done:
-                    # the one task we waited for completed
-                    try:
-                        item = done.pop().result()
-                    except StopAsyncIteration:
-                        # if the task raised StopAsyncIteration, we're done iterating
-                        if buffer:
-                            yield buffer
-                        task = None
-                        break
-                    else:
-                        # we got an item, add it to the buffer and set task to None to get the next item
-                        buffer.append(item)
-                        task = None
-                        # if this is the first item in the group, set the group start time
-                        if group_start_time is None:
-                            group_start_time = time.monotonic()
-                elif buffer:
-                    # otherwise if the task timeout expired and we have items in the buffer, yield the buffer
-                    yield buffer
-                    # clear the buffer and reset the group start time ready for the next group
-                    buffer = []
-                    group_start_time = None
-
+    groups = _TemporalGroups(aiter(aiterable))
     try:
-        yield async_iter_groups()
+        yield groups.ungrouped() if soft_max_interval is None else groups.debounced(soft_max_interval)
     finally:
-        await _cleanup_temporal_group(task, aiterator)
+        await _cleanup_temporal_group(groups.task, groups.aiterator)
 
 
 def sync_anext(iterator: Iterator[T]) -> T:
@@ -1107,27 +1115,29 @@ def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, s
             new_name = name_mapping.get(original_name, original_name)
             s['$ref'] = f'#/$defs/{new_name}'
 
+    for subschema in _mapped_json_subschemas(s):
+        _update_mapped_json_schema_refs(subschema, name_mapping)
+
+
+def _mapped_json_subschemas(s: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    """The subschemas directly under `s` whose `$ref`s `_update_mapped_json_schema_refs` updates."""
     # Handle keywords whose values map names to schemas.
     for keyword in ['properties', 'patternProperties', 'dependentSchemas']:
         if keyword in s:
             props: dict[str, dict[str, Any]] = s[keyword]
-            for prop in props.values():
-                if isinstance(prop, dict):
-                    _update_mapped_json_schema_refs(prop, name_mapping)
+            yield from (prop for prop in props.values() if isinstance(prop, dict))
 
     # Handle single-subschema keywords, including conditionals and array containment.
     for keyword in ['items', 'additionalProperties', 'propertyNames', 'not', 'contains', 'if', 'then', 'else']:
         subschema = s.get(keyword)
         if isinstance(subschema, dict):
-            _update_mapped_json_schema_refs(subschema, name_mapping)  # pyright: ignore[reportUnknownArgumentType]
+            yield subschema
 
     # Handle schema arrays, including the legacy tuple form of items.
     for keyword in ['prefixItems', 'anyOf', 'oneOf', 'allOf', 'items']:
         keyword_items: dict[str, Any] | list[dict[str, Any] | bool] | None = s.get(keyword)
         if isinstance(keyword_items, list):
-            for item in keyword_items:
-                if isinstance(item, dict):
-                    _update_mapped_json_schema_refs(item, name_mapping)
+            yield from (item for item in keyword_items if isinstance(item, dict))
 
 
 def _unique_def_name(name: str, schema: dict[str, Any], all_defs: dict[str, dict[str, Any]]) -> str:
@@ -1173,23 +1183,8 @@ def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str
                 renames[name] = _unique_def_name(name, schema, all_defs)
                 all_defs[renames[name]] = def_schema
 
-        # A def equal to an earlier schema's def ("shared") can reuse it only if none of the defs it
-        # transitively references were renamed; otherwise its `$ref`s resolve differently and it needs
-        # its own copy. Iterate to a fixpoint before keeping any shared def, so the result does not
-        # depend on the order of `$defs`.
         shared = [name for name in defs if name not in renames and name not in new_names]
-        changed = True
-        while changed:
-            changed = False
-            for name in shared:
-                if name in renames:
-                    continue
-                updated = copy.deepcopy(defs[name])
-                _update_mapped_json_schema_refs(updated, renames)
-                if updated != defs[name]:
-                    renames[name] = _unique_def_name(name, schema, all_defs)
-                    all_defs[renames[name]] = defs[name]
-                    changed = True
+        _rename_shared_defs_with_renamed_refs(shared, defs, renames, schema, all_defs)
 
         # Rewrite the refs of every def this schema contributes. Shared defs left under their
         # name only reference unrenamed defs, so the earlier schema's copy is already correct.
@@ -1200,6 +1195,34 @@ def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str
         rewritten_schemas.append(schema)
 
     return rewritten_schemas, all_defs
+
+
+def _rename_shared_defs_with_renamed_refs(
+    shared: list[str],
+    defs: dict[str, dict[str, Any]],
+    renames: dict[str, str],
+    schema: dict[str, Any],
+    all_defs: dict[str, dict[str, Any]],
+) -> None:
+    """Give each of `merge_json_schema_defs`'s `shared` defs that references a renamed def a unique name of its own.
+
+    A def equal to an earlier schema's def ("shared") can reuse it only if none of the defs it
+    transitively references were renamed; otherwise its `$ref`s resolve differently and it needs
+    its own copy. Iterate to a fixpoint before keeping any shared def, so the result does not
+    depend on the order of `$defs`.
+    """
+    changed = True
+    while changed:
+        changed = False
+        for name in shared:
+            if name in renames:
+                continue
+            updated = copy.deepcopy(defs[name])
+            _update_mapped_json_schema_refs(updated, renames)
+            if updated != defs[name]:
+                renames[name] = _unique_def_name(name, schema, all_defs)
+                all_defs[renames[name]] = defs[name]
+                changed = True
 
 
 _MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\r?\n(\{.*?\})\s*(?:\r?\n?```|\Z)', flags=re.DOTALL)
@@ -1333,12 +1356,13 @@ def enum_member_docstrings(cls: type[Enum]) -> dict[str, str]:
             continue
         # A member is a plain or an annotated assignment; a string after anything else describes no option,
         # and neither does one after a name that is not a member, such as `_ignore_`.
-        if isinstance(previous, ast.Assign):
-            targets = previous.targets
-        elif isinstance(previous, ast.AnnAssign):
-            targets = [previous.target]
-        else:
-            continue
+        match previous:
+            case ast.Assign():
+                targets = previous.targets
+            case ast.AnnAssign():
+                targets = [previous.target]
+            case _:
+                continue
         for name in [target.id for target in targets if isinstance(target, ast.Name) and target.id in cls.__members__]:
             docstrings[name] = inspect.cleandoc(node.value.value)
     return docstrings
