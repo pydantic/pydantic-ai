@@ -304,19 +304,36 @@ def _transcript_entries(
     """
     entries: list[tuple[_TranscriptEntryKind, str]] = []
     for msg in messages:
-        for part in msg.parts:
-            entry = (
-                _request_entry(
-                    part,
-                    skip_previous_summary=skip_previous_summary,
-                    tool_return_max_chars=tool_return_max_chars,
-                )
-                if isinstance(msg, ModelRequest)
-                else _response_entry(part)
+        entries.extend(
+            _message_entries(
+                msg,
+                skip_previous_summary=skip_previous_summary,
+                tool_return_max_chars=tool_return_max_chars,
             )
-            if entry is not None:
-                entries.append(entry)
+        )
     return entries
+
+
+def _message_entries(
+    message: ModelMessage,
+    *,
+    skip_previous_summary: bool,
+    tool_return_max_chars: int | None,
+) -> list[tuple[_TranscriptEntryKind, str]]:
+    """The entries *message* contributes, tagged with the role it was rendered for."""
+    rendered = (
+        [
+            _request_entry(
+                part,
+                skip_previous_summary=skip_previous_summary,
+                tool_return_max_chars=tool_return_max_chars,
+            )
+            for part in message.parts
+        ]
+        if isinstance(message, ModelRequest)
+        else [_response_entry(part) for part in message.parts]
+    )
+    return [entry for entry in rendered if entry is not None]
 
 
 def _request_entry(
@@ -1314,7 +1331,7 @@ def _summary_prompt(
 
 def _summary_input_budget(
     summarizer: SummarizingCompaction[AgentDepsT],
-    model: AbstractModel,
+    model: AbstractModel | str,
 ) -> int | None:
     """Tokens the summarizer request may spend, or `None` when its model's window is unknown.
 
@@ -1348,7 +1365,7 @@ def _transcript_copies(summary_prompt: str) -> int:
 
 def _fit_summary_input(
     summarizer: SummarizingCompaction[AgentDepsT],
-    model: AbstractModel,
+    model: AbstractModel | str,
     overhead_prompt: str,
     entries: Sequence[tuple[_TranscriptEntryKind, str]],
 ) -> str | None:
