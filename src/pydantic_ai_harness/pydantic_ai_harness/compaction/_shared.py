@@ -971,6 +971,11 @@ def starts_user_turn(message: ModelMessage) -> bool:
     )
 
 
+def answers_tool_call(message: ModelMessage) -> bool:
+    """Whether *message* is a `ModelRequest` carrying a reply to a tool call, so it continues the previous response."""
+    return isinstance(message, ModelRequest) and any(_is_tool_reply(part) for part in message.parts)
+
+
 def find_first_user_message(messages: list[ModelMessage]) -> ModelRequest | None:
     """Return the first `ModelRequest` that contains a `UserPromptPart`, or `None`."""
     for msg in messages:

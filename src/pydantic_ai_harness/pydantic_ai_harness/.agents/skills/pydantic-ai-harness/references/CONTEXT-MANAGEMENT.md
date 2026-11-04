@@ -115,7 +115,7 @@ hence `max_tokens=1` / `max_messages=1`. `tiers` must be non-empty and exactly o
 blanks old tool results, keeping the newest `keep_pairs`. `keep_turns=N` replaces that count: it
 keeps the results of the last N completed user turns plus the current one, which is never cleared;
 `keep_turns=0` clears every earlier turn's. Only genuine user prompts start a turn, not pinned
-messages, receipts or other harness-added prompts. `tools=[...]` clears only those tools' results;
+messages, receipts, other harness-added prompts, or a `ToolReturn`'s `content` sent with a tool result. `tools=[...]` clears only those tools' results;
 `exclude_tools` never clears them. Setting `tools` with `exclude_tools`, or a non-default
 `keep_pairs` with `keep_turns`, raises `UserError`. `placeholder` can be a function of the
 `ToolReturnPart` (e.g. `lambda part: part.model_response_str().partition('\n')[0]` keeps the first

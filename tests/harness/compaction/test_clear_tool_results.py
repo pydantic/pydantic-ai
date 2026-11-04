@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ToolReturn
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -336,6 +336,37 @@ class TestClearToolResultsTargeting:
             if isinstance(part, ToolReturnPart)
         ]
         assert returns == [CLEARED, 'new']
+
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+    async def test_keep_turns_ignores_user_content_a_tool_returns(self):
+        """A `ToolReturn` with `content` sends it as a user prompt next to the result, inside the current turn."""
+        sent: list[list[ModelMessage]] = []
+        script = iter(['search', 'screenshot', 'search', None])
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(list(messages))
+            tool_name = next(script)
+            if tool_name is None:
+                return ModelResponse(parts=[TextPart('answer')])
+            return ModelResponse(parts=[ToolCallPart(tool_name, {}, tool_call_id=f'{tool_name}_{len(sent)}')])
+
+        agent = Agent(FunctionModel(respond), capabilities=[ClearToolResults(max_tokens=1, keep_turns=0)])
+
+        @agent.tool_plain
+        def search() -> str:
+            return 'found'
+
+        @agent.tool_plain
+        def screenshot() -> ToolReturn:
+            return ToolReturn('captured', content=['what the screen shows'])
+
+        await agent.run('two', message_history=_turn('one', 'earlier'))
+        assert _contents(sent[-1]) == {
+            'earlier': CLEARED,
+            'search_1': 'found',
+            'screenshot_2': 'captured',
+            'search_3': 'found',
+        }
 
     @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
     async def test_keep_turns_on_a_resumed_history_counts_its_last_turn_as_current(self):

@@ -558,8 +558,8 @@ at or below `2 * keep_pairs` it clears on every request. Pick the value with tha
 results while a quiet one keeps several turns'. Set `keep_turns` instead to keep the tool results of
 the last `keep_turns` completed user turns, plus the current one. A user turn starts at a request
 carrying the user's prompt and runs until the next one; prompts added by harness capabilities, such as
-pinned messages and compaction receipts, don't start one. The current turn, the one the model is
-answering, is never cleared, so `keep_turns=0` clears every earlier turn's results. A run resumed
+pinned messages and compaction receipts, don't start one, and neither does user content sent with
+tool results, such as a `ToolReturn`'s `content`. The current turn, the one the model is answering, is never cleared, so `keep_turns=0` clears every earlier turn's results. A run resumed
 without a new prompt answers the history's last turn, so that turn counts as the current one.
 `keep_turns` replaces the pair count when set; passing a `keep_pairs` other than its default of 3
 along with it raises a `UserError`.

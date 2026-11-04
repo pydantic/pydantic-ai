@@ -12,6 +12,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._shared import (
+    answers_tool_call,
     compact_with_span,
     context_for_request,
     estimate_token_count,
@@ -143,7 +144,8 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
     A user turn starts at a request carrying the user's prompt, and runs until the next one. The
     current turn, the one the model is answering, is never cleared, so `0` clears the results of
     every earlier turn. Prompts added by harness capabilities, such as pinned messages and
-    compaction receipts, don't start a turn. Replaces the `keep_pairs` count when set."""
+    compaction receipts, don't start a turn, and neither does user content sent with tool results,
+    such as a `ToolReturn`'s `content`. Replaces the `keep_pairs` count when set."""
 
     def __post_init__(self) -> None:
         if isinstance(self.tools, str):
@@ -239,9 +241,16 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
     def _kept_turns_start(messages: list[ModelMessage], keep_turns: int) -> int:
         """Index of the first message in the last `keep_turns` completed user turns and the current one.
 
-        A history without a user turn is all current turn, so nothing in it is cleared.
+        A history without a user turn is all current turn, so nothing in it is cleared. A request that
+        answers a tool call continues the turn even when it carries a user prompt: core puts a
+        `ToolReturn`'s `content` there, and a prompt sent along with deferred tool results joins the
+        turn it resumes, which keeps more rather than less.
         """
-        starts = [index for index, message in enumerate(messages) if starts_user_turn(message)]
+        starts = [
+            index
+            for index, message in enumerate(messages)
+            if starts_user_turn(message) and not answers_tool_call(message)
+        ]
         if len(starts) <= keep_turns:
             return 0
         return starts[-(keep_turns + 1)]
