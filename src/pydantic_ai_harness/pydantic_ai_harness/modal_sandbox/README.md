@@ -116,6 +116,37 @@ The ref holds no credentials, so the process that reattaches needs your Modal cr
 
 Already have a `modal.Sandbox`? Pass `workspace=ModalSandboxBackend(sandbox=sandbox)` to a run, with `ModalSandboxBackend` from `pydantic_ai_harness.modal_sandbox`. `ModalSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend. A backend's `get_sandbox()` returns its `modal.Sandbox` for Modal features the workspace API does not cover; on a backend with no sandbox yet it creates one, like the first operation. It doesn't change who terminates the sandbox: whoever holds the ref does.
 
+## Use different credentials for each user
+
+`ModalSandbox(client=modal.Client.from_credentials(token_id, token_secret))` sets one client for the capability, in place of the environment and config file. Modal keeps one client from the environment for the whole process, so that can't serve several users at once. When each user has their own Modal account, supply the workspace from a capability of your own, which builds the client from the run's `deps`:
+
+```python {test="skip"}
+from dataclasses import dataclass
+
+import modal
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai_harness import Coder
+from pydantic_ai_harness.modal_sandbox import ModalSandboxBackend
+
+
+@dataclass
+class User:
+    modal_client: modal.Client
+
+
+@dataclass
+class UsersModal(AbstractCapability[User]):
+    def get_workspace(self, ctx: RunContext[User], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        if ref is not None and ref.provider != 'modal':
+            return None
+        return ModalSandboxBackend(ref=ref, client=ctx.deps.modal_client)
+
+
+agent = Agent('anthropic:claude-opus-5-5', deps_type=User, capabilities=[UsersModal(), Coder()])
+```
+
 ## Prepare a sandbox before the run
 
 To seed files or install packages before the agent starts, create the backend yourself, work in it through `Workspace`, and pass it to the run:
@@ -210,6 +241,7 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()
 | `idle_timeout` | Seconds without activity before Modal stops a new sandbox. Default: `None`, no idle limit. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `/root` on the default image, otherwise the image's own working directory. Created on a new sandbox; on an attached or caller-supplied sandbox it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox. |
+| `client` | The `modal.Client` to use. Default: `None`, Modal's client from the environment or config. See [Use different credentials for each user](#use-different-credentials-for-each-user). |
 | `warn_if_no_tools` | Warn when the agent has no `Shell` or `FileSystem` tool. Default: `True`. |
 
 Modal runs on the asyncio event loop only: its SDK uses asyncio tasks, so under Trio the backend raises `UserError`.
