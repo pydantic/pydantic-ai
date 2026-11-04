@@ -39,14 +39,25 @@ from .model_fallback import ModelFallback
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
 
-__all__ = ('RetryOnModelErrors',)
+__all__ = ('TRANSIENT_MODEL_ERRORS', 'RetryOnModelErrors')
 
-_DEFAULT_RETRY_ON: tuple[type[ModelAPIError], ...] = (
+TRANSIENT_MODEL_ERRORS: tuple[type[ModelAPIError], ...] = (
     ModelRateLimitError,
     ModelUnavailableError,
     ModelServerError,
     ModelConnectionError,
 )
+"""The model errors that waiting may fix, which [`RetryOnModelErrors`][pydantic_ai.capabilities.RetryOnModelErrors]
+retries by default.
+
+[`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError],
+[`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] (including an overloaded model),
+[`ModelServerError`][pydantic_ai.exceptions.ModelServerError] and
+[`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] (including a transport timeout). Extend it
+to retry another error too, as in `retry_on=(*TRANSIENT_MODEL_ERRORS, MyError)`, or check an error against it with
+`isinstance(error, TRANSIENT_MODEL_ERRORS)`.
+"""
+# `TRANSIENT_MODEL_ERRORS` by name, for the spec schema.
 _DEFAULT_SPEC_RETRY_ON: tuple[SpecModelError, ...] = (
     'ModelRateLimitError',
     'ModelUnavailableError',
@@ -118,7 +129,7 @@ class RetryOnModelErrors(AbstractCapability[AgentDepsT]):
     def __init__(
         self,
         *,
-        retry_on: FallbackOn = _DEFAULT_RETRY_ON,
+        retry_on: FallbackOn = TRANSIENT_MODEL_ERRORS,
         max_attempts: int = 3,
         initial_delay: float = 1.0,
         max_delay: float = 30.0,
@@ -133,7 +144,8 @@ class RetryOnModelErrors(AbstractCapability[AgentDepsT]):
                 - A response handler (sync or async): `def check(r: ModelResponse) -> bool`
                 - A sequence mixing all of the above: `[ModelRateLimitError, exc_handler, response_handler]`
 
-                Defaults to the transient errors listed above, which leave a refusal, a response with
+                Defaults to [`TRANSIENT_MODEL_ERRORS`][pydantic_ai.capabilities.TRANSIENT_MODEL_ERRORS], the
+                transient errors listed above, which leave a refusal, a response with
                 `finish_reason='content_filter'`, to a `ModelFallback`: the same model usually refuses again. Naming
                 [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] retries a refusal, empty or with
                 partial text, as it falls back from one in `fallback_on`. Handler type is auto-detected by inspecting type
@@ -161,7 +173,7 @@ class RetryOnModelErrors(AbstractCapability[AgentDepsT]):
             retry_on,
             owner='RetryOnModelErrors',
             param='retry_on',
-            default='(ModelRateLimitError, ModelUnavailableError, ModelServerError, ModelConnectionError)',
+            default='TRANSIENT_MODEL_ERRORS',
         )
         self._step = None
         self._model = None

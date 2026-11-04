@@ -554,7 +554,7 @@ The model classes that honor it are listed under [`ModelSettings.max_retries`][p
 
 ## Retrying the same model
 
-The [`RetryOnModelErrors`](capabilities/retry-on-model-errors.md) capability attempts the same model again when a request fails with an error that waiting may fix: by default a rate limit, an unavailable or overloaded model, a server error, or a connection error. It's the retry layer the agent can see, configured on the agent like any capability:
+The [`RetryOnModelErrors`](capabilities/retry-on-model-errors.md) capability attempts the same model again when a request fails with an error that waiting may fix: by default a rate limit, an unavailable or overloaded model, a server error, or a connection error, the errors [`TRANSIENT_MODEL_ERRORS`][pydantic_ai.capabilities.TRANSIENT_MODEL_ERRORS] lists. It's the retry layer the agent can see, configured on the agent like any capability:
 
 - it decides by the [normalized error categories](models/overview.md#handling-model-api-errors) every model raises, not by status codes, and you choose which with `retry_on`;
 - it waits the error's [`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after], or an exponential backoff, but never longer than `max_delay` or past the request's or the run's deadline, and on [Temporal](durable_execution/temporal.md) and [DBOS](durable_execution/dbos.md) the wait is durable;

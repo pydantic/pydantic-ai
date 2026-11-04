@@ -8,6 +8,7 @@ scripted model can fail on cue with the normalized errors every model raises. Th
 
 from __future__ import annotations
 
+import inspect
 import warnings
 from collections.abc import AsyncIterator, Generator, Sequence
 from contextlib import contextmanager
@@ -17,7 +18,13 @@ import pytest
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.agent.spec import AgentSpec
-from pydantic_ai.capabilities import BatchModelRequests, Hooks, ModelFallback, RetryOnModelErrors
+from pydantic_ai.capabilities import (
+    TRANSIENT_MODEL_ERRORS,
+    BatchModelRequests,
+    Hooks,
+    ModelFallback,
+    RetryOnModelErrors,
+)
 from pydantic_ai.exceptions import (
     ContentFilterError,
     FallbackExceptionGroup,
@@ -187,6 +194,32 @@ async def test_does_not_retry_permanent_errors_by_default(error: Exception):
     with _recorded_sleeps() as delays, pytest.raises(type(error)):
         await agent.run('x')
     assert (answered, delays) == (['primary'], [])
+
+
+def test_transient_model_errors_is_the_default_retry_on():
+    """`TRANSIENT_MODEL_ERRORS` is the default in Python and, by name, in a spec."""
+    assert inspect.signature(RetryOnModelErrors).parameters['retry_on'].default is TRANSIENT_MODEL_ERRORS
+    spec_default = inspect.signature(RetryOnModelErrors.from_spec).parameters['retry_on'].default
+    assert spec_default == tuple(error.__name__ for error in TRANSIENT_MODEL_ERRORS)
+
+
+async def test_retry_on_extends_transient_model_errors():
+    """`TRANSIENT_MODEL_ERRORS` can be extended with another error, and the transient ones are still retried."""
+    answered: list[str] = []
+    errors: list[Exception] = [
+        _http_error(ModelQuotaExceededError, 'primary', status_code=402),
+        _http_error(ModelRateLimitError, 'primary', status_code=429),
+    ]
+    agent = Agent(
+        _flaky('primary', errors, answered),
+        capabilities=[RetryOnModelErrors(retry_on=(*TRANSIENT_MODEL_ERRORS, ModelQuotaExceededError))],
+    )
+    with _recorded_sleeps():
+        result = await agent.run('x')
+    assert result.output == 'primary answered'
+    assert answered == ['primary'] * 3
+    assert isinstance(errors[1], TRANSIENT_MODEL_ERRORS)
+    assert not isinstance(errors[0], TRANSIENT_MODEL_ERRORS)
 
 
 async def test_retry_on_takes_exception_types_and_handlers():
@@ -767,8 +800,7 @@ async def test_does_not_retry_a_stream_after_output_reached_the_consumer():
         (
             {'retry_on': []},
             '`RetryOnModelErrors` created with an empty `retry_on`: all exceptions will propagate and all responses '
-            'will be accepted. Use `retry_on=(ModelRateLimitError, ModelUnavailableError, ModelServerError, '
-            'ModelConnectionError)` for the default behavior.',
+            'will be accepted. Use `retry_on=TRANSIENT_MODEL_ERRORS` for the default behavior.',
         ),
     ],
 )

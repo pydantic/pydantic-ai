@@ -56,7 +56,7 @@ The order you list them in doesn't matter: `RetryOnModelErrors` always judges an
 
 ## When to retry
 
-By default, a request is retried when it fails with one of these [error categories](../models/overview.md#handling-model-api-errors):
+By default, a request is retried when it fails with one of these [error categories](../models/overview.md#handling-model-api-errors), which [`TRANSIENT_MODEL_ERRORS`][pydantic_ai.capabilities.TRANSIENT_MODEL_ERRORS] lists:
 
 - [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError]
 - [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError], including [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError]
@@ -82,6 +82,19 @@ from pydantic_ai.exceptions import ModelOverloadedError, ModelRateLimitError
 agent = Agent(
     '{{ anthropic:medium }}',
     capabilities=[RetryOnModelErrors(retry_on=(ModelRateLimitError, ModelOverloadedError), max_attempts=5)],
+)
+```
+
+To retry another error on top of the default ones, extend `TRANSIENT_MODEL_ERRORS`. The same tuple tells you whether an error is one of them, as in `isinstance(error, TRANSIENT_MODEL_ERRORS)`:
+
+```python {title="retry_on_transient_and_quota.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import TRANSIENT_MODEL_ERRORS, RetryOnModelErrors
+from pydantic_ai.exceptions import ModelQuotaExceededError
+
+agent = Agent(
+    '{{ openai:medium }}',
+    capabilities=[RetryOnModelErrors(retry_on=(*TRANSIENT_MODEL_ERRORS, ModelQuotaExceededError))],
 )
 ```
 
