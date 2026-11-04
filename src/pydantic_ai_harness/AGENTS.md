@@ -96,7 +96,7 @@ The house pattern (spans on `ctx.tracer`, attribute naming, content behind
 A capability that tells the model something mid-conversation, such as `<memory>`, `<judge_feedback>` or
 `<task_output>`, defines a `DataCapabilityPart` kind with a declared `tag`. The framework renders it and never
 escapes its body, so don't escape it yourself: text in it that looks like its tag or a framework frame gets a
-note naming its author. See <https://pydantic.dev/docs/ai/capabilities/custom/#steering-messages-and-reminders>.
+note naming its author. See <https://pydantic.dev/docs/ai/capabilities/custom/#capability-parts>.
 
 Only text that isn't a capability part, such as a transcript flattened for a second model, writes a tag into
 prompt text. It registers the tag once at module level with `pydantic_ai.framing.register_tag()` and renders
