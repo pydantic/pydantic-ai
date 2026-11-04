@@ -270,12 +270,14 @@ All numbers are live measurements of Pydantic AI on the provider's API, as runs 
 |---|---|---|---|---|
 | Claude Haiku 5.5 | Follows an instruction change | 24/24 | 0/24 † | n/a |
 | | Follows a withdrawn instruction | 24/24 | 0/24 † | n/a |
-| | Keeps to the system prompt's task when the user asks for a conflicting one | 57/80 | 80/80 † | 79/80 † |
-| Claude Sonnet 4.6 | Keeps to the system prompt's task when the user asks for a conflicting one | 73/80 | 59/80 † | 60/80 † |
+| | Keeps to the system prompt's task when the user asks for a conflicting one | 57/80 | 75/76 | 74/76 |
+| Claude Sonnet 4.6 | Keeps to the system prompt's task when the user asks for a conflicting one | 73/80 | 67/76 | 64/76 |
 | Gemini 4 Argon | Follows an instruction change | 24/24 † | 21/24 † | n/a |
 | | Follows a withdrawn instruction | 24/24 † | 0/23 † | n/a |
 
-So on Claude Haiku 5.5, Pydantic AI gives up some of the system prompt's hold over a conflicting user request, to keep instruction changes working. Firm wording narrows the gap: 32/40 with a firmly worded system prompt, 25/40 with a weakly worded one. Without a conflicting request, every run was correct (40/40). Claude Sonnet 4.6 does better than the model alone on this measure, so it gives up nothing here.
+The conflicting-request rows are scored the same way on the same items, except that the two runs on the right cover 76 of the 80; on those 76, the default gets 53/76 on Claude Haiku 5.5 and 70/76 on Claude Sonnet 4.6. This measure varies between runs: with `seal="pydantic-ai"` as the marker, Claude Haiku 5.5 got 66/80 in one run and 60/80 in another.
+
+So on Claude Haiku 5.5, Pydantic AI gives up some of the system prompt's hold over a conflicting user request, to keep instruction changes working. Firm wording narrows the gap: 32/40 with a firmly worded system prompt, 25/40 with a weakly worded one. Without a conflicting request, every run was correct (40/40). Claude Sonnet 4.6 holds about as well as the model alone on this measure, so it gives up nothing measurable here.
 
 **The `<system verified>` block rather than a native system role, on Claude Sonnet 5.5.** Opt out with `supports_inline_system_prompts=True` in the model's profile.
 
