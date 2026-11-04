@@ -348,7 +348,9 @@ Gotchas:
   `max_uses`.
 - An agent has one advisor (tool name `advisor`): two `Advisor`s merge, a `None` option taking the
   other instance's value, two list `output_type`s combining, and any other option the later one's.
-  For durable runs use `mode='native'`; local execution is unsupported there.
+- Durable runs: DBOS records each local consultation under the default `id` (`advisor`; keep it stable once
+  deployed). Under Temporal and Prefect use `mode='native'`: their activity- or task-local usage doesn't merge
+  back into the run, so local execution is unsupported there.
 
 ## BackgroundTools
 
