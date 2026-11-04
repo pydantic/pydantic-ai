@@ -45,13 +45,8 @@ def is_provider_valid(messages: list[ModelMessage]) -> bool:
     open_calls: set[str] = set()
     for msg in messages:
         if isinstance(msg, ModelResponse):
-            call_ids = [part.tool_call_id for part in msg.parts if isinstance(part, ToolCallPart)]
-            # Repeating an ID within one response makes the two calls indistinguishable, and reusing
-            # one that is still open leaves the earlier call unanswerable: the later result answers
-            # this call instead. Either way the pairing a provider will reconstruct is not this one.
-            if len(call_ids) != len(set(call_ids)) or open_calls.intersection(call_ids):
+            if not _open_response_calls(msg, open_calls):
                 return False
-            open_calls.update(call_ids)
         else:
             for part in msg.parts:
                 if isinstance(part, ToolReturnPart):
@@ -64,6 +59,20 @@ def is_provider_valid(messages: list[ModelMessage]) -> bool:
                         return False
                     open_calls.discard(part.tool_call_id)
     return not open_calls
+
+
+def _open_response_calls(response: ModelResponse, open_calls: set[str]) -> bool:
+    """Open *response*'s tool calls in *open_calls*, or report that two of them can't be told apart.
+
+    Repeating an ID within one response makes the two calls indistinguishable, and reusing one that is
+    still open leaves the earlier call unanswerable: the later result answers this call instead. Either
+    way the pairing a provider reconstructs is not the one in `messages`.
+    """
+    call_ids = [part.tool_call_id for part in response.parts if isinstance(part, ToolCallPart)]
+    if len(call_ids) != len(set(call_ids)) or not open_calls.isdisjoint(call_ids):
+        return False
+    open_calls.update(call_ids)
+    return True
 
 
 async def continue_run(store: StepStore, *, run_id: str, include_interrupted: bool = False) -> list[ModelMessage]:
