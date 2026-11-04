@@ -2431,7 +2431,7 @@ class TestCodeMode:
             await self._run_code_with_tools('await tool(x=1, y=1)', tool_def)
 
     async def test_ref_past_the_expansion_limit_accepts_a_correct_call(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(function_signature, '_MAX_REF_EXPANSIONS', 3)
+        monkeypatch.setattr(function_signature, '_MAX_REF_EXPANSION_NODES', 3)
         over_limit = ToolDefinition(
             name='over_limit',
             parameters_json_schema={

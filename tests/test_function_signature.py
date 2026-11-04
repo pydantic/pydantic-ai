@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import typing
+from collections.abc import Iterator
 from copy import deepcopy
 from enum import Enum
 from itertools import product
@@ -2182,6 +2183,9 @@ def test_two_identical_inline_objects_with_one_title_are_one_type():
         '#/properties/list/items/first',
         '#/properties/list/items/²',
         '#/properties/list/items/01',
+        '#/properties/list/items/' + '1' * 5000,
+        '#/properties/list/items/-0',
+        '#/properties/list/items/\u0661',
         'http://[oops/x#/$defs/User',
         '#/properties',
         '#/$defs',
@@ -2228,42 +2232,22 @@ def test_property_named_ref_is_a_property():
     assert list(signature.params) == ['$ref']
 
 
-def test_two_identical_inline_union_members_are_one_member():
-    catalog = _ref_catalog({'x': {'anyOf': [deepcopy(_NAME_OBJECT), deepcopy(_NAME_OBJECT)]}})
-    assert catalog == snapshot("""\
-class ToolX(TypedDict):
-    name: str
-
-def tool(*, x: ToolX) -> Any:
-    ...\
-""")
+@pytest.mark.parametrize(
+    'member, rendered',
+    [
+        pytest.param({'type': 'integer'}, 'x: int', id='simple'),
+        pytest.param(_NAME_OBJECT, 'x: ToolX', id='object'),
+        pytest.param({'type': 'array', 'items': _NAME_OBJECT}, 'x: list[ToolXitem]', id='list of objects'),
+    ],
+)
+def test_repeated_union_member_is_one_member(member: dict[str, Any], rendered: str):
+    assert rendered in _ref_catalog({'x': {'anyOf': [deepcopy(member), deepcopy(member)]}})
 
 
 def test_two_identical_inline_union_members_and_null_keep_the_null():
     assert 'x: ToolX | None' in _ref_catalog(
         {'x': {'anyOf': [deepcopy(_NAME_OBJECT), deepcopy(_NAME_OBJECT), {'type': 'null'}]}}
     )
-
-
-def test_two_lists_of_identical_inline_objects_are_one_member():
-    item = {'type': 'array', 'items': _NAME_OBJECT}
-    assert 'x: list[ToolXitem]' in _ref_catalog({'x': {'anyOf': [deepcopy(item), deepcopy(item)]}})
-
-
-def test_repeated_simple_union_members_are_one_member():
-    assert 'x: int' in _ref_catalog({'x': {'anyOf': [{'type': 'integer'}, {'type': 'integer'}]}})
-
-
-def test_duplicated_union_member_does_not_make_a_type_different():
-    """Unifying compares a type before its unions lose their repeats, so that comparison has to see past them."""
-    repeated = {'x': {'anyOf': [deepcopy(_NAME_OBJECT), deepcopy(_NAME_OBJECT)]}}
-    catalog = _ref_catalog(
-        {
-            'a': {'type': 'object', 'title': 'Outer', 'properties': repeated, 'required': ['x']},
-            'b': {'type': 'object', 'title': 'Outer', 'properties': {'x': deepcopy(_NAME_OBJECT)}, 'required': ['x']},
-        }
-    )
-    assert catalog.count('Outer(TypedDict):') == 1
 
 
 def test_definition_used_by_an_earlier_one_keeps_the_name_from_that_use():
@@ -2381,44 +2365,112 @@ def test_nullable_object_name_does_not_depend_on_which_property_comes_first():
     assert 'def tool(*, b: User | None, a: User | None) -> Any:' in _ref_catalog({'b': to_user, 'a': to_user}, **defs)
 
 
-def test_union_drops_repeats_as_it_is_built(monkeypatch: pytest.MonkeyPatch):
-    """Unifying would drop them later, but a chain of aliases to two of the same would double in memory by then."""
-
-    def skip_unifying(signatures: list[FunctionSignature]) -> None:
-        return None
-
-    monkeypatch.setattr(FunctionSignature, '_unify_identical_types', skip_unifying)
-    aliases = {'A': {'anyOf': [{'$ref': '#/$defs/B'}, {'$ref': '#/$defs/B'}]}, 'B': {'type': 'string'}}
-    signature = FunctionSignature.from_schema(
-        name='tool',
-        parameters_schema={
-            'type': 'object',
-            'properties': {'x': {'$ref': '#/$defs/A'}},
-            'required': ['x'],
-            '$defs': aliases,
-        },
-    )
-    assert isinstance(signature.params['x'].type, SimpleTypeExpr)
-
-
 def _refs_to_an_integer(count: int) -> dict[str, Any]:
     return {'type': 'array', 'items': [{'$ref': '#/$defs/I'}] * count}
 
 
-def test_ref_expansions_past_the_limit_are_any():
-    limit = function_signature._MAX_REF_EXPANSIONS  # pyright: ignore[reportPrivateUsage]
+def test_ref_past_the_expansion_limit_is_any():
+    limit = function_signature._MAX_REF_EXPANSION_NODES  # pyright: ignore[reportPrivateUsage]
     catalog = _ref_catalog({'x': _refs_to_an_integer(limit + 1)}, **{'$defs': {'I': {'type': 'integer'}}})
     assert f'x: tuple[{"int, " * limit}Any]' in catalog
 
 
 def test_ref_expansion_limit_is_for_each_from_schema_call(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(function_signature, '_MAX_REF_EXPANSIONS', 2)
+    monkeypatch.setattr(function_signature, '_MAX_REF_EXPANSION_NODES', 2)
     document = {'$defs': {'I': {'type': 'integer'}}}
     assert 'x: tuple[int, int]' in _ref_catalog({'x': _refs_to_an_integer(2)}, **document)
     assert 'x: tuple[int, int]' in _ref_catalog({'x': _refs_to_an_integer(2)}, **document)
 
 
 def test_ref_expansion_limit_leaves_object_targets_alone(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(function_signature, '_MAX_REF_EXPANSIONS', 0)
+    monkeypatch.setattr(function_signature, '_MAX_REF_EXPANSION_NODES', 0)
     refs = {'a': {'$ref': '#/$defs/User'}, 'b': {'$ref': '#/$defs/User'}}
     assert 'def tool(*, a: User, b: User) -> Any:' in _ref_catalog(refs, **{'$defs': {'User': _NAME_OBJECT}})
+
+
+@pytest.mark.parametrize('limit, expanded', [(42, 2), (43, 3)])
+def test_ref_expansion_limit_counts_what_a_ref_expands_to(monkeypatch: pytest.MonkeyPatch, limit: int, expanded: int):
+    monkeypatch.setattr(function_signature, '_MAX_REF_EXPANSION_NODES', limit)
+    wide = {'type': 'array', 'items': [{'type': 'integer'}] * 20}  # 21 nodes each time.
+    refs = {'type': 'array', 'items': [{'$ref': '#/$defs/Wide'}] * 10}
+    catalog = _ref_catalog({'x': refs}, **{'$defs': {'Wide': wide}})
+    assert catalog.count(f'tuple[{"int, " * 19}int]') == expanded
+    assert catalog.count('Any]') + catalog.count('Any,') == 10 - expanded
+
+
+def test_ref_expansion_limit_counts_enum_values(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(function_signature, '_MAX_REF_EXPANSION_NODES', 22)
+    choice = {'enum': [f'v{i}' for i in range(10)]}  # 11 nodes each time.
+    refs = {'type': 'array', 'items': [{'$ref': '#/$defs/Choice'}] * 3}
+    assert _ref_catalog({'x': refs}, **{'$defs': {'Choice': choice}}).count('Literal[') == 2
+
+
+def test_ref_expansion_limit_leaves_nodes_outside_an_expansion_alone(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(function_signature, '_MAX_REF_EXPANSION_NODES', 2)
+    outside = {'type': 'array', 'items': [{'type': 'string'}] * 5}
+    assert 'y: int' in _ref_catalog({'x': outside, 'y': {'$ref': '#/$defs/I'}}, **{'$defs': {'I': {'type': 'integer'}}})
+
+
+def test_many_enum_fields_in_nested_models_stay_checked():
+    """The shape Pydantic emits: every field of every model is a `$ref` to one enum."""
+    status_fields = {f'f{j}': {'$ref': '#/$defs/Status'} for j in range(30)}
+    model = {'type': 'object', 'properties': status_fields, 'required': list(status_fields)}
+    defs: dict[str, Any] = {'Status': {'enum': ['on', 'off']}, **{f'M{i}': deepcopy(model) for i in range(40)}}
+    catalog = _ref_catalog({f'm{i}': {'$ref': f'#/$defs/M{i}'} for i in range(40)}, **{'$defs': defs})
+    assert catalog.count("Literal['on', 'off']") == 1200
+    assert ': Any' not in catalog
+
+
+class _ListThatCannotBeScanned(list[Any]):
+    def __iter__(self) -> Iterator[Any]:
+        raise AssertionError('a `$ref` through a list looks up one index')
+
+
+def test_ref_through_a_list_looks_up_one_index():
+    catalog = _ref_catalog({'x': {'$ref': '#/long/1'}}, long=_ListThatCannotBeScanned([{}, {'type': 'integer'}]))
+    assert 'x: int' in catalog
+
+
+def test_ref_through_a_long_list_reads_one_spelling_of_an_index():
+    assert 'x: Any' in _ref_catalog({'x': {'$ref': '#/long/01'}}, long=[{'type': 'integer'}] * 11)
+    assert 'x: int' in _ref_catalog({'x': {'$ref': '#/long/10'}}, long=[{'type': 'integer'}] * 11)
+
+
+@pytest.mark.parametrize(
+    'def_schema',
+    [
+        pytest.param({'type': ['object', 'null'], 'properties': []}, id='properties is a list'),
+        pytest.param({'type': ['object', 'null'], 'properties': 5}, id='properties is a number'),
+        pytest.param({'type': ['object', 'null'], 'properties': {}, 'required': True}, id='required is a boolean'),
+        pytest.param({'type': ['object', 'null'], 'properties': {}, 'required': [['a']]}, id='required holds a list'),
+        pytest.param({'type': ['object', 'null'], 'properties': {'a': 5}}, id='property is a number'),
+    ],
+)
+def test_malformed_unused_definition_leaves_the_tool_rendered(def_schema: dict[str, Any]):
+    assert 'def tool(*, q: str) -> Any:' in _ref_catalog({'q': {'type': 'string'}}, **{'$defs': {'Unused': def_schema}})
+
+
+def test_definition_whose_properties_is_not_a_map_is_not_a_type():
+    not_a_type: dict[str, Any] = {'type': 'object', 'properties': []}
+    catalog = _ref_catalog({'x': {'$ref': '#/$defs/Bad'}}, **{'$defs': {'Bad': not_a_type}})
+    assert 'class Bad' not in catalog
+    assert 'x: dict[str, Any]' in catalog
+
+
+def test_enum_that_is_not_a_list_is_not_counted_when_a_union_wins():
+    union_beside_bad_enum = {'anyOf': [{'type': 'integer'}], 'enum': 5}
+    assert 'x: int' in _ref_catalog({'x': {'$ref': '#/$defs/I'}}, **{'$defs': {'I': union_beside_bad_enum}})
+
+
+@pytest.mark.parametrize(
+    'parameters_schema',
+    [
+        pytest.param({'$ref': '#/x', 'x': {'properties': []}}, id='properties is a list'),
+        pytest.param(
+            {'$ref': '#/x', 'x': {'properties': {'a': {'type': 'string'}}, 'required': True}},
+            id='required is a boolean',
+        ),
+    ],
+)
+def test_malformed_root_ref_target_does_not_raise(parameters_schema: dict[str, Any]):
+    assert 'def tool(' in _catalog(FunctionSignature.from_schema(name='tool', parameters_schema=parameters_schema))

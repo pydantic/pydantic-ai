@@ -361,7 +361,7 @@ class FunctionSignature:
         unified. Types left with one name and different structures (e.g. a parameter and a return
         `User`) are told apart by `get_conflicting_type_names` at a later stage.
         """
-        _ref_expansions.set(0)
+        _ref_expansion_nodes.set(0)
         param_referenced: dict[int, TypeSignature] = {}
         _process_schema_defs(parameters_schema, param_referenced, name)
         params = _build_params_from_schema(parameters_schema, param_referenced, name)
@@ -538,9 +538,10 @@ _JSON_TYPE_TO_PYTHON: dict[str, str] = {
 # registering a placeholder before it walks the fields.
 _resolving_refs: ContextVar[frozenset[int]] = ContextVar('_resolving_refs', default=frozenset())
 
-# How many `$ref`s to non-object targets one `from_schema` call expands, as a small schema can expand exponentially.
-_MAX_REF_EXPANSIONS = 1_000
-_ref_expansions: ContextVar[int] = ContextVar('_ref_expansions', default=0)
+# How many schema nodes and enum values one `from_schema` call visits inside `$ref` expansions, as a small schema can
+# otherwise expand exponentially.
+_MAX_REF_EXPANSION_NODES = 20_000
+_ref_expansion_nodes: ContextVar[int] = ContextVar('_ref_expansion_nodes', default=0)
 
 
 def _json_type_to_python(json_type: str) -> SimpleTypeExpr:
@@ -582,12 +583,12 @@ def _normalize_schema_node(node: dict[str, Any] | bool) -> dict[str, Any]:
     value; `False` permits none and is *not* equivalent to `{}`. Neither the "anything" nor
     the "nothing" case maps to a precise Python type here, so we deliberately collapse both to
     an empty schema, which the walker renders as `Any` — the practical fallback for the model.
-    Non-bool nodes are returned unchanged.
+    Anything else that isn't a dict isn't a schema, and gets the same. Dicts are returned unchanged.
 
     Called at every point where a nested node may be a raw schema, so no walker has to
     special-case the boolean form.
     """
-    return {} if isinstance(node, bool) else node
+    return node if isinstance(node, dict) else {}
 
 
 def _process_schema_defs(
@@ -605,12 +606,26 @@ def _process_schema_defs(
 # Keywords whose value maps names to schemas, so a pointer ending on one has landed on the map and not on a schema.
 _MAPS_OF_SCHEMAS = frozenset({'$defs', 'definitions', 'dependentSchemas', 'patternProperties', 'properties'})
 
+_LIST_INDEX = re.compile(r'0|[1-9][0-9]*')
+
 
 def _is_typed_dict_schema(schema: dict[str, Any]) -> bool:
     """Whether a schema is an object with named fields, which can be nullable too."""
     schema_type = schema.get('type')
     is_object = schema_type == 'object' or (isinstance(schema_type, list) and 'object' in schema_type)
-    return is_object and 'properties' in schema
+    return is_object and isinstance(schema.get('properties'), dict)
+
+
+def _properties_of(schema: dict[str, Any]) -> dict[str, Any]:
+    properties = schema.get('properties')
+    return cast(dict[str, Any], properties) if isinstance(properties, dict) else {}
+
+
+def _required_of(schema: dict[str, Any]) -> set[str]:
+    required = schema.get('required')
+    return (
+        {name for name in cast(list[Any], required) if isinstance(name, str)} if isinstance(required, list) else set()
+    )
 
 
 def _ref_pointer(root: dict[str, Any], ref: Any) -> list[str] | None:
@@ -637,20 +652,26 @@ def _ref_pointer(root: dict[str, Any], ref: Any) -> list[str] | None:
     return [token.replace('~1', '/').replace('~0', '~') for token in pointer.split('/')[1:]]
 
 
-def _follow_pointer(root: dict[str, Any], tokens: list[str]) -> dict[str, Any] | None:
-    """The schema at a JSON pointer, or `None` if it doesn't land on one."""
+def _ref_target(root: dict[str, Any], ref: Any) -> tuple[list[str], dict[str, Any]] | None:
+    """The pointer tokens of a `$ref` and the schema they land on, or `None` if there isn't one. The single lookup."""
+    tokens = _ref_pointer(root, ref)
+    if tokens is None:
+        return None
     node: Any = root
     at_map_of_schemas = False
     for token in tokens:
         if isinstance(node, dict):
             node = cast(dict[str, Any], node).get(token)
         elif isinstance(node, list):
-            # By spelling, as RFC 6901 section 4 has one way to write an index: `01` isn't one.
-            node = {str(index): item for index, item in enumerate(cast(list[Any], node))}.get(token)
+            # RFC 6901 section 4 has one way to write an index: `01` isn't one. A length check before `int()`, which
+            # raises on thousands of digits.
+            items = cast(list[Any], node)
+            is_index = _LIST_INDEX.fullmatch(token) and len(token) <= len(str(len(items))) and int(token) < len(items)
+            node = items[int(token)] if is_index else None
         else:
             return None
         at_map_of_schemas = not at_map_of_schemas and token in _MAPS_OF_SCHEMAS
-    return cast(dict[str, Any], node) if isinstance(node, dict) and not at_map_of_schemas else None
+    return (tokens, cast(dict[str, Any], node)) if isinstance(node, dict) and not at_map_of_schemas else None
 
 
 def _ref_to_type_expr(
@@ -661,10 +682,10 @@ def _ref_to_type_expr(
     path: str,
 ) -> TypeExpr:
     """The TypeExpr of a `$ref`'s target, or `Any`, as JSON Schema allows anything if there is no target to check."""
-    tokens = _ref_pointer(root, ref)
-    target = None if tokens is None else _follow_pointer(root, tokens)
-    if tokens is None or target is None:
+    found = _ref_target(root, ref)
+    if found is None:
         return _ANY
+    tokens, target = found
     if _is_typed_dict_schema(target):
         if id(target) not in referenced_types:
             name = _ref_target_name(target, tokens, tool_name)
@@ -674,17 +695,15 @@ def _ref_to_type_expr(
     # Only object defs become TypedDicts. Pydantic emits enums, constrained aliases, list aliases
     # and unions as non-object defs, so resolve them inline: `Literal[...]`, `int`, `list[str]`.
     resolving = _resolving_refs.get()
-    expansions = _ref_expansions.get()
-    if id(target) in resolving or expansions >= _MAX_REF_EXPANSIONS:
+    if id(target) in resolving or _ref_expansion_nodes.get() >= _MAX_REF_EXPANSION_NODES:
         # A self-referential non-object def has no finite inline expression and no TypedDict
         # to name, and `Any` never rejects a correct call, so it also stands in past the limit.
         return _ANY
-    _ref_expansions.set(expansions + 1)
-    token = _resolving_refs.set(resolving | {id(target)})
+    reset_token = _resolving_refs.set(resolving | {id(target)})
     try:
         return _schema_to_type_expr(target, root, referenced_types, tool_name, path)
     finally:
-        _resolving_refs.reset(token)
+        _resolving_refs.reset(reset_token)
 
 
 def _ref_target_name(target: dict[str, Any], tokens: list[str], tool_name: str) -> str:
@@ -709,14 +728,13 @@ def _build_params_from_schema(
     # A recursive model's parameters schema is a root `$ref` to its own definition, which can be a `$ref` in turn.
     schema = root
     followed = {id(root)}
-    while 'properties' not in schema and (tokens := _ref_pointer(root, schema.get('$ref'))) is not None:
-        target = _follow_pointer(root, tokens)
-        if target is None or id(target) in followed:
-            break
-        schema = target
+    while (
+        'properties' not in schema and (found := _ref_target(root, schema.get('$ref'))) and id(found[1]) not in followed
+    ):
+        schema = found[1]
         followed.add(id(schema))
-    properties = schema.get('properties', {})
-    required = set(schema.get('required', []))
+    properties = _properties_of(schema)
+    required = _required_of(schema)
 
     required_params: dict[str, FunctionParam] = {}
     optional_params: dict[str, FunctionParam] = {}
@@ -771,6 +789,13 @@ def _schema_to_type_expr(
 ) -> TypeExpr:
     """Convert a JSON schema to a TypeExpr."""
     schema = _normalize_schema_node(schema)
+
+    if _resolving_refs.get():
+        # An enum is one node, but a `Literal` renders each of its values.
+        enum = schema.get('enum')
+        _ref_expansion_nodes.set(
+            _ref_expansion_nodes.get() + 1 + (len(cast(list[Any], enum)) if isinstance(enum, list) else 0)
+        )
 
     if '$ref' in schema:
         return _ref_to_type_expr(schema['$ref'], root, referenced_types, tool_name, path)
@@ -833,7 +858,7 @@ def _type_to_expr(
 
     # Object type
     if schema_type == 'object':
-        if 'properties' in schema:
+        if _is_typed_dict_schema(schema):
             if id(schema) in referenced_types:
                 return referenced_types[id(schema)]
             name = _object_type_name(schema, tool_name, path)
@@ -865,7 +890,7 @@ def _type_list_to_expr(
 ) -> TypeExpr:
     """Handle type lists like ['string', 'null']."""
     # Check if this is object with properties + null
-    if 'object' in schema_type and 'properties' in schema:
+    if _is_typed_dict_schema(schema):
         base_expr = _type_to_expr('object', schema, root, referenced_types, tool_name, path)
         if 'null' in schema_type:
             return UnionTypeExpr(members=[base_expr, _NONE])
@@ -902,7 +927,8 @@ def _handle_union_schema(
     if has_null:
         type_exprs.append(_NONE)
 
-    return _union_of(type_exprs)
+    # `_unify_identical_types` takes out repeats, once the types in them are known.
+    return UnionTypeExpr(members=type_exprs)
 
 
 def _build_and_register_type(
@@ -937,8 +963,8 @@ def _build_type_signature(
     path: str,
 ) -> TypeSignature:
     """Build a TypeSignature from an object schema."""
-    properties = schema.get('properties', {})
-    required = set(schema.get('required', []))
+    properties = _properties_of(schema)
+    required = _required_of(schema)
 
     fields: dict[str, TypeFieldSignature] = {}
 
