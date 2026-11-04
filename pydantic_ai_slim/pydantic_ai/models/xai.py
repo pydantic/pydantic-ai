@@ -774,12 +774,7 @@ class XaiModel(Model[AsyncClient]):
                 elif item.is_document:
                     # Upload document to xAI files API and reference it, reusing a
                     # file ID uploaded earlier by this instance for the same bytes.
-                    filename = item.identifier or f'document.{item.format}'
-                    cache_key = f'bytes:{hashlib.sha256(item.data).hexdigest()}'
-                    file_id = self._uploaded_document_ids.get(cache_key)
-                    if file_id is None:
-                        file_id = await self._upload_file_to_xai(item.data, filename)
-                        self._uploaded_document_ids[cache_key] = file_id
+                    file_id = await self._document_bytes_file_id(item)
                     content_items.append(file(file_id))
                 elif item.is_video:
                     raise NotImplementedError('BinaryContent with video is not supported in xAI user prompts')
@@ -788,17 +783,9 @@ class XaiModel(Model[AsyncClient]):
             elif isinstance(item, AudioUrl):
                 raise NotImplementedError('AudioUrl is not supported in xAI user prompts')
             elif isinstance(item, DocumentUrl):
-                cache_key = f'url:{item.url}'
-                file_id = self._uploaded_document_ids.get(cache_key)
-                if file_id is None:
-                    # Download and upload to xAI files API
-                    downloaded = await download_item(item, data_format='bytes')
-                    filename = item.identifier or 'document'
-                    # Add extension if data_type is available from download
-                    if 'data_type' in downloaded and downloaded['data_type']:
-                        filename = f'{filename}.{downloaded["data_type"]}'
-                    file_id = await self._upload_file_to_xai(downloaded['data'], filename)
-                    self._uploaded_document_ids[cache_key] = file_id
+                # Download and upload to xAI files API, reusing a file ID uploaded
+                # earlier by this instance for the same URL.
+                file_id = await self._document_url_file_id(item)
                 content_items.append(file(file_id))
             elif isinstance(item, VideoUrl):
                 raise NotImplementedError('VideoUrl is not supported in xAI user prompts')
@@ -815,6 +802,29 @@ class XaiModel(Model[AsyncClient]):
             return user(*content_items)
 
         return None
+
+    async def _document_bytes_file_id(self, item: BinaryContent) -> str:
+        """Upload document bytes to the xAI files API, reusing the file ID uploaded earlier by this instance."""
+        cache_key = f'bytes:{hashlib.sha256(item.data).hexdigest()}'
+        file_id = self._uploaded_document_ids.get(cache_key)
+        if file_id is None:
+            file_id = await self._upload_file_to_xai(item.data, item.identifier or f'document.{item.format}')
+            self._uploaded_document_ids[cache_key] = file_id
+        return file_id
+
+    async def _document_url_file_id(self, item: DocumentUrl) -> str:
+        """Download a DocumentUrl, upload it to the xAI files API, and reuse the file ID uploaded earlier by this instance."""
+        cache_key = f'url:{item.url}'
+        file_id = self._uploaded_document_ids.get(cache_key)
+        if file_id is None:
+            downloaded = await download_item(item, data_format='bytes')
+            filename = item.identifier or 'document'
+            # Add extension if data_type is available from download
+            if 'data_type' in downloaded and downloaded['data_type']:
+                filename = f'{filename}.{downloaded["data_type"]}'
+            file_id = await self._upload_file_to_xai(downloaded['data'], filename)
+            self._uploaded_document_ids[cache_key] = file_id
+        return file_id
 
     def _request_thinks(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters

@@ -6678,7 +6678,7 @@ def test_xai_finish_reason_proto_map_covers_all_enum_members():
 class CountingMockXai(MockXai):
     """A MockXai that records document uploads so tests can assert upload reuse."""
 
-    upload_calls: list[tuple[bytes, str]] = field(default_factory=list)
+    upload_calls: list[tuple[bytes, str]] = field(default_factory=list[tuple[bytes, str]])
 
     async def files_upload(self, data: bytes, filename: str) -> Any:
         self.upload_calls.append((data, filename))
