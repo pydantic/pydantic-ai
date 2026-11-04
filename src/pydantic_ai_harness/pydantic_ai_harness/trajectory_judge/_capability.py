@@ -444,16 +444,14 @@ def _steering_parts(judge: str, message: str) -> tuple[JudgeSteeringPart, JudgeF
     )
 
 
-def _steering_judge(part: ModelRequestPart | ModelResponsePart) -> str | None:
-    """The judge whose feedback `part` is, or `None` for any other part.
+def _steering_judge(part: JudgeFeedbackPart | UserPromptPart) -> str | None:
+    """The judge whose feedback `part` is, or `None` for any other user prompt.
 
     A `JudgeFeedbackPart`, or the user text an earlier version enqueued: a single `TextContent` with the steering
     origin and a string judge name, so a part that also holds other content is never misattributed.
     """
     if isinstance(part, JudgeFeedbackPart):
         return part.judge
-    if not isinstance(part, UserPromptPart):
-        return None
     match part.content:
         case [TextContent(metadata=metadata)] if (
             is_str_dict(metadata)
