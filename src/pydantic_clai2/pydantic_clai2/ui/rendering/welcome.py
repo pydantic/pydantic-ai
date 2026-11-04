@@ -28,7 +28,7 @@ def print_welcome(project: ProjectSettings, console: Console, *, worktree: Workt
 def _report_project(project: ProjectSettings, console: Console) -> None:
     if project.path is None:
         return
-    console.print(f'Project settings: {terminal_text(str(project.path))}', style=theme.color(theme.MUTED))
+    console.print(f'Project settings: {terminal_text(str(project.path))}', style=theme.color(theme.MUTED), markup=False)
     if project.unknown:
         console.print(f'Ignoring unknown settings: {", ".join(project.unknown)}', style=theme.color(theme.WARNING))
     if project.pending_notice is not None:

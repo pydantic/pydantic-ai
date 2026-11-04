@@ -541,3 +541,10 @@ def test_project_output_makes_control_characters_inert(tmp_path: Path) -> None:
         assert 'repo\\x1b[31m' in text
     assert '\x1b' not in listing + approved + revoked and '\x9b' not in listing
     assert 'Rule\\x9b31m' in listing
+
+
+def test_the_banner_prints_a_project_path_as_written(tmp_path: Path) -> None:
+    path = tmp_path / '[red]repo[/red]' / PROJECT_FILE
+    output = io.StringIO()
+    print_welcome(ProjectSettings(path=path), Console(file=output, width=300))
+    assert f'Project settings: {path}\n' in output.getvalue()
