@@ -533,7 +533,8 @@ class ConversationStore(ABC):
             scope: Only update it if it was saved with this scope.
 
         Returns:
-            The updated record.
+            The record as read before the update, with the fields passed changed. A field that a
+            concurrent update changed keeps the value that was read.
 
         Raises:
             UserError: If the store doesn't have the conversation.
