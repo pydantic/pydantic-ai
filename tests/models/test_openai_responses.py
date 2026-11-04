@@ -67,7 +67,14 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.capabilities import AbstractCapability, NativeTool, ProcessHistory
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    CompactionModelRequest,
+    CompactionRequest,
+    CompactionResult,
+    NativeTool,
+    ProcessHistory,
+)
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import (
     ContentFilterError,
@@ -93,11 +100,13 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models._continuation import merge_responses
 from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
-from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles import CompactionInstructionsMode, ModelProfile, merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
@@ -17562,6 +17571,118 @@ async def test_openai_responses_compact_stateful_mode(allow_model_requests: None
     assert compaction.provider_name == 'openai'
     assert compaction.provider_details is not None
     assert 'encrypted_content' in compaction.provider_details
+
+
+@dataclass
+class _RequestCompactionOnce(AbstractCapability[Any]):
+    """Requests compaction for the run's first request."""
+
+    async def before_run(self, ctx: RunContext[Any]) -> None:
+        ctx.request_compaction(reason='threshold')
+
+
+@dataclass
+class _Summarize(AbstractCapability[Any]):
+    """The next capability in the chain: compacts any request into a summary of its own."""
+
+    async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
+        part = CompactionPart(content='summarized')
+        return CompactionResult(
+            messages=[ModelRequest(parts=[part]), request.messages[-1]], part=part, handler='summarize'
+        )
+
+
+def _compaction_history() -> list[ModelMessage]:
+    return [ModelRequest(parts=[UserPromptPart('My name is Bob.')]), ModelResponse(parts=[TextPart('Hi Bob!')])]
+
+
+@pytest.mark.moves_cache_prefix(reason='compaction replaces the history the next request is built on')
+async def test_openai_responses_stateless_compaction_without_the_profile_flag(
+    allow_model_requests: None, openai_api_key: str
+):
+    """`OpenAICompaction(stateless=True)` compacts on a Responses model whatever its profile's generic flag says.
+
+    An OpenAI-compatible provider may not set `supports_compaction_on_demand`, which `NativeCompaction` relies on.
+    """
+    from pydantic_ai.models.openai import OpenAICompaction
+
+    model = OpenAIResponsesModel(
+        'gpt-5.4-nano',
+        provider=OpenAIProvider(api_key=openai_api_key),
+        profile={'supports_compaction_on_demand': False},
+    )
+    agent = Agent(
+        model, instructions='Answer in one short sentence.', capabilities=[OpenAICompaction(message_count_threshold=2)]
+    )
+    first = await agent.run('My name is Bob and my favorite color is teal.')
+    second = await agent.run('What is my favorite color?', message_history=first.all_messages())
+
+    assert 'teal' in second.output.lower()
+    compacted = second.all_messages()[0]
+    assert isinstance(compacted, ModelResponse)
+    [part] = compacted.parts
+    assert isinstance(part, CompactionPart) and part.provider_name == 'openai'
+    assert [record.handler for record in second.compactions] == ['native']
+
+
+async def test_openai_responses_stateful_compaction_leaves_requested_compaction_to_the_next_capability():
+    """Only `OpenAICompaction`'s stateless mode compacts on request: the stateful one leaves it to OpenAI."""
+    from pydantic_ai.models.openai import OpenAICompaction
+
+    model = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('ok')]))
+    agent = Agent(model, capabilities=[_RequestCompactionOnce(), OpenAICompaction(), _Summarize()])
+    result = await agent.run('hi', message_history=_compaction_history())
+
+    assert result.compactions[0].handler == 'summarize'
+
+
+@pytest.mark.parametrize('instructions_mode', ['system_prompt', None])
+async def test_openai_responses_stateless_compaction_drops_a_focus_it_cannot_send(
+    instructions_mode: CompactionInstructionsMode | None,
+):
+    """A focus merged in from elsewhere doesn't stop stateless `OpenAICompaction` compacting at its own trigger."""
+    from pydantic_ai.models.openai import OpenAICompaction
+
+    compacted: list[str | None] = []
+
+    class Responses(OpenAIResponsesModel):
+        async def compact_messages(
+            self, request_context: ModelRequestContext, *, instructions: str | None = None
+        ) -> ModelResponse:
+            compacted.append(instructions)
+            return ModelResponse(parts=[CompactionPart(content='summary')])
+
+    model = Responses(
+        'gpt-5.4-nano',
+        provider=OpenAIProvider(api_key='test'),
+        profile=ModelProfile(compaction_instructions=instructions_mode),
+    )
+    request = CompactionRequest(
+        reason='threshold',
+        messages=[*_compaction_history(), ModelRequest(parts=[UserPromptPart('What is my name?')])],
+        conversation_request=CompactionModelRequest(model=model, settings=None, parameters=ModelRequestParameters()),
+        focus='the name',
+    )
+    ctx = RunContext[None](deps=None, model=model, usage=RunUsage())
+
+    result = await OpenAICompaction(message_count_threshold=2).compact_history(ctx, request)
+
+    assert result is not None and result.handler == 'native'
+    assert compacted == [None]
+
+
+async def test_openai_responses_stateless_compaction_leaves_another_model_to_the_next_capability():
+    """Stateless `OpenAICompaction` serves only an OpenAI Responses model, however it's wrapped."""
+    from pydantic_ai.models.openai import OpenAICompaction
+
+    model = WrapperModel(FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('ok')])))
+    agent = Agent(
+        model,
+        capabilities=[_RequestCompactionOnce(), OpenAICompaction(message_count_threshold=100), _Summarize()],
+    )
+    result = await agent.run('hi', message_history=_compaction_history())
+
+    assert result.compactions[0].handler == 'summarize'
 
 
 async def test_openai_responses_phase_non_streamed(allow_model_requests: None):

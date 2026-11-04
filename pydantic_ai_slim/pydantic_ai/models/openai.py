@@ -68,7 +68,9 @@ from .._utils import (
     now_utc as _now_utc,
     number_to_datetime,
 )
+from ..capabilities._native_compaction import compact_with_model
 from ..capabilities.abstract import AbstractCapability
+from ..capabilities.compaction import CompactionRequest, CompactionResult
 from ..durable_exec._operation_backend import in_durable_unit
 from ..exceptions import (
     ModelConnectionError,
@@ -187,6 +189,7 @@ from ._tool_choice import (
     support_tool_forcing,
     tool_forcing_unavailable_reason,
 )
+from ._unwrap import unwrap_model
 
 if TYPE_CHECKING:
     from .batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
@@ -1645,12 +1648,15 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         return super()._no_batch_api_message()
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        """Leave the `'12h'` cache retention out of `supported_cache_retentions`, before the user's `profile=` applies.
+        """Turn off what Chat Completions doesn't serve, before the user's `profile=` applies.
 
-        Chat Completions rejects `prompt_cache_options.ttl='12h'` with a 400 (verified live on every GPT-5.6, GPT-6
-        and GPT-6.1 model), while the Responses API on the same models accepts it, and the providers declare their
-        tiers per model rather than per API.
+        `supports_compaction_on_demand` is off: `OpenAIProvider` sets it for the Responses API's compaction endpoint,
+        Chat Completions has none, and `OpenAIChatModel` doesn't implement `compact_messages`. The `'12h'` cache
+        retention is left out of `supported_cache_retentions`: Chat Completions rejects `prompt_cache_options.ttl='12h'`
+        with a 400 (verified live on every GPT-5.6, GPT-6 and GPT-6.1 model), while the Responses API on the same
+        models accepts it, and the providers declare their tiers per model rather than per API.
         """
+        profile = merge_profile(profile, ModelProfile(supports_compaction_on_demand=False))
         retentions = profile.get('supported_cache_retentions', ())
         if '12h' not in retentions:
             return profile
@@ -3646,7 +3652,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return cast(OpenAIModelProfile, profile)
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        """Turn off Batch API and Responses WebSocket defaults for Azure clients and the gateway.
+        """Turn off Batch API, compaction and Responses WebSocket defaults for Azure clients and the gateway.
 
         Every model resolves this, so it reads only the client's type and the provider's identity, never client state
         such as URLs, which a mocked or partly built client may not have yet.
@@ -3654,6 +3660,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if _is_azure(self._provider.client, self._provider.name) or is_gateway_provider(self._provider):
             # Azure batches need a batch deployment; the gateway doesn't serve the Batch API yet.
             profile = merge_profile(profile, OpenAIModelProfile(openai_supports_batch_api=False))
+        if is_gateway_provider(self._provider):
+            # The gateway doesn't serve the `/responses/compact` endpoint (probed live).
+            profile = merge_profile(profile, OpenAIModelProfile(supports_compaction_on_demand=False))
         # An Azure-named custom provider may advertise socket support with an ordinary OpenAI client.
         if isinstance(self._provider.client, AsyncAzureOpenAI) or is_gateway_provider(self._provider):
             # Responses WebSockets aren't verified on the Azure client, and the gateway's handshake fails with a 503
@@ -7230,14 +7239,22 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
       If omitted, OpenAI picks a server-side default.
 
     - **Stateless mode** (`stateless=True`): calls the stateless
-      `/responses/compact` endpoint from a `before_model_request` hook when
-      your trigger condition is met. Use this in
+      `/responses/compact` endpoint when your trigger condition is met. Use this in
       [ZDR](https://openai.com/enterprise-privacy/) environments where
       OpenAI must not retain conversation data, when you set
       [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store],
       or when you need explicit out-of-band control over when compaction runs.
 
-      Requires either `message_count_threshold` or a custom `trigger` callable.
+      Requires either `message_count_threshold` or a custom `trigger` callable. When it's met, a
+      `before_model_request` hook [requests compaction][pydantic_ai.tools.RunContext.request_compaction],
+      which this capability serves like [`NativeCompaction`][pydantic_ai.capabilities.NativeCompaction],
+      through the [compaction hook](../capabilities/compaction.md#the-compaction-hook), on any
+      `OpenAIResponsesModel` whatever its profile's `supports_compaction_on_demand` says. It serves
+      compaction another capability requests too. A focus the model's compaction can't take is
+      dropped, so a focus merged in from elsewhere never stops it compacting at its own trigger.
+      To compact on demand on any model that supports it,
+      not only OpenAI's, use [`NativeCompaction`][pydantic_ai.capabilities.NativeCompaction] with a
+      trigger of your own instead.
 
     If `stateless` is not set, it is inferred from which parameters you
     provide: passing any stateless-only parameter (`message_count_threshold`
@@ -7361,35 +7378,35 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
         if not self._should_compact(request_context.messages):
             return request_context
 
-        from .wrapper import WrapperModel
-
-        model = request_context.model
-        while isinstance(model, WrapperModel):
-            model = model.wrapped
-        if not isinstance(model, OpenAIResponsesModel):
+        if not isinstance(unwrapped := unwrap_model(request_context.model), OpenAIResponsesModel):
             raise UserError(
-                f'OpenAICompaction requires OpenAIResponsesModel, got {type(model).__name__}. '
+                f'OpenAICompaction requires OpenAIResponsesModel, got {type(unwrapped).__name__}. '
                 f'Use the provider-specific compaction capability for your model.'
             )
-
-        # Need at least 2 messages (history + current request) to compact
-        if len(request_context.messages) < 2:  # pragma: no cover
-            return request_context
-
-        # Compact all messages except the last (current) request
-        compact_ctx = ModelRequestContext(
-            model=request_context.model,
-            messages=request_context.messages[:-1],
-            model_settings=request_context.model_settings,
-            model_request_parameters=request_context.model_request_parameters,
-        )
-        compacted_response = await request_context.model.compact_messages(compact_ctx)
-
-        # Replace message history with compaction + last request
-        messages = [compacted_response, request_context.messages[-1]]
-        request_context.messages = messages.copy()
-        ctx.messages[:] = messages
+        ctx.request_compaction(reason='threshold')
         return request_context
+
+    @property
+    def _has_compact_history(self) -> bool:
+        # Only the stateless mode compacts on request: the stateful one leaves it to OpenAI.
+        return self.stateless
+
+    async def compact_history(self, ctx: RunContext[AgentDepsT], request: CompactionRequest) -> CompactionResult | None:
+        if not self.stateless:
+            return None
+        if not isinstance(unwrap_model(request.conversation_request.model), OpenAIResponsesModel):
+            # Another model serves this attempt, like a `ModelFallback` candidate: not OpenAI's to compact.
+            return None
+        # Unlike `NativeCompaction`, whatever the profile's `supports_compaction_on_demand` says: you chose an
+        # OpenAI capability, for a Responses API that may not be OpenAI's own, as with LiteLLM. A focus that can't be
+        # sent is dropped rather than declining: a focus merged in from elsewhere mustn't switch off this
+        # capability's own trigger and leave the context unbounded.
+        return await compact_with_model(
+            request,
+            request.conversation_request.model.profile.get('compaction_instructions'),
+            focus_as_system_prompt=False,
+            drop_unsendable_focus=True,
+        )
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
