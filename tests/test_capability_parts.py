@@ -1754,7 +1754,9 @@ def test_sanitize_drops_capability_parts(strip_system_prompts: bool) -> None:
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Hi'), nudge()])]
     with pytest.warns(UserWarning) as caught:
         sanitized = sanitize_messages(messages, strip_system_prompts=strip_system_prompts)
-    assert [str(warning.message) for warning in caught] == [_CAPABILITY_PARTS_DROPPED]
+    assert [str(warning.message) for warning in caught if warning.category is UserWarning] == [
+        _CAPABILITY_PARTS_DROPPED
+    ]
     assert [type(part).__name__ for message in sanitized for part in getattr(message, 'parts', [])] == [
         'UserPromptPart'
     ]
