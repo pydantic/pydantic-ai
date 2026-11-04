@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
@@ -38,7 +38,7 @@ def _anthropic_tool(tool: AbstractNativeTool) -> dict[str, Any]:
     tools, *_ = model._add_native_tools(  # pyright: ignore[reportPrivateUsage]
         [], ModelRequestParameters(native_tools=[tool]), AnthropicModelSettings()
     )
-    return tools[0]
+    return cast(dict[str, Any], tools[0])
 
 
 def _openrouter_tool(tool: AbstractNativeTool) -> dict[str, Any]:
@@ -46,7 +46,7 @@ def _openrouter_tool(tool: AbstractNativeTool) -> dict[str, Any]:
     tools, _ = model._get_tool_choice(  # pyright: ignore[reportPrivateUsage]
         OpenAIChatModelSettings(), ModelRequestParameters(native_tools=[tool])
     )
-    return tools[0]['parameters']  # pyright: ignore[reportTypedDictNotRequiredAccess, reportGeneralTypeIssues]
+    return cast(dict[str, Any], tools[0])['parameters']
 
 
 @dataclass(frozen=True)
