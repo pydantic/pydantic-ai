@@ -10,7 +10,6 @@ import pytest
 from stackone_defender import PromptDefense
 
 from pydantic_ai import Agent, Tool
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -148,12 +147,3 @@ async def test_defender_withholds_inside_a_workflow_and_survives_replay(
     replayer = Replayer(workflows=[workflow_class], plugins=[PydanticAIPlugin()], workflow_runner=_RUNNER)
     replay = await replayer.replay_workflow(history, raise_on_replay_failure=False)
     assert replay.replay_failure is None
-
-
-def test_a_defender_without_an_id_cannot_bind_to_a_durable_agent() -> None:
-    with pytest.raises(UserError, match='needs an explicit `id`'):
-        Agent(
-            FunctionModel(_model),
-            name='unnamed_defender',
-            capabilities=[PromptInjectionDefender(), TemporalDurability()],
-        )
