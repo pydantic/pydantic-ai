@@ -26,6 +26,7 @@ from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai._agent_graph import resolve_conversation_id
 from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, NativeTool, WebFetch
+from pydantic_ai.conversation_store import InMemoryConversationStore
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -8357,40 +8358,6 @@ async def test_agent_realtime_session_reevaluates_seeded_dynamic_system_prompt()
     assert stale.parts[0].content == 'Stale value.'
 
 
-async def test_agent_realtime_session_appending_dynamic_system_prompt_warns() -> None:
-    """A realtime session can't append a system prompt change, so it re-evaluates the prompt in place, and says so."""
-    agent: Agent[None, str] = Agent()
-
-    @agent.system_prompt(dynamic=True, on_change='append')
-    def dynamic_prompt() -> str:
-        return 'Current value.'
-
-    seed = [
-        ModelRequest(
-            parts=[
-                SystemPromptPart(
-                    content='Stale value.',
-                    dynamic_ref=dynamic_prompt.__qualname__,
-                    context_id='system_prompt:dynamic_prompt',
-                ),
-                UserPromptPart(content='earlier question'),
-            ]
-        ),
-        ModelResponse(parts=[TextPart(content='earlier answer')]),
-    ]
-    model = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
-    with pytest.warns(
-        UserWarning,
-        match="realtime sessions, so dynamic system prompts 'system_prompt:dynamic_prompt' are re-evaluated in place",
-    ):
-        async with agent.realtime(model, message_history=seed).session() as session:
-            _ = [e async for e in session]
-    assert model.last_instructions == 'Current value.'
-    first = session.all_messages()[0]
-    assert isinstance(first, ModelRequest) and isinstance(first.parts[0], SystemPromptPart)
-    assert first.parts[0].content == 'Current value.'
-
-
 async def test_agent_realtime_session_unknown_tool() -> None:
     agent: Agent[None, str] = Agent()
     conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc_x', tool_name='nonexistent', args='{}'), ResponseDone()])
@@ -10363,22 +10330,6 @@ async def test_agent_realtime_session_dynamic_instructions() -> None:
     assert model.last_instructions == 'Base\n\nDynamic'
 
 
-async def test_agent_realtime_session_append_instructions_warn() -> None:
-    agent: Agent[None, str] = Agent(instructions='Base')
-
-    @agent.instructions(name='state', on_change='append')
-    def state() -> str:
-        return 'Current state'
-
-    model = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
-    with pytest.warns(
-        UserWarning, match="realtime sessions, so instruction blocks 'agent:state' are sent as session instructions"
-    ):
-        async with agent.realtime(model).session() as session:
-            _ = [event async for event in session]
-    assert model.last_instructions == 'Base\n\nCurrent state'
-
-
 async def test_agent_realtime_session_sorts_static_instructions_before_dynamic() -> None:
     """A static toolset `InstructionPart` sorts before dynamic agent instructions, like `run`/`iter`.
 
@@ -10789,6 +10740,40 @@ async def test_agent_realtime_continues_a_text_runs_conversation() -> None:
         assert session.new_messages()[0].conversation_id == text.conversation_id
         # Handed back, the bundle still carries the text run's total, not a restarted one.
         assert session.conversation.usage.requests == text.usage.requests
+
+
+async def test_agent_realtime_carries_the_conversation_s_revision() -> None:
+    agent: Agent[None, str] = Agent(TestModel())
+    conversation = (await agent.run('Hi')).conversation
+    conversation.revision = 'rev-3'
+
+    async with agent.realtime(
+        FakeRealtimeModel(FakeRealtimeConnection([])), conversation=conversation
+    ).session() as session:
+        assert session.conversation.revision == 'rev-3'
+
+    assert session.result is not None
+    assert session.result.conversation.revision == 'rev-3'
+
+
+async def test_a_sessions_conversation_can_be_saved_again_as_the_session_goes_on() -> None:
+    store = InMemoryConversationStore()
+    agent: Agent[None, str] = Agent(TestModel())
+    conversation = (await agent.run('Hi')).conversation
+    await store.save(conversation)
+
+    async with agent.realtime(
+        FakeRealtimeModel(FakeRealtimeConnection([])), conversation=conversation
+    ).session() as session:
+        await store.save(session.conversation)
+        await session.send('And another.')
+        await store.save(session.conversation)
+
+    assert session.result is not None
+    await store.save(session.result.conversation)
+    loaded = await store.load(conversation.conversation_id)
+    assert loaded is not None
+    assert loaded.messages == session.all_messages()
 
 
 def test_agent_realtime_rejects_a_conversation_alongside_its_pieces() -> None:

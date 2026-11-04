@@ -73,12 +73,15 @@ Please don't spend effort chasing green CI, addressing every automated review co
 
 Do not force-push updates to an open PR. Rewriting its commits invalidates previous reviews; push follow-up commits instead. We will squash them when merging.
 
-### Automated review is advisory, not a gate
+### Automated review
 
-PRs are automatically reviewed by Devin and our own tooling. These reviews are advisory:
+PRs also receive automated reviews. They add to a maintainer's review; they don't replace it:
 
-- A bot approval does not mean your PR is ready to merge. Only a human maintainer's review counts.
-- A bot finding does not mean you must act on it. If you disagree, say so.
+- When a maintainer requests it, douwebot checks a PR against the repository's guidelines and looks for bugs it can find by reading the code. It doesn't run your code. A PR labeled `size: M` or larger needs a douwebot approval with no findings on its latest commit before it can merge.
+- pydanty runs code to review a PR, when a maintainer requests it.
+- Other bots' comments are advisory.
+- A bot approval does not mean your PR is ready to merge. A maintainer still reviews it.
+- A bot finding is not the final word. If you disagree, reply on its thread, and a maintainer will decide.
 - If automated review is generating noise on your PR, tell us. We use that feedback to retune the tooling.
 
 ### Priority
@@ -201,9 +204,13 @@ All routes in `docs/navigation.yml` are relative to the Pydantic AI documentatio
 page its complete canonical route in `slug`; use `aliases` only for redirect sources. Do not prefix
 either value with `/ai` or a leading slash.
 
-To validate navigation changes, ask a maintainer to add the `trigger:docs-preview` label to the pull request.
-This checks the navigation manifest, referenced Markdown files, routes, aliases, and redirects in
-`pydantic/unified-docs` and posts the result on the PR. It does not build a rendered preview.
+When you need to check navigation, visuals, links, or other rendered behavior, ask a maintainer to add
+the `trigger:docs-preview` label to the pull request. This checks the navigation manifest, referenced
+Markdown files, routes, aliases, and redirects in `pydantic/unified-docs`. Same-repository PRs also get
+a rendered preview; fork PRs receive navigation validation only. `pydantic-docs[bot]` posts separate
+navigation and preview results on the PR. Check that the reported SHA matches the head you want to
+inspect, and use the preview's **this commit** link for that source head. The stable **latest** link
+points to the latest deployed preview; re-add the label after source changes to request a new preview.
 
 CI checks that every link between doc pages resolves, anchor included, and fails on `Cannot find
 fragment`. A heading's anchor is generated from its text, so renaming one silently breaks every link

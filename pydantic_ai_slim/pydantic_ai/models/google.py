@@ -1,9 +1,10 @@
 from __future__ import annotations as _annotations
 
 import base64
+import math
 import re
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Generator, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Generator, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -147,6 +148,8 @@ try:
         UrlContextMetadata,
         VideoMetadataDict,
     )
+
+    from ..providers.google import _LONG_DECODE_TIMEOUT  # pyright: ignore[reportPrivateUsage]
 except ImportError as _import_error:
     raise ImportError(
         'Please install `google-genai` to use the Google model, '
@@ -433,9 +436,14 @@ def _resolve_google_cloud_service_tier(model_settings: GoogleModelSettings) -> G
 
 
 def _map_api_error(
-    e: errors.APIError | httpx2.TransportError, model_name: str, model_id_namespace: str = 'google'
+    e: errors.APIError | httpx2.TransportError | httpx2.HTTPStatusError,
+    model_name: str,
+    model_id_namespace: str = 'google',
 ) -> ModelAPIError:
     """Map a `google.genai` API error or a transport failure to the pydantic-ai exception to raise in its place."""
+    if isinstance(e, httpx2.HTTPStatusError):
+        # A retrying transport raises this for a status it gave up on, and `google.genai` lets it through unwrapped.
+        return _model_errors.transport_status_error(model_name, e.response)
     if isinstance(e, httpx2.TransportError):
         # `google.genai` doesn't wrap connection errors and timeouts in its own exceptions.
         timeout = isinstance(e, httpx2.TimeoutException)
@@ -1130,7 +1138,7 @@ class GoogleModel(Model[Client]):
         try:
             with map_decode_errors(self._model_name, errors.UnknownApiResponseError):
                 return await func(model=self._model_name, contents=contents, config=config)  # pyright: ignore[reportReturnType]
-        except (errors.APIError, httpx2.TransportError) as e:
+        except (errors.APIError, httpx2.TransportError, httpx2.HTTPStatusError) as e:
             raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
 
     def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
@@ -1139,6 +1147,16 @@ class GoogleModel(Model[Client]):
 
     def _build_http_options(self, model_settings: GoogleModelSettings, headers: dict[str, str]) -> HttpOptionsDict:
         """The per-request HTTP options: headers, plus the `timeout` and `max_retries` settings."""
+        # The SDK sends the client's timeout, which the provider pins to the HTTP client's read timeout, as
+        # `X-Server-Timeout`: a deadline for the whole request. A read timeout only bounds the wait between bytes,
+        # so the server would cut off a response that streams for longer. The SDK leaves the header alone when
+        # it's already set (in this exact spelling), so ask for at least Google's long-decode figure instead,
+        # unless the caller sent their own in `extra_headers`.
+        if caller_name := next((name for name in headers if name.lower() == 'x-server-timeout'), None):
+            headers['X-Server-Timeout'] = headers.pop(caller_name)
+        elif client_timeout_ms := self.client._api_client._http_options.timeout:  # pyright: ignore[reportPrivateUsage]
+            server_timeout = max(client_timeout_ms / 1000, _LONG_DECODE_TIMEOUT)
+            headers['X-Server-Timeout'] = str(math.ceil(server_timeout))
         http_options: HttpOptionsDict = {'headers': headers}
         if (timeout := model_settings.get('timeout')) is not None:
             if isinstance(timeout, int | float):
@@ -1396,7 +1414,7 @@ class GoogleModel(Model[Client]):
         try:
             with map_decode_errors(self._model_name, errors.UnknownApiResponseError):
                 first_chunk = await peekable_response.peek()
-        except (errors.APIError, httpx2.TransportError) as e:
+        except (errors.APIError, httpx2.TransportError, httpx2.HTTPStatusError) as e:
             raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
@@ -1886,16 +1904,15 @@ class GeminiStreamedResponse(StreamedResponse):
                                 yield event
                         new_request_vendor_part_id = None
                     elif part.function_call:
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                        for event in self._parts_manager.handle_tool_call_delta_events(
                             vendor_part_id=uuid4(),
                             tool_name=part.function_call.name,
                             args=part.function_call.args,
                             tool_call_id=part.function_call.id,
                             provider_name=self.provider_name if provider_details else None,
                             provider_details=provider_details,
-                        )
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
+                        ):
+                            yield event
                     elif part.inline_data is not None:
                         if part.thought:  # pragma: no cover
                             # Per https://ai.google.dev/gemini-api/docs/image-generation#thinking-process:
@@ -1925,36 +1942,8 @@ class GeminiStreamedResponse(StreamedResponse):
                             )
                         yield self._parts_manager.handle_part(vendor_part_id=tool_call_vendor_id, part=tool_call_part)
                     elif part.tool_response:
-                        tool_response_part = _map_tool_response(part.tool_response, self.provider_name)
-                        tool_response_part.provider_details = provider_details
-                        if tool_response_part.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
-                            if part.tool_response.id is None and self._media_processing_tool_call_id is not None:
-                                tool_response_part.tool_call_id = self._media_processing_tool_call_id
-                            elif self._media_processing_tool_call_vendor_id is not None:
-                                # The response can supply an ID omitted by the call; notify stream consumers too.
-                                event = self._parts_manager.handle_tool_call_delta(
-                                    vendor_part_id=self._media_processing_tool_call_vendor_id,
-                                    tool_call_id=tool_response_part.tool_call_id,
-                                )
-                                assert event is not None
-                                yield event
-                            self._media_processing_tool_call_id = None
-                            self._media_processing_tool_call_vendor_id = None
-                            yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_response_part)
-                        elif tool_response_part.tool_name == WebSearchTool.kind:
-                            # Only the response's last web_search return gets the sources, so an earlier one is
-                            # complete once another arrives.
-                            if (previous := self._pending_web_search_return) is not None:
-                                yield self._parts_manager.handle_part(
-                                    vendor_part_id=previous.tool_call_id, part=previous
-                                )
-                            self._pending_web_search_return = tool_response_part
-                            self._reserve_part(tool_response_part)
-                        elif tool_response_part.tool_name == FileSearchTool.kind and tool_response_part.content is None:
-                            self._pending_file_search_returns.append(tool_response_part)
-                            self._reserve_part(tool_response_part)
-                        else:
-                            yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_response_part)
+                        for event in self._handle_tool_response(part.tool_response, provider_details):
+                            yield event
                     elif part.executable_code is not None:
                         part_obj = self._handle_executable_code_streaming(part.executable_code)
                         part_obj.provider_details = provider_details
@@ -1995,6 +1984,37 @@ class GeminiStreamedResponse(StreamedResponse):
                     yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part)
         except (errors.APIError, httpx2.TransportError) as e:
             raise _map_api_error(e, self._model_name, self._model_id_namespace) from e
+
+    def _handle_tool_response(
+        self, tool_response: ToolResponse, provider_details: dict[str, Any] | None
+    ) -> Iterator[ModelResponseStreamEvent]:
+        """Map a native tool response, pairing a media-processing response with its call."""
+        tool_response_part = _map_tool_response(tool_response, self.provider_name)
+        tool_response_part.provider_details = provider_details
+        if tool_response_part.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
+            if tool_response.id is None and self._media_processing_tool_call_id is not None:
+                tool_response_part.tool_call_id = self._media_processing_tool_call_id
+            elif self._media_processing_tool_call_vendor_id is not None:
+                # The response can supply an ID omitted by the call; notify stream consumers too.
+                yield from self._parts_manager.handle_tool_call_delta_events(
+                    vendor_part_id=self._media_processing_tool_call_vendor_id,
+                    tool_call_id=tool_response_part.tool_call_id,
+                )
+            self._media_processing_tool_call_id = None
+            self._media_processing_tool_call_vendor_id = None
+            yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_response_part)
+        elif tool_response_part.tool_name == WebSearchTool.kind:
+            # Only the response's last web_search return gets the sources, so an earlier one is
+            # complete once another arrives.
+            if (previous := self._pending_web_search_return) is not None:
+                yield self._parts_manager.handle_part(vendor_part_id=previous.tool_call_id, part=previous)
+            self._pending_web_search_return = tool_response_part
+            self._reserve_part(tool_response_part)
+        elif tool_response_part.tool_name == FileSearchTool.kind and tool_response_part.content is None:
+            self._pending_file_search_returns.append(tool_response_part)
+            self._reserve_part(tool_response_part)
+        else:
+            yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_response_part)
 
     def _reserve_part(self, part: NativeToolReturnPart) -> None:
         """Reserve the part's slot, but defer its `PartStartEvent` until it's complete.

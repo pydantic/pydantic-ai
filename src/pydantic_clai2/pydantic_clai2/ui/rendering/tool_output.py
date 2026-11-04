@@ -319,39 +319,49 @@ class ToolOutput:
 
     def render(self, event: AgentStreamEvent) -> bool:
         """Return whether this event belongs to the specialized tool display."""
-        if isinstance(event, CommandStartedEvent):
-            self._shells[event.tool_call_id] = ShellPreview()
-            key = (event.tool_call_id, 'shell')
-            if key not in self._headers and self.tool_calls == 'detailed':
-                self._header('shell', event.command)
-            self._headers.discard(key)
-        elif isinstance(event, CommandOutputEvent):
-            if self.show_output:
-                self._shell_chunk(event)
-        elif isinstance(event, CommandFinishedEvent):
-            if not self.show_output:
-                self._shells.pop(event.tool_call_id, None)
-                return True
-            self._shell_finished(event)
-        elif isinstance(event, FileChangeRequestEvent):
-            if event.operation == 'write':
-                self._writes[event.tool_call_id, event.root_dir, event.path] = event
-        elif isinstance(event, FileEditedEvent):
-            key = (event.tool_call_id, 'edit_file')
-            if key not in self._headers:
-                self._header('edit_file', event.path)
-            self._headers.discard(key)
-            self._diff(event.diff, truncated=event.truncated)
-        elif isinstance(event, FileWrittenEvent):
-            key = (event.tool_call_id, 'write_file')
-            if key not in self._headers:
-                self._header('write_file', event.path)
-            self._headers.discard(key)
-            request = self._writes.pop((event.tool_call_id, event.root_dir, event.path), None)
-            if request is not None and not request.cancelled:
-                self._diff(request.diff, truncated=request.truncated)
-            else:
-                self.console.print()
-        else:
-            return False
+        match event:
+            case CommandStartedEvent():
+                self._shell_started(event)
+            case CommandOutputEvent():
+                if self.show_output:
+                    self._shell_chunk(event)
+            case CommandFinishedEvent():
+                if not self.show_output:
+                    self._shells.pop(event.tool_call_id, None)
+                    return True
+                self._shell_finished(event)
+            case FileChangeRequestEvent():
+                if event.operation == 'write':
+                    self._writes[event.tool_call_id, event.root_dir, event.path] = event
+            case FileEditedEvent():
+                self._file_edited(event)
+            case FileWrittenEvent():
+                self._file_written(event)
+            case _:
+                return False
         return True
+
+    def _shell_started(self, event: CommandStartedEvent) -> None:
+        self._shells[event.tool_call_id] = ShellPreview()
+        key = (event.tool_call_id, 'shell')
+        if key not in self._headers and self.tool_calls == 'detailed':
+            self._header('shell', event.command)
+        self._headers.discard(key)
+
+    def _file_edited(self, event: FileEditedEvent) -> None:
+        key = (event.tool_call_id, 'edit_file')
+        if key not in self._headers:
+            self._header('edit_file', event.path)
+        self._headers.discard(key)
+        self._diff(event.diff, truncated=event.truncated)
+
+    def _file_written(self, event: FileWrittenEvent) -> None:
+        key = (event.tool_call_id, 'write_file')
+        if key not in self._headers:
+            self._header('write_file', event.path)
+        self._headers.discard(key)
+        request = self._writes.pop((event.tool_call_id, event.root_dir, event.path), None)
+        if request is not None and not request.cancelled:
+            self._diff(request.diff, truncated=request.truncated)
+        else:
+            self.console.print()

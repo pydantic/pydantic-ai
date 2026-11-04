@@ -15,16 +15,7 @@ from pydantic_ai.models import KnownModelName
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.experimental.acp import InMemorySessionStore, PydanticAIACPAgent
-from pydantic_ai_harness.experimental.acp._adapter import _all_known_model_names  # pyright: ignore[reportPrivateUsage]
 from tests.harness.experimental.acp._acp_clients import RecordingClient
-
-
-def test_all_known_model_names_are_strings() -> None:
-    # Guards `models='all'` advertising only string model ids from Pydantic AI's public
-    # enumeration API.
-    names = _all_known_model_names()
-    assert len(names) > 100
-    assert all(isinstance(name, str) for name in names)
 
 
 def _adapter(

@@ -408,6 +408,7 @@ def test_agent_from_spec_mcp():
                         'native': True,
                         'id': 'search-mcp',
                         'description': 'Search MCP server.',
+                        'include_instructions': False,
                         'defer_loading': True,
                     }
                 }
@@ -421,6 +422,7 @@ def test_agent_from_spec_mcp():
     assert cap.tool_prefix is True
     assert cap.id == 'search-mcp'
     assert cap.description == 'Search MCP server.'
+    assert cap.include_instructions is False
     assert cap.defer_loading is True
 
 
@@ -796,7 +798,7 @@ def test_model_json_schema_with_capabilities():
                 'CacheConfig': {
                     'additionalProperties': False,
                     'properties': {
-                        'retention': {'enum': ['5m', '30m', '1h'], 'title': 'Retention', 'type': 'string'},
+                        'retention': {'enum': ['5m', '30m', '1h', '12h'], 'title': 'Retention', 'type': 'string'},
                         'messages': {'title': 'Messages', 'type': 'boolean'},
                     },
                     'title': 'CacheConfig',
@@ -1754,6 +1756,7 @@ def test_model_json_schema_with_capabilities():
                         'top_k': {'title': 'Top K', 'type': 'integer'},
                         'timeout': {'anyOf': [{'type': 'integer'}, {'type': 'number'}], 'title': 'Timeout'},
                         'request_timeout': {'title': 'Request Timeout', 'type': 'number'},
+                        'first_event_timeout': {'title': 'First Event Timeout', 'type': 'number'},
                         'max_retries': {'title': 'Max Retries', 'type': 'integer'},
                         'parallel_tool_calls': {'title': 'Parallel Tool Calls', 'type': 'boolean'},
                         'tool_choice': {
@@ -1790,7 +1793,7 @@ def test_model_json_schema_with_capabilities():
                         'cache': {
                             'anyOf': [
                                 {'type': 'boolean'},
-                                {'enum': ['5m', '30m', '1h'], 'type': 'string'},
+                                {'enum': ['5m', '30m', '1h', '12h'], 'type': 'string'},
                                 {'$ref': '#/$defs/CacheConfig'},
                             ],
                             'title': 'Cache',
@@ -2265,7 +2268,7 @@ def test_model_json_schema_with_capabilities():
                         'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                         'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
                         'retention': {
-                            'anyOf': [{'type': 'boolean'}, {'enum': ['5m', '30m', '1h'], 'type': 'string'}],
+                            'anyOf': [{'type': 'boolean'}, {'enum': ['5m', '30m', '1h', '12h'], 'type': 'string'}],
                             'title': 'Retention',
                         },
                         'messages': {'title': 'Messages', 'type': 'boolean'},
@@ -2388,6 +2391,7 @@ def test_model_json_schema_with_capabilities():
                                         'ModelAuthenticationError',
                                         'ModelNotFoundError',
                                         'ModelRequestTimeout',
+                                        'ContentFilterError',
                                     ],
                                     'type': 'string',
                                 },
@@ -2408,6 +2412,7 @@ def test_model_json_schema_with_capabilities():
                                             'ModelAuthenticationError',
                                             'ModelNotFoundError',
                                             'ModelRequestTimeout',
+                                            'ContentFilterError',
                                         ],
                                         'type': 'string',
                                     },
@@ -2416,6 +2421,7 @@ def test_model_json_schema_with_capabilities():
                             ],
                             'title': 'Fallback On',
                         },
+                        'sticky': {'title': 'Sticky', 'type': 'boolean'},
                     },
                     'required': ['models'],
                     'title': 'spec_params_ModelFallback',
@@ -2583,6 +2589,7 @@ def test_model_json_schema_with_capabilities():
                             'title': 'Tool Prefix',
                         },
                         'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'include_instructions': {'title': 'Include Instructions', 'type': 'boolean'},
                         'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
                     },
                     'required': ['url'],

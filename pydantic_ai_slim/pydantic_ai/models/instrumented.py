@@ -7,7 +7,7 @@ import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
-from typing import Any, Literal
+from typing import Any, Literal, assert_never
 
 from genai_prices.types import PriceCalculation
 from opentelemetry.metrics import MeterProvider, get_meter_provider
@@ -35,6 +35,7 @@ from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
 from ..messages import (
     BaseToolReturnPart,
+    CapabilityLoadDeltaPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
@@ -229,28 +230,39 @@ class InstrumentationSettings:
         result: list[_otel_messages.ChatMessage] = []
         sensitive_names = {f'mcp_server:{identity}' for identity in mcp_url_ids}
         for message in messages:
-            if sensitive_names and isinstance(message, ModelResponse):
-                projected_parts: list[ModelResponsePart] = [
-                    replace(part, tool_name='mcp_server:[REDACTED]')
-                    if isinstance(part, NativeToolCallPart | NativeToolReturnPart) and part.tool_name in sensitive_names
-                    else part
-                    for part in message.parts
-                ]
-                message = replace(message, parts=projected_parts)
-            if isinstance(message, ModelRequest):
-                for role, group in self._request_part_groups(message):
-                    message_parts: list[_otel_messages.MessagePart] = []
-                    for part in group:
-                        if hasattr(part, 'otel_message_parts'):
-                            message_parts.extend(part.otel_message_parts(self))
-
-                    result.append(_otel_messages.ChatMessage(role=role, parts=message_parts))
-            elif isinstance(message, ModelResponse):  # pragma: no branch
-                otel_message = _otel_messages.OutputMessage(role='assistant', parts=message.otel_message_parts(self))
-                if message.finish_reason is not None:
-                    otel_message['finish_reason'] = message.finish_reason
-                result.append(otel_message)
+            match message:
+                case ModelRequest():
+                    result.extend(self._request_otel_messages(message))
+                case ModelResponse():
+                    result.append(self._response_otel_message(message, sensitive_names))
+                case _:
+                    assert_never(message)
         return result
+
+    def _request_otel_messages(self, message: ModelRequest) -> list[_otel_messages.ChatMessage]:
+        otel_messages: list[_otel_messages.ChatMessage] = []
+        for role, group in self._request_part_groups(message):
+            message_parts: list[_otel_messages.MessagePart] = []
+            for part in group:
+                if hasattr(part, 'otel_message_parts'):
+                    message_parts.extend(part.otel_message_parts(self))
+
+            otel_messages.append(_otel_messages.ChatMessage(role=role, parts=message_parts))
+        return otel_messages
+
+    def _response_otel_message(self, message: ModelResponse, sensitive_names: set[str]) -> _otel_messages.OutputMessage:
+        if sensitive_names:
+            projected_parts: list[ModelResponsePart] = [
+                replace(part, tool_name='mcp_server:[REDACTED]')
+                if isinstance(part, NativeToolCallPart | NativeToolReturnPart) and part.tool_name in sensitive_names
+                else part
+                for part in message.parts
+            ]
+            message = replace(message, parts=projected_parts)
+        otel_message = _otel_messages.OutputMessage(role='assistant', parts=message.otel_message_parts(self))
+        if message.finish_reason is not None:
+            otel_message['finish_reason'] = message.finish_reason
+        return otel_message
 
     def _request_part_groups(self, message: ModelRequest) -> list[tuple[_otel_messages.Role, list[ModelRequestPart]]]:
         """The OTel messages a request's parts make: each one's role and the parts that go in it.
@@ -281,7 +293,19 @@ class InstrumentationSettings:
         otel_messages = self.messages_to_otel_messages(messages, mcp_url_ids=mcp_url_ids)
         if not any(_holds_request_scoped_prompt(message) for message in messages[:current_request_start]):
             return otel_messages
-        # For each OTel message the default conversion gives, which of its parts to mark, or `None` to leave it.
+        expected = self._request_scoped_marks(messages, current_request_start)
+        if _shape_differs(expected, otel_messages):
+            return otel_messages
+        for marks, otel_message in zip(expected, otel_messages):
+            for mark, part in zip(marks or (), otel_message['parts']):
+                if mark and part['type'] == 'text':
+                    part['visible'] = False
+        return otel_messages
+
+    def _request_scoped_marks(
+        self, messages: list[ModelMessage], current_request_start: int
+    ) -> list[list[bool] | None]:
+        """For each OTel message the default conversion gives, which of its parts to mark, or `None` to leave it."""
         expected: list[list[bool] | None] = []
         for index, message in enumerate(messages):
             if not isinstance(message, ModelRequest):
@@ -290,30 +314,17 @@ class InstrumentationSettings:
             mark = index < current_request_start and _holds_request_scoped_prompt(message)
             for _, group in self._request_part_groups(message):
                 # Only a message with a part to mark needs its OTel parts counted again; the rest just need their groups.
-                expected.append(
-                    [
-                        _is_request_scoped(part)
-                        for part in group
-                        if hasattr(part, 'otel_message_parts')
-                        for _ in part.otel_message_parts(self)
-                    ]
-                    if mark
-                    else None
-                )
-        if len(expected) != len(otel_messages) or any(
-            marks is not None
-            and (
-                len(marks) != len(otel_message['parts'])
-                or any(mark and part['type'] != 'text' for mark, part in zip(marks, otel_message['parts']))
-            )
-            for marks, otel_message in zip(expected, otel_messages)
-        ):
-            return otel_messages
-        for marks, otel_message in zip(expected, otel_messages):
-            for mark, part in zip(marks or (), otel_message['parts']):
-                if mark and part['type'] == 'text':
-                    part['visible'] = False
-        return otel_messages
+                expected.append(self._otel_part_marks(group) if mark else None)
+        return expected
+
+    def _otel_part_marks(self, group: list[ModelRequestPart]) -> list[bool]:
+        """Whether each OTel part a group of request parts gives comes from a request-scoped prompt."""
+        return [
+            _is_request_scoped(part)
+            for part in group
+            if hasattr(part, 'otel_message_parts')
+            for _ in part.otel_message_parts(self)
+        ]
 
     def _input_messages_json(
         self,
@@ -529,6 +540,18 @@ class InstrumentedModel(WrapperModel):
                     )
 
 
+def _shape_differs(expected: list[list[bool] | None], otel_messages: list[_otel_messages.ChatMessage]) -> bool:
+    """Whether `otel_messages` lacks the shape the default conversion gives, so the parts to mark can't be told apart."""
+    return len(expected) != len(otel_messages) or any(
+        marks is not None
+        and (
+            len(marks) != len(otel_message['parts'])
+            or any(mark and part['type'] != 'text' for mark, part in zip(marks, otel_message['parts']))
+        )
+        for marks, otel_message in zip(expected, otel_messages)
+    )
+
+
 def _holds_request_scoped_prompt(message: ModelMessage) -> bool:
     """Whether `message` is a request holding a [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] system prompt."""
     return isinstance(message, ModelRequest) and any(_is_request_scoped(part) for part in message.parts)
@@ -555,16 +578,20 @@ def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.R
     history after `prepare_messages` has already translated the part, except on a decision model,
     which is handed the part itself.
 
-    `ToolAvailabilityDeltaPart` gets `system` as the least-bad fit in a closed vocabulary, not as a
-    mirror of the wire. `Role` is `system | user | assistant | tool` and none of those means "the set
-    of tools changed", while the wire form varies by model: a real `SystemPromptPart` where there is
-    no native channel, a `role='system'` entry carrying `tool_addition` blocks on Anthropic, a
-    roleless `additional_tools` item on OpenAI Responses, a tool-search exchange where schemas are
-    withheld. `tool` is the one role that would actively mislead, being paired with
-    `tool_call_response`.
+    `ToolAvailabilityDeltaPart`, like `CapabilityLoadDeltaPart`, gets `system` as the least-bad fit in a closed
+    vocabulary, not as a mirror of the wire. `Role` is `system | user | assistant | tool` and none of those means "the
+    set of tools changed", while the wire form varies by model: a real `SystemPromptPart` where there is no native
+    channel, a `role='system'` entry carrying `tool_addition` blocks on Anthropic, a roleless `additional_tools` item on
+    OpenAI Responses, a tool-search exchange where schemas are withheld. `tool` is the one role that would actively
+    mislead, being paired with `tool_call_response`.
     """
     if isinstance(
-        part, SystemPromptPart | ToolAvailabilityDeltaPart | InstructionDeltaPart | ModelSettingsDeltaPart
+        part,
+        SystemPromptPart
+        | ToolAvailabilityDeltaPart
+        | CapabilityLoadDeltaPart
+        | InstructionDeltaPart
+        | ModelSettingsDeltaPart,
     ) or (version >= 6 and isinstance(part, RetryFeedbackPart) and _retry_feedback_speaks_for_the_harness(part)):
         return 'system'
     # TODO(v3): remove `RetryPromptPart`, still reachable here because `pydantic_ai.all_messages`

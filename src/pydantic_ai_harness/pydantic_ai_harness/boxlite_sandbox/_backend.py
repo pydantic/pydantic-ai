@@ -55,9 +55,10 @@ from pydantic_ai.workspaces import (
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env,
+    check_provider,
     check_timeout,
     command_argv,
-    running_on_asyncio,
+    require_asyncio,
 )
 
 if TYPE_CHECKING:
@@ -227,18 +228,13 @@ def check_ref(ref: WorkspaceRef) -> None:
     For refs from message history and for deletion: `get` opens any box of this BoxLite home by name or
     id, so such a ref could otherwise reach a box made by another tool, with host mounts or published ports.
     """
-    _check_provider(ref)
+    check_provider(ref, 'boxlite')
     if _NAME.fullmatch(ref.id) is None:
         raise ValueError(
             f'BoxLiteSandbox only uses boxes it created, named {_NAME_PREFIX!r} and 32 hex digits, got {ref.id!r}. '
             'To use another box, pass `workspace=BoxLiteSandboxBackend(sandbox=box)` to the run; '
             "`workspace='new'` starts a fresh box."
         )
-
-
-def _check_provider(ref: WorkspaceRef) -> None:
-    if ref.provider != 'boxlite':
-        raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'boxlite'")
 
 
 def _key(box: _Box) -> str:
@@ -435,7 +431,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
         box_options: Mapping[str, Any] | None = None,
     ) -> None:
         if ref is not None:
-            _check_provider(ref)
+            check_provider(ref, 'boxlite')
         if sandbox is not None and ref is not None:
             raise ValueError('pass either `sandbox` or `ref`, not both')
         check_env(env)
@@ -475,8 +471,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
         create a replacement.
         """
         # Every operation gets the box first, so this one check covers them all.
-        if not running_on_asyncio():
-            raise UserError(ASYNCIO_ONLY)
+        require_asyncio(ASYNCIO_ONLY)
         if self._box is not None:
             return self._box
         # Concurrent first uses wait for each other, so they create one box.
