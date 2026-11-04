@@ -196,6 +196,7 @@ applied automatically — don't set them.
 #### PR clusters
 
 Your PR is in a cluster when it shares a theme with at least two other open PRs.
+Merged PRs do not count. A PR in a cluster keeps its label and prefix after the other PRs merge.
 Bug fixes count when they share the theme, such as caching bugs or privilege-escalation bugs.
 Unrelated bug fixes do not form a cluster.
 
