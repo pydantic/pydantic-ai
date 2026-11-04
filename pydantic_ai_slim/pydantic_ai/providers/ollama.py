@@ -75,6 +75,7 @@ class OllamaProvider(_OpenAISDKProvider):
                 openai_supports_strict_tool_definition=False,
                 supports_json_schema_output=True,
                 supports_json_object_output=True,
+                openai_chat_supports_max_completion_tokens=False,
             ),
         )
 

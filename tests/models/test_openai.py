@@ -2488,6 +2488,34 @@ async def test_max_tokens_field_routed_by_profile(
     assert omitted_field not in kwargs
 
 
+async def test_ollama_max_tokens_sent_as_max_tokens(allow_model_requests: None) -> None:
+    """Ollama's OpenAI-compatible API only accepts `max_tokens`, so the setting must not be routed to `max_completion_tokens`."""
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-oss:20b', provider=OllamaProvider(openai_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(max_tokens=20))
+
+    await agent.run('Hello')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['max_tokens'] == 20
+    assert 'max_completion_tokens' not in kwargs
+
+
+async def test_ollama_unknown_model_max_tokens_sent_as_max_tokens(allow_model_requests: None) -> None:
+    """Models without a known profile still resolve Ollama's overlay profile, so `max_tokens` is also sent as `max_tokens`."""
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('some-unknown-model', provider=OllamaProvider(openai_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(max_tokens=20))
+
+    await agent.run('Hello')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['max_tokens'] == 20
+    assert 'max_completion_tokens' not in kwargs
+
+
 async def test_multiple_agent_tool_calls(allow_model_requests: None, gemini_api_key: str, openai_api_key: str):
     gemini_model = GoogleModel('gemini-2.0-flash-exp', provider=GoogleProvider(api_key=gemini_api_key))
     openai_model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))

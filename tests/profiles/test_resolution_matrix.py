@@ -2256,6 +2256,7 @@ def test_ollama_gpt_oss():
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'openai_chat_thinking_field': 'reasoning',
+            'openai_chat_supports_max_completion_tokens': False,
             'openai_supports_strict_tool_definition': False,
             'supports_forced_tool_choice': False,
         }
@@ -2271,6 +2272,7 @@ def test_ollama_unknown_falls_back_to_overlay_only():
             'supports_json_object_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'openai_chat_thinking_field': 'reasoning',
+            'openai_chat_supports_max_completion_tokens': False,
             'openai_supports_strict_tool_definition': False,
         }
     )
