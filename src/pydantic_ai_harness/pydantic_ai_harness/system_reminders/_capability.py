@@ -135,16 +135,37 @@ class GeneratedReminder:
 
     @property
     def note(self) -> str:
-        """A note, in the application's voice, saying what the accompanying `<generated_reminder>` is."""
+        """A note, in the application's voice, saying what the accompanying `<generated_reminder>` is.
+
+        Deprecated: this isn't what the model is sent. Use `text` and `model`.
+        """
+        _warn_generated_reminder_rendering('`GeneratedReminder.note`')
         return _LLM_REMINDER_NOTE
 
     @property
     def data(self) -> str:
-        """`text` quoted in a `<generated_reminder>` tag, with the framing tags in it escaped."""
-        return _quote('generated_reminder', self.text, model=self.model)
+        """`text` quoted in a `<generated_reminder>` tag, with the framing tags in it escaped.
+
+        Deprecated: this isn't what the model is sent. Use `text` and `model`.
+        """
+        _warn_generated_reminder_rendering('`GeneratedReminder.data`')
+        return self._quoted()
 
     def __str__(self) -> str:
-        return f'{self.note}\n\n{self.data}'
+        _warn_generated_reminder_rendering('`str()` of a `GeneratedReminder`')
+        return f'{_LLM_REMINDER_NOTE}\n\n{self._quoted()}'
+
+    def _quoted(self) -> str:
+        return _quote('generated_reminder', self.text, model=self.model)
+
+
+def _warn_generated_reminder_rendering(what: str) -> None:
+    warnings.warn(
+        f"{what} is deprecated, as it isn't what the model is sent; use `GeneratedReminder.text` and "
+        '`GeneratedReminder.model` instead.',
+        HarnessDeprecationWarning,
+        stacklevel=3,
+    )
 
 
 _WARNED_RUNS_KEPT = 256

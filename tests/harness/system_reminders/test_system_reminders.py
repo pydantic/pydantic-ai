@@ -1018,6 +1018,29 @@ class TestLLMReminder:
         assert isinstance(result, GeneratedReminder)
         assert result.data == _llm_data(escaped)
 
+    def test_renderings_are_deprecated_with_their_output_unchanged(self) -> None:
+        reminder = GeneratedReminder('refocus', 'some-model')
+        with pytest.warns(
+            HarnessDeprecationWarning, match=r'`GeneratedReminder\.note` is deprecated.*\.text'
+        ) as caught:
+            assert reminder.note == _LLM_NOTE
+        assert len(caught) == 1
+        with pytest.warns(
+            HarnessDeprecationWarning, match=r'`GeneratedReminder\.data` is deprecated.*\.text'
+        ) as caught:
+            assert reminder.data == _llm_data('refocus', 'some-model')
+        assert len(caught) == 1
+        with pytest.warns(
+            HarnessDeprecationWarning, match=r'`str\(\)` of a `GeneratedReminder` is deprecated'
+        ) as caught:
+            assert str(reminder) == _llm_reminder('refocus', 'some-model')
+        assert len(caught) == 1
+
+    @pytest.mark.filterwarnings('error::pydantic_ai_harness.HarnessDeprecationWarning')
+    async def test_sending_a_generated_reminder_reads_no_deprecated_rendering(self) -> None:
+        reminders = SystemReminders[None](dynamic_reminders=[lambda ctx: GeneratedReminder('refocus', 'some-model')])
+        await Agent(TestModel(), capabilities=[reminders]).run('hi')
+
     async def test_string_operations_cannot_promote_generated_text(self) -> None:
         # Provenance is the type, not a `str` subclass that `.strip()` or `+` would silently turn into operator text.
         result = await LLMReminder(interval=1, model=_capture_model({}, output='refocus'))(
