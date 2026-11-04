@@ -277,6 +277,12 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
         self.processes.append(process)
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
         sandbox.streams.append(queue)
+        # The command can run before this registers it, so a kill that saw neither the process nor its stream ends
+        # them here.
+        if sandbox.state != 'Running':  # pragma: lax no cover
+            with suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+            queue.put_nowait(('broken', None))
         return httpx.Response(
             200,
             headers={'content-type': 'text/event-stream'},

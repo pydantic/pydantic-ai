@@ -131,17 +131,28 @@ class _HangingAioCall:
 class _FakeStream:
     """Mimics the async-iterable output stream the backend reads with `async for`."""
 
-    def __init__(self, data: bytes, hangs: bool = False, delay: float = 0.0, error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        data: bytes,
+        hangs: bool = False,
+        drained_after_exit: Callable[[], None] | None = None,
+        process_exited: anyio.Event | None = None,
+        error: Exception | None = None,
+    ) -> None:
         self._data = data
         self._hangs = hangs
-        self._delay = delay
+        self._drained_after_exit = drained_after_exit
+        self._process_exited = process_exited
         self._error = error
 
     async def __aiter__(self) -> AsyncGenerator[bytes, None]:
         if self._hangs:
             await anyio.sleep_forever()
-        if self._delay:
-            await anyio.sleep(self._delay)
+        if self._drained_after_exit is not None and self._process_exited is not None:
+            await self._process_exited.wait()
+            # Lets the backend that was waiting for the exit start its wait for the output.
+            await anyio.lowlevel.checkpoint()
+            self._drained_after_exit()
         await anyio.lowlevel.checkpoint()
         if self._error is not None:
             raise self._error
@@ -157,10 +168,12 @@ class _FakeProcess:
         wait_error: Exception | None,
         wait_hangs: bool,
         stdout_hangs: bool = False,
-        stdout_delay: float = 0.0,
+        stdout_drained_after_exit: Callable[[], None] | None = None,
         stdout_error: Exception | None = None,
     ) -> None:
-        self.stdout = _FakeStream(stdout, stdout_hangs, stdout_delay, stdout_error)
+        # Host commands build this on a worker thread, without an event loop, and never drain after exit.
+        self._exited = None if stdout_drained_after_exit is None else anyio.Event()
+        self.stdout = _FakeStream(stdout, stdout_hangs, stdout_drained_after_exit, self._exited, stdout_error)
         self.stderr = _FakeStream(stderr)
         self._returncode = returncode
         self._wait_error = wait_error
@@ -171,6 +184,8 @@ class _FakeProcess:
         if self._wait_error is not None:
             raise self._wait_error
         self.returncode = self._returncode
+        if self._exited is not None:
+            self._exited.set()
         return self._returncode
 
 
@@ -490,6 +505,10 @@ class FakeSandbox:
         )
         assert process.stdout is not None and process.stderr is not None
         self._host_processes.add(process)
+        # The command can run before this thread registers it, so a `terminate` that did not see it kills it here.
+        if self.shutting_down:  # pragma: lax no cover
+            with suppress(OSError):
+                os.killpg(process.pid, signal.SIGKILL)
         streams = {process.stdout: bytearray(), process.stderr: bytearray()}
         active = list(streams)
         for stream in streams:
@@ -577,7 +596,7 @@ class FakeSandbox:
             self._control.wait_error,
             self._control.wait_hangs and not probing_kind,
             self._control.stdout_hangs and not probing_kind,
-            self._control.stdout_delay,
+            self._control.stdout_drained_after_exit,
             self._control.stdout_error,
         )
 
@@ -616,8 +635,8 @@ class FakeModal:
         self.wait_error: Exception | None = None
         self.wait_hangs = False
         self.stdout_hangs = False
-        # Seconds stdout takes to drain after the process has exited.
-        self.stdout_delay = 0.0
+        # Called once the process has exited, before stdout ends: output still draining when this runs.
+        self.stdout_drained_after_exit: Callable[[], None] | None = None
         # Raised by the stdout reader while the process keeps running.
         self.stdout_error: Exception | None = None
         # When set, sandboxes run commands and file operations on the host under this directory.
