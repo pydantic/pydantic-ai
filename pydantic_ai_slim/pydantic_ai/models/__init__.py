@@ -4407,10 +4407,11 @@ def _system_prompts_after_notes(parts: list[ModelRequestPart], *, leading: int) 
     if last_note is None:
         return parts
     head = parts[leading : last_note + 1]
-    genuine = [p for p in head if isinstance(p, SystemPromptPart) and not isinstance(p, _FrameworkNote)]
+    # A capability part's note stays with the content it's about.
+    genuine = [p for p in head if _is_genuine_system_prompt(p)]
     if not genuine:
         return parts
-    others = [p for p in head if not isinstance(p, SystemPromptPart) or isinstance(p, _FrameworkNote)]
+    others = [p for p in head if not _is_genuine_system_prompt(p)]
     return [*parts[:leading], *others, *genuine, *parts[last_note + 1 :]]
 
 
