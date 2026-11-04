@@ -2522,11 +2522,13 @@ class TestTaskControlBoundaries:
         with pytest.raises(UserError, match='on an engine that runs its tools in workflow code'):
             await agent.run('Go.')
 
-    async def test_only_dynamic_agents_declare_a_durable_operation(self) -> None:
-        # A durable operation needs an `id`, so declaring one on every `SubAgents` would refuse `id=None`.
-        plain = SubAgents(agents=[researcher()], id=None)
-        agent = Agent(TestModel(call_tools=[]), name='durable', capabilities=[plain, RecordingDurability()])
-        assert (await agent.run('Go.')).output
+    def test_durable_execution_requires_an_id(self) -> None:
+        with pytest.raises(UserError, match='needs an explicit `id`'):
+            Agent(
+                TestModel(),
+                name='durable',
+                capabilities=[SubAgents(agents=[researcher()], id=None), RecordingDurability()],
+            )
 
     async def test_dynamic_agents_record_each_delegation_under_durable_execution(self) -> None:
         def crash(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

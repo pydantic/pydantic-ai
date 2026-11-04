@@ -42,7 +42,6 @@ from pydantic_ai_harness.subagents._toolset import (
     DEFAULT_MAX_DEPTH,
     IN_WORKFLOW,
     SELF_AGENT_NAME,
-    RecordDelegation,
     RecordedDelegation,
     SubAgent,
     SubAgentToolset,
@@ -213,7 +212,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     # field after it, which would take `tool_retries` and `contain_errors` off the positional
     # contract they already have.
     id: str | None = field(default='sub_agents', kw_only=True)
-    """Fixed, since an agent exposes a single delegate tool.
+    """Fixed, since an agent exposes a single delegate tool. Durable execution requires one.
 
     Two `SubAgents` capabilities would register the same `tool_name` and collide. The shared id
     makes them merge instead, unioning their rosters, so a packaged harness that delegates can
@@ -343,11 +342,6 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     )
     """Run-scoped sub-agents created with `create_agent` (run_id -> name -> spec and sub-agent), shared with the
     toolset and cleared per run in `wrap_run`."""
-
-    def __new__(cls, *args: Any, **kwargs: Any) -> SubAgents[Any]:
-        # Only a `SubAgents` with `dynamic_agents` declares the `delegate` durable operation.
-        target = _DynamicSubAgents if cls is SubAgents and kwargs.get('dynamic_agents') is not None else cls
-        return object.__new__(target)
 
     def __post_init__(self) -> None:
         if self.inherit_tools:
@@ -773,11 +767,22 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             dynamic_agents=self.dynamic_agents,
             created=self._created,
             workspace_resolver=self.workspace_resolver,
-            record_delegation=self._record_delegation(),
+            record_delegation=self._delegate if self.dynamic_agents is not None else None,
         )
 
-    def _record_delegation(self) -> RecordDelegation | None:
-        return None
+    @durable_operation('delegate')
+    async def _delegate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        agent_name: str,
+        task: str,
+        model: str | None,
+        spec: DynamicAgentSpec | None,
+    ) -> RecordedDelegation:
+        """Run a delegation in a durable unit of its own, so recovery reuses its result."""
+        toolset = self._run_toolset if self._per_run else self._toolset
+        assert toolset is not None, 'Only a capability with delegates offers the delegate tool.'
+        return await toolset.run_recorded(ctx, agent_name, task, model, spec)
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
@@ -827,24 +832,3 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         if merged._per_run:
             merged._run_toolset = merged._make_toolset()
         return merged
-
-
-class _DynamicSubAgents(SubAgents[AgentDepsT]):
-    """`SubAgents` with `dynamic_agents`, which declares the `delegate` durable operation."""
-
-    def _record_delegation(self) -> RecordDelegation | None:
-        return self._delegate
-
-    @durable_operation('delegate')
-    async def _delegate(
-        self,
-        ctx: RunContext[AgentDepsT],
-        agent_name: str,
-        task: str,
-        model: str | None,
-        spec: DynamicAgentSpec | None,
-    ) -> RecordedDelegation:
-        """Run a delegation in a durable unit of its own, so recovery reuses its result."""
-        toolset = self._run_toolset if self._per_run else self._toolset
-        assert toolset is not None, 'Only a capability with delegates offers the delegate tool.'
-        return await toolset.run_recorded(ctx, agent_name, task, model, spec)
