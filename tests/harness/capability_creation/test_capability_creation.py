@@ -14,12 +14,22 @@ import anyio.to_thread
 import pytest
 
 from pydantic_ai import Agent, DeferredToolRequests, RunContext
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import ModelRequest, ToolReturnPart
+from pydantic_ai.messages import (
+    Authority,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
+    AuthorityWorkspace,
     LocalWorkspaceBackend,
     ReadOnlyWorkspace,
     Workspace,
@@ -1237,6 +1247,130 @@ class TestEndToEnd:
         agent = Agent(TestModel(), capabilities=[CapabilityCreation(directory=tmp_path)])
         with pytest.raises(UserError, match='imports model-written Python into the agent process'):
             await agent.run('go', workspace=backends[workspace])
+
+    @pytest.mark.parametrize('authority', ['user', 'none'])
+    async def test_refuses_a_store_directory_below_operator_authority(
+        self, tmp_path: Path, authority: Authority
+    ) -> None:
+        agent = Agent(
+            _authoring_model(tmp_path),
+            capabilities=[LocalWorkspace(tmp_path, authority=authority), CapabilityCreation(tmp_path / 'store')],
+        )
+        with pytest.raises(UserError, match=f"has `'{authority}'` authority"):
+            await agent.run('go')
+        assert not (tmp_path / 'store').exists()
+        assert not (tmp_path / 'ran').exists()
+
+    async def test_refuses_a_run_level_workspace_below_operator_authority(self, tmp_path: Path) -> None:
+        workspace = AuthorityWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)), authority='none')
+        agent = Agent(_authoring_model(tmp_path), capabilities=[CapabilityCreation(tmp_path / 'store')])
+        with pytest.raises(UserError, match="has `'none'` authority"):
+            await agent.run('go', workspace=workspace)
+        assert not (tmp_path / 'ran').exists()
+
+    async def test_runs_authored_code_in_a_store_directory_with_operator_authority(self, tmp_path: Path) -> None:
+        agent = Agent(
+            _authoring_model(tmp_path),
+            capabilities=[LocalWorkspace(tmp_path), CapabilityCreation(tmp_path / 'store')],
+        )
+        await agent.run('go')
+        assert (tmp_path / 'ran').exists()
+
+    async def test_refuses_a_lower_store_directory_inside_an_operator_workspace(self, tmp_path: Path) -> None:
+        # The directory's own level decides: the rest of the workspace being the operator's doesn't help.
+        agent = Agent(
+            _authoring_model(tmp_path),
+            capabilities=[
+                LocalWorkspace(tmp_path, path_authority={'vendor': 'none'}),
+                CapabilityCreation(tmp_path / 'vendor' / 'store'),
+            ],
+        )
+        with pytest.raises(UserError, match="has `'none'` authority"):
+            await agent.run('go')
+        assert not (tmp_path / 'ran').exists()
+
+    async def test_allows_an_operator_store_directory_inside_a_lower_workspace(self, tmp_path: Path) -> None:
+        # The operator's own directory next to a clone they don't control.
+        agent = Agent(
+            _authoring_model(tmp_path),
+            capabilities=[
+                LocalWorkspace(tmp_path, authority='none', path_authority={'store': 'operator'}),
+                CapabilityCreation(tmp_path / 'store'),
+            ],
+        )
+        await agent.run('go')
+        assert (tmp_path / 'ran').exists()
+
+    async def test_refuses_a_store_directory_that_links_to_a_lower_path(self, tmp_path: Path) -> None:
+        (tmp_path / 'vendor').mkdir()
+        (tmp_path / 'store').symlink_to(tmp_path / 'vendor')
+        agent = Agent(
+            _authoring_model(tmp_path),
+            capabilities=[
+                LocalWorkspace(tmp_path, path_authority={'vendor': 'none'}),
+                CapabilityCreation(tmp_path / 'store'),
+            ],
+        )
+        with pytest.raises(UserError, match="has `'none'` authority"):
+            await agent.run('go')
+        assert not (tmp_path / 'ran').exists()
+
+    async def test_relative_store_directory_resolves_against_the_process_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # `directory` is a path on this machine, not a workspace path: read against the workspace's working
+        # directory, `store` would be `<tmp_path>/store`, at operator level, while the code runs from `vendor/store`.
+        (tmp_path / 'vendor').mkdir()
+        monkeypatch.chdir(tmp_path / 'vendor')
+        agent = Agent(
+            _authoring_model(tmp_path),
+            capabilities=[
+                LocalWorkspace(tmp_path, path_authority={'vendor': 'none'}),
+                CapabilityCreation(Path('store')),
+            ],
+        )
+        with pytest.raises(UserError, match="has `'none'` authority"):
+            await agent.run('go')
+        assert not (tmp_path / 'ran').exists()
+
+    async def test_store_directory_outside_the_workspace_must_be_named_in_path_authority(self, tmp_path: Path) -> None:
+        (tmp_path / 'workspace').mkdir()
+        store = tmp_path / 'store'
+        refused = Agent(
+            _authoring_model(tmp_path),
+            capabilities=[LocalWorkspace(tmp_path / 'workspace'), CapabilityCreation(store)],
+        )
+        with pytest.raises(UserError, match='path_authority'):
+            await refused.run('go')
+        assert not (tmp_path / 'ran').exists()
+
+        named = Agent(
+            _authoring_model(tmp_path),
+            capabilities=[
+                LocalWorkspace(tmp_path / 'workspace', path_authority={str(store): 'operator'}),
+                CapabilityCreation(store),
+            ],
+        )
+        await named.run('go')
+        assert (tmp_path / 'ran').exists()
+
+
+def _authoring_model(tmp_path: Path) -> FunctionModel:
+    """Author a capability whose module body leaves a `ran` file in `tmp_path`, so a test can see whether it ran."""
+    code = (
+        'from pathlib import Path\n'
+        'from pydantic_ai.capabilities import AbstractCapability\n\n'
+        f'Path({str(tmp_path / "ran")!r}).touch()\n\n\n'
+        'class Authored(AbstractCapability):\n'
+        '    pass\n'
+    )
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('author_capability', {'name': 'authored', 'code': code})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    return FunctionModel(respond)
 
 
 class _Sandbox(LocalWorkspaceBackend):

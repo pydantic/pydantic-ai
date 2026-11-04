@@ -148,6 +148,23 @@ machine. A run therefore refuses to start unless its
 sandbox the model's code would run outside the sandbox, and a read-only workspace promises the
 model that it changes nothing.
 
+`directory` must hold only code the operator wrote or this capability authored, not a cloned
+repository or a user's upload. A run therefore also refuses to start unless
+[`authority_of`](https://pydantic.dev/docs/ai/core-concepts/workspace/) gives `directory`
+`'operator'` authority:
+
+- A workspace with `authority='user'` or `authority='none'` is refused, unless `path_authority`
+  gives `directory` `'operator'`.
+- A lower directory inside an operator workspace, such as one under
+  `path_authority={'vendor': 'none'}`, is refused, including through a symlink.
+- A directory outside the workspace's working directory has `'none'` authority, so name it:
+  `LocalWorkspace('./project', path_authority={'/var/lib/my-app/authored': 'operator'})`.
+
+This check runs when a run starts, so it can't cover a `store.load_active()` you call before the
+run, as in the example above: that call has no workspace to ask, and runs the code it finds. It also
+only looks at who controls the directory, not what the model has read: to keep text in a lower
+workspace from steering what gets authored, require approval as shown below.
+
 Authoring executes arbitrary Python in-process at import, construction, and run time. That
 is the same trust boundary an agent that already runs shell commands and edits files
 operates under. Do not point it at a directory whose

@@ -109,6 +109,14 @@ machine. A run therefore refuses to start unless its
 sandbox the model's code would run outside the sandbox, and a read-only workspace promises the
 model that it changes nothing.
 
+`directory` must hold only code the operator wrote or this capability authored, not a cloned repository or a user's upload. A run therefore also refuses to start unless [`authority_of`](https://pydantic.dev/docs/ai/core-concepts/workspace/) gives `directory` `'operator'` authority:
+
+- A workspace with `authority='user'` or `authority='none'` is refused, unless `path_authority` gives `directory` `'operator'`.
+- A lower directory inside an operator workspace, such as one under `path_authority={'vendor': 'none'}`, is refused, including through a symlink.
+- A directory outside the workspace's working directory has `'none'` authority, so name it: `LocalWorkspace('./project', path_authority={'/var/lib/my-app/authored': 'operator'})`.
+
+This check runs when a run starts, so it can't cover a `store.load_active()` you call before the run, as in the example above: that call has no workspace to ask, and runs the code it finds. It also only looks at who controls the directory, not what the model has read: to keep text in a lower workspace from steering what gets authored, require approval as shown below.
+
 `CapabilityCreation` executes arbitrary Python in-process at import, construction, and run time. That is the same trust boundary an agent that already runs shell commands and edits files operates under. Do not point it at a directory whose contents you would not run yourself, and treat authored capabilities as code the agent is executing on your host.
 
 Authored code first runs when the model calls `author_capability`, not on the next run: validation executes the module body, the constructor, and the static getters in the current run, with the agent process's environment and permissions, even when validation then rejects the code. If that code blocks, cancelling the run stops waiting for it, but its worker thread runs until the code returns and then finishes the write, so code that passes validation is still saved and loaded by the next `load_active()`; disable it if you did not want it. Other authoring, listing, and disabling calls are not held up by it. `store.load_active()` runs authored code in its calling thread, so an authored module that blocks also blocks that call. Loads of the same source from different threads run one at a time, so it also holds up every other load of that source, such as a `load_active()` call in another thread.

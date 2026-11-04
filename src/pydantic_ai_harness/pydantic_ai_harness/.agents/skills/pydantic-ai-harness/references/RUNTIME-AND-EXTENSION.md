@@ -460,7 +460,10 @@ async def main():
 ```
 
 Gotchas: a run raises `UserError` unless its workspace is a writable `LocalWorkspace`, because
-authored code executes in your process and would bypass a sandbox. Only use it where you would run the
+authored code executes in your process and would bypass a sandbox. A run also raises `UserError` unless
+`ctx.workspace.authority_of(directory)` is `'operator'`, so point `directory` at code the operator controls, not
+a clone or an upload; a directory outside the working directory needs `path_authority={path: 'operator'}`.
+`store.load_active()` runs outside this check, since it has no workspace. Only use it where you would run the
 model's code yourself. Authored code runs during `author_capability` validation, in the current run.
 `load_active()` runs the same checks and skips entries that fail them. Inside a Temporal or DBOS
 workflow, `capabilities=` on a run is refused, so authored capabilities cannot be activated there;
