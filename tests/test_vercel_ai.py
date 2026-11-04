@@ -14257,7 +14257,7 @@ async def test_conversation_store_saved_between_load_and_check_asks_to_reload():
     assert len(requests) == model_requests
     assert [chunk.error_text for chunk in chunks if isinstance(chunk, ErrorChunk)] == snapshot(
         [
-            'The conversation was changed by another request while this one ran, so this turn was not saved. '
+            'The conversation was changed by another request while it was being loaded, so this request did not run. '
             'Reload the conversation from the server and try again.'
         ]
     )

@@ -683,6 +683,10 @@ _CONVERSATION_CHANGED = (
     'The conversation was changed by another request while this one ran, so this turn was not saved. '
     'Reload the conversation from the server and try again.'
 )
+_CONVERSATION_CHANGED_WHILE_LOADING = (
+    'The conversation was changed by another request while it was being loaded, so this request did not run. '
+    'Reload the conversation from the server and try again.'
+)
 
 
 def _check_conversation_store_run(message_history: Sequence[ModelMessage] | None, conversation_id: str | None) -> None:
@@ -1268,7 +1272,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         if record is not None and record.scope != self.conversation_scope:
             raise UserError(f'Conversation {conversation_id!r} was not found.')
         if loaded is not None and (record is None or record.revision != loaded.revision):
-            raise UserError(_CONVERSATION_CHANGED)
+            raise UserError(_CONVERSATION_CHANGED_WHILE_LOADING)
         return loaded
 
     async def _conversation_available(self, conversation_id: str) -> bool:
