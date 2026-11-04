@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Literal, cast
 
 from prefect import task
-from prefect.context import FlowRunContext
+from prefect.context import FlowRunContext, TaskRunContext
 
 from pydantic_ai._utils import now_utc
 from pydantic_ai.agent import EventStreamHandler
@@ -119,6 +119,10 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     @property
     def in_durable_context(self) -> bool:
         return FlowRunContext.get() is not None
+
+    @property
+    def in_durable_unit(self) -> bool:
+        return TaskRunContext.get() is not None or super().in_durable_unit
 
     def get_default_run_id(self) -> str | None:
         context = FlowRunContext.get()
