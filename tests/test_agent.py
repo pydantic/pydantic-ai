@@ -9542,6 +9542,7 @@ def test_tool_call_with_validation_value_error_serializable():
                     'outcome': 'retried',
                     'retry': {'cause': 'validation_error', 'attempt': 1, 'max_retries': 1},
                     'part_kind': 'tool-return',
+                    'content_file_digests': [],
                 }
             ],
             'timestamp': IsStr(),
