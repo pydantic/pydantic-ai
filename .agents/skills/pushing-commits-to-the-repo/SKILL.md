@@ -86,6 +86,19 @@ Diagnose the failed jobs of the PR's newest `merge_group` run (`head_branch` `gh
 After diagnosing, post a PR comment that names each failed job and its cause, with evidence: your fix commit, a known flake, or a failure already on `main`.
 [Who merges](#who-merges) says whether you re-enqueue it.
 
+### Flake claims
+
+Claim a flake through its GitHub issue before you fix it, so that two agents never fix the same flake.
+
+1. Search the open issues for the failing test: `gh issue list -R pydantic/pydantic-ai --state open --search '<test name> in:title'`.
+2. If no issue names the test, file one. Title it `Flaky <test node id>`, label it `flake`, and link the failing CI run in the body.
+3. Cite the issue as evidence that the failure is a known flake.
+4. An issue with an assignee or a claim comment is claimed. If someone else holds the claim, do not fix the flake.
+5. To claim an unclaimed issue, assign it to yourself. If you cannot assign it, comment that you are fixing it and name your branch. Claim the issue before you write the fix.
+6. The fix PR closes the issue: put `Closes #<issue>` in its body.
+
+A flake that this PR's diff introduced needs no issue. Fix it in this PR.
+
 ### Flake fixes
 
 A flake fix removes the source of nondeterminism that makes a test fail intermittently, so it passes deterministically.
@@ -93,6 +106,7 @@ The trivial-S exception does not apply: require a clean douwebot approval.
 All of these must hold:
 
 - The PR body links a CI run where the test failed.
+- Unless this PR's own diff introduced the flake, the PR body closes the flake's issue, and you claimed that issue before you wrote the fix, as [Flake claims](#flake-claims) says.
 - The PR body names the root cause and a reproduction that fails without the fix and passes with it.
   Force the failure, for example with a `pytest-randomly` seed, a forced ordering or a frozen clock.
   Or run the test repeatedly, and report its failure count without the fix and zero failures in at least as many runs with it.
@@ -411,8 +425,11 @@ if the head changes, capture the new SHA and restart the loop.
    Its success certifies every job it contains, coverage included. Do not inspect individual jobs
    or their logs to reconfirm a success. Don't idle. If it fails, diagnose: fix if the failure is
    yours; if it's a known flake or pre-existing on main, say so with evidence.
-   When a flake fails your CI, fix it in this PR if this PR caused it, or if this PR is labeled `size: S` or `size: M` and the fix stays within the root `AGENTS.md` scope rule.
-   Otherwise, ask the person driving you whether to start a separate worktree and task to fix it.
+   When a flake fails your CI, fix it in this PR if this PR caused it.
+   For any other flake, find or file its issue as [Flake claims](#flake-claims) says.
+   Fix that flake in this PR only if you hold its claim, this PR is labeled `size: S` or `size: M`, and the fix stays within the root `AGENTS.md` scope rule.
+   Otherwise, if someone else holds the claim, cite their issue as the flake's evidence and leave the fix to them.
+   In every other case, ask the person driving you whether to start a separate worktree and task to fix it.
    Recommend yes.
 3. **Meet the merge bar on the captured SHA.**
    - **`CI Review`:** do not wait for it unless explicitly requested. On same-repository PRs, it runs

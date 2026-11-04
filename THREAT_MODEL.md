@@ -19,6 +19,8 @@ The same agent can run inside applications with different authority. Evaluate a 
 
 See [UI adapters](docs/ui/overview.md), [realtime deployment](docs/realtime/deployment.md), [workspaces](docs/workspace.md), [CLAI 2](src/pydantic_clai2/README.md), and [durable execution](docs/durable_execution/overview.md).
 
+Unlaunched packages: `pydantic-clai2` (CLAI 2). Maintainers handle a report against an unlaunched package as a bug, not a vulnerability. The CLAI 2 rows below still describe its intended boundary.
+
 Examples and documentation snippets show how to use an API; they are not hardened deployments. A flaw in one is a documentation bug for a public issue or pull request, unless the library code it calls breaks a documented boundary.
 
 A vulnerability in a third-party dependency or in CPython belongs to that project. When a dependency publishes a fix, the repository lock raises that dependency's floor, and the published requirements keep admitting the patched release; applications install that release themselves. Pydantic AI code does not work around the vulnerability. A CPython vulnerability fixed only in a later Python release does not change the [supported Python versions](docs/version-policy.md#support-for-python-versions); an application running an affected version carries that vulnerability until it upgrades Python. A Pydantic AI check that relies on dependency or CPython behavior is still a library control, so a bypass of that check is a Pydantic AI vulnerability.
@@ -215,6 +217,8 @@ A configuration-dependent report needs explicit deployment assumptions. For libr
 
 ## Keeping this model current
 
-Update this document when a change adds an input path, transfers authority, changes a trust or disclosure default, or changes an execution backend's guarantee. Keep option-level details in their canonical component documentation.
+Update this document in the PR that adds an input path, transfers authority, changes a trust or disclosure default, or changes an execution backend's guarantee. Keep option-level details in their canonical component documentation.
+
+When the new input path accepts client input, the same PR extends the `Pydantic AI UI Security Review` workflow to it. Add the path's source files to the `detect` step's path list in [`.github/workflows/pydantic-ai-ui-security-review.md`](.github/workflows/pydantic-ai-ui-security-review.md), and recompile its lock file.
 
 For a change crossing a boundary, trace the incoming value to its authorization or validation and trace the outgoing value to its audience. Include a regression test for the specific control. Review adapter protocols, local/provider transports, execution backends, and cancellation or recovery paths that share the affected mechanism.
