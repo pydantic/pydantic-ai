@@ -2754,9 +2754,10 @@ class OpenAILiveModel(RealtimeModel):
                 forwards_output_audio=False,
                 reattach=attach,
                 reconnect=settings.get('reconnect'),
+                # What the offer started the backend with, which an update builds on: its native tools stay.
                 backend=(
-                    {'instructions': delegation.responses.instructions}
-                    if delegation and delegation.type == 'responses' and delegation.responses.instructions
+                    delegation.responses.model_dump(mode='json', include={'instructions', 'tools'}, exclude_none=True)
+                    if delegation and delegation.type == 'responses'
                     else None
                 ),
             )
