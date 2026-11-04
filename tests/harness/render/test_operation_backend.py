@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable
-from dataclasses import replace
 
 import pytest
 from render.workflows import Options, Retry, Workflows
@@ -138,7 +137,7 @@ async def test_registered_task_options_are_snapshotted_when_the_agent_is_bound()
         return 'pong'  # pragma: no cover - invocation is outside this registration or rejection contract
 
     assert options.retry is not None
-    options.retry = replace(options.retry, max_retries=99)
+    options.retry.max_retries = 99
     options.timeout_seconds = 1
 
     with pytest.raises(UserError, match='fixed when an agent is bound'):

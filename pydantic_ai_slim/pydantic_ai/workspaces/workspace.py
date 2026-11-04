@@ -13,7 +13,6 @@ import anyio
 from typing_extensions import get_protocol_members
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import Authority
 
 from .protocol import (
     CommandResult,
@@ -388,15 +387,6 @@ class Workspace(WorkspaceBackend):
     def read_only(self) -> bool:
         """Whether this workspace refuses commands and file changes, so tools can leave those out."""
         return isinstance(self._backend, Workspace) and self._backend.read_only
-
-    @property
-    def authority(self) -> Authority:
-        """The [authority][pydantic_ai.messages.Authority] of this workspace's files, so capabilities know how to send their text.
-
-        `'operator'` unless an [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace] wrapper lowers it;
-        with several, the lowest wins. Tools work the same either way.
-        """
-        return self._backend.authority if isinstance(self._backend, Workspace) else 'operator'
 
     def durable_policy(self) -> tuple[object, ...]:
         """Configuration a durable unit must rebuild with this wrapper.

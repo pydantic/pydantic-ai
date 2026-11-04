@@ -40,7 +40,6 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
-    AuthorityWorkspace,
     CommandResult,
     FileEntry,
     LocalWorkspaceBackend,
@@ -804,22 +803,6 @@ def test_a_plain_workspace_around_a_wrapper_keeps_its_policy() -> None:
 
     assert nested.read_only
     assert workspace_layers(nested) == [ReadOnlyWorkspace, FakeWorkspace]
-
-
-def test_authority_is_the_lowest_through_the_wrappers() -> None:
-    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
-    plain = Workspace(FakeWorkspace('plain'))
-    users = AuthorityWorkspace(plain, authority='user')
-
-    assert ctx.workspace.authority == 'operator'
-    assert plain.authority == 'operator'
-    assert ReadOnlyWorkspace(plain).authority == 'operator'
-    assert AuthorityWorkspace(plain, authority='operator').authority == 'operator'
-    assert users.authority == 'user'
-    assert Workspace(ReadOnlyWorkspace(AuthorityWorkspace(users, authority='none'))).authority == 'none'
-    # An outer wrapper can't raise what an inner one capped.
-    assert AuthorityWorkspace(AuthorityWorkspace(plain, authority='none'), authority='operator').authority == 'none'
-    assert users.durable_policy() == ('user',)
 
 
 async def test_bare_run_context_workspace_explains_how_to_attach_one() -> None:

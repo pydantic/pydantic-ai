@@ -400,12 +400,7 @@ class SqliteMediaStore:
         conn = sqlite3.connect(
             self._database, isolation_level=None, check_same_thread=False, timeout=_BUSY_TIMEOUT_SECONDS
         )
-        try:
-            # Fails while another connection holds a new database locked, as concurrent first writers can.
-            conn.execute('PRAGMA journal_mode=WAL').close()
-        except BaseException:
-            conn.close()
-            raise
+        conn.execute('PRAGMA journal_mode=WAL').close()
         return conn
 
     def _maybe_close(self, conn: sqlite3.Connection) -> None:
