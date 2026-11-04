@@ -10,8 +10,8 @@ from typing import Literal, assert_never, overload
 from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelContextWindowExceededError,
+    ModelEmptyResponseError,
     ModelHTTPError,
-    UnexpectedModelBehavior,
 )
 
 from .. import _model_errors, usage
@@ -284,7 +284,7 @@ class CohereModel(Model[AsyncClientV2]):
             with _map_api_errors(self.model_name):
                 first_event = await peekable_response.peek()
             if isinstance(first_event, _Unset):
-                raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
+                raise ModelEmptyResponseError(self.model_name, 'Streamed response ended without content or tool calls')
             yield CohereStreamedResponse(
                 model_request_parameters=model_request_parameters,
                 _model_name=self._model_name,

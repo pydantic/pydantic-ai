@@ -38,7 +38,7 @@ from pydantic_ai import (
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import (
     ModelContextWindowExceededError,
-    UnexpectedModelBehavior,
+    ModelEmptyResponseError,
     UserError,
 )
 from pydantic_ai.messages import MultiModalContent
@@ -1187,9 +1187,12 @@ async def test_request_stream_error_on_entry(allow_model_requests: None) -> None
 async def test_request_stream_empty(allow_model_requests: None) -> None:
     client = MockAsyncClientV2.create_stream_mock([])
     model = CohereModel('command-r', provider=CohereProvider(cohere_client=client))
-    with pytest.raises(UnexpectedModelBehavior, match='Streamed response ended without content or tool calls'):
+    with pytest.raises(
+        ModelEmptyResponseError, match='Streamed response ended without content or tool calls'
+    ) as exc_info:
         async with model.request_stream([], None, ModelRequestParameters()):
             pass  # pragma: no cover
+    assert exc_info.value.model_name == 'command-r'
 
 
 async def test_stream_error_during_iteration(allow_model_requests: None):
