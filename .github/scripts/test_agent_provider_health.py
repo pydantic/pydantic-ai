@@ -2715,7 +2715,11 @@ def test_scheduled_recovery_retires_task_incidents_whose_pr_closed_or_moved(
             _issue(9, health.IncidentMarker('provider', 'zai', 'rate_limit', '9', '2026-09-30T00:00:00Z')),
         ]
     )
-    client.pull_requests = {7: _pull(7, 'closed', 'aaa', merged=True), 8: _pull(8, 'open', 'ccc'), 10: _pull(10, 'open', 'eee')}
+    client.pull_requests = {
+        7: _pull(7, 'closed', 'aaa', merged=True),
+        8: _pull(8, 'open', 'ccc'),
+        10: _pull(10, 'open', 'eee'),
+    }
     client.branch_pulls = {
         'org:feature': [_pull(12, 'open', 'ddd'), _pull(11, 'closed', 'old')],
         'org:gone': [_pull(13, 'closed', 'ggg')],
@@ -2728,7 +2732,7 @@ def test_scheduled_recovery_retires_task_incidents_whose_pr_closed_or_moved(
 
     out = capsys.readouterr().out
     # An unreadable PR leaves its incident open without stopping provider recovery.
-    assert 'Could not check task incident #7' in out
+    assert 'Could not retire task incident #7' in out
     reasons = {
         1: 'PR #7 is merged.',
         2: 'PR #8 moved from `bbb` to `ccc`.',
@@ -2743,6 +2747,42 @@ def test_scheduled_recovery_retires_task_incidents_whose_pr_closed_or_moved(
         assert [(number, body.split(' This incident')[0]) for number, body in client.comments] == [
             (number, f'Retired: {reason}') for number, reason in reasons.items()
         ]
+
+
+def test_a_failed_retirement_write_leaves_scheduled_recovery_running(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A failed comment or close leaves that incident open without stopping the rest of the hourly run."""
+
+    class _FailingWrites(FakeGitHub):
+        def request(self, method: str, path: str, payload: object | None = None) -> object:
+            if (method, path) in (('POST', 'issues/1/comments'), ('PATCH', 'issues/2')):
+                raise health.urllib.error.HTTPError(path, 502, 'Bad Gateway', Message(), None)
+            return super().request(method, path, payload)
+
+    client = _FailingWrites(
+        [
+            _issue(
+                number,
+                health.IncidentMarker(
+                    'task', f'CI Review:CI Review:pull_request:{number}:aaa:', 'other', str(number), None
+                ),
+            )
+            for number in (1, 2, 3)
+        ]
+        + [_issue(9, health.IncidentMarker('provider', 'zai', 'rate_limit', '9', '2026-09-30T00:00:00Z'))]
+    )
+    client.pull_requests = {number: _pull(number, 'closed', 'aaa') for number in (1, 2, 3)}
+    monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
+    monkeypatch.setattr(health, '_fetch_zai_quota', lambda *_: health.Quota('healthy'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 1, tzinfo=dt.UTC))
+
+    assert _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=None)) == 0
+
+    out = capsys.readouterr().out
+    assert 'Could not retire task incident #1' in out
+    assert 'Could not retire task incident #2' in out
+    assert client.closed == [3, 9]
 
 
 def test_open_incidents_read_normalized_issue_creation_time() -> None:

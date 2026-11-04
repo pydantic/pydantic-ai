@@ -1367,23 +1367,23 @@ def _retire_task_incidents(client: GitHubClient, issues: list[Issue], *, dry_run
         marker = _marker_from_body(issue.body)
         if marker is None or marker.scope != 'task':
             continue
-        # One unreadable PR must not stop the provider recovery that follows.
+        # One unreadable PR or failed write must not stop the provider recovery that follows.
         try:
             reason = _task_retirement(client, marker)
+            if reason is None:
+                continue
+            if dry_run:
+                print(f'DRY RUN: would retire task incident #{issue.number}: {reason}')
+                continue
+            comment = (
+                f'Retired: {reason} This incident blocked only runs on that PR head, so it no longer blocks anything. '
+                'It did not record a recovery of the failed run.'
+            )
+            client.request('POST', f'issues/{issue.number}/comments', {'body': comment})
+            client.close_issue(issue.number)
         except (OSError, ValueError) as exc:
-            print(f'Could not check task incident #{issue.number}: {exc}')
+            print(f'Could not retire task incident #{issue.number}: {exc}')
             continue
-        if reason is None:
-            continue
-        if dry_run:
-            print(f'DRY RUN: would retire task incident #{issue.number}: {reason}')
-            continue
-        comment = (
-            f'Retired: {reason} This incident blocked only runs on that PR head, so it no longer blocks anything. '
-            'It did not record a recovery of the failed run.'
-        )
-        client.request('POST', f'issues/{issue.number}/comments', {'body': comment})
-        client.close_issue(issue.number)
         print(f'Retired task incident #{issue.number}: {reason}')
 
 

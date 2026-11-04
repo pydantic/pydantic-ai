@@ -48,7 +48,7 @@ from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, 
 from contextlib import AsyncExitStack, asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Annotated, Any, TypeAlias, cast
+from typing import Annotated, Any, ClassVar, TypeAlias, cast
 
 import httpx2
 import logfire
@@ -161,10 +161,6 @@ def _mcp_protocol_error_message(error: Exception) -> str | None:
     return None
 
 
-# gh-aw's safe-outputs server rejects a call past a type's `max` with this code (`enforcePerTypeMax`).
-SAFE_OUTPUT_LIMIT_ERROR = 'E002: '
-
-
 @dataclass
 class _AnswerSafeOutputLimit(WrapperToolset[object]):
     """Answer a safe output past its per-run limit at the toolset, where the tool manager has not yet charged it.
@@ -172,6 +168,9 @@ class _AnswerSafeOutputLimit(WrapperToolset[object]):
     `MCPToolset` raises the server's rejection as a `ModelRetry`, which the tool manager counts against the
     tool's retries before any tool-execute hook runs.
     """
+
+    # gh-aw's safe-outputs server rejects a call past a type's `max` with this code (`enforcePerTypeMax`).
+    _LIMIT_ERROR: ClassVar[str] = 'E002: '
 
     async def call_tool(
         self, name: str, tool_args: dict[str, object], ctx: RunContext[object], tool: ToolsetTool[object]
@@ -183,7 +182,7 @@ class _AnswerSafeOutputLimit(WrapperToolset[object]):
             if (
                 _safe_output_type(name) is None
                 or not isinstance(limit_error, McpError)
-                or SAFE_OUTPUT_LIMIT_ERROR not in str(limit_error)
+                or self._LIMIT_ERROR not in str(limit_error)
             ):
                 raise
             logger.warning('safe output %r is past its limit — returned to model as a result', name)
