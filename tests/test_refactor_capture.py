@@ -5,7 +5,7 @@ They test the capture tooling rather than model behavior, so no recording applie
 
 from __future__ import annotations
 
-import importlib
+import importlib.util
 import json
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -27,7 +27,11 @@ with try_import() as imports_successful:
 pytest_plugins = ['pytester']
 
 pytestmark = [
-    pytest.mark.skipif(not imports_successful(), reason='`httpx`, `groq` or `anthropic` not installed'),
+    # The plugin imports `httpx`, `groq` and `anthropic`; the `REQUESTS` sessions import `openai` too.
+    pytest.mark.skipif(
+        not imports_successful() or importlib.util.find_spec('openai') is None,
+        reason='`httpx`, `groq`, `anthropic` or `openai` not installed',
+    ),
     # A capture of this session would record the streams of the sessions these tests run inside it.
     pytest.mark.skipif(
         "config.getoption('--refactor-capture', None) is not None", reason='runs inside a refactor capture'
