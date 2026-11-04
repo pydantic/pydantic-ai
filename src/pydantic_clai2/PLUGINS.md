@@ -1492,7 +1492,8 @@ worktree under its repository by the checkout saved with it (`ConversationSummar
 page lists them by project, or all together, in the order they were created
 (`ConversationSummary.created_at`). Archived ones are left out except in its Archived view
 (`GET /api/sessions?include_archived=true`; `POST /api/sessions/ID/archive` and `/unarchive`, and
-`POST /api/sessions/archive` for a branch's or project's sessions at once).
+`POST /api/sessions/archive` for a branch's or project's sessions at once). A session imported from
+Claude Code or Codex carries that agent's name (`source`), shown beside its title.
 
 Under `clai2 --web`, clicking a session opens it live (`POST /api/sessions/ID/open`, which calls
 `host.live.open`), even while other sessions run turns: it is resumed in a session of its own, in
@@ -1837,7 +1838,7 @@ card that names a workspace has an **Open** button that shows that session in th
 | `session_wait(workspace, timeout=300)` | wait, up to an hour, until the turn ends (then its final answer) or the session asks something |
 | `session_interrupt(workspace)` | stop the running turn |
 | `session_answer(workspace, request, answers=None)` | answer a question request; no `answers` declines |
-| `sessions_find(query='', project='', older_than_days=None, include_archived=False, limit=50)` | saved sessions of every project, from `host.sessions`, as a table: ID, title, project, worktree, last active, archived |
+| `sessions_find(query='', project='', older_than_days=None, include_archived=False, limit=50)` | saved sessions of every project, from `host.sessions`, as a table: ID, title (with `(from Claude Code)` or `(from Codex)` for an imported one), project, worktree, last active, archived |
 | `sessions_archive(ids)` | archive them, reporting each one archived and each refused (the current session, running ones) with the reason |
 | `sessions_unarchive(ids)` | list them again |
 
