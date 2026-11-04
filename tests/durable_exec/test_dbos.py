@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, patch
@@ -21,6 +22,7 @@ from unittest.mock import AsyncMock, patch
 import httpx2
 import pytest
 from httpx import AsyncClient
+from packaging.version import Version
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -113,23 +115,21 @@ from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 from ..conftest import IsDatetime, IsNow, IsStr, detach_dbos_logging, without_admin_server
 from ..realtime_connections import InferredConnection
 
-try:
-    from dbos import DBOS, DBOSConfig, SetWorkflowID
-    from dbos._error import DBOSAwaitedWorkflowCancelledError
-    from dbos._serialization import DBOSDefaultSerializer, deserialize_exception, serialize_exception
+# Skips only when `dbos` itself is missing, so an import below that a supported `dbos` version lacks fails loudly.
+pytest.importorskip('dbos')
 
-    from pydantic_ai.durable_exec._toolset import unwrap_recorded_tool_call_result, wrap_tool_call_result
-    from pydantic_ai.durable_exec.dbos import (
-        DBOSAgent,  # pyright: ignore[reportDeprecated]
-        DBOSDurability,
-        DBOSModel,
-        StepConfig,
-    )
-    from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset, dbosify_mcp_toolset
-    from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
+from dbos import DBOS, DBOSConfig, SetWorkflowID
+from dbos._error import DBOSAwaitedWorkflowCancelledError
 
-except ImportError:  # pragma: lax no cover
-    pytest.skip('DBOS is not installed', allow_module_level=True)
+from pydantic_ai.durable_exec._toolset import unwrap_recorded_tool_call_result, wrap_tool_call_result
+from pydantic_ai.durable_exec.dbos import (
+    DBOSAgent,  # pyright: ignore[reportDeprecated]
+    DBOSDurability,
+    DBOSModel,
+    StepConfig,
+)
+from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset, dbosify_mcp_toolset
+from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 
 try:
     import logfire
@@ -6783,12 +6783,18 @@ async def test_dbos_stream_failing_before_output_falls_back(dbos: DBOS) -> None:
     ],
     ids=lambda error: type(error).__name__,
 )
+@pytest.mark.skipif(
+    Version(version('dbos')) < Version('2.14'),
+    reason='`dbos` 2.14 added `serialize_exception` and `DBOSDefaultSerializer`',
+)
 def test_dbos_records_what_a_stream_produced_before_failing(error: ModelAPIError) -> None:
     """A step that failed after its stream produced output is raised on replay with what the stream produced.
 
     DBOS records a step's error by pickling it and raises the unpickled copy when a recovered workflow replays the
     step, so the run treats it as a stream that failed after it started, as the run that recorded it did.
     """
+    from dbos._serialization import DBOSDefaultSerializer, deserialize_exception, serialize_exception
+
     partial = ModelResponse(parts=[TextPart('partial')], usage=RequestUsage(input_tokens=5, output_tokens=1))
     mark_streamed_before_failing(error, partial)
     recorded, serialization = serialize_exception(error, None, DBOSDefaultSerializer)
