@@ -962,8 +962,5 @@ def test_model_response_errors_are_model_api_errors_and_unexpected_model_behavio
     assert isinstance(error, ModelAPIError)
     assert isinstance(error, UnexpectedModelBehavior)
     assert (error.model_name, error.message, error.body) == ('gpt-4', 'Unusable response', '<html>Bad gateway</html>')
-    assert str(error) == snapshot("""\
-Unusable response, body:
-<html>Bad gateway</html>\
-""")
+    assert str(error) == 'Unusable response'
     assert str(error_type('gpt-4', 'Unusable response')) == 'Unusable response'

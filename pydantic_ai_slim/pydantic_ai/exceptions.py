@@ -927,6 +927,11 @@ class _ModelResponseError(ModelAPIError, UnexpectedModelBehavior):
         # string.
         self.body = body  # pyright: ignore[reportIncompatibleVariableOverride]
 
+    def __str__(self) -> str:
+        # Like every other `ModelAPIError`, not `UnexpectedModelBehavior`, which appends the body: a response body can
+        # hold the whole completion, which doesn't belong in logs or a Temporal workflow's history.
+        return self.message
+
 
 class ModelEmptyResponseError(_ModelResponseError):
     """Raised when the provider answered a request successfully but sent no response in it.

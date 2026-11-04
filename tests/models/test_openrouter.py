@@ -604,8 +604,9 @@ async def test_openrouter_validate_non_json_response(openrouter_api_key: str) ->
         model._process_response('This is not JSON!')  # type: ignore[reportPrivateUsage]
 
     assert str(exc_info.value) == snapshot(
-        'Invalid response from openrouter chat completions endpoint, expected JSON data, body:\nThis is not JSON!'
+        'Invalid response from openrouter chat completions endpoint, expected JSON data'
     )
+    assert exc_info.value.body == 'This is not JSON!'
 
 
 async def test_openrouter_validate_error_response(openrouter_api_key: str) -> None:
