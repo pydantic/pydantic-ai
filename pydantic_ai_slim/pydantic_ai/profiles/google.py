@@ -315,15 +315,15 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     )
     if thinking_levels is not None:
         profile['google_thinking_levels'] = thinking_levels
-    _set_gemini_file_input(profile, is_gemma=is_gemma, is_older_gemini=is_older_gemini)
+    _set_gemini_file_input(profile, is_gemma=is_gemma, is_gemini_2_5=is_gemini_2_5)
     return profile
 
 
-def _set_gemini_file_input(profile: ModelProfile, *, is_gemma: bool, is_older_gemini: bool) -> None:
+def _set_gemini_file_input(profile: ModelProfile, *, is_gemma: bool, is_gemini_2_5: bool) -> None:
     if not is_gemma:
         profile['supported_image_media_types'] = _GEMINI_IMAGE_MEDIA_TYPES
         profile['supported_audio_media_types'] = _GEMINI_AUDIO_MEDIA_TYPES
-    if is_older_gemini:
+    if is_gemini_2_5:
         # Gemini 2.5 answers Word and Excel files with a 500 on the Gemini API and Vertex AI alike, where
         # Gemini 3 reads them (checked live 2026-11-04).
         profile['supported_document_media_types'] = KNOWN_DOCUMENT_MEDIA_TYPES - _OFFICE_DOCUMENT_MEDIA_TYPES

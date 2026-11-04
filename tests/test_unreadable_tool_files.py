@@ -162,7 +162,7 @@ async def test_tool_file_the_model_can_read_is_sent_as_it_is():
         pytest.param(
             ModelProfile(supported_document_media_types=frozenset({'application/pdf'})),
             BinaryContent(b'a,b', media_type='text/csv', identifier='table'),
-            'File table (text/csv, 3 bytes) was not sent: this model cannot read text/csv documents.',
+            'File table (text/csv, 3 bytes) was not sent: this model cannot read text/csv files.',
             id='document-media-type',
         ),
         pytest.param(
@@ -214,7 +214,7 @@ async def test_text_document_of_unlisted_media_type_is_noted_without_plain_text(
 
     [request] = sent
     assert tool_returns(request)[0].content == snapshot(
-        'File f338fe (application/json) was not sent: this model cannot read application/json documents.'
+        'File f338fe (application/json) was not sent: this model cannot read application/json files.'
     )
 
 
@@ -227,7 +227,7 @@ async def test_document_of_unlisted_media_type_is_noted():
 
     [request] = sent
     assert tool_returns(request)[0].content == snapshot(
-        'File b57d90 (application/vnd.openxmlformats-officedocument.presentationml.presentation) was not sent: this model cannot read application/vnd.openxmlformats-officedocument.presentationml.presentation documents.'
+        'File b57d90 (application/vnd.openxmlformats-officedocument.presentationml.presentation) was not sent: this model cannot read application/vnd.openxmlformats-officedocument.presentationml.presentation files.'
     )
 
 
@@ -265,10 +265,7 @@ async def test_file_of_unlisted_media_type_is_noted(file: BinaryContent, profile
     [request] = sent
     [note] = tool_returns(request)
     assert isinstance(note.content, str)
-    assert note.content.endswith(f'this model cannot read {file.media_type} {NOUNS[file.media_type.split("/")[0]]}.')
-
-
-NOUNS = {'image': 'images', 'audio': 'audio files', 'video': 'video'}
+    assert note.content.endswith(f'this model cannot read {file.media_type} files.')
 
 
 async def test_image_of_listed_media_type_is_sent():
@@ -748,7 +745,7 @@ def test_adapter_narrowing_applies_over_the_user_profile():
     assert tool_returns([request])[0].content == snapshot(
         [
             pdf,
-            'File notes (text/plain, 5 bytes) was not sent: this model cannot read text/plain documents.',
+            'File notes (text/plain, 5 bytes) was not sent: this model cannot read text/plain files.',
             'File song (audio/mpeg) was not sent: this model cannot read audio files.',
         ]
     )

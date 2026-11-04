@@ -8153,7 +8153,7 @@ def test_openai_chat_audio_of_other_format_from_a_tool_is_noted(allow_model_requ
         {
             'role': 'tool',
             'tool_call_id': 'call_1',
-            'content': 'File song (audio/flac, 4 bytes) was not sent: this model cannot read audio/flac audio files.',
+            'content': 'File song (audio/flac, 4 bytes) was not sent: this model cannot read audio/flac files.',
         }
     )
 
