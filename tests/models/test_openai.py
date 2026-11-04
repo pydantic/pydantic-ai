@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx2
 import pytest
-from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, JsonValue, Tag, TypeAdapter
+from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, JsonValue, Tag, TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
@@ -5310,6 +5310,35 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
             ),
         ]
     )
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_openai_native_output_cut_off_by_max_tokens(
+    allow_model_requests: None, openai_api_key: str, stream: bool
+):
+    """JSON the token limit cut off raises right away instead of re-prompting the model with the same limit."""
+    m = OpenAIChatModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+
+    class City(BaseModel):
+        name: str
+        country: str
+
+    class Cities(BaseModel):
+        cities: list[City]
+
+    agent = Agent(m, output_type=NativeOutput(Cities), model_settings=ModelSettings(max_tokens=20))
+    prompt = 'List the 20 largest cities in the world.'
+
+    with pytest.raises(
+        UnexpectedModelBehavior,
+        match=r'Model token limit \(20\) exceeded while generating structured output, resulting in incomplete JSON\.',
+    ) as exc_info:
+        if stream:
+            async with agent.run_stream(prompt) as result:
+                await result.get_output()
+        else:
+            await agent.run(prompt)
+    assert isinstance(exc_info.value.__cause__, ValidationError)
 
 
 async def test_openai_native_output(allow_model_requests: None, openai_api_key: str):
