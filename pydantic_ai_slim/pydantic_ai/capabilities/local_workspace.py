@@ -46,7 +46,9 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
     authority: Authority = 'operator'
     """The [authority][pydantic_ai.messages.Authority] of the directory's files: `'user'` for the user's own files,
     `'none'` for files nobody on the application's side wrote. Anything below `'operator'` wraps the workspace in an
-    [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace]."""
+    [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace]. Not the same as a capability's
+    [`max_authority`][pydantic_ai.capabilities.AbstractCapability.max_authority], which caps what a capability
+    enqueues rather than describing files."""
 
     env: Mapping[str, str] | None = None
     """Environment variables for every command, on top of `PATH`, `HOME`, `LANG`, `LC_ALL` and `LC_CTYPE`.

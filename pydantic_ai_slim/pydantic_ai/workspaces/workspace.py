@@ -394,7 +394,9 @@ class Workspace(WorkspaceBackend):
         """The [authority][pydantic_ai.messages.Authority] of this workspace's files, so capabilities know how to send their text.
 
         `'operator'` unless an [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace] wrapper lowers it;
-        with several, the lowest wins. Tools work the same either way.
+        with several, the lowest wins. Tools work the same either way. Not the same as a capability's
+        [`max_authority`][pydantic_ai.capabilities.AbstractCapability.max_authority], which caps what that
+        capability enqueues: this is the authority of the files themselves.
         """
         return self._backend.authority if isinstance(self._backend, Workspace) else 'operator'
 

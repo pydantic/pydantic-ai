@@ -294,7 +294,9 @@ agent = Agent('{{ anthropic:medium }}', capabilities=[LocalWorkspace('./checkout
 ```
 
 Tools work as before: the agent reads, edits and runs commands in it. The setting is for capabilities
-that pass the workspace's own files to the model. The model treats the agent's instructions as the
+that pass the workspace's own files to the model. It describes the files, unlike a capability's
+[`max_authority`][pydantic_ai.capabilities.AbstractCapability.max_authority], which caps what that capability
+enqueues. The model treats the agent's instructions as the
 operator speaking, so a capability that would put text read from the workspace there sends it with no more
 [authority][pydantic_ai.messages.Authority] than [`ctx.workspace.authority`][pydantic_ai.workspaces.Workspace.authority]:
 in a [capability part](capabilities/custom.md#capability-parts) whose source is

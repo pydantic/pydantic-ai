@@ -253,7 +253,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477).
     """
 
-    authority: ClassVar[Authority] = 'operator'
+    max_authority: ClassVar[Authority] = 'operator'
     """The most [authority][pydantic_ai.messages.Authority] what this capability enqueues can carry.
 
     A [capability part](../capabilities/custom.md#capability-parts) it enqueues whose source has more authority
@@ -263,7 +263,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     and `'none'` frames it as data with a note naming the capability. Set it in a subclass of a capability whose
     content you don't fully control, such as one built from a plugin or another team's code. To lower one instance
     rather than every instance of a class, use
-    [`with_authority`][pydantic_ai.capabilities.AbstractCapability.with_authority].
+    [`with_max_authority`][pydantic_ai.capabilities.AbstractCapability.with_max_authority].
+
+    Not the same as a workspace's [`authority`][pydantic_ai.workspaces.Workspace.authority], which is how much
+    authority the workspace's files carry: this caps what the capability itself enqueues, whatever it read.
     """
 
     @property
@@ -301,7 +304,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     """Description of the capability."""
 
     _authority_ceiling: Authority | None = field(default=None, init=False, repr=False)
-    """The authority [`with_authority`][pydantic_ai.capabilities.AbstractCapability.with_authority] lowered this instance to.
+    """The authority [`with_max_authority`][pydantic_ai.capabilities.AbstractCapability.with_max_authority] lowered this instance to.
 
     Not a constructor argument, so capabilities with their own `__init__` and their spec schemas are unaffected.
     """
@@ -542,10 +545,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def _prepare_event_dispatch(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
         """Prepare an emitted event synchronously before immediate listeners or stream delivery."""
 
-    def with_authority(self, authority: Authority) -> Self:
+    def with_max_authority(self, authority: Authority) -> Self:
         """Return a copy of this capability whose enqueued parts carry no more than `authority`.
 
-        Lowers this one instance, where the [`authority`][pydantic_ai.capabilities.AbstractCapability.authority]
+        Lowers this one instance, where the [`max_authority`][pydantic_ai.capabilities.AbstractCapability.max_authority]
         class attribute lowers every instance of a class: for example, one MCP server you don't control at `'none'`
         while the others keep `'operator'`. It only ever lowers: asking for more authority than the capability
         already has leaves it where it is.
@@ -554,9 +557,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     @property
     def _effective_authority(self) -> Authority:
-        """The class's `authority`, lowered by `with_authority` on this instance."""
+        """The class's `max_authority`, lowered by `with_max_authority` on this instance."""
         ceiling = self._authority_ceiling
-        return self.authority if ceiling is None else _lower_authority(self.authority, ceiling)
+        return self.max_authority if ceiling is None else _lower_authority(self.max_authority, ceiling)
 
     def _keep_authority(self, resolved: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Carry this instance's lowered authority to what its `for_run` or `for_agent` returned.
@@ -571,10 +574,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
             or resolved._effective_authority == _lower_authority(resolved._effective_authority, ceiling)
         ):
             return resolved
-        return resolved.with_authority(ceiling)
+        return resolved.with_max_authority(ceiling)
 
     async def _for_run_keeping_authority(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        """`for_run`, keeping the authority `with_authority` lowered this instance to."""
+        """`for_run`, keeping the authority `with_max_authority` lowered this instance to."""
         return self._keep_authority(await self.for_run(ctx))
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
