@@ -256,14 +256,15 @@ class TestCoder:
         assert _PLAN in seen['Delegate it'] and _FINISH not in seen['Delegate it']
         assert _FINISH in seen['Run it'] and _PLAN not in seen['Run it']
 
-    async def test_a_delegate_that_can_ask_its_parent_keeps_the_agency(self, tmp_path: Path) -> None:
+    async def test_a_delegate_with_task_control_is_also_told_to_finish(self, tmp_path: Path) -> None:
+        """Whether a delegate gets `ask_parent` depends on the workspace and sub-agent, so every delegate finishes alone."""
         model = TestModel(call_tools=[])
         coder = Coder(agency='low', repo_context=False, task_control=TaskControl())
         with delegation_level(2):
             await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert model.last_model_request_parameters is not None
         text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
-        assert _PLAN in text and _FINISH not in text
+        assert _FINISH in text and _PLAN not in text
 
     def test_unknown_agency_is_rejected(self) -> None:
         with pytest.raises(ValueError, match=r"`agency` must be one of 'low', 'medium', 'high', 'max', not 'full'"):

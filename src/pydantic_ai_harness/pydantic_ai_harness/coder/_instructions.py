@@ -18,7 +18,8 @@ _AGENCY: dict[Agency, str] = {
 }
 
 _DELEGATED = 'You are running a delegated task and nobody can answer questions. Choose sensible defaults and finish.'
-"""Replaces the agency sentence in a delegate that has no `ask_parent`, which a plan-and-wait level would leave idle."""
+"""Replaces the agency sentence in a delegate: its parent already chose the task, and whether it can ask back depends
+on the workspace and sub-agent settings, so a plan-and-wait level could leave it idle."""
 
 _INTRO = "You are a software engineering agent. Match the surrounding code's style, structure, and imports."
 
@@ -43,7 +44,7 @@ _FINISHING = 'Finish long-running work before replying; poll until done or block
 def coder_instructions(*, agency: Agency, delegate_tool: str | None, delegated: bool = False) -> str:
     """`Coder`'s default guidance for an agency level, with the delegation rule only when it can delegate.
 
-    `delegated` marks a delegate run that cannot ask its parent, so it is told to finish on its own.
+    `delegated` marks a delegate run, which is told to finish on its own.
     """
     autonomous = agency in ('high', 'max')
     checks = [

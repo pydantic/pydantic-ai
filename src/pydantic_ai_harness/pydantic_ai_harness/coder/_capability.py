@@ -118,9 +118,9 @@ and discards its work.
 
 
 def _guidance(
-    *, agency: Agency, delegate_tool: str | None, can_ask_parent: bool, extra: str | None
+    *, agency: Agency, delegate_tool: str | None, extra: str | None
 ) -> Callable[[RunContext[AgentDepsT]], str]:
-    """The default guidance plus `extra`, with a delegate that can't ask its parent told to finish on its own.
+    """The default guidance plus `extra`, with a delegate run told to finish on its own.
 
     `include_self` delegates to a fresh run of this agent, so without this a `'low'` delegate would
     propose a plan to nobody and stop.
@@ -132,7 +132,7 @@ def _guidance(
     }
 
     def guidance(ctx: RunContext[AgentDepsT]) -> str:
-        return texts[not can_ask_parent and delegation_depth() > 1]
+        return texts[delegation_depth() > 1]
 
     return guidance
 
@@ -232,7 +232,6 @@ class Coder(CombinedCapability[AgentDepsT]):
                     _guidance(
                         agency=agency,
                         delegate_tool=delegation.tool_name if delegation is not None else None,
-                        can_ask_parent=task_control is not None,
                         extra=instructions,
                     ),
                     # Naming the directory creates a lazily created sandbox, so it comes only with

@@ -178,9 +178,10 @@ everything the agent has -- the same model, workspace, instructions, and capabil
 gate, guardrail, or audit hook bound next to `Coder`, so those see the commands a delegate runs too. A
 delegate can delegate in turn, up to three levels counting the top-level run (`SubAgents.max_depth`).
 
-`Coder`'s instructions tell the agent not to spawn sub-agents with `delegate_task` unless the user or `AGENTS.md`
-asks, the rule Codex gives its models for `spawn_agent`. A delegate explores the project again from a fresh context, so delegation the user did not ask for
-multiplies tool calls and cost. To have the agent delegate, ask for it in the prompt, in `AGENTS.md`, or in `instructions=`.
+`Coder`'s instructions tell the agent not to spawn sub-agents with `delegate_task` unless the user or `AGENTS.md` asks,
+the rule Codex gives its models for `spawn_agent`. A delegate explores the project again from a fresh context, so
+delegation the user did not ask for multiplies tool calls and cost. To have the agent delegate, ask for it in the
+prompt, in `AGENTS.md`, or in `instructions=`.
 
 Only what is bound to the `Agent` carries over to a delegate; capabilities, toolsets, instructions, and model
 settings passed to `run()` do not. So bind `Coder` with `Agent(capabilities=[...])`: passing it to `run()`
@@ -231,7 +232,8 @@ behavior with heredocs rather than new files; and finish long-running work befor
 | `'high'` (default) | Asks only for credentials, approvals, or real ambiguity, and measures results against any numeric target the task states. |
 | `'max'` | Never asks: chooses sensible defaults, measures against numeric targets, and deletes its scratch files. Use it for runs nobody can answer, such as CI jobs. |
 
-A delegate started with `delegate_task` can't ask anyone without `task_control`, so it is told to choose sensible defaults and finish, whatever the level.
+A delegate, whether started by `delegate_task` or used as another agent's sub-agent, was handed its task by its parent,
+so whatever the level it is told to choose sensible defaults and finish.
 
 Tool descriptions supply tool usage; `RepoContext` supplies repository instructions and structure.
 The instructions also name the workspace's working directory as the project, where shell commands start and the file tools work.
