@@ -72,7 +72,7 @@ def complete(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
 
 
 def is_blank(response: ModelResponse) -> bool:
-    return not (response.text or '').strip()
+    return not response.tool_calls and not (response.text or '').strip()
 
 
 agent = Agent(
