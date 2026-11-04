@@ -260,6 +260,8 @@ Use a released compiler containing that fix once available; the runtime minimum 
 root engine block model-only; the shared import owns identity and credentials.
 `stage-gh-aw-agent.sh` configures the existing request limits in an isolated CLAI
 settings store. Workflow `engine.args` is ignored by this compiler's public-engine path.
+The public engine also ignores `tools:` allowlists. `pydantic_ai_gh_aw_shim/agent.py` withholds the shell
+from each source that declares `bash: []`.
 
 - **Never hand-edit a `*.lock.yml`.** It is generated — the header says so. Manual edits are silently overwritten on the next recompile, and until then the running workflow diverges from its source.
 - **After editing a workflow `*.md` source, recompile and commit the regenerated `*.lock.yml` in the same change** — a `*.md` edit without its recompiled lock is incomplete, and source and lock drift apart:
@@ -284,6 +286,8 @@ A fresh read-only Task must assess the actual diff, template exemption and scope
 Typos, broken links and small documentation improvements may omit an issue; nontrivial changes need an existing aligned issue assigned to the workflow actor, or noop.
 For non-exempt proposals, host validation checks frozen issue identity, open state, assignment, cited maintainer authority and closing reference.
 It also checks staged evidence and binds the review to the candidate, task and PR metadata; semantic classification belongs to the mandatory reviewer.
+The agent job records the approved proposal in its `weekly-ce-audit` artifact.
+The publication job publishes a pull request only when the ingested request equals that approved proposal.
 Local Task evidence is an execution check, not attestation against a compromised coordinator.
 
 The separate PR publication job uses the existing Docs app and retains protected-file review.
