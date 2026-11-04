@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from typing import Any
 
@@ -275,6 +276,19 @@ async def test_trio_is_refused_before_any_daytona_call(fake_daytona: FakeDaytona
         await DaytonaSandbox[None]().destroy(WorkspaceRef(provider='daytona', id='target'))
     await backend.aclose()
     assert fake_daytona.opened_clients == 0
+
+
+async def test_the_default_client_is_built_off_the_event_loop(
+    fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The real constructor checks for dotenv files, which the autouse blocking-call detector rejects on the event loop.
+    def client() -> Any:
+        os.stat('.')
+        return fake_daytona.client()
+
+    monkeypatch.setattr(daytona, 'AsyncDaytona', client)
+    await DaytonaSandbox[None]().destroy(WorkspaceRef(provider='daytona', id='target'))
+    assert fake_daytona.opened_clients == 1
 
 
 @pytest.mark.parametrize('supplied', ['client', 'workspace'])
