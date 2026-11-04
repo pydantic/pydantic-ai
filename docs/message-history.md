@@ -858,6 +858,8 @@ Some providers accept data they can't use: OpenAI ignores encrypted reasoning fr
 
 [`Model.accepts_stateless_artifacts()`][pydantic_ai.models.Model.accepts_stateless_artifacts] tells you whether a model would send a part's data back. A provider subclass that only changes its name, such as one that signs in differently to the same API, keeps its parent's canonical system, except for subclasses of [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider], which are assumed to talk to another service. To declare your own, override `canonical_system` or `compatible_systems` on your provider, or pass them to [`OpenAICompatibleProvider`][pydantic_ai.providers.openai_compatible.OpenAICompatibleProvider].
 
+The canonical system names the service a provider speaks to, whose signed data it verifies and whose provider-native features it shares, so a renamed subclass keeps both. Code that decides by service rather than by provider name reads it too, such as the [Pydantic AI Harness `Advisor`](harness/advisor.md), which uses it to tell whether an executor takes Anthropic or OpenRouter advisor model IDs. It doesn't group providers by wire protocol: `azure`, and providers like `deepseek` that speak the OpenAI API, each have their own.
+
 So a response from an `OpenAIProvider` at one `base_url` continued at another (a different gateway, say) gets its text, function calls and encrypted reasoning sent, but not its `previous_response_id` or item IDs, which the other endpoint couldn't look up. The base URLs are compared ignoring the case of the scheme and host, a default port and a trailing `/`. [`Model.accepts_server_state()`][pydantic_ai.models.Model.accepts_server_state] tells you whether a model would send a response's server-side state back; when two URLs reach the same stored state, like a proxy alias, override [`shares_server_state_with()`][pydantic_ai.providers.Provider.shares_server_state_with] on your provider. Files you upload yourself aren't judged this way: an [`UploadedFile`][pydantic_ai.messages.UploadedFile] is sent to the endpoint of whichever model you pass it to, so pass it to one that can read it.
 
 ## Sharing messages between agents
@@ -1065,6 +1067,12 @@ custom processing logic.
 Pydantic AI provides the [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] capability that allows
 you to intercept and modify the message history before each model request.
 
+That includes every request inside a run, not only the first: once the model calls a tool, the processor runs
+again before the next request and sees the run's own tool calls and results after the earlier history. To process
+only the history from earlier runs, use a [context-aware processor](#runcontext-parameter) and leave unchanged
+the messages whose [`run_id`][pydantic_ai.messages.ModelRequest.run_id] equals
+[`ctx.run_id`][pydantic_ai.tools.RunContext.run_id].
+
 !!! note "`ProcessHistory` is a thin wrapper over `before_model_request`"
     [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] is a migration-friendly wrapper
     around the [`before_model_request`](hooks.md) lifecycle hook. If you want richer control
@@ -1076,6 +1084,7 @@ you to intercept and modify the message history before each model request.
 !!! warning "History processors replace the message history"
     History processors replace the message history in the state with the processed messages, including the new user prompt part.
     This means that if you want to keep the original message history, you need to make a copy of it.
+    Later requests in the same run start from the processed messages, so a processor sees its own earlier output, not the original history.
 
     When using deferred tools, preserve their
     [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] entries, or the
@@ -1240,7 +1249,7 @@ agent = Agent('{{ openai:medium }}', capabilities=[ProcessHistory(summarize_old_
 ```
 
 !!! warning "Be careful when summarizing the message history"
-    When summarizing the message history, you need to make sure that tool calls and returns are paired, otherwise the LLM may return an error. For more details, refer to [this GitHub issue](https://github.com/pydantic/pydantic-ai/issues/2050#issuecomment-3019976269), where you can find examples of summarizing the message history.
+    Summarize each tool call together with its result, or keep both. A split pair no longer fails the request, but as with [slicing](#keep-only-recent-messages), the repair that resolves it changes what the model sees. The example above starts the kept turn with `starts_a_turn` so that no pair is split.
 
 #### Compact when the context window fills {#compact-when-the-context-window-fills}
 

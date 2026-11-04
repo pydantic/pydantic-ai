@@ -1,12 +1,14 @@
 """Keep deferred capabilities loaded across compaction, or tell the model which ones it unloaded.
 
-Core counts a deferred capability as loaded while its `load_capability` exchange is in the
+Core counts a deferred capability as loaded while the record of its load is in the
 [`post_compaction_window`][pydantic_ai.messages.post_compaction_window], the same rule as tool search's
-discoveries. A strategy that summarizes or drops the exchange therefore unloads the capability: its tools
+discoveries: the model's `load_capability` exchange, or else a `CapabilityLoadDeltaPart`, which a load from
+code leaves. A strategy that summarizes or drops the record therefore unloads the capability: its tools
 leave the request and its instructions stop being delivered, while a summary of the same turns may still
 say it is loaded. So every shipped strategy that removes history records each such load again after what
-replaced it, and core then delivers the capability's current instructions again. With
-`preserve_loaded_capabilities=False`, it leaves them unloaded and says so instead.
+replaced it, as a `CapabilityLoadDeltaPart` rather than an exchange the model never made, and core then
+delivers the capability's current instructions again. With `preserve_loaded_capabilities=False`, it leaves
+them unloaded and says so instead.
 
 This module imports only Pydantic AI, and `keep_capability_loads` is a plain function of messages and
 capability ids, so it runs workflow-side in a durable run and can move into core's compaction step
@@ -15,12 +17,10 @@ capability ids, so it runs workflow-side in a durable run and can move into core
 
 from __future__ import annotations
 
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Iterator, Sequence
 from dataclasses import dataclass
-from hashlib import sha256
 
 from pydantic_ai._deferred_capabilities import LoadExchanges
-from pydantic_ai._instructions import settle_loads
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
     CapabilityLoadDeltaPart,
@@ -39,14 +39,6 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.tools import AgentDepsT, RunContext
 
-RECORDED_LOAD_METADATA_KEY = 'pydantic-ai-harness.compaction.recorded-load.v1'
-"""Marks a `load_capability` exchange a compaction recorded, rather than one the model made.
-
-Set on the exchange's `ModelResponse.metadata` and on its `LoadCapabilityReturnPart.metadata`, neither of
-which reaches the model. The return's marker is the one that identifies the exchange: its call is the one
-with the same `tool_call_id`.
-"""
-
 UNLOADED_CAPABILITIES_ORIGIN = 'pydantic-ai-harness.compaction.unloaded-capabilities.v1'
 """The `origin` of the note `preserve_loaded_capabilities=False` leaves, naming the capabilities a compaction unloaded."""
 
@@ -54,28 +46,56 @@ UNLOADED_CAPABILITIES_ORIGIN = 'pydantic-ai-harness.compaction.unloaded-capabili
 @dataclass(frozen=True)
 class _Load:
     capability_id: str
-    returned: LoadCapabilityReturnPart
     tools: list[str] | None
+    """The tools the load revealed, if any."""
 
 
 def _loads(messages: Sequence[ModelMessage]) -> dict[str, _Load]:
-    """The capabilities loaded in the post-compaction window of *messages*, in load order, with what recorded each load."""
+    """The capabilities loaded in the post-compaction window of *messages*, in load order, with the tools each revealed.
+
+    A load is the model's `load_capability` exchange or a `CapabilityLoadDeltaPart`. A model's load reveals its
+    tools in a `ToolAvailabilityDeltaPart` with its call's `tool_call_id`, and a load from code in the one right
+    after its delta with the same `tool_call_id`: that of the tool call it was made in, or `None`. A load
+    without tools leaves no reveal, so adjacency alone would credit it with someone else's.
+    """
     exchanges = LoadExchanges()
-    returns: dict[str, LoadCapabilityReturnPart] = {}
-    tools: dict[str, list[str]] = {}
-    for message in post_compaction_window(messages):
+    loads: dict[str, _Load] = {}
+    calls: dict[str, str] = {}
+    """The capability each completed `load_capability` call loaded, by its `tool_call_id`."""
+    for part, previous in _parts_with_previous(post_compaction_window(messages)):
+        if isinstance(part, ToolAvailabilityDeltaPart) and (owner := _reveal_owner(part, previous, calls)):
+            loads[owner] = _Load(owner, part.tools_added)
+        for capability_id in exchanges.loads(part):
+            # Moved to the end, so a capability loaded again keeps its latest place in the load order.
+            loads.pop(capability_id, None)
+            loads[capability_id] = _Load(capability_id, None)
+            if isinstance(part, LoadCapabilityReturnPart):
+                calls[part.tool_call_id] = capability_id
+    return loads
+
+
+def _parts_with_previous(
+    messages: Sequence[ModelMessage],
+) -> Iterator[tuple[ModelRequestPart | ModelResponsePart, ModelRequestPart | ModelResponsePart | None]]:
+    """Each part of *messages* with the one before it in the same message, if any."""
+    for message in messages:
+        previous: ModelRequestPart | ModelResponsePart | None = None
         for part in message.parts:
-            if isinstance(part, ToolAvailabilityDeltaPart) and part.tool_call_id is not None:
-                tools[part.tool_call_id] = part.tools_added
-            elif (capability_id := exchanges.observe(part)) is not None:
-                assert isinstance(part, LoadCapabilityReturnPart)
-                # Moved to the end, so a capability loaded again keeps its latest place in the load order.
-                returns.pop(capability_id, None)
-                returns[capability_id] = part
-    return {
-        capability_id: _Load(capability_id, returned, tools.get(returned.tool_call_id))
-        for capability_id, returned in returns.items()
-    }
+            yield part, previous
+            previous = part
+
+
+def _reveal_owner(
+    reveal: ToolAvailabilityDeltaPart, previous: ModelRequestPart | ModelResponsePart | None, calls: dict[str, str]
+) -> str | None:
+    """The capability whose load *reveal* belongs to, by `tool_call_id`: a load from code in *previous*, or a model's load."""
+    if (
+        isinstance(previous, CapabilityLoadDeltaPart)
+        and previous.loaded
+        and reveal.tool_call_id == previous.tool_call_id
+    ):
+        return previous.loaded[-1]
+    return calls.get(reveal.tool_call_id) if reveal.tool_call_id is not None else None
 
 
 def deferred_capability_ids(ctx: RunContext[AgentDepsT]) -> set[str] | None:
@@ -114,33 +134,17 @@ def _insert_index(compacted: Sequence[ModelMessage], kept_from: int) -> int:
     return min(leading, kept_from, last)
 
 
-def _recorded_tool_call_id(load: _Load) -> str:
-    """A tool call id for the recorded load, derived from the one it records so a durable replay records the same one."""
-    digest = sha256(f'{load.returned.tool_call_id}:{load.capability_id}'.encode()).hexdigest()
-    return f'pyd_ai_{digest[:32]}'
+def _recorded_loads(loads: Sequence[_Load]) -> ModelRequest:
+    """The deltas recording *loads* again: per load, a `CapabilityLoadDeltaPart` and the reveal of its tools, if any.
 
-
-def _recorded_exchange(loads: Sequence[_Load]) -> list[ModelMessage]:
-    """The `load_capability` exchange recording *loads* again, marked as a compaction's own."""
-    calls: list[ModelResponsePart] = []
-    results: list[ModelRequestPart] = []
+    The records a load from code leaves, without a tool call: the model made no exchange after the compaction.
+    """
+    parts: list[ModelRequestPart] = []
     for load in loads:
-        tool_call_id = _recorded_tool_call_id(load)
-        calls.append(LoadCapabilityCallPart(args={'id': load.capability_id}, tool_call_id=tool_call_id))
-        results.append(
-            LoadCapabilityReturnPart(
-                content=load.returned.content.copy(),
-                tool_call_id=tool_call_id,
-                metadata={RECORDED_LOAD_METADATA_KEY: True},
-            )
-        )
+        parts.append(CapabilityLoadDeltaPart(loaded=[load.capability_id]))
         if load.tools:
-            results.append(ToolAvailabilityDeltaPart(tools_added=list(load.tools), tool_call_id=tool_call_id))
-    request = ModelRequest(parts=results)
-    # Settled, so core delivers each capability's current instructions after the latest message, as a change,
-    # rather than restoring them on this record as it does for a load whose statement a UI client dropped.
-    settle_loads(request, [load.capability_id for load in loads])
-    return [ModelResponse(parts=calls, metadata={RECORDED_LOAD_METADATA_KEY: True}), request]
+            parts.append(ToolAvailabilityDeltaPart(tools_added=list(load.tools)))
+    return ModelRequest(parts=parts)
 
 
 def _unloaded_note(capability_ids: Sequence[str]) -> ModelRequest:
@@ -186,11 +190,13 @@ def keep_capability_loads(
 ) -> list[ModelMessage]:
     """Record again each deferred capability load *compacted* lost from *original*, or note that it was lost.
 
-    A load is lost when its exchange is in *original*'s post-compaction window but not in *compacted*'s, and
-    its capability is in *deferred_ids*, the capabilities the run still registers as deferred (`None` when
-    that's unknown, which keeps every load). With *preserve*, each is recorded again with the content of its
-    original return, after the compaction that replaced it, so core keeps the capability loaded and delivers
-    its current instructions again. Without, a note names the capabilities that are no longer loaded.
+    A load is lost when its record, the model's `load_capability` exchange or a `CapabilityLoadDeltaPart`, is
+    in *original*'s post-compaction window but not in *compacted*'s, and its capability is in *deferred_ids*,
+    the capabilities the run still registers as deferred (`None` when that's unknown, which keeps every load).
+    With *preserve*, each is recorded again after the compaction that replaced it, in load order, as a
+    `CapabilityLoadDeltaPart` followed by the `ToolAvailabilityDeltaPart` revealing its tools, if the load
+    revealed any, so core keeps the capability loaded and delivers its current instructions again. Without, a
+    note names the capabilities that are no longer loaded.
     *kept_from* is the index in *compacted* where the kept messages start, which records go ahead of when
     there is no compaction part.
 
@@ -213,9 +219,9 @@ def keep_capability_loads(
         lost = [load for load in lost if load.capability_id not in noted]
     if not lost:
         return compacted
-    records = _recorded_exchange(lost) if preserve else [_unloaded_note([load.capability_id for load in lost])]
+    record = _recorded_loads(lost) if preserve else _unloaded_note([load.capability_id for load in lost])
     index = _insert_index(compacted, kept_from)
-    return [*compacted[:index], *records, *compacted[index:]]
+    return [*compacted[:index], record, *compacted[index:]]
 
 
 def is_load_part(part: ModelRequestPart | ModelResponsePart) -> bool:

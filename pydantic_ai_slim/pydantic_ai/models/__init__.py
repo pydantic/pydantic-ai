@@ -1779,15 +1779,18 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         prefix = model_request_parameters.instruction_parts if model_request_parameters is not None else None
         # Asked before the instruction state is projected, which drops the records it's read from.
         first_context_request = _first_context_request(messages, prefix)
-        messages = _drop_capability_load_deltas(messages)
         if _has_instruction_state(messages):
             # The same path choice as the prefix statement in `prepare_request`; on the fallback path
-            # `_wrap_non_leading_system_prompts` below `<system>`-wraps the update.
+            # `_wrap_non_leading_system_prompts` below `<system>`-wraps the update. Projection must run
+            # while the history still carries a code load's `CapabilityLoadDeltaPart`: it's the only
+            # record of that load, and folding it in is what keeps a code-loaded block rendered across
+            # instruction windows. The records go out only after, never in the messages the model sees.
             messages = _project_instruction_state(
                 messages,
                 inline_system=inline_system,
                 prefix=prefix,
             )
+        messages = _drop_capability_load_deltas(messages)
 
         messages = _render_system_prompt_contexts(
             messages,
@@ -2368,7 +2371,9 @@ class StreamedResponse(ABC):
         This method should be implemented by subclasses to translate the vendor-specific stream of events into
         pydantic_ai-format events.
 
-        It should use the `_parts_manager` to handle deltas, and should update the `_usage` attributes as it goes.
+        It should use the `_parts_manager` to handle deltas, forwarding the events that `handle_text_delta`,
+        `handle_thinking_delta` and `handle_tool_call_delta_events` yield, and should update the `_usage` attributes
+        as it goes.
         """
         raise NotImplementedError()
         # noinspection PyUnreachableCode
@@ -3412,7 +3417,7 @@ def prepare_return_schemas(
 
 
 def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestParameters) -> FinalResultEvent | None:
-    """Return an appropriate FinalResultEvent if `e` corresponds to a part that will produce a final result."""
+    """Return an appropriate FinalResultEvent if `e` corresponds to a part that could produce a final result."""
     if isinstance(e, PartStartEvent):
         new_part = e.part
         if (isinstance(new_part, TextPart) and params.allow_text_output) or (
