@@ -616,6 +616,8 @@ class FakeModal:
         self.sandboxes: list[FakeSandbox] = []
         self.create_kwargs: list[dict[str, object]] = []
         self.app_lookups: list[dict[str, object]] = []
+        self.clients: list[object] = []
+        """The client each `App.lookup`, `Sandbox.create`, `from_id` and `from_name` was given, in order."""
         self.image_tags: list[str] = []
         self.attach_ids: list[str] = []
         self.owned_creates = 0
@@ -651,7 +653,8 @@ class FakeModal:
         control = self
         module = types.ModuleType('modal')
 
-        def app_lookup(name: str, *, create_if_missing: bool = False) -> object:
+        def app_lookup(name: str, *, create_if_missing: bool = False, client: object = None) -> object:
+            control.clients.append(client)
             control.app_lookups.append({'name': name, 'create_if_missing': create_if_missing})
             return object()
 
@@ -670,7 +673,9 @@ class FakeModal:
             idle_timeout: int | None = None,
             workdir: str | None = None,
             env: dict[str, str | None] | None = None,
+            client: object = None,
         ) -> FakeSandbox:
+            control.clients.append(client)
             if control.create_error is not None:
                 raise control.create_error
             control.create_kwargs.append(
@@ -693,7 +698,8 @@ class FakeModal:
             control.sandboxes.append(workspace)
             return workspace
 
-        def sandbox_from_id(id: str) -> FakeSandbox:
+        def sandbox_from_id(id: str, client: object = None) -> FakeSandbox:
+            control.clients.append(client)
             control.attach_ids.append(id)
             if control.attach_error is not None:
                 raise control.attach_error
@@ -705,7 +711,8 @@ class FakeModal:
             control.sandboxes.append(sandbox)
             return sandbox
 
-        def workspace_from_name(app_name: str, name: str) -> FakeSandbox:
+        def workspace_from_name(app_name: str, name: str, client: object = None) -> FakeSandbox:
+            control.clients.append(client)
             existing = next((sandbox for sandbox in control.sandboxes if sandbox.name == name), None)
             if existing is None:
                 raise _EXCEPTIONS['NotFoundError']('name not found')

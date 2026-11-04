@@ -30,6 +30,7 @@ from websockets.exceptions import InvalidMessage, InvalidStatus
 from websockets.http11 import Response
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
@@ -1215,3 +1216,26 @@ async def test_trio_is_refused_before_any_sprites_call(transport: SpriteTranspor
     await backend.aclose()
     assert transport.clients == []
     assert transport.created == []
+
+
+def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
+    definitions = AgentSpec.model_json_schema_with_capabilities([SpritesSandbox])['$defs']
+    assert sorted(definitions['spec_params_SpritesSandbox']['properties']) == [
+        'defer_loading',
+        'description',
+        'env',
+        'id',
+        'runtime',
+        'working_dir',
+    ]
+
+
+def test_from_spec_forwards_the_spec_fields() -> None:
+    spec_fields: dict[str, Any] = {
+        'id': 'sandbox',
+        'description': 'a sandbox',
+        'working_dir': '/work',
+        'env': {'FOO': 'bar'},
+        'runtime': 'python',
+    }
+    assert SpritesSandbox[None].from_spec(**spec_fields) == SpritesSandbox[None](**spec_fields)
