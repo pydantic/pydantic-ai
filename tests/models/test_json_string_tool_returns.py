@@ -22,6 +22,7 @@ from pydantic_ai import (
     ModelResponse,
     TextPart,
     ToolCallPart,
+    ToolOutput,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -29,7 +30,7 @@ from pydantic_ai._file_input import unsupported_file_note
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelMessagesTypeAdapter
 from pydantic_ai.models import Model, ModelRequestParameters
-from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import ToolDefinition
 
@@ -285,6 +286,34 @@ def test_only_successful_string_returns_are_wrapped():
         'Not allowed.',
         'Final result processed.',
     ]
+
+
+async def test_a_skipped_calls_stub_is_not_wrapped():
+    """A call skipped because a final result was processed never ran, so its stub isn't sent as the tool's output."""
+
+    def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools
+        return ModelResponse(
+            parts=[
+                ToolCallPart(info.output_tools[0].name, {'value': 1}, tool_call_id='output'),
+                ToolCallPart('lookup', {}, tool_call_id='skipped'),
+            ]
+        )
+
+    model = FunctionModel(respond, profile=ModelProfile(needs_json_string_tool_returns=True))
+    agent = Agent(model, output_type=ToolOutput(dict[str, int]))
+
+    @agent.tool_plain
+    def lookup() -> str:  # pragma: no cover
+        return 'never runs'
+
+    result = await agent.run('Go.')
+
+    [request] = model.prepare_messages(result.all_messages())[-1:]
+    assert isinstance(request, ModelRequest)
+    [stub] = [part for part in request.parts if isinstance(part, ToolReturnPart) and part.tool_name == 'lookup']
+    assert stub.outcome == 'interrupted'
+    assert stub.content == 'Tool not executed - a final result was already processed.'
 
 
 def test_a_note_in_place_of_an_unreadable_file_goes_out_as_written():
