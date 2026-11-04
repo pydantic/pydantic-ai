@@ -41,7 +41,12 @@ from pydantic_clai2.runtime.project_instructions import ORIGIN, ProjectInstructi
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN
 
-USER_ONLY = {'repo_context.walk_up_roots', 'repo_context.autoload_symlink_roots', 'worktrees.remove_commands'}
+USER_ONLY = {
+    'repo_context.walk_up_roots',
+    'repo_context.autoload_symlink_roots',
+    'worktrees.remove_commands',
+    'updates.channel',
+}
 """Rejected in a project file outright."""
 APPROVED_ONLY: dict[str, JsonValue] = {
     'model': 'test:project',
@@ -49,12 +54,11 @@ APPROVED_ONLY: dict[str, JsonValue] = {
     'run.tool_retries': 0,
     'run.code_mode': False,
     'run.speculative_code_mode': True,
-    'run.permissions': 'read-only',
+    'run.permissions': 'full',
     'run.instructions': 'Project rule.',
     'accounts.pool': False,
     'sessions.naming': False,
     'sessions.naming_model': 'test:namer',
-    'updates.channel': 'main',
 }
 """A non-default value for each key that waits for approval, by `/set` key."""
 
@@ -82,13 +86,14 @@ def test_a_key_applies_only_once_approved_with_its_value(tmp_path: Path, key: st
     repo = tmp_path / 'repo'
     write(repo, {'thinking': False, **file_content({key: APPROVED_ONLY[key]})})
     store = SettingsStore(tmp_path / 'config.db')
+    store.set('run.permissions', 'read-only')  # So the project's `full` is wider than the saved mode.
     field = SETTING_FIELDS[key]
     settings_for = cli._settings_for(store, model=None, request_limit=None)  # pyright: ignore[reportPrivateUsage]
 
     project = load_project_settings(repo, store=store)
     assert project.overrides == {'display.thinking': False}, 'a display key applies at once'
     assert project.pending == {key: APPROVED_ONLY[key]}
-    assert settings_for(project).model_dump()[field] == Settings().model_dump()[field]
+    assert settings_for(project).model_dump()[field] == store.load().model_dump()[field]
     assert project.pending_notice == (
         f'Project settings not applied until you approve them with /project approve in a CLAI session: {field}'
     )
@@ -107,20 +112,67 @@ def test_a_key_applies_only_once_approved_with_its_value(tmp_path: Path, key: st
 
 
 def test_a_changed_value_waits_again(tmp_path: Path) -> None:
-    write(tmp_path, {'permissions': 'read-only'})
+    write(tmp_path, {'permissions': 'auto'})
     store = SettingsStore(tmp_path / 'config.db')
-    store.approve_project_settings(tmp_path, {'run.permissions': 'read-only'})
-    assert load_project_settings(tmp_path, store=store).overrides == {'run.permissions': 'read-only'}
+    store.set('run.permissions', 'read-only')
+    store.approve_project_settings(tmp_path, {'run.permissions': 'auto'})
+    assert load_project_settings(tmp_path, store=store).overrides == {'run.permissions': 'auto'}
     write(tmp_path, {'permissions': 'full'})
     assert load_project_settings(tmp_path, store=store).pending == {'run.permissions': 'full'}
     store.revoke_project_settings(tmp_path, ['run.permissions'])
     assert store.approved_project_settings(tmp_path) == {}
 
 
+@pytest.mark.parametrize(
+    ('saved', 'declared', 'at_once'),
+    [
+        (None, 'auto', True),
+        (None, 'read-only', True),
+        (None, 'full', True),
+        ('full', 'read-only', True),
+        ('auto', 'read-only', True),
+        ('auto', 'auto', True),
+        ('auto', 'full', False),
+        ('read-only', 'read-only', True),
+        ('read-only', 'auto', False),
+        ('read-only', 'full', False),
+    ],
+)
+def test_permissions_no_wider_than_your_own_apply_at_once(
+    tmp_path: Path, saved: str | None, declared: str, at_once: bool
+) -> None:
+    write(tmp_path, {'permissions': declared})
+    store = SettingsStore(tmp_path / 'config.db')
+    if saved is not None:
+        store.set('run.permissions', saved)
+    project = load_project_settings(tmp_path, store=store)
+    settings = cli._settings_for(store, model=None, request_limit=None)(project)  # pyright: ignore[reportPrivateUsage]
+    assert settings.permissions == (declared if at_once else (saved or 'full'))
+    assert project.pending == ({} if at_once else {'run.permissions': declared})
+    assert project.approved == frozenset(), 'applying at once is not an approval'
+
+
+def test_permissions_at_once_follow_your_own_and_need_a_store(tmp_path: Path) -> None:
+    write(tmp_path, {'permissions': 'auto'})
+    store = SettingsStore(tmp_path / 'config.db')
+    assert load_project_settings(tmp_path).pending == {'run.permissions': 'auto'}, 'your mode is unknown without one'
+    assert load_project_settings(tmp_path, store=store).overrides == {'run.permissions': 'auto'}
+    store.set('run.permissions', 'read-only')
+    assert load_project_settings(tmp_path, store=store).pending == {'run.permissions': 'auto'}, 'now it would widen'
+
+
+def test_a_project_file_cannot_set_the_update_channel(tmp_path: Path) -> None:
+    write(tmp_path, {'update_channel': 'main'})
+    store = SettingsStore(tmp_path / 'config.db')
+    with pytest.raises(ValueError, match='`update_channel` is user-only and cannot be set in a project file'):
+        load_project_settings(tmp_path, store=store)
+
+
 async def test_project_command_approves_applies_and_revokes(tmp_path: Path) -> None:
-    write(tmp_path, {'thinking': False, 'tool_retries': 0, 'permissions': 'read-only', 'model': 'test:project'})
+    write(tmp_path, {'thinking': False, 'tool_retries': 0, 'permissions': 'auto', 'model': 'test:project'})
     store = SettingsStore(tmp_path / 'config.db')
     store.set('run.tool_retries', 5)
+    store.set('run.permissions', 'read-only')
     project = load_project_settings(tmp_path, store=store)
     output = io.StringIO()
     commands = [
@@ -158,25 +210,25 @@ async def test_project_command_approves_applies_and_revokes(tmp_path: Path) -> N
         'tool_retries, permissions, model'
     ) in text
     assert '  thinking (applied): false\n' in text
-    assert '  permissions (waiting for approval): "read-only"\n' in text
+    assert '  permissions (waiting for approval): "auto"\n' in text
     assert 'Not waiting for approval here: request_limit. /project lists them.' in text
     assert 'Nothing to revoke.' in text
     assert 'Usage: /project [approve NAME...|all | revoke NAME...|all]' in text
     assert f'Approved tool_retries, permissions for {tmp_path}. Applied.' in text
     assert '  tool_retries (approved): 0\n' in text
-    assert f'Revoked tool_retries for {tmp_path}. Your own settings apply again.' in text
-    # The project's 0, then your saved 5; the project's read-only, then the default full.
+    assert f'Revoked tool_retries for {tmp_path}.' in text
+    # The project's 0, then your saved 5; the project's auto, then your saved read-only.
     assert text.index('\n0\n') < text.index('\n5\n')
-    assert text.index('\nread-only\n') < text.index('\nfull\n')
-    assert f'Approved model, tool_retries, permissions for {tmp_path}. Applied.' in text
+    assert text.index('\nauto\n') < text.index('\nread-only\n')
+    assert f'Approved permissions, tool_retries, model for {tmp_path}. Applied.' in text
     assert '\ntest:project\n' in text
     assert 'Nothing to approve.' in text
     assert (
-        '  model (approved): "test:project"\n  tool_retries (approved): 0\n  permissions (approved): "read-only"\n\n'
+        '  permissions (approved): "auto"\n  tool_retries (approved): 0\n  model (approved): "test:project"\n\n'
     ) in text, 'nothing waits, so no hint follows'
     assert store.approved_project_settings(tmp_path) == {
         'run.tool_retries': '0',
-        'run.permissions': '"read-only"',
+        'run.permissions': '"auto"',
         'model': '"test:project"',
     }
     assert store.load().tool_retries == 5, 'approval never writes your own settings'
@@ -287,13 +339,14 @@ async def test_unapproved_instructions_go_as_the_repositorys_data(tmp_path: Path
 async def test_headless_ignores_unapproved_keys_with_a_notice(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    write(tmp_path, {'thinking': False, 'tool_retries': 0, 'permissions': 'read-only'})
+    write(tmp_path, {'thinking': False, 'tool_retries': 0, 'permissions': 'full'})
     store = SettingsStore(tmp_path / 'config.db')
+    store.set('run.permissions', 'read-only')
     project = load_project_settings(tmp_path, store=store)
     # `agent_model`: the test agent's own model, as `--agent` keeps it.
     settings_for = cli._settings_for(store, model=None, request_limit=None, agent_model=True)  # pyright: ignore[reportPrivateUsage]
     settings = settings_for(project)
-    assert (settings.thinking, settings.tool_retries, settings.permissions) == (False, 3, 'full')
+    assert (settings.thinking, settings.tool_retries, settings.permissions) == (False, 3, 'read-only')
     monkeypatch.chdir(tmp_path)
     model = TestModel(call_tools=[], custom_output_text='done')
     monkeypatch.setattr(headless, 'create_agent', lambda: create_stock_agent(model))
@@ -396,3 +449,44 @@ async def test_a_web_session_opened_at_the_launch_directory_follows_a_revoke(
     monkeypatch.setattr(web, '_serve_web', serve)
     await web.run_web(settings_for=settings_for, store=store, project=project, console=Console(file=io.StringIO()))
     assert permissions == ['full', 'read-only']
+
+
+def test_permissions_applied_at_once_are_listed_as_applied_and_cannot_be_revoked(tmp_path: Path) -> None:
+    write(tmp_path, {'permissions': 'read-only'})
+    store = SettingsStore(tmp_path / 'config.db')
+    shell = create_shell(
+        Agent(TestModel()),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=None,
+        store=store,
+        builtin_plugins=(),
+        project=load_project_settings(tmp_path, store=store),
+        headless=True,
+    )
+    assert '  permissions (applied): "read-only"' in shell.context.project_command([])
+    assert list(shell.context.project_completions(['revoke', ''])) == ['all']
+    with pytest.raises(ValueError, match='Not approved here: permissions'):
+        shell.context.project_command(['revoke', 'permissions'])
+
+
+@pytest.mark.parametrize('declared', [True, False], ids=['project-read-only', 'no-project-file'])
+async def test_a_headless_run_keeps_to_a_stricter_project_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], declared: bool
+) -> None:
+    """Nobody can answer in a headless run, so a write the project's `read-only` holds back does not happen."""
+    if declared:
+        write(tmp_path, {'permissions': 'read-only'})
+    store = SettingsStore(tmp_path / 'config.db')
+    project = load_project_settings(tmp_path, store=store)
+    settings_for = cli._settings_for(store, model=None, request_limit=None, agent_model=True)  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.chdir(tmp_path)
+    model = TestModel(call_tools=['write_file'], custom_output_text='done')
+    monkeypatch.setattr(headless, 'create_agent', lambda: create_stock_agent(model))
+    before = {path for path in tmp_path.rglob('*') if path.is_file()}
+    assert await headless.run_headless(text='go', settings=settings_for(project), store=store, project=project) == 0
+    written = {path for path in tmp_path.rglob('*') if path.is_file()} - before - {tmp_path / 'sessions.db'}
+    assert bool({path for path in written if not path.name.startswith('sessions.db')}) is not declared
+    assert capsys.readouterr().err == '', 'the mode applied, so nothing is reported as left out'

@@ -408,7 +408,13 @@ Display settings (the `display.*` keys: `thinking`, `task_models`, `theme`, `spi
 `smooth_seconds`) apply as soon as CLAI finds the file. Every other key asks you
 first, as project plugins do: `model`, `request_limit`, `tool_retries`, `code_mode`,
 `speculative_code_mode`, `permissions`, `instructions`, `pool_accounts`,
-`session_namer`, `session_namer_model`, and `update_channel`. Until you approve
+`session_namer`, and `session_namer_model`. The exception is a `permissions` value
+no wider than your own, which applies at once: the modes run from `full` through
+`auto` to `read-only`, so a repository can ask for more confirmation without
+your approval, but never for less. `/permissions` still changes the mode for the
+current session, and the project value returns at the next start. A project file
+cannot set `update_channel`: like `worktree_remove_commands`, it is user-only, and
+a file that sets it stops startup. Until you approve
 one, CLAI uses your own setting for it and names it under the banner at startup.
 `/project` lists what the file sets, with each value and whether it applies;
 `/project approve NAME...` (or `all`) applies those keys now and in every later

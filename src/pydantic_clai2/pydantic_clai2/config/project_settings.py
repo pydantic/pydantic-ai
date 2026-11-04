@@ -5,7 +5,13 @@ from pathlib import Path
 
 from pydantic import JsonValue, TypeAdapter
 
-from pydantic_clai2.config import SETTING_FIELDS, PluginSettings, resolve_settings
+from pydantic_clai2.config import (
+    PERMISSION_MODES,
+    PERMISSIONS_SETTING,
+    SETTING_FIELDS,
+    PluginSettings,
+    resolve_settings,
+)
 from pydantic_clai2.config.hooks import HOOKS_FACTORY, PROJECT_HOOKS, HookTable
 from pydantic_clai2.config.settings_store import SettingsStore, setting_json
 
@@ -22,7 +28,7 @@ SAFE_PROJECT_KEYS = frozenset(key for key in SETTING_FIELDS if key.startswith('d
 
 Every other key a project file may set waits for `/project approve`: it grants permissions, adds
 instructions, picks the model or account, or configures how runs execute. A new key waits too unless
-it is added here.
+it is added here. The exception is a `run.permissions` no wider than your own, which applies at once.
 """
 
 
@@ -34,10 +40,13 @@ class ProjectSettings:
     overrides: dict[str, JsonValue] = field(default_factory=dict[str, JsonValue])
     """Validated setting values by `/set` key, ready to layer over the user store.
 
-    Only the `SAFE_PROJECT_KEYS` and the values `/project approve` approved for this project's root.
+    The `SAFE_PROJECT_KEYS`, the values `/project approve` approved for this project's root, and a
+    `run.permissions` no wider than your own.
     """
     pending: dict[str, JsonValue] = field(default_factory=dict[str, JsonValue])
     """Validated values by `/set` key that are not applied: no approval for this root, or one of another value."""
+    approved: frozenset[str] = frozenset()
+    """The `/set` keys `/project approve` approved for this project's root with the value the file sets now."""
     plugins: tuple[PluginSettings, ...] = ()
     """Declarations from the file, every one disabled: the user approves each with `/plugins enable`.
 
@@ -138,15 +147,25 @@ def with_current_approvals(project: ProjectSettings, *, store: SettingsStore | N
     root = project.root
     if root is None:
         return project
-    approved = {} if store is None else store.approved_project_settings(root)
+    rows = {} if store is None else store.approved_project_settings(root)
     declared = {**project.overrides, **project.pending}
+    approved = frozenset(key for key, value in declared.items() if rows.get(key) == setting_json(value))
+    # Later modes ask for more, so one at or after yours cannot widen what the agent may do.
+    no_wider = (
+        store is not None
+        and PERMISSIONS_SETTING in declared
+        and PERMISSION_MODES.index(declared[PERMISSIONS_SETTING]) >= PERMISSION_MODES.index(store.load().permissions)
+    )
     applied = {
         key: value
         for key, value in declared.items()
-        if key in SAFE_PROJECT_KEYS or approved.get(key) == setting_json(value)
+        if key in SAFE_PROJECT_KEYS or key in approved or (no_wider and key == PERMISSIONS_SETTING)
     }
     return replace(
-        project, overrides=applied, pending={key: value for key, value in declared.items() if key not in applied}
+        project,
+        overrides=applied,
+        pending={key: value for key, value in declared.items() if key not in applied},
+        approved=approved,
     )
 
 
@@ -155,7 +174,7 @@ def load_project_settings(workspace: Path, *, store: SettingsStore | None = None
 
     An unreadable file or a bad value fails startup with the path in the message; an unknown key does not.
     A key outside `SAFE_PROJECT_KEYS` applies only with the value `store` approved for the project's
-    root; without a `store`, none does.
+    root, or as a `run.permissions` no wider than `store` holds; without a `store`, none does.
     """
     path = find_project_file(workspace)
     if path is None:
@@ -168,7 +187,12 @@ def load_project_settings(workspace: Path, *, store: SettingsStore | None = None
             raise ValueError(
                 f'declare hooks with the `hooks` key, not as a plugin ({PROJECT_HOOKS} or {HOOKS_FACTORY})'
             )
-        for name in ('repo_context_walk_up_roots', 'repo_context_autoload_symlink_roots', 'worktree_remove_commands'):
+        for name in (
+            'repo_context_walk_up_roots',
+            'repo_context_autoload_symlink_roots',
+            'worktree_remove_commands',
+            'update_channel',
+        ):
             if name in raw:
                 raise ValueError(f'`{name}` is user-only and cannot be set in a project file')
         overrides = {_SET_KEYS[name]: value for name, value in raw.items() if name in _SET_KEYS}

@@ -3,7 +3,7 @@
 import threading
 from collections.abc import Callable, Iterable, Sequence
 from contextlib import suppress
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
@@ -11,7 +11,7 @@ from pydantic import JsonValue, TypeAdapter, ValidationError
 from pydantic_ai.settings import ModelSettings
 from pydantic_clai2.commands import Command, set_completions
 from pydantic_clai2.config import SETTING_FIELDS, STRING_SETTINGS, Settings
-from pydantic_clai2.config.project_settings import SAFE_PROJECT_KEYS, ProjectSettings
+from pydantic_clai2.config.project_settings import ProjectSettings, with_current_approvals
 from pydantic_clai2.config.settings_store import SettingsStore, setting_json
 from pydantic_clai2.ui import telemetry
 
@@ -83,29 +83,15 @@ class CommandContext:
                 keys = _project_keys(names, project.pending, verb='approve')
                 with self.edits:
                     self.store.approve_project_settings(root, {key: project.pending[key] for key in keys})
-                    self._use_project(
-                        replace(
-                            project,
-                            overrides={**project.overrides, **{key: project.pending[key] for key in keys}},
-                            pending={key: value for key, value in project.pending.items() if key not in keys},
-                        ),
-                        keys,
-                    )
+                    self._use_project(with_current_approvals(project, store=self.store), keys)
                 return f'Approved {_file_names(keys)} for {root}. Applied.'
             case ['revoke', *names] if names:
-                approved = {key: value for key, value in project.overrides.items() if key not in SAFE_PROJECT_KEYS}
+                approved = {key: value for key, value in project.overrides.items() if key in project.approved}
                 keys = _project_keys(names, approved, verb='revoke')
                 with self.edits:
                     self.store.revoke_project_settings(root, keys)
-                    self._use_project(
-                        replace(
-                            project,
-                            overrides={key: value for key, value in project.overrides.items() if key not in keys},
-                            pending={**project.pending, **{key: approved[key] for key in keys}},
-                        ),
-                        keys,
-                    )
-                return f'Revoked {_file_names(keys)} for {root}. Your own settings apply again.'
+                    self._use_project(with_current_approvals(project, store=self.store), keys)
+                return f'Revoked {_file_names(keys)} for {root}.'
             case _:
                 raise ValueError(PROJECT_USAGE)
 
@@ -115,7 +101,7 @@ class CommandContext:
             return ('approve', 'revoke')
         if args[0] == 'approve':
             return ('all', *(SETTING_FIELDS[key] for key in self.project.pending))
-        return ('all', *(SETTING_FIELDS[key] for key in self.project.overrides if key not in SAFE_PROJECT_KEYS))
+        return ('all', *(SETTING_FIELDS[key] for key in self.project.overrides if key in self.project.approved))
 
     def _use_project(self, project: ProjectSettings, keys: Iterable[str]) -> None:
         """Adopt `project` for this session, applying `keys`: its value when it sets one, else your saved one or the default.
@@ -280,7 +266,7 @@ def _project_listing(project: ProjectSettings) -> str:
     """What `/project` shows: the file, then each key it sets and whether it applies, with the value as JSON."""
     lines = [f'Project settings: {project.path}']
     for key, value in project.overrides.items():
-        state = 'applied' if key in SAFE_PROJECT_KEYS else 'approved'
+        state = 'approved' if key in project.approved else 'applied'
         lines.append(f'  {SETTING_FIELDS[key]} ({state}): {setting_json(value)}')
     for key, value in project.pending.items():
         lines.append(f'  {SETTING_FIELDS[key]} (waiting for approval): {setting_json(value)}')
