@@ -237,6 +237,9 @@ agent = Agent('test', capabilities=[LocalWorkspace('.'), SmartSearch(model='test
   the search as a tool failure the model sees.
 - Sends the query, snippets and paths to the judge's provider; `directory` must be inside the working
   directory (symlinks followed), else `ModelRetry`.
+- Durable execution records each search's judgments under the default `id` (`smart_search`); keep it stable
+  once deployed. Two sharing an `id` become one when they agree and raise `UserError` at build when they
+  differ; to keep two, give each its own `id` and wrap them in `PrefixTools`.
 
 ## Shell
 
@@ -286,7 +289,7 @@ Parameters: `denied_commands` (default `rm`, `rmdir`, `mkfs`, `dd`, `format`, `s
 | Lifetime | `sandbox_timeout=86_400` (10 to 86,400), optional `idle_timeout`; then terminated | `sandbox_timeout=3_600` (Pro: up to 86,400); then **paused**, resumed on attach | `sandbox_timeout=3_600` (up to 86,400); then terminated | Unlimited: sleeps when idle, persists until deleted | Unlimited: stopped after `auto_stop_interval` idle minutes (default 15), started again on attach; archived after 7 days stopped, never deleted | Unlimited: suspended, then hibernated, when idle (organization defaults; `auto_suspend_timeout` seconds), woken by the next command; a stopped machine is started on attach; no delete timer unless the organization sets one |
 | Default cwd / user | `/root`, `root` | `/home/user`, `user` | home directory, `root` | `/home/sprite`, `sprite` | `/home/daytona`, `daytona` | `/home/boxd`, `boxd` |
 | `rg` preinstalled | Yes | No | Not documented | No | Yes | Yes |
-| New-sandbox options | `image`, `app_name`, `create_app_if_missing` | `template`, `allow_internet_access` | `allow_internet_access`, `client` | `runtime`, `client` | `snapshot`, `auto_stop_interval`, `allow_internet_access`, `client` | `org`, `snapshot`, `vcpu`, `auto_suspend_timeout`, `client` |
+| New-sandbox options | `image`, `app_name`, `create_app_if_missing`, `client` | `template`, `allow_internet_access` | `allow_internet_access`, `client` | `runtime`, `client` | `snapshot`, `auto_stop_interval`, `allow_internet_access`, `client` | `org`, `snapshot`, `vcpu`, `auto_suspend_timeout`, `client` |
 
 All take `working_dir` (absolute; created on a new sandbox, must exist on an attached one) and `env`
 (nothing from your machine is passed through). All are asyncio-only and reject `defer_loading=True`.
@@ -356,7 +359,7 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
 ```
 
 - **Pydantic AI never terminates the sandbox**: it bills until `await <Sandbox>().destroy(ref)` or its
-  lifetime ends. `destroy` acts by ID (any instance works; Render, Sprites, Daytona and boxd use the instance's `client=`), does
+  lifetime ends. `destroy` acts by ID (any instance works; Modal, Render, Sprites, Daytona and boxd use the instance's `client=`), does
   not wake the sandbox, returns quietly if it is gone, and raises `ValueError` for another provider's
   ref. `after_run` skips failed runs; one-shot jobs destroy `ctx.workspace.ref` in `run_error`.
 - `await BoxdSandbox().fork(ref)` copies a boxd machine, files and running processes included, into a new
