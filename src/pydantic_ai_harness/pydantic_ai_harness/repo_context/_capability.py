@@ -447,18 +447,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         if latest is not self._latest_compaction:
             self._latest_compaction = latest
             self._pending_dirs.clear()
-        in_history: set[str] = set()
-        self._window_chars = 0
-        for message in post_compaction_window(messages):
-            if not isinstance(message, ModelRequest):
-                continue
-            for part in message.parts:
-                if not isinstance(part, UserPromptPart) or isinstance(part.content, str):
-                    continue
-                for item in part.content:
-                    if isinstance(item, TextContent) and (directory := _note_directory(item.metadata)) is not None:
-                        in_history.add(directory)
-                        self._window_chars += _note_chars(item.metadata)
+        notes = _notes_in_window(messages)
+        in_history = {directory for directory, _ in notes}
+        self._window_chars = sum(chars for _, chars in notes)
         self._pending_dirs -= in_history
         self._pending_chars = {key: chars for key, chars in self._pending_chars.items() if key in self._pending_dirs}
         return in_history
@@ -530,6 +521,19 @@ def _latest_compaction(messages: Sequence[ModelMessage]) -> CompactionPart | Non
             if isinstance(part, CompactionPart):
                 return part
     return None
+
+
+def _notes_in_window(messages: Sequence[ModelMessage]) -> list[tuple[str, int]]:
+    """The directory and inlined characters of each nested note in the post-compaction window."""
+    return [
+        (directory, _note_chars(item.metadata))
+        for message in post_compaction_window(messages)
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
+        for item in part.content
+        if isinstance(item, TextContent) and (directory := _note_directory(item.metadata)) is not None
+    ]
 
 
 def _note_chars(metadata: object) -> int:
