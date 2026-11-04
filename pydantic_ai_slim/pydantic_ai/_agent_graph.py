@@ -1144,6 +1144,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         run_context: RunContext[DepsT] | None = None
 
         if messages and (last_message := messages[-1]):
+            _raise_if_new_prompt_abandons_pending(last_message, messages, has_new_prompt=self.user_prompt is not None)
             if isinstance(last_message, _messages.ModelRequest) and self.user_prompt is None:
                 # Drop last message from history and reuse its parts
                 messages.pop()
@@ -1152,13 +1153,6 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
                 if (prompt := _request_prompt(last_message)) is not None:
                     ctx.deps.prompt = prompt
-            elif isinstance(last_message, _messages.ModelRequest):
-                # A trailing request can leave some of the last response's calls unanswered: a paused
-                # conversation whose inline handler resolved only part of the batch. A new prompt would
-                # abandon the rest — repair closes them out as interrupted — so raise, as the history
-                # ending on the response itself does.
-                if _unanswered_tool_calls(messages):
-                    raise exceptions.UserError(_UNPROCESSED_TOOL_CALLS)
             elif isinstance(last_message, _messages.ModelResponse):
                 if last_message.state == 'suspended' and self.user_prompt is None:
                     # The history ends in a turn a provider paused mid-flight (Anthropic
@@ -1195,14 +1189,6 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                     if not instruction_parts:
                         # No pending tool calls and no instructions — nothing new to send to the model.
                         return CallToolsNode[DepsT, NodeRunEndT](last_message)
-                elif last_message.state == 'suspended':
-                    # A new prompt on top of a suspended turn would abandon it, leaking the provider's
-                    # server-side job (e.g. an OpenAI background run). Resume it first (run with this
-                    # history and no new prompt) before starting a new turn.
-                    raise exceptions.UserError(
-                        'Cannot provide a new user prompt when the message history ends in a suspended response. '
-                        'Resume it by running the agent with this message history and no new prompt.'
-                    )
                 elif last_message.tool_calls:
                     # An interrupted response's calls were already closed out by `_repair_interrupted_tail`.
                     raise exceptions.UserError(_UNPROCESSED_TOOL_CALLS)
@@ -1368,6 +1354,32 @@ def _unanswered_tool_calls(messages: list[_messages.ModelMessage]) -> bool:
         None,
     )
     return last_response_index is not None and last_response_index in _dangling_tool_calls_by_response(messages)
+
+
+def _raise_if_new_prompt_abandons_pending(
+    last_message: _messages.ModelMessage, messages: list[_messages.ModelMessage], *, has_new_prompt: bool
+) -> None:
+    """Raise when a new prompt would abandon work the history's tail left pending.
+
+    Resuming without a prompt processes that work instead, so only a new prompt is refused.
+    """
+    if not has_new_prompt:
+        return
+    if isinstance(last_message, _messages.ModelRequest):
+        # A trailing request can leave some of the last response's calls unanswered: a paused
+        # conversation whose inline handler resolved only part of the batch. A new prompt would
+        # abandon the rest — repair closes them out as interrupted — so raise, as the history
+        # ending on the response itself does.
+        if _unanswered_tool_calls(messages):
+            raise exceptions.UserError(_UNPROCESSED_TOOL_CALLS)
+    elif isinstance(last_message, _messages.ModelResponse) and last_message.state == 'suspended':
+        # A new prompt on top of a suspended turn would abandon it, leaking the provider's
+        # server-side job (e.g. an OpenAI background run). Resume it first (run with this
+        # history and no new prompt) before starting a new turn.
+        raise exceptions.UserError(
+            'Cannot provide a new user prompt when the message history ends in a suspended response. '
+            'Resume it by running the agent with this message history and no new prompt.'
+        )
 
 
 def _resumed_request(request: _messages.ModelRequest) -> _messages.ModelRequest:
