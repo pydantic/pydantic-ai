@@ -22,7 +22,7 @@ ArtifactThreat: TypeAlias = Literal[
 - `'role_override'`: text giving the model a new identity, or forging a chat-template role marker.
 - `'exfiltration'`: a command or URL that sends credentials or credential files somewhere.
 - `'html_comment'`: an HTML comment, which Markdown renderers hide from the person reviewing the file.
-- `'invisible_unicode'`: zero-width, bidirectional-control, or tag characters a person cannot see.
+- `'invisible_unicode'`: zero-width, bidirectional-control, tag, filler, or misplaced variation-selector characters a person cannot see.
 - `'custom'`: a pattern passed in `ArtifactScanner(extra_patterns=...)`.
 """
 
@@ -104,11 +104,11 @@ Unicode's default-ignorable characters removed, so full-width letters or a zero-
 phrase do not hide it. `invisible_character` leaves out the characters ordinary text needs: the
 zero-width joiner and non-joiner (emoji sequences, Persian and Indic scripts), the left-to-right
 and right-to-left marks, the soft hyphen, a single variation selector (as in an emoji), and the tag
-characters of the England, Scotland, and Wales flags. Variation selectors are flagged where ordinary text has no
-use for them and they can encode hidden bytes: two in a row, or a supplement selector after anything but an
-ideograph, or a standardized selector other than the emoji ones after a character Unicode defines no
-variant of. The Hangul fillers
-U+3164 and U+FFA0 are flagged, and every Hangul filler reads as a space to the phrase patterns.
+characters of the England, Scotland, and Wales flags. Variation selectors are flagged where ordinary
+text has no use for them and they can encode hidden bytes: two in a row, a supplement selector after
+anything but an ideograph, or a standardized selector other than the emoji ones after a character
+Unicode defines no variant of. The Hangul fillers U+3164 and U+FFA0 are flagged, and every Hangul
+filler reads as a space to the phrase patterns.
 Repetition is bounded so a long artifact cannot make a pattern backtrack for seconds.
 
 These are a cheap first layer. Prompt injection is ordinary language, so a phrase list misses
