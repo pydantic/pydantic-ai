@@ -163,7 +163,7 @@ variant drops the leading clause.
 """
 
 
-def _google_error_details(body: object) -> list[dict[str, object]]:
+def google_error_details(body: object) -> list[dict[str, object]]:
     """The `details` of a Google API error body, like its `google.rpc.ErrorInfo` and `google.rpc.QuotaFailure`."""
     error = body.get('error') if is_str_dict(body) else None
     details = error.get('details') if is_str_dict(error) else None
@@ -172,22 +172,22 @@ def _google_error_details(body: object) -> list[dict[str, object]]:
     return [detail for detail in cast(list[object], details) if is_str_dict(detail)]
 
 
-def _google_error_reason(body: object) -> str | None:
+def google_error_reason(body: object) -> str | None:
     """The `reason` of the `google.rpc.ErrorInfo` in a Google API error body, like `'API_KEY_INVALID'`, if any."""
-    for detail in _google_error_details(body):
+    for detail in google_error_details(body):
         if isinstance(reason := detail.get('reason'), str):
             return reason
     return None
 
 
-def _google_exceeds_daily_quota(body: object) -> bool:
+def google_exceeds_daily_quota(body: object) -> bool:
     """Whether a Google API error body's `google.rpc.QuotaFailure` says a daily quota was exceeded.
 
     Gemini sends a `RESOURCE_EXHAUSTED` with a violation for each quota the request exceeded, like
     `GenerateRequestsPerMinutePerProjectPerModel-FreeTier` or `GenerateRequestsPerDayPerProjectPerModel-FreeTier`.
     A daily quota resets at midnight Pacific time, see https://ai.google.dev/gemini-api/docs/rate-limits.
     """
-    for detail in _google_error_details(body):
+    for detail in google_error_details(body):
         violations = detail.get('violations')
         if isinstance(violations, list):
             for violation in cast(list[object], violations):
@@ -207,12 +207,12 @@ def google_status_category(status: str | None, message: object, body: object = N
     only the quotas listed in the body's `google.rpc.QuotaFailure` tell them apart; without them, it's a rate limit.
     It sends an invalid API key as `INVALID_ARGUMENT`, with the `reason` `API_KEY_INVALID`.
     """
-    if _google_error_reason(body) == 'API_KEY_INVALID':
+    if google_error_reason(body) == 'API_KEY_INVALID':
         return ModelAuthenticationError
     match status:
         case 'RESOURCE_EXHAUSTED':
             # The daily quota doesn't reset until midnight Pacific time, so waiting won't help.
-            return ModelQuotaExceededError if _google_exceeds_daily_quota(body) else ModelRateLimitError
+            return ModelQuotaExceededError if google_exceeds_daily_quota(body) else ModelRateLimitError
         case 'FAILED_PRECONDITION' if isinstance(message, str) and 'billing' in message.lower():
             # Like `Gemini API free tier is not available in your country. Please enable billing on your project in
             # Google AI Studio.`; other preconditions, like `User location is not supported`, are rejected requests.
