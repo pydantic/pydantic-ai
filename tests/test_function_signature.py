@@ -2106,6 +2106,18 @@ def _mail_with(alias: str) -> type[BaseModel]:
     return create_model('Mail', sender=(str, Field(alias=alias)))
 
 
+def _definition_of(type_schema: dict[str, Any], **other_defs: dict[str, Any]) -> str:
+    """The definition rendered for `type_schema`, when a tool takes it as a parameter."""
+    schema = {
+        'type': 'object',
+        '$defs': {'Outer': type_schema, **other_defs},
+        'properties': {'o': {'$ref': '#/$defs/Outer'}},
+        'required': ['o'],
+    }
+    signature = FunctionSignature.from_schema(name='a', parameters_schema=schema)
+    return FunctionSignature.render_type_definitions([signature], frozenset())[0]
+
+
 @pytest.mark.parametrize('alias', ['from', 'user-id', 'None', '\ufb01eld'])
 def test_field_python_cannot_write_takes_the_functional_form(alias: str):
     definition = FunctionSignature.render_type_definitions([_signature('a', mail=_mail_with(alias))], frozenset())[0]
@@ -2123,18 +2135,11 @@ def test_functional_form_keeps_optional_fields_and_descriptions_as_comments():
         },
         'required': ['from'],
     }
-    schema = {
-        'type': 'object',
-        '$defs': {'Mail': mail},
-        'properties': {'mail': {'$ref': '#/$defs/Mail'}},
-        'required': ['mail'],
-    }
-    signature = FunctionSignature.from_schema(name='a', parameters_schema=schema)
-    assert FunctionSignature.render_type_definitions([signature], frozenset())[0] == snapshot("""\
+    assert _definition_of(mail) == snapshot("""\
 # A mail.
 #
 # With two lines.
-Mail = TypedDict('Mail', {
+Outer = TypedDict('Outer', {
     # The sender.\\x00
     'from': str,
     'subject': NotRequired[str],
@@ -2149,30 +2154,29 @@ def test_functional_form_uses_the_names_resolved_for_the_catalog():
     ast.parse(catalog)
 
 
+_S: dict[str, Any] = {'type': 'string'}
+_B: dict[str, Any] = {'type': 'boolean'}
+_I: dict[str, Any] = {'type': 'integer'}
+
+
 @pytest.mark.parametrize(
-    'field,annotation',
+    'properties,required',
     [
-        pytest.param('str', {'type': 'string'}, id='simple-type'),
-        pytest.param('NotRequired', {'type': 'string'}, id='not-required-of-an-optional-field'),
-        pytest.param('Literal', {'enum': ['a']}, id='literal'),
-        pytest.param('list', {'type': 'array', 'items': {'type': 'integer'}}, id='generic-base'),
-        pytest.param('int', {'type': 'array', 'items': {'type': 'integer'}}, id='generic-argument'),
-        pytest.param('int', {'anyOf': [{'type': 'integer'}, {'type': 'string'}]}, id='union-member'),
-        pytest.param('Inner', {'$ref': '#/$defs/Inner'}, id='type-definition'),
+        pytest.param({'x': _S, 'str': _B}, ['x', 'str'], id='simple-type'),
+        pytest.param({'x': _S, 'NotRequired': _B}, ['NotRequired'], id='not-required-of-an-optional-field'),
+        pytest.param({'x': {'enum': ['a']}, 'Literal': _B}, ['x', 'Literal'], id='literal'),
+        pytest.param({'x': {'type': 'array', 'items': _I}, 'list': _B}, ['x', 'list'], id='generic-base'),
+        pytest.param({'x': {'type': 'array', 'items': _I}, 'int': _B}, ['x', 'int'], id='generic-argument'),
+        pytest.param({'x': {'anyOf': [_I, _S]}, 'int': _B}, ['x', 'int'], id='union-member'),
+        pytest.param({'x': {'$ref': '#/$defs/Inner'}, 'Inner': _B}, ['x', 'Inner'], id='type-definition'),
     ],
 )
-def test_field_named_like_a_name_an_annotation_reads_takes_the_functional_form(field: str, annotation: dict[str, Any]):
-    outer: dict[str, Any] = {'type': 'object', 'properties': {'x': annotation, field: {'type': 'boolean'}}}
-    outer['required'] = [field] if field == 'NotRequired' else ['x', field]
-    inner = {'type': 'object', 'properties': {'z': {'type': 'boolean'}}, 'required': ['z']}
-    schema = {
-        'type': 'object',
-        '$defs': {'Outer': outer, 'Inner': inner},
-        'properties': {'o': {'$ref': '#/$defs/Outer'}},
-        'required': ['o'],
-    }
-    signature = FunctionSignature.from_schema(name='a', parameters_schema=schema)
-    assert FunctionSignature.render_type_definitions([signature], frozenset())[0].startswith('Outer = TypedDict(')
+def test_field_named_like_a_name_an_annotation_reads_takes_the_functional_form(
+    properties: dict[str, Any], required: list[str]
+):
+    inner = {'type': 'object', 'properties': {'z': _B}, 'required': ['z']}
+    outer = {'type': 'object', 'properties': properties, 'required': required}
+    assert _definition_of(outer, Inner=inner).startswith('Outer = TypedDict(')
 
 
 def test_field_named_like_the_name_resolved_for_a_type_takes_the_functional_form():
@@ -2182,52 +2186,35 @@ def test_field_named_like_the_name_resolved_for_a_type_takes_the_functional_form
 
 
 @pytest.mark.parametrize(
-    'field,field_schema',
+    'properties',
     [
-        pytest.param('asyncio', {'type': 'string'}, id='module'),
-        pytest.param('Any', {'type': 'string'}, id='any'),
-        pytest.param('Literal', {'type': 'string'}, id='literal'),
-        pytest.param('NotRequired', {'type': 'string'}, id='not-required-with-no-optional-field'),
-        pytest.param('list', {'type': 'string'}, id='generic-base'),
-        pytest.param('int', {'type': 'string'}, id='simple-type'),
-        pytest.param('str', {'type': 'integer'}, id='simple-type-with-another-annotation'),
-        pytest.param('tuple', {'type': 'array', 'prefixItems': [{'type': 'integer'}]}, id='tuple-renders-as-list'),
+        pytest.param({'asyncio': _S, 'other': _S}, id='module'),
+        pytest.param({'Any': _S, 'other': _S}, id='any'),
+        pytest.param({'Literal': _S, 'other': _S}, id='literal'),
+        pytest.param({'NotRequired': _S, 'other': _S}, id='not-required-with-no-optional-field'),
+        pytest.param({'list': _S, 'other': _S}, id='generic-base'),
+        pytest.param({'int': _S, 'other': _S}, id='simple-type'),
+        pytest.param({'str': _I}, id='simple-type-with-another-annotation'),
+        pytest.param({'tuple': {'type': 'array', 'prefixItems': [_I]}, 'other': _S}, id='tuple-renders-as-list'),
     ],
 )
-def test_field_named_like_a_name_no_annotation_reads_keeps_the_class_form(field: str, field_schema: dict[str, Any]):
+def test_field_named_like_a_name_no_annotation_reads_keeps_the_class_form(properties: dict[str, Any]):
     """Only a field an annotation reads changes anything, so a correct catalog shouldn't change its text."""
-    properties: dict[str, Any] = {field: field_schema}
-    if field != 'str':
-        properties['other'] = {'type': 'string'}
     outer = {'type': 'object', 'properties': properties, 'required': list(properties)}
-    schema = {
-        'type': 'object',
-        '$defs': {'Outer': outer},
-        'properties': {'o': {'$ref': '#/$defs/Outer'}},
-        'required': ['o'],
-    }
-    signature = FunctionSignature.from_schema(name='a', parameters_schema=schema)
-    assert FunctionSignature.render_type_definitions([signature], frozenset())[0].startswith('class Outer(TypedDict):')
+    assert _definition_of(outer).startswith('class Outer(TypedDict):')
 
 
 def test_field_named_like_text_in_a_literal_keeps_the_class_form():
     """Only names the annotation reads change its meaning, and most schemas should keep reading as a class."""
     outer = {
         'type': 'object',
-        'properties': {'kind': {'enum': ['label']}, 'label': {'type': 'boolean'}},
+        'properties': {'kind': {'enum': ['label']}, 'label': _B},
         'required': ['kind', 'label'],
     }
-    schema = {
-        'type': 'object',
-        '$defs': {'Outer': outer},
-        'properties': {'o': {'$ref': '#/$defs/Outer'}},
-        'required': ['o'],
-    }
-    signature = FunctionSignature.from_schema(name='a', parameters_schema=schema)
-    assert FunctionSignature.render_type_definitions([signature], frozenset())[0].startswith('class Outer(TypedDict):')
+    assert _definition_of(outer).startswith('class Outer(TypedDict):')
 
 
-def test_param_python_cannot_write_moves_the_parameter_list_into_the_docstring():
+def test_param_python_cannot_write_moves_the_parameter_list_into_comments():
     schema = {
         'type': 'object',
         '$defs': {'M': {'type': 'object', 'properties': {'a': {'type': 'string'}}, 'required': ['a']}},
@@ -2243,19 +2230,16 @@ def test_param_python_cannot_write_moves_the_parameter_list_into_the_docstring()
     rendered = signature.render('...', description='Send it.')
     assert rendered == snapshot("""\
 def send(**kwargs: Any) -> Any:
-    \"\"\"
-    Send it.
-
-    Some argument names can't be passed as keywords, so pass all arguments as `send(**{...})`.
-
-    Args:
-        'from': str
-            The sender.
-            With two lines.
-        'mail': M
-        'count': int = 1
-        'note': str | None = None
-    \"\"\"
+    \"\"\"Send it.\"\"\"
+    # Some argument names can't be passed as keywords, so pass all arguments as `send(**{...})`.
+    #
+    # Args:
+    #     'from': str
+    #         The sender.
+    #         With two lines.
+    #     'mail': M
+    #     'count': int = 1
+    #     'note': str | None = None
     ...\
 """)
     ast.parse(rendered)
@@ -2269,8 +2253,8 @@ def test_param_python_cannot_write_takes_kwargs(name: str):
     ast.parse(rendered)
 
 
-def test_docstring_of_kwargs_uses_the_names_resolved_for_the_catalog():
-    user = {'type': 'object', 'properties': {'id': {'type': 'integer'}}, 'required': ['id']}
+def test_kwargs_comment_uses_the_names_resolved_for_the_catalog():
+    user = {'type': 'object', 'properties': {'id': _I}, 'required': ['id']}
     schema = {
         'type': 'object',
         '$defs': {'User': user},
@@ -2280,20 +2264,17 @@ def test_docstring_of_kwargs_uses_the_names_resolved_for_the_catalog():
     catalog = _catalog(
         FunctionSignature.from_schema(name='b', parameters_schema=schema), _signature('c', user=_user_with_name())
     )
-    function = next(node for node in ast.parse(catalog).body if isinstance(node, ast.FunctionDef) and node.name == 'b')
-    assert "'from': b_User" in (ast.get_docstring(function) or '')
+    assert "    #     'from': b_User" in catalog.splitlines()
 
 
-@pytest.mark.parametrize('name', ["it's", 'a\nb', 'a\rb', 'a\\b', 'a\u200bb'])
-def test_docstring_of_kwargs_shows_the_dict_key_for_each_name_on_one_line(name: str):
-    schema = {'type': 'object', 'properties': {name: {'type': 'string'}}, 'required': [name]}
+@pytest.mark.parametrize('name', ["it's", 'a"b', 'a\\b', 'a\nb', 'a\rb', 'a\tb', 'a\u200bb', '"""', '\'"'])
+def test_kwargs_comment_shows_the_dict_key_for_each_name_as_the_model_reads_it(name: str):
+    """The model reads this text and not the evaluated string, so what it shows is what the model pastes."""
+    schema = {'type': 'object', 'properties': {name: _S}, 'required': [name]}
     rendered = FunctionSignature.from_schema(name='send', parameters_schema=schema).render('...')
-    function = ast.parse(rendered).body[0]
-    assert isinstance(function, ast.FunctionDef)
-    assert ast.get_docstring(function, clean=False) == (
-        f"\n    Some argument names can't be passed as keywords, so pass all arguments as `send(**{{...}})`.\n\n"
-        f'    Args:\n        {name!r}: str\n    '
-    )
+    key = next(line for line in rendered.splitlines() if line.endswith(': str'))
+    assert key.removeprefix('    #     ').removesuffix(': str') == repr(name)
+    assert [type(statement) for statement in ast.parse(rendered).body] == [ast.FunctionDef]
 
 
 @pytest.mark.parametrize('line_break', ['\n', '\r', '\r\n'])
@@ -2305,28 +2286,14 @@ def test_description_stays_in_the_comments_of_the_functional_form(line_break: st
         'properties': {'from': {'type': 'string', 'description': payload}},
         'required': ['from'],
     }
-    schema = {
-        'type': 'object',
-        '$defs': {'Mail': mail},
-        'properties': {'mail': {'$ref': '#/$defs/Mail'}},
-        'required': ['mail'],
-    }
-    signature = FunctionSignature.from_schema(name='a', parameters_schema=schema)
-    statements = ast.parse(FunctionSignature.render_type_definitions([signature], frozenset())[0]).body
+    statements = ast.parse(_definition_of(mail)).body
     assert [type(statement) for statement in statements] == [ast.Assign]
 
 
 @pytest.mark.parametrize('name', ["it's", 'a"b', 'a\\b', 'a\nb', '\'"'])
 def test_field_name_of_any_text_stays_one_exact_key(name: str):
-    mail = {'type': 'object', 'properties': {name: {'type': 'string'}}, 'required': [name]}
-    schema = {
-        'type': 'object',
-        '$defs': {'Mail': mail},
-        'properties': {'mail': {'$ref': '#/$defs/Mail'}},
-        'required': ['mail'],
-    }
-    signature = FunctionSignature.from_schema(name='a', parameters_schema=schema)
-    assignment = ast.parse(FunctionSignature.render_type_definitions([signature], frozenset())[0]).body[0]
+    mail = {'type': 'object', 'properties': {name: _S}, 'required': [name]}
+    assignment = ast.parse(_definition_of(mail)).body[0]
     assert isinstance(assignment, ast.Assign) and isinstance(assignment.value, ast.Call)
     fields = assignment.value.args[1]
     assert isinstance(fields, ast.Dict)

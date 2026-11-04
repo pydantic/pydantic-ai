@@ -95,6 +95,8 @@ class UnionTypeExpr:
 
 TypeExpr: TypeAlias = 'TypeSignature | SimpleTypeExpr | LiteralTypeExpr | GenericTypeExpr | UnionTypeExpr'
 
+"""A type expression node in the signature's type tree."""
+
 
 def _names_read_by(expr: TypeExpr) -> Iterator[str]:
     """The names an annotation reads when evaluated, which leaves out the text inside a `Literal[...]`."""
@@ -107,11 +109,10 @@ def _names_read_by(expr: TypeExpr) -> Iterator[str]:
     elif isinstance(expr, UnionTypeExpr):
         for member in expr.members:
             yield from _names_read_by(member)
-    else:
+    elif isinstance(expr, TypeSignature | SimpleTypeExpr):
         yield str(expr)
-
-
-"""A type expression node in the signature's type tree."""
+    else:
+        assert_never(expr)
 
 
 # =============================================================================
@@ -362,7 +363,7 @@ class FunctionSignature:
             if not description_lines:
                 continue
             first_line, *continuation = description_lines
-            # Such a name can hold anything, and the model has to copy it into a dict key.
+            # Such a name can hold anything, and `repr` gives the model a dict key to copy, on one line.
             shown_name = param.name if writable_params else repr(param.name)
             lines.append(f'{_DOC_INDENT}{shown_name}: {first_line}')
             # Continuation lines nest one level past the parameter name
@@ -390,19 +391,21 @@ class FunctionSignature:
             params_str = f'*, {params_str}'
         parts = [f'{prefix} {name}({params_str}) -> {self.return_type}:']
 
-        description_sections = [description] if description else []
-        if not writable_params:
-            description_sections.append(
-                f"Some argument names can't be passed as keywords, so pass all arguments as `{name}(**{{...}})`."
-            )
-
         args_lines = self._render_args_lines(writable_params)
-        if args_lines:
-            description_sections.append('\n'.join(['Args:', *args_lines]))
-        description = '\n\n'.join(description_sections)
+        args_section = '\n'.join(['Args:', *args_lines]) if args_lines else None
 
+        description = '\n\n'.join(
+            section for section in (description, args_section if writable_params else None) if section
+        )
         if description:
             parts.extend(_render_description(description, indent='    '))
+
+        if not writable_params:
+            # The model copies each name from this text into a dict key, and a docstring would escape it a second time.
+            call_form = (
+                f"Some argument names can't be passed as keywords, so pass all arguments as `{name}(**{{...}})`."
+            )
+            parts.extend(_render_comment(f'{call_form}\n\n{args_section}', '    '))
 
         parts.append(f'    {body}')
 

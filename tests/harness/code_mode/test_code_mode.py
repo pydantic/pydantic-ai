@@ -1996,7 +1996,7 @@ class TestCodeMode:
 
     @pytest.mark.parametrize('alias', ['from', 'user-id', '\ufb01eld'])
     async def test_field_python_cannot_write_is_checked(self, alias: str) -> None:
-        """A class body can't hold these, so on the previous stubs the model's correct call failed the type check."""
+        """A class body can't hold these names, so a correct call needs the functional form to pass the type check."""
         mail: type[BaseModel] = create_model('Mail', sender=(str, Field(alias=alias)))
         args: type[BaseModel] = create_model('Args', mail=(mail, ...))
         tool_def = ToolDefinition(
@@ -2083,8 +2083,10 @@ class TestCodeMode:
             return_schema={'type': 'string'},
         )
 
-    @pytest.mark.parametrize('name', ['from', 'user-id', '\ufb01eld'])
-    async def test_param_python_cannot_write_reaches_the_tool_by_its_exact_name(self, name: str) -> None:
+    @pytest.mark.parametrize(
+        'name', ['from', 'user-id', '\ufb01eld', "it's", 'a"b', 'a\\b', 'a\nb', 'a\tb', 'a\u200bb', '"""']
+    )
+    async def test_param_python_cannot_write_reaches_the_tool_by_the_key_the_catalog_shows(self, name: str) -> None:
         received: list[dict[str, Any]] = []
 
         class RecordingToolset(_StaticToolset):
@@ -2102,8 +2104,13 @@ class TestCodeMode:
         tools = await wrapper.get_tools(ctx)
         description = tools['run_code'].tool_def.description
         assert description is not None and 'send(**kwargs: Any)' in description
+        shown_key = next(
+            line.strip().removeprefix('# ').strip().removesuffix(': str')
+            for line in description.splitlines()
+            if line.endswith(': str')
+        )
         await wrapper.call_tool(
-            'run_code', {'code': f'await send(**{{{name!r}: "a", "count": 1}})'}, ctx, tools['run_code']
+            'run_code', {'code': f'await send(**{{{shown_key}: "a", "count": 1}})'}, ctx, tools['run_code']
         )
         assert received == [{name: 'a', 'count': 1}]
 
@@ -2140,6 +2147,8 @@ class TestCodeMode:
         assert isinstance(no_validator, CodeModeToolset)
         ctx = await build_ctx(None, no_validator)
         tools = await no_validator.get_tools(ctx)
+        description = tools['run_code'].tool_def.description
+        assert description is not None and 'send(**kwargs: Any)' in description
         await no_validator.call_tool('run_code', {'code': wrong_call}, ctx, tools['run_code'])
         assert received == [{'from': 1, 'count': 1}]
 
