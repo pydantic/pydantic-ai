@@ -13,7 +13,7 @@ from pydantic_clai2.app import STOCK_PLUGINS, create_stock_agent
 from pydantic_clai2.builtin_plugins.web import WebPlugin
 from pydantic_clai2.cli.self_update import WebHandoff
 from pydantic_clai2.config import Settings
-from pydantic_clai2.config.project_settings import ProjectSettings, load_project_settings
+from pydantic_clai2.config.project_settings import ProjectSettings, load_project_settings, with_current_approvals
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import DepsT, SessionEndReason
 from pydantic_clai2.plugins.loader import SessionPlugins
@@ -77,7 +77,7 @@ async def run_web(
         # Sessions opened from the browser log nothing: their output would interleave with this one's.
         shell.process.live.build = lambda directory: _web_session(
             settings_for=settings_for,
-            project=launch_project
+            project=with_current_approvals(launch_project, store=store)
             if directory in (None, launched_in)
             else load_project_settings(directory, store=store),
             console=Console(file=sink, force_terminal=False),

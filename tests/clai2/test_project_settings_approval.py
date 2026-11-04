@@ -2,7 +2,7 @@
 
 import io
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
 import pytest
@@ -26,14 +26,19 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
-from pydantic_clai2.app import create_stock_agent
-from pydantic_clai2.cli import cli, headless
+from pydantic_clai2.app import _opener, create_stock_agent  # pyright: ignore[reportPrivateUsage]
+from pydantic_clai2.cli import cli, headless, web
 from pydantic_clai2.config import SETTING_FIELDS, Settings, resolve_settings
-from pydantic_clai2.config.project_settings import PROJECT_FILE, SAFE_PROJECT_KEYS, load_project_settings
+from pydantic_clai2.config.project_settings import (
+    PROJECT_FILE,
+    SAFE_PROJECT_KEYS,
+    ProjectSettings,
+    load_project_settings,
+)
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import TurnStart
 from pydantic_clai2.runtime.project_instructions import ORIGIN, ProjectInstructions
-from pydantic_clai2.runtime.session_runtime import create_shell
+from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN
 
 USER_ONLY = {'repo_context.walk_up_roots', 'repo_context.autoload_symlink_roots', 'worktrees.remove_commands'}
@@ -325,3 +330,65 @@ async def test_project_instructions_only_go_with_a_runs_prompt() -> None:
     ]
     result = await agent.run(None, message_history=history)
     assert project_data(result.all_messages()) == []
+
+
+def approved_project(tmp_path: Path) -> tuple[SettingsStore, Callable[[ProjectSettings], Settings], ProjectSettings]:
+    """A saved `read-only`, a project file's `full` that is approved, and the settings CLAI starts with beside it."""
+    write(tmp_path, {'permissions': 'full'})
+    store = SettingsStore(tmp_path / 'config.db')
+    store.set('run.permissions', 'read-only')
+    store.approve_project_settings(tmp_path, {'run.permissions': 'full'})
+    settings_for = cli._settings_for(store, model=None, request_limit=None)  # pyright: ignore[reportPrivateUsage]
+    return store, settings_for, load_project_settings(tmp_path, store=store)
+
+
+async def test_a_session_opened_beside_the_terminal_follows_a_revoke(tmp_path: Path) -> None:
+    store, settings_for, project = approved_project(tmp_path)
+    shell = create_shell(
+        Agent(TestModel()),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=settings_for(project),
+        store=store,
+        builtin_plugins=(),
+        project=project,
+        headless=True,
+        workspace=tmp_path,
+    )
+    build = _opener(
+        shell,
+        agent=lambda: Agent(TestModel()),
+        deps=None,
+        plugins=(),
+        settings=settings_for,
+        load_plugins=False,
+        console=lambda: Console(file=io.StringIO()),
+    )
+    assert build(None).context.settings.permissions == 'full'
+    shell.context.project_command(['revoke', 'permissions'])
+    opened = build(None)
+    assert (opened.context.settings.permissions, opened.context.project.pending) == (
+        'read-only',
+        {'run.permissions': 'full'},
+    )
+
+
+async def test_a_web_session_opened_at_the_launch_directory_follows_a_revoke(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, settings_for, project = approved_project(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    permissions: list[str] = []
+
+    async def serve(shell: SessionRuntime[None, str], **_: object) -> None:
+        build = shell.process.live.build
+        assert build is not None
+        permissions.append(build(None).context.settings.permissions)
+        shell.context.project_command(['revoke', 'permissions'])
+        permissions.append(build(None).context.settings.permissions)
+
+    monkeypatch.setattr(web, '_serve_web', serve)
+    await web.run_web(settings_for=settings_for, store=store, project=project, console=Console(file=io.StringIO()))
+    assert permissions == ['full', 'read-only']

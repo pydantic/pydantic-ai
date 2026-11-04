@@ -26,7 +26,7 @@ from pydantic_clai2.commands import (
 )
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.builtins import DEFAULT_PLUGINS, STOCK_PLUGINS
-from pydantic_clai2.config.project_settings import ProjectSettings, load_project_settings
+from pydantic_clai2.config.project_settings import ProjectSettings, load_project_settings, with_current_approvals
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins import (
@@ -385,7 +385,7 @@ def _opener(
 
     def build(directory: Path | None) -> SessionRuntime[DepsT, OutputT]:
         project = (
-            launch_project
+            with_current_approvals(launch_project, store=shell.context.store)
             if directory in (None, launched_in)
             else load_project_settings(directory, store=shell.context.store)
         )

@@ -415,9 +415,8 @@ one, CLAI uses your own setting for it and names it under the banner at startup.
 session in that repository, and `/project revoke NAME...` (or `all`) returns to
 your own settings. An approval is kept in your user settings, for the folder
 that holds `.clai` and for the value you approved: once the file changes that
-value, as after a pull, it waits for your approval again. Only you approve, at
-the prompt: there is no `clai2` command-line equivalent, so nothing the agent
-runs in its shell can approve one. A headless `clai2 -p` run or `clai2 --web`
+value, as after a pull, it waits for your approval again. You approve at the
+prompt; `clai2` has no subcommand for it. A headless `clai2 -p` run or `clai2 --web`
 launch uses the approvals you saved and prints the keys it leaves out (on stderr
 for `-p`).
 

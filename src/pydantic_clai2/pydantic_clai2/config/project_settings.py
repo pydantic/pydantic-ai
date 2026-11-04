@@ -1,6 +1,6 @@
 """Project-local settings: `.clai/settings.json`, found by walking up from the workspace to the git root."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from pydantic import JsonValue, TypeAdapter
@@ -130,6 +130,26 @@ def _hooks(table: HookTable, *, root: Path) -> tuple[PluginSettings, ...]:
     return (PluginSettings(id=PROJECT_HOOKS, factory=HOOKS_FACTORY, enabled=False, settings=settings),)
 
 
+def with_current_approvals(project: ProjectSettings, *, store: SettingsStore | None) -> ProjectSettings:
+    """`project` with its keys split again by what `store` approves now; the file is not read again.
+
+    Without a `store`, nothing is approved. Without a file, there is nothing to approve, so `project` stays as it is.
+    """
+    root = project.root
+    if root is None:
+        return project
+    approved = {} if store is None else store.approved_project_settings(root)
+    declared = {**project.overrides, **project.pending}
+    applied = {
+        key: value
+        for key, value in declared.items()
+        if key in SAFE_PROJECT_KEYS or approved.get(key) == setting_json(value)
+    }
+    return replace(
+        project, overrides=applied, pending={key: value for key, value in declared.items() if key not in applied}
+    )
+
+
 def load_project_settings(workspace: Path, *, store: SettingsStore | None = None) -> ProjectSettings:
     """Read and validate the project file for `workspace`.
 
@@ -156,16 +176,10 @@ def load_project_settings(workspace: Path, *, store: SettingsStore | None = None
     except (OSError, ValueError) as exc:
         raise ValueError(f'{path}: {exc}') from exc
     root = path.parent.parent
-    approved = {} if store is None else store.approved_project_settings(root)
-    applied = {
-        key: value
-        for key, value in overrides.items()
-        if key in SAFE_PROJECT_KEYS or approved.get(key) == setting_json(value)
-    }
-    return ProjectSettings(
+    project = ProjectSettings(
         path=path,
-        overrides=applied,
-        pending={key: value for key, value in overrides.items() if key not in applied},
+        pending=overrides,
         plugins=(*(_unapproved(plugin, root=root) for plugin in plugins), *_hooks(hooks, root=root)),
         unknown=tuple(sorted(raw.keys() - _SET_KEYS.keys())),
     )
+    return with_current_approvals(project, store=store)
