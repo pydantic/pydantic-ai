@@ -322,11 +322,15 @@ def test_a_defender_without_an_id_cannot_bind_to_a_durable_agent() -> None:
 @pytest.mark.parametrize(
     ('defender', 'operations'),
     [
-        (PromptInjectionDefender(PromptDefense(enable_tier2=False, block_high_risk=True), id='defender'), ['classify']),
-        (PromptInjectionDefender(block_high_risk=True, id='defender'), []),
+        pytest.param(
+            PromptInjectionDefender(PromptDefense(enable_tier2=False, block_high_risk=True), id='defender'),
+            ['classify'],
+            id='supplied-defense',
+        ),
+        pytest.param(PromptInjectionDefender(block_high_risk=True, id='defender'), [], id='pattern-only'),
     ],
 )
-async def test_supplied_defense_classifies_as_a_json_journaled_operation(
+async def test_classification_routing_on_a_json_codec_engine(
     defender: PromptInjectionDefender[object], operations: list[str]
 ) -> None:
     """A supplied defense's verdicts survive a JSON-codec engine's round trip; pattern-only stays inline."""
