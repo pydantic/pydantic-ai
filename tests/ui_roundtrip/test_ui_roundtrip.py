@@ -55,12 +55,14 @@ from pydantic_ai.capabilities import AbstractCapability, Capability
 from pydantic_ai.messages import (
     BinaryContent,
     CompactionPart,
+    InstructionCapabilityPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
     ModelSettingsDeltaPart,
+    OperatorSource,
     StructuredContent,
     SystemPromptPart,
     TextPart,
@@ -599,11 +601,16 @@ def _progress_state(ctx: RunContext[None]) -> str:
     return f'The user has asked {_questions_asked(ctx)} question(s) so far.'
 
 
+@dataclass(kw_only=True)
+class _ReminderPart(InstructionCapabilityPart, namespace='test_ui_roundtrip', name='reminder'):
+    pass
+
+
 class _RequestScopedReminder(AbstractCapability[None]):
     async def before_model_request(
         self, ctx: RunContext[None], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        ctx.enqueue(SystemPromptPart('Reminder: keep it short.', scope='request'))
+        ctx.enqueue(_ReminderPart(content='Reminder: keep it short.', source=OperatorSource(), scope='request'))
         return request_context
 
 
@@ -991,6 +998,8 @@ class Client(ABC):
     def sanitize(self, adapter: UIAdapter[Any, Any, Any, Any, Any], messages: list[ModelMessage]) -> list[ModelMessage]:
         with warnings.catch_warnings():
             warnings.filterwarnings('ignore', 'Parts carrying the system voice were stripped', UserWarning)
+            # The server's own history has capability parts, which `dump_messages()` never sends to a client.
+            warnings.filterwarnings('ignore', 'Capability parts were dropped', UserWarning)
             return adapter.sanitize_messages(messages)
 
     async def turn(

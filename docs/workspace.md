@@ -295,15 +295,16 @@ agent = Agent('{{ anthropic:medium }}', capabilities=[LocalWorkspace('./checkout
 
 Tools work as before: the agent reads, edits and runs commands in it. The setting is for capabilities
 that pass the workspace's own files to the model. The model treats the agent's instructions as the
-operator speaking, so a capability that would put text read from the workspace there checks
-[`ctx.workspace.authority`][pydantic_ai.workspaces.Workspace.authority] and sends that text with no more
-[authority][pydantic_ai.messages.Authority] than it has: in the user's turn for `'user'`, as tool output for
-`'none'`. `authority` doesn't limit what the agent can do; use
+operator speaking, so a capability that would put text read from the workspace there sends it with no more
+[authority][pydantic_ai.messages.Authority] than [`ctx.workspace.authority`][pydantic_ai.workspaces.Workspace.authority]:
+in a [capability part](capabilities/custom.md#capability-parts) whose source is
+[`await WorkspaceSource.from_workspace(workspace, path)`][pydantic_ai.messages.WorkspaceSource.from_workspace], which
+Pydantic AI renders in the application's voice for `'operator'`, in the user's turn for `'user'` and as framed data
+for `'none'`. `authority` doesn't limit what the agent can do; use
 [tool approval](deferred-tools.md#human-in-the-loop-tool-approval) or a sandbox for that.
 
-No built-in capability reads `authority` yet, so setting it doesn't yet change what reaches the model.
-It's the setting your own capabilities check, and built-in capabilities that load workspace files will
-check it as they adopt it.
+What a tool returns, such as a file `read_file` read, is tool output whatever the workspace's authority.
+Built-in capabilities that load workspace files into instructions check `authority` as they adopt it.
 
 A capability checks `authority` when it builds a run's content, so a change applies from the next run.
 Text it already added to a conversation stays in that history, so start a new conversation after

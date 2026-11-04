@@ -135,9 +135,9 @@ before the next model request. A directory counts as surfaced while its note
 is still in the conversation: a later run of the same conversation doesn't
 repeat it, and once compaction summarizes the note away, the next traversal
 surfaces it again. The working directory's files are not surfaced again when
-the walk-up already loaded them. Every part of a note carries
-`{'origin': 'pydantic-ai-harness.repo_context.nested_note.v1', 'directory': ...}`
-in its `metadata`, which is how `RepoContext` and compaction recognize it.
+the walk-up already loaded them. A note is a `ContextFilePathPart` (pointer) or
+a `ContextFilePart` (contents), [capability parts](https://pydantic.dev/docs/ai/capabilities/custom/#capability-parts) whose `directory`
+field names the surfaced directory, which is how `RepoContext` recognizes it.
 Same-directory instruction symlinks are named after their targets, and load
 only when the target is itself an instruction file, as in the walk-up. Where the
 backend resolves symlinks, external instruction symlinks are skipped, even when
@@ -180,17 +180,27 @@ not just the file you originally linked.
 
 Nested files are different: the model chooses which directories to read, and
 those can include vendored code or a checkout someone else wrote. Their contents
-and paths reach the model as a user message, not as instructions. The
-`'pointer'` note's own wording is the framework's, so it is a `SystemPromptPart`
-(a system message where the model supports one mid-conversation, and
-`<system>`-tagged user text otherwise), followed by the file's path as a
-user-message `<context-file path="..." />` tag.
+and paths are data read from the workspace, so they reach the model as a user
+message, not as instructions. A `'pointer'` note is a `ContextFilePathPart`
+that sends the file's path in a `<context_file_path>` tag, with a note in the
+application's voice asking the model to read the file if it's relevant (a system
+message where the model supports one mid-conversation, and `<system>`-tagged
+user text otherwise). Both kinds of note carry a `WorkspaceSource`: for a
+workspace the operator doesn't control, it has no authority, and the note also
+says the file was written by its author, not by the user or the application.
 
-Each file is wrapped in `<context-file path="...">` tags. The `<` of every
-opening or closing `<context-file>` tag inside a file, and of every framing tag
-Pydantic AI writes (`<system>`, `<context>`, `<tool_result>` and the rest), is
-escaped as `&lt;`, and the path is HTML-escaped, so a file stays inside its own
-block.
+Walk-up files are wrapped in `<context-file path="...">` tags in the
+instructions. The `<` of every opening or closing `<context-file>` tag inside a
+file, and of every framing tag Pydantic AI writes (`<system>`, `<context>`,
+`<tool_result>` and the rest), is escaped as `&lt;`, and the path is HTML-
+escaped, so a file stays inside its own block.
+
+A `'contents'` note is a `ContextFilePart` that sends the file in a
+`<context_file path="...">` tag, with the path HTML-escaped. The file goes out
+as written: an opening or closing `<context_file>` tag in it, or text that looks
+like one of Pydantic AI's frames, such as a `<system>` tag, gets a note saying
+the file's author wrote it, so a file stays inside its own block. Find either
+kind of note in history by its type.
 
 ## Cache cost
 

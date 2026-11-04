@@ -10,6 +10,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from pydantic_ai import Agent
+from pydantic_ai._capability_parts import render_capability_parts
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -67,7 +68,7 @@ def test_video_example_reuses_ingestion_and_recalls_memory(monkeypatch: pytest.M
     def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         prompts = [
             part
-            for message in messages
+            for message in render_capability_parts(messages)
             if isinstance(message, ModelRequest)
             for part in message.parts
             if isinstance(part, UserPromptPart)
@@ -108,12 +109,10 @@ def test_video_example_reuses_ingestion_and_recalls_memory(monkeypatch: pytest.M
             assert TypeAdapter(dict[str, object]).validate_python(row['frame_attrs'])['time'] == 0
             assert any(
                 not isinstance(part.content, str)
-                and any(
-                    isinstance(content, TextContent)
-                    and content.content.startswith('<memory>\n')
-                    and 'visual examples' in content.content
-                    for content in part.content
-                )
+                and (
+                    text := ''.join(item.content for item in part.content if isinstance(item, TextContent))
+                ).startswith('<memory>')
+                and 'visual examples' in text
                 for part in prompts
             )
         else:

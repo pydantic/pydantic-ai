@@ -2,20 +2,21 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Mapping, Sequence
 from copy import copy
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import Literal, TypeAlias
+from typing import Final, Literal, TypeAlias
 
-from pydantic_ai._framing import neutralize_tags
 from pydantic_ai.agent.abstract import AgentInstructions
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    DataCapabilityPart,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
+    ModelSource,
     TextContent,
     ToolReturnPart,
     UserPromptPart,
@@ -34,8 +35,6 @@ from pydantic_ai_harness.memory._sqlite import SqliteMemoryStore
 from pydantic_ai_harness.memory._store import MemoryFile, MemoryStore, encode_metadata, validate_store_path
 from pydantic_ai_harness.memory._toolset import (
     MAIN_FILENAME,
-    MEMORY_DATA_PREFIX,
-    MEMORY_DATA_SUFFIX,
     MEMORY_ORIGIN,
     MemoryDeleteResult,
     MemorySearchResponse,
@@ -66,9 +65,24 @@ _DEFAULT_GUIDANCE = (
     'in this turn. A later `<memory>` block for this memory supersedes its earlier ones.'
 )
 
+
 # The slash is inside the optional group so the two `\s*` never compete for one run of spaces.
-_MEMORY_TAG_RE = re.compile(r'<(?=(?:\s*/)?\s*memory\b)', re.IGNORECASE)
-"""The `<` of a `<memory>` or `</memory>` tag in stored content, which could otherwise close the block early."""
+@dataclass(kw_only=True)
+class MemorySnapshotPart(DataCapabilityPart[str], namespace='memory', name='snapshot', tag='memory'):
+    """A snapshot of stored memory, as `Memory` records it in the conversation at the start of a run.
+
+    Memory is data the agent wrote in earlier runs, so it goes on the user channel in a `<memory>` frame, never in the
+    application's voice, with a note saying who wrote it. It goes in as stored: text in it that looks like a framework
+    frame, or opens or closes `<memory>`, gets a note saying it's the agent's, not the application's. Find snapshots in
+    history by this type.
+    """
+
+    scope_hash: str
+    """A hash of the memory scope the snapshot shows. Never sent to the model."""
+
+    memory_id: str
+    """The `id` of the `Memory` capability that recorded it, or `''`. Never sent to the model."""
+
 
 WriteMetadataFunc: TypeAlias = Callable[[RunContext[AgentDepsT]], Mapping[str, str] | None]
 """Resolves the metadata recorded with one `write_memory` write, or `None` to record none."""
@@ -331,7 +345,7 @@ class Memory(AbstractCapability[AgentDepsT]):
             if self._run_snapshot is not None and latest != self._run_snapshot:
                 # Compaction dropped it: what the provider is sent after the boundary is the request being sent,
                 # so it goes there, after any tool results, rather than anywhere the provider would trim.
-                ctx.enqueue(UserPromptPart([TextContent(self._run_snapshot, metadata=metadata)]))
+                ctx.enqueue(_snapshot_part(self._run_snapshot, metadata))
             return request_context
         self._run_snapshot = latest
         with ctx.tracer.start_as_current_span(
@@ -383,7 +397,7 @@ class Memory(AbstractCapability[AgentDepsT]):
             if appended is not None:
                 # When an earlier hook retried the first request, this lands after its retry feedback: still
                 # ahead of any response, so nothing the model has seen changes.
-                ctx.enqueue(UserPromptPart([TextContent(appended, metadata=metadata)]))
+                ctx.enqueue(_snapshot_part(appended, metadata))
                 self._run_snapshot = appended
             if span.is_recording():
                 span.set_attributes(
@@ -422,8 +436,7 @@ class Memory(AbstractCapability[AgentDepsT]):
         reserved: int = 0,
     ) -> tuple[str, bool] | None:
         """The framed snapshot, and whether a fresh conversation can skip it, or `None` when it doesn't fit the budget."""
-        main_content = '' if main is None else _neutralize(main.content)
-        subfiles = [_neutralize(name) for name in subfiles]
+        main_content = '' if main is None else main.content
         guidance = self._render_guidance()
         # The `directory` instruction, when there is one, shares `max_tokens` with the guidance and the snapshot.
         content_budget = snapshot_content_budget(self.max_tokens, guidance) - reserved
@@ -435,7 +448,7 @@ class Memory(AbstractCapability[AgentDepsT]):
             empty = empty_snapshot_body(self.heading, None if reader is None else reader[1])
             if len(empty) > content_budget:
                 return None
-            return f'{MEMORY_DATA_PREFIX}{empty}{MEMORY_DATA_SUFFIX}', True
+            return empty, True
         rendered = render_memory_prompt(
             main_content,
             subfiles,
@@ -448,7 +461,7 @@ class Memory(AbstractCapability[AgentDepsT]):
             read_main=read_call(reader, MAIN_FILENAME),
             location=None if reader is None else reader[1],
         )[:content_budget]
-        return f'{MEMORY_DATA_PREFIX}{rendered}{MEMORY_DATA_SUFFIX}', False
+        return rendered, False
 
     @durable_operation('load_snapshot')
     async def _load_snapshot(
@@ -533,32 +546,57 @@ class Memory(AbstractCapability[AgentDepsT]):
         return 'Memory'
 
 
-def _latest_snapshot(messages: list[ModelMessage], metadata: dict[str, str]) -> str | None:
-    """The text of the latest snapshot for this scope in history, or `None` when there is none.
+_MEMORY_SOURCE: Final = ModelSource('agent in an earlier run')
+"""Who wrote a memory snapshot: the agent, through its memory tools. Stores don't record which entries a user edited."""
 
-    Snapshots are recognized by the metadata `Memory` sets on them, never by their text. Versions before
-    snapshots were kept in history marked them with a plain string, which still identifies them.
+
+def _snapshot_part(content: str, metadata: dict[str, str]) -> MemorySnapshotPart:
+    """A snapshot as `Memory` records it: `content` is the frame's body, its line breaks included."""
+    return MemorySnapshotPart(
+        content=content,
+        # The agent writes memory with its memory tools, in earlier runs: another model's text, with no authority.
+        source=_MEMORY_SOURCE,
+        scope_hash=metadata['scope'],
+        memory_id=metadata['id'],
+    )
+
+
+def _latest_snapshot(messages: list[ModelMessage], metadata: dict[str, str]) -> str | None:
+    """The content of the latest snapshot for this scope in history, or `None` when there is none.
+
+    Snapshots are `MemorySnapshotPart`s, recognized by their type, scope and capability id, never by their text.
+    Earlier versions recorded them as user text marked with metadata, or before that a plain string, which still
+    identifies them. That text includes the `<memory>` frame, which is left out, so a snapshot that matches the
+    current memory isn't recorded again.
     """
     legacy = (f'{MEMORY_ORIGIN}:{metadata["scope"]}', MEMORY_ORIGIN)
     for message in reversed(messages):
         if not isinstance(message, ModelRequest):
             continue
         for part in reversed(message.parts):
-            if not isinstance(part, UserPromptPart) or isinstance(part.content, str):
-                continue
-            for item in reversed(part.content):
-                if isinstance(item, TextContent) and (item.metadata == metadata or item.metadata in legacy):
-                    return item.content
+            if (snapshot := _part_snapshot(part, metadata, legacy)) is not None:
+                return snapshot
     return None
 
 
-def _neutralize(text: str) -> str:
-    """Escape every framing tag in stored memory, and `<memory>` itself, so it can't end its block or forge one.
+def _part_snapshot(part: ModelRequestPart, metadata: dict[str, str], legacy: tuple[str, str]) -> str | None:
+    """The content of the snapshot for this scope that `part` is or holds, or `None` when it has none.
 
-    Memory is model- or user-written data: a `<system>` in it must not read as the application speaking.
+    `legacy` is the plain-string metadata older versions marked a snapshot with.
     """
-    # TODO: switch to `pydantic_ai.framing.wrap()` with `memory` registered as a framing tag (#10957).
-    return _MEMORY_TAG_RE.sub('&lt;', neutralize_tags(text))
+    if (
+        isinstance(part, MemorySnapshotPart)
+        and part.scope_hash == metadata['scope']
+        and part.memory_id == metadata['id']
+    ):
+        return part.content
+    if not isinstance(part, UserPromptPart) or isinstance(part.content, str):
+        return None
+    for item in reversed(part.content):
+        if isinstance(item, TextContent) and (item.metadata == metadata or item.metadata in legacy):
+            # A legacy snapshot's body sits on lines of its own, between the tags.
+            return item.content.removeprefix('<memory>\n').removesuffix('\n</memory>')
+    return None
 
 
 def _responded_in_run(ctx: RunContext[AgentDepsT]) -> bool:

@@ -22,7 +22,14 @@ from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from . import _utils, messages as _messages
 from ._cancel import current_run_clock
 from ._context_size import context_tokens
-from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
+from ._enqueue import (
+    EnqueueContent,
+    EnqueueGuard,
+    PendingMessage,
+    PendingMessagePriority,
+    hand_built_capability_speech,
+    stamp_capability_parts,
+)
 from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import UserError
 
@@ -921,22 +928,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 '`emit` is only available during an agent run (from tools, capability hooks, or '
                 '`AgentRun.emit`). This `RunContext` has no event stream to emit into.'
             )
-        capability_id: str | None = None
         capability = self._capability
-        if capability is not None:
-            capability_id = next(
-                (run_id for run_id, cap in self.capabilities.items() if cap is capability), capability.id
-            )
-        elif (
-            (tool_name := self._dispatched_tool_name or self.tool_name) is not None
-            and self.tool_manager is not None
-            and self.tool_manager.tools is not None
-        ):
-            if (tool := self.tool_manager.tools.get(tool_name)) is not None:
-                # `CapabilityOwnedToolset` stamps the owning capability's run id on the tool definition,
-                # covering capabilities that rely on an implicit (derived) id as well as explicit ones.
-                tool_capability_id = tool.tool_def.capability_id
-                capability_id = tool_capability_id if tool_capability_id in self.capabilities else None
+        capability_id = self._calling_capability_id()
 
         if isinstance(event, _messages.CapabilityEvent):
             if capability_id is None:
@@ -972,6 +965,23 @@ class RunContext(Generic[RunContextAgentDepsT]):
         await dispatch_event_immediate(self, event)
         return event
 
+    def _calling_capability_id(self) -> str | None:
+        """The run id of the capability whose hook or tool is using this context, or `None` outside one."""
+        capability = self._capability
+        if capability is not None:
+            return next((run_id for run_id, cap in self.capabilities.items() if cap is capability), capability.id)
+        if (
+            (tool_name := self._dispatched_tool_name or self.tool_name) is not None
+            and self.tool_manager is not None
+            and self.tool_manager.tools is not None
+        ):
+            if (tool := self.tool_manager.tools.get(tool_name)) is not None:
+                # `CapabilityOwnedToolset` stamps the owning capability's run id on the tool definition,
+                # covering capabilities that rely on an implicit (derived) id as well as explicit ones.
+                tool_capability_id = tool.tool_def.capability_id
+                return tool_capability_id if tool_capability_id in self.capabilities else None
+        return None
+
     def enqueue(
         self,
         *content: EnqueueContent,
@@ -988,6 +998,12 @@ class RunContext(Generic[RunContextAgentDepsT]):
         [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], right after it, when that request is the
         next one sent. Anything else is added to the history as its own messages, and so is content
         enqueued after it.
+
+        Called from a capability's hook or tool, except an app-facing callback capability such as
+        [`Hooks`][pydantic_ai.capabilities.Hooks], whose functions are the application's, it stamps each
+        [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] that has no `capability_id` yet with the capability's
+        run id, and warns on a bare [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] or user text that looks
+        like a framework frame, which a capability part should say instead.
 
         Args:
             *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items.
@@ -1035,7 +1051,30 @@ class RunContext(Generic[RunContextAgentDepsT]):
         )
         if pending is None:
             return None
+        if isinstance(self.pending_messages, EnqueueGuard):
+            # Nowhere to deliver to, such as inside a durable unit, where the run's state isn't all available: its
+            # queue says why before anything else is looked up.
+            self.pending_messages.append(pending)
+        capability_id = self._calling_capability_id()
+        owner = self._capability if self._capability is not None else self.capabilities.get(capability_id or '')
+        # An app-facing callback capability, such as `Hooks`, runs the application's own functions: what they enqueue
+        # is the application's, as `emit` treats their events.
+        if owner is not None and owner._emits_app_events:  # pyright: ignore[reportPrivateUsage]
+            capability_id = None
+        if capability_id is not None:
+            ceiling: _messages.Authority = 'operator' if owner is None else owner._effective_authority  # pyright: ignore[reportPrivateUsage]
+            # Stamped before it's queued: once queued, a run on another thread may deliver it at once, and it must
+            # never reach the model with more authority than the capability has.
+            stamp_capability_parts(pending.messages, capability_id, ceiling)
         self.pending_messages.append(pending)
+        if capability_id is not None and (reason := hand_built_capability_speech(pending.messages)):
+            warnings.warn(
+                f'Capability {capability_id!r} enqueued {reason}. Define a `CapabilityPart` subclass for what it '
+                'says, so the framework renders it in the right voice and your code can find it again by type: '
+                'see https://pydantic.dev/docs/ai/capabilities/custom/#capability-parts',
+                UserWarning,
+                stacklevel=2,
+            )
         return pending.enqueue_id
 
     def load_capability(self, capability: str | AbstractCapability[RunContextAgentDepsT]) -> bool:

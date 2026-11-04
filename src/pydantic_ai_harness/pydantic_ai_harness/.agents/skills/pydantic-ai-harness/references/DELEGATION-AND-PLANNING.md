@@ -25,7 +25,7 @@ Gives the model plan tools and keeps the current plan in front of it: every tool
 ends its result with the whole plan in a `<plan_reminder>` tag, and a fixed note in the static
 instructions says what the tag holds. Only when the latest plan isn't visible (after compaction, in a
 run started without it, or after an outside store change) does `Planning` record it as user-channel
-data. The plan never goes in system voice, and the history only grows, so plan edits don't break the
+data, a `PlanReminderPart` (from `pydantic_ai_harness.planning`; find records by type). The plan never goes in system voice, and the history only grows, so plan edits don't break the
 prompt cache or preserved thinking.
 
 ```python
@@ -215,14 +215,13 @@ orchestrator = Agent(
 ## DelegationReports
 
 Delivers finished background-task reports from a `DelegationTasks` owner into a parent run. Each
-report is the child's output as framed `<task_output task_id=... agent_name=...>` data in a
-`UserPromptPart`, with `outcome=...` only when the task didn't succeed and no preamble.
-`is_task_report(part)` identifies that part by its
-metadata, so hosts can keep it out of user-prompt listings. Like `BackgroundTools` completions, the
-metadata is never sent to the model, but the Vercel AI and AG-UI message conversions omit it: a
-history that round-trips through them returns the report as plain user text, and `is_task_report`
-no longer matches it. `message_history` is trusted as the caller's own, metadata included; load untrusted
-client history with a UI adapter or pass it through `sanitize_messages`, which resets `TextContent.metadata`.
+report is a `TaskOutputPart` (a `DataCapabilityPart` from `pydantic_ai_harness.subagents`): the child's
+output as `<task_output task_id=... agent_name=...>` data, with `outcome=...` only when the task didn't
+succeed, and a note naming the sub-agent as its author. A question is a `TaskQuestionPart`
+(`<task_question>`). The output goes out as written; text in it that looks like the frame's tag or an
+application frame gets a further note instead. Find both by type, or with `is_task_report(part)`, which
+also matches the metadata-marked user text an earlier version delivered, so hosts can keep them out of
+user-prompt listings. The Vercel AI and AG-UI message conversions leave capability parts out.
 
 ```python
 from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
@@ -355,20 +354,19 @@ Gotchas:
 Selected tools start, return a "running in background (task id)" message immediately, and deliver the
 result as a follow-up message when done.
 
-Each follow-up is a `ModelRequest` containing a `UserPromptPart` whose first content item is
-`TextContent` with `metadata={'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': original_tool_call_id}`,
-including handled failure notifications. This identifies the entire completion part, including any
-files and extra content. The metadata is not sent to the model and survives native message
-serialization and merging consecutive requests. The Vercel AI and AG-UI message conversions omit
-this metadata. A history loaded back from them keeps the text and its framing, but the follow-up
-is then an ordinary user prompt. `ToolReturn.metadata` is discarded.
+Each follow-up, including a handled failure notification, is a `BackgroundToolResultPart` (a
+`DataCapabilityPart` from `pydantic_ai_harness.background_tools`, with `tool_name`, `tool_call_id` and
+`outcome` fields); find follow-ups by that type. The Vercel AI and AG-UI message conversions leave
+capability parts out. The tool's return value and files, then any `ToolReturn.content`, go in the same
+frame; `ToolReturn.metadata` is discarded.
 
 The follow-up wraps what the tool returned in `<tool_result tool_name="..." tool_call_id="...">`
-tags, the same tags Pydantic AI puts around tool files it sends on the user channel. This tells the
-model the text is the tool's output rather than something the user said, and which pending call it
-completes. A closing `</tool_result>` tag inside the output is escaped, so the output cannot end the
-frame early. A failed call is framed the same way with `outcome="failed"`, wrapping the message from
-`ModelRetry` or `ToolFailed`.
+tags, the same tags Pydantic AI puts around tool files it sends on the user channel, with a note that
+the tool wrote it, not the user or the application. This tells the model the text is the tool's output
+rather than something the user said, and which pending call it completes. The output goes out as
+written: text in it that looks like `<tool_result>` or an application frame such as `<system>` gets a
+further note naming the tool as its author, so it cannot end the frame early. A failed call is framed
+the same way with `outcome="failed"`, wrapping the message from `ModelRetry` or `ToolFailed`.
 
 ```python
 import asyncio

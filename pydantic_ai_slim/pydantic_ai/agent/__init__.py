@@ -3535,7 +3535,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         unbound, a silent divergence. KEEP the two call sites in sync.
         """
         _reject_second_of_a_kind([self._effective_root_capability(), *extra_capabilities])
-        return [capability.for_agent(self) for capability in extra_capabilities]
+        return [capability._keep_authority(capability.for_agent(self)) for capability in extra_capabilities]  # pyright: ignore[reportPrivateUsage]
 
     async def _resolve_model_selection(
         self,
@@ -3726,7 +3726,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # durable-exec integrations rely on this for deterministic replay). Composing from the resolved
         # pieces yields the same structure as resolving a pre-composed tree, since the same
         # flatten-and-sort runs on the same resolved children either way.
-        resolved_layers = await _utils.gather(*(cap.for_run(ctx) for cap in run_layers))
+        resolved_layers = await _utils.gather(
+            *(cap._for_run_keeping_authority(ctx) for cap in run_layers)  # pyright: ignore[reportPrivateUsage]
+        )
         # The extras are the tail of `run_layers` (instrumentation, if added, is at the front). Slicing
         # from the front avoids the `[-0:]` full-list pitfall when there are no extras.
         resolved_extras = resolved_layers[len(resolved_layers) - len(extra_capabilities) :]

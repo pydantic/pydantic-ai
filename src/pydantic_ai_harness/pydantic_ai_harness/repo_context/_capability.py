@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Callable, Iterator, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
@@ -14,12 +14,14 @@ from pydantic_ai.capabilities import AbstractCapability, on_event
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CompactionPart,
+    DataCapabilityPart,
     ModelMessage,
     ModelRequest,
-    SystemPromptPart,
+    ModelRequestPart,
     TextContent,
     ToolCallPart,
     UserPromptPart,
+    WorkspaceSource,
     post_compaction_window,
 )
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
@@ -32,12 +34,11 @@ from pydantic_ai_harness.filesystem._tool_kinds import step_aside_for_read_file
 from pydantic_ai_harness.repo_context._loader import (
     ContextFile,
     context_file_label,
+    context_file_part_content,
     dir_context_file_path,
     directories_up_to,
     discover_instruction_files,
     find_dir_context_file,
-    render_context_file,
-    render_context_file_path,
     render_context_files,
 )
 from pydantic_ai_harness.repo_context._toolset import RepoContextToolset
@@ -52,8 +53,8 @@ _ASSET_ROOTS_HINT = (
     'or call `{tool_name}` to map it when that tool is offered.'
 )
 _POINTER_NOTE = (
-    'A directory you just accessed has an instruction file, not loaded here. Its path is in the '
-    '`<context-file>` tag that follows. Read the file if it is relevant to your task.'
+    'A directory you just accessed has an instruction file, not loaded here. Its path is in the accompanying '
+    '{frame}. Read the file if it is relevant to your task.'
 )
 _NESTED_PRECEDENCE = (
     'Instruction files ({names}) apply to the directory they are in and everything below it. Where instruction '
@@ -61,7 +62,44 @@ _NESTED_PRECEDENCE = (
     'precedence over all of them.'
 )
 _NESTED_NOTE_ORIGIN = 'pydantic-ai-harness.repo_context.nested_note.v1'
-"""The `origin` in the `metadata` of every part a nested note enqueues, next to the surfaced `directory`."""
+"""The `origin` in the `metadata` of the user-channel text an earlier version enqueued as a nested note, next to the
+surfaced `directory`; still recognized in a saved history, so a note in it isn't surfaced again."""
+
+
+@dataclass(kw_only=True)
+class ContextFilePart(
+    DataCapabilityPart[str], namespace='repo_context', name='context_file', tag='context_file', attributes=('path',)
+):
+    """A nested instruction file's contents, as `RepoContext(nested_inject='contents')` surfaces them.
+
+    Repository data on the user channel, in a `<context_file>` tag naming the file. Find them in history by this type.
+    """
+
+    path: str
+    """The file's label: its path relative to the working directory."""
+
+    directory: str
+    """The directory the file applies to, which the traversal surfaced. Never sent to the model."""
+
+
+@dataclass(kw_only=True)
+class ContextFilePathPart(
+    DataCapabilityPart[str],
+    namespace='repo_context',
+    name='context_file_path',
+    tag='context_file_path',
+    note=_POINTER_NOTE,
+):
+    """A pointer to a nested instruction file, as `RepoContext(nested_inject='pointer')` surfaces it.
+
+    Its content is the file's label, with a note in the application's voice asking the model to read the file if it
+    is relevant. Find them in history by this type.
+    """
+
+    directory: str
+    """The directory the file applies to, which the traversal surfaced. Never sent to the model."""
+
+
 _DEFAULT_TRAVERSAL_TOOL_NAMES = frozenset({'list_directory', 'read_file'})
 _DEFAULT_TRAVERSAL_PATH_ARG = 'path'
 _TRAVERSAL_DEPRECATION = (
@@ -379,7 +417,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         if context_file is None or self._surfaced(key, in_history):
             return
         self._pending_dirs.add(key)
-        ctx.enqueue(*_stamp(self._render_note(context_file), key))
+        ctx.enqueue(await self._note(ctx.workspace, context_file, key))
 
     def _surfaced(self, key: str, in_history: set[str]) -> bool:
         return key in self._loaded_dirs or key in self._pending_dirs or key in in_history
@@ -403,9 +441,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             for message in post_compaction_window(messages)
             if isinstance(message, ModelRequest)
             for part in message.parts
-            if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
-            for item in part.content
-            if isinstance(item, TextContent) and (directory := _note_directory(item.metadata)) is not None
+            for directory in _note_directories(part)
         }
         self._pending_dirs -= in_history
         return in_history
@@ -420,17 +456,23 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             return candidate
         return candidate.parent if not entry.is_dir else candidate
 
-    def _render_note(self, context_file: ContextFile) -> Sequence[str | SystemPromptPart]:
-        """The file's contents as repository data, or a framework pointer followed by the file's path as data.
+    async def _note(
+        self, workspace: Workspace, context_file: ContextFile, directory: str
+    ) -> ContextFilePart | ContextFilePathPart:
+        """The file's contents, or a pointer to it, as repository data read from `workspace`.
 
-        The contents and the path are the repository's, not the operator's or the framework's, so they go on
-        the user channel in a `<context-file>` tag. Only the pointer's own wording is in system voice.
+        The contents and the path are the repository's, not the operator's or the framework's, so they are data on
+        the user channel. Only the pointer's note, Pydantic AI's rendering of the part's class, speaks in the
+        application's voice, followed by who wrote the file when the operator doesn't control the workspace.
         """
         assert self._cached_working_dir is not None, 'a note is only rendered once the directory is resolved'
         label = context_file_label(context_file.path, self._cached_working_dir)
+        source = await WorkspaceSource.from_workspace(workspace, context_file.path.as_posix())
         if self.nested_inject == 'contents':
-            return [render_context_file(context_file, label=label)]
-        return [SystemPromptPart(_POINTER_NOTE), render_context_file_path(label)]
+            return ContextFilePart(
+                content=context_file_part_content(context_file), source=source, path=label, directory=directory
+            )
+        return ContextFilePathPart(content=label, source=source, directory=directory)
 
     async def _working_dir(self, workspace: Workspace) -> Path:
         if self._cached_working_dir is None:
@@ -443,18 +485,6 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         return 'RepoContext'
 
 
-def _stamp(parts: Sequence[str | SystemPromptPart], directory: str) -> Iterator[TextContent | SystemPromptPart]:
-    """Mark a note's parts as RepoContext's, so history scans and compaction recognize them by metadata."""
-    for part in parts:
-        # A dict per part, so mutating one part's metadata doesn't change the other's.
-        metadata = {'origin': _NESTED_NOTE_ORIGIN, 'directory': directory}
-        yield (
-            replace(part, metadata=metadata)
-            if isinstance(part, SystemPromptPart)
-            else TextContent(part, metadata=metadata)
-        )
-
-
 def _latest_compaction(messages: Sequence[ModelMessage]) -> CompactionPart | None:
     for message in reversed(messages):
         for part in reversed(message.parts):
@@ -463,7 +493,21 @@ def _latest_compaction(messages: Sequence[ModelMessage]) -> CompactionPart | Non
     return None
 
 
-def _note_directory(metadata: object) -> str | None:
+def _note_directories(part: ModelRequestPart) -> Iterator[str]:
+    """The directory a nested note in `part` surfaced, if `part` holds one.
+
+    A note is a `ContextFilePart` or a `ContextFilePathPart`, or, in a history an earlier version saved, user-channel
+    text carrying the nested-note `origin` metadata.
+    """
+    if isinstance(part, ContextFilePart | ContextFilePathPart):
+        yield part.directory
+    elif isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+        for item in part.content:
+            if isinstance(item, TextContent) and (directory := _legacy_note_directory(item.metadata)) is not None:
+                yield directory
+
+
+def _legacy_note_directory(metadata: object) -> str | None:
     if not is_str_dict(metadata) or metadata.get('origin') != _NESTED_NOTE_ORIGIN:
         return None
     directory = metadata.get('directory')

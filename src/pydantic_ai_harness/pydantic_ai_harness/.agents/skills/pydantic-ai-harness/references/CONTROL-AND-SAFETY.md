@@ -631,17 +631,21 @@ agent = Agent(
   that holds on every step, and the default `'request'` for per-step nudges or changing values.
 - `dynamic_reminders`: callables `(ctx) -> str | GeneratedReminder | None`, sync or async, evaluated
   on **every** request. A `str` is sent as written (no tag); a `GeneratedReminder` is quoted as data. Reminders are system prompts, so return only text you wrote and
-  quote user input or tool output as data.
+  quote user input or tool output as data: a `str` that looks like a framework frame raises `UserError` and fails the run.
 - `GoalReanchor()` points the model back at the run's first user prompt without repeating it (at the
   compaction summary once native compaction took the prompt); free. `LLMReminder` returns a
-  `GeneratedReminder`, not a `str`, so it stays data: a fixed note in system voice and the generated
-  text on the user channel (`<generated_reminder model="...">`), kept in history together as one record.
-  A plain `str` a dynamic reminder returns is operator text in system voice. Framing tags in quoted
-  text are escaped.
+  `GeneratedReminder`, not a `str`, so it stays data: a `GeneratedReminderPart` (from
+  `pydantic_ai_harness.system_reminders`), the generated text on the user channel
+  (`<generated_reminder model="...">`) behind a fixed note in the application's voice naming the
+  reminder model as its author, kept in history as one record. Text in it that looks like a framework
+  frame gets a further note naming its author. A plain `str` a dynamic reminder returns is operator
+  text in system voice; static `Reminder` content that looks like a framework frame, such as `<system>`,
+  raises `UserError` when the `Reminder` is created. Framing tags in the transcript `LLMReminder`
+  quotes to its model are escaped.
 - `LLMReminder(model=..., interval=10)` (model required) makes one extra model call every `interval`
   requests (10th, 20th, ...; pass `interval` explicitly: left unset it warns that the default used to
-  be `1`). Each firing adds a note and the generated text to history for good, so a run of R requests
-  gains `2 * (R // interval)` parts. Its agent is built on first use, so no provider key is needed at
+  be `1`). Each firing adds one `GeneratedReminderPart` to history for good, so a run of R requests
+  gains `R // interval` parts. Its agent is built on first use, so no provider key is needed at
   construction. On any error it sends `GoalReanchor` text instead, logging a warning with the
   traceback once per run under `pydantic_ai_harness.system_reminders`; only a budget too tight for
   the extra request is silent. A wrapper that gates it itself should pass `interval=1`.
@@ -732,9 +736,9 @@ except LoopDetectedError as error:
     #> repeated_result
 ```
 
-- `action='nudge'` (default) enqueues a `SystemPromptPart` (conversation scope, so it keeps
-  applying) into the current request; find it by `metadata['origin'] == 'pydantic-ai-harness.detect_loops.nudge.v1'`, never by
-  text. `'error'` raises `LoopDetectedError` (an `AgentRunError`, `.loop` is the `DetectedLoop`). A
+- `action='nudge'` (default) enqueues a `LoopNudgePart` (an `InstructionCapabilityPart` from
+  `pydantic_ai_harness.detect_loops`, conversation scope, so it keeps applying) into the current request; find it
+  by `isinstance(part, LoopNudgePart)`, never by text. Its `pattern` and `tool_names` fields never reach the model. `'error'` raises `LoopDetectedError` (an `AgentRunError`, `.loop` is the `DetectedLoop`). A
   sync or async `(ctx, loop)` callable decides itself; type `ctx` as `RunContext[object]` on an agent
   without `deps_type`.
 - Calls, results, and text are recorded as they arrive (the capability runs outermost), so

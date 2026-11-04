@@ -13,6 +13,6 @@ Capabilities are the composable home for cross-cutting agent behavior.
 
 ## Prompt-cache prefix stability
 
-- Follow [Message History & Prompt Caching](../../../agent_docs/message-history-and-caching.md): history is append-only across steps and runs, per-request nudges are enqueued `SystemPromptPart(scope='request')`s, and content goes in the channel that matches who wrote it.
+- Follow [Message History & Prompt Caching](../../../agent_docs/message-history-and-caching.md): history is append-only across steps and runs, per-request nudges are enqueued request-scoped `InstructionCapabilityPart`s, and content goes in the channel that matches who wrote it.
 - Keep tool definitions and their ordering stable across steps. Providers serialize tools before instructions and messages.
 - Use date-only timestamps in instructions. Finer-grained timestamps invalidate an otherwise stable prefix.

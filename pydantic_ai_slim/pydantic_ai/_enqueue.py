@@ -9,13 +9,18 @@ from __future__ import annotations
 import threading
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Literal, SupportsIndex, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, NoReturn, SupportsIndex, TypeAlias
 
+from ._capability_parts import operator_voice_lookalike
+from ._framing import resembles_frame
 from ._utils import fill_run_metadata
 from ._uuid import uuid7
 from .exceptions import UserError
 from .messages import (
+    Authority,
     CapabilityLoadDeltaPart,
+    CapabilityPart,
+    CapabilitySource,
     CompactionPart,
     EnqueuedMessagesEvent,
     InstructionBaselinePart,
@@ -29,10 +34,12 @@ from .messages import (
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SystemPromptPart,
+    TextContent,
     ToolAvailabilityDeltaPart,
     ToolReturnPart,
     ToolSearchReturnPart,
     UserPromptPart,
+    _lower_authority,  # pyright: ignore[reportPrivateUsage]
 )
 
 if TYPE_CHECKING:
@@ -125,6 +132,7 @@ def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> list[ModelMessag
                 InstructionBaselinePart,
                 SpeechPart,
                 CompactionPart,
+                CapabilityPart,
             ),
         ):
             flush_content()
@@ -132,7 +140,65 @@ def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> list[ModelMessag
         else:
             content.append(item)
     flush_request()
+    _check_operator_voice(messages)
     return messages
+
+
+def _check_operator_voice(messages: Sequence[ModelMessage]) -> None:
+    """Raise if a [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] would say something that looks like a framework frame in the application's voice."""
+    for message in messages:
+        if not isinstance(message, ModelRequest):
+            continue
+        for part in message.parts:
+            if isinstance(part, CapabilityPart) and operator_voice_lookalike(part):
+                raise UserError(
+                    f"Capability part {part.kind!r} speaks in the application's voice, but its content contains "
+                    'something that looks like a framework frame (such as a `<system` tag), which is usually data '
+                    'interpolated into it. Put that data in a `DataCapabilityPart` kind.'
+                )
+
+
+def stamp_capability_parts(messages: Sequence[ModelMessage], capability_id: str, ceiling: Authority) -> None:
+    """Attribute every [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] in `messages` to the capability that enqueued it, in place.
+
+    A part with no `capability_id` yet gets `capability_id`, and a part whose source has more authority than the
+    capability's `ceiling` gets a [`CapabilitySource`][pydantic_ai.messages.CapabilitySource] with that authority
+    instead, so the history says who wrote it and with how much authority.
+    """
+    for message in messages:
+        if isinstance(message, ModelRequest):
+            for part in message.parts:
+                if isinstance(part, CapabilityPart):
+                    _stamp_capability_part(part, capability_id, ceiling)
+
+
+def _stamp_capability_part(part: CapabilityPart, capability_id: str, ceiling: Authority) -> None:
+    """Attribute `part` to the capability `capability_id` and lower its source to `ceiling`, in place."""
+    if part.capability_id is None:
+        part.capability_id = capability_id
+    if _lower_authority(part.source.authority, ceiling) != part.source.authority:
+        part.source = CapabilitySource(capability_id, authority=ceiling)
+
+
+def hand_built_capability_speech(messages: Sequence[ModelMessage]) -> str | None:
+    """What in `messages` a capability built by hand that a [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] should say, or `None`.
+
+    That's a bare `SystemPromptPart`, or user-channel text with something that looks like a framework frame (a
+    `<system` or `<context` tag).
+    """
+    for message in messages:
+        if not isinstance(message, ModelRequest):
+            continue
+        for part in message.parts:
+            if isinstance(part, SystemPromptPart):
+                return 'a bare `SystemPromptPart`'
+            if isinstance(part, UserPromptPart) and any(
+                resembles_frame(item if isinstance(item, str) else item.content)
+                for item in ([part.content] if isinstance(part.content, str) else part.content)
+                if isinstance(item, str | TextContent)
+            ):
+                return 'user text containing what looks like a framework frame (such as a `<system` tag)'
+    return None
 
 
 @dataclass
@@ -202,6 +268,22 @@ class PendingMessage:
 
 CapabilityLoadRecord: TypeAlias = CapabilityLoadDeltaPart | ToolAvailabilityDeltaPart
 """A part recording a capability load from code: the load itself, or the reveal of the capability's tools."""
+
+
+class EnqueueGuard(list[PendingMessage]):
+    """Replaces `ctx.pending_messages` inside a durable unit, where enqueueing can't be supported.
+
+    A durable unit's recorded output is replayed on recovery (DBOS), cache hit (Prefect), or
+    across the activity boundary (Temporal) without re-running the code, so messages enqueued
+    inside it would be silently dropped; enqueueing raises an explanatory `UserError` instead.
+    """
+
+    def __init__(self, message: str):
+        super().__init__()
+        self._message = message
+
+    def append(self, pending: PendingMessage) -> NoReturn:
+        raise UserError(self._message)
 
 
 class PendingMessageQueue(list[PendingMessage]):

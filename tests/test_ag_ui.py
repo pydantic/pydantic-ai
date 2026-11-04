@@ -78,10 +78,12 @@ from pydantic_ai.agent import Agent, AgentRunResult
 from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTools
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolFailed, UserError
 from pydantic_ai.messages import (
+    InstructionCapabilityPart,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
+    OperatorSource,
     _clean_message_history,  # pyright: ignore[reportPrivateUsage]
     sanitize_messages,
 )
@@ -10958,11 +10960,16 @@ def _enqueuing_agent() -> Agent[object, str]:
     return agent
 
 
+@dataclass(kw_only=True)
+class _ReminderPart(InstructionCapabilityPart, namespace='test_ag_ui', name='reminder'):
+    pass
+
+
 class _TurnScopedReminder(AbstractCapability[object]):
     async def before_model_request(
         self, ctx: RunContext[object], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        ctx.enqueue(SystemPromptPart('Reminder: keep it short.', scope='request'))
+        ctx.enqueue(_ReminderPart(content='Reminder: keep it short.', source=OperatorSource(), scope='request'))
         return request_context
 
 
@@ -10986,7 +10993,7 @@ async def test_request_scoped_reminder_is_not_streamed(manage_system_prompt: Lit
         json.loads(encoded.removeprefix('data: ')) async for encoded in adapter.encode_stream(adapter.run_stream())
     ]
 
-    assert [event for event in events if event['type'] == 'ACTIVITY_SNAPSHOT'] == []
+    assert [event for event in events if event['type'] in ('ACTIVITY_SNAPSHOT', 'RUN_ERROR')] == []
     assert 'Reminder' not in json.dumps(events)
 
 

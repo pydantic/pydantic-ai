@@ -32,6 +32,7 @@ from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CapabilityLoadDeltaPart,
+    CapabilityPart,
     CompactionPart,
     ForceDownloadMode,
     InstructionBaselinePart,
@@ -214,7 +215,8 @@ def enqueued_messages_for_client(
     frontend's copy would be stripped on the way back in anyway, so sending it would only disclose it.
     Request-scoped ones stay on the server either way, as in `dump_messages`: they're for the model's
     current request only, and loaded back they'd become lasting system prompts. So do instruction changes
-    and baselines, which are server-side operator state.
+    and baselines, which are server-side operator state, and capability parts, which `dump_messages` keeps on
+    the server too.
     """
     kept: list[ModelMessage] = []
     for message in messages:
@@ -222,7 +224,7 @@ def enqueued_messages_for_client(
             parts = [
                 part
                 for part in message.parts
-                if not isinstance(part, (InstructionDeltaPart, InstructionBaselinePart))
+                if not isinstance(part, (InstructionDeltaPart, InstructionBaselinePart, CapabilityPart))
                 and (
                     not isinstance(part, SystemPromptPart)
                     or (manage_system_prompt == 'client' and part.scope != 'request')

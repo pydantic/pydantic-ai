@@ -4,7 +4,7 @@ from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequenc
 from copy import copy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Self, cast
 
 from pydantic import ValidationError
 from typing_extensions import TypeIs
@@ -19,7 +19,7 @@ from pydantic_ai._instructions import (
 )
 from pydantic_ai._utils import aclose_all, gather, replace_no_init
 from pydantic_ai.exceptions import ModelRetry, RetryModelRequest
-from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
+from pydantic_ai.messages import AgentStreamEvent, Authority, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
     AgentDepsT,
@@ -114,7 +114,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         new_capabilities: Sequence[AbstractCapability[AgentDepsT]],
         replacements: Mapping[int, Sequence[AbstractCapability[AgentDepsT] | None]] | None = None,
-    ) -> CombinedCapability[AgentDepsT]:
+    ) -> Self:
         """A shallow copy holding `new_capabilities`, with the composition view carried across.
 
         The only supported way to swap a container's children. `replace()` would re-run
@@ -294,14 +294,23 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             or any(c.listens_to(event) for c in self._dispatch)
         )
 
+    def with_authority(self, authority: Authority) -> Self:
+        """Return a copy whose children, and so what each of them enqueues, carry no more than `authority`.
+
+        Composition merges a container's children into the enclosing one and dispatches each on its own, so the ceiling
+        is set on every child as well as on the container.
+        """
+        lowered = super().with_authority(authority)
+        return lowered._rebound([child.with_authority(authority) for child in self.capabilities])
+
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> CombinedCapability[AgentDepsT]:
-        new_caps = [capability.for_agent(agent) for capability in self.capabilities]
+        new_caps = [capability._keep_authority(capability.for_agent(agent)) for capability in self.capabilities]
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
         return self._rebound(new_caps)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        new_caps = await gather(*(c.for_run(ctx) for c in self.capabilities))
+        new_caps = await gather(*(c._for_run_keeping_authority(ctx) for c in self.capabilities))
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
         return self._rebound(new_caps)
@@ -1228,7 +1237,11 @@ def bind_capabilities_tier(
         if is_deferred_group(capability):
             # Each child of a deferred group binds in its own tier, as it would outside the group.
             return bind_capabilities_tier(capability, agent, innermost=innermost)
-        return capability.for_agent(agent) if is_innermost(capability) == innermost else capability
+        return (
+            capability._keep_authority(capability.for_agent(agent))  # pyright: ignore[reportPrivateUsage]
+            if is_innermost(capability) == innermost
+            else capability
+        )
 
     branches = combined.capabilities
     new_caps = [bind(c) for c in branches]

@@ -23,13 +23,13 @@ The model owns the plan through the `planning` toolset. Every tool that changes 
 
 So in a tool loop, the latest plan is always in the conversation already, and `Planning` adds nothing to it: each request starts with everything the previous one sent, the cached prefix holds turn over turn, and on models with [preserved thinking](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking) the model's earlier reasoning stays valid.
 
-The plan tools' results carry `metadata={'origin': 'pydantic-ai-harness.planning.plan_reminder.v1', 'plan': ...}`, which the model doesn't see. Before each model request, `Planning` reads the plan from its store and looks for the latest plan the model can see, by that metadata, never by text. Only when there's none, or it differs from the store's, does `Planning` record the current plan itself, on the user channel in the same `<plan_reminder>` tag:
+The plan tools' results carry `metadata={'origin': 'pydantic-ai-harness.planning.plan_reminder.v1', 'plan': ...}`, which the model doesn't see. Before each model request, `Planning` reads the plan from its store and looks for the latest plan the model can see, by that metadata or by the type of a plan it recorded, never by text. Only when there's none, or it differs from the store's, does `Planning` record the current plan itself, as a `PlanReminderPart` on the user channel in the same `<plan_reminder>` tag:
 
 - after compaction took the plan tools' results, so the model works from a window without them, or cleared them (`ClearToolResults`): a cleared result keeps its metadata, so a plan tool's result only counts while its content still shows the plan;
 - in a run that starts without them in its history, such as an executor reading a plan another agent wrote to a shared store;
 - after something outside the plan tools changed the store.
 
-That record is kept in the history and marked with the same `origin`, so compaction tells it from something the user said. A plan emptied outside the plan tools after the model was shown one is recorded as `No plan yet.`, once, so the old plan doesn't read as current. A custom `guidance` replaces the tool guidance but keeps the note; `inject=False` means the model isn't shown the plan: it drops the note and the record, and the plan tools don't return the plan (`write_plan` replies with the bare checklist, the others with just their message).
+That record is a `PlanReminderPart` (from `pydantic_ai_harness.planning`), kept in the history and found by that type. It goes out with a note in the application's voice that the agent wrote it, not the user or the application, and compaction tells it from something the user said. A plan emptied outside the plan tools after the model was shown one is recorded as `No plan yet.`, once, so the old plan doesn't read as current. A custom `guidance` replaces the tool guidance but keeps the note; `inject=False` means the model isn't shown the plan: it drops the note and the record, and the plan tools don't return the plan (`write_plan` replies with the bare checklist, the others with just their message).
 
 ## Usage
 
@@ -164,7 +164,7 @@ The system prompt and instructions carry only the static guidance and the note o
 
 `Planning` doesn't place a cache breakpoint of its own. Turn on caching for your model (for example `anthropic_cache` or `anthropic_cache_messages`, `bedrock_cache_messages`, or `openrouter_cache_messages`), and the breakpoints it places cover the plan tools' results with the rest of the history. `cache_ttl` is deprecated and has no effect; setting it warns. The tag was `<plan-reminder>` in earlier releases; update any prompt or parser that names the old spelling.
 
-With a [UI adapter](../ui/overview.md#trust-model-for-client-submitted-messages), history that goes through the client may lose the metadata that marks a plan tool's result or a plan record (AG-UI drops it). Then when the client sends that history back, `Planning` records the plan on the next request, and compaction may keep an old record as a user turn. Keep history on the server when that matters.
+With a [UI adapter](../ui/overview.md#trust-model-for-client-submitted-messages), history that goes through the client may lose the metadata that marks a plan tool's result (AG-UI drops it), and leaves out the plan records `Planning` made, which are capability parts. Then when the client sends that history back, `Planning` records the plan on the next request. Keep history on the server when that matters.
 
 With a durable-execution capability attached, every plan store call is a journaled capability
 operation: the plan read before each model request, which decides whether the plan is recorded, and each

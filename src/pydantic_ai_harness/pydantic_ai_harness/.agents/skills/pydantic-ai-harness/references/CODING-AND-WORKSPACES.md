@@ -566,7 +566,9 @@ for resolution, labels, and backend requirements.
 `nested_traversal=True` surfaces the instruction files between the working directory and whatever
 `FileSystem` reads or lists, shallowest first, each directory once while its note is in the
 conversation (`nested_inject='pointer'` or `'contents'`), in the message tail so the cached prefix
-stays stable.
+stays stable. Notes are workspace-sourced `DataCapabilityPart`s, `ContextFilePathPart` (`<context_file_path>`) or
+`ContextFilePart` (`<context_file path="...">`), from `pydantic_ai_harness.repo_context`; find them by type, and
+their `directory` field.
 With it on, the instructions also gain one static sentence: each instruction file applies to its
 subtree, the deeper file wins, and the user's direct instructions win over all of them.
 
