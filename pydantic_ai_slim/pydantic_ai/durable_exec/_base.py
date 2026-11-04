@@ -304,7 +304,7 @@ def _operation_capability_id(capability: AbstractCapability[Any]) -> str | None:
     if capability.id is not None:
         return capability.id
     # A capability that rejects its own id-less durable runs opts out, so it keeps building without one.
-    if not getattr(capability, '_durable_operations_need_id', True):
+    if not capability._durable_operations_need_id:  # pyright: ignore[reportPrivateUsage]
         return None
     raise UserError(
         f'Capability {type(capability).__name__!r} contributes durable operations and needs an explicit '

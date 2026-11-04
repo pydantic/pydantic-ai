@@ -1682,9 +1682,12 @@ class TestDurableExecution:
             return 'worked'
 
         usage = RunUsage()
-        with pytest.raises(UsageLimitExceeded):
+        with pytest.raises(UsageLimitExceeded) as exc_info:
             await agent.run('do the thing', usage=usage, usage_limits=UsageLimits(request_limit=2))
-        assert usage.requests <= 2
+        assert (usage.requests, judge_calls) == (1, 1)
+        assert str(exc_info.value) == snapshot(
+            'The next request would exceed the request_limit of 2. Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits'
+        )
 
     async def test_durable_capable_agent_outside_its_container_is_judged(self) -> None:
         """Outside its durable container the judge still runs as a background task, not a durable operation."""
