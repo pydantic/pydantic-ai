@@ -539,7 +539,7 @@ _JSON_TYPE_TO_PYTHON: dict[str, str] = {
 _resolving_refs: ContextVar[frozenset[int]] = ContextVar('_resolving_refs', default=frozenset())
 
 # How many `$ref`s to non-object targets one `from_schema` call expands, as a small schema can expand exponentially.
-_MAX_REF_EXPANSIONS = 10_000
+_MAX_REF_EXPANSIONS = 1_000
 _ref_expansions: ContextVar[int] = ContextVar('_ref_expansions', default=0)
 
 
