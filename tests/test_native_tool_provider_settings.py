@@ -49,20 +49,20 @@ ANTHROPIC_RESPONSE: dict[str, Any] = {
     'usage': {'input_tokens': 1, 'output_tokens': 1},
 }
 # Anthropic's `20260318` web tools are always streamed.
+ANTHROPIC_STREAM_EVENTS: list[dict[str, Any]] = [
+    {'type': 'message_start', 'message': {**ANTHROPIC_RESPONSE, 'content': [], 'stop_reason': None}},
+    {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}},
+    {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': 'ok'}},
+    {'type': 'content_block_stop', 'index': 0},
+    {
+        'type': 'message_delta',
+        'delta': {'stop_reason': 'end_turn', 'stop_sequence': None},
+        'usage': {'output_tokens': 1},
+    },
+    {'type': 'message_stop'},
+]
 ANTHROPIC_STREAM = ''.join(
-    f'event: {event["type"]}\ndata: {json.dumps(event)}\n\n'
-    for event in [
-        {'type': 'message_start', 'message': {**ANTHROPIC_RESPONSE, 'content': [], 'stop_reason': None}},
-        {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}},
-        {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': 'ok'}},
-        {'type': 'content_block_stop', 'index': 0},
-        {
-            'type': 'message_delta',
-            'delta': {'stop_reason': 'end_turn', 'stop_sequence': None},
-            'usage': {'output_tokens': 1},
-        },
-        {'type': 'message_stop'},
-    ]
+    f'event: {event["type"]}\ndata: {json.dumps(event)}\n\n' for event in ANTHROPIC_STREAM_EVENTS
 )
 OPENROUTER_RESPONSE: dict[str, Any] = {
     'id': 'chat',
