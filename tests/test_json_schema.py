@@ -132,6 +132,14 @@ def test_boolean_schema_nodes_round_trip(value_schema: bool):
 
 _MALFORMED_SCHEMAS: dict[str, tuple[Any, str]] = {
     # id: (schema, expected error message)
+    'propertyNames-is-a-string': (
+        {'type': 'object', 'propertyNames': 'x'},
+        "Invalid JSON Schema at `propertyNames`: a schema must be an object or a boolean, got 'x'",
+    ),
+    'contains-is-a-string': (
+        {'type': 'array', 'contains': 'x'},
+        "Invalid JSON Schema at `contains`: a schema must be an object or a boolean, got 'x'",
+    ),
     'root-is-a-string': (
         'string',
         "Invalid JSON Schema at `<root>`: a schema must be an object or a boolean, got 'string'",
@@ -257,6 +265,22 @@ def test_malformed_schema_raises_user_error(transformer_cls: type[JsonSchemaTran
     assert str(exc_info.value) == message
 
 
+def test_malformed_schema_reached_through_a_json_pointer_raises_user_error():
+    """An inlining walker follows a `$ref` into draft-07 `definitions`, which the up-front check doesn't visit."""
+    schema = {
+        'type': 'object',
+        'properties': {'a': {'$ref': '#/definitions/A'}},
+        'definitions': {'A': {'type': 'object', 'properties': {'b': 'string'}}},
+    }
+
+    with pytest.raises(UserError) as exc_info:
+        InlineDefsJsonSchemaTransformer(schema).walk()
+
+    assert str(exc_info.value) == (
+        "Invalid JSON Schema at `definitions.A.properties.b`: a schema must be an object or a boolean, got 'string'"
+    )
+
+
 def test_schema_shape_ignores_keywords_the_transformers_do_not_read():
     """Provider extensions and keywords outside the declared shape pass through untouched, whatever their values."""
     schema = {
@@ -298,6 +322,8 @@ _VALID_SCHEMAS: dict[str, Any] = {
     'boolean-pattern-property': {'type': 'object', 'patternProperties': {'^x': True}},
     'boolean-additional-properties': {'type': 'object', 'additionalProperties': False},
     'boolean-items': {'type': 'array', 'items': True},
+    'boolean-property-names': {'type': 'object', 'propertyNames': True},
+    'boolean-contains': {'type': 'array', 'contains': True},
     'boolean-prefix-item': {'type': 'array', 'prefixItems': [True, {'type': 'string'}]},
     'boolean-union-member': {'anyOf': [{'type': 'string'}, False]},
     'empty-containers': {'type': 'object', 'properties': {}, 'required': [], 'allOf': [], 'enum': []},

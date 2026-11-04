@@ -26,7 +26,7 @@ def _is_type_value(value: Any) -> bool:
 # AG-UI frontend tools) are plain dicts, so a node that is not a schema can reach the walker. `_check_schema_shape`
 # checks these keywords and nothing more: keywords not listed here are passed through to the provider untouched,
 # so provider extensions are unaffected. If a transformer starts reading a new keyword, add it here.
-_SCHEMA_KEYWORDS = ('additionalProperties', 'items')
+_SCHEMA_KEYWORDS = ('additionalProperties', 'items', 'propertyNames', 'contains')
 """Keywords whose value is a schema (or, for `items` in older drafts, a list of schemas)."""
 _SCHEMA_CONTAINER_KEYWORDS: dict[str, type[dict[str, Any]] | type[list[Any]]] = {
     'properties': dict,
@@ -283,6 +283,9 @@ class JsonSchemaTransformer(ABC):
         def_schema = self.defs.get(key)
         if def_schema is None:
             def_schema = resolve_json_pointer(self.schema, key)
+            # A pointer can reach nodes the up-front check doesn't visit, like draft-07 `definitions`.
+            if def_schema is not None:
+                _check_schema_shape(def_schema, key.removeprefix('#/').replace('/', '.'))
         if def_schema is None:
             raise UserError(f'Could not find $ref definition for {key}')
 
