@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 from datetime import timedelta
 from uuid import uuid4
 
@@ -14,6 +13,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, Text
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 pytest.importorskip('temporalio')
+pytest.importorskip('onnxruntime', reason='semantic detection requires ONNX Runtime')
 
 from temporalio import workflow
 from temporalio.client import Client
@@ -29,7 +29,6 @@ from tests.temporal_utils import temporal_dev_server_cache_dir
 pytestmark = [
     pytest.mark.temporal,
     pytest.mark.xdist_group(name='harness-temporal'),
-    pytest.mark.skipif(importlib.util.find_spec('onnxruntime') is None, reason='requires ONNX Runtime'),
     skip_temporal_sandbox_on_314,
     ignore_source_reads_left_open,
 ]
