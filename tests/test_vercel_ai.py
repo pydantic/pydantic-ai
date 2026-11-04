@@ -14360,9 +14360,8 @@ class _FailingStore(InMemoryConversationStore):
     async def save(
         self, conversation: Conversation | AgentRunResult[Any], *, scope: str | None = None
     ) -> list[ConversationEntry]:
-        if self.failing == 'save':
-            raise self.error
-        return await super().save(conversation, scope=scope)
+        assert self.failing == 'save'  # A load that failed never gets to the save.
+        raise self.error
 
 
 _LOAD_FAILED = 'The conversation could not be loaded, so this request did not run. Try again later.'
