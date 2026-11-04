@@ -22,6 +22,8 @@ from dataclasses import KW_ONLY
 from datetime import datetime
 from typing import Any, Literal
 
+from typing_extensions import TypedDict
+
 from . import messages as _messages, usage as _usage
 from ._conversation_marks import mark_stored, stored_boundary
 from ._deferred import DeferredToolRequests
@@ -32,12 +34,26 @@ from .exceptions import UserError
 from .run import AgentRunResult
 
 __all__ = (
+    'ConversationDetails',
     'ConversationEntry',
     'ConversationRecord',
     'ConversationConflict',
     'ConversationStore',
     'InMemoryConversationStore',
 )
+
+
+class ConversationDetails(TypedDict, total=False):
+    """The fields of a [`ConversationRecord`][pydantic_ai.conversation_store.ConversationRecord] an update changes.
+
+    A key that's missing leaves that field as it is, and `None` clears it.
+    """
+
+    title: str | None
+    """The conversation's title."""
+
+    metadata: dict[str, Any] | None
+    """The conversation's metadata, which replaces the old."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -541,18 +557,17 @@ class ConversationStore(ABC):
             NotImplementedError: If the backend doesn't implement
                 [`write_details`][pydantic_ai.conversation_store.ConversationStore.write_details].
         """
+        details: ConversationDetails = {}
+        if not isinstance(title, Unset):
+            details['title'] = title
+        if not isinstance(metadata, Unset):
+            details['metadata'] = metadata
         while (record := await self._read_record(conversation_id, scope=scope)) is not None:
             try:
-                await self.write_details(
-                    conversation_id, expected_revision=record.revision, title=title, metadata=metadata
-                )
+                await self.write_details(conversation_id, details, expected_revision=record.revision)
             except ConversationConflict:
                 continue  # Saved or replaced since it was read: check its scope again.
-            return dataclasses.replace(
-                record,
-                title=record.title if isinstance(title, Unset) else title,
-                metadata=record.metadata if isinstance(metadata, Unset) else metadata,
-            )
+            return dataclasses.replace(record, **details)
         raise UserError(f'Conversation {conversation_id!r} is not in the store.')
 
     async def delete(self, conversation_id: str, *, scope: str | None = None) -> None:
@@ -637,16 +652,11 @@ class ConversationStore(ABC):
         raise NotImplementedError
 
     async def write_details(
-        self,
-        conversation_id: str,
-        *,
-        expected_revision: str,
-        title: str | None | Unset = UNSET,
-        metadata: dict[str, Any] | None | Unset = UNSET,
+        self, conversation_id: str, details: ConversationDetails, *, expected_revision: str
     ) -> None:
         """Replace the record's `title` or `metadata`, or both, keeping its `revision` and `updated_at`.
 
-        Only the fields passed are written, so a concurrent update of the other one isn't undone.
+        Only the keys in `details` are written, so a concurrent update of the other field isn't undone.
 
         A backend that implements this keeps a stored record's `title` and `metadata` when
         [`write_record`][pydantic_ai.conversation_store.ConversationStore.write_record] replaces it, so a
@@ -726,20 +736,15 @@ class InMemoryConversationStore(ConversationStore):
         self._records[record.conversation_id] = deepcopy(record)
 
     async def write_details(
-        self,
-        conversation_id: str,
-        *,
-        expected_revision: str,
-        title: str | None | Unset = UNSET,
-        metadata: dict[str, Any] | None | Unset = UNSET,
+        self, conversation_id: str, details: ConversationDetails, *, expected_revision: str
     ) -> None:
         stored = self._records.get(conversation_id)
         if stored is None or stored.revision != expected_revision:
             raise ConversationConflict(conversation_id)
-        if not isinstance(title, Unset):
-            stored.title = title
-        if not isinstance(metadata, Unset):
-            stored.metadata = deepcopy(metadata)
+        if 'title' in details:
+            stored.title = details['title']
+        if 'metadata' in details:
+            stored.metadata = deepcopy(details['metadata'])
 
     async def delete_record(self, conversation_id: str, *, expected_revision: str) -> None:
         stored = self._records.get(conversation_id)
