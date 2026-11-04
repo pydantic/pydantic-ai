@@ -6682,8 +6682,12 @@ async def test_google_tool_return_ref_key_mapping(google_provider: GoogleProvide
         m.prepare_messages(messages, ModelRequestParameters()), ModelRequestParameters()
     )
 
-    function_response = contents[0]['parts'][0]['function_response']  # pyright: ignore[reportTypedDictNotRequiredAccess,reportOptionalSubscript]
-    assert function_response['response'] == expected  # pyright: ignore[reportTypedDictNotRequiredAccess]
+    assert contents == [
+        {
+            'role': 'user',
+            'parts': [{'function_response': {'name': 'get_layout', 'response': expected, 'id': 'call_1'}}],
+        }
+    ]
 
 
 async def test_google_splits_tool_return_from_user_prompt(google_provider: GoogleProvider):
