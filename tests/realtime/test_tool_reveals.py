@@ -432,3 +432,18 @@ async def test_tools_still_unrevealed_on_a_model_without_updates_are_refused_at_
     with pytest.raises(UserError, match=r"`defer_loading=True` are not supported; remove it from: 'unrevealed'\."):
         async with agent.realtime(model, message_history=history).session():
             pass  # pragma: no cover
+
+
+async def test_revealing_a_tool_the_model_has_changes_nothing() -> None:
+    """Naming a tool the model can already call reveals nothing new, so no update goes out, as in a standard run."""
+    connection = _ScriptedConnection()
+    agent: Agent[None, str] = Agent(deps_type=type(None))
+
+    @agent.tool_plain
+    async def point() -> ToolReturn[str]:
+        return ToolReturn(return_value='Pointed.', tools=['point'])
+
+    async with agent.realtime(FakeRealtimeModel(connection, profile=_UPDATES)).session() as session:
+        await _converse(session, connection, [_call('point', call_id='point'), _ANSWER])
+
+    assert _sent_groups(connection) == [ToolResult]
