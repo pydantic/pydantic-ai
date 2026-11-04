@@ -27,6 +27,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai._file_input import unsupported_file_note
+from pydantic_ai._tool_status import TOOL_STATUS_TEXTS
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelMessagesTypeAdapter
 from pydantic_ai.models import Model, ModelRequestParameters
@@ -316,6 +317,26 @@ async def test_a_skipped_calls_stub_is_not_wrapped():
     # The stub itself is what it is on every other model: only this profile's outgoing copy treats it differently.
     assert stub.outcome == 'success'
     assert stub.typed_content == stub.content
+
+
+@pytest.mark.parametrize('status', sorted(TOOL_STATUS_TEXTS))
+def test_status_text_from_an_earlier_run_is_not_wrapped(status: str):
+    """Status text is recognised in history whose output tool isn't in this request, or with no parameters at all."""
+    model = FunctionModel(
+        lambda _messages, _info: ModelResponse(parts=[TextPart('ok')]),
+        profile=ModelProfile(needs_json_string_tool_returns=True),
+    )
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Go.')]),
+        ModelResponse(parts=[ToolCallPart('final_result_Foo', {}, tool_call_id='1')]),
+        ModelRequest(parts=[ToolReturnPart('final_result_Foo', status, tool_call_id='1')]),
+    ]
+    params = ModelRequestParameters(output_tools=[ToolDefinition(name='final_result_Bar')])
+
+    for prepared in (model.prepare_messages(messages, params), model.prepare_messages(messages)):
+        request = prepared[-1]
+        assert isinstance(request, ModelRequest)
+        assert [part.content for part in request.parts if isinstance(part, ToolReturnPart)] == [status]
 
 
 def test_a_note_in_place_of_an_unreadable_file_goes_out_as_written():

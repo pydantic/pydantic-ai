@@ -66,7 +66,6 @@ from .._framework_frame import framework_frame_body, is_framework_frame
 from .._framing import (
     CONVERSATION_SUMMARY_TAG,
     FRAME_SEAL,
-    SKIPPED_TOOL_CALL_CONTENT,
     SYSTEM_TAG,
     LookalikeSource,
     frame,
@@ -101,6 +100,7 @@ from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._removed_names import removed_names_getattr
 from .._run_context import RunContext
+from .._tool_status import TOOL_STATUS_TEXTS
 from .._unsupported_settings import SUPPRESSED_WARNINGS, warn_unsupported_settings
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
 from ..exceptions import ModelAPIError, UserError
@@ -1845,7 +1845,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             sealed=self._seals_system_blocks,
         )
         # Ahead of the file replacement, so a note the framework puts in place of an unreadable file isn't wrapped.
-        messages = _tool_returns_as_json_strings(messages, self.profile, model_request_parameters)
+        messages = _tool_returns_as_json_strings(messages, self.profile)
         messages = _replace_unsupported_tool_return_files(messages, self.profile)
         authored, messages = _tool_results_first(authored, messages)
         # The passes above replace or reorder parts one for one, so `authored` still lines up with `messages`.
@@ -4474,27 +4474,20 @@ def _text_file_content(item: object) -> str | None:
     return None
 
 
-def _tool_returns_as_json_strings(
-    messages: list[ModelMessage], profile: ModelProfile, model_request_parameters: ModelRequestParameters | None
-) -> list[ModelMessage]:
+def _tool_returns_as_json_strings(messages: list[ModelMessage], profile: ModelProfile) -> list[ModelMessage]:
     """Send each successful string tool return as a JSON string field, where the profile asks for it.
 
     See [`needs_json_string_tool_returns`][pydantic_ai.profiles.ModelProfile.needs_json_string_tool_returns]. Parts are
-    replaced one for one, and only in the outgoing copy. An output tool's return is the framework's status text
-    ("Final result processed." and the like), and so is the stub for a call skipped because a final result was
-    already processed. Neither is a tool's output, so they're left as is. Returns the original list when nothing
-    changed.
+    replaced one for one, and only in the outgoing copy. The status text Pydantic AI writes for an output tool or a
+    skipped call isn't a tool's output, so it's left as is. Returns the original list when nothing changed.
     """
     if not profile.get('needs_json_string_tool_returns', False):
         return messages
-    output_tool_names = frozenset(
-        tool.name for tool in (model_request_parameters.output_tools if model_request_parameters else ())
-    )
     new_messages: list[ModelMessage] = []
     changed = False
     for message in messages:
         if isinstance(message, ModelRequest):
-            parts = [_as_json_string_tool_return(part, output_tool_names) for part in message.parts]
+            parts = [_as_json_string_tool_return(part) for part in message.parts]
             if _parts_changed(parts, message.parts):
                 message = replace(message, parts=parts)
                 changed = True
@@ -4502,14 +4495,13 @@ def _tool_returns_as_json_strings(
     return new_messages if changed else messages
 
 
-def _as_json_string_tool_return(part: ModelRequestPart, output_tool_names: frozenset[str]) -> ModelRequestPart:
-    """`part` with its content as `{"tool_output": ...}` JSON when it's a successful string return of a function tool."""
+def _as_json_string_tool_return(part: ModelRequestPart) -> ModelRequestPart:
+    """`part` with its content as `{"tool_output": ...}` JSON when it's a successful string return of a tool's text."""
     if (
         not isinstance(part, ToolReturnPart)
         or part.outcome != 'success'
         or not isinstance(part.content, str)
-        or part.tool_name in output_tool_names
-        or part.content == SKIPPED_TOOL_CALL_CONTENT
+        or part.content in TOOL_STATUS_TEXTS
     ):
         return part
     return replace(part, content=json.dumps({'tool_output': part.content}, ensure_ascii=False))

@@ -277,10 +277,6 @@ _USER_VOICE: Final = (
 )
 
 
-SKIPPED_TOOL_CALL_CONTENT: Final = 'Tool not executed - a final result was already processed.'
-"""The content of the `ToolReturnPart` for a function tool call skipped because a final result was already processed."""
-
-
 FRAME_SEAL: Final = 'pydantic-ai'
 """The `seal` attribute value of the `<system>` blocks on a model whose profile sets `needs_sealed_system_blocks`.
 
