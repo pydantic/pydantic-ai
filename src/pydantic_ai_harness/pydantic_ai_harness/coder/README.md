@@ -286,7 +286,7 @@ Provider-specific cache settings, such as `anthropic_cache`, take precedence ove
 
 ## Durable execution
 
-`Coder` works under Temporal, DBOS, and Prefect: attach it next to the workspace and the durability capability, as the [workspace guide](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) shows with what works on each engine. On Temporal, `delegate_task` delegates to `self` only; see [delegation on Temporal](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#harness-workspace-capabilities).
+`Coder` works under Temporal, DBOS, Prefect, [Azure Durable Task](https://pydantic.dev/docs/ai/harness/azure-durable-task/), and [Render Workflows](https://pydantic.dev/docs/ai/harness/render-workflows/): attach it next to the workspace and the durability capability, as the [workspace guide](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) shows with what works on each engine. On Temporal, `delegate_task` delegates to `self` only; see [delegation on Temporal](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#harness-workspace-capabilities).
 
 ## Upgrading
 
