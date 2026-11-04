@@ -4841,6 +4841,7 @@ class CapturedConversation:
 
     def __init__(self) -> None:
         self._build: Callable[[], Conversation] | None = None
+        self._ended = False
         self._conversation: Conversation | None = None
 
     @property
@@ -4854,13 +4855,17 @@ class CapturedConversation:
         [`conversation`][pydantic_ai.agent.AgentRunResult.conversation], which also carries the
         tool calls a paused run waits on.
 
-        It's built on the first read and the same instance is returned after that, so a
-        [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] that saves it
-        advances the revision every later read sees.
+        Once the run has ended, it's built on the first read and the same instance is returned after
+        that, so a [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] that saves
+        it advances the revision every later read sees. A read while the run is still going returns a
+        new snapshot of it so far.
         """
-        if self._conversation is None and self._build is not None:
-            self._conversation = self._build()
-        return self._conversation
+        if self._conversation is not None or self._build is None:
+            return self._conversation
+        conversation = self._build()
+        if self._ended:
+            self._conversation = conversation
+        return conversation
 
 
 _captured_conversation: ContextVar[CapturedConversation | None] = ContextVar('_captured_conversation', default=None)
@@ -4920,6 +4925,13 @@ def capture_conversation_of(build: Callable[[], Conversation]) -> None:
     captured = _captured_conversation.get()
     if captured is not None and captured._build is None:  # pyright: ignore[reportPrivateUsage]
         captured._build = build  # pyright: ignore[reportPrivateUsage]
+
+
+def end_captured_run(build: Callable[[], Conversation]) -> None:
+    """Tell the context that captured the run with `build` that the run has ended, so its conversation can be kept."""
+    captured = _captured_conversation.get()
+    if captured is not None and captured._build is build:  # pyright: ignore[reportPrivateUsage]
+        captured._ended = True  # pyright: ignore[reportPrivateUsage]
 
 
 def get_captured_run_messages() -> _RunMessages:

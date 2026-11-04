@@ -71,6 +71,7 @@ from .._agent_graph import (
     capture_conversation_of,
     capture_run_conversation,
     capture_run_messages,
+    end_captured_run,
 )
 from .._cancel import (
     CancellationToken,
@@ -5164,6 +5165,8 @@ def _carrying_conversation(build: Callable[[], Conversation]) -> Generator[None]
     except exceptions.AgentRunError as error:
         error._conversation = build()  # pyright: ignore[reportPrivateUsage]
         raise
+    finally:
+        end_captured_run(build)
 
 
 def _cancellation_error_types(capability: AbstractCapability[Any]) -> tuple[type[BaseException], ...]:

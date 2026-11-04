@@ -992,6 +992,28 @@ async def test_a_run_whose_tool_raises_can_still_store_what_it_did() -> None:
     assert last.state == 'interrupted'
 
 
+async def test_a_conversation_read_while_the_run_goes_on_is_not_kept() -> None:
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def look_up() -> str:
+        raise ValueError('the database is down')
+
+    snapshots: list[Conversation | None] = []
+    with capture_run_conversation() as captured:
+        with pytest.raises(ValueError, match='the database is down'):
+            async with agent.iter('Look it up') as run:
+                async for _ in run:
+                    snapshots.append(captured.conversation)
+    failed = captured.conversation
+    assert failed is not None
+
+    # Each read during the run was a snapshot of it so far, and none of them was kept.
+    assert [len(snapshot.messages) for snapshot in snapshots if snapshot is not None] == [0, 0, 2]
+    assert len(failed.messages) == 3
+    assert captured.conversation is failed
+
+
 async def test_a_cancelled_run_carries_its_conversation() -> None:
     agent = Agent(TestModel())
 
