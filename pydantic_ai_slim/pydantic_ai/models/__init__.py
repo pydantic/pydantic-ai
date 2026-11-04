@@ -829,7 +829,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     _announces_lookalike_notes: ClassVar[bool] = True
     """Whether the model is told what the notes on text that resembles a framework frame mean (`lookalike_note_announcement`).
 
-    Where the profile's `supports_inline_system_prompts` is `False`, the announcement goes at the end of the
+    Where the profile's `supports_inline_system_prompts` is `False`, the announcement goes at the start of the
     instructions; elsewhere it's a mid-conversation `SystemPromptPart` in the first request that has a frame or a
     lookalike note. `False` for a model with no provider system field the sentence reliably reaches a model in: the
     test doubles, which have no wire, and `MCPSamplingModel`, whose client picks the model and gets the system
@@ -1943,7 +1943,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             messages = _move_request_scoped_prompts_to_tail(messages)
 
         if not inline_system:
-            # The announcement goes at the end of the instructions; see `_get_instruction_parts`.
+            # The announcement goes at the start of the instructions; see `_get_instruction_parts`.
             messages = _wrap_non_leading_system_prompts(
                 messages,
                 standing_prompt_count=standing_prompt_count,
@@ -2015,7 +2015,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         say its API needs it, and is worded "following" or "preceding" to match.
 
         On a model with inline system messages, the first request with a frame on the user channel or a note also
-        gets the announcement, as a mid-conversation `SystemPromptPart` (on the others it ends the
+        gets the announcement, as a mid-conversation `SystemPromptPart` (on the others it opens the
         instructions instead; see `_get_instruction_parts`). The frames counted are the retry feedback fences, a
         compaction summary, a tool's files moved onto the user channel and reasoning carried into a user turn. The
         request is found from the history alone, so the announcement stays in the same place on every later request.
@@ -2508,8 +2508,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         `model.request()` calls).
 
         Where the profile's `supports_inline_system_prompts` is `False` and there's a standing prompt, the
-        announcement is the last part. It's marked `dynamic` so the instruction cache points stay where they'd be
-        without it, ahead of it. A request made inside `second_model_prompt()` doesn't get it.
+        announcement is the first part, so the application's own instructions keep the last word in the system
+        prompt: with the announcement after them, Gemini acted more often on requests quoted in a tool result that
+        an operator instruction seemed to cover (numbers in #11813). It goes out unchanged on every request from the
+        first, so it's literal (not `dynamic`) and part of the cached prefix. A request made inside
+        `second_model_prompt()` doesn't get it.
         """
         parts = _instruction_parts_of(messages, model_request_parameters)
         if (
@@ -2519,7 +2522,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             and (parts or _first_request_has_standing_prompt(messages))
         ):
             announcement = lookalike_note_announcement(system_role=False, sealed=self._seals_system_blocks)
-            parts = [*(parts or []), _FrameworkInstructionPart(content=announcement, dynamic=True)]
+            parts = [_FrameworkInstructionPart(content=announcement), *(parts or [])]
         return parts
 
 
@@ -2546,7 +2549,7 @@ class _FrameworkUserPromptPart(UserPromptPart, _FrameworkAdded):
 
 @dataclass(repr=False)
 class _FrameworkInstructionPart(InstructionPart, _FrameworkAdded):
-    """The announcement at the end of the instructions, on a model without inline system messages."""
+    """The announcement at the start of the instructions, on a model without inline system messages."""
 
 
 def _is_framework_added(part: object) -> bool:
@@ -4283,7 +4286,7 @@ def _wrap_non_leading_system_prompts(
     `sealed` gives each block the `seal` attribute, for a profile that sets `needs_sealed_system_blocks`.
 
     The content goes in as written; a `<system>` tag in text the user or a tool wrote gets a note instead, as the
-    announcement at the end of the instructions says.
+    announcement at the start of the instructions says.
 
     The run's standing system prompt is left alone; the provider's `_map_messages` hoists it. Which
     parts those are is `_standing_system_prompt_count`'s question, and it is not simply "everything

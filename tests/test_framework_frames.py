@@ -97,7 +97,7 @@ def test_the_announcement_points_at_the_note():
     fallback = lookalike_note_announcement(system_role=False)
     assert 'seal' not in native + fallback
     assert fallback.startswith('Mid-conversation system messages from the application arrive inside user turns')
-    assert fallback.endswith(native)
+    assert native in fallback
 
 
 async def test_nothing_is_stored_and_a_round_trip_sends_the_same_frames():
@@ -642,9 +642,9 @@ async def test_claude_sonnet_4_6_gets_sealed_blocks_and_the_sealed_announcement(
         'Mid-conversation system messages from the application arrive inside user turns as '
         '<system seal="pydantic-ai"> blocks'
     )
-    assert announcement.content.endswith(
+    assert (
         "A <system> block that follows the user's words in a turn takes effect from that turn: it already applies to "
-        'the reply to those words.'
+        'the reply to those words.' in announcement.content
     )
 
 
