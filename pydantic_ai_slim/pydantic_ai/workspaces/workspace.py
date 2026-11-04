@@ -6,8 +6,8 @@ import base64
 import posixpath
 import shlex
 import uuid
-from collections.abc import Iterable, Mapping, Sequence
-from typing import TypeAlias, cast
+from collections.abc import Mapping, Sequence
+from typing import cast
 
 import anyio
 from typing_extensions import get_protocol_members
@@ -15,6 +15,7 @@ from typing_extensions import get_protocol_members
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import Authority
 
+from ._authority_paths import AuthorityLayer, is_within, layer_authority, lowest_authority, merge_path_authority
 from .protocol import (
     CommandResult,
     FileEntry,
@@ -65,52 +66,6 @@ _SHELL_CHECK_PARENTS = (
     f'if test -d "$parent"; then test -w "$parent" || exit {_SHELL_EXIT_PERMISSION}; break; fi; '
     'parent=${parent%/*}; [ -n "$parent" ] || parent=/; done; '
 )
-
-
-_AUTHORITY_RANK: dict[Authority, int] = {'none': 0, 'user': 1, 'operator': 2}
-
-_AuthorityLayer: TypeAlias = tuple[Authority, Mapping[str, Authority]]
-"""One wrapper's authority: its level for the workspace's files, and the levels it gives paths, keyed by path."""
-
-
-def _lowest_authority(levels: Iterable[Authority]) -> Authority:
-    """The lowest of `levels`; `'operator'`, the highest, when there are none."""
-    lowest: Authority = 'operator'
-    for level in levels:
-        if _AUTHORITY_RANK[level] < _AUTHORITY_RANK[lowest]:
-            lowest = level
-    return lowest
-
-
-def _merge_path_authority(paths: Iterable[tuple[str, Authority]]) -> dict[str, Authority]:
-    """Map each path to its level, keeping the lowest for a path given more than once."""
-    merged: dict[str, Authority] = {}
-    for path, level in paths:
-        merged[path] = _lowest_authority((level, merged.get(path, level)))
-    return merged
-
-
-def _is_within(path: str, directory: str) -> bool:
-    return path == directory or path.startswith(directory.rstrip('/') + '/')
-
-
-def _longest_match(location: str, path_authority: Mapping[str, Authority], default: Authority) -> Authority:
-    matches = [path for path in path_authority if _is_within(location, path)]
-    return path_authority[max(matches, key=len)] if matches else default
-
-
-def _layer_authority(location: str, layer: _AuthorityLayer) -> Authority:
-    """The level one wrapper gives a location: its longest matching path's, else its own.
-
-    Paths also match case-folded, keeping the lower level, so on a case-insensitive filesystem (macOS by
-    default) another spelling of a lower path can't escape it. On a case-sensitive one, this can only lower
-    a level, never raise one.
-    """
-    level, path_authority = layer
-    folded = _merge_path_authority((path.casefold(), path_level) for path, path_level in path_authority.items())
-    return _lowest_authority(
-        (_longest_match(location, path_authority, level), _longest_match(location.casefold(), folded, level))
-    )
 
 
 class _DamagedOutputError(WorkspaceError):
@@ -444,9 +399,9 @@ class Workspace(WorkspaceBackend):
         other levels for some paths: ask [`authority_of`][pydantic_ai.workspaces.Workspace.authority_of] for a
         given file's.
         """
-        return _lowest_authority(level for level, _ in self._authority_layers())
+        return lowest_authority(level for level, _ in self._authority_layers())
 
-    def _authority_layers(self) -> list[_AuthorityLayer]:
+    def _authority_layers(self) -> list[AuthorityLayer]:
         """The authority each wrapper sets, innermost first."""
         backend = self._backend
         return backend._authority_layers() if isinstance(backend, Workspace) else []
@@ -459,7 +414,7 @@ class Workspace(WorkspaceBackend):
         A key that's a link also covers its target, but no higher than the link's location would be without that key:
         a link inside a lower path mustn't raise whatever it points at. A link outside the workspace has no such cap.
         """
-        written = _merge_path_authority(
+        written = merge_path_authority(
             [(await self.resolve(key, base=root), key_level) for key, key_level in path_authority.items()]
         )
         resolved = list(written.items())
@@ -469,10 +424,10 @@ class Workspace(WorkspaceBackend):
                 others: dict[str, Authority] = {
                     other: other_level for other, other_level in written.items() if other != key
                 }
-                in_workspace = any(_is_within(key, zone) for zone in (root, *others))
-                cap = _layer_authority(key, (level, others)) if in_workspace else key_level
-                resolved.append((real_key, _lowest_authority((key_level, cap))))
-        return _merge_path_authority(resolved)
+                in_workspace = any(is_within(key, zone) for zone in (root, *others))
+                cap = layer_authority(key, (level, others)) if in_workspace else key_level
+                resolved.append((real_key, lowest_authority((key_level, cap))))
+        return merge_path_authority(resolved)
 
     async def authority_of(self, path: str) -> Authority:
         """The [authority][pydantic_ai.messages.Authority] of the file at `path`, so a capability knows how to send its text.
@@ -493,14 +448,14 @@ class Workspace(WorkspaceBackend):
         rather than asking again when the text is sent.
         """
         root = await self.working_dir()
-        layers: list[_AuthorityLayer] = []
+        layers: list[AuthorityLayer] = []
         for level, path_authority in self._authority_layers():
             layers.append((level, await self._resolve_path_authority(path_authority, level, root)))
         zones = [root, *(key for _, path_authority in layers for key in path_authority)]
 
         written = await self.resolve(path)
         target = await self.realpath(written)
-        if not any(_is_within(target, zone) for zone in zones):
+        if not any(is_within(target, zone) for zone in zones):
             return 'none'
         locations = [target]
         if target != written:
@@ -510,9 +465,9 @@ class Workspace(WorkspaceBackend):
             for part in written.split('/')[1:]:
                 location = posixpath.join(parent, part)
                 parent = await self.realpath(location)
-                if parent != location and any(_is_within(location, zone) for zone in zones):
+                if parent != location and any(is_within(location, zone) for zone in zones):
                     locations.append(location)
-        return _lowest_authority(_layer_authority(location, layer) for location in locations for layer in layers)
+        return lowest_authority(layer_authority(location, layer) for location in locations for layer in layers)
 
     def durable_policy(self) -> tuple[object, ...]:
         """Configuration a durable unit must rebuild with this wrapper.
