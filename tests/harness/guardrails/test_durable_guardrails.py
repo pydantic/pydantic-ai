@@ -119,6 +119,30 @@ async def _workflow() -> str:
     return (await _agent.run('my secret question')).output
 
 
+def _refuse_call(call: ToolCallInfo) -> bool:
+    raise ToolBlocked(call.name, 'not today')
+
+
+_refusing_agent: Agent[None, str] = Agent(
+    FunctionModel(_respond),
+    name='refusing_guardrails',
+    deps_type=type(None),
+    capabilities=[ToolGuardrail(guard=_refuse_call, id='tool'), DBOSDurability[None]()],
+)
+_refusing_agent.tool_plain(lookup)
+
+
+@DBOS.workflow(name='refusing_guardrails')
+async def _refusing_workflow() -> str:
+    return (await _refusing_agent.run('go')).output
+
+
+async def test_dbos_records_a_raised_guard_error(dbos: DBOS) -> None:
+    with pytest.raises(ToolBlocked) as blocked:
+        await _refusing_workflow()
+    assert (blocked.value.tool_name, blocked.value.reason) == ('lookup', 'not today')
+
+
 async def test_dbos_replays_the_recorded_verdicts(dbos: DBOS) -> None:
     """A replay reuses each recorded verdict: no guard is called again, and the outcome is the same."""
     _calls.clear()
@@ -244,13 +268,10 @@ async def test_a_raised_guard_error_reaches_the_run_through_a_json_journal() -> 
     def refuse(prompt: str) -> bool:
         raise InputBlocked('no')
 
-    def refuse_call(call: ToolCallInfo) -> bool:
-        raise ToolBlocked(call.name, 'not today')
-
     with pytest.raises(InputBlocked, match='no'):
         await _json_agent(InputGuardrail(guard=refuse, id='input')).run('go')
     with pytest.raises(ToolBlocked) as blocked:
-        await _json_agent(ToolGuardrail(guard=refuse_call, id='tool')).run('go')
+        await _json_agent(ToolGuardrail(guard=_refuse_call, id='tool')).run('go')
     assert (blocked.value.tool_name, blocked.value.reason) == ('lookup', 'not today')
 
 
