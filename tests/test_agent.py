@@ -43,6 +43,7 @@ from pydantic_ai import (
     ModelSelectionContext,
     NativeToolCallPart,
     NativeToolReturnPart,
+    OutputTokenLimitExceeded,
     PrefixedToolset,
     RequestUsage,
     RetryFeedbackPart,
@@ -4776,8 +4777,9 @@ def test_tool_exceeds_token_limit_error():
     with pytest.raises(
         IncompleteToolCall,
         match=r'Model token limit \(10\) exceeded while generating a tool call, resulting in incomplete arguments\.',
-    ):
+    ) as exc_info:
         agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
+    assert isinstance(exc_info.value, OutputTokenLimitExceeded)
 
     with pytest.raises(
         IncompleteToolCall,
@@ -4813,13 +4815,13 @@ def test_empty_response_with_finish_reason_length():
     agent = Agent(FunctionModel(return_empty_response), output_type=str)
 
     with pytest.raises(
-        UnexpectedModelBehavior,
+        OutputTokenLimitExceeded,
         match=r'Model token limit \(10\) exceeded before any response was generated.',
     ):
         agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
 
     with pytest.raises(
-        UnexpectedModelBehavior,
+        OutputTokenLimitExceeded,
         match=r'Model token limit \(provider default\) exceeded before any response was generated.',
     ):
         agent.run_sync('Hello')
@@ -4834,13 +4836,13 @@ def test_thinking_only_response_with_finish_reason_length():
     agent = Agent(FunctionModel(return_thinking_only), output_type=str)
 
     with pytest.raises(
-        UnexpectedModelBehavior,
+        OutputTokenLimitExceeded,
         match=r'Model token limit \(10\) exceeded before any response was generated.',
     ):
         agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
 
     with pytest.raises(
-        UnexpectedModelBehavior,
+        OutputTokenLimitExceeded,
         match=r'Model token limit \(provider default\) exceeded before any response was generated.',
     ):
         agent.run_sync('Hello')

@@ -3905,7 +3905,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
                 # Don't retry if the token limit was exceeded, possibly during thinking.
                 if self.model_response.finish_reason == 'length':
-                    raise exceptions.UnexpectedModelBehavior(
+                    raise exceptions.OutputTokenLimitExceeded(
                         f'Model token limit ({ctx.state.last_max_tokens or "provider default"}) exceeded before any response was generated. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
                     )
 
