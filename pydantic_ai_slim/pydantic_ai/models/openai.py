@@ -2467,7 +2467,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             # Auto-detect: if thinking came from a custom field and from the same provider, use field mode
             # id='content' means it came from tags in content, not a custom field
             if include_method == 'auto':
-                if field := self._model._auto_thinking_field(item):  # pyright: ignore[reportPrivateUsage]
+                if field := self._model._auto_thinking_field(item):
                     # Store both content and field name for later use in _into_message_param
                     self.thinkings.setdefault(field, []).append(item.content)
                 else:

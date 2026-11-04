@@ -33,7 +33,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     RetryFeedbackPart,
     RetryInfo,
-    RetryPromptPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]
     SystemPromptPart,
     TextContent,
     TextPart,
