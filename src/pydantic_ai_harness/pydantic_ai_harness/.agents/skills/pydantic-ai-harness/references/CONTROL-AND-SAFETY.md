@@ -631,7 +631,7 @@ agent = Agent(
   that holds on every step, and the default `'request'` for per-step nudges or changing values.
 - `dynamic_reminders`: callables `(ctx) -> str | GeneratedReminder | None`, sync or async, evaluated
   on **every** request. A `str` is sent as written (no tag); a `GeneratedReminder` is quoted as data. Reminders are system prompts, so return only text you wrote and
-  quote user input or tool output as data.
+  quote user input or tool output as data: a `str` that looks like a framework frame raises `UserError` and fails the run.
 - `GoalReanchor()` points the model back at the run's first user prompt without repeating it (at the
   compaction summary once native compaction took the prompt); free. `LLMReminder` returns a
   `GeneratedReminder`, not a `str`, so it stays data: a `GeneratedReminderPart` (from

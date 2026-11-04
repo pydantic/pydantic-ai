@@ -66,7 +66,7 @@ A request-scoped reminder, the default, adds recency; it doesn't keep a rule in 
 
 A reminder is a system prompt, so the model is already shown it as one: as a native system message where the model supports it, and in a `<system>` tag otherwise. It needs no tag of its own, so pass `tag=None`. The default used to be `'system-reminder'`: a `Reminder` that leaves `tag` unset sends the raw content and warns, and `tag='system-reminder'` restores the old wrapping.
 
-The `tag` wrapping applies only to static `Reminder` content. A `str` a dynamic callable returns (including `GoalReanchor`'s) is sent as written; an `LLMReminder`'s `GeneratedReminder` is quoted as data, as described under [Dynamic reminders](#dynamic-reminders).
+The `tag` wrapping applies only to static `Reminder` content. A `str` a dynamic callable returns (including `GoalReanchor`'s) is sent as written; an `LLMReminder`'s `GeneratedReminder` is quoted as data, as described under [Dynamic reminders](#dynamic-reminders). Text in it that looks like a framework frame, such as a `<system` tag, raises `UserError` and fails the run.
 
 ### Lasting reminders
 

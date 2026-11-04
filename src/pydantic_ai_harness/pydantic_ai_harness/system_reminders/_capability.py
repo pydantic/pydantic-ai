@@ -222,8 +222,8 @@ class Reminder(Generic[AgentDepsT]):
 DynamicReminder = Callable[[RunContext[AgentDepsT]], 'str | GeneratedReminder | None']
 """A callable returning reminder text (or `None` to skip), evaluated every model request.
 
-A `str` it returns is operator text, sent in system voice as written, so it must be text you wrote.
-Text a model generated is a `GeneratedReminder`, which `SystemReminders` quotes as data instead.
+A `str` it returns is operator text, sent in system voice as written, so it must be text you wrote: one that looks
+like a framework frame, such as a `<system` tag, raises `UserError` and fails the run. Text a model generated is a `GeneratedReminder`, which `SystemReminders` quotes as data instead.
 
 The callable reads the current `RunContext`, so it subsumes token-budget, post-compaction,
 mode-switch, and other conditions without hardcoded detectors: the user writes the condition.
@@ -665,7 +665,13 @@ def _reminder_parts(
             flush_plain()
             parts.append(GeneratedReminderPart(content=text.text, source=_REMINDER_MODEL_SOURCE, model=text.model))
             continue
-        scope = text.scope if isinstance(text, _StaticText) else 'request'
+        if isinstance(text, _StaticText):
+            scope = text.scope
+        else:
+            # Fixed text was checked at setup; this names the reminder rather than leaving it to `ctx.enqueue`'s
+            # message for capability authors.
+            check_operator_text(text, what="A dynamic reminder's text")
+            scope = 'request'
         if scope != plain_scope:
             flush_plain()
             plain_scope = scope
