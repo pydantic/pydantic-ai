@@ -201,7 +201,7 @@ Unrelated bug fixes do not form a cluster.
 
 Label every PR in a cluster `cluster:<name>`, and start its title with `[<name>] `.
 Name the cluster with one lowercase word, or two lowercase words joined by a hyphen: `cache`, `voice-authority`.
-A PR carries both the label and the prefix, or neither.
+Never apply the label without the prefix, or the prefix without the label.
 After the prefix, the title follows the root `AGENTS.md` convention.
 
 A `cluster:` label marks a time-bound work stream. It adds to the PR's topic labels and never replaces them.
