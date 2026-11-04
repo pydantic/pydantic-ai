@@ -398,6 +398,9 @@ class Workspace(WorkspaceBackend):
         with several, the lowest wins. Tools work the same either way. A wrapper's `path_authority` can set
         other levels for some paths: ask [`authority_of`][pydantic_ai.workspaces.Workspace.authority_of] for a
         given file's.
+
+        Set authority with `AuthorityWorkspace`. Overriding this property on another wrapper changes neither
+        `authority_of` nor what the layers around that wrapper report, so its files would keep a higher level.
         """
         return lowest_authority(level for level, _ in self._authority_layers())
 

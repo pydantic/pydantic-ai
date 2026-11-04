@@ -40,6 +40,7 @@ and file methods for every backend; `WrapperWorkspace` is the base for policy wr
 operations, delegate the rest to `self.wrapped`), `ReadOnlyWorkspace` blocks commands and changes,
 and `workspace.read_only` lets a tool provider leave write tools out. `AuthorityWorkspace` changes no operation:
 `workspace.authority` (`'operator' | 'user' | 'none'`, the lowest of any wrappers) is the authority of its files.
+Set it with `AuthorityWorkspace`: overriding `authority` on another wrapper changes neither `authority_of` nor what outer layers report.
 `path_authority={path: level}` (on the wrapper or `LocalWorkspace`) overrides it per directory or file: the longest
 matching path wins, relative paths resolve against the working directory, and a path outside it is at `'none'` unless
 listed. `await workspace.authority_of(path)` gives one file's level, following symlinks and taking the lower of the
