@@ -20,7 +20,9 @@ __all__ = (
     'UnionTypeExpr',
 )
 
+import keyword
 import re
+import unicodedata
 from collections import Counter
 from collections.abc import Iterable, Iterator
 from contextvars import ContextVar
@@ -31,6 +33,12 @@ from typing import Any, ClassVar, Literal, TypeAlias, assert_never, cast
 # so a type uses the name `get_conflicting_type_names` stored on it. The mapping (e.g. {'User': 'tool_a_User'}) is only
 # the fallback for a set of names that call didn't resolve.
 _type_name_overrides: ContextVar[dict[str, str]] = ContextVar('_type_name_overrides', default={})
+
+
+def _is_writable_name(name: str) -> bool:
+    """Whether Python source can use `name` as exactly this name: an identifier, not a keyword, kept by normalization."""
+    return name.isidentifier() and not keyword.iskeyword(name) and unicodedata.normalize('NFKC', name) == name
+
 
 # =============================================================================
 # Type expression tree
@@ -89,6 +97,23 @@ TypeExpr: TypeAlias = 'TypeSignature | SimpleTypeExpr | LiteralTypeExpr | Generi
 """A type expression node in the signature's type tree."""
 
 
+def _names_read_by(expr: TypeExpr) -> Iterator[str]:
+    """The names an annotation reads when evaluated, which leaves out the text inside a `Literal[...]`."""
+    if isinstance(expr, LiteralTypeExpr):
+        yield 'Literal'
+    elif isinstance(expr, GenericTypeExpr):
+        yield expr.base
+        for arg in expr.args:
+            yield from _names_read_by(arg)
+    elif isinstance(expr, UnionTypeExpr):
+        for member in expr.members:
+            yield from _names_read_by(member)
+    elif isinstance(expr, TypeSignature | SimpleTypeExpr):
+        yield str(expr)
+    else:
+        assert_never(expr)
+
+
 # =============================================================================
 # Signature dataclasses
 # =============================================================================
@@ -101,6 +126,13 @@ _DOC_INDENT = '    '
 # backslashes would start escape sequences, null bytes are rejected by compile(),
 # and quotes could terminate the delimiter.
 _DESCRIPTION_ESCAPES = str.maketrans({'\\': '\\\\', '\0': '\\x00', '"': '\\"'})
+
+
+def _render_comment(text: str | None, indent: str) -> list[str]:
+    """Render a description as comment lines, for a definition with no place for a docstring."""
+    if not text:
+        return []
+    return [f'{indent}# {line}'.rstrip() for line in text.strip().replace('\0', '\\x00').splitlines()]
 
 
 def _render_description(text: str, indent: str = '') -> list[str]:
@@ -128,18 +160,20 @@ class TypeFieldSignature:
 
     def __str__(self) -> str:
         """Render this field as a line in a TypedDict class body."""
-        type_str = str(self.type)
-        if not self.required:
-            type_str = f'NotRequired[{type_str}]'
-        lines: list[str] = [f'    {self.name}: {type_str}']
+        lines: list[str] = [f'    {self.name}: {_annotation(self)}']
         if self.description:
             lines.extend(_render_description(self.description, indent='    '))
         return '\n'.join(lines)
 
 
+def _annotation(type_field: TypeFieldSignature) -> str:
+    """The annotation a field renders with, in either form of definition."""
+    return str(type_field.type) if type_field.required else f'NotRequired[{type_field.type}]'
+
+
 @dataclass(kw_only=True)
 class TypeSignature:
-    """A TypedDict-style class definition with named fields."""
+    """A TypedDict definition with named fields."""
 
     name: str
 
@@ -168,7 +202,7 @@ class TypeSignature:
     def render_definition(
         self, *, owner_name: str | None = None, conflicting_type_names: frozenset[str] = frozenset()
     ) -> str:
-        """Render the full TypedDict class definition.
+        """Render the full TypedDict definition.
 
         Args:
             owner_name: The owning tool name, used to build prefixed type names
@@ -187,7 +221,14 @@ class TypeSignature:
         return self._render_definition()
 
     def _render_definition(self) -> str:
-        """Render the full TypedDict class definition (internal, assumes overrides are set)."""
+        """Render the full TypedDict definition (internal, assumes overrides are set)."""
+        # A class body can't hold a name Python can't write, and a field named like something an annotation
+        # reads changes what that annotation means, so these fields only fit the functional form.
+        names_read = {name for f in self.fields.values() for name in _names_read_by(f.type)}
+        if not all(f.required for f in self.fields.values()):
+            names_read.add('NotRequired')
+        if any(not _is_writable_name(name) or name in names_read for name in self.fields):
+            return self._render_functional_definition()
         lines = [f'class {self.display_name}(TypedDict):']
         if self.description:
             lines.extend(_render_description(self.description, indent='    '))
@@ -197,6 +238,16 @@ class TypeSignature:
         else:
             for f in self.fields.values():
                 lines.append(str(f))
+        return '\n'.join(lines)
+
+    def _render_functional_definition(self) -> str:
+        """Render the `Name = TypedDict('Name', {...})` form, with descriptions as comments."""
+        name = self.display_name
+        lines = [*_render_comment(self.description, ''), f'{name} = TypedDict({name!r}, {{']
+        for f in self.fields.values():
+            lines.extend(_render_comment(f.description, _DOC_INDENT))
+            lines.append(f'{_DOC_INDENT}{f.name!r}: {_annotation(f)},')
+        lines.append('})')
         return '\n'.join(lines)
 
     def structurally_equal(self, other: TypeSignature) -> bool:
@@ -221,10 +272,12 @@ class FunctionParam:
 
     def __str__(self) -> str:
         """Render this parameter as a function parameter string."""
-        type_str = str(self.type)
-        if self.default is not None:
-            return f'{self.name}: {type_str} = {self.default}'
-        return f'{self.name}: {type_str}'
+        return f'{self.name}: {_type_and_default(self)}'
+
+
+def _type_and_default(param: FunctionParam) -> str:
+    """The part of a parameter after its name, in either form of signature."""
+    return f'{param.type} = {param.default}' if param.default is not None else str(param.type)
 
 
 @dataclass(kw_only=True)
@@ -263,7 +316,7 @@ class FunctionSignature:
     """The return type expression."""
 
     referenced_types: list[TypeSignature] = field(default_factory=list[TypeSignature])
-    """TypedDict class definitions needed by the signature."""
+    """TypedDict definitions needed by the signature."""
 
     is_async: bool = False
     """Whether the underlying function is async."""
@@ -301,6 +354,23 @@ class FunctionSignature:
         finally:
             _type_name_overrides.reset(token)
 
+    def _render_args_lines(self, writable_params: bool) -> list[str]:
+        lines: list[str] = []
+        for param in self.params.values():
+            description_lines = (param.description or '').strip().splitlines()
+            if not writable_params:
+                # With no parameter list to show them, the type and default go here.
+                description_lines = [_type_and_default(param), *description_lines]
+            if not description_lines:
+                continue
+            first_line, *continuation = description_lines
+            # Such a name can hold anything, and `repr` gives the model a dict key to copy, on one line.
+            shown_name = param.name if writable_params else repr(param.name)
+            lines.append(f'{_DOC_INDENT}{shown_name}: {first_line}')
+            # Continuation lines nest one level past the parameter name
+            lines.extend(f'{_DOC_INDENT * 2}{line}' for line in continuation)
+        return lines
+
     def _render(
         self,
         body: str,
@@ -312,31 +382,31 @@ class FunctionSignature:
         async_flag = is_async if is_async is not None else self.is_async
         prefix = 'async def' if async_flag else 'def'
         params_str = ', '.join(str(p) for p in self.params.values())
-
-        return_str = str(self.return_type)
-        if params_str:
+        writable_params = all(_is_writable_name(param_name) for param_name in self.params)
+        if not writable_params:
+            # A `**{...}` call is the only way to pass these. `Unpack[...]` of a TypedDict would check it, but a
+            # type checker tests a dict literal's value type against every field, rejecting correct calls.
+            params_str = '**kwargs: Any'
+        elif params_str:
             # Force keyword-only params so LLMs always use named arguments
-            parts = [f'{prefix} {name}(*, {params_str}) -> {return_str}:']
-        else:
-            parts = [f'{prefix} {name}() -> {return_str}:']
+            params_str = f'*, {params_str}'
+        parts = [f'{prefix} {name}({params_str}) -> {self.return_type}:']
 
-        description_sections = [description] if description else []
+        args_lines = self._render_args_lines(writable_params)
+        args_section = '\n'.join(['Args:', *args_lines]) if args_lines else None
 
-        args_lines: list[str] = []
-        for param in self.params.values():
-            description_lines = (param.description or '').strip().splitlines()
-            if not description_lines:
-                continue
-            first_line, *continuation = description_lines
-            args_lines.append(f'{_DOC_INDENT}{param.name}: {first_line}')
-            # Continuation lines nest one level past the parameter name
-            args_lines.extend(f'{_DOC_INDENT * 2}{line}' for line in continuation)
-        if args_lines:
-            description_sections.append('\n'.join(['Args:', *args_lines]))
-        description = '\n\n'.join(description_sections)
-
+        description = '\n\n'.join(
+            section for section in (description, args_section if writable_params else None) if section
+        )
         if description:
             parts.extend(_render_description(description, indent='    '))
+
+        if not writable_params:
+            # The model copies each name from this text into a dict key, and a docstring would escape it a second time.
+            call_form = (
+                f"Some argument names can't be passed as keywords, so pass all arguments as `{name}(**{{...}})`."
+            )
+            parts.extend(_render_comment(f'{call_form}\n\n{args_section}', '    '))
 
         parts.append(f'    {body}')
 
@@ -502,7 +572,7 @@ class FunctionSignature:
             conflicting_type_names: The set returned by `get_conflicting_type_names`.
 
         Returns:
-            A list of rendered TypedDict class definitions as strings.
+            A list of rendered TypedDict definitions as strings.
         """
         unique_types = FunctionSignature.collect_unique_referenced_types(signatures)
         if not unique_types:
