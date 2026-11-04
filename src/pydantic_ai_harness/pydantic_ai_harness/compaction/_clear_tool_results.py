@@ -16,7 +16,7 @@ from pydantic_ai_harness.compaction._shared import (
     context_for_request,
     estimate_token_count,
     exceeds,
-    has_cleared_mark,
+    is_cleared_by_placeholder_function,
     is_cleared_return,
     iter_tool_pairs,
     rebuild_with_cleared,
@@ -146,6 +146,8 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
     compaction receipts, don't start a turn. Replaces the `keep_pairs` count when set."""
 
     def __post_init__(self) -> None:
+        if isinstance(self.tools, str):
+            raise UserError(f'tools takes a sequence of tool names, not a string: use tools=[{self.tools!r}].')
         if self.tools is not None and self.exclude_tools:
             raise UserError('Set at most one of tools or exclude_tools.')
         if self.keep_turns is not None and self.keep_pairs != 3:
@@ -247,7 +249,7 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
     def _is_cleared(self, part: ToolReturnPart) -> bool:
         if isinstance(self.placeholder, str):
             return is_cleared_return(part, self.placeholder)
-        return has_cleared_mark(part)
+        return is_cleared_by_placeholder_function(part)
 
     def _exceeds_max_messages(self, messages: list[ModelMessage]) -> bool:
         if self.max_messages is None:

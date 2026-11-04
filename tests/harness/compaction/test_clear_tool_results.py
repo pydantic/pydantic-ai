@@ -23,7 +23,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness.compaction import ClearToolResults, pin
+from pydantic_ai_harness.compaction import ClearToolResults, DeduplicateFileReads, pin
 from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 
 CLEARED = '[tool result cleared]'
@@ -86,6 +86,11 @@ class TestClearToolResultsTargeting:
     def test_tools_and_exclude_tools_are_exclusive(self):
         with pytest.raises(UserError, match='Set at most one of tools or exclude_tools'):
             ClearToolResults(max_tokens=1, tools=['search'], exclude_tools=frozenset({'fetch'}))
+
+    def test_tools_rejects_a_bare_string(self):
+        # A `str` is a `Sequence[str]`, so `tools='search'` typechecks but would test substrings.
+        with pytest.raises(UserError, match='tools takes a sequence of tool names'):
+            ClearToolResults(max_tokens=1, tools='search')
 
     def test_keep_pairs_and_keep_turns_are_exclusive(self):
         with pytest.raises(UserError, match='Set at most one of keep_pairs or keep_turns'):
@@ -220,6 +225,7 @@ class TestClearToolResultsTargeting:
         assert returns['tagged'].metadata == {
             'source': 'cache',
             'pydantic-ai-harness.compaction.cleared-tool-result.v1': True,
+            'pydantic-ai-harness.compaction.cleared-by-placeholder-function.v1': True,
         }
 
         # A string placeholder clears the opaque one, as it always has.
@@ -254,6 +260,44 @@ class TestClearToolResultsTargeting:
         rewritten = [i for i in range(1, len(sent)) if sent[i][: len(sent[i - 1])] != sent[i - 1]]
         assert rewritten == [4, 7, 10]
         assert list(_contents(sent[-1]).values())[-4:] == ['[c8]', 'result 9', 'result 10', 'result 11']
+
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+    async def test_callable_placeholder_max_messages_ignores_other_strategies_clears(self):
+        """`DeduplicateFileReads` marks the reads it clears too; those must not reset the `max_messages` count."""
+        sent: list[list[ModelMessage]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(list(messages))
+            step = len(sent)
+            if step > 12:
+                return ModelResponse(parts=[TextPart('done')])
+            if step % 2:
+                return ModelResponse(parts=[ToolCallPart('lookup', {'q': step}, tool_call_id=f'c{step}')])
+            return ModelResponse(parts=[ToolCallPart('read', {'path': 'a.py'}, tool_call_id=f'r{step}')])
+
+        def file_key(call: ToolCallPart) -> str | None:
+            return 'a.py' if call.tool_name == 'read' else None
+
+        agent = Agent(
+            FunctionModel(respond),
+            capabilities=[
+                DeduplicateFileReads(file_key=file_key),
+                ClearToolResults(max_messages=8, keep_pairs=2, placeholder=lambda part: f'[{part.tool_call_id}]'),
+            ],
+        )
+
+        @agent.tool_plain
+        def lookup(q: int) -> str:
+            return f'result {q}'
+
+        @agent.tool_plain
+        def read(path: str) -> str:
+            return f'contents of {path}'
+
+        await agent.run('go')
+
+        contents = _contents(sent[-1])
+        assert [contents[f'c{step}'] for step in (1, 3, 5)] == ['[c1]', '[c3]', '[c5]']
 
     async def test_keep_turns_keeps_the_last_completed_turns_and_the_current_one(self):
         messages = [*_turn('one', 'a'), *_turn('two', 'b'), *_turn('three', 'c'), _user('four')]

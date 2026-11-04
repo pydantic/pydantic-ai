@@ -1107,23 +1107,34 @@ def is_cleared_return(part: ToolReturnPart, placeholder: str) -> bool:
     return type(part) is ToolReturnPart or has_cleared_mark(part)
 
 
+PLACEHOLDER_FUNCTION_METADATA = 'pydantic-ai-harness.compaction.cleared-by-placeholder-function.v1'
+"""Model-invisible `ToolReturnPart.metadata` key marking a result cleared with a placeholder function.
+
+Set next to `CLEARED_TOOL_RESULT_METADATA`, which other strategies set too: a function's output differs
+per result, so this key is what tells `ClearToolResults` which cleared results are its own.
+"""
+
+
+def is_cleared_by_placeholder_function(part: ToolReturnPart) -> bool:
+    """Whether a compaction with a placeholder function cleared *part*."""
+    return is_str_dict(part.metadata) and part.metadata.get(PLACEHOLDER_FUNCTION_METADATA) is True
+
+
 def _clear_once(part: ToolReturnPart, placeholder: str | Callable[[ToolReturnPart], str]) -> ToolReturnPart | None:
     """*part* cleared with *placeholder*, or `None` if it is already cleared or can't be cleared.
 
-    A string placeholder recognizes its own clears by their content, as it always has. A callable's
-    output differs per part, so its clears are recognized by the metadata mark instead, and a part
-    whose metadata can't hold the mark is left alone: clearing it again would call the placeholder on
-    its own output.
+    A string placeholder recognizes its own clears by their content, as it always has. A function's
+    output differs per part, so its clears are recognized by their metadata marks instead, and a part
+    whose metadata can't hold them is left alone: clearing it again would call the placeholder on its
+    own output.
     """
     if isinstance(placeholder, str):
         return cleared_return(part, placeholder) if str(part.content) != placeholder else None
-    if (
-        has_cleared_mark(part)
-        or not (part.metadata is None or is_str_dict(part.metadata))
-        or not _has_clearable_type(part)
-    ):
+    metadata: object = {} if part.metadata is None else part.metadata
+    if not is_str_dict(metadata) or has_cleared_mark(part) or not _has_clearable_type(part):
         return None
-    return cleared_return(part, placeholder(part))
+    marks = {CLEARED_TOOL_RESULT_METADATA: True, PLACEHOLDER_FUNCTION_METADATA: True}
+    return replace(part, content=placeholder(part), metadata={**metadata, **marks})
 
 
 def rebuild_with_cleared(
