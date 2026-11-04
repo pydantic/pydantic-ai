@@ -16,6 +16,7 @@ from . import _utils, exceptions, messages as _messages, models
 from ._context_size import context_input_tokens
 from ._genai_prices import best_effort_price
 from ._output import (
+    BaseObjectOutputProcessor,
     BaseOutputProcessor,
     OutputDataT_inv,
     OutputSchema,
@@ -341,7 +342,11 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     text = text or text_before_native_tool_call
 
                 return await self._validate_text_output(
-                    text_processor, text, cut_off=message.finish_reason == 'length', allow_partial=allow_partial
+                    text_processor,
+                    text,
+                    # Only text parsed against a schema, as for `NativeOutput` and `PromptedOutput`, names the limit.
+                    cut_off=message.finish_reason == 'length' and isinstance(text_processor, BaseObjectOutputProcessor),
+                    allow_partial=allow_partial,
                 )
             else:
                 raise exceptions.UnexpectedModelBehavior(  # pragma: no cover

@@ -4041,7 +4041,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 )
                 raise ToolRetryError(m)
             except ToolRetryError as e:
-                _raise_if_cut_off_output(self.model_response, e, max_tokens=ctx.state.last_max_tokens)
+                _raise_if_cut_off_output(
+                    self.model_response, e, output_schema=output_schema, max_tokens=ctx.state.last_max_tokens
+                )
                 ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e, feedback=e.tool_retry)
                 self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
 
@@ -4380,14 +4382,21 @@ async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Dep
 
 
 def _raise_if_cut_off_output(
-    response: _messages.ModelResponse, error: ToolRetryError, *, max_tokens: int | None
+    response: _messages.ModelResponse,
+    error: ToolRetryError,
+    *,
+    output_schema: _output.OutputSchema[Any],
+    max_tokens: int | None,
 ) -> None:
-    """Raise instead of retrying when the token limit cut off text output that then failed validation.
+    """Raise instead of retrying when the token limit cut off structured text output that then failed validation.
 
-    Re-prompting the model with the same limit would only run into it again.
+    Re-prompting the model with the same limit would only run into it again. Only `NativeOutput` and `PromptedOutput`
+    text is parsed against a schema: a `TextOutput` function or output validator raising `ValidationError` on plain
+    text keeps its retry.
     """
     if (
         response.finish_reason == 'length'
+        and isinstance(output_schema.text_processor, _output.BaseObjectOutputProcessor)
         and isinstance(error.tool_retry, _messages.RetryFeedbackPart)
         and error.tool_retry.retry.cause == 'validation_error'
     ):

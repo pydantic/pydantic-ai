@@ -4902,6 +4902,18 @@ def test_output_validator_retry_with_finish_reason_length_is_retried():
     assert agent.run_sync('Hello').output == _City(name='Paris', population=3)
 
 
+def test_text_output_function_validation_error_with_finish_reason_length_is_retried():
+    """A `TextOutput` function parses text itself, so its `ValidationError` keeps its retry even when cut off."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[TextPart('{"name": "Paris", "popu')], finish_reason='length')
+        return ModelResponse(parts=[TextPart('{"name": "Paris", "population": 2}')])
+
+    agent = Agent(FunctionModel(respond), output_type=TextOutput(_City.model_validate_json))
+    assert agent.run_sync('Hello').output == _City(name='Paris', population=2)
+
+
 def test_truncated_text_output_is_returned():
     """Plain text has no shape to validate, so text the token limit cut off is the output; `finish_reason` says so."""
 
