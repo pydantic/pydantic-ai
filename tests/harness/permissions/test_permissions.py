@@ -17,6 +17,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     TextPart,
     ToolCallPart,
+    ToolReturn,
     ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -50,6 +51,17 @@ def _calls(*calls: tuple[str, Mapping[str, object]]) -> FunctionModel:
         return ModelResponse(parts=[TextPart(str(returned[0].content) if returned else 'done')])
 
     return FunctionModel(respond)
+
+
+class _DBOSDurability(AbstractCapability[None]):
+    in_durable_context = True
+
+
+_DBOSDurability.__module__ = 'pydantic_ai.durable_exec.dbos'
+
+
+def _return_metadata(messages: list[ModelMessage]) -> list[object]:
+    return [part.metadata for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
 
 
 class _Person:
@@ -292,32 +304,64 @@ class TestPermissions:
         assert remembered == {RememberedApproval('c', 'run_command', 'echo hi')}
         assert len(person.asked) == 1
 
-    async def test_remember_has_no_effect_inside_durable_execution(self, tmp_path: Path) -> None:
-        """In-process memory would not survive a replay, so inside a durable workflow every call asks."""
+    @pytest.mark.parametrize(
+        ('returned', 'metadata', 'asks'),
+        [
+            ('hi', {'permissions': {'subject': 'echo hi'}}, 2),
+            (ToolReturn('hi', metadata={'kept': True}), {'kept': True, 'permissions': {'subject': 'echo hi'}}, 2),
+            (ToolReturn('hi', metadata='note'), 'note', 3),
+        ],
+    )
+    async def test_remember_inside_durable_execution_is_kept_in_history(
+        self, returned: object, metadata: object, asks: int
+    ) -> None:
+        """In-process memory would not survive a replay, so inside a durable workflow the approval goes in history."""
 
-        class DBOSDurability(AbstractCapability[None]):
-            in_durable_context = True
+        def run_command(command: str) -> object:
+            return returned
 
-        DBOSDurability.__module__ = 'pydantic_ai.durable_exec.dbos'
         remembered: set[RememberedApproval] = set()
-        person = _Person(PermissionDecision(approved=True, remember=True), PermissionDecision(approved=True))
+        person = _Person(*[PermissionDecision(approved=True, remember=True)] * asks)
         command = ('run_command', {'command': 'echo hi'})
         agent = Agent[None, str](
-            _calls(command, command),
+            _calls(command, ('run_command', {'command': 'echo bye'}), command),
             deps_type=type(None),
+            tools=[Tool(run_command, metadata={'code_arg_language': 'shell', 'code_arg_name': 'command'})],
             capabilities=[
-                DBOSDurability(),
-                LocalWorkspace(tmp_path),
-                Shell(denied_commands=[]),
+                _DBOSDurability(),
                 Permissions('read-only', remembered=remembered),
                 HandleDeferredToolCalls[None](handler=lambda ctx, requests: ask_permissions(requests, person)),
             ],
         )
 
-        await agent.run('go')
+        result = await agent.run('go')
 
         assert remembered == set()
-        assert len(person.asked) == 2
+        assert len(person.asked) == asks
+        assert _return_metadata(result.all_messages())[0] == metadata
+
+    async def test_remember_inside_durable_execution_ignores_calls_it_does_not_hold(self) -> None:
+        async def approve_remembering(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+            remember = {'permissions': {'remember': True}}
+            return DeferredToolResults(
+                approvals={call.tool_call_id: ToolApproved() for call in requests.approvals},
+                metadata={call.tool_call_id: remember for call in requests.approvals},
+            )
+
+        agent = Agent[None, str](
+            _calls(('guarded', {})),
+            deps_type=type(None),
+            tools=[Tool(lambda: 'ok', name='guarded', requires_approval=True)],
+            capabilities=[
+                _DBOSDurability(),
+                Permissions('read-only'),
+                HandleDeferredToolCalls[None](handler=approve_remembering),
+            ],
+        )
+
+        result = await agent.run('go')
+
+        assert _return_metadata(result.all_messages()) == [None]
 
     def test_serialization_name(self) -> None:
         assert Permissions.get_serialization_name() == 'Permissions'
