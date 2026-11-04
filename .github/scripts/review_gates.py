@@ -50,7 +50,7 @@ class ReviewPullRequest(BaseModel):
 
 
 class Review(BaseModel):
-    """A submitted review, including its immutable reviewed commit."""
+    """A submitted review; GitHub can move its `commit_id` after a push, but not its body's marker."""
 
     id: int
     user: ReviewUser
