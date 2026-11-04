@@ -140,7 +140,8 @@ class GuardrailResult:
         the call surfaces in
         [`DeferredToolRequests`][pydantic_ai.DeferredToolRequests] and the
         application decides. To attach approval metadata, raise
-        `ApprovalRequired(metadata=...)` from the guard directly.
+        `ApprovalRequired(metadata=...)` from the guard directly (not under
+        Temporal, where a raised exception fails the guard's activity).
         """
         return cls(action='approve')
 
