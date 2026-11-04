@@ -216,16 +216,17 @@ class TestAzureDurableTaskDurability:
             name='coder',
             capabilities=[LocalWorkspace(tmp_path), FileSystem(), Shell(tools=['shell']), AzureDurableTaskDurability()],
         )
-        requests: set[str] = set()
+        requests: list[str] = []
 
         @agent.on_event(FileChangeRequestEvent)
         async def record(ctx: RunContext[None], event: FileChangeRequestEvent) -> None:
-            requests.add(event.operation)
+            requests.append(event.operation)
 
         with registered_agent(durable_worker, agent):
             result = run_agent(durable_worker, agent, deps=None)
         assert 'shell-two' in result.output
-        assert requests == {'write', 'edit'}
+        # The orchestrator, and so its listeners, re-run on every replay.
+        assert set(requests) == {'write', 'edit'}
         assert (tmp_path / 'note.txt').read_text() == 'two'
 
     @pytest.mark.parametrize('same_agent', [False, True])

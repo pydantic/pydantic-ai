@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import re
 from collections.abc import AsyncIterable
 from pathlib import Path
 from typing import Any, ParamSpec, TypeVar
@@ -282,10 +283,11 @@ async def test_prefixed_dynamic_tool_child_tasks_keep_context_snapshots() -> Non
     )
 
 
-async def test_dynamic_tool_cannot_opt_out_of_render_child_task() -> None:
+@pytest.mark.parametrize('metadata', [False, True])
+async def test_dynamic_tool_cannot_opt_out_of_render_child_task(metadata: bool) -> None:
     tools = FunctionToolset[None]()
 
-    @tools.tool_plain
+    @tools.tool_plain(metadata={'render_workflows': False} if metadata else None)
     async def dynamic_lookup(query: str) -> str:
         return f'found {query}'  # pragma: no cover - rejected before the tool can run
 
@@ -297,7 +299,7 @@ async def test_dynamic_tool_cannot_opt_out_of_render_child_task() -> None:
     render_workflows = RenderWorkflows[None](
         workflows,
         deps_type=type(None),
-        resolve_tool_options=lambda _operation_id, _tool, _tool_name: False,
+        resolve_tool_options=None if metadata else lambda _operation_id, _tool, _tool_name: False,
     )
     agent = Agent[None, str](
         TestModel(call_tools=['dynamic_lookup']),
@@ -314,7 +316,8 @@ async def test_dynamic_tool_cannot_opt_out_of_render_child_task() -> None:
 
     pending_result = run_agent.func(RecordingTaskContext(), 'find it')
     assert inspect.isawaitable(pending_result)
-    with pytest.raises(UserError, match='only for function tools'):
+    source = "`metadata={'render_workflows': False}`" if metadata else '`resolve_tool_options`'
+    with pytest.raises(UserError, match=f'^{re.escape(source)} can be `False` only for function tools'):
         await pending_result
 
 

@@ -128,7 +128,8 @@ class RenderWorkflows(BaseDurabilityCapability[AgentDepsT]):
                 function-tool opt-out. The framework asks for a toolset default with
                 `tool=None`; each statically known function tool is then resolved with its
                 concrete tool and name. `None` keeps `tool_options`, and `False` executes that
-                function tool inline, as `metadata={'render_workflows': False}` on the tool does. Render fixes task options at registration, so returning
+                function tool inline, as `metadata={'render_workflows': False}` on the tool
+                does. Render fixes task options at registration, so returning
                 different `Options` for an individual tool raises a `UserError`. Put tools
                 needing different settings in separate named toolsets.
         """
@@ -292,7 +293,8 @@ def _resolve_tool_options(
     tool: object | None,
     tool_name: str,
 ) -> Options | Literal[False]:
-    if _opted_out_by_metadata(tool):
+    from_metadata = _opted_out_by_metadata(tool)
+    if from_metadata:
         resolved = False
     elif resolve_tool_options is None:
         return base_tool_options
@@ -305,9 +307,9 @@ def _resolve_tool_options(
     if tool is None and resolved is False:
         return base_tool_options
     if resolved is False and not _is_function_tool_operation(operation_id):
+        source = "`metadata={'render_workflows': False}`" if from_metadata else '`resolve_tool_options`'
         raise UserError(
-            '`resolve_tool_options` may return `False` only for function tools; '
-            'MCP and dynamic tools must run as Render child tasks.'
+            f'{source} can be `False` only for function tools; MCP and dynamic tools must run as Render child tasks.'
         )
     return base_tool_options if resolved is None else resolved
 

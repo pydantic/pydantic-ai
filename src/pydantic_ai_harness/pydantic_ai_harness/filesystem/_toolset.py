@@ -484,7 +484,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         }
         for name in FILE_SYSTEM_TOOL_NAMES:
             if name in self._tools:
-                # Approval must run in the workflow before the durable workspace write activity.
+                # Approval must run in the workflow before the durable workspace write.
                 metadata = (
                     {'temporal': False, 'azure_durable_task': False, 'render_workflows': False}
                     if name in {'write_file', 'edit_file', 'create_directory'}
