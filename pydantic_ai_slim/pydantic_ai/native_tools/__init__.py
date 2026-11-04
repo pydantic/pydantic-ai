@@ -2,11 +2,11 @@ from __future__ import annotations as _annotations
 
 import warnings
 from abc import ABC
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cache
-from typing import Annotated, Any, Literal, Union, cast
+from typing import Annotated, Any, Literal, Union
 
 import pydantic
 from pydantic_core import core_schema
@@ -70,7 +70,10 @@ def _validate_without_provider_field_warnings(value: Any, handler: core_schema.V
 
 
 def _check_moved_fields(
-    tool: AbstractNativeTool, system: str, provider_settings: Any, moved_fields: dict[str, tuple[Any, Any]]
+    tool: AbstractNativeTool,
+    system: str,
+    nested: Mapping[str, object],
+    moved_fields: Mapping[str, tuple[object, object]],
 ) -> None:
     """Reject moved fields that disagree with `provider_settings`, and warn about the ones that are set.
 
@@ -78,7 +81,6 @@ def _check_moved_fields(
     whoever constructs the tool, through `__init__` and `__post_init__`.
     """
     set_fields = {name: value for name, (value, default) in moved_fields.items() if value != default}
-    nested = cast(dict[str, dict[str, Any]], provider_settings or {}).get(system, {})
     for name, value in set_fields.items():
         if name in nested and nested[name] != value:
             raise UserError(
@@ -813,7 +815,7 @@ class ImageGenerationTool(AbstractNativeTool):
         _check_moved_fields(
             self,
             'openai',
-            self.provider_settings,
+            (self.provider_settings or {}).get('openai', {}),
             {
                 'action': (self.action, 'auto'),
                 'background': (self.background, 'auto'),
@@ -998,7 +1000,7 @@ class FileSearchTool(AbstractNativeTool):
         _check_moved_fields(
             self,
             'xai',
-            self.provider_settings,
+            (self.provider_settings or {}).get('xai', {}),
             {'instructions': (self.instructions, None), 'retrieval_mode': (self.retrieval_mode, None)},
         )
 
@@ -1100,7 +1102,9 @@ class AdvisorTool(AbstractNativeTool):
 
     def __post_init__(self) -> None:
         _validate_provider_settings(AdvisorProviderSettings, self.provider_settings)
-        _check_moved_fields(self, 'anthropic', self.provider_settings, {'caching': (self.caching, None)})
+        _check_moved_fields(
+            self, 'anthropic', (self.provider_settings or {}).get('anthropic', {}), {'caching': (self.caching, None)}
+        )
         if self.max_tokens is not None and self.max_tokens < 1024:
             raise ValueError('AdvisorTool.max_tokens must be at least 1024')
 

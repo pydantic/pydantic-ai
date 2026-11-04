@@ -29,9 +29,13 @@ def _apply_native_overrides(tool: _NativeToolT, overrides: dict[str, Any]) -> _N
     """
     if not overrides:
         return tool
-    if isinstance(tool, ImageGenerationTool) and (openai := (tool.provider_settings or {}).get('openai')):
+    if (
+        isinstance(tool, ImageGenerationTool)
+        and tool.provider_settings
+        and (openai := tool.provider_settings.get('openai'))
+    ):
         kept = {option: value for option, value in openai.items() if option not in overrides}
-        overrides = {**overrides, 'provider_settings': {'openai': kept}}
+        overrides = {**overrides, 'provider_settings': {**tool.provider_settings, 'openai': kept}}
     with suppress_provider_field_warnings():
         return replace(tool, **overrides)
 
