@@ -46,6 +46,7 @@ from pydantic_ai import (
     Tool,
     ToolDefinition,
     capture_run_messages,
+    function_signature,
 )
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability, Capability, Instrumentation, ToolSearch, Toolset
@@ -2428,6 +2429,32 @@ class TestCodeMode:
         assert output == {'output': 'ok\n'}
         with pytest.raises(ModelRetry, match='Type error in code'):
             await self._run_code_with_tools('await tool(x=1, y=1)', tool_def)
+
+    async def test_ref_past_the_expansion_limit_accepts_a_correct_call(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(function_signature, '_MAX_REF_EXPANSIONS', 3)
+        over_limit = ToolDefinition(
+            name='over_limit',
+            parameters_json_schema={
+                'type': 'object',
+                '$defs': {'I': {'type': 'integer'}},
+                'properties': {'x': {'type': 'array', 'items': [{'$ref': '#/$defs/I'}] * 4}},
+                'required': ['x'],
+            },
+            return_schema={'type': 'string'},
+        )
+        healthy = ToolDefinition(
+            name='healthy',
+            parameters_json_schema={'type': 'object', 'properties': {'q': {'type': 'string'}}, 'required': ['q']},
+            return_schema={'type': 'string'},
+        )
+        output, description = await self._run_code_with_tools(
+            "print(await over_limit(x=(1, 2, 3, 'past the limit')))", over_limit, healthy
+        )
+        assert output == {'output': 'ok\n'}
+        assert 'x: tuple[int, int, int, Any]' in description
+        for wrong in ("await over_limit(x=('s', 2, 3, 4))", 'await healthy(q=1)'):
+            with pytest.raises(ModelRetry, match='Type error in code'):
+                await self._run_code_with_tools(wrong, over_limit, healthy)
 
     async def test_invalid_uri_in_a_ref_leaves_the_tool_beside_it_checked(self) -> None:
         bad = ToolDefinition(

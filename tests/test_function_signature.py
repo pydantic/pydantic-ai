@@ -13,6 +13,7 @@ import pytest
 import typing_extensions
 from pydantic import BaseModel, RootModel, create_model
 
+from pydantic_ai import function_signature
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.function_signature import (
     FunctionParam,
@@ -2398,3 +2399,26 @@ def test_union_drops_repeats_as_it_is_built(monkeypatch: pytest.MonkeyPatch):
         },
     )
     assert isinstance(signature.params['x'].type, SimpleTypeExpr)
+
+
+def _refs_to_an_integer(count: int) -> dict[str, Any]:
+    return {'type': 'array', 'items': [{'$ref': '#/$defs/I'}] * count}
+
+
+def test_ref_expansions_past_the_limit_are_any():
+    limit = function_signature._MAX_REF_EXPANSIONS  # pyright: ignore[reportPrivateUsage]
+    catalog = _ref_catalog({'x': _refs_to_an_integer(limit + 1)}, **{'$defs': {'I': {'type': 'integer'}}})
+    assert f'x: tuple[{"int, " * limit}Any]' in catalog
+
+
+def test_ref_expansion_limit_is_for_each_from_schema_call(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(function_signature, '_MAX_REF_EXPANSIONS', 2)
+    document = {'$defs': {'I': {'type': 'integer'}}}
+    assert 'x: tuple[int, int]' in _ref_catalog({'x': _refs_to_an_integer(2)}, **document)
+    assert 'x: tuple[int, int]' in _ref_catalog({'x': _refs_to_an_integer(2)}, **document)
+
+
+def test_ref_expansion_limit_leaves_object_targets_alone(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(function_signature, '_MAX_REF_EXPANSIONS', 0)
+    refs = {'a': {'$ref': '#/$defs/User'}, 'b': {'$ref': '#/$defs/User'}}
+    assert 'def tool(*, a: User, b: User) -> Any:' in _ref_catalog(refs, **{'$defs': {'User': _NAME_OBJECT}})

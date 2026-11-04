@@ -361,6 +361,7 @@ class FunctionSignature:
         unified. Types left with one name and different structures (e.g. a parameter and a return
         `User`) are told apart by `get_conflicting_type_names` at a later stage.
         """
+        _ref_expansions.set(0)
         param_referenced: dict[int, TypeSignature] = {}
         _process_schema_defs(parameters_schema, param_referenced, name)
         params = _build_params_from_schema(parameters_schema, param_referenced, name)
@@ -537,6 +538,10 @@ _JSON_TYPE_TO_PYTHON: dict[str, str] = {
 # registering a placeholder before it walks the fields.
 _resolving_refs: ContextVar[frozenset[int]] = ContextVar('_resolving_refs', default=frozenset())
 
+# How many `$ref`s to non-object targets one `from_schema` call expands, as a small schema can expand exponentially.
+_MAX_REF_EXPANSIONS = 10_000
+_ref_expansions: ContextVar[int] = ContextVar('_ref_expansions', default=0)
+
 
 def _json_type_to_python(json_type: str) -> SimpleTypeExpr:
     """Convert a JSON type string to a SimpleTypeExpr."""
@@ -662,25 +667,31 @@ def _ref_to_type_expr(
         return _ANY
     if _is_typed_dict_schema(target):
         if id(target) not in referenced_types:
-            # Named from the pointer, not the reference, so a name doesn't depend on which of the two comes first.
-            last_token = tokens[-1] if tokens else ''
-            is_definition = tokens[-2:-1] in (['$defs'], ['definitions'])
-            name = last_token if is_definition else _object_type_name(target, tool_name, last_token)
+            name = _ref_target_name(target, tokens, tool_name)
             _build_and_register_type(name, target, root, referenced_types, tool_name, path)
         target_type = referenced_types[id(target)]
         return UnionTypeExpr(members=[target_type, _NONE]) if 'null' in target['type'] else target_type
     # Only object defs become TypedDicts. Pydantic emits enums, constrained aliases, list aliases
     # and unions as non-object defs, so resolve them inline: `Literal[...]`, `int`, `list[str]`.
     resolving = _resolving_refs.get()
-    if id(target) in resolving:
-        # A self-referential non-object def has no finite inline expression and no
-        # TypedDict to name, so `Any` keeps the rendered signature self-contained.
+    expansions = _ref_expansions.get()
+    if id(target) in resolving or expansions >= _MAX_REF_EXPANSIONS:
+        # A self-referential non-object def has no finite inline expression and no TypedDict
+        # to name, and `Any` never rejects a correct call, so it also stands in past the limit.
         return _ANY
+    _ref_expansions.set(expansions + 1)
     token = _resolving_refs.set(resolving | {id(target)})
     try:
         return _schema_to_type_expr(target, root, referenced_types, tool_name, path)
     finally:
         _resolving_refs.reset(token)
+
+
+def _ref_target_name(target: dict[str, Any], tokens: list[str], tool_name: str) -> str:
+    """Named from the pointer, not the reference, so a name doesn't depend on which of the two comes first."""
+    last_token = tokens[-1] if tokens else ''
+    is_definition = tokens[-2:-1] in (['$defs'], ['definitions'])
+    return last_token if is_definition else _object_type_name(target, tool_name, last_token)
 
 
 def _object_type_name(schema: dict[str, Any], tool_name: str, path: str) -> str:
