@@ -6,7 +6,19 @@ import inspect
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Protocol, Self, TypeAlias, assert_never, cast
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    ClassVar,
+    Generic,
+    Literal,
+    Protocol,
+    Self,
+    TypeAlias,
+    assert_never,
+    cast,
+)
 
 import anyio
 from pydantic import Discriminator, Tag, ValidationError
@@ -27,7 +39,7 @@ from pydantic_ai.exceptions import (
     ToolFailed,
     UserError,
 )
-from pydantic_ai.messages import InstructionPart, ToolReturn, ToolReturnContent
+from pydantic_ai.messages import InstructionPart, ToolReturn, ToolReturnContent, _RecordsContentFiles  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
@@ -396,8 +408,10 @@ _ToolReturnResult = Annotated[
 
 
 @dataclass
-class _ToolReturn:
+class _ToolReturn(_RecordsContentFiles):
     """Legacy wire shape retained for decoding in-flight durable executions."""
+
+    _content_field: ClassVar[str] = 'result'
 
     result: _ToolReturnResult
     _: KW_ONLY
@@ -405,10 +419,12 @@ class _ToolReturn:
 
 
 @dataclass
-class _ToolContentResult:
+class _ToolContentResult(_RecordsContentFiles):
     # Emitted only when a user dict's `kind` collides with `'tool-return'`. Workers predating this
     # variant cannot decode it, but those payloads already failed to round-trip there; ordinary
     # results deliberately retain the legacy `tool_return` shape for rolling upgrades.
+    _content_field: ClassVar[str] = 'result'
+
     result: ToolReturnContent
     _: KW_ONLY
     kind: Literal['tool_content_result'] = 'tool_content_result'

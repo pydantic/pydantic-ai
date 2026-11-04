@@ -17,6 +17,7 @@ from uuid import uuid4
 
 import anyio
 from pydantic import SerializerFunctionWrapHandler, TypeAdapter, WrapSerializer
+from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import AgentRunResult, AgentStreamEvent, CapabilityEvent, RunContext, capture_run_messages
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, on_event
@@ -29,6 +30,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.output import OutputContext
+from pydantic_ai_harness._history import STORED_HISTORY_CONTEXT
 from pydantic_ai_harness._task_report import TaskOutputPart, TaskQuestionPart, make_task_output, make_task_question
 from pydantic_ai_harness.step_persistence import StepPersistence, StepStore
 from pydantic_ai_harness.subagents._events import DelegationOutcome
@@ -49,8 +51,9 @@ RESUME_DIRECTORY_MISMATCH = 'A resumed task cannot change its working directory.
 def _dump_messages(messages: list[ModelMessage], handler: SerializerFunctionWrapHandler) -> object:
     try:
         return handler(messages)
-    except UnicodeDecodeError:
-        # Non-UTF-8 `bytes` in an `Any` field: only an outermost adapter's base64 config reaches them.
+    except (UnicodeDecodeError, PydanticSerializationError):
+        # Non-UTF-8 `bytes` in an `Any` field: only an outermost adapter's base64 config reaches them. The
+        # error arrives wrapped when a serializer function sits between, as tool results' do.
         return ModelMessagesTypeAdapter.dump_python(messages, mode='json')
 
 
@@ -161,7 +164,7 @@ _SAFE_ID = re.compile(r'[0-9a-f]{32}\Z')
 
 async def _read(path: anyio.Path) -> DelegationTask:
     """A saved task, checked to have the identity its file name gives it."""
-    record = _ADAPTER.validate_json(await path.read_bytes())
+    record = _ADAPTER.validate_json(await path.read_bytes(), context=STORED_HISTORY_CONTEXT)
     if not _SAFE_ID.fullmatch(record.id) or not _SAFE_ID.fullmatch(record.run_id) or path.name != f'{record.id}.json':
         raise ValueError(f'Invalid saved task identity in {path.name!r}')
     return record
