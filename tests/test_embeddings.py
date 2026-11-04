@@ -487,6 +487,7 @@ class TestOpenAI:
                     'operation.cost': 8e-08,
                     'gen_ai.response.model': 'text-embedding-3-small',
                     'gen_ai.embeddings.dimension.count': 128,
+                    'embeddings': IsList(IsList(IsFloat(), length=128), length=1),
                 },
             }
         )
@@ -1593,6 +1594,7 @@ class TestBedrock:
                     'gen_ai.response.model': 'amazon.titan-embed-text-v2:0',
                     'operation.cost': 1e-07,
                     'gen_ai.embeddings.dimension.count': 256,
+                    'embeddings': IsList(IsList(IsFloat(), length=256), length=1),
                 },
             }
         )
@@ -2095,6 +2097,7 @@ class TestGoogle:
                     'logfire.msg': 'embeddings gemini-embedding-2-preview',
                     'gen_ai.response.model': 'gemini-embedding-2-preview',
                     'gen_ai.embeddings.dimension.count': 768,
+                    'embeddings': IsList(IsList(IsFloat(), length=768), length=1),
                 },
             }
         )
@@ -2656,6 +2659,22 @@ async def test_instrumentation_records_settings_without_extra_headers_and_extra_
     with_dimensions, only_extra_headers = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
     assert with_dimensions['attributes']['embedding_settings'] == {'dimensions': 8}
     assert 'embedding_settings' not in only_extra_headers['attributes']
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_instrumentation_embeddings_honor_include_content(capfire: CaptureLogfire, include_content: bool):
+    """The embedding span carries the returned vectors only when content capture is on."""
+    embedder = Embedder(
+        TestEmbeddingModel(dimensions=3), instrument=InstrumentationSettings(include_content=include_content)
+    )
+    result = await embedder.embed_query('hello')
+
+    [span] = capfire.exporter.exported_spans_as_dict()
+    if include_content:
+        assert span['attributes']['embeddings'] == json.dumps(result.embeddings)
+    else:
+        assert 'embeddings' not in span['attributes']
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
