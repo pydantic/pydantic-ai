@@ -2,7 +2,7 @@
 
 The capture is off unless pytest loads this module as a plugin, `-p tests.refactor_capture --refactor-capture=DIR`, so
 other runs never import it. To compare a base commit with the working tree, run this from the repository root, over
-one or two test nodes that stream through each changed line rather than whole test files:
+one or two test nodes that reach each changed line rather than whole test files:
 
     uv run python -m tests.refactor_capture "$(git merge-base HEAD upstream/main)" <test nodes>
 
