@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from pydantic_ai import (
     Agent,
     ModelContextWindowExceededError,
+    ModelHTTPError,
     ModelRequest,
     ModelResponse,
     RequestUsage,
@@ -381,6 +382,7 @@ async def test_context_window_exceeded_on_recorded_ollama_cloud_400(allow_model_
     with pytest.raises(ModelContextWindowExceededError) as capture:
         await agent.run('What is the capital of France?')
 
+    assert isinstance(capture.value, ModelHTTPError)
     assert capture.value.status_code == 400
     assert capture.value.provider_error_code is None
     assert capture.value.provider_error_type == 'invalid_request_error'
