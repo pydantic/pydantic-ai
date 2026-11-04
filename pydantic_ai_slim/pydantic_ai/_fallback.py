@@ -192,10 +192,9 @@ class FallbackPredicates:
     """Whether the predicates name `ContentFilterError`, so a response the provider's content filter ended matches.
 
     The agent only raises `ContentFilterError` once a response is accepted, too late to fall back from or retry the
-    error, so the
-    exception type stands for any response with `finish_reason='content_filter'`, with or without partial output,
-    which the provider says to discard. Streamed responses skip it without a warning, unlike response handlers: a
-    stream's finish reason is only known once it has been streamed, so a streamed refusal is accepted.
+    error, so the exception type stands for any response with `finish_reason='content_filter'`, with or without
+    partial output, which the provider says to discard. Streamed responses skip it without a warning, unlike response
+    handlers: a stream's finish reason is only known once it has been streamed, so a streamed refusal is accepted.
     """
 
     @classmethod

@@ -4731,10 +4731,10 @@ class ModelResponse:
 
     A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or the
     [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] capability records the models it moved on from
-    here, and [`RetryOnModelErrors`][pydantic_ai.capabilities.RetryOnModelErrors] the attempts it retried. Their usage is not included in `usage`, which is this response's own, but it does
-    count towards the run's [`RunUsage`][pydantic_ai.usage.RunUsage] and
-    [`UsageLimits`][pydantic_ai.usage.UsageLimits] token and cost limits. A rejected response's
-    parts are not kept. Not sent to the model.
+    here, and [`RetryOnModelErrors`][pydantic_ai.capabilities.RetryOnModelErrors] the attempts it retried.
+    Their usage is not included in `usage`, which is this response's own, but it does count towards the run's
+    [`RunUsage`][pydantic_ai.usage.RunUsage] and [`UsageLimits`][pydantic_ai.usage.UsageLimits] token and cost
+    limits. A rejected response's parts are not kept. Not sent to the model.
     """
 
     state: ModelResponseState = 'complete'
