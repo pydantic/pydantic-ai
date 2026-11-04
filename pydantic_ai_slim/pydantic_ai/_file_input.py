@@ -50,7 +50,7 @@ def unsupported_file_input(item: SendableFile, profile: ModelProfile) -> str | N
 
     A file is judged by its kind's flag, then by its media type against the kind's `supported_*_media_types`,
     as given: adapters send `image/jpg` or `image/png; name=a.png` under that spelling, which the provider may not
-    take. A URL whose media type can't be inferred is judged by kind alone. A document of a text media type that
+    take. A URL whose media type can't be inferred, or is of another kind, is judged by kind alone. A document of a text media type that
     `DocumentMediaType` doesn't list, such as `text/x-python`, is judged as `text/plain`, which is how adapters
     send it. Binary content that is neither an image, audio, video nor a document is left to the model adapter.
     """
@@ -59,25 +59,28 @@ def unsupported_file_input(item: SendableFile, profile: ModelProfile) -> str | N
             if not profile.get('supports_image_input', True):
                 return 'images'
             supported = profile.get('supported_image_media_types', KNOWN_IMAGE_MEDIA_TYPES)
-            noun = 'images'
+            noun, prefix = 'images', 'image/'
         case AudioUrl() | BinaryContent(is_audio=True):
             if not profile.get('supports_audio_file_input', True):
                 return 'audio files'
             supported = profile.get('supported_audio_media_types', KNOWN_AUDIO_MEDIA_TYPES)
-            noun = 'audio files'
+            noun, prefix = 'audio files', 'audio/'
         case VideoUrl() | BinaryContent(is_video=True):
             if not profile.get('supports_video_input', True):
                 return 'video'
             supported = profile.get('supported_video_media_types', KNOWN_VIDEO_MEDIA_TYPES)
-            noun = 'video'
+            noun, prefix = 'video', 'video/'
         case DocumentUrl() | BinaryContent(is_document=True):
             if not profile.get('supports_document_input', True):
                 return 'documents'
             supported = profile.get('supported_document_media_types', KNOWN_DOCUMENT_MEDIA_TYPES)
-            noun = 'documents'
+            noun, prefix = 'documents', ''
         case _:
             return None
-    if (media_type := inferred_media_type(item)) is None:
+    media_type = inferred_media_type(item)
+    if media_type is None or not media_type.startswith(prefix):
+        # No media type to judge, or one of another kind, such as an `ImageUrl` given as a PDF, which the
+        # adapter sends by the media type it downloads as.
         return None
     judged_as = media_type
     if noun == 'documents' and media_type not in KNOWN_DOCUMENT_MEDIA_TYPES and is_text_like_media_type(media_type):
