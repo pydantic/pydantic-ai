@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 import pytest
 
@@ -13,6 +14,7 @@ with try_import() as imports_successful:
     from render.sandbox import SandboxNotFoundError
 
     from pydantic_ai import Agent
+    from pydantic_ai.agent.spec import AgentSpec
     from pydantic_ai.exceptions import UserError
     from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
     from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -216,3 +218,28 @@ async def test_later_runs_reattach_to_the_same_sandbox(workspace_harness: Worksp
         if isinstance(part, ToolReturnPart)
     ]
     assert 'kept' in str(returns)
+
+
+def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
+    definitions = AgentSpec.model_json_schema_with_capabilities([RenderSandbox])['$defs']
+    assert sorted(definitions['spec_params_RenderSandbox']['properties']) == [
+        'allow_internet_access',
+        'defer_loading',
+        'description',
+        'env',
+        'id',
+        'sandbox_timeout',
+        'working_dir',
+    ]
+
+
+def test_from_spec_forwards_the_spec_fields() -> None:
+    spec_fields: dict[str, Any] = {
+        'id': 'sandbox',
+        'description': 'a sandbox',
+        'working_dir': '/work',
+        'env': {'FOO': 'bar'},
+        'allow_internet_access': False,
+        'sandbox_timeout': 120,
+    }
+    assert RenderSandbox[None].from_spec(**spec_fields) == RenderSandbox[None](**spec_fields)
