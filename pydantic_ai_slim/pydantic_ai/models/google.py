@@ -1288,7 +1288,7 @@ class GoogleModel(Model[Client]):
             gla_service_tier = _resolve_gla_service_tier(model_settings)
 
         http_options = self._build_http_options(model_settings, headers)
-        supports_penalties = self.profile.get('google_supports_penalties', True)
+        supports_penalties = 'presence_penalty' not in self._unsupported_settings()
 
         # See `GoogleModelSettings.google_cached_content` for why these three fields are stripped.
         _warn_on_cached_content_strips(cached_content, system_instruction, tools)

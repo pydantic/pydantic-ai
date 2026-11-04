@@ -5,7 +5,7 @@ It's a module of its own because `models/bedrock.py` can't import from `models/a
 
 from __future__ import annotations as _annotations
 
-from typing import cast
+from typing import Literal
 
 from ..profiles import ModelProfile
 from ..settings import ModelSettings
@@ -22,7 +22,7 @@ def drop_conflicting_sampling_settings(
     with a 400 (verified live 2026-11-04, on both the Anthropic API and Bedrock). They're tuning knobs, so they're
     dropped silently.
     """
-    conflicting: set[str] = set()
+    conflicting: set[Literal['temperature', 'top_p', 'top_k']] = set()
     temperature = model_settings.get('temperature')
     top_p = model_settings.get('top_p')
     if thinking and profile.get('anthropic_restricts_sampling_with_thinking', False):
@@ -39,4 +39,7 @@ def drop_conflicting_sampling_settings(
         and not conflicting & {'temperature', 'top_p'}
     ):
         conflicting.add('top_p')
-    return cast(ModelSettings, {key: value for key, value in model_settings.items() if key not in conflicting})
+    filtered: ModelSettings = {**model_settings}
+    for setting in conflicting:
+        filtered.pop(setting)
+    return filtered

@@ -1173,7 +1173,7 @@ class BedrockConverseModel(Model[BaseClient]):
     ) -> ModelSettings | None:
         """Drop the sampling settings the model rejects alone or with the rest of the request, like `AnthropicModel`."""
         profile = cast(BedrockModelProfile, self.profile)
-        if self.profile.get('anthropic_disallows_sampling_settings', False) or profile.get(
+        if profile.get('anthropic_disallows_sampling_settings', False) or profile.get(
             'bedrock_disallows_sampling_settings', False
         ):
             filtered: ModelSettings = {**model_settings}
