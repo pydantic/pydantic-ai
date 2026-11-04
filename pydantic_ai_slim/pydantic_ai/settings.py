@@ -29,7 +29,7 @@ it maps to the closest available value (e.g. `'xhigh'` and `'max'` -> `'high'` o
 that don't support them, `'minimal'` -> `'low'` on providers without a minimal level).
 """
 
-CacheRetention: TypeAlias = Literal['5m', '30m', '1h']
+CacheRetention: TypeAlias = Literal['5m', '30m', '1h', '12h']
 """The retention tiers for prompt-cache configuration.
 
 Not all providers support all tiers. A requested retention snaps down to the
@@ -620,13 +620,15 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Anthropic (documents, including those returned by tools, and Web Fetch)
+    * Anthropic (documents, including those returned by tools, Web Fetch, and Web Search on models with the
+      `20260209` web tools, which on the Anthropic API the setting has the model call directly unless the request
+      needs code execution; see [Web Tool Callers](../models/anthropic.md#web-tool-callers))
     * Bedrock (TXT and PDF documents, including those returned by tools, on Anthropic models)
     * xAI (inline citations)
 
     Only used when the output is text. On Anthropic models, a `tool_choice` that forces a tool call raises a
-    `UserError` when the request has something to cite. Providers that always cite ignore this setting. See
-    [Citations, tools and structured output](../citations.md#citations-tools-and-structured-output).
+    `UserError` when the request has a document or Web Fetch tool to cite. Providers that always cite ignore this
+    setting. See [Citations, tools and structured output](../citations.md#citations-tools-and-structured-output).
     """
 
     cache: CacheSetting
@@ -634,8 +636,9 @@ class ModelSettings(TypedDict, total=False):
 
     Prompt caching lets the provider serve a long or multi-turn prompt's stable prefix from its cache
     instead of re-processing it. Cache writes cost more than uncached input (1.25x for Anthropic's
-    5-minute and OpenAI's GPT-5.6 caches, 2x for Anthropic's 1-hour cache) while cache reads cost about
-    0.1x, so a 1.25x write breaks even after one read and a 2x write after two.
+    5-minute and OpenAI's GPT-5.6 30-minute caches, 2x for Anthropic's 1-hour cache, 2.5x for OpenAI's
+    12-hour cache) while cache reads cost about 0.1x, so a 1.25x write breaks even after one read and a
+    2x or 2.5x write after two.
 
     - `True`: Cache the stable prompt prefix (tool definitions and static instructions)
       and the growing conversation, with the provider's default retention. The library places cache
@@ -644,7 +647,7 @@ class ModelSettings(TypedDict, total=False):
       overriding a `cache` value in the model's default settings. Explicit
       [`CachePoint`][pydantic_ai.messages.CachePoint] markers and provider-specific cache settings
       still apply, and providers that cache implicitly (e.g. OpenAI, Gemini) still do.
-    - `'5m'`/`'30m'`/`'1h'`: Cache with a specific retention, snapped to the nearest tier the
+    - `'5m'`/`'30m'`/`'1h'`/`'12h'`: Cache with a specific retention, snapped to the nearest tier the
       provider supports (down where a shorter tier exists).
     - A [`CacheConfig`][pydantic_ai.settings.CacheConfig]: Cache with an optional `retention`, and with
       `messages=False` cache only the stable prefix (tool definitions and static instructions), not the

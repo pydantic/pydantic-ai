@@ -25,6 +25,7 @@ from pydantic_ai import Agent, AgentStreamEvent
 from pydantic_ai.capabilities import Capability
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, repair_messages
 from pydantic_ai.usage import RunUsage
+from pydantic_ai_harness._history import STORED_HISTORY_CONTEXT
 from pydantic_ai_harness.ask_user import AskUser, AskUserAnswer
 from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer
 from pydantic_clai2.builtin_plugins.web.protocol import (
@@ -89,7 +90,7 @@ def read_saved(path: Path) -> Saved:
     """The conversation in `path`; empty when there is none or it cannot be read."""
     data, revision = _revision(path)
     try:
-        messages = [] if data is None else ModelMessagesTypeAdapter.validate_json(data)
+        messages = [] if data is None else ModelMessagesTypeAdapter.validate_json(data, context=STORED_HISTORY_CONTEXT)
     except ValidationError:
         messages = []
     return Saved(messages=messages, revision=revision)

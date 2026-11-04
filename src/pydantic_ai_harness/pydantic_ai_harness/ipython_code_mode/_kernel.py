@@ -303,18 +303,30 @@ class IPythonKernel:
             await self._kill()
 
     async def _interrupt(self) -> None:
-        # Unset only while the run holding the lock is still starting the kernel.
+        # Unset only while the run holding the lock is starting or stopping the kernel.
         if self._manager is not None:  # pragma: no branch
             await self._manager.interrupt_kernel()
 
     async def _kill(self) -> None:
-        # Unset only while the run holding the lock is still starting the kernel.
+        # Unset only while the run holding the lock is starting or stopping the kernel.
         if self._manager is not None:  # pragma: no branch
-            await self._manager.shutdown_kernel(now=True)
+            await self._shutdown_kernel(self._manager)
+
+    async def _shutdown_kernel(self, manager: _KernelManager) -> None:
+        # `_kill()` runs without `_lock`, so the run holding it can find the process gone and stop the kernel
+        # too. jupyter-client fails the later of two overlapping `shutdown_kernel()` calls with
+        # `InvalidStateError`; one after the other, both succeed.
+        async with self._shutdown_lock:
+            await manager.shutdown_kernel(now=True)
 
     @cached_property
     def _lock(self) -> anyio.Lock:
         """Serializes cells, created on first use so it binds to the event loop that uses the kernel."""
+        return anyio.Lock()
+
+    @cached_property
+    def _shutdown_lock(self) -> anyio.Lock:
+        """Serializes stopping the kernel process, which `_kill()` does without holding `_lock`."""
         return anyio.Lock()
 
     async def _ensure_started(self) -> None:
@@ -349,12 +361,16 @@ class IPythonKernel:
     async def _stop(self) -> None:
         manager, client, context = self._manager, self._client, self._context
         self._manager = self._client = self._context = None
-        if client is not None:
-            client.stop_channels()
-        if manager is not None:
-            await manager.shutdown_kernel(now=True)
-        if context is not None:
-            context.destroy(linger=0)
+        try:
+            if client is not None:
+                client.stop_channels()
+            if manager is not None:
+                await self._shutdown_kernel(manager)
+        finally:
+            # Also when stopping is cancelled or fails: nothing else holds the context now, and the garbage
+            # collector would find it unclosed later, in unrelated code.
+            if context is not None:
+                context.destroy(linger=0)
 
     async def _execute(
         self,

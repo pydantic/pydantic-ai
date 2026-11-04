@@ -138,12 +138,9 @@ def parse_macroscope_stream(lines: Iterable[str]) -> MacroscopeReview:
 
 
 class MacroscopeToolset(FunctionToolset[AgentDepsT]):
-    """Exposes a single tool that runs `macroscope codereview` and returns findings.
+    """Exposes a single tool that runs `macroscope codereview` in the run's workspace and returns findings.
 
-    The tool runs the `macroscope` binary installed in the run's workspace (`ctx.workspace`),
-    in its working directory, so the review sees the repository where the agent works, local or in a sandbox. It
-    collects the streamed findings and returns them as a `MacroscopeReview`; validating and
-    fixing the findings is left to the agent's other tools.
+    See [`Macroscope`][pydantic_ai_harness.macroscope.Macroscope] for how the review runs.
 
     Setup problems the model cannot fix (the binary is missing or cannot be
     launched, or the CLI is not signed in) raise `UserError` so the run stops with
