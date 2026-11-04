@@ -453,10 +453,12 @@ jobs:
         run: |
           # Exclude the tag being built: once its GitHub release exists, `gh release view`
           # would otherwise compare the release to itself and make this gate a no-op.
+          # Take the highest version, not the newest: a V1 maintenance release can be published last.
           release_tag=$(gh release list --repo pydantic/pydantic-ai --limit 20 \
             --exclude-drafts --exclude-pre-releases --json tagName \
             | jq -r --arg current "$GITHUB_REF_NAME" \
-              'map(select(.tagName != $current))[0].tagName // empty')
+              'map(select(.tagName != $current and (.tagName | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))))
+               | max_by(.tagName | ltrimstr("v") | split(".") | map(tonumber)).tagName // empty')
           if [ -z "$release_tag" ]; then
             echo '::error::Could not find a prior stable release for the API compatibility baseline.'
             exit 1
