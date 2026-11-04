@@ -1050,9 +1050,8 @@ async def test_openrouter_no_openrouter_details(openrouter_api_key: str) -> None
     )
 
 
-def test_openrouter_unmapped_response_data_omits_fields_openrouter_maps(openrouter_api_key: str) -> None:
+async def test_openrouter_unmapped_response_data_omits_fields_openrouter_maps(allow_model_requests: None) -> None:
     """Fields `OpenRouterModel`'s response type declares, like `provider` and `native_finish_reason`, aren't unmapped."""
-    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=OpenRouterProvider(api_key=openrouter_api_key))
     choice = Choice.model_construct(
         index=0,
         message={'role': 'assistant', 'content': 'test', 'vendor_note': 'x'},
@@ -1062,10 +1061,14 @@ def test_openrouter_unmapped_response_data_omits_fields_openrouter_maps(openrout
     response = ChatCompletion.model_construct(
         id='test', choices=[choice], created=1704067200, object='chat.completion', model='test', provider='TestProvider'
     )
+    mock_client = MockOpenAI.create_mock(response)
+    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=OpenRouterProvider(openai_client=mock_client))
 
-    result = model._process_response(response, include_unmapped_response_data=True)  # type: ignore[reportPrivateUsage]
+    result = await Agent(model).run('hello', model_settings={'openai_include_unmapped_response_data': True})
 
-    assert (result.provider_details or {}).get('unmapped') == snapshot({'message': {'vendor_note': 'x'}})
+    response_message = result.all_messages()[-1]
+    assert isinstance(response_message, ModelResponse)
+    assert (response_message.provider_details or {}).get('unmapped') == snapshot({'message': {'vendor_note': 'x'}})
 
 
 async def test_openrouter_google_nested_schema(allow_model_requests: None, openrouter_api_key: str) -> None:

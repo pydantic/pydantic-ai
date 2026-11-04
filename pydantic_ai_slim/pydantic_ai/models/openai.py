@@ -563,8 +563,11 @@ def _split_content_parts(content: object) -> tuple[object, list[object]]:
 
 
 _MAPPED_MESSAGE_EXTRA_FIELDS = frozenset({'reasoning', 'reasoning_content', 'annotations'})
-"""Vendor fields on a message or delta that the Chat Completions mapping already reads, besides the profile's
-`openai_chat_thinking_field`. (`annotations` is declared on a message, but arrives as an extra on a delta.)"""
+"""Vendor fields on a message or delta that the Chat Completions mapping reads, besides the profile's
+`openai_chat_thinking_field`. (`annotations` is declared on a message, but arrives as an extra on a delta.)
+
+Thinking is mapped from the first of the thinking fields with a non-empty string, so the others are read but not
+kept: in practice they carry the same text, as vLLM sends both `reasoning` and `reasoning_content`."""
 
 
 def _unmapped_extra_fields(obj: object, mapped: frozenset[str] = frozenset()) -> dict[str, Any]:
