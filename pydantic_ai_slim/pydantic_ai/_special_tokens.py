@@ -20,10 +20,12 @@ wrote.
 from __future__ import annotations as _annotations
 
 import re
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from itertools import groupby
 from typing import TYPE_CHECKING, Any, Final, TypeVar, cast
+
+import pydantic_core
 
 from .messages import (
     BaseToolCallPart,
@@ -164,9 +166,17 @@ def _restore_part(part: _PartT) -> _PartT:
 
 
 def _restore_args(args: str | dict[str, Any] | None) -> str | dict[str, Any] | None:
-    if isinstance(args, str):
-        return _JOINER_IN_JSON.sub('', args)
-    return None if args is None else _restore_value(args)
+    if not isinstance(args, str):
+        return None if args is None else _restore_value(args)
+    restored = _JOINER_IN_JSON.sub('', args)
+    if '\\u' not in restored:
+        return restored
+    # The rest of the token can be escaped too, which only shows once the JSON is decoded.
+    try:
+        decoded = pydantic_core.from_json(restored)
+    except ValueError:
+        return restored
+    return restored if (fully_restored := _restore_value(decoded)) == decoded else fully_restored
 
 
 def _restore_value(value: Any) -> Any:
@@ -248,10 +258,12 @@ class StreamRestorer:
             return replace(
                 event, delta=replace(delta, content_delta=self._text_restorer(event.index).feed(delta.content_delta))
             )
-        if isinstance(delta, ToolCallPartDelta) and isinstance(delta.args_delta, str):
-            return replace(
-                event, delta=replace(delta, args_delta=self._args_restorer(event.index).feed(delta.args_delta))
-            )
+        if isinstance(delta, ToolCallPartDelta):
+            if isinstance(delta.args_delta, str):
+                args_delta = self._args_restorer(event.index).feed(delta.args_delta)
+                return replace(event, delta=replace(delta, args_delta=args_delta))
+            if delta.args_delta is not None:
+                return replace(event, delta=replace(delta, args_delta=_restore_args(delta.args_delta)))
         return event
 
     def _text_restorer(self, index: int) -> _StreamedTextRestorer:
@@ -275,11 +287,21 @@ class StreamRestorer:
         new_part = replace(call, args=call.args.removesuffix(restorer.held))
         return new_part
 
+    def flush_text(self) -> list[PartDeltaEvent]:
+        """Send what's held for each text part, as a new part has started and the last one has to end whole.
+
+        Tool call arguments stay held: parallel calls' deltas interleave, and JSON arguments never end in a joiner.
+        """
+        return self._flush(lambda index: index not in self.args_parts)
+
     def flush(self) -> list[PartDeltaEvent]:
-        """Send what's held for every part, as deltas: at the end of the stream, or before a new part starts."""
+        """Send what's held for every part, at the end of the stream."""
+        return self._flush(lambda index: True)
+
+    def _flush(self, include: Callable[[int], bool]) -> list[PartDeltaEvent]:
         events: list[PartDeltaEvent] = []
         for index, restorer in self.restorers.items():
-            if held := restorer.flush():
+            if include(index) and (held := restorer.flush()):
                 delta = (
                     ToolCallPartDelta(args_delta=held)
                     if index in self.args_parts
@@ -301,59 +323,79 @@ async def _restored_events(
 ) -> AsyncIterator[ModelResponseStreamEvent]:
     async for event in events:
         if isinstance(event, PartStartEvent):
-            for flushed in restorer.flush():
+            for flushed in restorer.flush_text():
                 yield flushed
         yield restorer.restore(event)
     for flushed in restorer.flush():
         yield flushed
 
 
-def break_special_tokens_in_messages(messages: list[ModelMessage], profile: ModelProfile) -> list[ModelMessage]:
+def break_special_tokens_in_messages(
+    messages: list[ModelMessage], profile: ModelProfile, system: str
+) -> list[ModelMessage]:
     """Break the special tokens in the text of every part that doesn't come from the application itself, if `profile` asks for it.
 
     `SystemPromptPart`s are left alone: they're the application's own channel, like instructions and tool definitions.
-    So is reasoning with a signature, which the provider would reject when changed, and a compaction a provider
-    produced. Ids, provider details and every other field stay as they are.
+    So is reasoning signed by `system`, the provider this request goes to, which it would reject when changed, and a
+    compaction a provider produced. Reasoning signed by another provider is sent as text, without its signature. Ids,
+    provider details and every other field stay as they are.
 
     Returns the original list when nothing changed.
     """
     if not profile.get('may_tokenize_special_tokens_in_content', False):
         return messages
-    new_messages = [_break_message(message) for message in messages]
+    new_messages = [_break_message(message, system) for message in messages]
     return new_messages if any(new is not old for new, old in zip(new_messages, messages)) else messages
 
 
-def _break_message(message: ModelMessage) -> ModelMessage:
+def _break_message(message: ModelMessage, system: str) -> ModelMessage:
     if isinstance(message, ModelRequest):
-        request_parts = [_break_part(part) for part in message.parts]
+        request_parts = [_break_part(part, system) for part in message.parts]
         changed = any(new is not old for new, old in zip(request_parts, message.parts))
         return replace(message, parts=request_parts) if changed else message
-    response_parts = [_break_part(part) for part in message.parts]
+    response_parts = [_break_part(part, system) for part in message.parts]
     changed = any(new is not old for new, old in zip(response_parts, message.parts))
     return replace(message, parts=response_parts) if changed else message
 
 
-def _break_part(part: _PartT) -> _PartT:
+def _break_part(part: _PartT, system: str) -> _PartT:
     new_part: Any = part
     if isinstance(part, UserPromptPart | BaseToolReturnPart):
         container = cast('UserPromptPart | BaseToolReturnPart[Any]', part)
         content = _break_value(container.content)
         if content is not container.content:
             new_part = replace(container, content=content)
+        if (
+            isinstance(new_part, BaseToolReturnPart)
+            and (name := break_special_tokens(new_part.tool_name)) != new_part.tool_name
+        ):
+            new_part = replace(cast('BaseToolReturnPart[Any]', new_part), tool_name=name)
     elif isinstance(part, BaseToolCallPart):
-        call = cast('BaseToolCallPart[Any]', part)
-        args = _break_value(call.args)
-        if args is not call.args:
-            new_part = replace(call, args=args)
+        new_part = _break_tool_call(cast('BaseToolCallPart[Any]', part))
     elif (
         isinstance(part, TextPart)
-        or (isinstance(part, ThinkingPart) and part.signature is None)
+        or (isinstance(part, ThinkingPart) and (part.signature is None or part.provider_name != system))
         or (isinstance(part, CompactionPart) and part.provider_name is None)
     ):
         content = part.content and break_special_tokens(part.content)
         if content != part.content:
             new_part = replace(part, content=content)
     return new_part
+
+
+def _break_tool_call(call: BaseToolCallPart[Any]) -> BaseToolCallPart[Any]:
+    args = call.args
+    if isinstance(args, str) and '\\u' in args:
+        # Adapters decode the JSON to send it canonically, which would turn an escaped token into a literal one.
+        decoded = call.args_as_dict()
+        broken = _break_value(decoded)
+        args = args if broken is decoded else broken
+    else:
+        args = _break_value(args)
+    name = break_special_tokens(call.tool_name)
+    if args is call.args and name == call.tool_name:
+        return call
+    return replace(call, args=args, tool_name=name)
 
 
 def _break_value(value: Any) -> Any:
@@ -381,7 +423,7 @@ def _break_value(value: Any) -> Any:
 def _break_sequence(sequence: list[Any] | tuple[Any, ...]) -> Any:
     """Break each item, treating adjacent text as one text: hosts join a message's text parts before tokenizing."""
     items: list[Any] = []
-    for is_text, group in groupby(sequence, key=lambda item: isinstance(item, str | TextContent)):
+    for is_text, group in groupby(sequence, key=lambda item: isinstance(item, str | TextContent | CachePoint)):
         items.extend(_break_adjacent_text(list(group)) if is_text else [_break_value(item) for item in group])
     return sequence if all(new is old for new, old in zip(items, sequence)) else items
 
@@ -390,16 +432,25 @@ def _break_mapping(mapping: dict[Any, Any]) -> Any:
     entries = [(_break_value(key), _break_value(item)) for key, item in mapping.items()]
     if all(new_key is key and new_item is item for (new_key, new_item), (key, item) in zip(entries, mapping.items())):
         return mapping
-    if len({key for key, _ in entries}) < len(entries):
+    try:
+        return_as_json = len({key for key, _ in entries}) < len(entries)
+    except TypeError:
+        # A tuple key with a token in it became a list.
+        return_as_json = True
+    if return_as_json:
         # A broken key now equals one that was already written that way: send the JSON text, which keeps every entry.
         return break_special_tokens(tool_return_ta.dump_json(mapping).decode())
     return dict(entries)
 
 
-def _break_adjacent_text(items: Sequence[str | TextContent]) -> list[str | TextContent]:
-    texts = [item.content if isinstance(item, TextContent) else item for item in items]
+def _break_adjacent_text(items: Sequence[str | TextContent | CachePoint]) -> list[str | TextContent | CachePoint]:
+    # A cache marker sends no text of its own, so the text on either side of it joins up too.
+    texts = [
+        item.content if isinstance(item, TextContent) else '' if isinstance(item, CachePoint) else item
+        for item in items
+    ]
     joiners = [match.end() for match in _SPECIAL_TOKEN_START.finditer(''.join(texts))]
-    new_items: list[str | TextContent] = []
+    new_items: list[str | TextContent | CachePoint] = []
     offset = 0
     for item, text in zip(items, texts):
         end = offset + len(text)
@@ -409,7 +460,7 @@ def _break_adjacent_text(items: Sequence[str | TextContent]) -> list[str | TextC
     return new_items
 
 
-def _with_joiners(item: str | TextContent, text: str, cuts: list[int]) -> str | TextContent:
+def _with_joiners(item: str | TextContent | CachePoint, text: str, cuts: list[int]) -> str | TextContent | CachePoint:
     bounds = [0, *cuts, len(text)]
     broken = ZERO_WIDTH_JOINER.join(text[start:stop] for start, stop in zip(bounds, bounds[1:]))
     return replace(item, content=broken) if isinstance(item, TextContent) else broken

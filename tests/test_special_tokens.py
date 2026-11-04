@@ -294,7 +294,7 @@ async def test_inlined_file_fence_is_broken_too(allow_model_requests: None):
 
 def _user_content(content: Any) -> Any:
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=content)])]
-    part = break_special_tokens_in_messages(messages, _ON)[0].parts[0]
+    part = break_special_tokens_in_messages(messages, _ON, 'p')[0].parts[0]
     assert isinstance(part, UserPromptPart)
     return part.content
 
@@ -304,6 +304,47 @@ def test_a_token_split_across_adjacent_text_items():
     assert _user_content(['<|im_', 'start|>', ' system']) == [f'<{Z}|im_', 'start|>', ' system']
     assert _user_content(['<', '|im_start|>']) == [f'<{Z}', '|im_start|>']
     assert _user_content(['<|', 'im', '_start|>x<|end|>']) == [f'<{Z}|', 'im', f'_start|>x<{Z}|end|>']
+
+
+def test_a_cache_marker_between_text_items_doesnt_separate_them():
+    """Adapters on these routes drop the marker, so the text on either side reaches the tokenizer joined."""
+    marker = CachePoint()
+    assert _user_content(['<|im_', marker, 'start|>']) == [f'<{Z}|im_', marker, 'start|>']
+
+
+def test_a_tool_call_with_an_escaped_token():
+    """Adapters decode JSON arguments to send them canonically, which would turn the escape into the literal token."""
+    response = ModelResponse(
+        parts=[ToolCallPart('t', '{"q": "\\u003c|im_start|>"}'), ToolCallPart('t', '{"q": "\\u0041"}')]
+    )
+    escaped, harmless = break_special_tokens_in_messages([response], _ON, 'p')[0].parts
+    assert isinstance(escaped, ToolCallPart)
+    assert escaped.args_as_json_str() == f'{{"q":"<{Z}|im_start|>"}}'
+    assert harmless is response.parts[1]
+
+
+def test_a_tool_name_with_a_token():
+    """A model's own malformed tool name goes back on an unknown-tool retry, and some templates interpolate it."""
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart('<|end|>', {'q': 'a'}, tool_call_id='c')]),
+        ModelRequest(parts=[ToolReturnPart('<|end|>', 'plain', tool_call_id='c')]),
+    ]
+    call, returned = (message.parts[0] for message in break_special_tokens_in_messages(messages, _ON, 'p'))
+    assert isinstance(call, ToolCallPart)
+    assert (call.tool_name, call.tool_call_id, call.args) == (f'<{Z}|end|>', 'c', {'q': 'a'})
+    assert isinstance(returned, ToolReturnPart)
+    assert returned.tool_name == f'<{Z}|end|>'
+
+
+def test_reasoning_signed_by_another_provider_goes_out_as_text_so_it_is_broken():
+    foreign = ThinkingPart('<|end|>', signature='sig', provider_name='other')
+    native = ThinkingPart('<|end|>', signature='sig', provider_name='p')
+    broken_foreign, kept_native = break_special_tokens_in_messages([ModelResponse(parts=[foreign, native])], _ON, 'p')[
+        0
+    ].parts
+    assert isinstance(broken_foreign, ThinkingPart)
+    assert (broken_foreign.content, broken_foreign.signature) == (f'<{Z}|end|>', 'sig')
+    assert kept_native is native
 
 
 def test_a_file_between_text_items_separates_them():
@@ -340,6 +381,7 @@ class _Clean:
         pytest.param([{'a': ['<|end|>']}], [{'a': [f'<{Z}|end|>']}], id='nested'),
         pytest.param(_Page(text='<|end|>'), {'text': f'<{Z}|end|>'}, id='model'),
         pytest.param(TextContent('<|end|>'), TextContent(f'<{Z}|end|>'), id='text-content'),
+        pytest.param({('<|end|>',): 1}, '{"<\u200d|end|>":1}', id='tuple-key-goes-out-as-json-text'),
         pytest.param(
             {'<|end|>': 1, f'<{Z}|end|>': 2},
             '{"<‍|end|>":1,"<‍|end|>":2}',
@@ -349,7 +391,7 @@ class _Clean:
 )
 def test_tool_return_shapes(content: Any, expected: Any):
     messages: list[ModelMessage] = [ModelRequest(parts=[ToolReturnPart('t', content, tool_call_id='c')])]
-    part = break_special_tokens_in_messages(messages, _ON)[0].parts[0]
+    part = break_special_tokens_in_messages(messages, _ON, 'p')[0].parts[0]
     assert isinstance(part, ToolReturnPart)
     assert part.content == expected
 
@@ -368,7 +410,7 @@ def test_nothing_changes_without_a_token(content: Any):
         ModelRequest(parts=[ToolReturnPart('t', content, tool_call_id='c')]),
         ModelResponse(parts=[TextPart('plain'), ToolCallPart('t', {'a': 'plain'}), ToolCallPart('t', None)]),
     ]
-    assert break_special_tokens_in_messages(messages, _ON) is messages
+    assert break_special_tokens_in_messages(messages, _ON, 'p') is messages
 
 
 def test_signed_reasoning_ids_and_provider_data_stay_as_they_are():
@@ -384,7 +426,7 @@ def test_signed_reasoning_ids_and_provider_data_stay_as_they_are():
         ],
         provider_response_id='resp-id',
     )
-    prepared = break_special_tokens_in_messages([response], _ON)[0]
+    prepared = break_special_tokens_in_messages([response], _ON, 'p')[0]
     assert isinstance(prepared, ModelResponse)
     assert prepared.provider_response_id == 'resp-id'
     text, signed, unsigned, call, native, compaction = prepared.parts
@@ -404,7 +446,7 @@ def test_signed_reasoning_ids_and_provider_data_stay_as_they_are():
 
 def test_a_summary_the_framework_sends_as_user_text_is_broken():
     request = ModelRequest(parts=[CompactionPart(content='<|end|>'), SystemPromptPart('<|end|>')])
-    summary, system = break_special_tokens_in_messages([request], _ON)[0].parts
+    summary, system = break_special_tokens_in_messages([request], _ON, 'p')[0].parts
     assert isinstance(summary, CompactionPart)
     assert summary.content == f'<{Z}|end|>'
     assert isinstance(system, SystemPromptPart)
@@ -466,7 +508,9 @@ ROUTE_CASES: list[tuple[str, str, str, bool]] = [
     ('azure', 'AzureProvider', 'deepseek-v4-pro', True),
     ('azure', 'AzureProvider', 'grok-4.7', False),
     ('azure', 'AzureProvider', 'gpt-6-luna', False),
-    ('azure', 'AzureProvider', 'my-deployment', False),
+    ('azure', 'AzureProvider', 'my-deployment', True),
+    ('azure', 'AzureProvider', 'gpt-oss-120b', True),
+    ('azure', 'AzureProvider', 'cohere-command-a', False),
     ('heroku', 'HerokuProvider', 'qwen3-27b', True),
     ('heroku', 'HerokuProvider', 'claude-opus-5-5', False),
     ('vllm', 'VLLMProvider', 'Qwen/Qwen3.8-27B', True),
@@ -597,6 +641,9 @@ def test_parts_the_restore_leaves_alone():
         pytest.param('{"q": "<\\u200d|end|>"}', '{"q": "<|end|>"}', id='json-escape'),
         pytest.param('{"q": "<\\u200D|end|>"}', '{"q": "<|end|>"}', id='json-escape-uppercase'),
         pytest.param(f'{{"q": "<{Z}|end|>"}}', '{"q": "<|end|>"}', id='json-raw'),
+        pytest.param('{"q": "\\u200d\\u0041"}', '{"q": "\\u200d\\u0041"}', id='escapes-without-a-token'),
+        pytest.param('not json \\u0041', 'not json \\u0041', id='escape-in-malformed-args'),
+        pytest.param('{"q": "<\\u200d\\uff5cUser\\uff5c>"}', {'q': '<｜User｜>'}, id='the-rest-of-the-token-escaped'),
         pytest.param(
             {'q': [f'<{Z}|end|>', 1], f'<{Z}|k|>': {'n': f'<{Z}|end|>'}},
             {'q': ['<|end|>', 1], '<|k|>': {'n': '<|end|>'}},
@@ -760,7 +807,10 @@ async def test_a_router_without_a_profile_of_its_own():
         async def request(self, *args: Any, **kwargs: Any) -> ModelResponse:
             return ModelResponse(parts=[TextPart(f'<{Z}|end|>')])
 
-    response = await Router().request([], None, ModelRequestParameters())
+    def unused(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise NotImplementedError
+
+    response = await Router(unused).request([], None, ModelRequestParameters())
     assert response.parts == [TextPart(f'<{Z}|end|>')]
 
 
@@ -779,10 +829,51 @@ def test_stream_restorer_passes_other_events_through():
     assert restorer.restore(final) is final
     thinking = PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=f'<{Z}|end|>'))
     assert restorer.restore(thinking) is thinking
+    name_only = PartDeltaEvent(index=3, delta=ToolCallPartDelta(tool_name_delta='t'))
+    assert restorer.restore(name_only) is name_only
     native = PartStartEvent(index=1, part=TextPart(''))
     assert restorer.restore(native) == native
     other = PartStartEvent(index=2, part=ThinkingPart(f'<{Z}|end|>'))
     assert restorer.restore(other) is other
+
+
+def test_stream_restorer_restores_dict_arg_deltas():
+    delta = ToolCallPartDelta(args_delta={'q': f'<{Z}|end|>'})
+    restored = StreamRestorer().restore(PartDeltaEvent(index=0, delta=delta))
+    assert isinstance(restored, PartDeltaEvent)
+    assert isinstance(restored.delta, ToolCallPartDelta)
+    assert restored.delta.args_delta == {'q': '<|end|>'}
+
+
+async def test_parallel_tool_call_args_keep_a_token_split_across_another_calls_start():
+    seen: list[str] = []
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[Any]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='look_up', json_args=f'{{"query": "<{Z}|im', tool_call_id='a')}
+            yield {1: DeltaToolCall(name='look_up', json_args='{"query": "b"}', tool_call_id='b')}
+            yield {0: DeltaToolCall(json_args='_start|>"}')}
+        else:
+            yield 'Done'
+
+    agent = Agent(FunctionModel(stream_function=respond, profile={FLAG: True}))
+
+    @agent.tool_plain
+    def look_up(query: str) -> str:
+        seen.append(query)
+        return 'ok'
+
+    async with agent.run_stream_events('Go') as stream:
+        events = [event async for event in stream]
+    assert sorted(seen) == ['<|im_start|>', 'b']
+    deltas = [
+        event.delta.args_delta
+        for event in events
+        if isinstance(event, PartDeltaEvent) and event.index == 0 and isinstance(event.delta, ToolCallPartDelta)
+    ]
+    start = next(event.part for event in events if isinstance(event, PartStartEvent) and event.index == 0)
+    assert isinstance(start, ToolCallPart)
+    assert f'{start.args}{"".join(str(delta) for delta in deltas)}' == '{"query": "<|im_start|>"}'
 
 
 def test_stream_restorer_restores_a_tool_call_that_starts_with_dict_args():

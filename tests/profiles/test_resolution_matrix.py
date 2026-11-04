@@ -2046,6 +2046,7 @@ def test_azure_openai_gpt_5():
             'openai_supports_phase': True,
             'openai_chat_supports_document_input': False,
             'openai_responses_supports_websocket': False,
+            'may_tokenize_special_tokens_in_content': False,
         }
     )
 

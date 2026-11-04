@@ -1852,7 +1852,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         messages = _translate_retry_parts(messages, keep_feedback=self._renders_retry_feedback)
         messages = _replace_unsupported_tool_return_files(messages, self.profile)
         # After retry feedback becomes user text, and before any step below renders the application's own text.
-        messages = break_special_tokens_in_messages(messages, self.profile)
+        messages = break_special_tokens_in_messages(messages, self.profile, self.system)
         if first_context_request is not None:
             # Before the `<system>` wrap below, which turns each note into `<system>`-tagged user text where needed.
             messages = _note_context_lookalikes(messages, first_context_request)

@@ -429,7 +429,7 @@ Open-weight models mark their turns with special tokens in a chat template, such
 
 So on routes that can reach such a host, Pydantic AI puts a zero-width joiner (U+200D) inside each of these tokens before sending, so `<|im_start|>` goes out as `<\u200d|im_start|>` and reaches the model as ordinary text. This is the exception to sending your content as written, and it's limited to this one character:
 
-- **What goes out with the joiner:** user prompts, tool results, inlined text files, retry feedback, summaries sent as user text, and the model's own text, tool call arguments and unsigned reasoning when they're sent back in later requests. Text without a special token goes out unchanged.
+- **What goes out with the joiner:** user prompts, tool results, inlined text files, retry feedback, summaries sent as user text, and the model's own text, tool names, tool call arguments and reasoning when they're sent back in later requests, unless the reasoning goes back to the provider that signed it. Text without a special token goes out unchanged.
 - **What doesn't:** the message history you store, system prompts, instructions and tool definitions. A file or URL a provider fetches itself isn't changed either. Tool definitions tokenize on these hosts too, so a tool description from an MCP server you don't trust is not protected by this.
 - **Prompt cache:** the same text always gets the same joiners, so resending a history sends the same bytes.
 

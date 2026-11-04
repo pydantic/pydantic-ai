@@ -54,6 +54,7 @@ _EVERY_MODEL: Final[frozenset[_SpecialTokenRoute]] = frozenset(
 _CLOSED_MODEL_PREFIXES: Final = (
     # Served by the lab's own API, whichever route reaches it, which doesn't render a public chat template.
     'claude',
+    'cohere-',
     'command',
     'gemini',
     'grok',

@@ -134,7 +134,7 @@ class AzureProvider(_OpenAISDKProvider):
         }
 
         base: ModelProfile | None = None
-        route_profile: ModelProfile | None = None
+        route_profile = special_token_route_profile('azure', model_name)
         is_mistral = False
         for prefix, profile_func in prefix_to_profile.items():
             if model_name.startswith(prefix):
@@ -146,7 +146,6 @@ class AzureProvider(_OpenAISDKProvider):
                     profile_func(model_name),
                 )
                 is_mistral = profile_func is mistral_model_profile
-                route_profile = special_token_route_profile('azure', model_name)
                 break
         if base is None:
             # OpenAI models are unprefixed, and inherit their unset `default_cache_retention`: Azure
