@@ -42,6 +42,7 @@ from pydantic_ai.capabilities import (
     Instrumentation,
     WrapModelRequestHandler,
     WrapperCapability,
+    durable_operation,
 )
 from pydantic_ai.exceptions import ModelRetry, SkipModelRequest, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserContent, UserPromptPart
@@ -376,12 +377,7 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
 
         `block` raises `SkipModelRequest`; `retry` and `approve` raise `UserError`.
         """
-        verdict, position = await evaluate_all(
-            as_guards(self.guard, capability='InputGuardrail'),
-            ctx,
-            prompt,
-            check_replacement=_require_prompt_text,
-        )
+        verdict, position = await self._evaluate(ctx, prompt)
         match verdict.action:
             case 'allow' | 'replace':
                 return verdict, position
@@ -401,6 +397,13 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
                 raise SkipModelRequest(ModelResponse(parts=[TextPart(content=message)]))
             case _:  # pragma: no cover - assert_never exhaustiveness guard
                 assert_never(verdict.action)
+
+    @durable_operation('guard')
+    async def _evaluate(self, ctx: RunContext[AgentDepsT], prompt: str) -> tuple[GuardrailResult, int]:
+        """Run the guard chain, as the durable operation `(id, 'guard')` inside a workflow or flow."""
+        return await evaluate_all(
+            as_guards(self.guard, capability='InputGuardrail'), ctx, prompt, check_replacement=_require_prompt_text
+        )
 
     async def _history_replacement(self, ctx: RunContext[AgentDepsT], original: UserPromptPart) -> str | None:
         """The redaction of the history's `original` of a prompt the model was sent a changed copy of.
@@ -586,7 +589,7 @@ class OutputGuardrail(AbstractCapability[AgentDepsT]):
         """Evaluate the guard against the processed output and act on its verdict."""
         if ctx.partial_output:
             return output
-        verdict, _ = await evaluate_all(as_guards(self.guard, capability='OutputGuardrail'), ctx, output)
+        verdict = await self._evaluate(ctx, output)
         match verdict.action:
             case 'allow':
                 return output
@@ -606,3 +609,9 @@ class OutputGuardrail(AbstractCapability[AgentDepsT]):
                 return verdict.replacement
             case _:  # pragma: no cover - assert_never exhaustiveness guard
                 assert_never(verdict.action)
+
+    @durable_operation('guard')
+    async def _evaluate(self, ctx: RunContext[AgentDepsT], output: object) -> GuardrailResult:
+        """Run the guard chain, as the durable operation `(id, 'guard')` inside a workflow or flow."""
+        verdict, _ = await evaluate_all(as_guards(self.guard, capability='OutputGuardrail'), ctx, output)
+        return verdict

@@ -13,8 +13,10 @@ import inspect
 import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Literal, assert_never
+from typing import Annotated, Any, Literal, assert_never
 
+from pydantic import Field, GetCoreSchemaHandler
+from pydantic_core import core_schema
 from typing_extensions import TypeIs
 
 from pydantic_ai.exceptions import UserError
@@ -33,6 +35,13 @@ class _Unset:
 
     def __repr__(self) -> str:
         return '<unset>'
+
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
+        """Let a JSON schema of `GuardrailResult`, as a durable operation result, carry the default."""
+        return core_schema.is_instance_schema(
+            cls, serialization=core_schema.plain_serializer_function_ser_schema(lambda _: None)
+        )
 
 
 _UNSET = _Unset()
@@ -60,7 +69,7 @@ class GuardrailResult:
     message: str | None = None
     """For `block`, the refusal text. For `retry`, the instruction sent back to the model."""
 
-    replacement: object = _UNSET
+    replacement: Annotated[object, Field(exclude_if=lambda value: value is _UNSET)] = _UNSET
     """For `replace`, the value substituted for the inspected one.
 
     Defaults to a private sentinel rather than `None`, so `replace(None)` is a
