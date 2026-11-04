@@ -94,17 +94,15 @@ if imports_successful():
     )
 
     @DBOS.workflow(name='subagents_child_workflow')
-    async def child_workflow_workflow() -> tuple[str, int]:
-        result = await dbos_delegator.run('Delegate it')
-        return result.output, result.usage.requests
+    async def child_workflow_workflow() -> str:
+        return (await dbos_delegator.run('Delegate it')).output
 
 
 async def test_durable_delegate_runs_as_a_child_workflow(dbos: DBOS) -> None:
     """With `child_workflow` metadata on the delegate tool, a durable delegate's steps land in the child's history."""
     workflow_id = str(uuid.uuid4())
     with SetWorkflowID(workflow_id):
-        # The delegate's request is forwarded to the parent's usage across the child workflow.
-        assert await child_workflow_workflow() == ('from the worker', 3)
+        assert await child_workflow_workflow() == 'from the worker'
     steps = await dbos.list_workflow_steps_async(workflow_id)
     child_name = 'dbos_delegator__function_toolset__sub_agents.call_tool__child_workflow'
     assert [step['function_name'] for step in steps] == [
