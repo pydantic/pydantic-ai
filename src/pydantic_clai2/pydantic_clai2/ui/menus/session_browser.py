@@ -371,12 +371,15 @@ class SessionBrowser:
         when = when or f'{entry.updated_at.astimezone():%b %d}'
         title = f'{marker}{when} {entry.title}{risk}{archived}'
         counts = f'{entry.message_count} msgs / {entry.total_tokens:,} tok'
+        short = f'{entry.message_count} msgs'
         if len(counts) > width // 2:
-            counts = f'{entry.message_count} msgs'
+            counts = short
         if self.importing(entry):
-            counts = 'to import'
-        if (source := imported_from(entry)) is not None and len(f'{source} · {counts}') <= width // 2:
-            counts = f'{source} · {counts}'
+            counts = short = 'to import'
+        source = imported_from(entry)
+        # Drop the source label before it squeezes the title below a third of the row.
+        labelled = () if source is None else (f'{source} · {counts}', f'{source} · {short}')
+        counts = next((text for text in labelled if len(text) <= width - width // 3), counts)
         title = truncate(plain(title), max(1, width - len(counts) - 1))
         if entry == selected and self.mode == 'sessions':
             title = f'{theme.sgr(theme.INFO, bold=True)}{title}\x1b[0m'
