@@ -73,7 +73,6 @@ from ...profiles.anthropic import (
     AnthropicCodeExecutionToolVersion,
     AnthropicEffort,
     AnthropicModelProfile,
-    cap_max_tokens,
     resolve_anthropic_effort,
 )
 from ...providers import Provider, infer_provider
@@ -108,6 +107,7 @@ from .. import (
     download_item,
     get_user_agent,
 )
+from .._anthropic_max_tokens import cap_max_tokens
 from .._anthropic_schema_limits import default_output_mode_within_limits, limit_exceeded_error, model_exceeded_limit
 from .._decode_errors import check_json_response, map_decode_errors
 from .._prompt_cache import (

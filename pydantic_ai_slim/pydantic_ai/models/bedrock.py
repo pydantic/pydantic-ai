@@ -106,6 +106,7 @@ from pydantic_ai.models import (
     check_allow_model_requests,
     download_item,
 )
+from pydantic_ai.models._anthropic_max_tokens import cap_max_tokens
 from pydantic_ai.models._anthropic_schema_limits import (
     SCHEMA_TOO_COMPLEX_HINT,
     default_output_mode_within_limits,
@@ -134,7 +135,6 @@ from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.profiles.anthropic import (
     ANTHROPIC_SAMPLING_PARAMS,
     ANTHROPIC_THINKING_BUDGET_MAP,
-    cap_max_tokens,
     resolve_anthropic_effort,
 )
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
