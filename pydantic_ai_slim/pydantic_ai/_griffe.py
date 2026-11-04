@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from griffe import (
     Docstring,
+    DocstringSection,
     DocstringSectionKind,
     DocstringSectionParameters,
     GoogleOptions,
@@ -72,6 +73,20 @@ def doc_descriptions(
             for param in section.value:
                 params.setdefault(param.name.lstrip('*'), param.description)
 
+    main_desc = _main_description(sections)
+
+    if return_ := next((p for p in sections if p.kind == DocstringSectionKind.returns), None):
+        main_desc = _main_desc_with_returns(return_, docstring_style, func, main_desc)
+
+    return main_desc, params
+
+
+def _main_description(sections: list[DocstringSection]) -> str:
+    """Build the main description from the docstring's text and admonition sections, in source order.
+
+    The first text section supplies the description; recognized admonition sections (e.g. `Warning:`) are
+    appended where they appear.
+    """
     main_desc_parts: list[str] = []
     text_seen = False
     for section in sections:
@@ -82,26 +97,29 @@ def doc_descriptions(
             # Recognized admonition sections (e.g. `Warning:`) reach the model verbatim, in source order;
             # other sections keep their current handling.
             main_desc_parts.append(f'{section.value.kind.capitalize()}:\n{section.value.contents}')
-    main_desc = '\n\n'.join(main_desc_parts)
+    return '\n\n'.join(main_desc_parts)
 
-    if return_ := next((p for p in sections if p.kind == DocstringSectionKind.returns), None):
-        return_statement = return_.value[0]
-        return_desc = return_statement.description
-        return_type = return_statement.annotation
-        if docstring_style == 'google' and return_type and signature(func).return_annotation is not Signature.empty:
-            # The Python return annotation is authoritative: keep the whole docstring text as the return
-            # description instead of griffe splitting a type off at the first colon.
-            return_desc = f'{return_type}: {return_desc}'
-            return_type = None
-        type_tag = f'<type>{return_type}</type>\n' if return_type else ''
-        return_xml = f'<returns>\n{type_tag}<description>{return_desc}</description>\n</returns>'
 
-        if main_desc:
-            main_desc = f'<summary>{main_desc}</summary>\n{return_xml}'
-        else:
-            main_desc = return_xml
-
-    return main_desc, params
+def _main_desc_with_returns(
+    return_: DocstringSection,
+    docstring_style: DocstringStyle,
+    func: Callable[..., Any],
+    main_desc: str,
+) -> str:
+    """Format the returns section as the `<returns>` XML the model sees, folding in the main description."""
+    return_statement = return_.value[0]
+    return_desc = return_statement.description
+    return_type = return_statement.annotation
+    if docstring_style == 'google' and return_type and signature(func).return_annotation is not Signature.empty:
+        # The Python return annotation is authoritative: keep the whole docstring text as the return
+        # description instead of griffe splitting a type off at the first colon.
+        return_desc = f'{return_type}: {return_desc}'
+        return_type = None
+    type_tag = f'<type>{return_type}</type>\n' if return_type else ''
+    return_xml = f'<returns>\n{type_tag}<description>{return_desc}</description>\n</returns>'
+    if main_desc:
+        return f'<summary>{main_desc}</summary>\n{return_xml}'
+    return return_xml
 
 
 def _infer_docstring_style(doc: str) -> DocstringStyle:

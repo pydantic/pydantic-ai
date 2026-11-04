@@ -5835,7 +5835,7 @@ def test_enum_member_docstrings_do_not_need_the_enclosing_model_to_opt_in():
     )
 
 
-def test_admonition_sections_reach_tool_description(allow_model_requests):
+def test_admonition_sections_reach_tool_description():
     """Recognized admonition sections reach the model instead of being dropped."""
     test_model = TestModel()
     agent = Agent(test_model)
@@ -5863,7 +5863,9 @@ def test_admonition_sections_reach_tool_description(allow_model_requests):
         return []
 
     agent.run_sync('Fetch my ad rows')
-    descriptions = {t.name: t.description for t in test_model.last_model_request_parameters.function_tools}
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    descriptions = {t.name: t.description for t in params.function_tools}
     assert descriptions['fetch_ad_rows'] == (
         'Fetch ad rows for an account.\n'
         '\n'
@@ -5877,7 +5879,7 @@ def test_admonition_sections_reach_tool_description(allow_model_requests):
     )
 
 
-def test_admonition_sections_reach_tool_description_numpy(allow_model_requests):
+def test_admonition_sections_reach_tool_description_numpy():
     """NumPy `Warnings` and `Notes` sections are recognized admonitions and reach the model."""
     test_model = TestModel()
     agent = Agent(test_model)
@@ -5902,7 +5904,9 @@ def test_admonition_sections_reach_tool_description_numpy(allow_model_requests):
         return 'ok'
 
     agent.run_sync('Fetch my ad rows')
-    descriptions = {t.name: t.description for t in test_model.last_model_request_parameters.function_tools}
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    descriptions = {t.name: t.description for t in params.function_tools}
     assert descriptions['fetch_ad_rows'] == (
         'Fetch ad rows for an account.\n'
         '\n'
@@ -5914,7 +5918,7 @@ def test_admonition_sections_reach_tool_description_numpy(allow_model_requests):
     )
 
 
-def test_raises_and_examples_sections_still_dropped(allow_model_requests):
+def test_raises_and_examples_sections_still_dropped():
     """`Raises:` and `Examples:` sections keep their current handling and stay out of the tool description."""
     test_model = TestModel()
     agent = Agent(test_model)
@@ -5935,11 +5939,13 @@ def test_raises_and_examples_sections_still_dropped(allow_model_requests):
         return 'ok'
 
     agent.run_sync('Fetch my ad rows')
-    descriptions = {t.name: t.description for t in test_model.last_model_request_parameters.function_tools}
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    descriptions = {t.name: t.description for t in params.function_tools}
     assert descriptions['fetch_ad_rows'] == 'Fetch ad rows for an account.'
 
 
-def test_returns_with_colon_whole_text_when_return_annotated(allow_model_requests):
+def test_returns_with_colon_whole_text_when_return_annotated():
     """With a Python return annotation, a `Returns:` section keeps its whole text instead of splitting at the first colon."""
     test_model = TestModel()
     agent = Agent(test_model)
@@ -5957,7 +5963,9 @@ def test_returns_with_colon_whole_text_when_return_annotated(allow_model_request
         return []
 
     agent.run_sync('Fetch my ad rows')
-    descriptions = {t.name: t.description for t in test_model.last_model_request_parameters.function_tools}
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    descriptions = {t.name: t.description for t in params.function_tools}
     assert descriptions['fetch_ad_rows'] == (
         '<summary>Fetch ad rows for an account.</summary>\n'
         '<returns>\n'
@@ -5966,7 +5974,7 @@ def test_returns_with_colon_whole_text_when_return_annotated(allow_model_request
     )
 
 
-def test_returns_with_colon_still_split_when_not_annotated(allow_model_requests):
+def test_returns_with_colon_still_split_when_not_annotated():
     """Without a Python return annotation, a `Returns:` type prefix keeps its current handling."""
     test_model = TestModel()
     agent = Agent(test_model)
@@ -5984,7 +5992,9 @@ def test_returns_with_colon_still_split_when_not_annotated(allow_model_requests)
         return None
 
     agent.run_sync('Fetch my ad rows')
-    descriptions = {t.name: t.description for t in test_model.last_model_request_parameters.function_tools}
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    descriptions = {t.name: t.description for t in params.function_tools}
     assert descriptions['fetch_ad_rows'] == (
         '<summary>Fetch ad rows for an account.</summary>\n'
         '<returns>\n'
