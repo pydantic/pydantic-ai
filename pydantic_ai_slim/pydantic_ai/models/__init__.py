@@ -1777,7 +1777,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         (`supports_request_scoped_system_prompts`) gets the same tags and stays a `SystemPromptPart`. On such a
         profile the instructions open with a sentence saying what the tag means (see `_get_instruction_parts`).
         Nothing the user or a tool wrote is
-        rewritten. A user, tool, file, retry feedback or carried reasoning item whose text resembles
+        rewritten. A user, tool, file, compaction summary, retry feedback or carried reasoning item whose text resembles
         a frame gets a note next to it, and on a profile with inline system messages the first request with a
         frame or a note gets the announcement (see `_note_lookalike_frames`). It also converts
         `SpeechPart`s from realtime session history into `UserPromptPart`s /
@@ -1833,7 +1833,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
         standing_prompt_count = _standing_system_prompt_count(first_request) if first_request else 0
         # Kept as stored, after speech becomes user text: lookalike frames below are looked for in what the user, a
-        # tool or a file wrote and in the text retry feedback quotes, never in the fence the framework renders around it.
+        # tool, a file or a summarizer wrote and in the text retry feedback quotes, never in the frame the framework
+        # renders around it.
         authored = messages
         # Translated before every later step — the tool-availability announcement and the `<system>`
         # wrap below it — so they see the plain parts a retry becomes rather than the retry itself.
@@ -2002,7 +2003,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         note goes ahead of a user prompt and after the request's tool results, or wherever this adapter's ClassVars
         say its API needs it, and is worded "following" or "preceding" to match.
 
-        Retry feedback gets the same for the text it quotes, not for the fence around it. So does reasoning this adapter
+        Retry feedback gets the same for the text it quotes and a compaction summary for its text, not for the frame
+        around either. So does reasoning this adapter
         carries into a user turn, with its note last in the request before that reply: the request has gone out by the
         time the reply is replayed, so anywhere earlier in it would move the prompt cache's prefix. Only an opening
         reply has no request to hold a note, so its reasoning goes without one.
@@ -4436,8 +4438,8 @@ def _lookalike_sources(part: ModelRequestPart) -> list[tuple[LookalikeSource, li
     """Who wrote the text in `part` that resembles a framework frame, with the system-voice tags it opens.
 
     A user prompt's text and its text files are checked separately, so each gets a note naming its author. A tool
-    result is checked whole, its text files included. Retry feedback is checked for the text it quotes, not for the
-    frame core puts around it. Text files are read as UTF-8; other files have no text to check.
+    result is checked whole, its text files included. Retry feedback is checked for the text it quotes, and a
+    compaction summary for the summarizer's text, not for the frame core puts around either. Text files are read as UTF-8; other files have no text to check.
     """
     # TODO(v3): remove `RetryPromptPart`
     if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
@@ -4479,6 +4481,8 @@ def _lookalike_texts(part: ModelRequestPart) -> Iterator[tuple[LookalikeSource, 
             yield 'tool', _text_of(item) if text is None else text
     elif isinstance(part, RetryFeedbackPart):
         yield 'retry', _retry_feedback_text(part)
+    elif isinstance(part, CompactionPart):
+        yield 'summary', part.content
 
 
 def _text_of(item: object) -> str | None:

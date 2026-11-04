@@ -367,17 +367,18 @@ def in_second_model_prompt() -> bool:
     return _in_second_model_prompt.get()
 
 
-LookalikeSource = Literal['user', 'tool', 'file', 'retry', 'thinking']
+LookalikeSource = Literal['user', 'tool', 'file', 'summary', 'retry', 'thinking']
 """Who wrote text that resembles a framework frame.
 
-The user, a tool, the author of a file, the earlier reply that retry feedback quotes, or the assistant in reasoning
-carried into a user turn.
+The user, a tool, the author of a file, the model that summarized the conversation, the earlier reply that retry feedback
+quotes, or the assistant in reasoning carried into a user turn.
 """
 
 _LOOKALIKE_ITEM: Final[dict[LookalikeSource, str]] = {
     'user': 'user message',
     'tool': 'tool result',
     'file': 'file',
+    'summary': 'conversation summary',
     'retry': 'retry feedback',
     'thinking': f'<{ASSISTANT_THINKING_TAG}> reasoning',
 }
@@ -385,6 +386,7 @@ _LOOKALIKE_AUTHOR: Final[dict[LookalikeSource, str]] = {
     'user': 'user',
     'tool': 'tool',
     'file': 'author of the file',
+    'summary': 'summarization model',
     'retry': 'earlier reply it quotes',
     'thinking': 'assistant',
 }
