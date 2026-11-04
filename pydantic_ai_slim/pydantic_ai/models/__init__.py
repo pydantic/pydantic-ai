@@ -592,6 +592,12 @@ class ModelRequestContext:
     _serving_wrapper: tuple[Model, Model] | None = field(default=None, repr=False, compare=False)
     """The model a capability's `get_wrapper_model` returned to serve the request, which is entered around it, and
     the model it wraps, whose lifecycle its owner manages."""
+    _hooked_messages: list[ModelMessage] | None = field(default=None, repr=False, compare=False)
+    """The messages once the request hooks have run, before `prepare_messages` renders them for the model.
+
+    Typed parts, such as a capability part, are still themselves here, and anything a hook removed from `messages`
+    is gone, so a reader that needs both, such as a judge model, reads this instead of `RunContext.messages`.
+    """
 
     @property
     def _usage_responses(self) -> tuple[ModelResponse, ...]:

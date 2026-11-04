@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 import secrets
-from dataclasses import is_dataclass
+from dataclasses import is_dataclass, replace
 from typing import Any, cast
 from unittest.mock import MagicMock
 
@@ -1182,7 +1182,66 @@ class TestFailureHandling:
             await run_cap.wrap_run(ctx, handler=handler)
 
 
+def _redacted(message: ModelMessage) -> ModelMessage:
+    """`message` with every tool result's content replaced, as an application redacting PII would."""
+    if not isinstance(message, ModelRequest):
+        return message
+    parts = [
+        replace(part, content='[redacted]') if isinstance(part, ToolReturnPart) else part for part in message.parts
+    ]
+    return replace(message, parts=parts)
+
+
+class _RedactToolResults(AbstractCapability[Any]):
+    """Redacts tool results from the request the model is sent, leaving the stored history as it was."""
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        request_context.messages = [_redacted(message) for message in request_context.messages]
+        return request_context
+
+
 class TestTranscript:
+    async def test_the_judge_never_sees_what_a_request_hook_redacted(self) -> None:
+        """The judge reads the request as the hooks left it, not the stored history a hook redacted it from."""
+        seen: list[str] = []
+        judged = asyncio.Event()
+
+        def main_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            requests = [message for message in messages if isinstance(message, ModelRequest)]
+            if len(requests) == 1:
+                return ModelResponse(parts=[ToolCallPart('lookup', {})])
+            if len(requests) == 2:
+                # The judge runs after this request; the tool waits for it so the run doesn't cancel it.
+                return ModelResponse(parts=[ToolCallPart('wait_for_judge', {})])
+            return _text_response('done')
+
+        agent = Agent(
+            FunctionModel(main_fn),
+            capabilities=[
+                _RedactToolResults(),
+                TrajectoryJudge(model=_all_good_model_seeing(seen), every=2, on_verdict=lambda _: judged.set()),
+            ],
+        )
+
+        @agent.tool_plain
+        def lookup() -> str:
+            return 'SSN 123-45-6789'
+
+        @agent.tool_plain
+        async def wait_for_judge() -> str:
+            await asyncio.wait_for(judged.wait(), timeout=_WAIT)
+            return 'judged'
+
+        result = await agent.run('look the customer up')
+        assert result.output == 'done'
+        # The stored history keeps the tool result; only the request was redacted.
+        assert 'SSN 123-45-6789' in str(result.all_messages())
+        [prompt] = seen
+        assert '[redacted]' in prompt
+        assert 'SSN 123-45-6789' not in prompt
+
     async def test_escapes_trajectory_delimiters_in_content(self) -> None:
         seen: list[str] = []
         done = asyncio.Event()

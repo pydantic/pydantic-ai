@@ -292,13 +292,17 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
         steering enqueue happen concurrently with the run, and the steering is delivered
         when the run next drains its pending messages.
 
-        The trajectory is the run's history as stored (`ctx.messages`), not the request as prepared for the model,
-        where steering has been rendered into plain text: there it's found by its type.
+        The trajectory is the request as the request hooks left it, before it was rendered for the model: what a hook
+        removed, such as a redacted tool result, never reaches the judge, and steering is still a typed part, found
+        by its type.
         """
         self._collect_finished()
         self._steps += 1
         if self._steps % self.every == 0 and self._task is None and self._claim_request(ctx):
-            prompt = _judge_prompt([*ctx.messages, response], self.window, ctx.run_id)
+            hooked = request_context._hooked_messages  # pyright: ignore[reportPrivateUsage]
+            # Set on every request the agent makes; a context built by hand has only the request itself.
+            messages = request_context.messages if hooked is None else hooked
+            prompt = _judge_prompt([*messages, response], self.window, ctx.run_id)
             self._task = asyncio.create_task(self._evaluate(ctx, prompt), name=f'trajectory-judge:{self._judge_name()}')
         return response
 

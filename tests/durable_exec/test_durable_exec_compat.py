@@ -915,6 +915,9 @@ def test_model_request_context_projection_is_exhaustive() -> None:
         # The live wrapper a capability's `get_wrapper_model` built around `model`, with the model it wraps; the
         # durable unit re-applies the hook to the model it rebuilds, so it's never carried across.
         '_serving_wrapper',
+        # The request's messages as the hooks left them, set caller-side after every hook has run, for readers of
+        # the request (such as `TrajectoryJudge`) in `after_model_request`; a durable hook never sees it.
+        '_hooked_messages',
     }
     projected = {field.name for field in fields(ModelRequestContextProjection)}
     context_fields = {field.name for field in fields(ModelRequestContext)}

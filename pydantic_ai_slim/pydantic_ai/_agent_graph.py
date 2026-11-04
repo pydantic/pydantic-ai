@@ -3305,6 +3305,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             (wrapped for wrapped in wrappers if wrapped[0] is request_context.model), None
         )
         request_context.messages = list(processed_context.messages)
+        request_context._hooked_messages = list(request_context.messages)  # pyright: ignore[reportPrivateUsage]
         request_context.model_settings = processed_context.model_settings or None
         request_context.model_request_parameters = processed_context.model_request_parameters
         request_context.model_id = processed_context.model_id
