@@ -15,7 +15,7 @@ import threading
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from importlib.metadata import distributions
+from importlib.metadata import PackageNotFoundError, distributions, version
 from types import ModuleType, SimpleNamespace
 from typing import Any, Literal, cast
 
@@ -1552,6 +1552,15 @@ async def test_scoped_task_result_raises_task_error_without_awaiter_cancellation
     assert exc_info.value.__context__ is None
 
 
+def _is_installed(distribution: str) -> bool:
+    # Not `find_spec`: run from the repository root, the source directory makes it a namespace package.
+    try:
+        version(distribution)
+    except PackageNotFoundError:
+        return False
+    return True
+
+
 _SYNC_ENTRY_POINTS = {
     'run_sync': """
         from pydantic_ai import Agent
@@ -1583,9 +1592,7 @@ _SYNC_ENTRY_POINTS = {
         'run_stream_sync',
         pytest.param(
             'evaluate_sync',
-            marks=pytest.mark.skipif(
-                importlib.util.find_spec('pydantic_evals') is None, reason='pydantic-evals not installed'
-            ),
+            marks=pytest.mark.skipif(not _is_installed('pydantic-evals'), reason='pydantic-evals not installed'),
         ),
     ],
 )
