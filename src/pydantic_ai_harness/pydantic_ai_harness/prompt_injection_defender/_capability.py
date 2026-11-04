@@ -252,6 +252,7 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
     async def _verdicts(
         self, ctx: RunContext[AgentDepsT], payloads: list[object], tool_name: str
     ) -> list[DefenseResult]:
+        """Pick where to classify; kept out of `after_tool_execute`, which is over the complexity limit."""
         # A supplied defense may run Tier 2 or Tier 3, which can't run in workflow code either.
         if self.semantic_detection or self.defense is not None:
             return await self._classify(ctx, payloads, tool_name)

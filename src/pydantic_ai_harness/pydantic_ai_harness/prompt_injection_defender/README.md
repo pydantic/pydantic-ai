@@ -144,6 +144,10 @@ Inside a durable workflow or flow (Temporal, DBOS, Prefect), classification with
 does the semantic warmup, because the ML classifier can't load in workflow code.
 A replay reuses the recorded verdict. `on_detection` runs from the hook, so a
 replay calls it again.
+With distributed workers, as on Temporal, the `warmup` activity may load the
+model on a different worker from the one that later runs `classify`, which then
+loads it on first use. To guarantee a warm classifier, supply a `defense` and
+call `defense.warmup_tier2()` at worker startup.
 
 A durable operation is addressed by the capability's `id`, and
 `PromptInjectionDefender` has no default one, because several scoped defenders
