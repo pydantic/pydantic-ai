@@ -276,9 +276,8 @@ def test_only_successful_string_returns_are_wrapped():
             ]
         ),
     ]
-    params = ModelRequestParameters(output_tools=[ToolDefinition(name='final_result')])
 
-    [request] = model.prepare_messages(messages, params)[-1:]
+    [request] = model.prepare_messages(messages)[-1:]
 
     assert isinstance(request, ModelRequest)
     assert [part.content for part in request.parts if isinstance(part, ToolReturnPart)] == [
