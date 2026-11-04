@@ -1229,6 +1229,13 @@ class _Unrecorded:
 _UNRECORDED = _Unrecorded()
 
 
+class _RebuildAll:
+    """The file record of a tool result saved before records existed, loaded with `rebuild_unrecorded_tool_files`."""
+
+
+_REBUILD_ALL = _RebuildAll()
+
+
 @dataclass
 class _ContentFileRecord:
     """What serializing a tool result's content found, for the result to write next to it."""
@@ -1243,7 +1250,9 @@ _dumped_file_digests: ContextVar[list[str] | None] = ContextVar('_dumped_file_di
 _content_file_record: ContextVar[_ContentFileRecord | None] = ContextVar('_content_file_record', default=None)
 """The record of the tool result being serialized, which its content's serializer fills."""
 
-_loaded_file_digests: ContextVar[frozenset[str] | _Unrecorded | None] = ContextVar('_loaded_file_digests', default=None)
+_loaded_file_digests: ContextVar[frozenset[str] | _Unrecorded | _RebuildAll | None] = ContextVar(
+    '_loaded_file_digests', default=None
+)
 """The file record of the tool result being validated, or `None` outside one."""
 
 
@@ -1364,15 +1373,28 @@ class _RecordsContentFiles:
             return handler(value)
         mapping = cast(Mapping[str, Any], value)
         digests = mapping.get(_FILE_DIGESTS_KEY)
-        record: frozenset[str] | _Unrecorded | None
+        own: frozenset[str] | None = None
         if isinstance(digests, list):
             entries = cast(list[Any], digests)
             if not all(isinstance(digest, str) for digest in entries):
                 raise PydanticCustomError('invalid_file_record', '`content_file_digests` must be a list of strings')
-            record = frozenset(cast(list[str], entries))
-        else:
+            own = frozenset(cast(list[str], entries))
+        enclosing = _loaded_file_digests.get()
+        record: frozenset[str] | _Unrecorded | _RebuildAll
+        if isinstance(enclosing, frozenset):
+            # A result nested in another one's content was serialized into that content, so the enclosing
+            # record already holds its files. Its own record, which the enclosing data could have written,
+            # can only narrow that.
+            record = enclosing if own is None else enclosing & own
+        elif isinstance(enclosing, _Unrecorded):
+            record = _UNRECORDED
+        elif own is not None:
+            record = own
+        elif isinstance(enclosing, _RebuildAll) or _rebuilds_unrecorded_tool_files(info.context):
             # History saved before records existed: its file-shaped data is rebuilt only when the caller asks.
-            record = None if _rebuilds_unrecorded_tool_files(info.context) else _UNRECORDED
+            record = _REBUILD_ALL
+        else:
+            record = _UNRECORDED
         token = _loaded_file_digests.set(record)
         try:
             return handler({key: item for key, item in mapping.items() if key != _FILE_DIGESTS_KEY})
@@ -1409,7 +1431,7 @@ def _check_file_provenance(value: Any) -> Any:
     URL with `force_download` reset. An `UploadedFile` or a non-HTTP URL stays a mapping.
     """
     record = _loaded_file_digests.get()
-    if record is None or not isinstance(value, Mapping):
+    if record is None or isinstance(record, _RebuildAll) or not isinstance(value, Mapping):
         return value
     mapping = cast(Mapping[str, Any], value)
     if isinstance(record, _Unrecorded):

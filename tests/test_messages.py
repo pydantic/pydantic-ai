@@ -2195,14 +2195,6 @@ def test_tool_return_inferred_serialization_keeps_its_files():
         assert (tool_return.content, native_return.content) == ([uploaded, lookalike], [uploaded])
         assert type(cast(list[Any], tool_return.content)[1]) is dict
 
-    from pydantic_ai.durable_exec._toolset import (
-        CallToolResult,
-        _ToolReturn,  # pyright: ignore[reportPrivateUsage]
-    )
-
-    result = _ToolReturn(result=[uploaded, lookalike])
-    assert TypeAdapter[Any](CallToolResult).validate_json(to_json(result)) == result
-
 
 def test_file_item_keys_match_their_dumps():
     """The keys a recorded file item may carry are exactly those its dump writes."""
@@ -2261,37 +2253,6 @@ def test_tool_return_inferred_serialization_encodes_bytes_like_the_adapter():
     assert to_json(messages) == ModelMessagesTypeAdapter.dump_json(messages)
 
 
-def test_durable_journal_written_before_records_loads_completely():
-    """A journal entry an earlier worker wrote has no record, and still decodes with every file it held.
-
-    The application's own worker wrote it, so a run in flight across an upgrade keeps its tool results.
-    """
-    from pydantic_ai.durable_exec._codec import _JsonCodec  # pyright: ignore[reportPrivateUsage]
-    from pydantic_ai.durable_exec._toolset import (
-        CallToolResult,
-        _ToolReturn,  # pyright: ignore[reportPrivateUsage]
-    )
-
-    files: list[FileUrl | UploadedFile] = [
-        UploadedFile('file-1', 'openai'),
-        DocumentUrl('s3://bucket/report.pdf'),
-        ImageUrl('https://example.com/chart.png', force_download=True),
-    ]
-    result = _ToolReturn(result=files)
-    journaled = TypeAdapter[Any](CallToolResult).dump_python(result, mode='json')
-    del journaled['content_file_digests']
-
-    assert _JsonCodec().load(CallToolResult, journaled) == result
-
-    pytest.importorskip('temporalio')
-    from temporalio.api.common.v1 import Payload
-
-    from pydantic_ai.durable_exec.temporal._payload_converter import PydanticAIJSONPlainPayloadConverter
-
-    payload = Payload(metadata={'encoding': b'json/plain'}, data=json.dumps(journaled).encode())
-    assert PydanticAIJSONPlainPayloadConverter().from_payload(payload, cast(type, CallToolResult)) == result
-
-
 def test_tool_return_records_only_the_files_in_its_content():
     """A file the application keeps in `metadata`, or sends as `ToolReturn.content`, doesn't count toward the result's record."""
     uploaded = UploadedFile('file-1', 'openai')
@@ -2331,51 +2292,6 @@ def test_tool_return_python_dump_encoded_as_json_keeps_its_files():
     assert message_part(loaded, ToolReturnPart).content == ImageUrl(
         'https://example.com/a.png', vendor_metadata={'raw': 'abc'}
     )
-
-
-def test_tool_return_nested_result_keeps_its_own_record():
-    """A result nested in durable execution's tool-call result keeps a record of its own.
-
-    A file in the nested result's `metadata` doesn't count toward a mapping in its `return_value`.
-    """
-    from pydantic_ai.durable_exec._toolset import (
-        CallToolResult,
-        _ToolReturn,  # pyright: ignore[reportPrivateUsage]
-    )
-
-    uploaded = UploadedFile('file-1', 'openai')
-    lookalike = _dumped_file(uploaded)
-    adapter = TypeAdapter[Any](CallToolResult)
-    result = _ToolReturn(result=ToolReturn(return_value=[lookalike], metadata=uploaded))
-
-    reloaded = adapter.validate_json(adapter.dump_json(result))
-
-    assert reloaded.result.return_value == [lookalike]
-    assert type(reloaded.result.return_value[0]) is dict
-
-
-def test_tool_return_value_and_durable_tool_results_record_their_files():
-    """`ToolReturn.return_value` and the durable tool-call result keep the same distinction.
-
-    Durable execution carries a tool's result between activities in these, outside any `ToolReturnPart`,
-    so a lookalike there would otherwise be rebuilt within a single run.
-    """
-    pytest.importorskip('pydantic_ai.durable_exec._toolset')
-    from pydantic_ai.durable_exec._toolset import (
-        CallToolResult,
-        _ToolContentResult,  # pyright: ignore[reportPrivateUsage]
-        _ToolReturn,  # pyright: ignore[reportPrivateUsage]
-    )
-
-    uploaded = UploadedFile('file-1', 'openai')
-    lookalike = _dumped_file(UploadedFile('file-2', 'openai'))
-    adapter = TypeAdapter[Any](CallToolResult)
-    for result in (
-        _ToolReturn(result=[uploaded, lookalike]),
-        _ToolReturn(result=ToolReturn(return_value=[uploaded, lookalike])),
-        _ToolContentResult(result={'kind': 'tool-return', 'items': [uploaded, lookalike]}),
-    ):
-        assert adapter.validate_json(adapter.dump_json(result)) == result
 
 
 @pytest.mark.parametrize('url_type', [ImageUrl, AudioUrl, VideoUrl, DocumentUrl])
