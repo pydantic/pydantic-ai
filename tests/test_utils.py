@@ -8,14 +8,13 @@ import functools
 import importlib.util
 import itertools
 import os
-import subprocess
 import sys
-import textwrap
 import threading
-from collections.abc import AsyncIterator
+import warnings
+from collections.abc import AsyncIterator, Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from importlib.metadata import PackageNotFoundError, distributions, version
+from importlib.metadata import distributions
 from types import ModuleType, SimpleNamespace
 from typing import Any, Literal, cast
 
@@ -46,7 +45,10 @@ from pydantic_ai._utils import (
 from pydantic_ai.models.test import TestModel
 
 from ._inline_snapshot import snapshot
-from .conftest import no_leaked_tasks, undrivable_event_loop
+from .conftest import no_leaked_tasks, try_import, undrivable_event_loop
+
+with try_import() as evals_imports_successful:
+    from pydantic_evals import Dataset  # noqa: F401  # pyright: ignore[reportUnusedImport]
 from .models.mock_async_stream import MockAsyncStream
 from .realtime.simulation._loop import SimulatedLoop
 
@@ -1552,64 +1554,57 @@ async def test_scoped_task_result_raises_task_error_without_awaiter_cancellation
     assert exc_info.value.__context__ is None
 
 
-def _is_installed(distribution: str) -> bool:
-    # Not `find_spec`: run from the repository root, the source directory makes it a namespace package.
+@pytest.fixture
+def fresh_event_loop_policy() -> Iterator[None]:
+    """A policy with no current loop, as in a fresh interpreter's main thread, restoring the previous one after."""
+    previous = asyncio.get_event_loop_policy()
+    policy = asyncio.DefaultEventLoopPolicy()
+    asyncio.set_event_loop_policy(policy)
     try:
-        version(distribution)
-    except PackageNotFoundError:
-        return False
-    return True
+        yield
+    finally:
+        loop = policy._local._loop  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
+        if loop is not None:  # pragma: no branch
+            loop.close()  # pyright: ignore[reportUnknownMemberType]
+        asyncio.set_event_loop_policy(previous)
 
 
-_SYNC_ENTRY_POINTS = {
-    'run_sync': """
-        from pydantic_ai import Agent
-        from pydantic_ai.models.test import TestModel
+def _run_sync() -> None:
+    Agent(TestModel()).run_sync('hello')
 
-        Agent(TestModel()).run_sync('hello')
-    """,
-    'run_stream_sync': """
-        from pydantic_ai import Agent
-        from pydantic_ai.models.test import TestModel
 
-        with Agent(TestModel()).run_stream_sync('hello') as result:
-            result.get_output()
-    """,
-    'evaluate_sync': """
-        from pydantic_evals import Case, Dataset
+def _run_stream_sync() -> None:
+    with Agent(TestModel()).run_stream_sync('hello') as result:
+        result.get_output()
 
-        Dataset(name='d', cases=[Case(inputs='hello')]).evaluate_sync(lambda inputs: inputs, progress=False)
-    """,
-}
+
+def _evals_get_event_loop() -> None:
+    from pydantic_evals._utils import get_event_loop as evals_get_event_loop
+
+    evals_get_event_loop()
 
 
 @pytest.mark.skipif(sys.version_info >= (3, 14), reason='Python 3.14 raises instead of warning, which is handled')
-@pytest.mark.subprocess(reason='the warning only fires the first time a fresh interpreter asks for an event loop')
 @pytest.mark.parametrize(
     'entry_point',
     [
-        'run_sync',
-        'run_stream_sync',
+        pytest.param(_run_sync, id='run_sync'),
+        pytest.param(_run_stream_sync, id='run_stream_sync'),
         pytest.param(
-            'evaluate_sync',
-            marks=pytest.mark.skipif(not _is_installed('pydantic-evals'), reason='pydantic-evals not installed'),
+            _evals_get_event_loop,
+            id='pydantic_evals',
+            marks=pytest.mark.skipif(not evals_imports_successful(), reason='pydantic-evals not installed'),
         ),
     ],
 )
-def test_sync_entry_point_does_not_warn_about_a_missing_event_loop(entry_point: str):
+def test_sync_entry_point_does_not_warn_about_a_missing_event_loop(
+    fresh_event_loop_policy: None, entry_point: Callable[[], None]
+):
     """On Python 3.12 and 3.13, a sync run in a script used to warn `There is no current event loop` (#1196).
 
-    A subprocess, since only the first request for a loop in a fresh interpreter's main thread warns, and the
-    rest of the suite has set one long before.
+    The warning fires when the policy has never had a loop set, as in a fresh interpreter's main thread, which the
+    `fresh_event_loop_policy` fixture recreates.
     """
-    script = textwrap.dedent(_SYNC_ENTRY_POINTS[entry_point])
-    env = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
-    process = subprocess.run(
-        # Only the warning under test: dependencies' own deprecations aren't this test's concern.
-        [sys.executable, '-W', 'error:There is no current event loop:DeprecationWarning', '-c', script],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        env=env,
-    )
-    assert process.returncode == 0, process.stderr
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        entry_point()
