@@ -17,6 +17,7 @@ from pydantic_ai._cancel import provide_run_deadline
 from pydantic_ai._utils import now_utc
 from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.agent.abstract import AbstractAgent
+from pydantic_ai.capabilities import SetToolMetadata
 from pydantic_ai.capabilities.abstract import AbstractCapability, WrapRunHandler
 from pydantic_ai.durable_exec._base import (
     BaseDurabilityCapability,
@@ -35,7 +36,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent
 from pydantic_ai.models import Model
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, matches_tool_selector
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
@@ -162,7 +163,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         self._operation_backend: DBOSOperationBackend | None = None
         self._event_step_contexts: dict[tuple[str | None, str | None], dict[int, deque[DBOSContext | None]]] = {}
         self._child_workflow_toolsets: dict[str, DurableFunctionToolset[AgentDepsT]] = {}
-        self._child_workflow_metadata_capability = False
+        self._child_workflow_metadata_capabilities: list[SetToolMetadata[AgentDepsT]] = []
         self._init_legacy_context_vars()
 
     def _init_legacy_context_vars(self) -> None:
@@ -203,7 +204,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
 
         # --- MCP toolset wrapping ---
         self._register_toolsets(agent)
-        self._child_workflow_metadata_capability = False
+        self._child_workflow_metadata_capabilities = []
         agent.root_capability.apply(self._detect_child_workflow_metadata)
         self._child_workflow_toolsets = {}
         for toolset in agent.toolsets:
@@ -304,7 +305,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         """The wrapper that dispatches `ts`'s `child_workflow` tools; toolsets without them stay unwrapped, as before."""
         if not isinstance(ts, FunctionToolset):
             return None
-        if not self._child_workflow_metadata_capability and not toolset_selects_child_workflow(ts, 'dbos'):
+        if not self._child_workflow_metadata_capabilities and not toolset_selects_child_workflow(ts, 'dbos'):
             return None
         child = self._child_workflow_toolsets.get(ts._explicit_id or '')  # pyright: ignore[reportPrivateUsage]
         if child is not None and child.wrapped is ts:
@@ -319,8 +320,8 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
 
     def _detect_child_workflow_metadata(self, capability: AbstractCapability[AgentDepsT]) -> None:
         # `SetToolMetadata` can select tools in any toolset, so it enables child workflows for all of them.
-        if capability_selects_child_workflow(capability, 'dbos'):
-            self._child_workflow_metadata_capability = True
+        if isinstance(capability, SetToolMetadata) and capability_selects_child_workflow(capability, 'dbos'):
+            self._child_workflow_metadata_capabilities.append(capability)
 
     def _register_child_workflow(self, toolset: AbstractToolset[AgentDepsT]) -> None:
         """Register the DBOS workflow that runs `toolset`'s tools with `child_workflow` metadata."""
@@ -329,7 +330,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             not isinstance(toolset, FunctionToolset)
             or toolset_id is None
             or toolset_id in self._child_workflow_toolsets
-            or not (self._child_workflow_metadata_capability or toolset_selects_child_workflow(toolset, 'dbos'))
+            or not (self._child_workflow_metadata_capabilities or toolset_selects_child_workflow(toolset, 'dbos'))
         ):
             # DBOS hashes registered workflows into the application version, so only opted-in toolsets register one.
             return
@@ -439,13 +440,32 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     # --- Capability hooks ---
 
     async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-        """With a workspace, run tools outside child workflows alone, as their workspace steps share the workflow's."""
-        return _workspace_barriers(ctx, tool_defs, self.in_durable_context)
+        """With a workspace, run each tool outside a child workflow alone.
+
+        DBOS numbers steps as they start, so steps from concurrent tools could replay into the wrong call.
+        """
+        if not (self.in_durable_context and ctx.workspace.attached):
+            return tool_defs
+        return [
+            tool_def if await self._runs_in_child_workflow(ctx, tool_def) else replace(tool_def, sequential=True)
+            for tool_def in tool_defs
+        ]
 
     async def prepare_output_tools(
         self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
     ) -> list[ToolDefinition]:
-        return _workspace_barriers(ctx, tool_defs, self.in_durable_context)
+        return await self.prepare_tools(ctx, tool_defs)
+
+    async def _runs_in_child_workflow(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> bool:
+        if tool_def.toolset_id not in self._child_workflow_toolsets:
+            return False
+        if selects_child_workflow(tool_def.metadata, 'dbos'):
+            return True
+        # `SetToolMetadata` wraps the toolset outside this hook, so its metadata isn't on `tool_def` yet.
+        for capability in self._child_workflow_metadata_capabilities:
+            if await matches_tool_selector(capability.tools, ctx, tool_def):
+                return True
+        return False
 
     async def wrap_run(
         self,
@@ -469,18 +489,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         finally:
             if reserve_events:
                 self._event_step_contexts.pop(key)
-
-
-def _workspace_barriers(
-    ctx: RunContext[Any], tool_defs: list[ToolDefinition], in_durable_context: bool
-) -> list[ToolDefinition]:
-    # DBOS numbers steps as they start, so steps from concurrent tools could replay into the wrong call.
-    if not (in_durable_context and ctx.workspace.attached):
-        return tool_defs
-    return [
-        tool_def if selects_child_workflow(tool_def.metadata, 'dbos') else replace(tool_def, sequential=True)
-        for tool_def in tool_defs
-    ]
 
 
 _child_workflow_config_adapter = TypeAdapter(ChildWorkflowConfig)

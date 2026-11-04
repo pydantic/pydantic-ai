@@ -18,6 +18,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RunContext, Tool, ToolOutput
+from pydantic_ai.capabilities import SetToolMetadata
 from pydantic_ai.models.test import TestModel
 
 from ..workspace_fakes import InMemoryProvider
@@ -145,19 +146,23 @@ async def right(ctx: RunContext[None]) -> str:
     return content
 
 
-child_workflow: dict[str, Any] = {'dbos': {'child_workflow': {}}}
+async def plain(ctx: RunContext[None]) -> str:
+    return await ctx.workspace.read_text('left.txt')
+
+
+child_workflow: dict[str, Any] = {'child_workflow': {}}
 parallel_agent = Agent(
-    TestModel(call_tools=['left', 'right']),
+    TestModel(call_tools=['left', 'right', 'plain']),
     name='dbos_parallel',
     output_type=ToolOutput(bool),
-    tools=[Tool(left, metadata=child_workflow), Tool(right, metadata=child_workflow)],
-    capabilities=[provider.capability(), DBOSDurability()],
+    tools=[Tool(left, metadata={'dbos': child_workflow}), right, plain],
+    capabilities=[provider.capability(), SetToolMetadata(tools=['right'], dbos=child_workflow), DBOSDurability()],
 )
 
 
 @DBOS.workflow()
 async def parallel_workflow() -> list[Any]:
-    result = await parallel_agent.run('Use both tools.')
+    result = await parallel_agent.run('Use the tools.')
     return [
         part.content for message in result.all_messages() for part in message.parts if part.part_kind == 'tool-return'
     ]
@@ -172,13 +177,16 @@ async def test_dbos_child_workflow_tools_run_in_parallel_with_a_workspace(dbos: 
         await parallel_workflow()
 
     # Recovery replays each tool's own recorded workspace results, not what the environment holds now.
-    provider.environments['env-1'] = {}
+    provider.environments['env-1']['/remote/left.txt'] = b'changed'
     workflows = await DBOS.list_workflows_async(workflow_id_prefix=workflow_id)
     for workflow in workflows:
         if workflow.workflow_id != workflow_id and workflow.status == 'PENDING':
             await DBOS.resume_workflow_async(workflow.workflow_id)
     handle = await DBOS.resume_workflow_async(workflow_id)
-    assert await handle.get_result() == snapshot(['left', 'right', 'Final result processed.'])
+    # `plain` isn't a child workflow, so it runs alone after the others, and for the first time on recovery.
+    assert await handle.get_result() == snapshot(['left', 'right', 'changed', 'Final result processed.'])
+    assert provider.log == snapshot(['create:env-1', 'attach:env-1', 'attach:env-1', 'attach:env-1'])
+    # Each child workflow is named by the parent step that started it.
     steps = {
         w.workflow_id.removeprefix(workflow_id): [
             step['function_name'] for step in await dbos.list_workflow_steps_async(w.workflow_id)
@@ -194,6 +202,7 @@ async def test_dbos_child_workflow_tools_run_in_parallel_with_a_workspace(dbos: 
                 'DBOS.getResult',
                 'dbos_parallel__function_toolset__<agent>.call_tool__child_workflow',
                 'DBOS.getResult',
+                'dbos_parallel__capability__workspace.call',
                 'dbos_parallel__model.request',
             ],
             '-5': [

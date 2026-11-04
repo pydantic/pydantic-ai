@@ -300,7 +300,7 @@ It's equivalent to the behavior of [`with agent.parallel_tool_call_execution_mod
     DBOS requires durable steps to start in a deterministic order. When tools run concurrently, a tool that awaits one durable operation before starting another can interleave differently with sibling tools or their emitted-event handlers during replay, causing recovery to fail.
 
     For this pattern, set `parallel_execution_mode='sequential'` on [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability]. To run independent sequences concurrently, put each sequence in a separate [child workflow](https://docs.dbos.dev/python/tutorials/workflow-tutorial#running-async-steps-in-parallel).
-With a [workspace](../workspace.md), each tool call runs alone, except for tools that run in a [child workflow](#child-workflows): their workspace calls are steps of their own child workflow, so they still run in parallel.
+With a [workspace](../workspace.md), each tool call runs alone, except for tools that run in a [child workflow](#child-workflows) selected in their metadata or with a `SetToolMetadata` passed to the agent: their workspace calls are steps of their own child workflow, so they still run in parallel. Tool hooks such as `before_tool_execute` still run in the parent workflow, so they shouldn't make workspace calls.
 
 ### Toolsets at Runtime
 
