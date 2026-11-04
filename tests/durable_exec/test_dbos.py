@@ -6522,8 +6522,9 @@ async def test_dbos_child_workflow_requires_a_registered_toolset(dbos: DBOS, sel
     with workflow_raises(
         UserError,
         "Tool 'tool' selects a DBOS child workflow, but its toolset has no registered child workflow. "
-        'Give the `FunctionToolset` a unique `id`, and select the child workflow before the agent is constructed, '
-        "in the tool's metadata or with a `SetToolMetadata` capability.",
+        'Give the `FunctionToolset` a unique `id`, and select the child workflow before the agent is constructed: '
+        "in the tool's metadata (for the agent's own tools, `Agent(tools=[Tool(..., metadata=...)])` rather than a "
+        'later `@agent.tool`), or with a `SetToolMetadata` capability.',
     ):
         await run_agent()
 

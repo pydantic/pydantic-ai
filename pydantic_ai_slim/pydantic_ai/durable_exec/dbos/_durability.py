@@ -488,6 +488,7 @@ async def _reject_unregistered_child_workflow(
 ) -> Any:
     raise UserError(
         f'Tool {name!r} selects a DBOS child workflow, but its toolset has no registered child workflow. '
-        'Give the `FunctionToolset` a unique `id`, and select the child workflow before the agent is constructed, '
-        "in the tool's metadata or with a `SetToolMetadata` capability."
+        'Give the `FunctionToolset` a unique `id`, and select the child workflow before the agent is constructed: '
+        "in the tool's metadata (for the agent's own tools, `Agent(tools=[Tool(..., metadata=...)])` rather than a "
+        'later `@agent.tool`), or with a `SetToolMetadata` capability.'
     )
