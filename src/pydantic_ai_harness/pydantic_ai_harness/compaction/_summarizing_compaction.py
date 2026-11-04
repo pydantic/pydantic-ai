@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, cast
 # `EventStreamHandler` holds the forward reference `'AsyncIterable[_messages.AgentStreamEvent]'`, which the
 # `AgentSpec` schema resolves against this module's globals.
 from pydantic_ai import messages as _messages  # noqa: F401  # pyright: ignore[reportUnusedImport]
+from pydantic_ai._capability_parts import effective_authority
 from pydantic_ai._framing import neutralize_tags, second_model_prompt
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.agent import EventStreamHandler
@@ -376,13 +377,19 @@ def _capability_part_elements(part: CapabilityPart, max_chars: int | None) -> li
     """A capability part, recognized by its type, as the transcript shows it.
 
     An instruction in the application's voice reads as a system message, except a request-scoped one, which applied
-    to its own request only. Data a capability added is labeled with its kind, never taken for the user's.
+    to its own request only. Anything else, data a capability added or an instruction its source downgraded, the model
+    saw framed rather than in the application's voice, so it's labeled with its kind, never taken for the user's.
     """
-    if part.rendering.voice == 'data':
+    if effective_authority(part) != 'operator':
         return [_harness_data_element(part.kind, capability_part_text(part), max_chars)]
     if part.scope == 'request':
         return []
     return [_message_element('system', capability_part_text(part))]
+
+
+def _is_transcript_data(part: ModelRequestPart) -> bool:
+    """Whether *part* is a `<harness_data>` element in the transcript: harness data, or a downgraded instruction."""
+    return is_harness_data(part) or (isinstance(part, CapabilityPart) and effective_authority(part) != 'operator')
 
 
 def _harness_data_element(origin: str, content: str, max_chars: int | None) -> str:
@@ -1109,7 +1116,7 @@ async def write_summary(
         tool_return_max_chars=summarizer.tool_return_max_chars,
     )
     prompt = summarizer.summary_prompt.format(messages=formatted)
-    if any(is_harness_data(part) for msg in messages if isinstance(msg, ModelRequest) for part in msg.parts):
+    if any(_is_transcript_data(part) for msg in messages if isinstance(msg, ModelRequest) for part in msg.parts):
         prompt = f'{prompt}\n\n{_HARNESS_DATA_INSTRUCTION}'
 
     if previous_summary is not None:

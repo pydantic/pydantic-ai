@@ -1050,24 +1050,27 @@ class RunContext(Generic[RunContextAgentDepsT]):
         )
         if pending is None:
             return None
-        # Queued first: a context with nowhere to deliver to, such as one inside a durable unit, raises there. The
-        # parts are stamped in place right after, so they carry the id by the time the run delivers them.
-        self.pending_messages.append(pending)
         capability_id = self._calling_capability_id()
         owner = self._capability if self._capability is not None else self.capabilities.get(capability_id or '')
         # An app-facing callback capability, such as `Hooks`, runs the application's own functions: what they enqueue
         # is the application's, as `emit` treats their events.
-        if capability_id is not None and not (owner is not None and owner._emits_app_events):  # pyright: ignore[reportPrivateUsage]
+        if owner is not None and owner._emits_app_events:  # pyright: ignore[reportPrivateUsage]
+            capability_id = None
+        if capability_id is not None:
             ceiling: _messages.Authority = 'operator' if owner is None else owner._effective_authority  # pyright: ignore[reportPrivateUsage]
+            # Stamped before it's queued: once queued, a run on another thread may deliver it at once, and it must
+            # never reach the model with more authority than the capability has.
             stamp_capability_parts(pending.messages, capability_id, ceiling)
-            if reason := hand_built_capability_speech(pending.messages):
-                warnings.warn(
-                    f'Capability {capability_id!r} enqueued {reason}. Define a `CapabilityPart` subclass for what it '
-                    'says, so the framework renders it in the right voice and your code can find it again by type: '
-                    'see https://pydantic.dev/docs/ai/capabilities/custom/#capability-parts',
-                    UserWarning,
-                    stacklevel=2,
-                )
+        # A context with nowhere to deliver to, such as one inside a durable unit, raises here.
+        self.pending_messages.append(pending)
+        if capability_id is not None and (reason := hand_built_capability_speech(pending.messages)):
+            warnings.warn(
+                f'Capability {capability_id!r} enqueued {reason}. Define a `CapabilityPart` subclass for what it '
+                'says, so the framework renders it in the right voice and your code can find it again by type: '
+                'see https://pydantic.dev/docs/ai/capabilities/custom/#capability-parts',
+                UserWarning,
+                stacklevel=2,
+            )
         return pending.enqueue_id
 
     def load_capability(self, capability: str | AbstractCapability[RunContextAgentDepsT]) -> bool:

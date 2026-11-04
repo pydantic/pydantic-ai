@@ -10,7 +10,13 @@ from pydantic import ValidationError
 from pydantic_ai._instructions import AgentInstructions, SourcedInstruction, normalize_instructions
 from pydantic_ai._utils import aclose_all, replace_no_init
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    Authority,
+    ModelResponse,
+    ToolCallPart,
+    _lower_authority,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.tools import (
     AgentDepsT,
     AgentNativeTool,
@@ -232,6 +238,12 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         # `Hooks`/`ProcessEventStream` must not revoke its user callbacks' permission to emit
         # `CustomEvent`s.
         return self.wrapped._emits_app_events
+
+    @property
+    def _effective_authority(self) -> Authority:
+        # What the wrapped capability enqueues may reach `RunContext.enqueue` through the wrapper, so the wrapper
+        # carries the lower of its own authority and the wrapped one's: wrapping never raises a capability's authority.
+        return _lower_authority(super()._effective_authority, self.wrapped._effective_authority)
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
         new_wrapped = self.wrapped._keep_authority(self.wrapped.for_agent(agent))

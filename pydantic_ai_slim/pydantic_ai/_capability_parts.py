@@ -167,10 +167,22 @@ def render_capability_part(part: CapabilityPart) -> RenderedCapabilityPart:
     )
     lookalikes = _body_lookalikes(part, items, tag)
     naming = _lookalike_naming(part.source, tag)
-    text = _note(part, authority, open_tag)
+    text = _note(part, authority, _note_frame(tag, attrs, open_tag))
     note = None if text is None else SystemPromptPart(text, timestamp=part.timestamp)
     parts: list[SystemPromptPart | UserPromptPart] = [body] if note is None else [note, body]
     return RenderedCapabilityPart(parts=parts, body=body, note=note, lookalikes=lookalikes, naming=naming)
+
+
+def _note_frame(tag: str, attrs: dict[str, str | None], open_tag: str) -> str:
+    """How a note in the application's voice names a part's frame: its opening tag, or the bare tag.
+
+    An attribute's value can come from content, such as a path in a repository, so the note quotes the opening tag only
+    when every value is a plain identifier or path; otherwise it names the tag alone, and the values stay in the frame
+    on the user channel.
+    """
+    if all(value is None or _NOTE_PATH.fullmatch(value) for value in attrs.values()):
+        return open_tag
+    return f'<{tag}>'
 
 
 def _note(part: CapabilityPart, authority: Authority, frame: str) -> str | None:
