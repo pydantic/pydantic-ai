@@ -1556,17 +1556,20 @@ async def test_scoped_task_result_raises_task_error_without_awaiter_cancellation
 
 @pytest.fixture
 def fresh_event_loop_policy() -> Iterator[None]:
-    """A policy with no current loop, as in a fresh interpreter's main thread, restoring the previous one after."""
-    previous = asyncio.get_event_loop_policy()
+    """A policy with no current loop, as in a fresh interpreter's main thread, restoring the previous one after.
+
+    Policies are deprecated from Python 3.14, where the tests using this are skipped.
+    """
+    previous = asyncio.get_event_loop_policy()  # pyright: ignore[reportDeprecated]
     policy = asyncio.DefaultEventLoopPolicy()
-    asyncio.set_event_loop_policy(policy)
+    asyncio.set_event_loop_policy(policy)  # pyright: ignore[reportDeprecated]
     try:
         yield
     finally:
-        loop = policy._local._loop  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
+        loop: asyncio.AbstractEventLoop | None = policy._local._loop  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
         if loop is not None:  # pragma: no branch
-            loop.close()  # pyright: ignore[reportUnknownMemberType]
-        asyncio.set_event_loop_policy(previous)
+            loop.close()
+        asyncio.set_event_loop_policy(previous)  # pyright: ignore[reportDeprecated]
 
 
 def _run_sync() -> None:
