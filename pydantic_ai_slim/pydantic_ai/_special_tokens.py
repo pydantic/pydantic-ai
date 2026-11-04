@@ -360,16 +360,12 @@ def _break_message(message: ModelMessage, system: str) -> ModelMessage:
 
 def _break_part(part: _PartT, system: str) -> _PartT:
     new_part: Any = part
-    if isinstance(part, UserPromptPart | BaseToolReturnPart):
-        container = cast('UserPromptPart | BaseToolReturnPart[Any]', part)
-        content = _break_value(container.content)
-        if content is not container.content:
-            new_part = replace(container, content=content)
-        if (
-            isinstance(new_part, BaseToolReturnPart)
-            and (name := break_special_tokens(new_part.tool_name)) != new_part.tool_name
-        ):
-            new_part = replace(cast('BaseToolReturnPart[Any]', new_part), tool_name=name)
+    if isinstance(part, UserPromptPart):
+        content = _break_value(part.content)
+        if content is not part.content:
+            new_part = replace(part, content=content)
+    elif isinstance(part, BaseToolReturnPart):
+        new_part = _break_tool_return(cast('BaseToolReturnPart[Any]', part))
     elif isinstance(part, BaseToolCallPart):
         new_part = _break_tool_call(cast('BaseToolCallPart[Any]', part))
     elif (
@@ -381,6 +377,14 @@ def _break_part(part: _PartT, system: str) -> _PartT:
         if content != part.content:
             new_part = replace(part, content=content)
     return new_part
+
+
+def _break_tool_return(part: BaseToolReturnPart[Any]) -> BaseToolReturnPart[Any]:
+    content = _break_value(part.content)
+    name = break_special_tokens(part.tool_name)
+    if content is part.content and name == part.tool_name:
+        return part
+    return replace(part, content=content, tool_name=name)
 
 
 def _break_tool_call(call: BaseToolCallPart[Any]) -> BaseToolCallPart[Any]:
