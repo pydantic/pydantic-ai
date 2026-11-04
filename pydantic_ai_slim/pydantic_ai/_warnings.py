@@ -1,5 +1,29 @@
 from __future__ import annotations
 
+from collections.abc import Generator
+from contextlib import contextmanager
+from contextvars import ContextVar
+
+_provider_field_warnings_suppressed: ContextVar[bool] = ContextVar('_provider_field_warnings_suppressed', default=False)
+
+
+@contextmanager
+def suppress_provider_field_warnings() -> Generator[None]:
+    """Build native tools from values the user didn't set on the tool directly, without warning them.
+
+    Uses a context variable rather than `warnings.catch_warnings()`, which changes global state and so isn't safe when
+    runs happen concurrently.
+    """
+    token = _provider_field_warnings_suppressed.set(True)
+    try:
+        yield
+    finally:
+        _provider_field_warnings_suppressed.reset(token)
+
+
+def provider_field_warnings_suppressed() -> bool:
+    return _provider_field_warnings_suppressed.get()
+
 
 class PydanticAIDeprecationWarning(UserWarning):
     """Warning emitted when a deprecated Pydantic AI API is used.

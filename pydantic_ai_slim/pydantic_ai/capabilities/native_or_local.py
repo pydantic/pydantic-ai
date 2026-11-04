@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, TypeVar, cast
 
 from pydantic_ai._utils import replace_no_init
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai._warnings import suppress_provider_field_warnings
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool, ToolDefinition
@@ -26,18 +25,22 @@ _NativeToolT = TypeVar('_NativeToolT', bound=AbstractNativeTool)
 def _apply_native_overrides(tool: _NativeToolT, overrides: dict[str, Any]) -> _NativeToolT:
     """Return `tool` with capability-level overrides applied.
 
-    `provider_settings` merge per model system, so overriding one option keeps the tool's other options.
+    A top-level override also replaces the same option in the tool's `provider_settings`, where it would otherwise win,
+    and `provider_settings` merge per model system so overriding one option keeps the tool's others.
     """
     if not overrides:
         return tool
-    if (provider_settings := overrides.get('provider_settings')) is not None:
-        merged: dict[str, Any] = dict(getattr(tool, 'provider_settings', None) or {})
-        for system, settings in provider_settings.items():
+    base: dict[str, Any] | None = getattr(tool, 'provider_settings', None)
+    override_settings: dict[str, Any] | None = overrides.get('provider_settings')
+    if base or override_settings:
+        merged = {
+            system: {option: value for option, value in settings.items() if option not in overrides}
+            for system, settings in (base or {}).items()
+        }
+        for system, settings in (override_settings or {}).items():
             merged[system] = {**merged.get(system, {}), **settings}
         overrides = {**overrides, 'provider_settings': merged}
-    # Deprecated fields on `tool` already warned when it was constructed; `replace()` must not warn again.
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
+    with suppress_provider_field_warnings():
         return replace(tool, **overrides)
 
 
@@ -320,7 +323,8 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
             return _apply_native_overrides(self.native, overrides)
 
         if self.native is False:
-            return tool_cls(**overrides)
+            with suppress_provider_field_warnings():
+                return tool_cls(**overrides)
 
         native_factory = self.native
         if not callable(native_factory):

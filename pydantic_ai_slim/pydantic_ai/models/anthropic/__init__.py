@@ -2461,17 +2461,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return 'regex'
         return strategy or 'bm25'
 
-    def _check_web_tool_settings_supported(self, tool: WebSearchTool | WebFetchTool) -> None:
-        """Reject settings that need the `20260318` web tools on clients that stay on older versions."""
-        settings = (tool.provider_settings or {}).get('anthropic', {})
-        if any(value is not None for value in settings.values()) and isinstance(
-            self.client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
-        ):
-            raise UserError(
-                f'`{type(tool).__name__}.provider_settings` for Anthropic requires the `20260318` web tools, '
-                f'which `{type(self.client).__name__}` does not support.'
-            )
-
     @staticmethod
     def _map_web_search_tool(
         tool: WebSearchTool, supports_dynamic_filtering: bool
@@ -2578,7 +2567,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         for tool in model_request_parameters.native_tools:
             if isinstance(tool, WebSearchTool):
-                self._check_web_tool_settings_supported(tool)
                 tools.append(self._map_web_search_tool(tool, supports_dynamic_filtering))
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tool_version = self._get_code_execution_tool_version(model_settings)
@@ -2588,7 +2576,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 if self._container_upload_file_ids(tool):
                     beta_features.add('files-api-2025-04-14')
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
-                self._check_web_tool_settings_supported(tool)
                 web_fetch_tool, beta_feature = self._map_web_fetch_tool(
                     tool, supports_dynamic_filtering, citations_included(model_settings, model_request_parameters)
                 )

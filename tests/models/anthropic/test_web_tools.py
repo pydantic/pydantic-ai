@@ -245,8 +245,8 @@ def test_anthropic_20260318_web_tools_implicit_code_execution(
     assert ('code_execution' in enabled_names) is enables_code_execution
 
 
-def test_anthropic_20260318_settings_rejected_on_vertex():
-    """Vertex stays on the older web tools, so settings that need `20260318` raise instead of being dropped."""
+def test_anthropic_20260318_settings_forwarded_on_vertex():
+    """An opted-in setting reaches Vertex, whose API is the authority on what it supports."""
     m = AnthropicModel(
         'claude-sonnet-4-6',
         provider=AnthropicProvider(
@@ -261,8 +261,22 @@ def test_anthropic_20260318_settings_rejected_on_vertex():
         ]
     )
 
-    with pytest.raises(UserError, match='requires the `20260318` web tools'):
-        m._add_native_tools([], params, AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
+    tools, *_ = m._add_native_tools([], params, AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
+
+    assert tools == snapshot(
+        [
+            {
+                'name': 'web_search',
+                'type': 'web_search_20260318',
+                'max_uses': None,
+                'allowed_domains': None,
+                'blocked_domains': None,
+                'user_location': None,
+                'response_inclusion': 'full',
+                'allowed_callers': ['direct'],
+            }
+        ]
+    )
 
 
 @pytest.mark.vcr()

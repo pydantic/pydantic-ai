@@ -958,7 +958,7 @@ Setting any option selects Anthropic's `web_search_20260318` or `web_fetch_20260
 
 On a model without dynamic filtering, these versions are sent with `allowed_callers=['direct']`, so they don't bring code execution with them. Set [`anthropic_web_tools_allowed_callers`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_web_tools_allowed_callers] to override that. `response_inclusion` only affects results consumed by code execution, so it has no effect on direct calls.
 
-The Vertex AI client doesn't send these versions, so Pydantic AI raises a `UserError` if you set these options with `AsyncAnthropicVertex`.
+These options are always forwarded, so a client whose API doesn't accept these versions reports that itself. This applies to `AsyncAnthropicVertex`, which otherwise stays on older web tool versions.
 
 ## Code Execution Tool Version
 

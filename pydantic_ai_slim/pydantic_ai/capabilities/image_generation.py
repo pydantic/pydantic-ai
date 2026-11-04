@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal, get_args
 from typing_extensions import deprecated
 
 from pydantic_ai._utils import replace_no_init
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai._warnings import PydanticAIDeprecationWarning, suppress_provider_field_warnings
 from pydantic_ai.exceptions import ContentFilterError, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.images import (
     ImageDimensions,
@@ -30,7 +30,6 @@ from pydantic_ai.native_tools import (
     ImageGenerationProviderSettings,
     ImageGenerationTool,
     ImageSize,
-    OpenAIImageGenerationToolSettings,
 )
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool, ToolDefinition
@@ -743,34 +742,33 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     def _image_gen_kwargs(self) -> dict[str, Any]:
         """Collect settings supported by the native `ImageGenerationTool` path."""
         kwargs: dict[str, Any] = {}
-        openai_settings = OpenAIImageGenerationToolSettings()
-        if self.action is not None:
-            openai_settings['action'] = self.action
         if self.background is not None:
-            openai_settings['background'] = self.background
+            kwargs['background'] = self.background
         if self.input_fidelity is not None:
-            openai_settings['input_fidelity'] = self.input_fidelity
+            kwargs['input_fidelity'] = self.input_fidelity
         if self.moderation is not None:
-            openai_settings['moderation'] = self.moderation
-        if self.image_model is not None:
-            openai_settings['model'] = self.image_model
-        if self.quality is not None:
-            openai_settings['quality'] = self.quality
-        openai_settings.update((self.provider_settings or {}).get('openai', {}))
-        if openai_settings:
-            kwargs['provider_settings'] = ImageGenerationProviderSettings(openai=openai_settings)
-
+            kwargs['moderation'] = self.moderation
         if self.output_compression is not None:
             kwargs['output_compression'] = self.output_compression
         if self.output_format is not None:
             kwargs['output_format'] = self.output_format
+        if self.quality is not None:
+            kwargs['quality'] = self.quality
 
         geometry, _ = self._native_geometry()
         kwargs.update(geometry)
+
+        if self.action is not None:
+            kwargs['action'] = self.action
+        if self.image_model is not None:
+            kwargs['model'] = self.image_model
+        if self.provider_settings is not None:
+            kwargs['provider_settings'] = self.provider_settings
         return kwargs
 
     def _default_native(self) -> ImageGenerationTool:
-        return ImageGenerationTool(**self._image_gen_kwargs())
+        with suppress_provider_field_warnings():
+            return ImageGenerationTool(**self._image_gen_kwargs())
 
     def _resolve_local_strategy(self, name: str | bool) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
         # Every string and `local=True` land here: the capability has no named local strategy, and

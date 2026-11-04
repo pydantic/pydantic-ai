@@ -9,6 +9,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import AdvisorTool, Agent, RunContext
+from pydantic_ai._warnings import suppress_provider_field_warnings
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability, ModelFallback, PrefixTools
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded, UserError
@@ -94,9 +95,9 @@ class TestAdvisor:
         await agent.run('Review this plan.')
 
         assert seen[0].function_tools == []
-        assert seen[0].native_tools == [
-            AdvisorTool(model='claude-opus-4-8', max_tokens=2048, provider_settings={'anthropic': {'caching': '5m'}})
-        ]
+        with suppress_provider_field_warnings():
+            expected = AdvisorTool(model='claude-opus-4-8', max_tokens=2048, caching='5m')
+        assert seen[0].native_tools == [expected]
 
     @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
     @pytest.mark.parametrize('mode', ['auto', 'native'])
@@ -557,9 +558,9 @@ class TestAdvisor:
 
         await agent.run('Review this plan.')
 
-        assert seen[0].native_tools == [
-            AdvisorTool(model='claude-opus-4-8', max_tokens=2048, provider_settings={'anthropic': {'caching': '1h'}})
-        ]
+        with suppress_provider_field_warnings():
+            expected = AdvisorTool(model='claude-opus-4-8', max_tokens=2048, caching='1h')
+        assert seen[0].native_tools == [expected]
 
     async def test_merged_local_advisor_uses_settings_only_one_instance_states(self) -> None:
         advisor_settings: list[ModelSettings | None] = []

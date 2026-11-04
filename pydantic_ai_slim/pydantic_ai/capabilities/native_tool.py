@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import pydantic
@@ -50,4 +50,6 @@ class NativeTool(AbstractCapability[AgentDepsT]):
                 '`NativeTool.from_spec()` requires either a `tool` argument or keyword arguments'
                 ' specifying the native tool type (e.g. `kind="web_search"`)'
             )
+        # Validation doesn't warn about deprecated fields, but a spec is written by a user who can act on the warning.
+        validated = replace(validated)
         return cls(tool=validated)

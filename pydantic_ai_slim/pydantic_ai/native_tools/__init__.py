@@ -5,13 +5,18 @@ from abc import ABC
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from functools import cache
 from typing import Annotated, Any, Literal, Union
 
 import pydantic
 from pydantic_core import core_schema
 from typing_extensions import TypedDict
 
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai._warnings import (
+    PydanticAIDeprecationWarning,
+    provider_field_warnings_suppressed,
+    suppress_provider_field_warnings,
+)
 from pydantic_ai.messages import UploadedFile
 
 __all__ = (
@@ -54,8 +59,17 @@ This dict is populated automatically via `__init_subclass__` when tool classes a
 """
 
 
+def _validate_without_provider_field_warnings(value: Any, handler: core_schema.ValidatorFunctionWrapHandler) -> Any:
+    """Stay quiet when a tool is rebuilt from data, as durable execution does between activities.
+
+    The tool may come from a capability, whose user has nothing to change, and the warning would point into pydantic.
+    """
+    with suppress_provider_field_warnings():
+        return handler(value)
+
+
 def _warn_deprecated_provider_fields(tool_name: str, system: str, fields: Sequence[str]) -> None:
-    if not fields:
+    if not fields or provider_field_warnings_suppressed():
         return
 
     formatted_fields = ', '.join(f'`{name}`' for name in fields)
@@ -172,7 +186,7 @@ class AbstractNativeTool(ABC):
         cls, _source_type: Any, handler: pydantic.GetCoreSchemaHandler
     ) -> core_schema.CoreSchema:
         if cls is not AbstractNativeTool:
-            return handler(cls)
+            return core_schema.no_info_wrap_validator_function(_validate_without_provider_field_warnings, handler(cls))
 
         tools = NATIVE_TOOL_TYPES.values()
         if len(tools) == 1:  # pragma: no cover
@@ -184,6 +198,18 @@ class AbstractNativeTool(ABC):
         return handler(tools_type)
 
 
+@cache
+def _provider_settings_adapter(settings_type: type[Any]) -> pydantic.TypeAdapter[Any]:
+    return pydantic.TypeAdapter(settings_type)
+
+
+def _validate_provider_settings(settings_type: type[Any], settings: Any) -> None:
+    """Fail fast on an option no adapter would read, instead of silently running without it."""
+    if settings is not None:
+        _provider_settings_adapter(settings_type).validate_python(settings, strict=True)
+
+
+@pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
 class AnthropicWebSearchToolSettings(TypedDict, total=False):
     """Anthropic-specific settings for [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]."""
 
@@ -191,6 +217,7 @@ class AnthropicWebSearchToolSettings(TypedDict, total=False):
     """Whether results consumed by completed code execution calls remain in the response."""
 
 
+@pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
 class OpenRouterWebSearchToolSettings(TypedDict, total=False):
     """OpenRouter-specific settings for [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]."""
 
@@ -210,6 +237,7 @@ class OpenRouterWebSearchToolSettings(TypedDict, total=False):
     """The maximum content characters returned for each result."""
 
 
+@pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
 class WebSearchProviderSettings(TypedDict, total=False):
     """Provider-specific web search settings, indexed by the model system."""
 
@@ -318,6 +346,9 @@ class WebSearchTool(AbstractNativeTool):
 
     kind: str = 'web_search'
     """The kind of tool."""
+
+    def __post_init__(self) -> None:
+        _validate_provider_settings(WebSearchProviderSettings, self.provider_settings)
 
     @property
     def restricting_settings(self) -> frozenset[str]:
@@ -483,6 +514,7 @@ class CodeExecutionTool(AbstractNativeTool):
     """The kind of tool."""
 
 
+@pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
 class AnthropicWebFetchToolSettings(TypedDict, total=False):
     """Anthropic-specific settings for [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool]."""
 
@@ -493,6 +525,7 @@ class AnthropicWebFetchToolSettings(TypedDict, total=False):
     """Whether results consumed by completed code execution calls remain in the response."""
 
 
+@pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
 class WebFetchProviderSettings(TypedDict, total=False):
     """Provider-specific web fetch settings, indexed by the model system."""
 
@@ -567,6 +600,9 @@ class WebFetchTool(AbstractNativeTool):
     kind: str = 'web_fetch'
     """The kind of tool."""
 
+    def __post_init__(self) -> None:
+        _validate_provider_settings(WebFetchProviderSettings, self.provider_settings)
+
     @property
     def restricting_settings(self) -> frozenset[str]:
         """`allowed_domains`, `blocked_domains` and `max_uses` when set."""
@@ -580,6 +616,7 @@ class WebFetchTool(AbstractNativeTool):
         return frozenset(settings)
 
 
+@pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
 class OpenAIImageGenerationToolSettings(TypedDict, total=False):
     """OpenAI-specific settings for [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool]."""
 
@@ -605,6 +642,7 @@ class OpenAIImageGenerationToolSettings(TypedDict, total=False):
     """The OpenAI image quality level. Defaults to `'auto'`."""
 
 
+@pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
 class ImageGenerationProviderSettings(TypedDict, total=False):
     """Provider-specific image generation settings, indexed by the model system."""
 
@@ -741,6 +779,7 @@ class ImageGenerationTool(AbstractNativeTool):
     """The kind of tool."""
 
     def __post_init__(self) -> None:
+        _validate_provider_settings(ImageGenerationProviderSettings, self.provider_settings)
         deprecated_fields = [
             name
             for name, is_set in (
@@ -850,6 +889,7 @@ class MCPServerTool(AbstractNativeTool):
         return f'MCP: {self.id}'
 
 
+@pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
 class XaiFileSearchToolSettings(TypedDict, total=False):
     """xAI-specific settings for [`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool]."""
 
@@ -860,6 +900,7 @@ class XaiFileSearchToolSettings(TypedDict, total=False):
     """The xAI collections search retrieval strategy."""
 
 
+@pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
 class FileSearchProviderSettings(TypedDict, total=False):
     """Provider-specific file search settings, indexed by the model system."""
 
@@ -923,6 +964,7 @@ class FileSearchTool(AbstractNativeTool):
     """The kind of tool."""
 
     def __post_init__(self) -> None:
+        _validate_provider_settings(FileSearchProviderSettings, self.provider_settings)
         deprecated_fields = [
             name
             for name, is_set in (
@@ -934,6 +976,7 @@ class FileSearchTool(AbstractNativeTool):
         _warn_deprecated_provider_fields('FileSearchTool', 'xai', deprecated_fields)
 
 
+@pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
 class AnthropicAdvisorToolSettings(TypedDict, total=False):
     """Anthropic-specific settings for [`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool]."""
 
@@ -941,6 +984,7 @@ class AnthropicAdvisorToolSettings(TypedDict, total=False):
     """The ephemeral cache TTL for the Anthropic advisor context."""
 
 
+@pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
 class OpenRouterAdvisorToolSettings(TypedDict, total=False):
     """OpenRouter-specific settings for [`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool]."""
 
@@ -948,6 +992,7 @@ class OpenRouterAdvisorToolSettings(TypedDict, total=False):
     """Whether OpenRouter should include the conversation transcript in the advisor request."""
 
 
+@pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
 class AdvisorProviderSettings(TypedDict, total=False):
     """Provider-specific advisor settings, indexed by the model system."""
 
@@ -1028,6 +1073,7 @@ class AdvisorTool(AbstractNativeTool):
 
     def __post_init__(self) -> None:
         _warn_deprecated_provider_fields('AdvisorTool', 'anthropic', ['caching'] if self.caching is not None else [])
+        _validate_provider_settings(AdvisorProviderSettings, self.provider_settings)
         if self.max_tokens is not None and self.max_tokens < 1024:
             raise ValueError('AdvisorTool.max_tokens must be at least 1024')
 

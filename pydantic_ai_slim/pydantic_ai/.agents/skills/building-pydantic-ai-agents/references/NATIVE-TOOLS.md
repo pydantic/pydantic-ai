@@ -43,7 +43,8 @@ Reach for these when the provider supports them:
 ## Provider-Specific Settings
 
 Put settings shared by providers directly on the native tool. For provider-only options, pass the
-provider's typed settings dictionary under its model-system key in `provider_settings`:
+provider's typed settings dictionary under its model-system key in `provider_settings`. The key follows
+the model class, so Claude through `OpenRouterModel` reads `openrouter`. Unknown keys raise an error:
 
 ```python
 from pydantic_ai import Agent
