@@ -1223,6 +1223,12 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     ) -> RawToolArgs:
         """Modify raw args before validation.
 
+        The returned args feed validation and execution only: the tool call in the message history
+        keeps the model's arguments. `call` is that history part, so to record a rewrite there too,
+        assign it to `call.args` as well. Also clear `call.id`, since OpenAI Responses replays its own
+        stored copy of a call that keeps its item ID; keep the original in `call.provider_details`
+        if it should stay visible.
+
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip validation and
         ask the model to redo the tool call.
 
@@ -1412,7 +1418,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         Use [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute]
         to intercept retries or failures.
         """
-        raise error
+        try:
+            raise error
+        finally:
+            # The raised error's traceback holds this frame; clear its error reference to release ctx.deps.
+            del error
 
     # --- Output validate lifecycle hooks ---
 

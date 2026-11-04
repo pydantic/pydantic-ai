@@ -57,6 +57,7 @@ from .._framing import neutralize_voice_tag
 from .._http import to_httpx2_timeout
 from .._instrumentation import current_model_request_span, get_instructions
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
+from .._removed_names import removed_names_getattr
 from .._run_context import RunContext
 from .._thinking_part import render_replayed_thinking, split_content_into_text_and_thinking
 from .._utils import (
@@ -1635,7 +1636,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         ) or super().resolve_cache_retention(model_settings)
 
     def _no_batch_api_message(self) -> str:
-        if self.system == 'openai':
+        # The profile's Batch API flag, not the provider name, so renamed and compatible providers get the hint too.
+        if self.profile.get('openai_supports_batch_api', False):
             return (
                 f'`{type(self).__name__}` {self.model_name!r} has no batch API: batch it through the Responses API, with '
                 '`OpenAIResponsesModel` or the `openai:` prefix.'
@@ -2469,38 +2471,31 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         # the run is reasoning. A turn another model or provider produced, or one served with thinking off,
         # can lack it: a `FallbackModel` step, a resumed run, or a foreign native tool search that
         # `prepare_messages` splits into a synthesized `search_tools` turn. `'field'` mode sets the configured
-        # field empty on every such turn once the history holds a `ThinkingPart`, or, for a profile that sets
-        # `openai_chat_thinking_requires_field_on_tool_calls`, once the request itself thinks, as it can before
-        # any step has thought; `'auto'` mode is handled after mapping, below.
+        # field empty on every such turn from the first response that holds a `ThinkingPart` on, or, for a
+        # profile that sets `openai_chat_thinking_requires_field_on_tool_calls`, on every such turn once the
+        # request itself thinks, as it can before any step has thought; `'auto'` mode is handled after mapping,
+        # below. A turn before the first `ThinkingPart` was already sent without the field, so a later response
+        # that thinks doesn't add it there: the turn goes out the same way in every request, keeping the
+        # cached prefix.
         send_back_thinking = profile.get('openai_chat_send_back_thinking_parts', 'auto')
-        thinking_active = any(
-            isinstance(part, ThinkingPart)
-            for message in messages
-            if isinstance(message, ModelResponse)
-            for part in message.parts
-        )
-        backfill_field = (
-            profile.get('openai_chat_thinking_field', None)
-            if send_back_thinking == 'field'
-            and (
-                thinking_active
-                or (
-                    profile.get('openai_chat_thinking_requires_field_on_tool_calls', False)
-                    and self._request_thinks(model_settings, model_request_parameters)
-                )
-            )
-            else None
+        backfill_field = profile.get('openai_chat_thinking_field', None) if send_back_thinking == 'field' else None
+        backfill = bool(
+            backfill_field
+            and profile.get('openai_chat_thinking_requires_field_on_tool_calls', False)
+            and self._request_thinks(model_settings, model_request_parameters)
         )
         for message in messages:
             if isinstance(message, ModelRequest):
                 async for item in self._map_user_message(message):
                     openai_messages.append(item)
             elif isinstance(message, ModelResponse):
+                backfill = backfill or any(isinstance(part, ThinkingPart) for part in message.parts)
                 if (carried_thinking := self._map_carried_thinking(message)) is not None:
                     openai_messages.append(carried_thinking)
                 if (mapped := self._map_model_response(message)) is not None:
                     if (
-                        backfill_field
+                        backfill
+                        and backfill_field
                         and mapped['role'] == 'assistant'
                         and mapped.get('tool_calls')
                         and backfill_field not in mapped
@@ -6322,18 +6317,17 @@ class OpenAIStreamedResponse(StreamedResponse):
         """
         for dtc in choice.delta.tool_calls or []:
             provider_details = _map_tool_call_provider_details(dtc)
-            maybe_event = self._parts_manager.handle_tool_call_delta(
+            for event in self._parts_manager.handle_tool_call_delta_events(
                 vendor_part_id=dtc.index,
                 tool_name=dtc.function.name if dtc.function is not None else None,
                 args=dtc.function.arguments if dtc.function is not None else None,
                 tool_call_id=dtc.id,
                 provider_name=self.provider_name if provider_details else None,
                 provider_details=provider_details,
-            )
-            if maybe_event is not None:
-                if isinstance(maybe_event, PartStartEvent):
+            ):
+                if isinstance(event, PartStartEvent):
                     self._advance_part_boundary('tool')
-                yield maybe_event
+                yield event
 
     def _map_provider_details(self, chunk: ChatCompletionChunk) -> dict[str, Any] | None:
         """Hook that generates the provider details from chunk content.
@@ -6563,23 +6557,23 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     provider_details=provider_details,
                 )
 
-            def finalize_function_call(item_id: str, final_args: str) -> ModelResponseStreamEvent | None:
+            def finalize_function_call(item_id: str, final_args: str) -> Iterator[ModelResponseStreamEvent]:
                 if item_id in finalized_function_calls or not final_args:
-                    return None
+                    return
                 existing_part = self._parts_manager.get_part_by_vendor_id(item_id)
                 if not isinstance(existing_part, ToolCallPart):
                     # A stream resumed after `output_item.added` has no complete part yet;
                     # `output_item.done` creates it from the full item.
-                    return None
+                    return
 
                 received_args = function_call_args.get(item_id, '')
                 if received_args == final_args:
                     finalized_function_calls.add(item_id)
-                    return None
+                    return
 
                 if final_args.startswith(received_args):
                     # The Codex backend can send arguments only in the done events.
-                    event = self._parts_manager.handle_tool_call_delta(
+                    yield from self._parts_manager.handle_tool_call_delta_events(
                         vendor_part_id=item_id,
                         args=final_args[len(received_args) :],
                     )
@@ -6594,11 +6588,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         'Please open an issue at https://github.com/pydantic/pydantic-ai/issues.',
                         UserWarning,
                     )
-                    return None
+                    return
 
                 function_call_args[item_id] = final_args
                 finalized_function_calls.add(item_id)
-                return event
 
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
@@ -6699,15 +6692,14 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     # skip its deltas and let `output_item.done` create it; never mutate finalized args.
                     if chunk.item_id in function_call_args and chunk.item_id not in finalized_function_calls:
                         function_call_args[chunk.item_id] += chunk.delta
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                        for event in self._parts_manager.handle_tool_call_delta_events(
                             vendor_part_id=chunk.item_id,
                             args=chunk.delta,
-                        )
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
+                        ):
+                            yield event
 
                 elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDoneEvent):
-                    if event := finalize_function_call(chunk.item_id, chunk.arguments):
+                    for event in finalize_function_call(chunk.item_id, chunk.arguments):
                         yield event
 
                 elif isinstance(chunk, (responses.ResponseInProgressEvent, responses.ResponseQueuedEvent)):
@@ -6775,12 +6767,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         yield self._parts_manager.handle_part(
                             vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
                         )
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                        for event in self._parts_manager.handle_tool_call_delta_events(
                             vendor_part_id=f'{chunk.item.id}-call',
                             args=args_json_delta,
-                        )
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
+                        ):
+                            yield event
                     elif isinstance(chunk.item, responses.response_output_item.ImageGenerationCall):
                         call_part, _, _ = _map_image_generation_tool_call(chunk.item, self.provider_name)
                         yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
@@ -6797,12 +6788,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         yield self._parts_manager.handle_part(
                             vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
                         )
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                        for event in self._parts_manager.handle_tool_call_delta_events(
                             vendor_part_id=f'{chunk.item.id}-call',
                             args=args_json_delta,
-                        )
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
+                        ):
+                            yield event
                     elif isinstance(chunk.item, responses.response_output_item.McpListTools):
                         call_part, _ = _map_mcp_list_tools(chunk.item, self.provider_name)
                         yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
@@ -6825,8 +6815,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         if not isinstance(self._parts_manager.get_part_by_vendor_id(item_id), ToolCallPart):
                             yield handle_function_call_part(chunk.item)
                             finalized_function_calls.add(item_id)
-                        elif event := finalize_function_call(item_id, chunk.item.arguments):
-                            yield event
+                        else:
+                            for event in finalize_function_call(item_id, chunk.item.arguments):
+                                yield event
                     elif isinstance(chunk.item, responses.ResponseReasoningItem):
                         if signature := chunk.item.encrypted_content:  # pragma: no branch
                             # Add the signature to the part corresponding to the first summary/raw CoT
@@ -6849,47 +6840,18 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     elif isinstance(chunk.item, responses.ResponseFunctionWebSearch):
                         call_part, return_part = _map_web_search_tool_call(chunk.item, self.provider_name)
 
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                        for event in self._parts_manager.handle_tool_call_delta_events(
                             vendor_part_id=f'{chunk.item.id}-call',
                             args=call_part.args,
-                        )
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
+                        ):
+                            yield event
 
                         yield self._parts_manager.handle_part(
                             vendor_part_id=f'{chunk.item.id}-return', part=return_part
                         )
                     elif isinstance(chunk.item, responses.ResponseToolSearchCall):
-                        if chunk.item.execution == 'client':
-                            # Feed the final args through the tool-call delta path so the
-                            # part manager resolves its pending args; there's no paired
-                            # `tool_search_output` — the return part is produced by the
-                            # local tool runner after the stream completes.
-                            #
-                            # OpenAI Responses streaming sometimes assigns a different
-                            # `call_id` between the `output_item.added` and `output_item.done`
-                            # frames for client-executed `tool_search_call`s; the server's
-                            # log of record is the latter. Pass it through here so the
-                            # `tool_search_output` we replay on the next turn references the
-                            # call_id the API actually expects.
-                            client_call_part = _map_client_tool_search_call(chunk.item, self.provider_name)
-                            client_args_json = client_call_part.args_as_json_str()
-                            maybe_event = self._parts_manager.handle_tool_call_delta(
-                                vendor_part_id=chunk.item.id,
-                                args=client_args_json,
-                                tool_call_id=client_call_part.tool_call_id,
-                            )
-                            if maybe_event is not None:  # pragma: no branch
-                                yield maybe_event
-                        else:
-                            call_part = _map_tool_search_call(chunk.item, self.provider_name)
-                            maybe_event = self._parts_manager.handle_tool_call_delta(
-                                vendor_part_id=f'{chunk.item.id}-call',
-                                args=cast('str | dict[str, Any] | None', call_part.args),
-                                provider_details=call_part.provider_details,
-                            )
-                            if maybe_event is not None:  # pragma: no branch
-                                yield maybe_event
+                        for event in self._handle_tool_search_call_done(chunk.item):
+                            yield event
                     elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):
                         if chunk.item.execution == 'server':
                             call_id = _match_tool_search_output_to_call(
@@ -6906,12 +6868,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     elif isinstance(chunk.item, responses.ResponseFileSearchToolCall):
                         call_part, return_part = _map_file_search_tool_call(chunk.item, self.provider_name)
 
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                        for event in self._parts_manager.handle_tool_call_delta_events(
                             vendor_part_id=f'{chunk.item.id}-call',
                             args=call_part.args,
-                        )
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
+                        ):
+                            yield event
 
                         yield self._parts_manager.handle_part(
                             vendor_part_id=f'{chunk.item.id}-return', part=return_part
@@ -7082,20 +7043,18 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
                 elif isinstance(chunk, responses.ResponseCodeInterpreterCallCodeDeltaEvent):
                     json_args_delta = to_json(chunk.delta).decode()[1:-1]  # Drop the surrounding `"`
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                    for event in self._parts_manager.handle_tool_call_delta_events(
                         vendor_part_id=f'{chunk.item_id}-call',
                         args=json_args_delta,
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    ):
+                        yield event
 
                 elif isinstance(chunk, responses.ResponseCodeInterpreterCallCodeDoneEvent):
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                    for event in self._parts_manager.handle_tool_call_delta_events(
                         vendor_part_id=f'{chunk.item_id}-call',
                         args='"}',
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    ):
+                        yield event
 
                 elif isinstance(chunk, responses.ResponseCodeInterpreterCallCompletedEvent):
                     pass  # there's nothing we need to do here
@@ -7129,20 +7088,18 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item_id}-file', part=file_part)
 
                 elif isinstance(chunk, responses.ResponseMcpCallArgumentsDoneEvent):
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                    for event in self._parts_manager.handle_tool_call_delta_events(
                         vendor_part_id=f'{chunk.item_id}-call',
                         args='}',
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    ):
+                        yield event
 
                 elif isinstance(chunk, responses.ResponseMcpCallArgumentsDeltaEvent):
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                    for event in self._parts_manager.handle_tool_call_delta_events(
                         vendor_part_id=f'{chunk.item_id}-call',
                         args=chunk.delta,
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    ):
+                        yield event
 
                 elif isinstance(chunk, responses.ResponseMcpListToolsInProgressEvent):
                     pass  # there's nothing we need to do here
@@ -7189,6 +7146,37 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 **(self.provider_details or {}),
                 'last_sequence_number': self._last_sequence_number,
             }
+
+    def _handle_tool_search_call_done(
+        self, item: responses.ResponseToolSearchCall
+    ) -> Iterator[ModelResponseStreamEvent]:
+        """Complete the tool search call part `output_item.added` started with the item's final arguments."""
+        if item.execution == 'client':
+            # Feed the final args through the tool-call delta path so the
+            # part manager resolves its pending args; there's no paired
+            # `tool_search_output` — the return part is produced by the
+            # local tool runner after the stream completes.
+            #
+            # OpenAI Responses streaming sometimes assigns a different
+            # `call_id` between the `output_item.added` and `output_item.done`
+            # frames for client-executed `tool_search_call`s; the server's
+            # log of record is the latter. Pass it through here so the
+            # `tool_search_output` we replay on the next turn references the
+            # call_id the API actually expects.
+            client_call_part = _map_client_tool_search_call(item, self.provider_name)
+            client_args_json = client_call_part.args_as_json_str()
+            yield from self._parts_manager.handle_tool_call_delta_events(
+                vendor_part_id=item.id,
+                args=client_args_json,
+                tool_call_id=client_call_part.tool_call_id,
+            )
+        else:
+            call_part = _map_tool_search_call(item, self.provider_name)
+            yield from self._parts_manager.handle_tool_call_delta_events(
+                vendor_part_id=f'{item.id}-call',
+                args=cast('str | dict[str, Any] | None', call_part.args),
+                provider_details=call_part.provider_details,
+            )
 
     def _store_conversation_id(self, response: responses.Response) -> None:
         if response.conversation:
@@ -8263,3 +8251,13 @@ def _map_mcp_call(
             provider_name=provider_name,
         ),
     )
+
+
+_REMOVED_IN_V2 = {
+    'OpenAIModel': 'use `OpenAIChatModel` (the same Chat Completions API), or `OpenAIResponsesModel`.',
+    'OpenAIModelSettings': 'use `OpenAIChatModelSettings`.',
+}
+
+# Kept from type checkers, which would otherwise accept any name on this module.
+if not TYPE_CHECKING:  # pragma: no branch
+    __getattr__ = removed_names_getattr(__name__, _REMOVED_IN_V2)

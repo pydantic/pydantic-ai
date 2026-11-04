@@ -160,24 +160,26 @@ ToolsPrepareFunc: TypeAlias = Callable[
 This is useful if you want to customize the definition of multiple tools or you want to register
 a subset of tools for a given step. Both sync and async functions are accepted.
 
-Example — here `turn_on_strict_if_openai` is valid as a `ToolsPrepareFunc`:
+Example — here `turn_on_strict_if_supported` is valid as a `ToolsPrepareFunc`. It reads the profile's
+`supports_json_schema_output` as a stand-in, since there's no provider-agnostic strict-tools flag:
 
 ```python {noqa="I001"}
 from dataclasses import replace
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import PrepareTools
+from pydantic_ai.models import Model
 from pydantic_ai.tools import ToolDefinition
 
 
-def turn_on_strict_if_openai(
+def turn_on_strict_if_supported(
     ctx: RunContext, tool_defs: list[ToolDefinition]
 ) -> list[ToolDefinition]:
-    if ctx.model.system == 'openai':
+    if isinstance(ctx.model, Model) and ctx.model.profile.get('supports_json_schema_output', False):
         return [replace(tool_def, strict=True) for tool_def in tool_defs]
     return tool_defs
 
-agent = Agent('openai:gpt-5.2', capabilities=[PrepareTools(turn_on_strict_if_openai)])
+agent = Agent('openai:gpt-5.2', capabilities=[PrepareTools(turn_on_strict_if_supported)])
 ```
 
 Usage `ToolsPrepareFunc[AgentDepsT]`.

@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import secrets
+import socket
 import sys
 import warnings
 from collections.abc import AsyncIterator, Callable, Generator, Iterator, Sequence
@@ -75,6 +76,12 @@ from .function_model_prefix import RequestRecorder, check_function_model_prefix_
 # BlockBuster reports: https://github.com/pydantic/pydantic-ai/issues/7446.
 with suppress(ImportError):
     import pandas  # pyright: ignore[reportUnusedImport] # noqa: F401
+
+# `openai` reads `aiohttp` package metadata at import (`openai/_vendor/httpx_aiohttp/transport.py`), a disk
+# read the detector reports when the first import happens inside an async test:
+# https://github.com/pydantic/pydantic-ai/issues/7660.
+with suppress(ImportError):
+    import openai  # pyright: ignore[reportUnusedImport] # noqa: F401
 
 T = TypeVar('T')
 
@@ -509,6 +516,12 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
         (func, 'exa_py/utils.py', '_get_package_version')
         for func in ('os.stat', 'os.listdir', 'os.path.abspath', 'io.TextIOWrapper.read')
     ),
+    # Render's SDK touches its local file on the event loop while downloading, with no public API that avoids it.
+    # Only the live tier reaches this code; the deterministic tier replaces `copy_from`.
+    ('os.stat', 'render/experimental/sandbox/files.py', 'resolve_file_dest'),
+    ('os.path.abspath', 'render/experimental/sandbox/files.py', ('parent_dir', '__init__')),
+    ('io.BufferedWriter.write', 'render/experimental/sandbox/files.py', 'write'),
+    ('os.remove', 'render/experimental/sandbox/files.py', '__exit__'),
     ('os.stat', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
     ('os.listdir', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
     ('io.TextIOWrapper.read', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
@@ -572,6 +585,7 @@ BLOCKBUSTER_TEST_DOUBLES: tuple[str, ...] = (
     'tests/harness/boxlite_sandbox/fake_boxlite.py',
     'tests/harness/daytona_sandbox/fake_daytona.py',
     'tests/harness/e2b_sandbox/fake_e2b.py',
+    'tests/harness/render_sandbox/workspace_helpers.py',
 )
 
 
@@ -886,6 +900,26 @@ except ImportError:
     pass
 
 
+def _reserve_loopback_port() -> int:
+    """A loopback port that no other `bind(0)` is handed while it is in `TIME_WAIT`, but a server can still bind.
+
+    Closing an accepted connection first leaves the port itself in `TIME_WAIT`: the kernel then skips it
+    when allocating a port, while a server that sets `SO_REUSEADDR` (uvicorn does) can bind it. Linux
+    allows that bind only if the socket that left the port in `TIME_WAIT` set `SO_REUSEADDR` too, so the
+    listener sets it, as Rust's `TcpListener::bind` does for the Temporal SDK, which reserves its
+    dev-server ports the same way.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(('127.0.0.1', 0))
+        listener.listen()
+        port: int = listener.getsockname()[1]
+        with socket.create_connection(('127.0.0.1', port)):
+            accepted, _ = listener.accept()
+            accepted.close()
+    return port
+
+
 @pytest.fixture(scope='session')
 def prefect_test_server() -> Iterator[None]:
     """A Prefect test server with an isolated database, shared by every Prefect test in the worker.
@@ -896,6 +930,7 @@ def prefect_test_server() -> Iterator[None]:
     short connect timeout that flakes on slow runners.
     """
     pytest.importorskip('prefect')
+    import prefect.testing.utilities
     from prefect.settings import PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED, temporary_settings
     from prefect.testing.utilities import prefect_test_harness
 
@@ -904,10 +939,15 @@ def prefect_test_server() -> Iterator[None]:
     # recorder's bulk inserts exhaust it, failing the flow whose state it was recording. Nothing
     # here reads what it records: task run states reach the API through the task engine.
     with (
+        pytest.MonkeyPatch.context() as monkeypatch,
         temporary_settings({PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED: False}),
-        prefect_test_harness(server_startup_timeout=120),
     ):
-        yield
+        # The harness picks its port by binding port 0 and closing the socket, which leaves the port free
+        # for the 15-25s uvicorn takes to bind it. A server another worker starts meanwhile, such as a
+        # Temporal dev server, can be handed it and answer the harness's health check, failing its setup.
+        monkeypatch.setattr(prefect.testing.utilities, '_find_available_port', _reserve_loopback_port)
+        with prefect_test_harness(server_startup_timeout=120):
+            yield
     # Prefect's test server leaves client sockets for GC on Python 3.14; collect them here, where the
     # warning is expected, rather than in whichever test the collector happens to run in.
     with warnings.catch_warnings():

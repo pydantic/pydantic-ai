@@ -6,9 +6,12 @@ import hashlib
 import json
 import os
 import sqlite3
+import sys
+import uuid
 from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass, field, replace
+from importlib.util import find_spec
 from pathlib import Path
 from types import TracebackType
 from typing import Protocol
@@ -52,6 +55,26 @@ class Store(MemoryStore, SearchableMemoryStore, Protocol):
     """Combined contract implemented by the bundled stores."""
 
 
+def test_wildcard_import_skips_the_optional_pixeltable_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, 'pixeltable', None)
+    namespace: dict[str, object] = {}
+    exec('from pydantic_ai_harness.memory import *', namespace)
+    assert 'InMemoryStore' in namespace
+    assert 'PixeltableMemoryStore' not in namespace
+
+
+def test_unknown_memory_attribute_raises() -> None:
+    import pydantic_ai_harness.memory as memory
+
+    with pytest.raises(AttributeError, match="has no attribute 'MissingStore'"):
+        memory.MissingStore
+
+
+_PIXELTABLE = pytest.param(3, marks=pytest.mark.skipif(find_spec('pixeltable') is None, reason='pixeltable extra'))
+_STORE_INDEXES = (0, 1, 2, _PIXELTABLE)
+_VERSION_INDEXES = (0, 2, _PIXELTABLE)
+
+
 def _local_stores(tmp_path: Path) -> list[Store]:
     return [
         InMemoryStore(),
@@ -60,9 +83,18 @@ def _local_stores(tmp_path: Path) -> list[Store]:
     ]
 
 
-@pytest.mark.parametrize('index', range(3))
+def _local_store(tmp_path: Path, index: int) -> Store:
+    if index < 3:
+        return _local_stores(tmp_path)[index]
+    from pydantic_ai_harness.memory import PixeltableMemoryStore
+
+    # The session-wide `PIXELTABLE_HOME` is a temporary catalog, so each test only needs its own table.
+    return PixeltableMemoryStore(table_name=f'harness_contract_{uuid.uuid4().hex[:8]}.memory')
+
+
+@pytest.mark.parametrize('index', _STORE_INDEXES)
 async def test_local_store_compare_and_set_contract(tmp_path: Path, index: int) -> None:
-    store = _local_stores(tmp_path)[index]
+    store = _local_store(tmp_path, index)
 
     created = await store.write('notes/main.md', 'one', expected_version=None)
     assert created.version is not None
@@ -186,9 +218,9 @@ def test_memory_file_with_metadata_stays_hashable() -> None:
     assert hash(file) == hash(MemoryFile(content='a', version='1', operation_id=None, truncated=False))
 
 
-@pytest.mark.parametrize('index', (0, 2))  # `FileStore` versions are content hashes; see below.
+@pytest.mark.parametrize('index', _VERSION_INDEXES)  # `FileStore` versions are content hashes; see below.
 async def test_local_store_versions_do_not_repeat_after_delete_and_recreate(tmp_path: Path, index: int) -> None:
-    store = _local_stores(tmp_path)[index]
+    store = _local_store(tmp_path, index)
     first = await store.write('main.md', 'same', expected_version=None)
     await store.delete('main.md', expected_version=first.version)
     recreated = await store.write('main.md', 'same', expected_version=None)
@@ -200,9 +232,9 @@ async def test_local_store_versions_do_not_repeat_after_delete_and_recreate(tmp_
         await store.delete('main.md', expected_version=first.version)
 
 
-@pytest.mark.parametrize('index', range(3))
+@pytest.mark.parametrize('index', _STORE_INDEXES)
 async def test_local_store_search_skips_nested_scopes(tmp_path: Path, index: int) -> None:
-    store = _local_stores(tmp_path)[index]
+    store = _local_store(tmp_path, index)
     await store.write('acme/main/MEMORY.md', 'tea', expected_version=None)
     await store.write('acme/main/main/MEMORY.md', 'tea tea', expected_version=None)
     await store.write('acme/main/main/notes.md', 'tea tea tea', expected_version=None)
@@ -286,9 +318,9 @@ async def test_store_paths_reject_dot_segments(path: str) -> None:
         await InMemoryStore().write(path, 'content', expected_version=None)
 
 
-@pytest.mark.parametrize('index', range(3))
+@pytest.mark.parametrize('index', _STORE_INDEXES)
 async def test_local_store_read_and_listing_bounds(tmp_path: Path, index: int) -> None:
-    store = _local_stores(tmp_path)[index]
+    store = _local_store(tmp_path, index)
     created = await store.write('a.md', '0123456789', expected_version=None)
     await store.write('b.md', 'b', expected_version=None)
     await store.write('c.md', 'c', expected_version=None)
@@ -305,9 +337,9 @@ async def test_local_store_read_and_listing_bounds(tmp_path: Path, index: int) -
     assert await store.list_paths(limit=2) == ['a.md', 'b.md']
 
 
-@pytest.mark.parametrize('index', range(3))
+@pytest.mark.parametrize('index', _STORE_INDEXES)
 async def test_local_store_operation_receipts(tmp_path: Path, index: int) -> None:
-    store = _local_stores(tmp_path)[index]
+    store = _local_store(tmp_path, index)
     operation = MemoryOperation(id='run-1:call-1', fingerprint='write:notes/main.md:one')
 
     first = await store.write('notes/main.md', 'one', expected_version=None, operation=operation)
@@ -330,9 +362,9 @@ async def test_local_store_operation_receipts(tmp_path: Path, index: int) -> Non
     assert (await store.delete('missing.md', expected_version=None, operation=delete_operation)).replayed
 
 
-@pytest.mark.parametrize('index', range(3))
+@pytest.mark.parametrize('index', _STORE_INDEXES)
 async def test_local_store_scoped_bounded_search(tmp_path: Path, index: int) -> None:
-    store = _local_stores(tmp_path)[index]
+    store = _local_store(tmp_path, index)
     for path, content in (
         ('tenant-a/main/alpha.md', 'alpha alpha'),
         ('tenant-a/main/beta.md', 'alpha'),
@@ -357,23 +389,24 @@ async def test_local_store_scoped_bounded_search(tmp_path: Path, index: int) -> 
     assert tiny.matches == []
     assert tiny.truncated
 
-    for query, limit, max_files, max_chars in (
-        ('', 10, 10, 80),
-        ('alpha', 0, 10, 80),
-        ('alpha', 10, 0, 80),
-        ('alpha', 10, 10, 0),
+    for query, limit, max_files, max_chars, max_file_chars in (
+        ('', 10, 10, 80, 1_000),
+        ('alpha', 0, 10, 80, 1_000),
+        ('alpha', 10, 0, 80, 1_000),
+        ('alpha', 10, 10, 0, 1_000),
+        ('alpha', 10, 10, 80, 0),
     ):
         empty = await store.search(
-            '', query, limit=limit, max_files=max_files, max_chars=max_chars, max_file_chars=1_000
+            '', query, limit=limit, max_files=max_files, max_chars=max_chars, max_file_chars=max_file_chars
         )
         assert empty.matches == []
         assert empty.scanned == 0
         assert not empty.truncated
 
 
-@pytest.mark.parametrize('index', range(3))
+@pytest.mark.parametrize('index', _STORE_INDEXES)
 async def test_local_store_search_snippets_cover_tiny_and_offset_windows(tmp_path: Path, index: int) -> None:
-    store = _local_stores(tmp_path)[index]
+    store = _local_store(tmp_path, index)
     await store.write('a', '012345alpha-tail', expected_version=None)
 
     tiny = await store.search('', 'alpha', limit=1, max_files=1, max_chars=3, max_file_chars=1_000)
@@ -384,38 +417,44 @@ async def test_local_store_search_snippets_cover_tiny_and_offset_windows(tmp_pat
     assert offset.matches[0].snippet.startswith('...')
 
 
-@pytest.mark.parametrize('index', range(3))
+@pytest.mark.parametrize('index', _STORE_INDEXES)
 async def test_local_store_search_bounds_each_file_and_ignores_namespace_prefix(tmp_path: Path, index: int) -> None:
-    store = _local_stores(tmp_path)[index]
+    store = _local_store(tmp_path, index)
     namespace = 'n' * 180
     prefix = f'{namespace}/main/'
     await store.write(f'{prefix}note.md', 'prefix TARGET', expected_version=None)
 
     bounded = await store.search(prefix, 'target', limit=10, max_files=10, max_chars=100, max_file_chars=6)
     assert bounded.matches == []
+    assert bounded.truncated
+    cut_hit = await store.search(prefix, 'prefix', limit=10, max_files=10, max_chars=100, max_file_chars=6)
+    assert [match.path for match in cut_hit.matches] == [f'{prefix}note.md']
+    assert cut_hit.truncated
     namespace_result = await store.search(prefix, namespace, limit=10, max_files=10, max_chars=100, max_file_chars=100)
     assert namespace_result.matches == []
     visible = await store.search(prefix, 'target', limit=10, max_files=10, max_chars=20, max_file_chars=100)
     assert [match.path for match in visible.matches] == [f'{prefix}note.md']
+    assert not visible.truncated
 
 
-@pytest.mark.parametrize('index', range(3))
+@pytest.mark.parametrize('index', _STORE_INDEXES)
 @pytest.mark.parametrize('path', ('../escape.md', '/absolute.md', 'a//b.md', 'a/../../b.md', 'a b.md'))
 async def test_local_stores_reject_unsafe_paths(tmp_path: Path, index: int, path: str) -> None:
-    store = _local_stores(tmp_path)[index]
+    store = _local_store(tmp_path, index)
     with pytest.raises(ValueError):
         await store.read(path, max_chars=1_000)
 
 
-def test_bundled_stores_implement_public_protocols(tmp_path: Path) -> None:
-    for store in _local_stores(tmp_path):
-        assert isinstance(store, MemoryStore)
-        assert isinstance(store, SearchableMemoryStore)
+@pytest.mark.parametrize('index', _STORE_INDEXES)
+def test_bundled_stores_implement_public_protocols(tmp_path: Path, index: int) -> None:
+    store = _local_store(tmp_path, index)
+    assert isinstance(store, MemoryStore)
+    assert isinstance(store, SearchableMemoryStore)
 
 
-@pytest.mark.parametrize('index', range(3))
+@pytest.mark.parametrize('index', _STORE_INDEXES)
 async def test_local_stores_reject_non_positive_read_and_listing_bounds(tmp_path: Path, index: int) -> None:
-    store = _local_stores(tmp_path)[index]
+    store = _local_store(tmp_path, index)
     with pytest.raises(ValueError, match='max_chars'):
         await store.read('main.md', max_chars=0)
     with pytest.raises(ValueError, match='limit'):

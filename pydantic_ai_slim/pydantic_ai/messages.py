@@ -4374,6 +4374,17 @@ from ._tool_search import (  # noqa: E402  (intentional late import: typed subcl
     ToolSearchReturnPart as ToolSearchReturnPart,
 )
 
+Authority: TypeAlias = Literal['operator', 'user', 'none']
+"""How much authority content carries with the model, by who wrote it.
+
+- `'operator'`: the application's own, such as its instructions or files the operator controls.
+- `'user'`: the user's, such as a user's saved notes or uploads.
+- `'none'`: data, such as a tool's output, another model's text or a file someone else wrote.
+
+A [`Workspace`][pydantic_ai.workspaces.Workspace]'s [`authority`][pydantic_ai.workspaces.Workspace.authority] is
+the authority of the files in it.
+"""
+
 
 def _model_request_part_discriminator(v: Any) -> str | None:
     """Callable discriminator for [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart].
@@ -6664,7 +6675,14 @@ class PartEndEvent:
 
 @dataclass(repr=False, kw_only=True)
 class FinalResultEvent:
-    """An event indicating the response to the current model request matches the output schema and will produce a result."""
+    """An event indicating the response to the current model request matches the output schema and could produce a result.
+
+    [`Agent.run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] takes the first matching part as the final result.
+    Methods that run the agent graph to completion, like
+    [`Agent.run_stream_events`][pydantic_ai.agent.AbstractAgent.run_stream_events] and
+    [`Agent.iter`][pydantic_ai.agent.AbstractAgent.iter], can end with a different result,
+    for example from an output tool call that follows matching text.
+    """
 
     tool_name: str | None
     """The name of the output tool that was called. `None` if the result is from text content and not from a tool."""

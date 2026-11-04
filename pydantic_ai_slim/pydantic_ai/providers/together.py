@@ -14,6 +14,7 @@ from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, OpenAIReasoningEffort
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 try:
     from openai import AsyncOpenAI
@@ -54,6 +55,7 @@ class TogetherProvider(_OpenAISDKProvider):
             'mistralai': mistral_model_profile,
             'moonshotai': moonshotai_model_profile,
             'openai': harmony_model_profile,  # gpt-oss models speak OpenAI's Harmony response format
+            'zai-org': _glm_5_3_schema_profile,
         }
 
         profile = None

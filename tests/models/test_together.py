@@ -73,9 +73,14 @@ async def test_together_native_output_builds_json_schema_response_format(allow_m
 
     assert result.output == CityLocation(city='Mexico City', country='Mexico')
     response_format = bodies[0]['response_format']
+    assert isinstance(response_format, dict)
     assert response_format['type'] == 'json_schema'
-    assert response_format['json_schema']['strict'] is True
-    assert response_format['json_schema']['schema']['properties'] == {
+    json_schema = response_format['json_schema']
+    assert isinstance(json_schema, dict)
+    assert json_schema['strict'] is True
+    schema = json_schema['schema']
+    assert isinstance(schema, dict)
+    assert schema['properties'] == {
         'city': {'type': 'string'},
         'country': {'type': 'string'},
     }
