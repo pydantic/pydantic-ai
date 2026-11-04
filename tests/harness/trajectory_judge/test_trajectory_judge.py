@@ -15,7 +15,7 @@ from pydantic import ValidationError
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.exceptions import UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
@@ -42,6 +42,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness.trajectory_judge import AllGood, Steer, TrajectoryJudge, TrajectoryVerdict
 from tests.conftest import legacy_retry_prompt_part, try_import
+from tests.harness._recording_durability import RecordingDurability
 
 with try_import() as anthropic_imports:
     from anthropic.types.beta import BetaTextBlock, BetaToolUseBlock, BetaUsage
@@ -1597,24 +1598,35 @@ class TestUsageCoordination:
 
 
 class TestDurableExecution:
-    async def test_rejected_inside_a_durable_container(self) -> None:
-        """A judged run inside a durable workflow or flow fails fast, before any model request."""
+    async def test_evaluation_is_a_durable_operation_awaited_before_the_next_request(self) -> None:
+        """Inside a durable container the evaluation is checkpointed and its steering reaches the very next request."""
+        seen: list[str] = []
 
-        class DBOSDurability(AbstractCapability[None]):
-            in_durable_context = True
+        def judge_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return _all_good_response() if 'steered' in _all_user_text(messages) else _steer_response('cite the file')
 
-        DBOSDurability.__module__ = 'pydantic_ai.durable_exec.dbos'
-
-        def main_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
-            return _text_response('never reached')
+        def main_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(_all_user_text(messages))
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('work', {})])
+            return _text_response('done')
 
         capabilities: list[AbstractCapability[None]] = [
-            DBOSDurability(),
-            TrajectoryJudge(model=_steer_model(), every=1),
+            TrajectoryJudge(model=FunctionModel(judge_fn), id='judge', every=1),
+            RecordingDurability(),
         ]
-        agent = Agent(FunctionModel(main_fn), deps_type=type(None), capabilities=capabilities)
-        with pytest.raises(UserError, match='durable workflow or flow'):
-            await agent.run('do the thing')
+        agent = Agent(FunctionModel(main_fn), name='judged', deps_type=type(None), capabilities=capabilities)
+
+        @agent.tool_plain
+        def work() -> str:
+            return 'worked'
+
+        result = await agent.run('do the thing')
+        assert result.output == 'done'
+        bound = RecordingDurability.from_agent(agent)
+        assert bound is not None
+        assert [name for name, _ in bound.calls] == ['judged__model.request', 'judged__capability__judge.evaluate'] * 2
+        assert seen[1].endswith(_steering('trajectory-judge', 'cite the file'))
 
     async def test_durable_capable_agent_outside_its_container_is_judged(self) -> None:
         """Only the durable container is rejected; the same agent run plainly keeps its judge."""
