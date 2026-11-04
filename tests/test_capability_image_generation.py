@@ -1494,16 +1494,17 @@ class TestImageGenerationCapability:
         native = ImageGenerationTool(provider_settings={'openai': {'quality': 'high', 'moderation': 'low'}})
         expected = {'openai': {'quality': 'low', 'moderation': 'low'}}
 
-        cap = ImageGeneration(native=native, fallback_subagent_model='test', quality='low')
-        resolved = cap._resolved_native()  # pyright: ignore[reportPrivateUsage]
+        from_instance = ImageGeneration[None](native=native, fallback_subagent_model='test', quality='low')
+        resolved = from_instance._resolved_native()  # pyright: ignore[reportPrivateUsage]
         assert isinstance(resolved, ImageGenerationTool)
         assert resolved.provider_settings == expected
 
-        cap = ImageGeneration(native=lambda ctx: native, fallback_subagent_model='test', quality='low')
-        resolve = cap._resolved_native()  # pyright: ignore[reportPrivateUsage]
-        assert callable(resolve)
-        from_factory = await resolve(cast(RunContext[None], None))
-        assert from_factory.provider_settings == expected
+        from_factory = ImageGeneration[None](native=lambda ctx: native, fallback_subagent_model='test', quality='low')
+        resolve = from_factory._resolved_native()  # pyright: ignore[reportPrivateUsage]
+        assert not isinstance(resolve, ImageGenerationTool)
+        pending = resolve(cast(RunContext[None], None))
+        assert inspect.isawaitable(pending)
+        assert (await pending).provider_settings == expected
 
     def test_image_generation_overrides_do_not_repeat_legacy_warning(self):
         """A deprecated field warned when the tool was built, so applying overrides stays quiet and nested wins."""
