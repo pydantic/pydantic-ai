@@ -17,6 +17,7 @@ from pydantic_ai import Agent
 from pydantic_ai._framing import neutralize_tags
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, durable_operation
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -159,7 +160,7 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
 
     Inside a durable workflow or flow (Temporal, DBOS, Prefect) each evaluation is the durable
     operation `evaluate`, awaited before the run continues so replay delivers the same steering
-    at the same point. Durable execution needs an explicit, per-judge `id`.
+    at the same point. This needs an explicit, per-judge `id`; an id-less judge is rejected there.
     """
 
     model: Model | KnownModelName | str | None = None
@@ -224,6 +225,17 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
                 )
             self._judge = self.agent
 
+    def __new__(cls, *args: Any, **kwargs: Any) -> TrajectoryJudge[AgentDepsT]:
+        """Build a `_DurableTrajectoryJudge` when given an `id`.
+
+        A durable operation needs a stable `id`, and durability binds every class-level operation when the
+        agent is built, so only judges with an `id` declare one: an id-less judge on a durable-capable agent
+        keeps building.
+        """
+        if cls is TrajectoryJudge and kwargs.get('id') is not None:
+            return object.__new__(_DurableTrajectoryJudge)
+        return object.__new__(cls)
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> TrajectoryJudge[AgentDepsT]:
         """Return a fresh per-run instance so step counts and in-flight evaluations are not shared.
 
@@ -231,6 +243,14 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
         `_steps` to `0`, `_task` to `None`, and `_judge` rebuilt from the same config.
         """
         return replace(self)
+
+    async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Reject an id-less judged run inside a durable workflow or flow, before any budget is spent."""
+        if in_durable_context(ctx):
+            raise UserError(
+                '`TrajectoryJudge` needs an `id` inside a durable workflow or flow, so its evaluations can be '
+                "checkpointed: construct it as `TrajectoryJudge(..., id='...')`."
+            )
 
     async def after_model_request(
         self,
@@ -335,11 +355,10 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
         if self.on_verdict is not None:
             self.on_verdict(verdict)
 
-    @durable_operation('evaluate')
     async def _judge_verdict(self, ctx: RunContext[AgentDepsT], prompt: str) -> tuple[TrajectoryVerdict, str]:
-        """Run the judge, as a durable operation inside a workflow or flow, returning its verdict and a steering `ref`.
+        """Run the judge, returning its verdict and a steering `ref`.
 
-        The random `ref` is made here so a replay reuses the recorded one and delivers the same steering.
+        The random `ref` is made here so a durable replay reuses the recorded one and delivers the same steering.
         """
         result = await self._judge.run(
             prompt,
@@ -389,6 +408,17 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
     def get_serialization_name(cls) -> str | None:
         """Not spec-serializable: the capability may hold a live `Agent` and a callback."""
         return None
+
+
+class _DurableTrajectoryJudge(TrajectoryJudge[AgentDepsT]):
+    """A `TrajectoryJudge` with an `id`, whose evaluation is a durable operation inside a workflow or flow."""
+
+    async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
+        return None
+
+    @durable_operation('evaluate')
+    async def _judge_verdict(self, ctx: RunContext[AgentDepsT], prompt: str) -> tuple[TrajectoryVerdict, str]:
+        return await super()._judge_verdict(ctx, prompt)
 
 
 def _steering_parts(judge: str, message: str, ref: str) -> tuple[SystemPromptPart, TextContent]:

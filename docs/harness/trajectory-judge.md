@@ -134,7 +134,20 @@ agent = Agent(
 
 - The judge's model usage is threaded onto the run's `usage` and respects the run's `usage_limits`: each launch claims one request on the shared usage before the evaluation starts, so the parent's next request and concurrent judges account for in-flight evaluations and the shared request limit cannot be exceeded. A launch the request budget cannot fit skips the tick, like one that finds an evaluation still in flight. The judge run is filed under the judged run's `conversation_id`.
 - An evaluation failure is raised on the run at the next cadence tick or at run end. To have a judge degrade instead, pass an `agent` that falls back to another model (for example with the [`ModelFallback`](../capabilities/model-fallback.md) capability).
-- Inside a [durable execution](../durable_execution/overview.md) workflow or flow (Temporal, DBOS, Prefect), each evaluation is the durable operation `<agent>__capability__<id>.evaluate`, awaited before the run continues instead of running concurrently (so a failure is raised at once), and a replay reuses the recorded verdict and delivers the same steering at the same point. `on_verdict` runs again on replay. A judge on a durable-capable agent needs an explicit `id`, distinct per judge.
+
+## Durable execution
+
+Inside a [durable execution](../durable_execution/overview.md) workflow or flow (Temporal, DBOS, Prefect), a judge with an `id` checkpoints each evaluation as the durable operation `<agent>__capability__<id>.evaluate`. The evaluation is awaited before the run continues, so a replay reuses the recorded verdict and delivers the same steering at the same point, and the judge is billed once. Give each judge its own `id`:
+
+```python
+from pydantic_ai_harness import TrajectoryJudge
+
+judge = TrajectoryJudge(model='{{ anthropic:small }}', id='evidence-judge', every=10)
+```
+
+A judge without an `id` is rejected with `UserError` before the first model request inside a workflow or flow. Outside one, nothing changes and `id` stays optional.
+
+`on_verdict` is not part of the durable operation, so a replay calls it again with the recorded verdict. Make the callback idempotent if it writes to an external system.
 
 ## Observability
 

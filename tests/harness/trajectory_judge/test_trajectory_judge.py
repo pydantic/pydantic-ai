@@ -15,7 +15,7 @@ from pydantic import ValidationError
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.exceptions import UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
@@ -1598,6 +1598,25 @@ class TestUsageCoordination:
 
 
 class TestDurableExecution:
+    async def test_a_judge_without_an_id_is_rejected_inside_a_durable_container(self) -> None:
+        """Without an `id` there is no durable operation, so the run fails fast before any model request."""
+
+        class DBOSDurability(AbstractCapability[None]):
+            in_durable_context = True
+
+        DBOSDurability.__module__ = 'pydantic_ai.durable_exec.dbos'
+
+        def main_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+            return _text_response('never reached')
+
+        capabilities: list[AbstractCapability[None]] = [
+            DBOSDurability(),
+            TrajectoryJudge(model=_steer_model(), every=1),
+        ]
+        agent = Agent(FunctionModel(main_fn), deps_type=type(None), capabilities=capabilities)
+        with pytest.raises(UserError, match='needs an `id`'):
+            await agent.run('do the thing')
+
     async def test_evaluation_is_a_durable_operation_awaited_before_the_next_request(self) -> None:
         """Inside a durable container the evaluation is checkpointed and its steering reaches the very next request."""
         seen: list[str] = []

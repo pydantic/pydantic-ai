@@ -169,7 +169,8 @@ Most harness capabilities run under core `TemporalDurability`, `DBOSDurability`,
   `session_scope`): their toolsets carry
   no stable id, and passing `id=` to the capability does not reach the toolset.
 - `PlaywrightBrowser` raises `UserError` at `Agent(...)` with any durability capability (a live
-  browser cannot survive replay).
+  browser cannot survive replay); a `TrajectoryJudge` without an `id` raises at run start inside a durable
+  workflow.
 - `CodeMode` runs but skips its `speculate=` early tool launches. `BackgroundTools`, guardrails,
   `SpendLimits`, `Memory`, `Planning`, `SubAgents`, the sandboxes, and the hosted integrations build
   under Temporal.
