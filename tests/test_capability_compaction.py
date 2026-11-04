@@ -532,6 +532,54 @@ async def test_result_is_checked(build: CompactionBuilder, error: type[Exception
         await agent.run('hi')
 
 
+def _summary_ahead_of_the_system_prompt(request: CompactionRequest) -> CompactionResult:
+    """A summary prepended to the history, ahead of the standing system prompt in the opening request."""
+    part = CompactionPart(content='summary')
+    return CompactionResult(messages=[ModelRequest(parts=[part]), request.messages[-1]], part=part, handler='h')
+
+
+def _summary_after_the_system_prompt(request: CompactionRequest) -> CompactionResult:
+    """A summary after the standing system prompt, which keeps opening the history."""
+    opening = request.messages[0]
+    assert isinstance(opening, ModelRequest)
+    [system_prompt, *_] = opening.parts
+    part = CompactionPart(content='summary')
+    return CompactionResult(
+        messages=[ModelRequest(parts=[system_prompt, part]), request.messages[-1]], part=part, handler='h'
+    )
+
+
+def _provider_part_ahead_of_the_system_prompt(request: CompactionRequest) -> CompactionResult:
+    """A provider's compaction response at the start, which the provider takes the place of the history with."""
+    part = CompactionPart(provider_name='openai', provider_details={'encrypted_content': 'gAAA'})
+    return CompactionResult(
+        messages=[ModelResponse(parts=[part], provider_name='openai'), request.messages[-1]],
+        part=part,
+        handler='native',
+    )
+
+
+async def test_a_summary_must_not_go_ahead_of_the_standing_system_prompt():
+    """A summary in a request before the standing system prompt would demote that prompt to user text."""
+    agent = Agent(
+        TestModel(),
+        system_prompt='You are a pirate.',
+        capabilities=[RequestOnce(), Returns(_summary_ahead_of_the_system_prompt)],
+    )
+    with pytest.raises(UserError, match="compacted by 'h' must open with the standing system prompt"):
+        await agent.run('hi')
+
+
+@pytest.mark.parametrize('build', [_summary_after_the_system_prompt, _provider_part_ahead_of_the_system_prompt])
+async def test_compactions_that_keep_the_standing_system_prompt_first_pass(build: CompactionBuilder):
+    """A summary after the standing system prompt is fine, and a provider's part in its response isn't checked."""
+    seen: list[list[ModelMessage]] = []
+    agent = Agent(seen_by(seen), system_prompt='You are a pirate.', capabilities=[RequestOnce(), Returns(build)])
+    result = await agent.run('hi')
+    assert result.output == 'hello'
+    assert len(result.compactions) == 1
+
+
 async def test_compaction_only_response_records_the_summary_size():
     """A provider's compaction response is stamped with the summary's size as its context size."""
     part = CompactionPart(provider_name='openai', provider_details={'encrypted_content': 'gAAA'})

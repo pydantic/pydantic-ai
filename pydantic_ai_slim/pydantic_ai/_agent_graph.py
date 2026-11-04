@@ -962,6 +962,14 @@ def _check_compaction_result(result: CompactionResult, given: Sequence[_messages
             f'The compaction by {handler!r} produced an empty summary, which would replace the history with nothing.'
         )
     holder = latest[0]
+    if isinstance(messages[holder], _messages.ModelRequest) and _standing_prompt_count(
+        messages
+    ) < _standing_prompt_count(given):
+        raise exceptions.UserError(
+            f'The history compacted by {handler!r} must open with the standing system prompt of the history it was '
+            'given, ahead of its `CompactionPart`: put the summary after the opening `SystemPromptPart`s, or the '
+            "system prompt is sent as user text to models that don't take it inline."
+        )
     if (kept_from := result.kept_from) is None:
         return _default_kept_from(messages, holder, given)
     if not _keeps_unchanged_tail(messages, holder, kept_from, given):
@@ -970,6 +978,20 @@ def _check_compaction_result(result: CompactionResult, given: Sequence[_messages
             'messages from there on must be the last messages of the history it was given, unchanged.'
         )
     return kept_from
+
+
+def _standing_prompt_count(messages: Sequence[_messages.ModelMessage]) -> int:
+    """How many `SystemPromptPart`s the standing system prompt of `messages` has, as the request to a model counts it.
+
+    That's the opening parts of its first request, after the requests at the start are merged into one, as they are
+    before they're sent.
+    """
+    parts: list[_messages.ModelRequestPart] = []
+    for message in messages:
+        if not isinstance(message, _messages.ModelRequest):
+            break
+        parts.extend(message.parts)
+    return models._standing_system_prompt_count(_messages.ModelRequest(parts=parts))  # pyright: ignore[reportPrivateUsage]
 
 
 def _is_empty_summary(part: _messages.CompactionPart) -> bool:

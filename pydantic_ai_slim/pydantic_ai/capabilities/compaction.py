@@ -68,7 +68,9 @@ class CompactionResult:
     """The history that replaces [`CompactionRequest.messages`][pydantic_ai.capabilities.CompactionRequest.messages].
 
     It has to contain `part` and end with the request being answered, and it can keep any other messages, like
-    the most recent turns or, for OpenAI, the user messages the provider kept next to its compaction item.
+    the most recent turns or, for OpenAI, the user messages the provider kept next to its compaction item. When
+    `part` is in a `ModelRequest`, the standing system prompt the given history opens with, its leading
+    `SystemPromptPart`s, has to stay first, ahead of `part`, so it's still sent as the system prompt.
     """
 
     part: CompactionPart
