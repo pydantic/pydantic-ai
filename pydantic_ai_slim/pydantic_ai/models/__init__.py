@@ -3921,7 +3921,7 @@ def _restore_special_tokens_at_the_model_boundary(cls: type[Model]) -> None:
         @wraps(request)
         async def restoring_request(self: Model, *args: Any, **kwargs: Any) -> ModelResponse:
             response = await request(self, *args, **kwargs)
-            return restore_special_tokens_in_response(response) if self._restores_special_tokens else response
+            return restore_special_tokens_in_response(response) if self._restores_special_tokens else response  # pyright: ignore[reportPrivateUsage]
 
         cls.request = restoring_request
 
@@ -3930,10 +3930,12 @@ def _restore_special_tokens_at_the_model_boundary(cls: type[Model]) -> None:
 
         @wraps(request_stream)
         @asynccontextmanager
-        async def restoring_request_stream(self: Model, *args: Any, **kwargs: Any) -> AsyncIterator[StreamedResponse]:
+        async def restoring_request_stream(
+            self: Model, *args: Any, **kwargs: Any
+        ) -> AsyncGenerator[StreamedResponse, None]:
             async with request_stream(self, *args, **kwargs) as stream:
-                if self._restores_special_tokens:
-                    stream._parts_manager.special_token_restorer = StreamRestorer()  # pyright: ignore[reportPrivateUsage]
+                if self._restores_special_tokens:  # pyright: ignore[reportPrivateUsage]
+                    stream._parts_manager.special_token_restorer = StreamRestorer()
                 yield stream
 
         cls.request_stream = restoring_request_stream
@@ -3944,7 +3946,7 @@ def _restore_special_tokens_at_the_model_boundary(cls: type[Model]) -> None:
         @wraps(batch_decode)
         def restoring_batch_decode(self: Model, *args: Any, **kwargs: Any) -> ModelResponse:
             response = batch_decode(self, *args, **kwargs)
-            return restore_special_tokens_in_response(response) if self._restores_special_tokens else response
+            return restore_special_tokens_in_response(response) if self._restores_special_tokens else response  # pyright: ignore[reportPrivateUsage]
 
         cls.batch_decode = restoring_batch_decode
 

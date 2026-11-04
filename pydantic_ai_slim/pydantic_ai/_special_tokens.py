@@ -156,9 +156,10 @@ def _restore_part(part: _PartT) -> _PartT:
         if content != part.content:
             new_part = replace(part, content=content)
     elif isinstance(part, ToolCallPart):
-        args = _restore_args(part.args)
-        if args != part.args:
-            new_part = replace(part, args=args)
+        call = cast('ToolCallPart[Any]', part)
+        args = _restore_args(call.args)
+        if args != call.args:
+            new_part = replace(call, args=args)
     return new_part
 
 
@@ -267,9 +268,12 @@ class StreamRestorer:
         if restorer is None or not restorer.held:
             return restored
         if isinstance(restored, TextPart):
-            return replace(restored, content=restored.content.removesuffix(restorer.held))  # pyright: ignore[reportReturnType]
-        assert isinstance(restored, ToolCallPart) and isinstance(restored.args, str)
-        return replace(restored, args=restored.args.removesuffix(restorer.held))  # pyright: ignore[reportReturnType]
+            new_part: Any = replace(restored, content=restored.content.removesuffix(restorer.held))
+            return new_part
+        call = cast('ToolCallPart[Any]', restored)
+        assert isinstance(call.args, str)
+        new_part = replace(call, args=call.args.removesuffix(restorer.held))
+        return new_part
 
     def flush(self) -> list[PartDeltaEvent]:
         """Send what's held for every part, as deltas: at the end of the stream, or before a new part starts."""
@@ -332,13 +336,15 @@ def _break_message(message: ModelMessage) -> ModelMessage:
 def _break_part(part: _PartT) -> _PartT:
     new_part: Any = part
     if isinstance(part, UserPromptPart | BaseToolReturnPart):
-        content = _break_value(part.content)
-        if content is not part.content:
-            new_part = replace(part, content=content)
+        container = cast('UserPromptPart | BaseToolReturnPart[Any]', part)
+        content = _break_value(container.content)
+        if content is not container.content:
+            new_part = replace(container, content=content)
     elif isinstance(part, BaseToolCallPart):
-        args = _break_value(part.args)
-        if args is not part.args:
-            new_part = replace(part, args=args)
+        call = cast('BaseToolCallPart[Any]', part)
+        args = _break_value(call.args)
+        if args is not call.args:
+            new_part = replace(call, args=args)
     elif (
         isinstance(part, TextPart)
         or (isinstance(part, ThinkingPart) and part.signature is None)
