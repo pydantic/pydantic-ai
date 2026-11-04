@@ -4700,7 +4700,7 @@ def _lower_authority(a: Authority, b: Authority) -> Authority:
     return a if _AUTHORITY_RANK[a] <= _AUTHORITY_RANK[b] else b
 
 
-def _workspace_authority(workspace: Workspace, path: str) -> Authority:
+async def _workspace_authority(workspace: Workspace, path: str) -> Authority:
     """The [authority][pydantic_ai.messages.Authority] of the file at `path` in `workspace`.
 
     A workspace reports one authority for all its files, [`Workspace.authority`][pydantic_ai.workspaces.Workspace.authority],
@@ -4736,7 +4736,7 @@ class OperatorText(str):
         cloned third-party repository.
         """
         text = cls(await workspace.read_text(path))
-        text._source = WorkspaceSource.from_workspace(workspace, path)
+        text._source = await WorkspaceSource.from_workspace(workspace, path)
         return text
 
 
@@ -4785,7 +4785,7 @@ class WorkspaceSource:
     """Who wrote content from this source, for the lookalike note."""
 
     @classmethod
-    def from_workspace(cls, workspace: Workspace, path: str) -> WorkspaceSource:
+    async def from_workspace(cls, workspace: Workspace, path: str) -> WorkspaceSource:
         """The source for content read from `path` in `workspace`, with the authority of the workspace's files.
 
         That's [`workspace.authority`][pydantic_ai.workspaces.Workspace.authority]: `'operator'` unless an
@@ -4794,7 +4794,7 @@ class WorkspaceSource:
         source = cls.__new__(cls)
         # Frozen, and with no generated `__init__`, so the fields are set the way a frozen dataclass sets them.
         object.__setattr__(source, 'path', path)
-        object.__setattr__(source, 'authority', _workspace_authority(workspace, path))
+        object.__setattr__(source, 'authority', await _workspace_authority(workspace, path))
         object.__setattr__(source, 'source_kind', 'workspace')
         return source
 

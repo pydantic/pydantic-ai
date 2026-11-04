@@ -59,9 +59,9 @@ def framed_content(fetched: str, items: list[UserContent]) -> None:
     TextNotePart(content=items, source=OperatorSource())  # pyright: ignore[reportArgumentType]
 
 
-def workspace_sources(workspace: Workspace) -> None:
+async def workspace_sources(workspace: Workspace) -> None:
     # Authority is the workspace's to say: a source can only be built from one.
-    source = WorkspaceSource.from_workspace(workspace, 'AGENTS.md')
+    source = await WorkspaceSource.from_workspace(workspace, 'AGENTS.md')
     assert_type(source.authority, Authority)
     WorkspaceSource(path='AGENTS.md', authority='operator')  # pyright: ignore[reportCallIssue]
 

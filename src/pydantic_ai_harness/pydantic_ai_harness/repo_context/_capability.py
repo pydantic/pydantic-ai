@@ -417,7 +417,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         if context_file is None or self._surfaced(key, in_history):
             return
         self._pending_dirs.add(key)
-        ctx.enqueue(self._note(ctx.workspace, context_file, key))
+        ctx.enqueue(await self._note(ctx.workspace, context_file, key))
 
     def _surfaced(self, key: str, in_history: set[str]) -> bool:
         return key in self._loaded_dirs or key in self._pending_dirs or key in in_history
@@ -456,7 +456,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             return candidate
         return candidate.parent if not entry.is_dir else candidate
 
-    def _note(
+    async def _note(
         self, workspace: Workspace, context_file: ContextFile, directory: str
     ) -> ContextFilePart | ContextFilePathPart:
         """The file's contents, or a pointer to it, as repository data read from `workspace`.
@@ -467,7 +467,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         """
         assert self._cached_working_dir is not None, 'a note is only rendered once the directory is resolved'
         label = context_file_label(context_file.path, self._cached_working_dir)
-        source = WorkspaceSource.from_workspace(workspace, context_file.path.as_posix())
+        source = await WorkspaceSource.from_workspace(workspace, context_file.path.as_posix())
         if self.nested_inject == 'contents':
             return ContextFilePart(
                 content=context_file_part_content(context_file), source=source, path=label, directory=directory

@@ -298,7 +298,7 @@ that pass the workspace's own files to the model. The model treats the agent's i
 operator speaking, so a capability that would put text read from the workspace there sends it with no more
 [authority][pydantic_ai.messages.Authority] than [`ctx.workspace.authority`][pydantic_ai.workspaces.Workspace.authority]:
 in a [capability part](capabilities/custom.md#capability-parts) whose source is
-[`WorkspaceSource.from_workspace(workspace, path)`][pydantic_ai.messages.WorkspaceSource.from_workspace], which
+[`await WorkspaceSource.from_workspace(workspace, path)`][pydantic_ai.messages.WorkspaceSource.from_workspace], which
 Pydantic AI renders in the application's voice for `'operator'`, in the user's turn for `'user'` and as framed data
 for `'none'`. `authority` doesn't limit what the agent can do; use
 [tool approval](deferred-tools.md#human-in-the-loop-tool-approval) or a sandbox for that.
