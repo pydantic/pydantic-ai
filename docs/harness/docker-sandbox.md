@@ -189,7 +189,7 @@ The container doesn't run the image's own entrypoint or command, so a service th
 
 A container that can't be created or started, or that stops mid-command, raises `WorkspaceUnavailableError`. The exit code is the command's own, even when it is one `docker` also uses for its own errors.
 
-On a timeout or cancellation, the command and the processes it started are stopped in the container; a command that detached into a session of its own, like a [Shell](shell.md) background job, keeps running.
+On a timeout or cancellation, the command and the processes it started are stopped in the container; a command that detached into a session of its own, like a [Shell](shell.md) background job, keeps running. Under older crun, such as with Ubuntu 24.04's Podman 4.9.3, a process whose parent has already exited keeps running too.
 
 With Docker, a command that leaves a background process holding its output open, such as `server &` without redirecting the server's output, doesn't return until that process exits: redirect it, as in `server > server.log 2>&1 &`. With Podman, it returns when the command itself exits.
 

@@ -108,7 +108,8 @@ read -r pid 2> /dev/null < "$pidfile" || exit 0
 [ -n "$pid" ] || exit 0
 if kill -0 "-$pid" 2> /dev/null; then
     kill -KILL "-$pid" "$pid" 2> /dev/null
-elif read -r line 2> /dev/null < "/proc/$pid/stat"; then
+else
+    read -r line 2> /dev/null < "/proc/$pid/stat"
     set -- ${{line##*) }}
     group=$3
     tree=" $pid "
