@@ -614,9 +614,7 @@ async def test_a_hook_retrying_the_same_model_records_a_retry():
     async def retry_once(
         ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
     ) -> ModelResponse:
-        if request_context.attempt == 1:
-            raise RetryModelRequest()
-        raise error  # pragma: no cover
+        raise RetryModelRequest()
 
     hooks = Hooks()
     hooks.on.model_request_error(retry_once)

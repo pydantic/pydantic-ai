@@ -102,7 +102,8 @@ FallbackOn = (
     | Sequence[type[Exception] | ExceptionHandler | ResponseHandler]
 )
 """The type of the `fallback_on` parameter to [`ModelFallback`][pydantic_ai.capabilities.ModelFallback]
-and [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]."""
+and [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], and of the `retry_on` parameter to
+[`RetryOnModelErrors`][pydantic_ai.capabilities.RetryOnModelErrors]."""
 
 
 SpecModelError = Literal[
