@@ -1566,7 +1566,8 @@ def fresh_event_loop_policy() -> Iterator[None]:
     try:
         yield
     finally:
-        loop: asyncio.AbstractEventLoop | None = policy._local._loop  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
+        # The loop the run set on the policy; asyncio keeps it in a private thread-local.
+        loop: asyncio.AbstractEventLoop | None = getattr(getattr(policy, '_local'), '_loop')
         if loop is not None:  # pragma: no branch
             loop.close()
         asyncio.set_event_loop_policy(previous)  # pyright: ignore[reportDeprecated]
