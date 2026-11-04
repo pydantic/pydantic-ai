@@ -242,7 +242,7 @@ Available to every test under `tests/models/`. See "Asserting what goes out on t
 ## Assertion Helpers
 
 ### From `conftest.py`
-- `IsNow(tz=timezone.utc)` - datetime within 10 seconds of now
+- `IsNow(tz=timezone.utc)` - datetime made during this test, give or take 10 seconds
 - `IsStr()` - any string, supports `regex=r'...'`
 - `IsDatetime()` - any datetime
 - `IsBytes()` - any bytes

@@ -11,6 +11,7 @@ import re
 import secrets
 import socket
 import sys
+import time
 import warnings
 from collections.abc import AsyncIterator, Callable, Generator, Iterator, Sequence
 from contextlib import contextmanager, suppress
@@ -114,6 +115,16 @@ __all__ = (
 
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
+_test_started_at = time.monotonic()
+"""When the running test's setup began, as a `time.monotonic()` reading. `IsNow` allows for the time since then."""
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup() -> None:
+    global _test_started_at
+    _test_started_at = time.monotonic()
+
+
 os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
 
 
@@ -168,9 +179,9 @@ else:
         allowed_types = Decimal
 
     def IsNow(*args: Any, **kwargs: Any):
-        # Increase the default value of `delta` to 10 to reduce test flakiness on overburdened machines
-        if 'delta' not in kwargs:  # pragma: no branch
-            kwargs['delta'] = 10
+        # A timestamp from anywhere in this test matches, so a runner that stalls between making one and comparing it
+        # can't fail the test, however long the stall. One older than the test by more than `delta` still fails.
+        kwargs['delta'] = kwargs.get('delta', 10) + (time.monotonic() - _test_started_at)
         return _IsNow(*args, **kwargs)
 
     class IsSameStr(IsStr):
@@ -568,6 +579,7 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
             'os.listdir',
             'os.getcwd',
             'os.path.abspath',
+            'os.readlink',
             'os.read',
             'os.remove',
             'os.unlink',
@@ -589,6 +601,7 @@ BLOCKBUSTER_TEST_DOUBLES: tuple[str, ...] = (
     'tests/harness/boxlite_sandbox/fake_boxlite.py',
     'tests/harness/daytona_sandbox/fake_daytona.py',
     'tests/harness/e2b_sandbox/fake_e2b.py',
+    'tests/harness/opensandbox_sandbox/fake_opensandbox.py',
     'tests/harness/render_sandbox/workspace_helpers.py',
 )
 
