@@ -223,8 +223,9 @@ agent = Agent('anthropic:claude-sonnet-5', capabilities=[KeenableSearch(num_resu
 ```
 
 Fields: `num_results=5` (1 to 50, sent as Keenable's `max_results`), `max_snippet_chars=500`
-(per-hit excerpt cap), `max_page_chars=10_000` (`get_page` cap, truncation marker included),
-`guidance=None`, `client=None`.
+(per-hit excerpt cap), `max_page_chars=10_000` (`get_page` cap; the truncation marker counts
+against it, and a budget too small to hold the marker cuts the page without one), `guidance=None`,
+`client=None`.
 
 Gotchas:
 
