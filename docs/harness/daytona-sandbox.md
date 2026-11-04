@@ -16,10 +16,10 @@ Run your agent's commands and file edits in an isolated [Daytona](https://www.da
 ## Install
 
 ```bash
-pip/uv-add "pydantic-ai-harness[daytona,anthropic]"
+pip/uv-add "pydantic-ai-harness[coder,daytona,anthropic]"
 ```
 
-The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `DAYTONA_API_KEY` to an API key from your Daytona dashboard, and `ANTHROPIC_API_KEY` for the examples.
+The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `DAYTONA_API_KEY` to an API key from your Daytona dashboard, and `ANTHROPIC_API_KEY` for the examples.
 
 ## Quick start
 
@@ -159,6 +159,8 @@ A failed run returns no result, so there is no ref to store. To delete its sandb
 ```python
 from typing import Any
 
+import anyio
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.run import AgentRunResult
@@ -171,7 +173,10 @@ hooks = Hooks()
 @hooks.on.run_error
 async def delete_failed_run_sandbox(ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[Any]:
     if ctx.workspace.ref is not None:
-        await DaytonaSandbox().destroy(ctx.workspace.ref)
+        # Shielded, so an `anyio` deadline around the run doesn't cut the delete short,
+        # and bounded, so a hung API call can't hang the run indefinitely.
+        with anyio.move_on_after(30, shield=True):
+            await DaytonaSandbox().destroy(ctx.workspace.ref)
     raise error
 
 

@@ -41,6 +41,8 @@ later) is set as baggage, so every span in the run records which prompt produced
 
 ### Usage
 
+If Logfire is not set up yet, run `uvx logfire-cli wizard --task pydantic-ai` once from your project; see [Using Logfire](https://pydantic.dev/docs/ai/integrations/logfire/#using-logfire) for details.
+
 Pass the prompt name and a default value. The name `support_agent` is declared as the managed
 variable `prompt__support_agent`, the naming Logfire's Prompt management uses (hyphens in a
 name become underscores). The default is used until a remote value is published.

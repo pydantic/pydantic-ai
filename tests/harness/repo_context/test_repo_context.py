@@ -5,22 +5,37 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import AsyncIterator
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock
 
+import anyio.to_thread
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import PrefixTools
+from pydantic_ai import Agent, AgentRunResult, RunContext
+from pydantic_ai.capabilities import AbstractCapability, PrefixTools
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import (
+    CompactionPart,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    SystemPromptPart,
+    TextContent,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
 from pydantic_ai_harness import HarnessDeprecationWarning
+from pydantic_ai_harness.compaction import SummarizingCompaction
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.repo_context import (
     AgentContextInventory,
@@ -34,6 +49,8 @@ from pydantic_ai_harness.repo_context._loader import (
     find_dir_context_file,
     render_context_files,
 )
+
+from ...workspace_fakes import FakeWorkspace, FilesystemOnlyWorkspaceBackend
 
 
 @pytest.fixture
@@ -65,12 +82,18 @@ def _tool_returns(messages: list[ModelMessage]) -> int:
     return sum(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
 
 
+def _user_text(part: UserPromptPart) -> str:
+    if isinstance(part.content, str):
+        return part.content
+    return ''.join(item.content for item in part.content if isinstance(item, TextContent))
+
+
 def _repo_notes(messages: list[ModelMessage]) -> list[str]:
     notes: list[str] = []
     for message in messages:
         for part in message.parts:
-            if isinstance(part, UserPromptPart) and isinstance(part.content, str) and '<context-file ' in part.content:
-                notes.append(part.content)
+            if isinstance(part, UserPromptPart) and '<context-file ' in (text := _user_text(part)):
+                notes.append(text)
     return notes
 
 
@@ -84,6 +107,29 @@ class TestDiscoverInstructionFiles:
         (directory / 'AGENTS.md').symlink_to(outside)
         assert await discover_instruction_files(workspace, directory, None, ('AGENTS.md',)) == []
         assert await find_dir_context_file(workspace, directory, ('AGENTS.md',)) is None
+
+    @pytest.mark.skipif(sys.platform == 'win32', reason='symlinks need privileges on Windows')
+    async def test_does_not_load_a_link_to_a_file_that_is_not_an_instruction_file(
+        self, tmp_path: Path, workspace: Workspace
+    ) -> None:
+        _write(tmp_path / '.env', 'SECRET=1')
+        (tmp_path / 'AGENTS.md').symlink_to('.env')
+        assert await discover_instruction_files(workspace, tmp_path, None, ('AGENTS.md', 'CLAUDE.md')) == []
+        assert await find_dir_context_file(workspace, tmp_path, ('AGENTS.md', 'CLAUDE.md')) is None
+
+    @pytest.mark.skipif(sys.platform == 'win32', reason='symlinks need privileges on Windows')
+    async def test_loads_a_link_to_an_instruction_file_left_out_of_filenames(
+        self, tmp_path: Path, workspace: Workspace
+    ) -> None:
+        _write(tmp_path / 'AGENTS.md', 'shared')
+        (tmp_path / 'CLAUDE.md').symlink_to('AGENTS.md')
+        files = await discover_instruction_files(workspace, tmp_path, None, ('CLAUDE.md',))
+        assert [(f.path.name, f.content) for f in files] == [('AGENTS.md', 'shared')]
+
+    async def test_loads_a_regular_file_configured_by_relative_path(self, tmp_path: Path, workspace: Workspace) -> None:
+        _write(tmp_path / '.github' / 'copilot-instructions.md', 'copilot')
+        files = await discover_instruction_files(workspace, tmp_path, None, ('.github/copilot-instructions.md',))
+        assert [(f.path, f.content) for f in files] == [(tmp_path / '.github' / 'copilot-instructions.md', 'copilot')]
 
     async def test_walk_up_ancestor_first(self, tmp_path: Path, workspace: Workspace) -> None:
         _write(tmp_path / 'CLAUDE.md', 'root')
@@ -176,6 +222,148 @@ class TestDiscoverInstructionFiles:
         assert 'instructions' in files[0].content
 
 
+@pytest.mark.skipif(sys.platform == 'win32', reason='symlinks need privileges on Windows')
+class TestRepoContextSymlinkRoots:
+    @pytest.mark.parametrize('authorized', [False, True])
+    async def test_autoload_external_target_keeps_entry_scope(self, tmp_path: Path, authorized: bool) -> None:
+        project = tmp_path / 'project'
+        working_dir = project / 'package'
+        _write(working_dir / 'AGENTS.md', 'package rules')
+        target = _write(tmp_path / 'tooling' / 'shared.md', 'shared rules')
+        _write(target.parent / 'AGENTS.md', 'do not scan the target directory')
+        (project / 'CLAUDE.md').symlink_to(target)
+        # The root itself may be a symlink and may use a workspace-relative spelling.
+        (tmp_path / 'authorized').symlink_to(target.parent, target_is_directory=True)
+        _write(tmp_path / 'AGENTS.md', 'above stop')
+        captured: list[str | None] = []
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            request = messages[0]
+            assert isinstance(request, ModelRequest)
+            captured.append(request.instructions)
+            yield 'done'
+
+        await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                RepoContext(home_dir='..', autoload_symlink_roots=['../../authorized'] if authorized else ())
+            ],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir))
+
+        if authorized:
+            assert captured == snapshot(
+                [
+                    """\
+<context id="capability:repo_context">
+<context-file path="../CLAUDE.md">
+shared rules
+</context-file>
+
+<context-file path="AGENTS.md">
+package rules
+</context-file>
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+"""
+                ]
+            )
+        else:
+            assert captured == snapshot(
+                [
+                    """\
+<context id="capability:repo_context">
+<context-file path="AGENTS.md">
+package rules
+</context-file>
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+"""
+                ]
+            )
+
+    @pytest.mark.parametrize('target_kind', ['sibling', 'prefix', 'chained', 'broken', 'directory'])
+    async def test_denies_targets_outside_authorized_root(self, tmp_path: Path, target_kind: str) -> None:
+        project = tmp_path / 'project'
+        project.mkdir()
+        root = tmp_path / 'tooling'
+        root.mkdir()
+        target = _write(tmp_path / ('tooling-extra' if target_kind == 'prefix' else 'other') / 'rules.md', 'denied')
+        if target_kind == 'chained':
+            (root / 'escape').symlink_to(target.parent, target_is_directory=True)
+            target = root / 'escape' / target.name
+        elif target_kind == 'broken':
+            target = root / 'missing.md'
+        elif target_kind == 'directory':
+            target = root
+        (project / 'AGENTS.md').symlink_to(target)
+        cap = RepoContext[object](autoload_symlink_roots=[root])
+        ctx = _run_context(Workspace(LocalWorkspaceBackend(project)))
+        await cap.before_run(ctx)
+        assert _render_capability_instructions(cap, ctx) is None
+
+    async def test_deduplicates_targets_and_content_without_changing_same_directory_labels(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        project = tmp_path / 'project'
+        leaf = project / 'package'
+        leaf.mkdir(parents=True)
+        target = _write(tmp_path / 'tooling' / 'shared.md', 'shared')
+        (project / 'CLAUDE.md').symlink_to(target)
+        (project / 'AGENTS.md').symlink_to(target)
+        (leaf / 'CLAUDE.md').symlink_to(_write(target.parent / 'copy.md', 'shared'))
+        _write(leaf / 'rules.md', 'local')
+        (leaf / 'AGENTS.md').symlink_to('rules.md')
+        cap = RepoContext[object](
+            filenames=('CLAUDE.md', 'AGENTS.md', 'rules.md'), home_dir=project, autoload_symlink_roots=[target.parent]
+        )
+        workspace = Workspace(LocalWorkspaceBackend(leaf))
+        read = AsyncMock(wraps=workspace.read_bytes)
+        monkeypatch.setattr(workspace, 'read_bytes', read)
+        ctx = _run_context(workspace)
+        await cap.before_run(ctx)
+        assert read.await_count == 3
+        assert _render_capability_instructions(cap, ctx) == (
+            '<context-file path="../CLAUDE.md">\nshared\n</context-file>\n\n'
+            '<context-file path="rules.md">\nlocal\n</context-file>'
+        )
+
+    async def test_authorization_does_not_enable_nested_external_links(self, tmp_path: Path) -> None:
+        target = _write(tmp_path / 'tooling' / 'shared.md', 'not nested')
+        project = tmp_path / 'project'
+        (project / 'sub').mkdir(parents=True)
+        (project / 'sub' / 'AGENTS.md').symlink_to(target)
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                yield {0: DeltaToolCall(name='list_directory', json_args='{"path":"sub"}', tool_call_id='list')}
+            else:
+                assert _repo_notes(messages) == []
+                yield 'done'
+
+        await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[FileSystem(), RepoContext(nested_traversal=True, autoload_symlink_roots=[target.parent])],
+        ).run('go', workspace=LocalWorkspaceBackend(project))
+
+    @pytest.mark.parametrize(
+        ('autoload', 'authorized', 'fails_closed'),
+        [(False, False, False), (False, True, False), (True, False, False), (True, True, True)],
+    )
+    async def test_filesystem_without_realpath_fails_closed_only_for_autoload_opt_in(
+        self, autoload: bool, authorized: bool, fails_closed: bool
+    ) -> None:
+        backend = FilesystemOnlyWorkspaceBackend(FakeWorkspace('no-realpath'))
+        cap = RepoContext[object](
+            autoload_instructions=autoload, autoload_symlink_roots=['/tooling'] if authorized else ()
+        )
+        agent = Agent(TestModel(), capabilities=[cap])
+        if fails_closed:
+            with pytest.raises(UserError, match='`SupportsRealpath` or `SupportsCommands`'):
+                await agent.run('go', workspace=backend)
+        else:
+            await agent.run('go', workspace=backend)
+
+
 class TestFindDirContextFile:
     async def test_first_existing_wins(self, tmp_path: Path, workspace: Workspace) -> None:
         _write(tmp_path / 'AGENTS.md', 'agents')
@@ -199,6 +387,27 @@ class TestRender:
         cf = ContextFile(directory=outside.parent, path=outside, content='x')
         rendered = render_context_files([cf], relative_to=tmp_path / 'inner')
         assert outside.as_posix() in rendered
+
+    async def test_walk_up_labels_ancestor_files_relative_to_the_working_dir(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'AGENTS.md', 'repo root')
+        _write(tmp_path / 'packages' / 'AGENTS.md', 'packages')
+        _write(tmp_path / 'packages' / 'foo' / 'AGENTS.md', 'foo package')
+        cap = RepoContext[object](home_dir=str(tmp_path))
+        ctx = _run_context(workspace=Workspace(LocalWorkspaceBackend(tmp_path / 'packages' / 'foo')))
+        await cap.before_run(ctx)
+        assert _render_capability_instructions(cap, ctx) == snapshot("""\
+<context-file path="../../AGENTS.md">
+repo root
+</context-file>
+
+<context-file path="../AGENTS.md">
+packages
+</context-file>
+
+<context-file path="AGENTS.md">
+foo package
+</context-file>\
+""")
 
     def test_trailing_newline_does_not_open_a_gap_before_the_closing_tag(self, tmp_path: Path) -> None:
         # The terminator goes; the two spaces before it stay, being a hard line break in Markdown.
@@ -277,6 +486,27 @@ ends with &lt;/context-file
         assert 'ignored' not in instructions
         assert 'inventory_agent_context' in instructions
         assert 'translate' not in instructions
+
+    async def test_nested_traversal_states_how_instruction_files_relate(
+        self, tmp_path: Path, workspace: Workspace
+    ) -> None:
+        _write(tmp_path / 'AGENTS.md', 'root')
+        cap = RepoContext[object](nested_traversal=True, filenames=('AGENTS.md', 'CLAUDE.md'))
+        ctx = _run_context(workspace=workspace)
+        await cap.before_run(ctx)
+        assert _render_capability_instructions(cap, ctx) == snapshot("""\
+<context-file path="AGENTS.md">
+root
+</context-file>
+
+Instruction files (`AGENTS.md`, `CLAUDE.md`) apply to the directory they are in and everything below it. Where instruction files conflict, the more deeply nested one takes precedence, and the user's direct instructions take precedence over all of them.\
+""")
+
+    def test_nested_traversal_without_autoload_keeps_the_statement_static(self) -> None:
+        instructions = RepoContext[object](autoload_instructions=False, nested_traversal=True).get_instructions()
+        assert instructions == snapshot(
+            "Instruction files (`CLAUDE.md`, `AGENTS.md`) apply to the directory they are in and everything below it. Where instruction files conflict, the more deeply nested one takes precedence, and the user's direct instructions take precedence over all of them."
+        )
 
     async def test_no_files_no_inventory_is_none(self, tmp_path: Path, workspace: Workspace) -> None:
         cap = RepoContext[object](expose_inventory_tool=False)
@@ -549,13 +779,389 @@ class TestNestedTraversal:
         )
         result = await agent.run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
         parts = [
-            (type(part), part.content)
+            (type(part), part.content if isinstance(part, SystemPromptPart) else _user_text(part))
             for message in result.all_messages()
             if isinstance(message, ModelRequest)
             for part in message.parts
             if isinstance(part, SystemPromptPart | UserPromptPart)
         ]
         assert parts == [(UserPromptPart, 'go'), *note]
+
+    async def test_reading_a_deep_file_surfaces_every_directory_between_it_and_the_working_directory(
+        self, tmp_path: Path
+    ) -> None:
+        _write(tmp_path / 'packages' / 'AGENTS.md', 'PACKAGES BODY')
+        _write(tmp_path / 'packages' / 'foo' / 'AGENTS.md', 'FOO BODY')
+        _write(tmp_path / 'packages' / 'foo' / 'src' / 'x.py', 'x')
+        _write(tmp_path / 'packages' / 'foo' / 'tests' / 'test_x.py', 'test')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            returns = _tool_returns(messages)
+            if returns == 0:
+                args = '{"path":"packages/foo/src/x.py"}'
+                yield {0: DeltaToolCall(name='read_file', json_args=args, tool_call_id='x')}
+            elif returns == 1:
+                args = '{"path":"packages/foo/tests/test_x.py"}'
+                yield {0: DeltaToolCall(name='read_file', json_args=args, tool_call_id='test')}
+            else:
+                yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                FileSystem(root_dir=tmp_path),
+                RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject='contents'),
+            ],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+        assert _repo_notes(result.all_messages()) == snapshot(
+            [
+                '<context-file path="packages/AGENTS.md">\nPACKAGES BODY\n</context-file>',
+                '<context-file path="packages/foo/AGENTS.md">\nFOO BODY\n</context-file>',
+            ]
+        )
+
+    @pytest.mark.skipif(sys.platform == 'win32', reason='symlinks need privileges on Windows')
+    async def test_a_nested_link_to_a_denied_file_is_not_surfaced(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'pkg' / '.env', 'SECRET=1')
+        _write(tmp_path / 'pkg' / 'public.py', 'x = 1')
+        (tmp_path / 'pkg' / 'AGENTS.md').symlink_to('.env')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                yield {0: DeltaToolCall(name='read_file', json_args='{"path":"pkg/public.py"}', tool_call_id='x')}
+            else:
+                yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                FileSystem(root_dir=tmp_path, denied_patterns=['**/.env*']),
+                RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject='contents'),
+            ],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+        assert _repo_notes(result.all_messages()) == []
+        assert 'SECRET' not in str(result.all_messages())
+
+    @pytest.mark.skipif(sys.platform == 'win32', reason='symlinks need privileges on Windows')
+    @pytest.mark.parametrize(
+        'via',
+        [
+            pytest.param('directory', id='symlinked-intermediate-directory'),
+            pytest.param('file', id='symlinked-file-whose-parent-resolves-outside'),
+        ],
+    )
+    @pytest.mark.parametrize('detection', [pytest.param('events', id='events'), pytest.param('sniffer', id='sniffer')])
+    async def test_a_symlink_in_the_path_does_not_surface_files_outside_the_working_directory(
+        self, tmp_path: Path, via: Literal['directory', 'file'], detection: Literal['events', 'sniffer']
+    ) -> None:
+        _write(tmp_path / 'AGENTS.md', 'OUTSIDE BODY')
+        repo = tmp_path / 'repo'
+        _write(repo / 'README.md', 'readme')
+        _write(repo / 'pkg' / 'AGENTS.md', 'PKG BODY')
+        _write(repo / 'pkg' / 'x.py', 'x')
+        (repo / 'bounce').symlink_to(tmp_path)
+        if via == 'directory':
+            path = f'bounce/{repo.name}/README.md'
+        else:
+            # The file resolves inside the repo, but its lexical parent `bounce` resolves outside it.
+            (tmp_path / 'link').symlink_to(repo / 'README.md')
+            path = 'bounce/link'
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            returns = _tool_returns(messages)
+            if returns == 0:
+                yield {0: DeltaToolCall(name='read_file', json_args=f'{{"path":"{path}"}}', tool_call_id='x')}
+            elif returns == 1:
+                # A read with no symlink in its path, so the chain still surfaces files inside the working directory.
+                yield {0: DeltaToolCall(name='read_file', json_args='{"path":"pkg/x.py"}', tool_call_id='pkg')}
+            else:
+                yield 'done'
+
+        if detection == 'events':
+            repo_context = RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject='contents')
+        else:
+            with pytest.warns(HarnessDeprecationWarning):
+                repo_context = RepoContext(
+                    autoload_instructions=False,
+                    nested_traversal=True,
+                    nested_inject='contents',
+                    traversal_tool_names=frozenset({'read_file'}),
+                )
+        result = await Agent(
+            FunctionModel(stream_function=stream), capabilities=[FileSystem(root_dir=repo), repo_context]
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=repo))
+        # The read itself is allowed, since the file resolves inside the repo; `bounce` resolves outside it.
+        assert 'readme' in str(result.all_messages())
+        assert _repo_notes(result.all_messages()) == snapshot(
+            ['<context-file path="pkg/AGENTS.md">\nPKG BODY\n</context-file>']
+        )
+
+    @pytest.mark.parametrize(
+        'call',
+        [
+            pytest.param(('read_file', '{"path":"README.md"}'), id='read-top-level-file'),
+            pytest.param(('list_directory', '{"path":"."}'), id='list-working-directory'),
+        ],
+    )
+    async def test_working_directory_file_already_in_the_instructions_is_not_surfaced_again(
+        self, tmp_path: Path, call: tuple[str, str]
+    ) -> None:
+        _write(tmp_path / 'AGENTS.md', 'ROOT BODY')
+        _write(tmp_path / 'README.md', 'readme')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                yield {0: DeltaToolCall(name=call[0], json_args=call[1], tool_call_id='call')}
+            else:
+                yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[FileSystem(root_dir=tmp_path), RepoContext(nested_traversal=True, nested_inject='contents')],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+        assert _repo_notes(result.all_messages()) == []
+
+    async def test_working_directory_file_deduped_against_an_ancestor_is_not_surfaced(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'AGENTS.md', 'SHARED BODY')
+        project = tmp_path / 'project'
+        _write(project / 'AGENTS.md', 'SHARED BODY')
+        _write(project / 'README.md', 'readme')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                yield {0: DeltaToolCall(name='read_file', json_args='{"path":"README.md"}', tool_call_id='call')}
+            else:
+                yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                FileSystem(root_dir=project),
+                RepoContext(home_dir=tmp_path, nested_traversal=True, nested_inject='contents'),
+            ],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=project))
+        assert _repo_notes(result.all_messages()) == []
+
+    async def test_working_directory_file_created_during_the_run_is_surfaced(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'README.md', 'readme')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                await anyio.to_thread.run_sync(_write, tmp_path / 'AGENTS.md', 'WRITTEN DURING THE RUN')
+                yield {0: DeltaToolCall(name='read_file', json_args='{"path":"README.md"}', tool_call_id='call')}
+            else:
+                yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[FileSystem(root_dir=tmp_path), RepoContext(nested_traversal=True, nested_inject='contents')],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+        assert _repo_notes(result.all_messages()) == snapshot(
+            ['<context-file path="AGENTS.md">\nWRITTEN DURING THE RUN\n</context-file>']
+        )
+
+    async def test_working_directory_file_is_surfaced_when_autoload_is_off(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'AGENTS.md', 'ROOT BODY')
+        _write(tmp_path / 'README.md', 'readme')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                yield {0: DeltaToolCall(name='read_file', json_args='{"path":"README.md"}', tool_call_id='call')}
+            else:
+                yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                FileSystem(root_dir=tmp_path),
+                RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject='contents'),
+            ],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+        assert _repo_notes(result.all_messages()) == snapshot(
+            ['<context-file path="AGENTS.md">\nROOT BODY\n</context-file>']
+        )
+
+    @pytest.mark.parametrize('nested_inject', ['pointer', 'contents'])
+    async def test_note_parts_carry_the_origin_and_directory_in_metadata(
+        self, tmp_path: Path, nested_inject: Literal['pointer', 'contents']
+    ) -> None:
+        _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
+        _write(tmp_path / 'sub' / 'one.py', 'one')
+        result = await self._read_files(tmp_path, ['sub/one.py'], nested_inject=nested_inject)
+        metadata = [
+            item.metadata
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            for item in (
+                [part]
+                if isinstance(part, SystemPromptPart)
+                else part.content
+                if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
+                else []
+            )
+            if isinstance(item, SystemPromptPart | TextContent)
+        ]
+        expected = {'origin': 'pydantic-ai-harness.repo_context.nested_note.v1', 'directory': str(tmp_path / 'sub')}
+        assert metadata == [expected] * (2 if nested_inject == 'pointer' else 1)
+
+    async def test_a_later_run_does_not_repeat_a_note_still_in_history(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
+        _write(tmp_path / 'sub' / 'one.py', 'one')
+        _write(tmp_path / 'sub' / 'two.py', 'two')
+        first = await self._read_files(tmp_path, ['sub/one.py'])
+        second = await self._read_files(tmp_path, ['sub/two.py'], message_history=first.all_messages())
+        assert len(_repo_notes(first.all_messages())) == 1
+        assert _repo_notes(second.new_messages()) == []
+
+    async def test_text_with_other_or_malformed_metadata_does_not_count_as_a_note(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
+        _write(tmp_path / 'sub' / 'one.py', 'one')
+        history: list[ModelMessage] = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        [
+                            TextContent(
+                                'other', metadata={'origin': 'somewhere.else', 'directory': str(tmp_path / 'sub')}
+                            ),
+                            TextContent(
+                                'malformed',
+                                metadata={'origin': 'pydantic-ai-harness.repo_context.nested_note.v1', 'directory': 7},
+                            ),
+                        ]
+                    )
+                ]
+            ),
+            ModelResponse(parts=[TextPart('ok')]),
+        ]
+        result = await self._read_files(tmp_path, ['sub/one.py'], message_history=history)
+        assert len(_repo_notes(result.new_messages())) == 1
+
+    async def test_compaction_during_the_run_resurfaces_a_note_it_summarized_away(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
+        _write(tmp_path / 'sub' / 'one.py', 'one')
+        _write(tmp_path / 'sub' / 'two.py', 'two')
+        reads = ['sub/one.py', 'sub/one.py', 'sub/two.py']
+        requests = 0
+
+        @dataclass
+        class CompactBeforeTheLastRead(AbstractCapability[object]):
+            async def before_model_request(
+                self, ctx: RunContext[object], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                # Like `SummarizingCompaction`: rewrite history in place, with the summary near its start.
+                if requests == len(reads) - 1:
+                    ctx.messages[:] = [
+                        ModelRequest(parts=[UserPromptPart('go')]),
+                        ModelRequest(parts=[CompactionPart('The agent read sub/one.py.')]),
+                    ]
+                    return replace(request_context, messages=list(ctx.messages))
+                return request_context
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            nonlocal requests
+            step, requests = requests, requests + 1
+            if step < len(reads):
+                args = json.dumps({'path': reads[step]})
+                yield {0: DeltaToolCall(name='read_file', json_args=args, tool_call_id=f'read{step}')}
+            else:
+                yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                CompactBeforeTheLastRead(),
+                FileSystem(root_dir=tmp_path),
+                RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject='contents'),
+            ],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+        assert _repo_notes(result.all_messages()) == snapshot(
+            ['<context-file path="sub/AGENTS.md">\nNESTED BODY\n</context-file>']
+        )
+
+    @pytest.mark.parametrize('nested_inject', ['pointer', 'contents'])
+    async def test_summarizing_compaction_drops_the_note_and_the_next_read_resurfaces_it(
+        self, tmp_path: Path, nested_inject: Literal['pointer', 'contents']
+    ) -> None:
+        _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
+        for name in ('sub/one.py', 'sub/two.py', 'a.py', 'b.py', 'c.py'):
+            _write(tmp_path / name, name)
+        reads = ['sub/one.py', 'a.py', 'b.py', 'c.py', 'sub/two.py']
+        step = 0
+        summarized: list[list[ModelMessage]] = []
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            nonlocal step
+            current, step = step, step + 1
+            if current < len(reads):
+                args = json.dumps({'path': reads[current]})
+                yield {0: DeltaToolCall(name='read_file', json_args=args, tool_call_id=f'read{current}')}
+            else:
+                yield 'done'
+
+        def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            summarized.append(messages)
+            return ModelResponse(parts=[TextPart('The agent read some files.')])
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                FileSystem(root_dir=tmp_path),
+                RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject=nested_inject),
+                SummarizingCompaction(model=FunctionModel(summarize), max_messages=6, keep_messages=2),
+            ],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+
+        history = result.all_messages()
+        assert summarized, 'compaction ran'
+        assert any(isinstance(part, CompactionPart) for message in history for part in message.parts)
+        # The original note was summarized away, so the only note left is the one the read of `sub/two.py` surfaced.
+        positions = [i for i, message in enumerate(history) if _repo_notes([message])]
+        two_call = next(
+            i
+            for i, message in enumerate(history)
+            if isinstance(message, ModelResponse)
+            and any(
+                isinstance(part, ToolCallPart) and 'sub/two.py' in part.args_as_json_str() for part in message.parts
+            )
+        )
+        assert len(positions) == 1 and positions[0] > two_call
+
+    async def test_compaction_resurfaces_a_note_it_summarized_away(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
+        _write(tmp_path / 'sub' / 'one.py', 'one')
+        _write(tmp_path / 'sub' / 'two.py', 'two')
+        first = await self._read_files(tmp_path, ['sub/one.py'])
+        compacted = [*first.all_messages(), ModelRequest(parts=[CompactionPart('The agent read sub/one.py.')])]
+        second = await self._read_files(tmp_path, ['sub/two.py'], message_history=compacted)
+        assert _repo_notes(second.new_messages()) == snapshot(
+            ['<context-file path="sub/AGENTS.md">\nNESTED BODY\n</context-file>']
+        )
+
+    async def _read_files(
+        self,
+        root: Path,
+        paths: list[str],
+        *,
+        nested_inject: Literal['pointer', 'contents'] = 'contents',
+        message_history: list[ModelMessage] | None = None,
+    ) -> AgentRunResult[str]:
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            done = _tool_returns(messages) - _tool_returns(message_history or [])
+            if done < len(paths):
+                args = json.dumps({'path': paths[done]})
+                yield {0: DeltaToolCall(name='read_file', json_args=args, tool_call_id=f'read{done}')}
+            else:
+                yield 'done'
+
+        return await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                FileSystem(root_dir=root),
+                RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject=nested_inject),
+            ],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=root), message_history=message_history)
 
     async def test_filesystem_rooted_above_the_workspace_resolves_against_its_own_root(self, tmp_path: Path) -> None:
         project = tmp_path / 'project'
@@ -722,6 +1328,43 @@ class TestNestedTraversal:
 
         await Agent(FunctionModel(stream_function=stream), capabilities=[capability], tools=[list_dir]).run(
             'go', workspace=LocalWorkspaceBackend(working_dir=workspace)
+        )
+
+    async def test_customized_sniff_labels_an_ancestor_context_file_relatively(self, tmp_path: Path) -> None:
+        workspace = tmp_path / 'workspace'
+        workspace.mkdir()
+        _write(tmp_path / 'AGENTS.md', 'PARENT BODY')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                yield {0: DeltaToolCall(name='list_dir', json_args='{"target":".."}', tool_call_id='up')}
+            else:
+                yield 'done'
+
+        def list_dir(target: Any) -> str:
+            return 'listed'
+
+        with pytest.warns(HarnessDeprecationWarning, match='Traversal detection now reacts'):
+            capability = RepoContext(
+                autoload_instructions=False,
+                expose_inventory_tool=False,
+                nested_traversal=True,
+                nested_inject='contents',
+                traversal_tool_names=frozenset({'list_dir'}),
+                traversal_path_arg='target',
+            )
+
+        result = await Agent(FunctionModel(stream_function=stream), capabilities=[capability], tools=[list_dir]).run(
+            'go', workspace=LocalWorkspaceBackend(working_dir=workspace)
+        )
+        assert _repo_notes(result.all_messages()) == snapshot(
+            [
+                """\
+<context-file path="../AGENTS.md">
+PARENT BODY
+</context-file>\
+"""
+            ]
         )
 
 

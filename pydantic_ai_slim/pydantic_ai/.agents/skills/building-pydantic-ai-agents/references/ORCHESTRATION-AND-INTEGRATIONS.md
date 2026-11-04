@@ -109,8 +109,10 @@ OpenAI background mode.
 
 Under durable execution, put the capability on the agent. With Temporal, DBOS or Prefect, submitting and each check
 are durable steps and a recovered run continues with the same batch; the waits between checks are durable on
-Temporal and DBOS, and plain sleeps on Prefect. The Harness engines (AWS Lambda, Absurd, pgtask, Render Workflows)
-sleep in-process between checks, so the process must stay up for the whole batch. Restate and Airflow don't record
+Temporal and DBOS, and plain sleeps on Prefect. Under the Harness's Azure Durable Task engine, submitting and each
+check are activities and the waits between them are durable timers, so a recovered run continues with the same batch.
+The other Harness engines (AWS Lambda, Absurd, pgtask, Render Workflows) sleep in-process between checks, so the
+process must stay up for the whole batch. Restate and Airflow don't record
 batched requests, so recovery submits them again, in a new batch that's billed too. Where an engine can't wait out a long
 batch, use `PendingModelResponse` and schedule the next run from the stored history yourself. See
 https://pydantic.dev/docs/ai/core-concepts/batch/#durable-execution for each engine's details.
@@ -193,7 +195,7 @@ Common entry points:
 
 - `Case`
 - `Dataset`
-- evaluator classes from `pydantic_evals.evaluators`, or plain functions taking an `EvaluatorContext` for one-off checks (these can't be saved to a dataset file)
+- evaluator classes from `pydantic_evals.evaluators`, or plain functions taking an `EvaluatorContext` for checks without parameters (saved to dataset files under the function's name, so pass them in `custom_evaluator_types` to load)
 
 ## Build Custom Toolsets, Models, or Agents
 

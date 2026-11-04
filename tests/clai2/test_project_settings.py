@@ -271,3 +271,85 @@ async def test_a_relative_path_saved_before_anchoring_is_refused_until_approved_
     await loader.command(['enable', 'helper'])
     assert ran(tmp_path) == ['trusted']
     assert [plugin.path for plugin in store.plugins()] == [str(trusted / 'plugins' / 'helper.py')]
+
+
+@pytest.mark.parametrize('elsewhere', [False, True])
+async def test_a_changed_project_plugin_file_waits_for_approval_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, elsewhere: bool
+) -> None:
+    """Changing only the file's bytes ends the approval, also where another repository's session loads it."""
+    trusted = repository(tmp_path, 'trusted')
+    store = SettingsStore(tmp_path / 'config.db')
+    monkeypatch.chdir(trusted)
+    await plugin_loader(store, load_project_settings(trusted), io.StringIO()).command(['enable', 'helper'])
+    assert ran(tmp_path) == ['trusted']
+
+    (tmp_path / 'trusted.ran').unlink()
+    (trusted / 'plugins' / 'helper.py').write_text(HELPER.format(marker=str(tmp_path / 'changed.ran')))
+    launched = repository(tmp_path, 'other', declared=False) if elsewhere else trusted
+    monkeypatch.chdir(launched)
+    output = io.StringIO()
+    loader = plugin_loader(store, load_project_settings(launched), output)
+    await loader.load_all()
+    assert ran(tmp_path) == []
+    shown = ' '.join(output.getvalue().split())  # The console wraps the long temporary path.
+    assert 'run /plugins enable helper to approve it as it is now' in shown
+
+    await loader.command(['enable', 'helper'])
+    assert ran(tmp_path) == ['changed']
+
+
+async def test_a_project_path_through_the_plugins_folder_is_still_a_project_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only a file that stays inside the plugins folder is the user's own drop-in; `..` leaving it does not count."""
+    trusted = repository(tmp_path, 'trusted', declared=False)
+    store = SettingsStore(tmp_path / 'config.db')
+    store.plugins_dir.mkdir()
+    through = store.plugins_dir / '..' / 'trusted' / 'plugins' / 'helper.py'
+    write(trusted, {'plugins': [{'id': 'helper', 'factory': 'helper', 'path': str(through)}]})
+    monkeypatch.chdir(trusted)
+    await plugin_loader(store, load_project_settings(trusted), io.StringIO()).command(['enable', 'helper'])
+    assert ran(tmp_path) == ['trusted']
+
+    (tmp_path / 'trusted.ran').unlink()
+    (trusted / 'plugins' / 'helper.py').write_text(HELPER.format(marker=str(tmp_path / 'changed.ran')))
+    await plugin_loader(store, load_project_settings(trusted), io.StringIO()).load_all()
+    assert ran(tmp_path) == []
+
+
+async def test_a_project_plugin_file_that_cannot_be_read_cannot_be_approved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trusted = repository(tmp_path, 'trusted')
+    (trusted / 'plugins' / 'helper.py').unlink()
+    store = SettingsStore(tmp_path / 'config.db')
+    monkeypatch.chdir(trusted)
+    loader = plugin_loader(store, load_project_settings(trusted), io.StringIO())
+    with pytest.raises(ValueError, match=r'helper\.py'):
+        await loader.command(['enable', 'helper'])
+    assert store.plugins() == []
+
+
+async def test_a_plugin_approval_saved_without_its_contents_is_asked_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An approval saved before CLAI recorded file contents covers the declaration alone, so it is asked again once."""
+    trusted = repository(tmp_path, 'trusted')
+    store = SettingsStore(tmp_path / 'config.db')
+    path = str(trusted / 'plugins' / 'helper.py')
+    store.save_plugin(PluginSettings(id='helper', factory='helper', path=path))
+    monkeypatch.chdir(trusted)
+    loader = plugin_loader(store, load_project_settings(trusted), io.StringIO())
+    await loader.load_all()
+    assert ran(tmp_path) == [] and loader.entries()[0].state.startswith('enabled, failed: ValueError:')
+
+    await loader.command(['enable', 'helper'])
+    assert ran(tmp_path) == ['trusted']
+
+
+@pytest.mark.parametrize('field', ['repo_context_walk_up_roots', 'repo_context_autoload_symlink_roots'])
+def test_repo_context_boundaries_are_user_only(tmp_path: Path, field: str) -> None:
+    write(tmp_path, {field: ['/']})
+    with pytest.raises(ValueError, match=rf'`{field}` is user-only and cannot be set in a project file'):
+        load_project_settings(tmp_path)

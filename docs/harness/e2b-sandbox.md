@@ -16,10 +16,10 @@ Run your agent's commands and file edits in an isolated [E2B](https://e2b.dev) c
 ## Install
 
 ```bash
-pip/uv-add "pydantic-ai-harness[e2b,anthropic]"
+pip/uv-add "pydantic-ai-harness[coder,e2b,anthropic]"
 ```
 
-The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `E2B_API_KEY` to your E2B API key, and `ANTHROPIC_API_KEY` for the examples.
+The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `E2B_API_KEY` to your E2B API key, and `ANTHROPIC_API_KEY` for the examples.
 
 ## Quick start
 
@@ -188,6 +188,8 @@ A failed run returns no result, so there is no ref to store. To terminate its sa
 ```python
 from typing import Any
 
+import anyio
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.run import AgentRunResult
@@ -200,7 +202,10 @@ hooks = Hooks()
 @hooks.on.run_error
 async def terminate_failed_run(ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[Any]:
     if ctx.workspace.ref is not None:
-        await E2BSandbox().destroy(ctx.workspace.ref)
+        # Shielded, so an `anyio` deadline around the run doesn't cut the kill short,
+        # and bounded, so a hung API call can't hang the run indefinitely.
+        with anyio.move_on_after(30, shield=True):
+            await E2BSandbox().destroy(ctx.workspace.ref)
     raise error
 
 
@@ -224,7 +229,7 @@ agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Coder(), hook
 Install the `temporal` extra too:
 
 ```bash
-pip/uv-add "pydantic-ai-harness[e2b,anthropic,temporal]"
+pip/uv-add "pydantic-ai-harness[coder,e2b,anthropic,temporal]"
 ```
 
 Run a Temporal dev server on `localhost:7233` first. The agent and workflow must be defined at module level for activity registration.
@@ -277,6 +282,10 @@ Removing a capability while workflows using it are still running changes their r
 ## Telemetry
 
 `E2BSandbox` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) records the sandbox on the agent run span as `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id`, and each command or file operation a tool makes runs inside that tool call's span; operations at run start, such as `RepoContext` loading repo instructions, run in the agent run span. Creating a sandbox also logs `Created E2B sandbox <id>` at INFO on the `pydantic_ai_harness.e2b_sandbox._backend` logger, so the id is on record even if the run ends before it is stored.
+
+## Further reading
+
+- [Run Pydantic AI coding agents in E2B sandboxes](https://pydantic.dev/articles/pydantic-ai-e2b-sandboxes) (Pydantic): a coding agent in an E2B sandbox
 
 ## API reference
 

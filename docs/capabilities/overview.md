@@ -43,11 +43,13 @@ The workspace the agent acts in: the files it edits and the commands it runs, lo
 | [Shell](https://pydantic.dev/docs/ai/harness/shell/) | Harness | Command execution with allowlists, denylists, timeouts, and credential-stripping |
 | [Modal Sandbox](https://pydantic.dev/docs/ai/harness/modal-sandbox/) | Harness | Commands and files in an isolated [Modal](https://modal.com) cloud sandbox |
 | [E2B Sandbox](https://pydantic.dev/docs/ai/harness/e2b-sandbox/) | Harness | Commands and files in an isolated [E2B](https://e2b.dev) cloud sandbox |
+| [Render Sandbox](https://pydantic.dev/docs/ai/harness/render-sandbox/) | Harness | Commands and files in an isolated [Render](https://render.com/docs/sandboxes) sandbox |
 | [Sprites Sandbox](https://pydantic.dev/docs/ai/harness/sprites-sandbox/) | Harness | Commands and files in a persistent [Fly.io Sprite](https://sprites.dev) |
 | [Daytona Sandbox](https://pydantic.dev/docs/ai/harness/daytona-sandbox/) | Harness | Commands and files in an isolated [Daytona](https://www.daytona.io) cloud sandbox |
 | [boxd Sandbox](https://pydantic.dev/docs/ai/harness/boxd-sandbox/) | Harness | Commands and files in an isolated [boxd](https://boxd.sh) cloud machine |
 | [Smol Sandbox](https://pydantic.dev/docs/ai/harness/smol-sandbox/) | Harness | Commands and files in a [smolvm](https://github.com/smol-machines/smolvm) microVM on your own machine; no cloud account |
 | [BoxLite Sandbox](https://pydantic.dev/docs/ai/harness/boxlite-sandbox/) | Harness | Commands and files in a [BoxLite](https://github.com/boxlite-ai/boxlite) micro-VM on your own machine, with an optional egress allow-list; no cloud account |
+| [OpenSandbox](https://pydantic.dev/docs/ai/harness/opensandbox-sandbox/) | Harness | Commands and files in a sandbox on your own [OpenSandbox](https://open-sandbox.ai) server, on Docker or Kubernetes |
 | [Docker Sandbox](https://pydantic.dev/docs/ai/harness/docker-sandbox/) | Harness | Commands and files in a local [Docker](https://www.docker.com/) or Podman container |
 | [SSH Workspace](https://pydantic.dev/docs/ai/harness/ssh-workspace/) | Harness | Commands and files on a remote host over your `ssh` client; no isolation |
 | [Bubblewrap Sandbox](https://pydantic.dev/docs/ai/harness/bubblewrap-sandbox/) | Harness | Wraps another workspace capability so its commands run in a Linux [bubblewrap](https://github.com/containers/bubblewrap) sandbox on that workspace's host |
@@ -136,6 +138,7 @@ What the agent knows and remembers, loaded when relevant instead of carried in e
 | Capability | Package | What it does |
 |---|---|---|
 | [Memory](https://pydantic.dev/docs/ai/harness/memory/) | Harness | A persistent, namespaced notebook: bounded prompt injection, on-demand search; in-memory/file/Postgres stores |
+| [Pixeltable](https://pydantic.dev/docs/ai/harness/pixeltable/) | Harness | Query and search allowed Pixeltable tables; persist the memory notebook in Pixeltable |
 | [Conversation Search](https://pydantic.dev/docs/ai/harness/conversation-search/) | Harness | BM25 search over stored history, including turns compaction dropped |
 | [Skills](https://pydantic.dev/docs/ai/harness/skills/) | Harness | Load [Agent Skill](on-demand.md) (`SKILL.md`) instructions on demand |
 | [Repo Context](https://pydantic.dev/docs/ai/harness/repo-context/) | Harness | Start runs oriented: `AGENTS.md`/`CLAUDE.md` + repository structure |
@@ -149,6 +152,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 |---|---|---|
 | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) | Harness | Validate/block/redact user input, tool calls, tool results, and output, including secret masking and parallel async guards |
 | [Prompt Injection Defender](https://pydantic.dev/docs/ai/harness/prompt-injection-defender/) | Harness | Classify local tool results for indirect prompt injection and optionally withhold high-risk results |
+| [Artifact Scanning](https://pydantic.dev/docs/ai/harness/artifact-scanning/) | Harness | Scan memory files and skills for prompt injection, credential exfiltration, and hidden content before they are stored or loaded |
 | [Spend Limits](https://pydantic.dev/docs/ai/harness/spend/) | Harness | Cross-window USD/token budgets and per-response cost tracking, per model and per tenant |
 | [Ask User](https://pydantic.dev/docs/ai/harness/ask-user/) | Harness | Let the model ask the user multiple-choice questions mid-run; you supply the answerer (terminal, web, test) |
 | [Tool approval](../deferred-tools.md#human-in-the-loop-tool-approval) | Core | Flag tool calls that need human approval before they run |

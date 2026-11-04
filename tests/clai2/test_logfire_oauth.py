@@ -13,7 +13,7 @@ import pytest
 from keyring.errors import KeyringError
 from pydantic import JsonValue
 
-import pydantic_clai2.mcp._client as mcp_client
+import pydantic_clai2.mcp.client as mcp_client
 from pydantic_clai2 import logfire_oauth
 from pydantic_clai2.config.credential_store import save_codex_credentials
 from pydantic_clai2.logfire_oauth import (

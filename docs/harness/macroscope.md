@@ -139,8 +139,7 @@ treat them as untrusted input: run the agent in a sandbox workspace, or require
 
 `Macroscope` emits no spans of its own. Core's
 [instrumentation](../capabilities/instrumentation.md) records each
-`run_macroscope_review` call as a tool span, and the capability makes no
-decision worth a span of its own.
+`run_macroscope_review` call as a tool span.
 
 ## Two of them
 
@@ -174,11 +173,9 @@ from pydantic_ai_harness import Macroscope
 agent = Agent.from_file('agent.yaml', custom_capability_types=[Macroscope])
 ```
 
-Pass `custom_capability_types` so the spec loader knows how to instantiate
-`Macroscope`.
-
 ## Further reading
 
+- [The agent writes faster than you can review](https://pydantic.dev/articles/harness-macroscope) (Pydantic): from a ten-line self-critic to Macroscope's review
 - [Macroscope CLI documentation](https://docs.macroscope.com/cli)
 - [Pydantic AI capabilities](../capabilities/overview.md)
 - [Toolsets](../toolsets.md)

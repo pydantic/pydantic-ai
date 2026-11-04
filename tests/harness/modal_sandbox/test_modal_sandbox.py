@@ -13,6 +13,7 @@ import pytest
 
 import pydantic_ai_harness.modal_sandbox as modal_sandbox_package
 from pydantic_ai import Agent
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import PrefixTools
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
@@ -154,20 +155,32 @@ async def test_an_sdk_timeout_during_create_propagates_unchanged(fake_modal: Fak
 
 
 async def test_command_timeout_starts_once_the_sandbox_is_acquired(fake_modal: FakeModal) -> None:
+    # Read the deadline the command runs under instead of racing a real one: a command that must
+    # finish in what a slow acquisition leaves of a short timeout fails whenever the runner stalls.
     fake_modal.create_gate = anyio.Event()
+    command_deadlines: list[float] = []
+
+    def responder(argv: list[str], timeout: int | None) -> tuple[str, str, int]:
+        command_deadlines.append(anyio.current_effective_deadline())
+        return ' '.join(argv) + '\n', '', 0
+
+    fake_modal.responder = responder
     backend = ModalSandboxBackend()
+    acquired_at: list[float] = []
     async with anyio.create_task_group() as tg:
 
         async def release() -> None:
-            # Creating the sandbox outlasts the timeout; the command itself fits in it comfortably.
-            await anyio.sleep(1.1)
-            assert fake_modal.create_gate is not None
+            await anyio.wait_all_tasks_blocked()
+            assert fake_modal.create_started and fake_modal.create_gate is not None
+            acquired_at.append(anyio.current_time())
             fake_modal.create_gate.set()
 
         tg.start_soon(release)
-        result = await backend.run(['echo', 'hello'], timeout=1)
+        result = await backend.run(['echo', 'hello'], timeout=60)
         assert result.stdout == 'echo hello\n'
-    assert fake_modal.sandboxes[0].exec_calls[0].timeout == 1
+    (command_deadline,) = command_deadlines
+    assert command_deadline >= acquired_at[0] + 60
+    assert fake_modal.sandboxes[0].exec_calls[0].timeout == 60
 
 
 async def test_command_timeout_keeps_captured_output(fake_modal: FakeModal) -> None:
@@ -607,3 +620,42 @@ def test_a_non_string_sandbox_id_is_rejected() -> None:
         pytest.raises(UserError, match='must be a string naming a Modal sandbox, got 123'),
     ):
         ModalSandbox(sandbox_id=123)  # pyright: ignore[reportArgumentType]
+
+
+def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
+    """A `modal.Image` annotation must not erase the whole schema entry."""
+    definitions = AgentSpec.model_json_schema_with_capabilities([ModalSandbox])['$defs']
+    assert sorted(definitions['spec_params_ModalSandbox']['properties']) == [
+        'app_name',
+        'create_app_if_missing',
+        'description',
+        'env',
+        'id',
+        'idle_timeout',
+        'image',
+        'sandbox_timeout',
+        'warn_if_no_tools',
+        'working_dir',
+    ]
+
+
+def test_from_spec_forwards_the_spec_fields() -> None:
+    spec_fields: dict[str, Any] = {
+        'id': 'modal',
+        'description': 'a sandbox',
+        'image': 'python:3.13-slim',
+        'app_name': 'app',
+        'create_app_if_missing': False,
+        'sandbox_timeout': 600,
+        'idle_timeout': 60,
+        'working_dir': '/work',
+        'env': {'A': '1'},
+        'warn_if_no_tools': False,
+    }
+    assert ModalSandbox[None].from_spec(**spec_fields) == ModalSandbox(**spec_fields)
+
+
+def test_from_spec_keeps_the_deprecated_arguments_working() -> None:
+    with pytest.warns(HarnessDeprecationWarning):
+        capability = ModalSandbox[None].from_spec(workdir='/work')
+    assert capability.working_dir == '/work'

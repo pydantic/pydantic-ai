@@ -6,18 +6,19 @@ from collections.abc import Sequence
 
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import TextContent, UserContent
+from pydantic_ai_harness._typeguards import is_object_dict
 
 # Interim, deliberately generic rule: a harness capability that tags what it adds, user-channel data or a system
 # prompt, with an `origin` under this prefix is covered by one check, without per-capability code. Today that is
-# `BackgroundTools` results, `TrajectoryJudge` feedback, `SubAgents` task reports, `Memory` snapshots and
-# `SystemReminders` reminders. The rule is temporary: once core provenance (`CapabilityPart`) lands, recognize that
-# instead of this metadata convention.
+# `BackgroundTools` results, `TrajectoryJudge` feedback, `SubAgents` task reports, `Memory` snapshots,
+# `SystemReminders` reminders and `RepoContext` nested notes. The rule is temporary: once core provenance
+# (`CapabilityPart`) lands, recognize that instead of this metadata convention.
 HARNESS_ORIGIN_PREFIX = 'pydantic-ai-harness.'
 """The prefix of the `origin` metadata harness capabilities put on user-channel data and system prompts they add."""
 
 
 def harness_origin(metadata: object) -> str | None:
-    """The harness `origin` that *metadata* names, or `None` when it names none."""
+    """The harness `origin` that `metadata` names, or `None` when it names none."""
     if (
         is_str_dict(metadata)
         and isinstance(origin := metadata.get('origin'), str)
@@ -32,6 +33,6 @@ def tagged_text(content: str | Sequence[UserContent] | None, origin: str) -> Tex
     if isinstance(content, Sequence) and len(content) == 1 and isinstance(content[0], TextContent):
         text_content = content[0]
         metadata = text_content.metadata
-        if isinstance(metadata, dict) and 'origin' in metadata and metadata['origin'] == origin:
+        if is_object_dict(metadata) and metadata.get('origin') == origin:
             return text_content
     return None

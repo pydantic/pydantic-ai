@@ -622,6 +622,7 @@ def test_model_profile_fable_5_1():
             'anthropic_disallows_sampling_settings': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_disables_thinking_with_between_tools': False,
+            'anthropic_distrusts_system_after_tool_result': False,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_task_budgets': True,
@@ -704,6 +705,7 @@ def test_model_profile_opus_5():
             'anthropic_disallows_sampling_settings': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': True,
             'anthropic_disables_thinking_with_between_tools': False,
+            'anthropic_distrusts_system_after_tool_result': False,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_task_budgets': True,
@@ -789,9 +791,10 @@ def test_model_profile_haiku_5_5():
     also returned signed thinking blocks and positive thinking-token usage. Other live probes confirmed forced tool
     choice, task-budget acceptance, `code_execution_20260120`, BM25 search, Advisor, web-search request acceptance,
     deferred tool addition, inline system messages, and the `drop_block` transformation after a prefix change. The only
-    Haiku-specific profile overrides are fast speed disabled and thinking-block binding enabled; unchanged fields
-    retain Opus 5's existing profile defaults. See Anthropic's
+    Haiku-specific profile overrides are fast speed disabled, thinking-block binding enabled, and a text block
+    before a `system` entry that follows a tool result; unchanged fields retain Opus 5's existing profile defaults. See Anthropic's
     [overview](https://platform.claude.com/docs/en/models/haiku-5-5/overview),
+    [mid-conversation system messages](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#placement-after-tool-results),
     [migration guide](https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide),
     [thinking configuration](https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting),
     [effort](https://platform.claude.com/docs/en/build-with-claude/effort),
@@ -807,6 +810,7 @@ def test_model_profile_haiku_5_5():
         **opus_5,
         'anthropic_supports_fast_speed': False,
         'anthropic_binds_thinking_blocks': True,
+        'anthropic_distrusts_system_after_tool_result': True,
     }
 
 

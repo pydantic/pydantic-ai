@@ -28,10 +28,6 @@ credentials, the AWS CLI, and a health check.
 
 ## Usage
 
-`LocalStack` exposes AWS tooling wired to a running LocalStack instance. The
-agent issues plain AWS CLI commands; the capability injects the endpoint, region,
-and credentials, and adds a health check for the emulated services.
-
 ```python
 from pydantic_ai import Agent
 from pydantic_ai_harness import LocalStack
@@ -50,9 +46,9 @@ for example with the
 [`localstack` CLI](https://docs.localstack.cloud/aws/tooling/localstack-cli/)
 (`localstack start`). The defaults match LocalStack's conventions: the edge
 endpoint `http://localhost.localstack.cloud:4566` (which resolves to
-`127.0.0.1`) and `test` / `test` credentials. Set `manage_container=True` to have
-the capability start and stop a fresh Docker container per run, or one shared
-container inside `async with agent:`.
+`127.0.0.1`) and `test` / `test` credentials. To have the capability start and stop the
+container for you, set `manage_container=True` (see
+[Managing the container](#managing-the-container)).
 
 ## Tools
 
@@ -102,9 +98,8 @@ credentials.
 ## Managing the container
 
 Set `manage_container=True` and the capability starts a LocalStack Docker
-container for each run and stops it when the run ends, so each run gets a fresh
-environment; runs inside `async with agent:` share one instead (see below).
-Docker must be installed and running.
+container for each run and stops it when the run ends. Docker must be installed
+and running.
 
 ```python
 from pydantic_ai_harness import LocalStack
@@ -231,7 +226,7 @@ LocalStack(
 ```
 
 The AWS CLI must be installed and on `PATH` (or point `aws_cli_path` at it). If
-the binary is missing, `aws_cli` returns a clear error instead of aborting the
+the binary is missing, `aws_cli` returns an error instead of aborting the
 run. Set `include_instructions=False` to omit the capability's prompt text when
 you supply your own.
 
@@ -261,6 +256,7 @@ Pass `custom_capability_types` so the spec loader knows how to instantiate
 
 ## Further reading
 
+- [Ten agents, ten clouds, one answer](https://pydantic.dev/articles/harness-localstack) (Pydantic): a fan-out of sub-agents, each with its own emulated AWS
 - [LocalStack documentation](https://docs.localstack.cloud/)
 - [Pydantic AI capabilities](../capabilities/overview.md)
 - [Toolsets](../toolsets.md)

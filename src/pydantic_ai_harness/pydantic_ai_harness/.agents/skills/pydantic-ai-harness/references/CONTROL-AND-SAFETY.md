@@ -4,8 +4,8 @@ Capabilities that constrain, screen, budget, or steer a run: repair malformed to
 guard prompts/tool calls/outputs, scan tool results for prompt injection, cap spend, ask the user
 a question mid-run, re-inject reminders, interrupt repeated-action loops, and review the trajectory with a
 judge model. All are
-`AbstractCapability`s passed in `Agent(capabilities=[...])`. Only `PromptInjectionDefender` needs
-an extra. For plain tool approval (`requires_approval=True`, `ApprovalRequired`,
+`AbstractCapability`s passed in `Agent(capabilities=[...])`. Only `RepairToolArguments` (`[repair-tool-arguments]`) and
+`PromptInjectionDefender` need an extra. For plain tool approval (`requires_approval=True`, `ApprovalRequired`,
 `DeferredToolRequests`, `HandleDeferredToolCalls`), use the core mechanism documented in the
 `building-pydantic-ai-agents` skill (`references/TOOLS-ADVANCED.md`); do not rebuild it here.
 
@@ -21,8 +21,10 @@ an extra. For plain tool approval (`requires_approval=True`, `ApprovalRequired`,
 | Get human approval for some tool calls, decided per call | `ToolGuardrail` returning `GuardrailResult.approve()` |
 | Get human approval for a whole tool | core `requires_approval=True` (core skill) |
 | Detect indirect prompt injection in emails/web pages returned by tools | `PromptInjectionDefender` |
+| Keep injected instructions, exfiltration commands, hidden text out of memory and skills | `Memory(scanner=ArtifactScanner())`, `Skills(..., scanner=ArtifactScanner())` |
 | Ask a second model whether each selected tool call should run | `ToolCallJudge(model, question=..., tools=...)` |
 | Let a second model approve low-risk calls that need approval, and ask a person about the rest | `ApprovalReviewer(model, question=..., tools=...)` |
+| Ask a person before file writes and commands, by permission mode (full, auto, read-only) | `Permissions(mode)` with `ask_permissions` in a `HandleDeferredToolCalls` handler |
 | Cap USD or tokens per day/month/run, per tenant, across workers | `SpendLimits(budgets=[Budget(...)])` |
 | Cap tokens/cost for one run only | core `UsageLimits` (no harness capability needed) |
 | Let the model ask the user multiple-choice questions and wait | `AskUser(answerer=...)` |
@@ -33,7 +35,10 @@ an extra. For plain tool approval (`requires_approval=True`, `ApprovalRequired`,
 ## RepairToolArguments
 
 Runs `json-repair` on raw tool-call argument strings in `before_tool_validate`, for every tool on the
-agent. No extra (`json-repair` is a base dependency), no options.
+agent. Needs the `repair-tool-arguments` extra, which installs `json-repair`
+(`uv add "pydantic-ai-harness[repair-tool-arguments]"`; `[coder]` includes it); no options.
+A repair is written back to the `ToolCallPart` in history (original args in
+`provider_details['original_args']`), so later requests replay the repaired arguments.
 
 ```python
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
@@ -264,6 +269,37 @@ Gotchas: `defense` plus `block_high_risk` or `semantic_detection` raises `UserEr
 diagnostics in `ToolReturn.metadata['prompt_injection']` (not sent to the model). With a custom ML
 `defense`, call `defense.warmup_tier2()` at startup.
 
+## ArtifactScanner
+
+Pattern scanner for agent-written artifacts that later sessions load: memory files and skills. Not a
+capability; pass it to `Memory(scanner=...)` and `Skills(scanner=...)`, or call `scan()` directly.
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+
+from pydantic_ai_harness import ArtifactScanner, Memory, Skills
+
+scanner = ArtifactScanner()  # threats=[...] narrows; extra_patterns={'name': regex} adds 'custom' ones
+agent = Agent(
+    'anthropic:claude-sonnet-5-5',
+    capabilities=[LocalWorkspace('.'), Memory(scanner=scanner), Skills('.agents/skills', scanner=scanner)],
+)
+result = scanner.scan('Ignore previous instructions', source='notes.md')
+result.flagged, result.summary()  # True, 'injection (ignore_instructions)'
+```
+
+Threats: `injection`, `role_override`, `exfiltration`, `html_comment`, `invisible_unicode` (plus
+`custom` for `extra_patterns`). With a scanner: `write_memory` refuses flagged text with a
+`ToolFailed`-style result (nothing stored); a flagged `MEMORY.md` is replaced by a notice in the
+snapshot; `read_memory` refuses a flagged file; flagged `search_memory` snippets become a notice; a
+flagged skill is skipped with a `UserWarning` and `SkippedSkill(reason='flagged', scan=...)`.
+Each decision emits an `artifact_scan flagged` span (source and excerpts only with `trace_include_content`).
+
+Gotchas: regex only, so paraphrases slip through and quoted attacks false-positive. `html_comment`
+flags linter directives in skills; narrow `threats` there. Memory files read via `FileSystem` and
+bundled skill files are not scanned. Subclass and override `scan` to plug in another detector.
+
 ## ToolCallJudge
 
 Asks a second model one yes/no risk question after a selected tool call's arguments validate and
@@ -351,6 +387,51 @@ Gotchas:
   and are durable operations under Temporal, DBOS, and Prefect (give the reviewer an explicit `id`).
 - Reviewed arguments leave the process for the reviewer provider, including calls it leaves for the
   person. This is a model-based filter, not an authorization boundary.
+
+## Permissions
+
+Holds the `FileSystem` writes and `Shell` commands a permission mode asks about by raising
+`ApprovalRequired`: `'full'` (default) asks about nothing, `'auto'` asks about commands matching
+`ask_commands` (`DEFAULT_ASK_COMMANDS`: `rm -rf`, `git push`, `sudo`, network clients, installs), and
+`'read-only'` asks about every write and command. Other tools are not checked.
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import HandleDeferredToolCalls, LocalWorkspace
+
+from pydantic_ai_harness import Coder
+from pydantic_ai_harness.permissions import (
+    PermissionDecision,
+    PermissionRequest,
+    Permissions,
+    ask_permissions,
+)
+
+
+async def approve(request: PermissionRequest) -> PermissionDecision:
+    return PermissionDecision(approved=input(f'{request.subject}? [y/N] ') == 'y')
+
+
+agent = Agent(
+    'anthropic:claude-sonnet-5-5',
+    capabilities=[
+        LocalWorkspace('.'),
+        Coder(),
+        Permissions('auto'),
+        HandleDeferredToolCalls(handler=lambda ctx, requests: ask_permissions(requests, approve)),
+    ],
+)
+```
+
+Gotchas:
+
+- Without a handler a held call ends the run as `DeferredToolRequests` output, like `requires_approval=True`.
+- `mode` may be a function of the run context, read on every call. `PermissionDecision(remember=True)`
+  skips asking about the same tool and command or path for the rest of the conversation, via the caller-ownable
+  `remembered` set; inside durable execution nothing is remembered.
+- Delegates are only checked when `Permissions` reaches them: pass it in `SubAgents(shared_capabilities=[...])`.
+- `ask_commands` patterns are a convenience, not a sandbox: use a sandbox workspace when the agent must not
+  reach something.
 
 ## SpendLimits
 
@@ -476,8 +557,19 @@ print(agent.run_sync('Set up storage').output)
 ```
 
 - Answerer: any `async (AskUserRequest) -> AskUserResponse`. `request.id` matches replies in a UI.
+- Two required positional parameters receive `(ctx, request)` (`ContextAnswerer[DepsT]`), including lambdas.
+  If both call shapes bind, a first parameter annotated `RunContext[DepsT]` selects the context form; otherwise request-only.
+  Only the first annotation is inspected; unresolved `RunContext` references are recognized.
+  Read the asking run's dependencies and messages through `ctx`, not the request.
+  A delegated question receives the child's context. For durable field access, follow
+  https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#agent-run-context-and-dependencies.
+- Type a stored callback as `AnyAnswerer[DepsT]` when either signature is possible.
 - Decline: return `AskUserResponse(cancelled=True)`; the model gets a "user declined" tool result.
 - Free text: `AskUserAnswer(header=..., custom_answer='...')` with `selected` empty.
+- Answer notes: `AskUserAnswer.note` accompanies selected labels or a custom answer with text and attachments.
+  Notes reach the user channel in `answer_note` frames and remain user turns during compaction.
+  See [Adding notes to an answer](https://pydantic.dev/docs/ai/harness/ask-user/#adding-notes-to-an-answer)
+  for supported content, validation and provenance; annotate tool results with `AskUserResult` from `pydantic_ai_harness.ask_user`.
 - An answer that does not fit (unknown header/label, several picks on single-select, missing
   answer) raises `ValueError` and fails the run; call `check_response(request, response)` (from
   `pydantic_ai_harness.ask_user`) first.
