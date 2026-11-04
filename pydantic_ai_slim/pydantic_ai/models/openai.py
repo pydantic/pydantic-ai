@@ -1149,7 +1149,7 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
 
     Currently supported values are `auto`, `default`, `flex`, `priority`, `fast`, and `ultrafast`.
     `fast` is OpenAI's newer name for `priority`. OpenAI only accepts `ultrafast` on the Responses API.
-    For more information, see [OpenAI's service tiers documentation](https://developers.openai.com/api/reference/responses/create).
+    For more information, see [OpenAI's service tiers documentation](https://developers.openai.com/api/reference/resources/responses/methods/create).
     """
 
     openai_prediction: ChatCompletionPredictionContentParam
