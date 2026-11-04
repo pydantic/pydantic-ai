@@ -283,6 +283,24 @@ async def test_image_of_listed_media_type_is_sent():
     assert tool_returns(request)[0].content == image
 
 
+@pytest.mark.parametrize(
+    'file',
+    [
+        pytest.param(BinaryContent(b'jpg', media_type='image/jpg'), id='image'),
+        pytest.param(BinaryContent(b'mp3', media_type='audio/mp3'), id='audio'),
+    ],
+)
+async def test_file_of_a_common_alias_is_judged_as_its_media_type(file: BinaryContent):
+    """OpenAI, Gemini, xAI and Mistral read `image/jpg` as JPEG, so it isn't turned into a note."""
+    sent: list[list[ModelMessage]] = []
+    agent = agent_with_tool_file(FunctionModel(calls_get_file_then(sent)), file)
+
+    await agent.run('Get the file.')
+
+    [request] = sent
+    assert tool_returns(request)[0].content == file
+
+
 async def test_url_without_a_media_type_is_judged_by_kind_alone():
     sent: list[list[ModelMessage]] = []
     image = ImageUrl('https://example.com/image')

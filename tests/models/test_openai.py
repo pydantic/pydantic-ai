@@ -8156,3 +8156,15 @@ def test_openai_chat_audio_of_other_format_from_a_tool_is_noted(allow_model_requ
             'content': 'File song (audio/flac, 4 bytes) was not sent: this model cannot read audio/flac audio files.',
         }
     )
+
+
+@pytest.mark.parametrize(('media_type', 'audio_format'), [('audio/mp3', 'mp3'), ('audio/x-wav', 'wav')])
+def test_openai_chat_audio_alias_is_sent_in_its_format(allow_model_requests: None, media_type: str, audio_format: str):
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='success', role='assistant')))
+    model = OpenAIChatModel('gpt-4o-audio-preview', provider=OpenAIProvider(openai_client=mock_client))
+
+    Agent(model).run_sync(['Process this audio', BinaryContent(b'audio', media_type=media_type)])
+
+    user_message = get_mock_chat_completion_kwargs(mock_client)[0]['messages'][0]
+    audio_part = next(part for part in user_message['content'] if part['type'] == 'input_audio')
+    assert audio_part['input_audio']['format'] == audio_format

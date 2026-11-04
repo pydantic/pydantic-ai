@@ -1563,7 +1563,12 @@ def _resolve_legacy_cache_retention(
     return timedelta(hours=24) if settings.get('openai_prompt_cache_retention') == '24h' else None
 
 
-_CHAT_AUDIO_FORMATS: dict[str, Literal['wav', 'mp3']] = {'audio/wav': 'wav', 'audio/mpeg': 'mp3'}
+_CHAT_AUDIO_FORMATS: dict[str, Literal['wav', 'mp3']] = {
+    'audio/wav': 'wav',
+    'audio/x-wav': 'wav',
+    'audio/mpeg': 'mp3',
+    'audio/mp3': 'mp3',
+}
 """The audio Chat Completions' `input_audio` takes, by media type."""
 
 

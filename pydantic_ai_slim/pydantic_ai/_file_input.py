@@ -45,14 +45,19 @@ SendableFile = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
 """A file the flags judge. An `UploadedFile` is not one: only the provider it was uploaded to can read it."""
 
 
+_MEDIA_TYPE_ALIASES = {'image/jpg': 'image/jpeg', 'audio/mp3': 'audio/mpeg', 'audio/x-wav': 'audio/wav'}
+"""Spellings in common use that providers which read the registered media type also read."""
+
+
 def unsupported_file_input(item: SendableFile, profile: ModelProfile) -> str | None:
     """What `item` is that the model cannot read, such as `'audio files'` or `'image/heic images'`, or `None`.
 
     A file is judged by its kind's flag, then by its media type against the kind's `supported_*_media_types`,
-    as given: adapters send `image/jpg` or `image/png; name=a.png` under that spelling, which the provider may not
-    take. A URL whose media type can't be inferred, or is of another kind, is judged by kind alone. A document of a text media type that
-    `DocumentMediaType` doesn't list, such as `text/x-python`, is judged as `text/plain`, which is how adapters
-    send it. Binary content that is neither an image, audio, video nor a document is left to the model adapter.
+    as given apart from a few common aliases such as `image/jpg`: adapters send a media type under the spelling
+    they're given, which the provider may not take. A URL whose media type can't be inferred, or is of another
+    kind, is judged by kind alone. A document of a text media type that `DocumentMediaType` doesn't list, such
+    as `text/x-python`, is judged as `text/plain`, which is how adapters send it. Binary content that is
+    neither an image, audio, video nor a document is left to the model adapter.
     """
     match item:
         case ImageUrl() | BinaryContent(is_image=True):
@@ -82,7 +87,7 @@ def unsupported_file_input(item: SendableFile, profile: ModelProfile) -> str | N
         # No media type to judge, or one of another kind, such as an `ImageUrl` given as a PDF, which the
         # adapter sends by the media type it downloads as.
         return None
-    judged_as = media_type
+    judged_as = _MEDIA_TYPE_ALIASES.get(media_type, media_type)
     if noun == 'documents' and media_type not in KNOWN_DOCUMENT_MEDIA_TYPES and is_text_like_media_type(media_type):
         judged_as = 'text/plain'
     return None if judged_as in supported else f'{media_type} {noun}'
