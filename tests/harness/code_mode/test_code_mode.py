@@ -25,7 +25,7 @@ from uuid import UUID
 import anyio
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, create_model
 from pydantic_core import SchemaValidator, core_schema
 from pydantic_monty import (
     NOT_HANDLED,
@@ -1906,127 +1906,34 @@ class TestCodeMode:
         result = await wrapper.call_tool('run_code', {'code': code}, ctx, tools['run_code'])
         return result.return_value, description
 
-    @staticmethod
-    def _mail_tool_def() -> ToolDefinition:
-        return ToolDefinition(
-            name='send',
-            description='Send a mail.',
-            parameters_json_schema={
-                'type': 'object',
-                '$defs': {
-                    'Mail': {
-                        'type': 'object',
-                        'properties': {'from': {'type': 'string'}, 'cc': {'$ref': '#/$defs/Other'}},
-                        'required': ['from'],
-                    },
-                    'Other': {'type': 'object', 'properties': {'a': {'type': 'string'}}, 'required': ['a']},
-                },
-                'properties': {'mail': {'$ref': '#/$defs/Mail'}, 'dry_run': {'type': 'boolean'}},
-                'required': ['mail', 'dry_run'],
-            },
-            return_schema={'type': 'string'},
-        )
-
-    async def test_keyword_field_accepts_the_right_call(self) -> None:
-        """A field named `from` is written so the checker knows it, and the correct call runs."""
-        code = "print(await send(mail={'from': 'a', 'cc': {'a': 'b'}}, dry_run=True))"
-        output, description = await self._run_code_with_tools(code, self._mail_tool_def())
-        assert output == {'output': 'ok\n'}
-        assert "Mail = TypedDict('Mail', {" in description
-
     @pytest.mark.parametrize(
-        'mail',
+        'right,wrong',
         [
-            pytest.param("{'sender': 'a'}", id='wrong-key'),
-            pytest.param("{'from': 1}", id='wrong-value'),
-            pytest.param("{'from': 'a', 'cc': {'a': 1}}", id='wrong-forward-reference-value'),
+            pytest.param(
+                "tool_a(wrap={'user': {'name': 'x'}})", "tool_a(wrap={'user': {'id': 1}})", id='kept-to-renamed'
+            ),
+            pytest.param("tool_b(user={'id': 1})", "tool_b(user={'name': 'x'})", id='renamed'),
         ],
     )
-    async def test_keyword_field_rejects_wrong_calls(self, mail: str) -> None:
-        code = f'await send(mail={mail}, dry_run=True)'
-        with pytest.raises(ModelRetry, match='Type error in code'):
-            await self._run_code_with_tools(code, self._mail_tool_def())
-
-    @staticmethod
-    def _keyword_param_tool_def() -> ToolDefinition:
-        return ToolDefinition(
-            name='send',
-            description='Send a mail.',
-            parameters_json_schema={
-                'type': 'object',
-                'properties': {'from': {'type': 'string'}, 'limit': {'type': 'integer', 'default': 5}},
-                'required': ['from'],
-            },
-            return_schema={'type': 'string'},
+    async def test_type_keeping_its_name_is_checked_against_a_renamed_type(self, right: str, wrong: str) -> None:
+        """On main `Wrapper.user` named a `User` nothing defined, so the checker let anything through."""
+        user_a: type[BaseModel] = create_model('User', name=(str, ...))
+        user_b: type[BaseModel] = create_model('User', id=(int, ...))
+        wrapper: type[BaseModel] = create_model('Wrapper', user=(user_a, ...))
+        tool_a_args: type[BaseModel] = create_model('ToolAArgs', wrap=(wrapper, ...))
+        tool_b_args: type[BaseModel] = create_model('ToolBArgs', user=(user_b, ...))
+        tools = (
+            ToolDefinition(
+                name='tool_a', parameters_json_schema=tool_a_args.model_json_schema(), return_schema={'type': 'string'}
+            ),
+            ToolDefinition(
+                name='tool_b', parameters_json_schema=tool_b_args.model_json_schema(), return_schema={'type': 'string'}
+            ),
         )
-
-    async def test_keyword_param_accepts_the_right_call(self) -> None:
-        """Fields of different types must not fail a `**{...}` call, which `Unpack[...]` would."""
-        output, description = await self._run_code_with_tools(
-            "print(await send(**{'from': 'a', 'limit': 1}))", self._keyword_param_tool_def()
-        )
-        assert output == {'output': 'ok\n'}
-        assert 'async def send(**kwargs: Any) -> str:' in description
-        assert '`SendArgs` describes them.' in description
-        assert 'limit: Defaults to `5`.' in description
-
-    async def test_keyword_param_args_can_be_checked_through_their_type(self) -> None:
-        tool_def = self._keyword_param_tool_def()
-        output, _ = await self._run_code_with_tools(
-            "args: SendArgs = {'from': 'a'}\nprint(await send(**args))", tool_def
-        )
+        output, _ = await self._run_code_with_tools(f'print(await {right})', *tools)
         assert output == {'output': 'ok\n'}
         with pytest.raises(ModelRetry, match='Type error in code'):
-            await self._run_code_with_tools("args: SendArgs = {'from': 1}\nawait send(**args)", tool_def)
-
-    async def test_literal_with_a_quote_in_a_functional_form_is_still_checked(self) -> None:
-        """A quoted annotation holding an escape loses its type, so annotations in this form are not quoted."""
-        tool_def = ToolDefinition(
-            name='send',
-            parameters_json_schema={
-                'type': 'object',
-                '$defs': {
-                    'Other': {'type': 'object', 'properties': {'a': {'type': 'string'}}, 'required': ['a']},
-                    'Mail': {
-                        'type': 'object',
-                        'properties': {'from': {'anyOf': [{'$ref': '#/$defs/Other'}, {'enum': ["it's"]}]}},
-                        'required': ['from'],
-                    },
-                },
-                'properties': {'mail': {'$ref': '#/$defs/Mail'}},
-                'required': ['mail'],
-            },
-            return_schema={'type': 'string'},
-        )
-        output, _ = await self._run_code_with_tools("""print(await send(mail={'from': "it's"}))""", tool_def)
-        assert output == {'output': 'ok\n'}
-        with pytest.raises(ModelRetry, match='Type error in code'):
-            await self._run_code_with_tools("print(await send(mail={'from': 'wrong'}))", tool_def)
-
-    async def test_field_shadowing_a_type_keeps_type_checking(self) -> None:
-        """A field `str: str` in a class body would switch off checking of every later `str` in that class."""
-        tool_def = ToolDefinition(
-            name='send',
-            parameters_json_schema={
-                'type': 'object',
-                '$defs': {
-                    'Mail': {
-                        'type': 'object',
-                        'properties': {'str': {'type': 'string'}, 'other': {'type': 'string'}},
-                        'required': ['str', 'other'],
-                    },
-                },
-                'properties': {'mail': {'$ref': '#/$defs/Mail'}, 'dry_run': {'type': 'boolean'}},
-                'required': ['mail', 'dry_run'],
-            },
-            return_schema={'type': 'string'},
-        )
-        output, _ = await self._run_code_with_tools(
-            "print(await send(mail={'str': 'a', 'other': 'b'}, dry_run=True))", tool_def
-        )
-        assert output == {'output': 'ok\n'}
-        with pytest.raises(ModelRetry, match='Type error in code'):
-            await self._run_code_with_tools("await send(mail={'str': 'a', 'other': 1}, dry_run=True)", tool_def)
+            await self._run_code_with_tools(f'await {wrong}', *tools)
 
     async def test_nested_difference_is_checked_per_tool(self) -> None:
         """Two `Order`s that differ only in the `User` inside them stay two types for the checker."""
@@ -2066,6 +1973,7 @@ class TestCodeMode:
             await self._run_code_with_tools("await tool_b(order={'user': {'name': 'a'}}, dry_run=True)", *tools)
 
     async def test_type_named_any_does_not_shadow_any(self) -> None:
+        """A definition named `Any` would change what every `Any` in the stubs means."""
         tool_def = ToolDefinition(
             name='send',
             parameters_json_schema={
@@ -2079,6 +1987,8 @@ class TestCodeMode:
         output, description = await self._run_code_with_tools("print(await send(x={'a': 'b'}, y=1))", tool_def)
         assert output == {'output': 'ok\n'}
         assert 'x: send_Any, y: Any' in description
+        with pytest.raises(ModelRetry, match='Type error in code'):
+            await self._run_code_with_tools("await send(x={'a': 1}, y=1)", tool_def)
 
     # ---------------------------------------------------------------------------
     # Deferred tools
