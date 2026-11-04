@@ -54,7 +54,7 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.messages import CapabilityLoadDeltaPart, LoadCapabilityCallPart, ModelRequestPart
+from pydantic_ai.messages import CapabilityLoadDeltaPart, ModelRequestPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models._batch_model import BatchedModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -1289,15 +1289,14 @@ def compaction_tools(agent: Agent[None, str]) -> None:
 
 
 def recorded_load_ids(messages: list[ModelMessage]) -> list[str]:
-    """The capabilities `messages` record as loaded, by an exchange or a `CapabilityLoadDeltaPart`."""
-    ids: list[str] = []
-    for message in messages:
-        for part in message.parts:
-            if isinstance(part, LoadCapabilityCallPart):
-                ids.append(str(part.args_as_dict()['id']))
-            elif isinstance(part, CapabilityLoadDeltaPart):
-                ids.extend(part.loaded)
-    return ids
+    """The capabilities `messages` record as loaded again, with the `CapabilityLoadDeltaPart` a compaction leaves."""
+    return [
+        capability_id
+        for message in messages
+        for part in message.parts
+        if isinstance(part, CapabilityLoadDeltaPart)
+        for capability_id in part.loaded
+    ]
 
 
 async def test_capability_loads_are_recorded_again_after_the_summary():
