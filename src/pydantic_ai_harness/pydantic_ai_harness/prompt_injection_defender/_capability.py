@@ -100,8 +100,9 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
     the client, so they are not classified here.
 
     Inside a durable workflow or flow, semantic warmup and, with `semantic_detection` or a supplied
-    `defense`, classification are durable operations addressed by the capability's `id`, which has no default (several scoped defenders compose), so
-    a defender on a durable-capable agent needs an explicit one: `PromptInjectionDefender(id='defender')`.
+    `defense`, classification are durable operations addressed by the capability's `id`. It has no
+    default (several scoped defenders compose), so a defender on a durable-capable agent needs an
+    explicit one: `PromptInjectionDefender(id='defender')`.
 
     Example:
         ```python
