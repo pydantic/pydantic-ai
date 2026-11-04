@@ -237,6 +237,9 @@ agent = Agent('test', capabilities=[LocalWorkspace('.'), SmartSearch(model='test
   the search as a tool failure the model sees.
 - Sends the query, snippets and paths to the judge's provider; `directory` must be inside the working
   directory (symlinks followed), else `ModelRetry`.
+- Durable execution records each search's judgments under the default `id` (`smart_search`); keep it stable
+  once deployed. Two sharing an `id` become one when they agree and raise `UserError` at build when they
+  differ; to keep two, give each its own `id` and wrap them in `PrefixTools`.
 
 ## Shell
 
