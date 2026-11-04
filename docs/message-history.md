@@ -423,6 +423,38 @@ print(closed_out.content)
 
 This pipeline handles regular, locally-executed tool calls only. Provider-native tool parts — produced and resolved by the provider inline — are left untouched and repaired by each model's own serializer instead. Some other provider-invalid histories are also out of scope and may be rejected: duplicate tool results for one call, and provider-specific ordering rules beyond call/result pairing — where one of those rules is known and verified, the model's own serializer normalizes the request for it instead.
 
+### Special tokens in content
+
+Open-weight models mark their turns with special tokens in a chat template, such as `<|im_start|>`, `<|eot_id|>` or `[INST]`. Many hosts of these models also encode those characters as the real control token when they find them in message content. Text from a tool, a file or a user can then close the current turn and open a new one in any role, and a note beside the text can't help, because it sits in a turn the forged one has already closed. Which hosts do this depends on the host and the model, not only on the model family, and a routing service can pick a different host per request.
+
+So on routes that can reach such a host, Pydantic AI puts a zero-width joiner (U+200D) inside each of these tokens before sending, so `<|im_start|>` goes out as `<\u200d|im_start|>` and reaches the model as ordinary text. This is the exception to sending your content as written, and it's limited to this one character:
+
+- **What changes:** user prompts, tool results, inlined text files, retry feedback, summaries sent as user text, and the model's own text, tool call arguments and unsigned reasoning when they're sent back in later requests. Text without a special token goes out unchanged.
+- **What doesn't:** the message history you store, the arguments your tools receive, system prompts, instructions and tool definitions. A file or URL a provider fetches itself isn't changed either.
+- **Prompt cache:** the same text always gets the same joiners, so resending a history sends the same bytes.
+
+The flag is [`may_tokenize_special_tokens_in_content`][pydantic_ai.profiles.ModelProfile.may_tokenize_special_tokens_in_content]. It's on for self-hosted servers ([vLLM](models/compatible-apis.md#vllm), [Ollama](models/ollama.md), [Hugging Face](models/huggingface.md)), for hosts of open-weight models, and for routing services and [`OpenAICompatibleProvider`][pydantic_ai.providers.openai_compatible.OpenAICompatibleProvider] for every model that isn't only available from its own lab, such as Claude, GPT or Gemini. It's off where those labs' models are served by their own APIs.
+
+!!! warning "Agents that edit files containing these tokens"
+    The model reads the joiner as part of the text and copies it into what it writes. An agent on one of these routes that reads a chat template, a tokenizer config or a prompt file containing `<|im_start|>` and writes it back is likely to write the invisible character into your file, where the token no longer works. It won't notice: reading the file back shows the same text it read before. An edit tool that matches exact text can also fail, because the model's search text has a joiner that the file doesn't, until the model retries without it.
+
+    If your agent edits this kind of file, turn the flag off for that model:
+
+    ```python {title="turn_off_special_token_breaking.py"}
+    from pydantic_ai import Agent
+    from pydantic_ai.models.openrouter import OpenRouterModel
+
+    model = OpenRouterModel(
+        'qwen/qwen3.8-27b',
+        profile={'may_tokenize_special_tokens_in_content': False},
+    )
+    agent = Agent(model)
+    ```
+
+    Only do this when you trust that text, or when you've pinned a host that treats these tokens as text: with the flag off on a host that tokenizes them, the text can forge a turn, and the model usually can't copy the tokens either, since it no longer sees them as text.
+
+Breaking the token only stops the host from creating a turn boundary. A model can still follow text written to look like a turn, and some do, which no change to these characters can prevent.
+
 ### Correlating runs with `run_id` and `conversation_id`
 
 Each `ModelRequest` and `ModelResponse` carries two identifiers:

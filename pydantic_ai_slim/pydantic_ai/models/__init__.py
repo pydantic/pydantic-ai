@@ -88,6 +88,7 @@ from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._removed_names import removed_names_getattr
 from .._run_context import RunContext
+from .._special_tokens import break_special_tokens, break_special_tokens_in_messages
 from .._unsupported_settings import SUPPRESSED_WARNINGS, warn_unsupported_settings
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
 from ..exceptions import ModelAPIError, UserError
@@ -1702,6 +1703,16 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             has_function_tools=bool(model_request_parameters.function_tools),
         )
 
+    def _format_inlined_text_file(self, text: str, *, media_type: str, identifier: str) -> str:
+        """Frame a text file for a message-mapping step that inlines it into a text prompt.
+
+        It's downloaded or decoded in that step, so `prepare_messages` can't have seen its text.
+        """
+        formatted = _utils.format_inlined_text_file(text, media_type=media_type, identifier=identifier)
+        if self.profile.get('may_tokenize_special_tokens_in_content', False):
+            return break_special_tokens(formatted)
+        return formatted
+
     def prepare_messages(
         self,
         messages: list[ModelMessage],
@@ -1740,6 +1751,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         Renders each [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] with a `context_id` as the
         `<context>` element that id names, so a later statement of an appending dynamic system prompt replaces
         or withdraws the first.
+
+        Where the profile's `may_tokenize_special_tokens_in_content` is `True`, puts a zero-width joiner inside each
+        chat-template special token in user prompts, tool results and replayed model output, so a host can't encode it
+        as a control token. The same text always comes out the same, and the history itself isn't changed.
 
         When the conversation has `<context>` elements, follows each user prompt, attached text file and tool result
         whose text opens one with a note saying who wrote it, so the model doesn't take it as a change to its
@@ -1813,6 +1828,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         # wrap below it — so they see the plain parts a retry becomes rather than the retry itself.
         messages = _translate_retry_parts(messages, keep_feedback=self._renders_retry_feedback)
         messages = _replace_unsupported_tool_return_files(messages, self.profile)
+        # After retry feedback becomes user text, and before any step below renders the application's own text.
+        messages = break_special_tokens_in_messages(messages, self.profile)
         if first_context_request is not None:
             # Before the `<system>` wrap below, which turns each note into `<system>`-tagged user text where needed.
             messages = _note_context_lookalikes(messages, first_context_request)
