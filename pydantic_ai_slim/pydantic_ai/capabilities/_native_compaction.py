@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from itertools import takewhile
+from typing import cast
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import CompactionPart, ModelMessage, ModelRequest, ModelRequestPart, ModelResponse
@@ -66,11 +68,8 @@ def _standing_system_prompt(messages: Sequence[ModelMessage]) -> list[ModelReque
 
     That's the opening parts of the requests the history starts with, merged as they are before they're sent.
     """
-    parts: list[ModelRequestPart] = []
-    for message in messages:
-        if not isinstance(message, ModelRequest):
-            break
-        parts.extend(message.parts)
+    opening = takewhile(lambda message: isinstance(message, ModelRequest), messages)
+    parts: list[ModelRequestPart] = [part for message in opening for part in cast(ModelRequest, message).parts]
     return parts[: _standing_system_prompt_count(ModelRequest(parts=parts))]
 
 
