@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -24,8 +25,17 @@ from pydantic_ai_harness.subagents import is_task_report
 WORKER_CALLS: list[str] = []
 """The worker's model requests, one entry per request."""
 
+_turn_ended = asyncio.Event()
 
-def _parent(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+
+def reset_worker() -> None:
+    """Forget the worker's requests, and hold its next one until the parent ends its turn."""
+    global _turn_ended
+    WORKER_CALLS.clear()
+    _turn_ended = asyncio.Event()
+
+
+def _parent(messages: list[ModelMessage], background: bool) -> ModelResponse:
     reports = [
         ''.join(item.content for item in part.content if isinstance(item, TextContent))
         for message in messages
@@ -36,27 +46,35 @@ def _parent(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     if reports:
         return ModelResponse(parts=[TextPart(reports[-1])])
     if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+        _turn_ended.set()
         return ModelResponse(parts=[TextPart('Waiting for the report.')])
-    args = {'agent_name': 'worker', 'task': 'Work on it', 'background': True}
+    args = {'agent_name': 'worker', 'task': 'Work on it', 'background': background}
     return ModelResponse(parts=[ToolCallPart('delegate_task', args)])
 
 
-async def _stream_parent(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
-    [part] = _parent(messages, info).parts
-    if isinstance(part, TextPart):
-        yield part.content
-    else:
-        assert isinstance(part, ToolCallPart)
-        yield {0: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
+def background_parent(*, background: bool = True) -> FunctionModel:
+    """Without `background`, the task only moves to the background with `auto_background_after`.
+
+    Streams too, as a run whose capabilities handle events streams its model requests.
+    """
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return _parent(messages, background)
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        [part] = _parent(messages, background).parts
+        if isinstance(part, TextPart):
+            yield part.content
+        else:
+            assert isinstance(part, ToolCallPart)
+            yield {0: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
+
+    return FunctionModel(respond, stream_function=stream)
 
 
-def background_parent() -> FunctionModel:
-    """Streams too, as a run whose capabilities handle events streams its model requests."""
-    return FunctionModel(_parent, stream_function=_stream_parent)
-
-
-def background_worker(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+async def background_worker(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     WORKER_CALLS.append('worker')
+    await _turn_ended.wait()
     return ModelResponse(parts=[TextPart('from the worker')])
 
 

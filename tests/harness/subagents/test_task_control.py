@@ -279,7 +279,7 @@ class TestSubAgentsTaskControl:
         [backgrounded] = recorder.of(TaskBackgroundedEvent)
         assert backgrounded.reason == 'requested'
 
-    # Temporal replays the timer, so it moves a durable task to the background too.
+    # The engine gate admits it on Temporal, whose replay test is in `test_temporal.py`.
     @pytest.mark.parametrize('durable', [False, True])
     async def test_a_slow_task_moves_to_the_background_after_auto_background_after(self, durable: bool) -> None:
         gate = Gate()
@@ -2555,6 +2555,7 @@ class TestTaskControlBoundaries:
                 id='remote_agents',
             ),
             pytest.param(controlled(auto_background_after=1), id='auto_background_after'),
+            pytest.param(controlled(max_running_tasks=1), id='max_running_tasks'),
         ],
     )
     async def test_task_control_refuses_durable_execution_it_cannot_replay(self, capability: SubAgents[Any]) -> None:

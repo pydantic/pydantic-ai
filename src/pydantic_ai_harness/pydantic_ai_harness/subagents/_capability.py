@@ -310,8 +310,8 @@ class SubAgents(AbstractCapability[AgentDepsT]):
 
     See `TaskControl`. Only one `SubAgents` on an agent can set it. On Temporal and DBOS, each task runs in a durable
     unit of its own, which can't ask questions, take messages, or be resumed. Under durable execution, `include_self`,
-    `remote_agents`, `auto_background_after` outside Temporal, other durable engines, and a bound `DelegationTasks`
-    owner raise a `UserError`.
+    `remote_agents`, `auto_background_after` or `max_running_tasks` outside Temporal, other durable engines, and a bound
+    `DelegationTasks` owner raise a `UserError`.
     """
 
     dynamic_agents: DynamicAgents[AgentDepsT] | None = field(default=None, kw_only=True)
@@ -548,12 +548,16 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         if (control := self.task_control) is not None and (
             self.include_self
             or control.remote_agents
-            # Only Temporal replays the timer: elsewhere, a recovered task settles before it fires.
-            or (control.auto_background_after is not None and spec.tool_config_key != 'temporal')
+            # Only Temporal journals when a task settles: elsewhere, a recovered task can settle before a timer fires or
+            # a limit is checked, so replay would decide differently.
+            or (
+                spec.tool_config_key != 'temporal'
+                and (control.auto_background_after is not None or control.max_running_tasks is not None)
+            )
         ):
             raise UserError(
                 '`SubAgents` `task_control` is not supported under durable execution with `include_self` or '
-                '`remote_agents`, nor with `auto_background_after` outside Temporal.'
+                '`remote_agents`, nor with `auto_background_after` or `max_running_tasks` outside Temporal.'
             )
         # Replay rebuilds the roster only if `create_agent` runs in workflow code: an engine that runs function tools
         # there, or Temporal, which honors the toolset's `{'temporal': False}`.

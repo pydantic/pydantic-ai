@@ -12,7 +12,13 @@ from pydantic_ai import Agent
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai_harness.subagents import DynamicAgents, SubAgent, SubAgents, TaskControl
 from tests.conftest import detach_dbos_logging, try_import
-from tests.harness.subagents._background import WORKER_CALLS, EventKinds, background_parent, background_worker
+from tests.harness.subagents._background import (
+    WORKER_CALLS,
+    EventKinds,
+    background_parent,
+    background_worker,
+    reset_worker,
+)
 from tests.harness.subagents._dynamic import POET_CALLS, POET_RESULT, creator
 
 with try_import() as imports_successful:
@@ -86,7 +92,7 @@ async def test_background_task_survives_recovery(dbos: DBOS) -> None:
         events.kinds.clear()
         return [(await agent.run('Delegate it')).output, *events.kinds]
 
-    WORKER_CALLS.clear()
+    reset_worker()
     workflow_id = str(uuid.uuid4())
     with SetWorkflowID(workflow_id):
         output, *kinds = await workflow()
