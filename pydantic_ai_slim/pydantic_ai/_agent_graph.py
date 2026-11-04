@@ -819,14 +819,18 @@ class _AttemptCompaction:
 
     def commit(self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]]) -> None:
         """Replace the run's history with the compacted one, now that a response to it is kept."""
-        if self.requested is not None:
+        # A compaction that failed sent nothing compacted, so the request stays pending for the next request.
+        if self.requested is not None and self.error is None:
             ctx.state.compaction_requests.settle(self.requested)
-        if self.committed is None or self.record is None:
+        if self.committed is None or self.record is None or self.record.replaced is None:
             return
         history = ctx.state.message_history
-        removed = len(history) - len(self.committed)
+        # The history the compaction replaced is the start of the run's: what hooks appended to it since, like an
+        # `after_model_request` hook's `ctx.messages.append(...)`, is kept after the compacted history.
+        compacted = len(self.record.replaced)
+        removed = compacted - len(self.committed)
         # In place: `capture_run_messages` and every `RunContext` of the run hold this list.
-        history[:] = self.committed
+        history[:] = [*self.committed, *history[compacted:]]
         ctx.state.compactions.append(self.record)
         if ctx.deps.resumed_request_index is not None:
             # As after the before-chain: the request a run resumes from history is the last one, which compaction keeps.

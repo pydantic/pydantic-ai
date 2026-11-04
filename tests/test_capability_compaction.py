@@ -729,6 +729,58 @@ async def test_merged_requests_keep_both_focuses():
     assert await compacted_with(('manual', 'the decisions'), ('manual', 'the decisions')) == ('manual', 'the decisions')
 
 
+async def test_history_written_while_the_compacted_attempt_ran_is_kept():
+    """What `after_model_request` writes to the history while a compacted attempt is answered survives the commit."""
+    note = ModelRequest(parts=[UserPromptPart('a note from after_model_request')])
+
+    async def after(
+        ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
+    ) -> ModelResponse:
+        if ctx.run_step == 1:
+            ctx.messages.append(note)
+        return response
+
+    agent = Agent(TestModel(), capabilities=[RequestOnce(), Summarize(), Hooks(after_model_request=after)])
+    result = await agent.run('hi')
+    assert note in result.all_messages()
+    assert isinstance(result.all_messages()[0].parts[0], CompactionPart)
+
+
+async def test_a_failed_compaction_recovered_from_keeps_the_request_pending():
+    """When compacting fails and an error hook recovers, nothing compacted was sent, so the next request compacts."""
+    recovered: list[bool] = []
+
+    async def recover(ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception) -> ModelResponse:
+        recovered.append(True)
+        return ModelResponse(parts=[ToolCallPart('noop', {})])
+
+    @dataclass
+    class FailOnce(AbstractCapability[Any]):
+        failed: bool = False
+
+        async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
+            if not self.failed:
+                self.failed = True
+                raise ModelAPIError(model_name='m', message='compaction rate limited')
+            return None
+
+    summarize = Summarize()
+    agent = Agent(
+        TestModel(),
+        capabilities=[RequestOnce(), FailOnce(), summarize, Hooks(model_request_error=recover)],
+    )
+
+    @agent.tool_plain
+    def noop() -> str:
+        return 'ok'
+
+    result = await agent.run('hi')
+    assert recovered == [True]
+    # The request was compacted on the next step instead.
+    assert len(summarize.calls) == 1
+    assert len(result.compactions) == 1
+
+
 async def test_request_made_during_the_attempt_stays_pending():
     """Accepting an attempt settles the request it compacted for, not one made while it ran."""
 
