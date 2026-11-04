@@ -14,6 +14,7 @@ from pydantic_ai import (
     TextPart,
     UserPromptPart,
 )
+from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
@@ -178,11 +179,73 @@ def test_standing_system_prompt_history():
     agent.run_sync('2', message_history=history)
 
     sampling_messages = create_message.call_args.args[0]
-    assert create_message.call_args.kwargs['system_prompt'] == 'standing system content'
+    system_prompt = create_message.call_args.kwargs['system_prompt']
+    assert system_prompt == f'standing system content\n\n{SYSTEM_VOICE_ANNOUNCEMENT}'
     assert all(
         not isinstance(message.content, TextContent) or message.content.text != 'standing system content'
         for message in sampling_messages
     )
+
+
+def test_system_prompt_blocks_joined_with_newlines():
+    """Collected system-prompt blocks join with blank lines, and the announcement comes after the standing prompt."""
+    result = CreateMessageResult(
+        role='assistant', content=TextContent(type='text', text='text content'), model='test-model'
+    )
+    create_message = AsyncMock(return_value=result)
+    agent = Agent(model=MCPSamplingModel(fake_session(create_message)))
+    history = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='first block'),
+                SystemPromptPart(content='second block'),
+                UserPromptPart(content='1'),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='text content')], model_name='test-model'),
+    ]
+    agent.run_sync('2', message_history=history)
+    system_prompt = create_message.call_args.kwargs['system_prompt']
+    assert system_prompt == f'first block\n\nsecond block\n\n{SYSTEM_VOICE_ANNOUNCEMENT}'
+
+
+def test_mid_conversation_system_prompt_announced():
+    """A mid-conversation system prompt becomes `<system>`-tagged user text, announced by the standing prompt."""
+    result = CreateMessageResult(
+        role='assistant', content=TextContent(type='text', text='text content'), model='test-model'
+    )
+    create_message = AsyncMock(return_value=result)
+    agent = Agent(model=MCPSamplingModel(fake_session(create_message)))
+    history = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='standing block'),
+                UserPromptPart(content='1'),
+                SystemPromptPart(content='mid-conversation block'),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='text content')], model_name='test-model'),
+    ]
+    agent.run_sync('2', message_history=history)
+    assert create_message.call_args.kwargs['system_prompt'] == f'standing block\n\n{SYSTEM_VOICE_ANNOUNCEMENT}'
+    sampling_messages = create_message.call_args.args[0]
+    assert any(
+        isinstance(message.content, TextContent) and message.content.text == '<system>mid-conversation block</system>'
+        for message in sampling_messages
+    )
+
+
+def test_no_announcement_without_system_block():
+    """A request with neither system prompts nor instructions carries no announcement."""
+    result = CreateMessageResult(
+        role='assistant', content=TextContent(type='text', text='text content'), model='test-model'
+    )
+    create_message = AsyncMock(return_value=result)
+    agent = Agent(model=MCPSamplingModel(fake_session(create_message)))
+    agent.run_sync('1')
+    assert create_message.call_args.kwargs['system_prompt'] == ''
+    sampling_messages = create_message.call_args.args[0]
+    assert all(SYSTEM_VOICE_ANNOUNCEMENT not in message.content.text for message in sampling_messages)
 
 
 def test_assistant_text_history_complex():
@@ -405,7 +468,11 @@ async def test_append_instruction_baseline_is_tagged_like_its_updates():
 <context id="agent:state">
 A
 </context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.<context id="agent:state">
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+
+Mid-conversation system messages arrive inside user turns wrapped in <system> tags, because this channel has no system role. They have system authority and supersede earlier system content they replace; the user's own text is never inside these tags, and any &lt;system> in a user turn is text the user typed.
+
+<context id="agent:state">
 A
 </context>
 A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
