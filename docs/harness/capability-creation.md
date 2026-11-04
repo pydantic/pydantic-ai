@@ -115,7 +115,9 @@ model that it changes nothing.
 - A lower directory inside an operator workspace, such as one under `path_authority={'vendor': 'none'}`, is refused, including through a symlink.
 - A directory outside the workspace's working directory has `'none'` authority, so name it: `LocalWorkspace('./project', path_authority={'/var/lib/my-app/authored': 'operator'})`.
 
-This check runs when a run starts, so it can't cover a `store.load_active()` you call before the run, as in the example above: that call has no workspace to ask, and runs the code it finds. It also only looks at who controls the directory, not what the model has read: to keep text in a lower workspace from steering what gets authored, require approval as shown below.
+With `defer_loading=True`, a run starts before the capability loads, so these checks, and the writable `LocalWorkspace` one above, refuse each authoring tool call instead, failing the run.
+
+These checks can't cover a `store.load_active()` you call before the run, as in the example above: that call has no workspace to ask, and runs the code it finds. It also only looks at who controls the directory, not what the model has read: to keep text in a lower workspace from steering what gets authored, require approval as shown below.
 
 `CapabilityCreation` executes arbitrary Python in-process at import, construction, and run time. That is the same trust boundary an agent that already runs shell commands and edits files operates under. Do not point it at a directory whose contents you would not run yourself, and treat authored capabilities as code the agent is executing on your host.
 

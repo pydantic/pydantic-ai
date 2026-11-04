@@ -29,7 +29,7 @@ except ImportError:  # pragma: lax no cover
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.capability_creation import CapabilityCreation
 from tests.temporal_utils import temporal_dev_server_cache_dir
@@ -47,6 +47,12 @@ _RESTRICTIONS = SandboxRestrictions.default.with_passthrough_modules('coverage',
 
 
 def _answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('ran')])
+
+
+def _list_then_answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('list_authored_capabilities', {})])
     return ModelResponse(parts=[TextPart('ran')])
 
 
@@ -74,14 +80,25 @@ lower_agent = Agent(
     ],
 )
 
+tool_agent = Agent(
+    FunctionModel(_list_then_answer),
+    name='tool_agent',
+    deps_type=type(None),
+    capabilities=[
+        LocalWorkspace[None]('.'),
+        CapabilityCreation[None](_DIRECTORY),
+        TemporalDurability[None](activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+_AGENTS = {agent.name: agent for agent in (operator_agent, lower_agent, tool_agent)}
+
 
 @workflow.defn
 class CreationWorkflow:
     @workflow.run
     async def run(self, name: str) -> str:
-        agent = operator_agent if name == operator_agent.name else lower_agent
         try:
-            return (await agent.run('go')).output
+            return (await _AGENTS[name].run('go')).output
         except UserError as exc:
             return str(exc)
 
@@ -107,7 +124,7 @@ async def _execute(client: Client, name: str) -> str:
         client,
         task_queue=TASK_QUEUE,
         workflows=[CreationWorkflow],
-        plugins=[AgentPlugin(operator_agent), AgentPlugin(lower_agent)],
+        plugins=[AgentPlugin(agent) for agent in _AGENTS.values()],
         workflow_runner=SandboxedWorkflowRunner(restrictions=_RESTRICTIONS),
     ):
         return await client.execute_workflow(
@@ -124,3 +141,8 @@ async def test_runs_at_operator_authority(client: Client) -> None:
 
 async def test_refuses_below_operator_authority(client: Client) -> None:
     assert "has `'none'` authority" in await _execute(client, 'lower_agent')
+
+
+async def test_checks_before_an_authoring_tool_call(client: Client) -> None:
+    # The check before a tool call, which a capability loaded mid-run relies on, runs in workflow code too.
+    assert await _execute(client, 'tool_agent') == 'ran'

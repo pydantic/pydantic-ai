@@ -161,7 +161,10 @@ repository or a user's upload. A run therefore also refuses to start unless
 - A directory outside the workspace's working directory has `'none'` authority, so name it:
   `LocalWorkspace('./project', path_authority={'/var/lib/my-app/authored': 'operator'})`.
 
-This check runs when a run starts, so it can't cover a `store.load_active()` you call before the
+With `defer_loading=True`, a run starts before the capability loads, so these checks, and the
+writable `LocalWorkspace` one above, refuse each authoring tool call instead, failing the run.
+
+These checks can't cover a `store.load_active()` you call before the
 run, as in the example above: that call has no workspace to ask, and runs the code it finds. It also
 only looks at who controls the directory, not what the model has read: to keep text in a lower
 workspace from steering what gets authored, require approval as shown below.
