@@ -142,9 +142,15 @@ def workflow_model(ctx: ModelResolutionContext[object], model_id: str) -> Model:
     return _model
 
 
+# Workflows whose source declares `tools: bash: []`. This engine receives no compiled tool allowlist,
+# so their shell is withheld here.
+NO_SHELL_WORKFLOWS = frozenset({cli.ATTENTION_WORKFLOW, 'Pydantic AI Community Demand', 'Pydantic AI Feature Digest'})
+
+
 def build_agent() -> Agent[None, str]:
     """Compose Coder with the repository workflow policies."""
-    attention = os.environ.get('GITHUB_WORKFLOW') == cli.ATTENTION_WORKFLOW
+    workflow = os.environ.get('GITHUB_WORKFLOW')
+    attention = workflow == cli.ATTENTION_WORKFLOW
     env: dict[str, str] = {
         name: value
         for name, value in os.environ.items()
@@ -163,6 +169,11 @@ def build_agent() -> Agent[None, str]:
             cli.MarkTimedOutSpans(),
             cli.RecoverMCPToolErrors(),
             PrepareTools(cli.hold_time_reserve_for_safe_output),
+            *(
+                [PrepareTools(lambda _, tool_defs: [tool_def for tool_def in tool_defs if tool_def.name != 'shell'])]
+                if workflow in NO_SHELL_WORKFLOWS
+                else []
+            ),
             ProcessHistory(partial(cli.compact_history, preserve_prompt=True)),
             LocalWorkspace('.', env=env, read_only=attention),
             # Checkout guidance accompanies file traversal, as in the read-only

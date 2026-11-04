@@ -24,6 +24,7 @@ from pydantic_ai.messages import (
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -39,6 +40,7 @@ from pydantic_clai2.config.settings_store import SettingsStore
 sys.path.insert(0, str(Path(__file__).parent))
 
 import agent_provider_health as health
+import agentic_workflow_guard as guard
 from pydantic_ai_gh_aw_shim import agent as workflow, cli
 
 
@@ -104,6 +106,40 @@ async def test_clai2_headless_keeps_coder_tools_and_read_only_task(
     assert health.parse_run_result(artifact) == health.RunResult(
         'CI Review', 'CI Review:workflow_dispatch:branch:head:run', 'workflow_dispatch', 2, None
     )
+
+
+WORKFLOW_SOURCES = sorted((Path(__file__).parents[1] / 'workflows').glob('pydantic-ai-*.md'))
+
+
+@pytest.mark.parametrize('source', WORKFLOW_SOURCES, ids=lambda source: source.stem)
+async def test_shell_exposure_follows_the_workflow_source(source: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The engine receives no compiled tool allowlist, so a source's `bash: []` must withhold the shell."""
+    frontmatter = guard.parse_frontmatter(source)
+    monkeypatch.setenv('GITHUB_WORKFLOW', frontmatter['name'])
+    offered: list[set[str]] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        del messages
+        offered.append({tool.name for tool in info.function_tools})
+        if len(offered) == 1 and 'shell' not in offered[0]:
+            return ModelResponse(parts=[ToolCallPart('shell', {'command': 'true'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = workflow.build_agent()
+    with agent.override(model=streaming_model(respond)):
+        result = await agent.run('Report the tools you were given')
+    granted = frontmatter.get('tools', {}).get('bash') != []
+    assert ('shell' in offered[0]) == granted
+    assert (frontmatter['name'] in workflow.NO_SHELL_WORKFLOWS) == (not granted)
+    if not granted:
+        refused = [
+            part
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'shell'
+        ]
+        assert [part.outcome for part in refused] == ['retried']
+        assert 'Unknown tool name' in str(refused[0].content)
 
 
 async def test_safe_output_must_be_emitted_before_clai2_completes(
