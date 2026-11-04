@@ -161,6 +161,7 @@ with try_import() as imports_successful:
     from starlette.requests import Request
     from starlette.responses import StreamingResponse
 
+    from pydantic_ai.conversation import Conversation
     from pydantic_ai.conversation_store import InMemoryConversationStore
     from pydantic_ai.ui import (
         DEFAULT_ALLOWED_CONTENT_TYPES,
@@ -11950,6 +11951,41 @@ async def test_conversation_store_rejects_a_resume_for_a_call_not_pending():
             "The request answers 1 tool call(s) that `message_history` is not waiting on: 'del-2'. With `manage_message_history='server'`, an approval, denial or deferred tool result can only answer a tool call that is still pending at the end of the stored history. If the conversation changed since the client loaded it, reload it from the server."
         ]
     )
+
+
+async def test_conversation_store_failure_is_logged_not_sent_to_the_client(caplog: pytest.LogCaptureFixture):
+    class FailingStore(InMemoryConversationStore):
+        async def load(
+            self, conversation_id: str, *, limit: int | None = None, scope: str | None = None
+        ) -> Conversation | None:
+            raise RuntimeError('postgres://admin:hunter2@10.0.0.5/chats is down')
+
+    agent, _, _ = server_history_agent()
+
+    events = await _stored_turn(agent, FailingStore(), create_input(UserMessage(id='u1', content='hi'), thread_id='t'))
+
+    assert [event.message for event in events if isinstance(event, RunErrorEvent)] == [
+        'The conversation could not be loaded, so this request did not run. Try again later.'
+    ]
+    assert 'hunter2' in caplog.text
+
+
+async def test_dispatch_request_conversation_store_client_names_new():
+    """A client can send `'new'` as its `threadId`: that's a `404`, not the `UserError` for an app passing it."""
+    agent, requests, _ = server_history_agent()
+    body = create_input(UserMessage(id='u1', content='hi'), thread_id='new').model_dump_json(by_alias=True).encode()
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': body}
+
+    request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+    response = await AGUIAdapter.dispatch_request(request, agent=agent, conversation_store=InMemoryConversationStore())
+
+    assert response.status_code == 404
+    assert requests == []
 
 
 async def test_dispatch_request_forwards_manage_message_history():

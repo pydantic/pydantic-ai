@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 import warnings
 from abc import ABC, abstractmethod
@@ -98,6 +99,8 @@ DispatchDepsT = TypeVar('DispatchDepsT')
 
 DispatchOutputDataT = TypeVar('DispatchOutputDataT')
 """TypeVar for output data to avoid awkwardness with unbound classvar output data."""
+
+logger = logging.getLogger(__name__)
 
 _TOOL_NAME_PATTERN = re.compile(r'[a-zA-Z0-9_-]{1,64}')
 """The tool-name shape accepted by the strictest supported model providers."""
@@ -687,6 +690,8 @@ _CONVERSATION_CHANGED_WHILE_LOADING = (
     'The conversation was changed by another request while it was being loaded, so this request did not run. '
     'Reload the conversation from the server and try again.'
 )
+_CONVERSATION_LOAD_FAILED = 'The conversation could not be loaded, so this request did not run. Try again later.'
+_CONVERSATION_SAVE_FAILED = 'The conversation could not be saved, so this turn was not saved. Try again later.'
 
 
 def _check_conversation_store_run(message_history: Sequence[ModelMessage] | None, conversation_id: str | None) -> None:
@@ -1251,10 +1256,13 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     async def _conversation_found(self, conversation_id: str | None) -> bool:
         """Whether `dispatch_request` can run: without a store, or for a conversation `_conversation_available` allows.
 
-        Without a conversation ID, the run itself reports the missing ID.
+        Without a conversation ID, the run itself reports the missing ID. A client naming the conversation
+        `'new'` isn't missing one, though: it names a conversation no store can hold.
         """
         if self.conversation_store is None:
             return True
+        if conversation_id is None and self.conversation_id == 'new':
+            return False
         conversation_id = conversation_id or self.conversation_id
         return (
             conversation_id is None or conversation_id == 'new' or await self._conversation_available(conversation_id)
@@ -1267,8 +1275,15 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         revision, so a conversation saved with another scope in between can't slip through: the store's own
         `scope=None` would load it whatever its scope.
         """
-        loaded = await store.load(conversation_id, scope=self.conversation_scope)
-        record = await store.read_record(conversation_id)
+        try:
+            loaded = await store.load(conversation_id, scope=self.conversation_scope)
+            record = await store.read_record(conversation_id)
+        except UserError:
+            raise
+        except Exception as e:
+            # The stream sends an exception's text to the client, and a store's can hold queries or hosts.
+            logger.exception('Loading conversation %r from the `conversation_store` failed.', conversation_id)
+            raise UserError(_CONVERSATION_LOAD_FAILED) from e
         if record is not None and record.scope != self.conversation_scope:
             raise UserError(f'Conversation {conversation_id!r} was not found.')
         if loaded is not None and (record is None or record.revision != loaded.revision):
@@ -1295,6 +1310,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             self._saved_entries = await store.save(result, scope=self.conversation_scope)
         except ConversationConflict as e:
             raise UserError(_CONVERSATION_CHANGED) from e
+        except UserError:
+            raise
+        except Exception as e:
+            # The stream sends an exception's text to the client, and a store's can hold queries or hosts.
+            logger.exception('Saving conversation %r to the `conversation_store` failed.', result.conversation_id)
+            raise UserError(_CONVERSATION_SAVE_FAILED) from e
 
     def _conversation_saved_events(self, conversation_id: str, entries: Sequence[ConversationEntry]) -> list[EventT]:
         """The protocol events that tell the client which entries a [`conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store] save stored.
@@ -1385,9 +1406,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
         With a [`conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store], the `UserError` for
         passing `message_history` as well or for having no conversation ID to load also raises at the call
-        site, but the conversation is loaded on the first iteration of the returned stream, so whatever
-        the load raises surfaces there, such as a `UserError` for a conversation that wasn't found or an
-        error from the store's backend.
+        site, but the conversation is loaded on the first iteration of the returned stream, so a `UserError`
+        for a conversation that wasn't found surfaces there. So does one for a store that failed to load
+        it, which holds the store's own exception as its `__cause__` and leaves its text out of the stream.
 
         Args:
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no

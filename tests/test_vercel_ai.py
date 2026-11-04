@@ -23,7 +23,7 @@ from pydantic_ai._utils import is_str_dict
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability, Capability, NativeTool
 from pydantic_ai.conversation import Conversation
-from pydantic_ai.conversation_store import InMemoryConversationStore
+from pydantic_ai.conversation_store import ConversationEntry, ConversationRecord, InMemoryConversationStore
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     AgentInstructionSource,
@@ -14314,6 +14314,89 @@ async def test_dispatch_request_conversation_store_needs_a_conversation_id():
         await VercelAIAdapter.dispatch_request(
             request, agent=agent, conversation_store=InMemoryConversationStore(), conversation_id='new'
         )
+
+
+@pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
+async def test_dispatch_request_conversation_store_client_names_new():
+    """A client can send `'new'` as its chat `id`: that's a `404`, not the `UserError` for an app passing it."""
+    agent, requests, _ = server_history_agent()
+    body = SubmitMessage(id='new', messages=[_HI]).model_dump_json(by_alias=True).encode()
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': body}
+
+    request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+    response = await VercelAIAdapter.dispatch_request(
+        request, agent=agent, conversation_store=InMemoryConversationStore()
+    )
+
+    assert response.status_code == 404
+    assert requests == []
+
+
+class _FailingStore(InMemoryConversationStore):
+    """A store whose `failing` method raises `error`, as a database driver's failure would."""
+
+    def __init__(self, failing: str, error: Exception) -> None:
+        super().__init__()
+        self.failing = failing
+        self.error = error
+
+    async def load(
+        self, conversation_id: str, *, limit: int | None = None, scope: str | None = None
+    ) -> Conversation | None:
+        if self.failing == 'load':
+            raise self.error
+        return await super().load(conversation_id, limit=limit, scope=scope)
+
+    async def read_record(self, conversation_id: str) -> ConversationRecord | None:
+        if self.failing == 'read_record':
+            raise self.error
+        return await super().read_record(conversation_id)
+
+    async def save(
+        self, conversation: Conversation | AgentRunResult[Any], *, scope: str | None = None
+    ) -> list[ConversationEntry]:
+        if self.failing == 'save':
+            raise self.error
+        return await super().save(conversation, scope=scope)
+
+
+_LOAD_FAILED = 'The conversation could not be loaded, so this request did not run. Try again later.'
+_SAVE_FAILED = 'The conversation could not be saved, so this turn was not saved. Try again later.'
+
+
+@pytest.mark.parametrize(
+    ('failing', 'message'), [('load', _LOAD_FAILED), ('read_record', _LOAD_FAILED), ('save', _SAVE_FAILED)]
+)
+async def test_conversation_store_failure_is_logged_not_sent_to_the_client(
+    failing: str, message: str, caplog: pytest.LogCaptureFixture
+):
+    agent, _, _ = server_history_agent()
+    store = _FailingStore(failing, RuntimeError('postgres://admin:hunter2@10.0.0.5/chats is down'))
+
+    chunks = await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]))
+
+    assert [chunk.error_text for chunk in chunks if isinstance(chunk, ErrorChunk)] == [message]
+    assert 'hunter2' not in ''.join(chunk.model_dump_json() for chunk in chunks)
+    [logged] = [record for record in caplog.records if record.name == 'pydantic_ai.ui._adapter']
+    assert "'chat'" in logged.getMessage()
+    assert logged.exc_info is not None and logged.exc_info[1] is store.error
+
+
+@pytest.mark.parametrize('failing', ['load', 'save'])
+async def test_conversation_store_user_error_reaches_the_client(failing: str, caplog: pytest.LogCaptureFixture):
+    """A `UserError` from a store was written for whoever made the request, so it's sent as is."""
+    agent, _, _ = server_history_agent()
+    store = _FailingStore(failing, UserError('This conversation is archived.'))
+
+    chunks = await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]))
+
+    assert [chunk.error_text for chunk in chunks if isinstance(chunk, ErrorChunk)] == ['This conversation is archived.']
+    assert [record for record in caplog.records if record.name == 'pydantic_ai.ui._adapter'] == []
 
 
 async def test_conversation_store_failed_regenerate_keeps_the_stored_turn():
