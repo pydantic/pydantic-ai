@@ -1147,7 +1147,12 @@ class SqliteStepStore:
         assert self._database is not None
         self._database.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self._database, isolation_level=None, timeout=_BUSY_TIMEOUT_SECONDS)
-        conn.execute('PRAGMA journal_mode=WAL')
+        try:
+            # Fails while another connection holds a new database locked, as concurrent first writers can.
+            conn.execute('PRAGMA journal_mode=WAL')
+        except BaseException:
+            conn.close()
+            raise
         return conn
 
     def _maybe_close(self, conn: sqlite3.Connection) -> None:
