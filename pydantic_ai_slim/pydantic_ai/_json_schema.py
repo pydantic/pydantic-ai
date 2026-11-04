@@ -17,7 +17,8 @@ MAX_INLINED_SCHEMA_VALUES = 250_000
 """The most JSON values inlining a schema's `$ref`s may copy into it.
 
 Each object, array, string, number, boolean and null in an inlined definition counts as one value, at every site the
-definition is inlined to. A `$ref` in it counts as the definition it refers to.
+definition is inlined to. A `$ref` in it counts as the definition it refers to. A string counts as one value, whatever
+its length.
 """
 
 
@@ -31,7 +32,8 @@ class InlinedSchemaTooLargeError(UserError):
         self.subject = subject
         super().__init__(
             f'{subject} is too large: its `$ref`s expand to more than {MAX_INLINED_SCHEMA_VALUES:,} JSON values. '
-            'Refer to large definitions from fewer places.'
+            'Refer to large definitions from fewer places, or leave the schema out of the request: for a tool, with '
+            '`prepare_tools` or a `FilteredToolset`.'
         )
 
     def __reduce__(self) -> tuple[type[InlinedSchemaTooLargeError], tuple[str]]:
@@ -180,12 +182,13 @@ class JsonSchemaTransformer(ABC):
         while stack:
             value = stack.pop()
             self._inlined_values += 1
+            if self._inlined_values > MAX_INLINED_SCHEMA_VALUES:
+                # Stop as soon as the count passes the limit: a schema can share one object at many places.
+                raise InlinedSchemaTooLargeError('JSON schema')
             if isinstance(value, dict):
                 stack.extend(member for member in value.values() if id(member) not in visited)
             elif isinstance(value, list):
                 stack.extend(member for member in value if id(member) not in visited)
-        if self._inlined_values > MAX_INLINED_SCHEMA_VALUES:
-            raise InlinedSchemaTooLargeError('JSON schema')
 
     def _handle_object(self, schema: JsonSchema) -> JsonSchema:
         if properties := schema.get('properties'):
