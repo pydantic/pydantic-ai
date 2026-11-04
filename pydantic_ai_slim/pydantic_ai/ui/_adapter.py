@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import re
 import warnings
 from abc import ABC, abstractmethod
@@ -20,11 +19,13 @@ from typing import (
     runtime_checkable,
 )
 
+from opentelemetry.trace import get_current_span
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_json, to_jsonable_python
 from typing_extensions import TypeVar
 
 from pydantic_ai import CancellationToken, DeferredToolRequests, DeferredToolResults, _instructions
+from pydantic_ai._instrumentation import record_exception
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AbstractAgent
@@ -99,8 +100,6 @@ DispatchDepsT = TypeVar('DispatchDepsT')
 
 DispatchOutputDataT = TypeVar('DispatchOutputDataT')
 """TypeVar for output data to avoid awkwardness with unbound classvar output data."""
-
-logger = logging.getLogger('pydantic_ai.ui')
 
 _TOOL_NAME_PATTERN = re.compile(r'[a-zA-Z0-9_-]{1,64}')
 """The tool-name shape accepted by the strictest supported model providers."""
@@ -704,6 +703,24 @@ _CONVERSATION_LOAD_FAILED = 'The conversation could not be loaded, so this reque
 _CONVERSATION_SAVE_FAILED = 'The conversation could not be saved, so this turn was not saved. Try again later.'
 
 
+def _report_store_failure(action: str, error: Exception) -> None:
+    """Tell the server's operator about a `conversation_store` failure the client only gets a fixed message for.
+
+    The warning holds the exception's text, which stays on the server. The current span, if one is
+    recording, gets only its type, since a store's message can quote the messages it was storing and the
+    adapter doesn't know the agent's `include_content`.
+    """
+    record_exception(get_current_span(), error, include_content=False, escaped=False)
+    # Whatever raises here would reach the client as the stream's error, with the store's text if it's
+    # this warning under `-W error`, so it can't be allowed to replace the fixed message.
+    try:
+        warnings.warn(
+            f'{action} the `conversation_store` failed: {type(error).__name__}: {error}', UserWarning, stacklevel=3
+        )
+    except Exception:
+        pass
+
+
 def pending_tool_calls(message_history: Sequence[ModelMessage]) -> list[ToolCallPart]:
     """The tool calls of `message_history`'s last response that no request after it answers."""
     history = list(message_history)
@@ -1294,7 +1311,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         except UserError:
             raise
         except Exception as e:
-            logger.exception('Checking conversation %r in the `conversation_store` failed.', conversation_id)
+            _report_store_failure(f'Checking conversation {conversation_id!r} in', e)
             raise UserError(_CONVERSATION_LOAD_FAILED) from e
         return record is None or record.scope == self.conversation_scope
 
@@ -1312,7 +1329,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             raise
         except Exception as e:
             # The stream sends an exception's text to the client, and a store's can hold queries or hosts.
-            logger.exception('Loading conversation %r from the `conversation_store` failed.', conversation_id)
+            _report_store_failure(f'Loading conversation {conversation_id!r} from', e)
             raise UserError(_CONVERSATION_LOAD_FAILED) from e
         if record is not None and record.scope != self.conversation_scope:
             raise UserError(f'Conversation {conversation_id!r} was not found.')
@@ -1332,7 +1349,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             raise
         except Exception as e:
             # The stream sends an exception's text to the client, and a store's can hold queries or hosts.
-            logger.exception('Saving conversation %r to the `conversation_store` failed.', result.conversation_id)
+            _report_store_failure(f'Saving conversation {result.conversation_id!r} to', e)
             raise UserError(_CONVERSATION_SAVE_FAILED) from e
 
     def _conversation_saved_events(self, conversation_id: str, entries: Sequence[ConversationEntry]) -> list[EventT]:

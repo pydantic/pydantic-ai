@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
 import pytest
+from opentelemetry.trace import get_current_span
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai import Agent, CancellationToken, RunCancelled, RunTimedOut, ToolOutput, capture_run_messages
@@ -121,6 +122,10 @@ from .conftest import (
     server_history_agent,
     try_import,
 )
+
+with try_import() as otel_sdk_installed:
+    # `opentelemetry-sdk` arrives with the `logfire` extra.
+    from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 
 with try_import() as starlette_import_successful:
     from starlette.exceptions import HTTPException
@@ -14396,37 +14401,78 @@ class _FailingStore(InMemoryConversationStore):
 
 _LOAD_FAILED = 'The conversation could not be loaded, so this request did not run. Try again later.'
 _SAVE_FAILED = 'The conversation could not be saved, so this turn was not saved. Try again later.'
+_STORE_SECRET = 'postgres://admin:hunter2@10.0.0.5/chats is down'
+
+
+class _UnprintableError(Exception):
+    def __str__(self) -> str:
+        raise ValueError('hunter2')
 
 
 @pytest.mark.parametrize(
     ('failing', 'message'), [('load', _LOAD_FAILED), ('read_record', _LOAD_FAILED), ('save', _SAVE_FAILED)]
 )
-async def test_conversation_store_failure_is_logged_not_sent_to_the_client(
-    failing: str, message: str, caplog: pytest.LogCaptureFixture
-):
+async def test_conversation_store_failure_warns_on_the_server_not_to_the_client(failing: str, message: str):
     agent, _, _ = server_history_agent()
-    store = _FailingStore(failing, RuntimeError('postgres://admin:hunter2@10.0.0.5/chats is down'))
+    store = _FailingStore(failing, RuntimeError(_STORE_SECRET))
 
-    chunks = await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]))
+    with pytest.warns(UserWarning, match=rf"conversation 'chat' .*failed: RuntimeError: {_STORE_SECRET}"):
+        chunks = await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]))
 
     assert [chunk.error_text for chunk in chunks if isinstance(chunk, ErrorChunk)] == [message]
     assert 'hunter2' not in ''.join(chunk.model_dump_json() for chunk in chunks)
-    [logged] = [record for record in caplog.records if record.name == 'pydantic_ai.ui']
-    assert "'chat'" in logged.getMessage()
-    assert logged.exc_info is not None and logged.exc_info[1] is store.error
+
+
+@pytest.mark.skipif(not otel_sdk_installed(), reason='`opentelemetry-sdk` is not installed')
+@pytest.mark.parametrize(('failing', 'message'), [('load', _LOAD_FAILED), ('save', _SAVE_FAILED)])
+async def test_conversation_store_failure_keeps_its_cause_and_records_only_its_type(failing: str, message: str):
+    """The fixed message's `__cause__` is the store's exception, and a recording span gets its type but not its text."""
+    agent, _, _ = server_history_agent()
+    store = _FailingStore(failing, RuntimeError(_STORE_SECRET))
+    adapter = VercelAIAdapter(agent, SubmitMessage(id='chat', messages=[_HI]), sdk_version=6, conversation_store=store)
+
+    with TracerProvider().get_tracer('test').start_as_current_span('request') as span:
+        with pytest.warns(UserWarning, match='hunter2'), pytest.raises(UserError, match=message) as exc_info:
+            _ = [event async for event in adapter.run_stream_native()]
+
+    assert exc_info.value.__cause__ is store.error
+    assert isinstance(span, ReadableSpan)
+    assert [(event.name, dict(event.attributes or {})) for event in span.events] == [
+        ('exception', {'exception.type': 'RuntimeError', 'exception.escaped': 'False'})
+    ]
+
+
+@pytest.mark.parametrize(('failing', 'message'), [('load', _LOAD_FAILED), ('save', _SAVE_FAILED)])
+@pytest.mark.parametrize(
+    'error',
+    [
+        pytest.param(RuntimeError(_STORE_SECRET), id='warning-raised-under-W-error'),
+        pytest.param(_UnprintableError(), id='exception-whose-str-raises'),
+    ],
+)
+async def test_conversation_store_failure_report_cant_replace_the_fixed_message(
+    failing: str, message: str, error: Exception
+):
+    """Under `-W error` the warning raises with the store's text, which must not become the stream's error."""
+    agent, _, _ = server_history_agent()
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        chunks = await _stored_turn(agent, _FailingStore(failing, error), SubmitMessage(id='chat', messages=[_HI]))
+
+    assert [chunk.error_text for chunk in chunks if isinstance(chunk, ErrorChunk)] == [message]
 
 
 @pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
 @pytest.mark.parametrize(
-    ('error', 'detail', 'logged'),
+    ('error', 'detail', 'warned'),
     [
-        pytest.param(RuntimeError('postgres://admin:hunter2@10.0.0.5/chats is down'), _LOAD_FAILED, True, id='failure'),
+        pytest.param(RuntimeError(_STORE_SECRET), _LOAD_FAILED, True, id='failure'),
         pytest.param(UserError('This conversation is archived.'), 'This conversation is archived.', False, id='user'),
     ],
 )
-async def test_dispatch_request_conversation_store_failure_before_the_run(
-    error: Exception, detail: str, logged: bool, caplog: pytest.LogCaptureFixture
-):
+async def test_dispatch_request_conversation_store_failure_before_the_run(error: Exception, detail: str, warned: bool):
+    """No span is recording before the run starts, and the failure still warns on the server."""
     agent, requests, _ = server_history_agent()
     body = SubmitMessage(id='chat', messages=[_HI]).model_dump_json(by_alias=True).encode()
 
@@ -14437,26 +14483,31 @@ async def test_dispatch_request_conversation_store_failure_before_the_run(
         scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
         receive=receive,
     )
-    response = await VercelAIAdapter.dispatch_request(
-        request, agent=agent, conversation_store=_FailingStore('read_record', error)
-    )
+    assert not get_current_span().is_recording()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        response = await VercelAIAdapter.dispatch_request(
+            request, agent=agent, conversation_store=_FailingStore('read_record', error)
+        )
 
     assert response.status_code == 500
     assert json.loads(bytes(response.body)) == {'detail': detail}
     assert requests == []
-    assert ('hunter2' in caplog.text) is logged
+    assert any('hunter2' in str(warning.message) for warning in caught) is warned
 
 
 @pytest.mark.parametrize('failing', ['load', 'save'])
-async def test_conversation_store_user_error_reaches_the_client(failing: str, caplog: pytest.LogCaptureFixture):
+async def test_conversation_store_user_error_reaches_the_client(failing: str):
     """A `UserError` from a store was written for whoever made the request, so it's sent as is."""
     agent, _, _ = server_history_agent()
     store = _FailingStore(failing, UserError('This conversation is archived.'))
 
-    chunks = await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        chunks = await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]))
 
     assert [chunk.error_text for chunk in chunks if isinstance(chunk, ErrorChunk)] == ['This conversation is archived.']
-    assert [record for record in caplog.records if record.name == 'pydantic_ai.ui'] == []
+    assert not [warning for warning in caught if 'conversation_store' in str(warning.message)]
 
 
 async def test_conversation_store_failed_regenerate_keeps_the_stored_turn():

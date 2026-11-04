@@ -11953,7 +11953,7 @@ async def test_conversation_store_rejects_a_resume_for_a_call_not_pending():
     )
 
 
-async def test_conversation_store_failure_is_logged_not_sent_to_the_client(caplog: pytest.LogCaptureFixture):
+async def test_conversation_store_failure_warns_on_the_server_not_to_the_client():
     class FailingStore(InMemoryConversationStore):
         async def load(
             self, conversation_id: str, *, limit: int | None = None, scope: str | None = None
@@ -11962,12 +11962,14 @@ async def test_conversation_store_failure_is_logged_not_sent_to_the_client(caplo
 
     agent, _, _ = server_history_agent()
 
-    events = await _stored_turn(agent, FailingStore(), create_input(UserMessage(id='u1', content='hi'), thread_id='t'))
+    with pytest.warns(UserWarning, match="conversation 't' .*failed: RuntimeError: .*hunter2"):
+        events = await _stored_turn(
+            agent, FailingStore(), create_input(UserMessage(id='u1', content='hi'), thread_id='t')
+        )
 
     assert [event.message for event in events if isinstance(event, RunErrorEvent)] == [
         'The conversation could not be loaded, so this request did not run. Try again later.'
     ]
-    assert 'hunter2' in caplog.text
 
 
 async def test_dispatch_request_conversation_store_client_names_new():
