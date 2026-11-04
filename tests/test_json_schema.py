@@ -239,3 +239,20 @@ def test_inlining_counts_array_items_and_union_members(monkeypatch: pytest.Monke
 
     with pytest.raises(UserError, match='expand to more than 21 JSON values'):
         InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
+
+
+def test_inlining_counts_a_shared_object_at_each_place_it_appears(monkeypatch: pytest.MonkeyPatch):
+    """An object a definition repeats outside its walked subschemas, here in `examples`, counts at each place."""
+    kind = {'enum': ['cat', 'dog']}
+    pet = {'type': 'object', 'properties': {'kind': kind}, 'examples': [kind]}
+    schema = {'type': 'object', 'properties': {'a': {'$ref': '#/$defs/Pet'}}, '$defs': {'Pet': pet}}
+    # One copy of `Pet`, of 12 JSON values: the object, its `type`, `properties`, and `examples`, and `kind` with its
+    # `enum` list of two in both places.
+    monkeypatch.setattr('pydantic_ai._json_schema.MAX_INLINED_SCHEMA_VALUES', 12, raising=False)
+
+    assert InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()['properties'] == {'a': pet}
+
+    monkeypatch.setattr('pydantic_ai._json_schema.MAX_INLINED_SCHEMA_VALUES', 11, raising=False)
+
+    with pytest.raises(UserError, match='expand to more than 11 JSON values'):
+        InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()

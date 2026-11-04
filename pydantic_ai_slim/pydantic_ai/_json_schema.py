@@ -165,31 +165,40 @@ class JsonSchemaTransformer(ABC):
         visit, so they are left out here, by the same tests those methods apply.
         """
         type_ = schema.get('type')
-        walked: list[_JsonSchemaNode | None] = []
+        member_keys: tuple[str, ...] = ()
+        value_keys: tuple[str, ...] = ()
         if type_ == 'object':
-            properties: dict[str, _JsonSchemaNode] = schema.get('properties') or {}
-            pattern_properties: dict[str, _JsonSchemaNode] = schema.get('patternProperties') or {}
-            walked = [*properties.values(), schema.get('additionalProperties'), *pattern_properties.values()]
+            member_keys, value_keys = ('properties', 'patternProperties'), ('additionalProperties',)
         elif type_ == 'array':
-            prefix_items: list[_JsonSchemaNode] = schema.get('prefixItems') or []
-            walked = [*prefix_items, schema.get('items') or None]
+            member_keys, value_keys = ('prefixItems',), ('items',) if schema.get('items') else ()
         elif type_ is None:
-            any_of: list[_JsonSchemaNode] = schema.get('anyOf', [])
-            one_of: list[_JsonSchemaNode] = schema.get('oneOf', [])
-            walked = [*any_of, *one_of]
-        visited = {id(member) for member in walked if isinstance(member, dict)}
+            member_keys = ('anyOf', 'oneOf')
 
-        stack: list[JsonValue] = [schema]
-        while stack:
+        # The node and every value in it, except the subschemas the walk visits next: the schema members of
+        # `member_keys` (their container still counts) and a schema under `value_keys`.
+        containers = 1
+        stack: list[JsonValue] = []
+        for key, raw_value in schema.items():
+            value: JsonValue = raw_value
+            if key in member_keys and isinstance(value, (dict, list)):
+                containers += 1
+                members = value.values() if isinstance(value, dict) else value
+                stack.extend(member for member in members if not isinstance(member, dict))
+            elif not (key in value_keys and isinstance(value, dict)):
+                stack.append(value)
+
+        self._inlined_values += containers
+        while self._inlined_values <= MAX_INLINED_SCHEMA_VALUES:
+            if not stack:
+                return
             value = stack.pop()
             self._inlined_values += 1
-            if self._inlined_values > MAX_INLINED_SCHEMA_VALUES:
-                # Stop as soon as the count passes the limit: a schema can share one object at many places.
-                raise InlinedSchemaTooLargeError('JSON schema')
             if isinstance(value, dict):
-                stack.extend(member for member in value.values() if id(member) not in visited)
+                stack.extend(value.values())
             elif isinstance(value, list):
-                stack.extend(member for member in value if id(member) not in visited)
+                stack.extend(value)
+        # Stopped as soon as the count passed the limit: a schema can share one object at many places.
+        raise InlinedSchemaTooLargeError('JSON schema')
 
     def _handle_object(self, schema: JsonSchema) -> JsonSchema:
         if properties := schema.get('properties'):
