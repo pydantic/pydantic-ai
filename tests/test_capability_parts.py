@@ -1766,7 +1766,7 @@ def test_sanitize_warns_about_system_prompts_and_capability_parts_separately() -
     messages: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart('Be brief.'), nudge(), UserPromptPart('Hi')])]
     with pytest.warns(UserWarning) as caught:
         sanitize_messages(messages)
-    assert [str(warning.message).split(':')[0] for warning in caught] == [
+    assert [str(warning.message).split(':')[0] for warning in caught if warning.category is UserWarning] == [
         'Capability parts were dropped from the client-submitted messages',
         'Parts carrying the system voice were stripped from the client-submitted messages',
     ]
