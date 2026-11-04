@@ -13873,7 +13873,7 @@ async def test_server_message_history_stale_regenerate_is_an_error_event():
     assert b''.join(message.get('body', b'') for message in sent).decode() == snapshot("""\
 data: {"type":"start"}
 
-data: {"type":"error","errorText":"The message to regenerate ('u2') is not in `message_history`. Either the server never stored it, as when the run that answered it failed or was stopped, or the client holds a different conversation than the server, as a client in a stale tab does. Send the message again as a new one, or reload the conversation from the server."}
+data: {"type":"error","errorText":"The message to regenerate ('u2') is not in the stored conversation. Either the server never stored it, as when the run that answered it failed or was stopped, or the client holds a different conversation than the server, as a client in a stale tab does. Send the message again as a new one, or reload the conversation from the server."}
 
 data: {"type":"finish-step"}
 
@@ -14014,10 +14014,10 @@ async def test_server_message_history_rejects_an_approval_for_a_call_not_pending
     errors = [event.error_text for event in events if isinstance(event, ErrorChunk)]
     tool_call_id = "'del-1'" if case == 'already_answered' else "'del-2'"
     assert errors == [
-        f'The request answers 1 tool call(s) that `message_history` is not waiting on: {tool_call_id}. With '
-        "`manage_message_history='server'`, an approval, denial or deferred tool result can only answer a tool call "
-        'that is still pending at the end of the stored history. If the conversation changed since the client loaded '
-        'it, reload it from the server.'
+        f'The request answers 1 tool call(s) that the stored conversation is not waiting on: {tool_call_id}. An '
+        'approval, denial or deferred tool result can only answer a tool call that is still waiting for that kind of '
+        'answer at the end of the stored conversation. If the conversation changed since the client loaded it, '
+        'reload it from the server.'
     ]
 
 
@@ -14381,7 +14381,7 @@ async def test_conversation_store_failure_is_logged_not_sent_to_the_client(
 
     assert [chunk.error_text for chunk in chunks if isinstance(chunk, ErrorChunk)] == [message]
     assert 'hunter2' not in ''.join(chunk.model_dump_json() for chunk in chunks)
-    [logged] = [record for record in caplog.records if record.name == 'pydantic_ai.ui._adapter']
+    [logged] = [record for record in caplog.records if record.name == 'pydantic_ai.ui']
     assert "'chat'" in logged.getMessage()
     assert logged.exc_info is not None and logged.exc_info[1] is store.error
 
@@ -14426,7 +14426,7 @@ async def test_conversation_store_user_error_reaches_the_client(failing: str, ca
     chunks = await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]))
 
     assert [chunk.error_text for chunk in chunks if isinstance(chunk, ErrorChunk)] == ['This conversation is archived.']
-    assert [record for record in caplog.records if record.name == 'pydantic_ai.ui._adapter'] == []
+    assert [record for record in caplog.records if record.name == 'pydantic_ai.ui'] == []
 
 
 async def test_conversation_store_failed_regenerate_keeps_the_stored_turn():

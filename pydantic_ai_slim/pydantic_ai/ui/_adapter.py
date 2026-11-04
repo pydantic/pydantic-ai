@@ -100,7 +100,7 @@ DispatchDepsT = TypeVar('DispatchDepsT')
 DispatchOutputDataT = TypeVar('DispatchOutputDataT')
 """TypeVar for output data to avoid awkwardness with unbound classvar output data."""
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('pydantic_ai.ui')
 
 _TOOL_NAME_PATTERN = re.compile(r'[a-zA-Z0-9_-]{1,64}')
 """The tool-name shape accepted by the strictest supported model providers."""
@@ -619,7 +619,7 @@ def _take_new_turn(
             resubmitted_results = {part.tool_call_id for part in results}
     elif regenerate:
         raise UserError(
-            f'The message to regenerate ({ui_message_id!r}) is not in `message_history`. Either the server never '
+            f'The message to regenerate ({ui_message_id!r}) is not in the stored conversation. Either the server never '
             f'stored it, as when the run that answered it failed or was stopped, or the client holds a different '
             f'conversation than the server, as a client in a stale tab does. Send the message again as a new one, '
             f'or reload the conversation from the server.'
@@ -685,11 +685,10 @@ def _reject_answers_for_calls_not_pending(
         *(tool_call_id for tool_call_id in deferred_tool_results.calls if tool_call_id not in answerable),
     ]:
         raise UserError(
-            f'The request answers {len(not_pending)} tool call(s) that `message_history` is not waiting on: '
-            f'{", ".join(repr(tool_call_id) for tool_call_id in not_pending)}. With '
-            f"`manage_message_history='server'`, an approval, denial or deferred tool result can only answer a "
-            f'tool call that is still pending at the end of the stored history. If the conversation changed since '
-            f'the client loaded it, reload it from the server.'
+            f'The request answers {len(not_pending)} tool call(s) that the stored conversation is not waiting on: '
+            f'{", ".join(repr(tool_call_id) for tool_call_id in not_pending)}. An approval, denial or deferred tool '
+            f'result can only answer a tool call that is still waiting for that kind of answer at the end of the '
+            f'stored conversation. If the conversation changed since the client loaded it, reload it from the server.'
         )
 
 

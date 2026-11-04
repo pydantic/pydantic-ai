@@ -11894,10 +11894,10 @@ async def test_server_message_history_rejects_an_approval_for_a_call_not_pending
     errors = [event.message for event in events if isinstance(event, RunErrorEvent)]
     tool_call_id = "'del-1'" if case == 'already_answered' else "'del-2'"
     assert errors == [
-        f'The request answers 1 tool call(s) that `message_history` is not waiting on: {tool_call_id}. With '
-        "`manage_message_history='server'`, an approval, denial or deferred tool result can only answer a tool call "
-        'that is still pending at the end of the stored history. If the conversation changed since the client loaded '
-        'it, reload it from the server.'
+        f'The request answers 1 tool call(s) that the stored conversation is not waiting on: {tool_call_id}. An '
+        'approval, denial or deferred tool result can only answer a tool call that is still waiting for that kind of '
+        'answer at the end of the stored conversation. If the conversation changed since the client loaded it, '
+        'reload it from the server.'
     ]
 
 
@@ -11948,7 +11948,7 @@ async def test_conversation_store_rejects_a_resume_for_a_call_not_pending():
     assert deleted == []
     assert [event.message for event in events if isinstance(event, RunErrorEvent)] == snapshot(
         [
-            "The request answers 1 tool call(s) that `message_history` is not waiting on: 'del-2'. With `manage_message_history='server'`, an approval, denial or deferred tool result can only answer a tool call that is still pending at the end of the stored history. If the conversation changed since the client loaded it, reload it from the server."
+            "The request answers 1 tool call(s) that the stored conversation is not waiting on: 'del-2'. An approval, denial or deferred tool result can only answer a tool call that is still waiting for that kind of answer at the end of the stored conversation. If the conversation changed since the client loaded it, reload it from the server."
         ]
     )
 

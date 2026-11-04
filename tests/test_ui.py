@@ -2318,7 +2318,7 @@ async def test_server_message_history_rejects_a_regenerate_of_an_unknown_message
     assert events == snapshot(
         [
             '<stream>',
-            "<error type='UserError'>The message to regenerate ('u2') is not in `message_history`. Either the server never stored it, as when the run that answered it failed or was stopped, or the client holds a different conversation than the server, as a client in a stale tab does. Send the message again as a new one, or reload the conversation from the server.</error>",
+            "<error type='UserError'>The message to regenerate ('u2') is not in the stored conversation. Either the server never stored it, as when the run that answered it failed or was stopped, or the client holds a different conversation than the server, as a client in a stale tab does. Send the message again as a new one, or reload the conversation from the server.</error>",
             '</stream>',
         ]
     )
