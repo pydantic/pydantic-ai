@@ -99,8 +99,8 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
     Provider-native tools (for example hosted web search) run server-side and never transit
     the client, so they are not classified here.
 
-    Inside a durable workflow or flow, semantic warmup and classification are durable operations
-    addressed by the capability's `id`, which has no default (several scoped defenders compose), so
+    Inside a durable workflow or flow, semantic warmup and, with `semantic_detection` or a supplied
+    `defense`, classification are durable operations addressed by the capability's `id`, which has no default (several scoped defenders compose), so
     a defender on a durable-capable agent needs an explicit one: `PromptInjectionDefender(id='defender')`.
 
     Example:
@@ -248,17 +248,22 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
                 await self._notify(ctx, call, verdict)
         return unchanged if blocked is None else blocked
 
-    async def _verdicts(self, ctx: RunContext[AgentDepsT], payloads: list[Any], tool_name: str) -> list[DefenseResult]:
-        if self.semantic_detection:
+    async def _verdicts(
+        self, ctx: RunContext[AgentDepsT], payloads: list[object], tool_name: str
+    ) -> list[DefenseResult]:
+        # A supplied defense may run Tier 2 or Tier 3, which can't run in workflow code either.
+        if self.semantic_detection or self.defense is not None:
             return await self._classify(ctx, payloads, tool_name)
         return await self._defend(payloads, tool_name)
 
     @durable_operation('classify')
-    async def _classify(self, ctx: RunContext[AgentDepsT], payloads: list[Any], tool_name: str) -> list[DefenseResult]:
-        """Run the semantic classifier, which can't load in workflow code, as a durable operation."""
+    async def _classify(
+        self, ctx: RunContext[AgentDepsT], payloads: list[object], tool_name: str
+    ) -> list[DefenseResult]:
+        """Classify as a durable operation, since the semantic classifier can't load in workflow code."""
         return await self._defend(payloads, tool_name)
 
-    async def _defend(self, payloads: list[Any], tool_name: str) -> list[DefenseResult]:
+    async def _defend(self, payloads: list[object], tool_name: str) -> list[DefenseResult]:
         return [await self._defense.defend_tool_result_async(payload, tool_name) for payload in payloads]
 
     async def _notify(self, ctx: RunContext[AgentDepsT], call: ToolCallPart, verdict: DefenseResult) -> None:

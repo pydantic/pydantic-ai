@@ -71,9 +71,6 @@ replaces the rejected result before the model sees it.
 - `semantic_detection`: add local ML classification beyond known patterns. This
   requires the `prompt-injection-defender-ml` extra. On Python 3.15 that extra
   installs pattern detection only, until ONNX Runtime publishes Python 3.15 wheels.
-  Under durable execution, semantic warmup and classification run as durable
-  operations addressed by the capability's `id`, so a defender on a
-  durable-capable agent needs an explicit `id`, distinct per defender.
 - `tool_filter`: classify all tools, selected tool names, or tools accepted by a
   [`ToolSelector`][pydantic_ai.tools.ToolSelector].
 - `on_detection`: run a sync or async callback for each flagged verdict. A
@@ -128,6 +125,28 @@ application and is not sent to the model.
 - Referenced media is not fetched or decoded, so instructions inside images,
   audio, video, or documents are not inspected.
 
+## Durable execution
+
+Inside a durable workflow or flow (Temporal, DBOS, Prefect), classification with
+`semantic_detection=True` or a supplied `defense` runs as a durable operation, as
+does the semantic warmup, because the ML classifier can't load in workflow code.
+A replay reuses the recorded verdict. `on_detection` runs from the hook, so a
+replay calls it again.
+
+A durable operation is addressed by the capability's `id`, and
+`PromptInjectionDefender` has no default one, because several scoped defenders
+compose on one agent. So a defender on a durable-capable agent needs an explicit
+`id`, distinct per defender:
+
+```python
+from pydantic_ai_harness import PromptInjectionDefender
+
+capability = PromptInjectionDefender(block_high_risk=True, id='defender')
+```
+
+Without one, Pydantic AI refuses to bind the agent and names the fix. Outside
+durable execution nothing changes and `id` stays optional.
+
 ## Custom defense
 
 ```python
@@ -143,8 +162,8 @@ capability = PromptInjectionDefender(defense)
 ```
 
 A supplied defense owns its blocking and detection configuration. If it uses the
-local ML classifier, call `defense.warmup_tier2()` during application startup to
-load the model before the first tool result.
+local ML classifier, call `defense.warmup_tier2()` during application startup (on
+the worker, under durable execution) to load the model before the first tool result.
 
 ## Further reading
 
