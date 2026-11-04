@@ -38,7 +38,7 @@ _EVERY_MODEL: Final[frozenset[_SpecialTokenRoute]] = frozenset(
         'huggingface',
         'ollama',
         'vllm',
-        # Hosts of open-weight models, each measured to tokenize at least some of the families it serves.
+        # Hosts of open-weight models.
         'cerebras',
         'crusoe',
         'groq',
@@ -52,7 +52,7 @@ _EVERY_MODEL: Final[frozenset[_SpecialTokenRoute]] = frozenset(
 """Routes that only serve open-weight models. Every other route gets the flag for names `_is_closed_model` doesn't match."""
 
 _CLOSED_MODEL_PREFIXES: Final = (
-    # Served by the lab's own API, whichever route reaches it, and measured to send these tokens as text.
+    # Served by the lab's own API, whichever route reaches it, which doesn't render a public chat template.
     'claude',
     'command',
     'gemini',

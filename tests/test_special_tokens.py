@@ -507,7 +507,7 @@ def _route_cases() -> list[Any]:
         (CrusoeProvider, 'qwen/qwen3.8-27b', True),
         (OVHcloudProvider, 'qwen3.8-27b', True),
         (ZaiProvider, 'glm-4.7', True),
-        # Measured to send these tokens as text.
+        # Routes that keep it off.
         (FireworksProvider, 'accounts/fireworks/models/deepseek-v4', False),
         (MoonshotAIProvider, 'kimi-k3', False),
         (DeepSeekProvider, 'deepseek-v4-pro', False),
