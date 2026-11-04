@@ -324,44 +324,6 @@ async def test_anthropic_20260318_web_search_response_inclusion(
     )
 
 
-@pytest.mark.parametrize(
-    ('setting_name', 'expected_setting'),
-    [
-        ('use_cache', {'use_cache': False}),
-        ('response_inclusion', {'response_inclusion': 'excluded'}),
-    ],
-)
-def test_anthropic_web_fetch_settings_map_to_20260318(setting_name: str, expected_setting: dict[str, object]):
-    """Each Anthropic web fetch setting selects and maps to the `20260318` wire tool.
-
-    The settings are built inside the test: the module collects without `anthropic` installed, so
-    parametrize arguments cannot reference the guarded imports.
-    """
-    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='test'))
-    if setting_name == 'use_cache':
-        settings = AnthropicWebFetchToolSettings(use_cache=False)
-    else:
-        settings = AnthropicWebFetchToolSettings(response_inclusion='excluded')
-    params = ModelRequestParameters(native_tools=[WebFetchTool(provider_settings={'anthropic': settings})])
-
-    tools, _, _ = m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
-        [], params, AnthropicModelSettings()
-    )
-
-    assert tools == [
-        {
-            'name': 'web_fetch',
-            'type': 'web_fetch_20260318',
-            'max_uses': None,
-            'allowed_domains': None,
-            'blocked_domains': None,
-            'citations': None,
-            'max_content_tokens': None,
-            **expected_setting,
-        },
-    ]
-
-
 @pytest.mark.vcr()
 async def test_anthropic_20260318_web_fetch_settings(
     allow_model_requests: None,
