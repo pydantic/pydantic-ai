@@ -124,7 +124,7 @@ The project uses:
 
 - [`uv`](https://docs.astral.sh/uv/getting-started/installation/), supporting Python 3.11 through 3.15
     - Install all dependencies with `make install`
-- `pre-commit`, can be installed with `uv tool install pre-commit`
+- `pre-commit`, installed and set up by `make install` (if it isn't available, `make install` installs it with `uv`)
 - `ruff` via `make lint` and `make format`
 - `pyright` via `make typecheck`
 - `pytest` in `tests/`, via `make test`, with:
@@ -142,7 +142,7 @@ Do not use subprocesses to test logic that can run in-process. Starting another 
 
 ## When to verify
 
-Pre-commit runs `make lint` and `make format` automatically on every commit. CI runs the repository-wide type check, test, and coverage gates. Do not run repository-wide Pyright, pytest, or coverage locally. While iterating, only run targeted checks on the files/tests you have a specific reason to suspect:
+Pre-commit runs `make lint`, `make format` and the [cognitive complexity check](agent_docs/complexity.md) automatically on every commit. CI runs the repository-wide type check, test, and coverage gates. Do not run repository-wide Pyright, pytest, or coverage locally. While iterating, only run targeted checks on the files/tests you have a specific reason to suspect:
 
 - typecheck a single file: `PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright path/to/file.py`
 - run a single test: `uv run pytest path/to/test.py::test_name`

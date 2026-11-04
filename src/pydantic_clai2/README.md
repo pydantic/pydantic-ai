@@ -24,7 +24,9 @@ commands, and menus without forking anything.
   background, or rewind it to an earlier prompt. You can even pick up sessions from
   Claude Code and Codex.
 - **Yours to change.** Turn plugins on and off from a menu, install one from Git, or
-  write your own in a few lines of Python.
+  write your own in a few lines of Python. Ask CLAI how: it can look up its own
+  [reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#ask-clai-about-itself)
+  and plugin docs when you need them.
 
 CLAI runs commands and edits files as you, with no sandbox and no approval step. Run it
 in a project you trust.
@@ -85,8 +87,9 @@ A few keys to know:
 
 Type `/` to see every command, or `/help` for the full list.
 
-CLAI reads `AGENTS.md` or `CLAUDE.md` from the folder you start it in and follows what it
-says (not yet on Windows). If the folder (or a parent) has a `.env` file, CLAI loads it at startup.
+CLAI reads `AGENTS.md` (or `CLAUDE.md`) from the folder you start it in and the folders above
+it, then a subfolder's as it works there, and follows what they say (not yet on Windows). If
+the folder (or a parent) has a `.env` file, CLAI loads it at startup.
 
 ### Where CLAI keeps things
 
@@ -359,7 +362,7 @@ These are on from the start:
   Configure a delegate model menu to select a model per call. Separately enable a read-only `Review`
   specialist to review another directory; see [delegate models](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#delegate-models-and-review-directory).
 - `ask_user`: questions from the model
-- `repo_context`: reads `AGENTS.md` or `CLAUDE.md`
+- `repo_context`: reads `AGENTS.md` or `CLAUDE.md` from the folder, its parents, and subfolders
 - `compaction`: summarises older messages, and `/compact`
 - `persistence`: extra checkpoints so an interrupted session can recover
 - `mcp`: MCP servers, managed with `/mcp`

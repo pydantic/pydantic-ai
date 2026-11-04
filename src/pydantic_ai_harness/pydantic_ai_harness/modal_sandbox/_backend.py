@@ -31,7 +31,6 @@ from uuid import uuid4
 import anyio
 import anyio.to_thread
 
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
@@ -47,10 +46,12 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
+    check_env_types,
+    check_provider,
     check_timeout,
     command_argv,
     command_deadline,
-    running_on_asyncio,
+    require_asyncio,
     safe_credential_reason,
     stop_shielded,
 )
@@ -77,7 +78,9 @@ MAX_SANDBOX_TIMEOUT = 86_400
 # continue in it for as long as Modal allows.
 DEFAULT_SANDBOX_TIMEOUT = MAX_SANDBOX_TIMEOUT
 
-_CREDENTIAL_HINT = 'Set MODAL_TOKEN_ID / MODAL_TOKEN_SECRET or run `modal token new`.'
+_CREDENTIAL_HINT = (
+    'Set MODAL_TOKEN_ID / MODAL_TOKEN_SECRET, run `modal token new`, or pass a configured `modal.Client` as `client=`.'
+)
 
 # Bound the workspace-create RPCs so a wedged control plane cannot hang acquisition.
 _CREATE_TIMEOUT = 600
@@ -151,7 +154,6 @@ def _translate(error: Exception, *, context: str, unavailable: str, path: str | 
             exc.ExecutionError,
             exc.RequestSizeError,
             exc.SandboxFilesystemError,
-            exc.FilesystemExecutionError,
         ),
     ):
         return WorkspaceError(f'{context}: {error}')
@@ -204,6 +206,7 @@ async def _file_entry(backend: ModalSandboxBackend, entry: modal.types.FileInfo,
     return FileEntry(name=entry.name, path=path, is_dir=is_dir, size=size)
 
 
+# Subclassing the structural protocols makes a signature drift fail the type check on this class.
 class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
     """A Modal sandbox implementing Pydantic AI's `WorkspaceBackend` protocol.
 
@@ -214,11 +217,10 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
     Commands run in isolated process groups. Cancellation and command deadlines attempt to stop
     the foreground group without terminating the sandbox shared by other commands.
 
-    The protocol is structural, but subclassing it here makes a signature drift fail the type
-    check on this class instead of at a distant `WorkspaceBackend` call.
-
     Args:
         sandbox: A live `modal.Sandbox` you already have. Whoever created it owns terminating it.
+        client: A `modal.Client` to create or attach with, such as one from `modal.Client.from_credentials`;
+            Modal's client from the environment or config when `None`.
         ref: Identity of an existing sandbox to attach to on first use.
         image: Registry tag, or a `modal.Image`, a newly created sandbox runs. `None` (the default)
             is Debian slim with Python 3.12, `git`, and `ripgrep`.
@@ -238,6 +240,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         self,
         *,
         sandbox: modal.Sandbox | None = None,
+        client: modal.Client | None = None,
         ref: WorkspaceRef | None = None,
         image: str | modal.Image | None = None,
         app_name: str = DEFAULT_APP_NAME,
@@ -247,8 +250,8 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
     ) -> None:
-        if ref is not None and ref.provider != 'modal':
-            raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'modal'")
+        if ref is not None:
+            check_provider(ref, 'modal')
         if sandbox is not None and ref is not None:
             raise ValueError('pass either `sandbox` or `ref`, not both')
         if type(sandbox_timeout) is not int or not MIN_SANDBOX_TIMEOUT <= sandbox_timeout <= MAX_SANDBOX_TIMEOUT:
@@ -262,10 +265,10 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             modal_sdk = importlib.import_module('modal')
             if not isinstance(image, modal_sdk.Image):
                 raise TypeError('image must be a registry tag or modal.Image')
-        if env is not None and any(type(key) is not str or type(value) is not str for key, value in env.items()):
-            raise TypeError('env keys and values must be strings')
+        check_env_types(env)
         self._ref = ref if sandbox is None else WorkspaceRef(provider='modal', id=sandbox.object_id)
         self._sandbox: modal.Sandbox | None = sandbox
+        self._client = client
         self._image = image
         self._app_name = app_name
         self._create_app_if_missing = create_app_if_missing
@@ -299,7 +302,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             UserError: The event loop is not asyncio.
         """
         # Every operation acquires the sandbox first, so this one check covers them all.
-        _require_asyncio()
+        require_asyncio(_ASYNCIO_ONLY)
         if (sandbox := self._sandbox) is not None:
             return sandbox
         task = self._acquisition
@@ -482,7 +485,9 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             # a retry reuses it. Only the local deadline interrupts the call; a sandbox created
             # after it fires is reaped at its `sandbox_timeout`.
             with anyio.CancelScope(shield=True), anyio.move_on_after(_CREATE_TIMEOUT):
-                app = await modal.App.lookup.aio(self._app_name, create_if_missing=self._create_app_if_missing)
+                app = await modal.App.lookup.aio(
+                    self._app_name, create_if_missing=self._create_app_if_missing, client=self._client
+                )
                 if self._image is None:
                     # Built on create, not at import: Modal caches it per workspace after the first build.
                     built = modal.Image.debian_slim(python_version='3.12').apt_install('git', 'ripgrep')
@@ -501,6 +506,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
                     env=variables,
                     timeout=self._sandbox_timeout,
                     idle_timeout=self._idle_timeout,
+                    client=self._client,
                 )
         except Exception as error:
             if create_attempted and (recovered := await self._recover_create(name)) is not None:
@@ -534,7 +540,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
 
         try:
             with anyio.move_on_after(_RECOVER_CREATE_TIMEOUT):
-                sandbox = await modal.Sandbox.from_name.aio(self._app_name, name)
+                sandbox = await modal.Sandbox.from_name.aio(self._app_name, name, client=self._client)
                 return sandbox if await sandbox.poll.aio() is None else None
             return None
         except modal.exception.NotFoundError:
@@ -555,7 +561,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         import modal
 
         try:
-            sandbox = await modal.Sandbox.from_id.aio(sandbox_id)
+            sandbox = await modal.Sandbox.from_id.aio(sandbox_id, client=self._client)
             finished = await sandbox.poll.aio()
         except Exception as error:
             mapped = _translate(
@@ -584,9 +590,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             sandbox = await self.get_sandbox()
             result = await self.run(['pwd', '-P'], timeout=_INTERNAL_EXEC_TIMEOUT)
             printed = result.stdout.removesuffix('\n')
-            # Only an absolute path is an answer. Caching whatever else the sandbox printed
-            # would hand every later `resolve()` a working directory that is not one,
-            # mis-resolving relative paths with no error.
+            # Caching anything but an absolute path would make every later `resolve()` mis-resolve relative paths.
             if result.exit_code != 0 or not posixpath.isabs(printed):
                 raise WorkspaceError(
                     f'Could not determine the working directory of Modal sandbox {sandbox.object_id!r}: '
@@ -880,20 +884,18 @@ async def _import_modal() -> None:
     await anyio.to_thread.run_sync(importlib.import_module, 'modal')
 
 
-def _require_asyncio() -> None:
-    if not running_on_asyncio():
-        raise UserError('Modal needs the asyncio event loop: the Modal SDK runs its calls on asyncio tasks.')
+_ASYNCIO_ONLY = 'Modal needs the asyncio event loop: the Modal SDK runs its calls on asyncio tasks.'
 
 
-async def terminate_sandbox(sandbox_id: str) -> None:
+async def terminate_sandbox(sandbox_id: str, *, client: modal.Client | None = None) -> None:
     """Terminate a sandbox by ID without attaching; one that no longer exists returns quietly."""
-    _require_asyncio()
+    require_asyncio(_ASYNCIO_ONLY)
     await _import_modal()
     import modal
 
     try:
         # A dead sandbox cannot be opened for work, but its ID still identifies the resource to terminate.
-        sandbox = await modal.Sandbox.from_id.aio(sandbox_id)
+        sandbox = await modal.Sandbox.from_id.aio(sandbox_id, client=client)
         await sandbox.terminate.aio()
     except modal.exception.NotFoundError:
         return

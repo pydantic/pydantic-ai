@@ -298,20 +298,9 @@ class ConversationStore(ABC):
         else:
             # Compare only the stored messages the conversation says it holds, so a window isn't
             # taken for a history rewritten from its first message.
-            window = conversation.new_message_index
-            history = await self._history_of(record, limit=window) if record is not None else []
-            if history is None:
-                raise ConversationConflict(conversation_id)
-            shared = 0
-            for entry, message in zip(history, messages):
-                if entry.message != message:
-                    break
-                shared += 1
-            parent_id = history[shared - 1].id if shared else history[0].parent_id if history else None
-            unsaved = messages[shared:]
-            if shared < len(history):
-                # A rewritten history leaves the stored one as a branch.
-                branches = _left(branches, history[-1].id)
+            parent_id, unsaved, branches = await self._unsaved_after_history(
+                record, conversation_id, messages, branches, window=conversation.new_message_index
+            )
         new_entries: list[ConversationEntry] = []
         for message in unsaved:
             entry = ConversationEntry(parent_id=parent_id, message=message)
@@ -333,6 +322,30 @@ class ConversationStore(ABC):
         if result is not None:
             result._conversation_saved(updated.revision)  # pyright: ignore[reportPrivateUsage]
         return new_entries
+
+    async def _unsaved_after_history(
+        self,
+        record: ConversationRecord | None,
+        conversation_id: str,
+        messages: list[_messages.ModelMessage],
+        branches: list[str],
+        *,
+        window: int | None,
+    ) -> tuple[str | None, list[_messages.ModelMessage], list[str]]:
+        """Compare `messages` with the last `window` stored ones: the entry the rest follow, the rest, and the branches left."""
+        history = await self._history_of(record, limit=window) if record is not None else []
+        if history is None:
+            raise ConversationConflict(conversation_id)
+        shared = 0
+        for entry, message in zip(history, messages):
+            if entry.message != message:
+                break
+            shared += 1
+        parent_id = history[shared - 1].id if shared else history[0].parent_id if history else None
+        if shared < len(history):
+            # A rewritten history leaves the stored one as a branch.
+            branches = _left(branches, history[-1].id)
+        return parent_id, messages[shared:], branches
 
     async def branch(
         self,
@@ -412,6 +425,11 @@ class ConversationStore(ABC):
                     f'`at` must be between 0 and {len(history)}, the number of messages in the conversation.'
                 )
             return history[:keep]
+        return await self._history_to_entry(record, history, from_entry)
+
+    async def _history_to_entry(
+        self, record: ConversationRecord, history: list[ConversationEntry], from_entry: str
+    ) -> list[ConversationEntry]:
         for tip in [None, *reversed(record.branches)]:
             line = history if tip is None else await self.read_history(tip)
             for index, entry in enumerate(line):

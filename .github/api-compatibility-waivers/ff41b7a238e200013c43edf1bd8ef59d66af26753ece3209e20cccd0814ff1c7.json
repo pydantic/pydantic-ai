@@ -1,0 +1,5 @@
+{
+  "against": "v2.66.0",
+  "reason": "`DEFAULT_ARTIFACT_PATTERNS['invisible_character']` also flags Hangul fillers, more format controls, and misplaced variation selectors; every other pattern and key is unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11475"
+}
