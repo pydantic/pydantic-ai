@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from pydantic_ai._instructions import AgentInstructions, SourcedInstruction, normalize_instructions
 from pydantic_ai._utils import aclose_all, replace_no_init
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import (
     AgentDepsT,
     AgentNativeTool,
@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
     from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
     from pydantic_ai.output import OutputContext
+    from pydantic_ai.realtime import RealtimeConnectContext
     from pydantic_ai.run import AgentRunResult
 
 
@@ -314,11 +315,6 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def get_wrapper_model(self, model: Model) -> Model | None:
         return self.wrapped.get_wrapper_model(model)
 
-    async def _process_seeded_history(
-        self, ctx: RunContext[AgentDepsT], messages: list[ModelMessage]
-    ) -> list[ModelMessage]:
-        return await self.wrapped._process_seeded_history(ctx, messages)
-
     def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
         # Every hook here delegates to `wrapped`, which the session asks for itself.
         return self._realtime_uncalled_hooks_overriding(WrapperCapability)
@@ -444,6 +440,15 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
                 yield event
         finally:
             await aclose_all((wrapped_stream, stream))
+
+    # --- Realtime session hooks ---
+
+    async def before_realtime_connect(
+        self,
+        ctx: RunContext[AgentDepsT],
+        connect_context: RealtimeConnectContext,
+    ) -> RealtimeConnectContext:
+        return await self.wrapped.before_realtime_connect(ctx, connect_context)
 
     # --- Model request lifecycle hooks ---
 

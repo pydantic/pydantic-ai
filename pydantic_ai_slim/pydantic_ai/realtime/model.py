@@ -568,6 +568,45 @@ class RealtimeModel(AbstractModel):
         return self.profile.get('audio_output_sample_rate', DEFAULT_AUDIO_SAMPLE_RATE)
 
 
+@dataclass
+class RealtimeConnectContext:
+    """Context for the [`before_realtime_connect`][pydantic_ai.capabilities.AbstractCapability.before_realtime_connect] hook.
+
+    The realtime counterpart of [`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]: it bundles what a
+    realtime session is about to connect with. A hook returns a context, so changing the history is assigning to
+    `messages`, or returning `dataclasses.replace(connect_context, messages=...)`.
+
+    Only `messages` can be changed. `model`, `model_settings` and `model_request_parameters` are read-only: the
+    session raises [`UserError`][pydantic_ai.exceptions.UserError] if a hook returns a context with any of them
+    replaced.
+    """
+
+    model: RealtimeModel
+    """The realtime model the session connects to. Read-only."""
+
+    messages: list[ModelMessage]
+    """The history the session is seeded with: the `message_history` it was opened with, with its dynamic system
+    prompts re-evaluated, or an empty list when the session starts a new conversation.
+
+    Unlike [`ModelRequestContext.messages`][pydantic_ai.models.ModelRequestContext.messages], this isn't a view for
+    one request: what the hooks leave here is what the provider is seeded with, what
+    [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] starts with (so
+    [`new_messages()`][pydantic_ai.realtime.RealtimeSession.new_messages] starts after it), and what a reconnect
+    replays. The instructions of the [on-demand capabilities](../capabilities/on-demand.md) it loaded are resolved
+    from it too.
+    """
+
+    model_settings: RealtimeModelSettings | None
+    """The merged realtime model settings the session connects with. Read-only."""
+
+    model_request_parameters: ModelRequestParameters
+    """The tools and instructions the session connects with. Read-only.
+
+    The instructions of the on-demand capabilities `messages` loaded are resolved from it before the hooks run, and
+    again afterwards if the hooks changed which capabilities it loads.
+    """
+
+
 KnownRealtimeModelName = TypeAliasType(
     'KnownRealtimeModelName',
     Literal[

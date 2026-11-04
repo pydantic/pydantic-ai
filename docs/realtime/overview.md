@@ -255,7 +255,7 @@ instead of a single `user_prompt`:
 | [Event stream](events.md) | ✓ — iterate the session, or attach [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] |
 | `output_type` and output validators | ✗ — [delegate to a text agent](tools.md#delegating-work-during-a-call) |
 | Graph node and model-request hooks (e.g. `before_model_request`) | ✗ — no agent graph |
-| History processors at seeding | ✓ — [once, before seeding](capabilities.md#processing-seeded-history) |
+| History processors at seeding | ✓ — [once, before connecting](capabilities.md#processing-seeded-history) |
 | `event_stream_handler` parameter | ✗ — use [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] |
 
 See [Capabilities and hooks](capabilities.md) for the full mapping, and

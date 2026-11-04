@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.realtime import RealtimeConnectContext
 
     _MsgList = list[_messages.ModelMessage]
     _AsyncWithCtx = Callable[[RunContext[Any], _MsgList], Awaitable[_MsgList]]
@@ -24,7 +25,11 @@ if TYPE_CHECKING:
 
 @dataclass
 class ProcessHistory(AbstractCapability[AgentDepsT]):
-    """A capability that processes message history before model requests."""
+    """A capability that processes message history before model requests.
+
+    In a [realtime session](../realtime/capabilities.md#processing-seeded-history), which has no per-request
+    boundary, the processor runs once over the history the session is seeded with, before it connects.
+    """
 
     processor: HistoryProcessorFunc[AgentDepsT]
 
@@ -39,15 +44,21 @@ class ProcessHistory(AbstractCapability[AgentDepsT]):
 
         return request_context
 
-    async def _process_seeded_history(
-        self, ctx: RunContext[AgentDepsT], messages: list[_messages.ModelMessage]
-    ) -> list[_messages.ModelMessage]:
-        messages = await _run_history_processor(self.processor, ctx, messages)
-        ctx.messages[:] = messages
-        return messages
+    async def before_realtime_connect(
+        self,
+        ctx: RunContext[AgentDepsT],
+        connect_context: RealtimeConnectContext,
+    ) -> RealtimeConnectContext:
+        # A realtime session can't rewrite the provider's conversation before each response, so the processor runs
+        # once, over the history the session is seeded with. With nothing to seed, there's nothing to process.
+        if connect_context.messages:
+            messages = await _run_history_processor(self.processor, ctx, list(connect_context.messages))
+            connect_context.messages = messages.copy()
+            ctx.messages[:] = messages
+        return connect_context
 
     def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
-        # A realtime session runs the processor once over the history it's seeded with, in `_process_seeded_history`.
+        # A realtime session runs the processor once over the history it's seeded with, in `before_realtime_connect`.
         return self._realtime_uncalled_hooks_overriding(ProcessHistory)
 
     @classmethod

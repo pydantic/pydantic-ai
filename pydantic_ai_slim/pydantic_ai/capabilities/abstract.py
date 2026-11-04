@@ -24,7 +24,6 @@ from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     CapabilityInstructionSource,
-    ModelMessage,
     ModelResponse,
     ToolCallPart,
 )
@@ -55,6 +54,7 @@ if TYPE_CHECKING:
         ModelSelectionContext,
     )
     from pydantic_ai.output import OutputContext
+    from pydantic_ai.realtime import RealtimeConnectContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End
@@ -448,16 +448,6 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         here. Override this alongside `on_event` when you can report something narrower.
         """
         return type(self).on_event is not AbstractCapability.on_event or marked_listens_to(type(self), event)
-
-    async def _process_seeded_history(
-        self, ctx: RunContext[AgentDepsT], messages: list[ModelMessage]
-    ) -> list[ModelMessage]:
-        """Transform the history a realtime session is seeded with, once, before seeding it.
-
-        A session never calls `before_model_request`, so [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory]
-        runs its processor here instead. Containers and wrappers dispatch it as they dispatch `before_model_request`.
-        """
-        return messages
 
     def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
         """The hooks this capability itself implements that a realtime session never calls.
@@ -1096,6 +1086,28 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
                 yield event
         finally:
             await _utils.aclose_if_supported(stream)
+
+    # --- Realtime session hooks ---
+
+    async def before_realtime_connect(
+        self,
+        ctx: RunContext[AgentDepsT],
+        connect_context: RealtimeConnectContext,
+    ) -> RealtimeConnectContext:
+        """Called once before a [realtime session](../realtime/capabilities.md) connects, the realtime counterpart of `before_model_request`.
+
+        Can change the history the session is seeded with, `connect_context.messages`: what the hooks leave there
+        is what the provider is seeded with, what the session records as its history's start, and what a reconnect
+        replays. The model, settings and request parameters are read-only.
+
+        It runs inside `wrap_run`, after `before_run` and after the seeded history's dynamic system prompts are
+        re-evaluated, in capability order, and also when there's no history to seed. It doesn't run on reconnect,
+        or in a standard run. An exception stops the session from connecting and goes through `on_run_error`.
+        WebRTC signaling resolves the configuration a session connects with, so it runs there too, outside any run.
+        [`ctx.realtime_session`][pydantic_ai.tools.RunContext.realtime_session] is `None`, since the session
+        doesn't exist yet.
+        """
+        return connect_context
 
     # --- Model request lifecycle hooks ---
 

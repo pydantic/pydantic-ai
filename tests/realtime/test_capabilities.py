@@ -71,6 +71,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool, WebSearchTool
 from pydantic_ai.output import OutputContext
 from pydantic_ai.realtime import (
+    RealtimeConnectContext,
     RealtimeEvent,
     RealtimeModel,
     RealtimeModelProfile,
@@ -612,6 +613,131 @@ async def test_cancelled_session_new_messages_follow_processed_history() -> None
     new_messages = exc_info.value.new_messages()
     assert new_messages == exc_info.value.all_messages()[1:]
     assert new_messages == sessions[0].new_messages() != []
+
+
+_CONNECT_AMBIENT: contextvars.ContextVar[str] = contextvars.ContextVar(
+    'before_realtime_connect_ambient', default='unset'
+)
+
+
+async def test_before_realtime_connect_changes_the_seed() -> None:
+    """`before_realtime_connect` runs once, inside `wrap_run` and after `before_run`, and its `messages` are the seed.
+
+    It sees what the session connects with, and what it leaves is what the provider is seeded with, what the session
+    records as its history's start, and what a reconnect replays.
+    """
+    calls: list[str] = []
+    hooks = Hooks[None]()
+    trimmed = _SECRET_HISTORY[1:]
+
+    @hooks.on.run
+    async def wrap_run(ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+        token = _CONNECT_AMBIENT.set('in wrap_run')
+        try:
+            return await handler()
+        finally:
+            _CONNECT_AMBIENT.reset(token)
+
+    @hooks.on.before_run
+    async def before_run(ctx: RunContext[None]) -> None:
+        calls.append('before_run')
+
+    @hooks.on.before_realtime_connect
+    async def trim(ctx: RunContext[None], connect_context: RealtimeConnectContext) -> RealtimeConnectContext:
+        calls.append(f'before_realtime_connect: {_CONNECT_AMBIENT.get()}')
+        assert ctx.realtime_session is None
+        assert connect_context.model is model
+        assert connect_context.model_settings == RealtimeModelSettings(voice='alloy')
+        assert [tool.name for tool in connect_context.model_request_parameters.function_tools] == ['lookup']
+        assert connect_context.messages == _SECRET_HISTORY
+        return replace(connect_context, messages=trimmed)
+
+    agent = Agent(capabilities=[hooks], deps_type=type(None))
+
+    @agent.tool_plain
+    async def lookup() -> str:
+        return 'found'  # pragma: no cover
+
+    model = _RecordingModel(settings=RealtimeModelSettings(voice='alloy'))
+    async with agent.realtime(model, message_history=_SECRET_HISTORY).session() as session:
+        async for _ in session:
+            pass
+        replayed = session._replayable_messages()  # pyright: ignore[reportPrivateUsage]
+
+    assert calls == ['before_run', 'before_realtime_connect: in wrap_run']
+    assert model.messages is not None
+    assert model.messages[:1] == trimmed
+    assert 'secret' not in str(model.messages)
+    assert session.all_messages()[:1] == trimmed
+    assert session.new_messages() == session.all_messages()[1:]
+    assert replayed[:1] == trimmed
+
+
+async def test_before_realtime_connect_runs_without_a_seed() -> None:
+    """The hook runs once even with no history to seed, and never in a standard run."""
+    seen: list[list[ModelMessage]] = []
+
+    def record(ctx: RunContext[None], connect_context: RealtimeConnectContext) -> RealtimeConnectContext:
+        seen.append(list(connect_context.messages))
+        return connect_context
+
+    hooks = Hooks[None](before_realtime_connect=record)
+    hooks.on.before_realtime_connect(timeout=5)(record)
+    agent = Agent(capabilities=[hooks], deps_type=type(None))
+    await _drain(agent, _RecordingModel())
+    assert seen == [[], []]
+
+    await agent.run('Hello.', model=TestModel())
+    assert seen == [[], []]
+
+
+def _replace_model(connect_context: RealtimeConnectContext) -> RealtimeConnectContext:
+    return replace(connect_context, model=_RecordingModel())
+
+
+def _assign_model_settings(connect_context: RealtimeConnectContext) -> RealtimeConnectContext:
+    connect_context.model_settings = RealtimeModelSettings(voice='alloy')
+    return connect_context
+
+
+def _replace_model_request_parameters(connect_context: RealtimeConnectContext) -> RealtimeConnectContext:
+    return replace(connect_context, model_request_parameters=ModelRequestParameters())
+
+
+@pytest.mark.parametrize('modify', [_replace_model, _assign_model_settings, _replace_model_request_parameters])
+async def test_before_realtime_connect_read_only_fields(
+    modify: Callable[[RealtimeConnectContext], RealtimeConnectContext],
+) -> None:
+    """Changing a read-only field, on a copy or in place, raises rather than being silently ignored."""
+
+    def change(ctx: RunContext[None], connect_context: RealtimeConnectContext) -> RealtimeConnectContext:
+        return modify(connect_context)
+
+    model = _RecordingModel()
+    with pytest.raises(UserError, match='`before_realtime_connect` can only change `messages`'):
+        await _drain(Agent(capabilities=[Hooks[None](before_realtime_connect=change)]), model)
+    assert model.messages is None
+
+
+async def test_before_realtime_connect_error_goes_through_on_run_error() -> None:
+    """A raising hook stops the session from connecting, and the error reaches `on_run_error`."""
+    errors: list[BaseException] = []
+    hooks = Hooks[None]()
+
+    @hooks.on.before_realtime_connect
+    async def fail(ctx: RunContext[None], connect_context: RealtimeConnectContext) -> RealtimeConnectContext:
+        raise RuntimeError('seed rejected')
+
+    @hooks.on.run_error
+    async def record(ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[Any]:
+        errors.append(error)
+        raise error
+
+    model = _RecordingModel()
+    with pytest.raises(RuntimeError, match='seed rejected'):
+        await _drain(Agent(capabilities=[hooks]), model, message_history=_SECRET_HISTORY)
+    assert [str(error) for error in errors] == ['seed rejected']
+    assert model.messages is None
 
 
 async def test_capability_native_tool_survives_native_tools_override() -> None:

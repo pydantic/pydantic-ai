@@ -19,7 +19,7 @@ from pydantic_ai._instructions import (
 )
 from pydantic_ai._utils import aclose_all, gather, replace_no_init
 from pydantic_ai.exceptions import ModelRetry, RetryModelRequest
-from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
     AgentDepsT,
@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
     from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
     from pydantic_ai.output import OutputContext
+    from pydantic_ai.realtime import RealtimeConnectContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End
@@ -736,15 +737,19 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         finally:
             await aclose_all(reversed(wrapped_streams))
 
-    # --- Model request lifecycle hooks ---
+    # --- Realtime session hooks ---
 
-    async def _process_seeded_history(
-        self, ctx: RunContext[AgentDepsT], messages: list[ModelMessage]
-    ) -> list[ModelMessage]:
+    async def before_realtime_connect(
+        self,
+        ctx: RunContext[AgentDepsT],
+        connect_context: RealtimeConnectContext,
+    ) -> RealtimeConnectContext:
         for capability in self._dispatch:
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
-                messages = await capability._process_seeded_history(cap_ctx, messages)
-        return messages
+                connect_context = await capability.before_realtime_connect(cap_ctx, connect_context)
+        return connect_context
+
+    # --- Model request lifecycle hooks ---
 
     async def before_model_request(
         self,
