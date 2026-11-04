@@ -8,9 +8,11 @@ from typing import Generic, TypeGuard
 
 from pydantic_ai._deferred_capabilities import LoadCapabilityReturnPart, LoadExchanges
 from pydantic_ai._run_context import AgentDepsT, RunContext
-from pydantic_ai._utils import dataclasses_no_defaults_repr
+from pydantic_ai._utils import dataclasses_no_defaults_repr, is_str_dict
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
+    _UNSTATED_LOADS_KEY,  # pyright: ignore[reportPrivateUsage]
     CapabilityInstructionSource,
     CompactionPart,
     InstructionBaselinePart,
@@ -25,7 +27,6 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     ModelResponsePart,
     ModelSettingsDeltaPart,
-    _holds_unstated_loads,  # pyright: ignore[reportPrivateUsage]
     _instruction_text_hash,  # pyright: ignore[reportPrivateUsage]
     _post_compaction_window_start,  # pyright: ignore[reportPrivateUsage]
 )
@@ -635,6 +636,12 @@ def _loaded_instruction_changes(
         else:
             changes.append(change)
     return changes, restored
+
+
+def _holds_unstated_loads(message: ModelMessage) -> bool:
+    """Whether `message` holds loads from a client's history, as `sanitize_messages` marked it."""
+    namespace = (message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+    return is_str_dict(namespace) and namespace.get(_UNSTATED_LOADS_KEY) is True
 
 
 def _restore_statements(

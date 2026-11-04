@@ -5821,12 +5821,6 @@ def _sanitized_request_metadata(
     return {**(metadata or {}), _PYDANTIC_AI_METADATA_KEY: {_UNSTATED_LOADS_KEY: True}}
 
 
-def _holds_unstated_loads(message: ModelMessage) -> bool:
-    """Whether `message` holds loads from untrusted history, as `sanitize_messages` marked it."""
-    namespace = (message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
-    return _utils.is_str_dict(namespace) and namespace.get(_UNSTATED_LOADS_KEY) is True
-
-
 def _without_reserved_metadata(message: ModelMessage, stripped: list[ModelMessage]) -> dict[str, Any] | None:
     """Return the metadata of an untrusted message without the reserved `__pydantic_ai__` key.
 
@@ -5835,7 +5829,9 @@ def _without_reserved_metadata(message: ModelMessage, stripped: list[ModelMessag
     metadata = message.metadata
     if metadata is None or _PYDANTIC_AI_METADATA_KEY not in metadata:
         return metadata
-    stripped.append(message)
+    # History sanitized before carries only `sanitize_messages`' own mark, which it sets again where it applies.
+    if metadata[_PYDANTIC_AI_METADATA_KEY] != {_UNSTATED_LOADS_KEY: True}:
+        stripped.append(message)
     return {key: value for key, value in metadata.items() if key != _PYDANTIC_AI_METADATA_KEY} or None
 
 
