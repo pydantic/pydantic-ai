@@ -1,0 +1,156 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: conversation_initiation_client_data
+    source_info:
+      source: unknown
+      version: pydantic-ai/<version>
+    conversation_config_override:
+      agent:
+        prompt:
+          prompt: 'You are a voice assistant. Answer in one short sentence.
+
+
+            <context id="agent:code_word">
+
+            The code word is BLUE. Tell the user when they ask for it.
+
+            </context>
+
+            A later <context> element with the same id replaces the earlier one and
+            stays in effect until replaced again.'
+      conversation:
+        text_only: true
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    conversation_initiation_metadata_event:
+      conversation_id: conv_6001m651dk9zfn9t8smtz38bjtfh
+      agent_output_audio_format: pcm_16000
+      user_input_audio_format: pcm_16000
+      persistent_session_token: null
+    type: conversation_initiation_metadata
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: user_message
+    text: What is the code word?
+    id: pydantic_ai_input_0
+- kind: message
+  direction: received
+  at: 0.687
+  data:
+    text_response_part:
+      text: ''
+      type: start
+      event_id: 1
+      response_id: 4d399835-f0b4-4f00-abff-d6fe57c34b20
+    type: agent_chat_response_part
+- kind: message
+  direction: received
+  at: 0.687
+  data:
+    text_response_part:
+      text: The code word is BLUE.
+      type: delta
+      event_id: 1
+      response_id: 4d399835-f0b4-4f00-abff-d6fe57c34b20
+    type: agent_chat_response_part
+- kind: message
+  direction: received
+  at: 0.687
+  data:
+    text_response_part:
+      text: ''
+      type: stop
+      event_id: 1
+      response_id: 4d399835-f0b4-4f00-abff-d6fe57c34b20
+    type: agent_chat_response_part
+- kind: message
+  direction: received
+  at: 0.687
+  data:
+    agent_response_event:
+      agent_response: The code word is BLUE.
+      event_id: 1
+      response_id: 4d399835-f0b4-4f00-abff-d6fe57c34b20
+      in_response_to_ids:
+      - pydantic_ai_input_0
+      response_type: text
+      attachments: []
+    type: agent_response
+- kind: message
+  direction: sent
+  at: 0.688
+  data:
+    type: contextual_update
+    text: '<system><context id="agent:code_word">
+
+      The code word is ORANGE. Tell the user when they ask for it.
+
+      </context></system>'
+- kind: message
+  direction: received
+  at: 0.688
+  data:
+    context_usage_event:
+      event_id: 1
+      model: gemini-2.5-flash
+      context_tokens: 379
+      context_limit_tokens: 1048576
+    type: context_usage
+- kind: message
+  direction: sent
+  at: 0.688
+  data:
+    type: user_message
+    text: What is the code word now?
+    id: pydantic_ai_input_2
+- kind: message
+  direction: received
+  at: 1.455
+  data:
+    text_response_part:
+      text: ''
+      type: start
+      event_id: 2
+      response_id: ea115451-c306-465d-98b5-cadc5f13f851
+    type: agent_chat_response_part
+- kind: message
+  direction: received
+  at: 1.455
+  data:
+    text_response_part:
+      text: The code word is ORANGE.
+      type: delta
+      event_id: 2
+      response_id: ea115451-c306-465d-98b5-cadc5f13f851
+    type: agent_chat_response_part
+- kind: message
+  direction: received
+  at: 1.455
+  data:
+    text_response_part:
+      text: ''
+      type: stop
+      event_id: 2
+      response_id: ea115451-c306-465d-98b5-cadc5f13f851
+    type: agent_chat_response_part
+- kind: message
+  direction: received
+  at: 1.455
+  data:
+    agent_response_event:
+      agent_response: The code word is ORANGE.
+      event_id: 2
+      response_id: ea115451-c306-465d-98b5-cadc5f13f851
+      in_response_to_ids:
+      - pydantic_ai_input_2
+      response_type: text
+      attachments: []
+    type: agent_response

@@ -117,6 +117,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.realtime import openai_live as live_module
+    from pydantic_ai.realtime._utils import InstructionChangeContext
     from pydantic_ai.realtime.openai import OpenAIRealtimeModel
     from pydantic_ai.realtime.openai_live import (
         AUTO_BACKEND_MODEL,
@@ -722,6 +723,102 @@ async def test_text_turn_runs_the_backend_and_context_is_thinking() -> None:
             },
             {'type': 'response.create', 'event_id': 'pydantic_ai.text.0'},
             {'type': 'session.thinking.append', 'delegation_id': None, 'content': 'Know this quietly.'},
+        ]
+    )
+
+
+async def test_instruction_change_updates_the_backend_instructions() -> None:
+    """The agent's instructions are the backend's, so a change is appended to them with `session.update`, and the
+    configuration a redial starts the new session with has it too."""
+    sent: list[dict[str, Any]] = []
+
+    class _Recorder(OpenAILiveConnection):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            sent.append(event)
+
+    backend: dict[str, Any] = {'model': 'gpt-5.6-sol', 'instructions': 'Be brief.'}
+    connection = _Recorder(object(), backend=backend)  # pyright: ignore[reportArgumentType]
+    first = '<context id="agent:mood">\nBe calm.\n</context>'
+    second = '<context id="agent:mood">\nBe cheerful.\n</context>'
+    await connection.send(InstructionChangeContext(f'<system>{first}</system>', system_prompt=first))
+    await connection.send(InstructionChangeContext(f'<system>{second}</system>', system_prompt=second))
+
+    assert sent == snapshot(
+        [
+            {
+                'type': 'session.update',
+                'session': {
+                    'delegation': {
+                        'type': 'responses',
+                        'responses': {
+                            'instructions': """\
+Be brief.
+
+<context id="agent:mood">
+Be calm.
+</context>\
+"""
+                        },
+                    }
+                },
+            },
+            {
+                'type': 'session.update',
+                'session': {
+                    'delegation': {
+                        'type': 'responses',
+                        'responses': {
+                            'instructions': """\
+Be brief.
+
+<context id="agent:mood">
+Be calm.
+</context>
+
+<context id="agent:mood">
+Be cheerful.
+</context>\
+"""
+                        },
+                    }
+                },
+            },
+        ]
+    )
+    assert backend == snapshot(
+        {
+            'model': 'gpt-5.6-sol',
+            'instructions': """\
+Be brief.
+
+<context id="agent:mood">
+Be calm.
+</context>
+
+<context id="agent:mood">
+Be cheerful.
+</context>\
+""",
+        }
+    )
+    assert connection._replays_instruction_changes is False  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_instruction_change_without_backend_instructions() -> None:
+    sent: list[dict[str, Any]] = []
+
+    class _Recorder(OpenAILiveConnection):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            sent.append(event)
+
+    connection = _Recorder(object())  # pyright: ignore[reportArgumentType]
+    await connection.send(InstructionChangeContext('<system>Be calm.</system>', system_prompt='Be calm.'))
+    assert sent == snapshot(
+        [
+            {
+                'type': 'session.update',
+                'session': {'delegation': {'type': 'responses', 'responses': {'instructions': 'Be calm.'}}},
+            }
         ]
     )
 

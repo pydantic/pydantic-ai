@@ -27,7 +27,9 @@ As in a standard run, a session started without `message_history` records the ag
 [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s, so they carry over when the history is
 handed off or used to seed another session. The model receives them as part of the session instructions.
 A [system prompt sent mid-session](turns.md#system-prompts) is recorded where it was sent, in a request of
-its own, and a reconnect that replays the conversation replays it there as `<system>`-tagged text.
+its own, and a reconnect that replays the conversation replays it there as `<system>`-tagged text. So is a
+[change to the instructions](capabilities.md#instructions-that-change), recorded as the
+[`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart] it is.
 
 With [`output_speech_timestamps`](audio.md#speech-timestamps) on, the model's speech parts also record
 when each word was heard, as [`SpeechPart.timestamps`][pydantic_ai.messages.SpeechPart.timestamps]. A
