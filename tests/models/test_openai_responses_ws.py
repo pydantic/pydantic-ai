@@ -3682,6 +3682,16 @@ async def test_request_settings(allow_model_requests: None, sockets: SocketHarne
     assert sent['metadata'] == {'test': 'websocket'}
 
 
+@pytest.mark.parametrize('tier', ['fast', 'ultrafast'])
+async def test_openai_service_tier_is_sent_unchanged(
+    allow_model_requests: None, sockets: SocketHarness, tier: Literal['fast', 'ultrafast']
+):
+    settings: OpenAIResponsesModelSettings = {'openai_transport': 'websocket', 'openai_service_tier': tier}
+    model = OpenAIResponsesModel('gpt-6-astra', provider=OpenAIProvider(api_key='test'), settings=settings)
+    assert (await Agent(model).run('hello')).output == 'ready'
+    assert sockets.opened[0].sent[0]['service_tier'] == tier
+
+
 async def test_credential_callbacks_refresh_over_http(
     allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses
 ):

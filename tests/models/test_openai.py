@@ -703,6 +703,17 @@ async def test_request_list_content(allow_model_requests: None):
     assert result.output == 'hello world'
 
 
+@pytest.mark.parametrize('tier', ['fast', 'ultrafast'])
+def test_openai_service_tier_is_sent_unchanged(allow_model_requests: None, tier: Literal['fast', 'ultrafast']) -> None:
+    """OpenAI only accepts `ultrafast` on the Responses API, but Chat Completions leaves that error to the API."""
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
+
+    agent.run_sync('hello', model_settings=OpenAIChatModelSettings(openai_service_tier=tier))
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['service_tier'] == tier
+
+
 def test_service_tier_comes_from_response(allow_model_requests: None) -> None:
     c = completion_message(ChatCompletionMessage(content='hello', role='assistant'))
     mock_client = MockOpenAI.create_mock(c.model_copy(update={'service_tier': 'default'}))

@@ -119,8 +119,8 @@ On Google Cloud the unified field maps only to safe PT-with-spillover variants s
 Provisioned Throughput keep using their reserved capacity first; to bypass PT entirely use
 [`google_cloud_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_cloud_service_tier]
 with `'flex_only'` or `'priority_only'`. Likewise, provider-specific values not in the unified set
-(Bedrock's `'reserved'`, Anthropic's `'standard_only'`, Google Cloud's PT routing tiers) are reachable
-only through the per-provider field.
+(OpenAI's `'fast'` and `'ultrafast'`, Bedrock's `'reserved'`, Anthropic's `'standard_only'`, Google Cloud's PT
+routing tiers) are reachable only through the per-provider field.
 
 Per-provider settings (`openai_service_tier`, `anthropic_service_tier`, `bedrock_service_tier`,
 `google_cloud_service_tier`) always take precedence over this unified field when set.

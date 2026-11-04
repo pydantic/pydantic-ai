@@ -897,6 +897,10 @@ class _ResponsesRequestParams:
     context_management: list[ContextManagement] | Omit
 
 
+_OpenAIServiceTier: TypeAlias = Literal['auto', 'default', 'flex', 'priority', 'fast', 'ultrafast']
+"""The values of [`openai_service_tier`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_service_tier]."""
+
+
 class _ResponsesCreateParams(TypedDict):
     """Body arguments of a response creation, shared by `client.responses.create` and the batch API."""
 
@@ -914,7 +918,7 @@ class _ResponsesCreateParams(TypedDict):
     max_output_tokens: int | Omit
     temperature: float | Omit
     top_p: float | Omit
-    service_tier: Literal['auto', 'default', 'flex', 'priority'] | Omit
+    service_tier: _OpenAIServiceTier | Omit
     conversation: str | Omit
     top_logprobs: int | Omit
     store: bool | Omit | None
@@ -1140,11 +1144,12 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     (as `text.verbosity`). Parameter support can differ depending on the model.
     """
 
-    openai_service_tier: Literal['auto', 'default', 'flex', 'priority']
+    openai_service_tier: _OpenAIServiceTier
     """The service tier to use for the model request.
 
-    Currently supported values are `auto`, `default`, `flex`, and `priority`.
-    For more information, see [OpenAI's service tiers documentation](https://platform.openai.com/docs/api-reference/chat/object#chat/object-service_tier).
+    Currently supported values are `auto`, `default`, `flex`, `priority`, `fast`, and `ultrafast`.
+    `fast` is OpenAI's newer name for `priority`. OpenAI only accepts `ultrafast` on the Responses API.
+    For more information, see [OpenAI's service tiers documentation](https://developers.openai.com/api/reference/responses/create).
     """
 
     openai_prediction: ChatCompletionPredictionContentParam
@@ -1434,7 +1439,7 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
 
 def _resolve_openai_service_tier(
     model_settings: OpenAIChatModelSettings,
-) -> Literal['auto', 'default', 'flex', 'priority'] | Omit:
+) -> _OpenAIServiceTier | Omit:
     """Resolve the value to send as `service_tier` on the OpenAI request.
 
     Per-provider [`openai_service_tier`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_service_tier]
@@ -1898,7 +1903,11 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     reasoning_effort=self._translate_thinking(model_settings, model_request_parameters),
                     user=model_settings.get('openai_user', OMIT),
                     web_search_options=web_search_options or OMIT,
-                    service_tier=_resolve_openai_service_tier(model_settings),
+                    # The SDK types `ultrafast` as Responses-only; rejecting it is left to the API.
+                    service_tier=cast(
+                        "Literal['auto', 'default', 'flex', 'priority', 'fast'] | Omit",
+                        _resolve_openai_service_tier(model_settings),
+                    ),
                     prediction=model_settings.get('openai_prediction', OMIT),
                     temperature=model_settings.get('temperature', OMIT),
                     top_p=model_settings.get('top_p', OMIT),
