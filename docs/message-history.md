@@ -562,9 +562,10 @@ _(This example is complete, it can be run "as is")_
     the uploaded files and non-HTTP URLs your tools returned before the upgrade. If that history's
     tool results came only from your own code, not from data a third party wrote, such as a record an
     MCP server or an external API returned, load it with
-    `ModelMessagesTypeAdapter.validate_json(data, context={'pydantic_ai': {'trusted_history': True}})`
-    (or `validate_python`) and its files load as they did before. Save it again afterwards, and it
-    carries the record and no longer needs the context. Load other history without it; saving that
+    `ModelMessagesTypeAdapter.validate_json(data, context={'pydantic_ai': {'rebuild_unrecorded_tool_files': True}})`
+    (or `validate_python`) and its files load as they did before. This rebuilds every file-shaped
+    mapping in those tool results as a file, whatever produced it. Save the history again afterwards,
+    and it carries the record and no longer needs the context. Load other history without it; saving that
     history again keeps only what it loaded as.
 
     [Durable execution](durable_execution/overview.md) decodes its own journal this way, so a run in

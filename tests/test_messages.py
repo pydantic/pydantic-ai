@@ -2107,7 +2107,7 @@ def test_tool_return_saved_before_records_rebuilds_only_sanitized_http_files():
 
 
 @pytest.mark.parametrize('mode', ['json', 'python'])
-def test_tool_return_saved_before_records_loads_as_before_from_trusted_history(mode: Literal['json', 'python']):
+def test_tool_return_saved_before_records_rebuilds_its_files_on_request(mode: Literal['json', 'python']):
     """History the caller trusts loads its files as before, and keeps them once saved again."""
     items: list[FileUrl | UploadedFile] = [
         DocumentUrl('https://example.com/report.txt', force_download='allow-local'),
@@ -2119,7 +2119,7 @@ def test_tool_return_saved_before_records_loads_as_before_from_trusted_history(m
     ]
     stored = json.loads(ModelMessagesTypeAdapter.dump_json(messages))
     del stored[0]['parts'][0]['content_file_digests']
-    context = {'pydantic_ai': {'trusted_history': True}}
+    context = {'pydantic_ai': {'rebuild_unrecorded_tool_files': True}}
 
     if mode == 'json':
         loaded = ModelMessagesTypeAdapter.validate_json(json.dumps(stored), context=context)
@@ -2131,9 +2131,11 @@ def test_tool_return_saved_before_records_loads_as_before_from_trusted_history(m
     assert message_part(resaved, ToolReturnPart).content == items
 
 
-@pytest.mark.parametrize('context', [None, {}, {'pydantic_ai': {}}, {'pydantic_ai': {'trusted_history': 'yes'}}])
-def test_tool_return_trusted_history_needs_the_exact_flag(context: Any):
-    """Only `{'pydantic_ai': {'trusted_history': True}}` loads history saved before records as before."""
+@pytest.mark.parametrize(
+    'context', [None, {}, {'pydantic_ai': {}}, {'pydantic_ai': {'rebuild_unrecorded_tool_files': 'yes'}}]
+)
+def test_tool_return_rebuild_unrecorded_tool_files_needs_the_exact_flag(context: Any):
+    """Only `{'pydantic_ai': {'rebuild_unrecorded_tool_files': True}}` loads history saved before records as before."""
     messages: list[ModelMessage] = [
         ModelRequest(
             parts=[ToolReturnPart(tool_name='t', content=[UploadedFile('file-1', 'openai')], tool_call_id='c')]

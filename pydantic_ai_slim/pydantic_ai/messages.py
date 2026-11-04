@@ -1371,8 +1371,8 @@ class _RecordsContentFiles:
                 raise PydanticCustomError('invalid_file_record', '`content_file_digests` must be a list of strings')
             record = frozenset(cast(list[str], entries))
         else:
-            # History saved before records existed: rebuilt as before only when the caller says it trusts it.
-            record = None if _trusts_history(info.context) else _UNRECORDED
+            # History saved before records existed: its file-shaped data is rebuilt only when the caller asks.
+            record = None if _rebuilds_unrecorded_tool_files(info.context) else _UNRECORDED
         token = _loaded_file_digests.set(record)
         try:
             return handler({key: item for key, item in mapping.items() if key != _FILE_DIGESTS_KEY})
@@ -1380,7 +1380,7 @@ class _RecordsContentFiles:
             _loaded_file_digests.reset(token)
 
 
-_JOURNAL_CONTEXT: Mapping[str, Any] = {'pydantic_ai': {'trusted_history': True}}
+_JOURNAL_CONTEXT: Mapping[str, Any] = {'pydantic_ai': {'rebuild_unrecorded_tool_files': True}}
 """The validation context durable execution decodes its own journal with.
 
 A journal entry written before tool results recorded their files carries no record, and the worker that
@@ -1388,12 +1388,14 @@ wrote it is the application's own, so it loads as it did then rather than losing
 """
 
 
-def _trusts_history(context: Any) -> bool:
-    """Whether a validation context carries `{'pydantic_ai': {'trusted_history': True}}`."""
+def _rebuilds_unrecorded_tool_files(context: Any) -> bool:
+    """Whether a validation context carries `{'pydantic_ai': {'rebuild_unrecorded_tool_files': True}}`."""
     if not isinstance(context, Mapping):
         return False
     options = cast(Mapping[str, Any], context).get('pydantic_ai')
-    return isinstance(options, Mapping) and cast(Mapping[str, Any], options).get('trusted_history') is True
+    return (
+        isinstance(options, Mapping) and cast(Mapping[str, Any], options).get('rebuild_unrecorded_tool_files') is True
+    )
 
 
 def _check_file_provenance(value: Any) -> Any:
