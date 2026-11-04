@@ -71,6 +71,9 @@ replaces the rejected result before the model sees it.
 - `semantic_detection`: add local ML classification beyond known patterns. This
   requires the `prompt-injection-defender-ml` extra. On Python 3.15 that extra
   installs pattern detection only, until ONNX Runtime publishes Python 3.15 wheels.
+  Under durable execution, semantic warmup and classification run as durable
+  operations addressed by the capability's `id`, so a defender on a
+  durable-capable agent needs an explicit `id`, distinct per defender.
 - `tool_filter`: classify all tools, selected tool names, or tools accepted by a
   [`ToolSelector`][pydantic_ai.tools.ToolSelector].
 - `on_detection`: run a sync or async callback for each flagged verdict. A

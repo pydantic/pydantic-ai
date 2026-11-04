@@ -11,7 +11,7 @@ from typing import Any
 import anyio.to_thread
 from pydantic_core import to_jsonable_python
 
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, durable_operation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import TextContent, ToolCallPart, ToolReturn
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector, matches_tool_selector
@@ -98,6 +98,10 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
 
     Provider-native tools (for example hosted web search) run server-side and never transit
     the client, so they are not classified here.
+
+    Inside a durable workflow or flow, semantic warmup and classification are durable operations
+    addressed by the capability's `id`, which has no default (several scoped defenders compose), so
+    a defender on a durable-capable agent needs an explicit one: `PromptInjectionDefender(id='defender')`.
 
     Example:
         ```python
@@ -196,7 +200,11 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Preload the optional semantic classifier off the event loop."""
         if self.semantic_detection:
-            await anyio.to_thread.run_sync(self._defense.warmup_tier2)
+            await self._warmup(ctx)
+
+    @durable_operation('warmup')
+    async def _warmup(self, ctx: RunContext[AgentDepsT]) -> None:
+        await anyio.to_thread.run_sync(self._defense.warmup_tier2)
 
     async def after_tool_execute(
         self,
@@ -229,7 +237,7 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
                     values.append({'content': text})
         else:
             values = [result]
-        verdicts = [await self._defense.defend_tool_result_async(_payload(value), call.tool_name) for value in values]
+        verdicts = await self._verdicts(ctx, [_payload(value) for value in values], call.tool_name)
         blocking = next((verdict for verdict in verdicts if not verdict.allowed), None)
         blocked: ToolReturn[str] | None = None
         if blocking is not None:
@@ -239,6 +247,19 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
             if _flagged(verdict):
                 await self._notify(ctx, call, verdict)
         return unchanged if blocked is None else blocked
+
+    async def _verdicts(self, ctx: RunContext[AgentDepsT], payloads: list[Any], tool_name: str) -> list[DefenseResult]:
+        if self.semantic_detection:
+            return await self._classify(ctx, payloads, tool_name)
+        return await self._defend(payloads, tool_name)
+
+    @durable_operation('classify')
+    async def _classify(self, ctx: RunContext[AgentDepsT], payloads: list[Any], tool_name: str) -> list[DefenseResult]:
+        """Run the semantic classifier, which can't load in workflow code, as a durable operation."""
+        return await self._defend(payloads, tool_name)
+
+    async def _defend(self, payloads: list[Any], tool_name: str) -> list[DefenseResult]:
+        return [await self._defense.defend_tool_result_async(payload, tool_name) for payload in payloads]
 
     async def _notify(self, ctx: RunContext[AgentDepsT], call: ToolCallPart, verdict: DefenseResult) -> None:
         if self.on_detection is None:
