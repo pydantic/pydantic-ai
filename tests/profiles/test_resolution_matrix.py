@@ -752,6 +752,30 @@ def test_google_gemini_3_pro():
             ),
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/heif',
+                    'image/jpeg',
+                    'image/png',
+                    'image/webp',
+                }
+            ),
+            'supported_audio_media_types': frozenset(
+                {
+                    'audio/aac',
+                    'audio/aiff',
+                    'audio/flac',
+                    'audio/mp4',
+                    'audio/mpeg',
+                    'audio/ogg',
+                    'audio/opus',
+                    'audio/wav',
+                }
+            ),
         }
     )
 
@@ -770,6 +794,33 @@ def test_google_gemini_2_5_flash():
             'google_supports_thinking_level': False,
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': True,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/heif',
+                    'image/jpeg',
+                    'image/png',
+                    'image/webp',
+                }
+            ),
+            'supported_audio_media_types': frozenset(
+                {
+                    'audio/aac',
+                    'audio/aiff',
+                    'audio/flac',
+                    'audio/mp4',
+                    'audio/mpeg',
+                    'audio/ogg',
+                    'audio/opus',
+                    'audio/wav',
+                }
+            ),
+            'supported_document_media_types': frozenset(
+                {'application/pdf', 'text/csv', 'text/html', 'text/markdown', 'text/plain'}
+            ),
         }
     )
 
@@ -788,6 +839,33 @@ def test_google_gemini_2_5_flash_image():
             'supports_video_input': False,
             'google_supports_thinking_level': False,
             'google_web_search_billed_per_prompt': True,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/heif',
+                    'image/jpeg',
+                    'image/png',
+                    'image/webp',
+                }
+            ),
+            'supported_audio_media_types': frozenset(
+                {
+                    'audio/aac',
+                    'audio/aiff',
+                    'audio/flac',
+                    'audio/mp4',
+                    'audio/mpeg',
+                    'audio/ogg',
+                    'audio/opus',
+                    'audio/wav',
+                }
+            ),
+            'supported_document_media_types': frozenset(
+                {'application/pdf', 'text/csv', 'text/html', 'text/markdown', 'text/plain'}
+            ),
         }
     )
 
@@ -830,6 +908,30 @@ def test_google_gemini_3_7_flash_thinking_levels():
             'supports_thinking': True,
             'google_web_search_billed_per_prompt': False,
             'supports_tool_return_schema': True,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/heif',
+                    'image/jpeg',
+                    'image/png',
+                    'image/webp',
+                }
+            ),
+            'supported_audio_media_types': frozenset(
+                {
+                    'audio/aac',
+                    'audio/aiff',
+                    'audio/flac',
+                    'audio/mp4',
+                    'audio/mpeg',
+                    'audio/ogg',
+                    'audio/opus',
+                    'audio/wav',
+                }
+            ),
         }
     )
 
@@ -838,7 +940,12 @@ def test_google_gemini_3_7_flash_thinking_levels():
 def test_xai_grok_4():
     profile = XaiProvider.model_profile('grok-4')
     assert _normalize(profile) == snapshot(
-        {'supports_json_schema_output': True, 'supports_json_object_output': True, 'grok_supports_builtin_tools': True}
+        {
+            'supported_image_media_types': frozenset({'image/jpeg', 'image/png', 'image/webp'}),
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'grok_supports_builtin_tools': True,
+        }
     )
 
 
@@ -847,6 +954,7 @@ def test_xai_grok_3_mini():
     profile = XaiProvider.model_profile('grok-3-mini')
     assert _normalize(profile) == snapshot(
         {
+            'supported_image_media_types': frozenset({'image/jpeg', 'image/png', 'image/webp'}),
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_thinking': True,
@@ -860,7 +968,24 @@ def test_xai_grok_3_mini():
 @pytest.mark.skipif(not mistral_imports(), reason='mistral not installed')
 def test_mistral_mistral_large():
     profile = MistralProvider.model_profile('mistral-large-latest')
-    assert _normalize(profile) == snapshot({'tool_call_id_length': 9, 'supports_inline_system_prompts': True})
+    assert _normalize(profile) == snapshot(
+        {
+            'tool_call_id_length': 9,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/jpeg',
+                    'image/png',
+                    'image/tiff',
+                    'image/webp',
+                }
+            ),
+            'supports_inline_system_prompts': True,
+        }
+    )
 
 
 @pytest.mark.skipif(not mistral_imports(), reason='mistral not installed')
@@ -868,7 +993,23 @@ def test_mistral_small_latest():
     """Small 4 / Medium 3.5 advertise adjustable (opt-in) reasoning, unlike always-on magistral."""
     profile = MistralProvider.model_profile('mistral-small-latest')
     assert _normalize(profile) == snapshot(
-        {'tool_call_id_length': 9, 'supports_thinking': True, 'supports_inline_system_prompts': True}
+        {
+            'tool_call_id_length': 9,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/jpeg',
+                    'image/png',
+                    'image/tiff',
+                    'image/webp',
+                }
+            ),
+            'supports_thinking': True,
+            'supports_inline_system_prompts': True,
+        }
     )
 
 
@@ -965,6 +1106,18 @@ def test_mistral_zai_glm_5_3_flash_inline_defs():
     expected = snapshot(
         {
             'tool_call_id_length': 9,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/jpeg',
+                    'image/png',
+                    'image/tiff',
+                    'image/webp',
+                }
+            ),
             'supports_inline_system_prompts': True,
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
         }
@@ -972,7 +1125,22 @@ def test_mistral_zai_glm_5_3_flash_inline_defs():
     assert _normalize(MistralProvider.model_profile('zai-glm-5-3')) == expected
     assert _normalize(MistralProvider.model_profile('zai-glm-5-3-flash')) == expected
     assert _normalize(MistralProvider.model_profile('zai-glm-5-30')) == snapshot(
-        {'tool_call_id_length': 9, 'supports_inline_system_prompts': True}
+        {
+            'tool_call_id_length': 9,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/jpeg',
+                    'image/png',
+                    'image/tiff',
+                    'image/webp',
+                }
+            ),
+            'supports_inline_system_prompts': True,
+        }
     )
 
 
@@ -1214,6 +1382,18 @@ def test_bedrock_mistral_large():
     assert _normalize(profile) == snapshot(
         {
             'tool_call_id_length': 9,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/jpeg',
+                    'image/png',
+                    'image/tiff',
+                    'image/webp',
+                }
+            ),
             'supported_native_tools': frozenset(),
             'bedrock_tool_result_format': 'json',
             'json_schema_transformer': BedrockJsonSchemaTransformer,
@@ -1428,6 +1608,7 @@ def test_bedrock_xai_grok(region: str):
     assert profiles == snapshot(
         {
             '4.6': {
+                'supported_image_media_types': frozenset({'image/jpeg', 'image/png', 'image/webp'}),
                 'supports_thinking': True,
                 'thinking_always_enabled': True,
                 'grok_supports_builtin_tools': True,
@@ -1439,6 +1620,7 @@ def test_bedrock_xai_grok(region: str):
                 'supports_video_input': False,
             },
             '4.7': {
+                'supported_image_media_types': frozenset({'image/jpeg', 'image/png', 'image/webp'}),
                 'supports_thinking': True,
                 'thinking_always_enabled': True,
                 'grok_supports_builtin_tools': True,
@@ -1571,6 +1753,30 @@ def test_openrouter_google_gemini_3_pro():
             ),
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/heif',
+                    'image/jpeg',
+                    'image/png',
+                    'image/webp',
+                }
+            ),
+            'supported_audio_media_types': frozenset(
+                {
+                    'audio/aac',
+                    'audio/aiff',
+                    'audio/flac',
+                    'audio/mp4',
+                    'audio/mpeg',
+                    'audio/ogg',
+                    'audio/opus',
+                    'audio/wav',
+                }
+            ),
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
@@ -1619,6 +1825,30 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
             'openai_chat_supports_max_completion_tokens': False,
             'google_web_search_billed_per_prompt': False,
             'openai_chat_supports_web_search': True,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/heif',
+                    'image/jpeg',
+                    'image/png',
+                    'image/webp',
+                }
+            ),
+            'supported_audio_media_types': frozenset(
+                {
+                    'audio/aac',
+                    'audio/aiff',
+                    'audio/flac',
+                    'audio/mp4',
+                    'audio/mpeg',
+                    'audio/ogg',
+                    'audio/opus',
+                    'audio/wav',
+                }
+            ),
             'openai_chat_thinking_field': 'reasoning',
             'openrouter_max_cache_points': None,
             'openrouter_supports_cache_control': True,
@@ -1645,6 +1875,18 @@ def test_openrouter_mistral_large():
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'tool_call_id_length': 9,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/jpeg',
+                    'image/png',
+                    'image/tiff',
+                    'image/webp',
+                }
+            ),
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
@@ -1697,6 +1939,7 @@ def test_openrouter_xai_grok_4():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
+            'supported_image_media_types': frozenset({'image/jpeg', 'image/png', 'image/webp'}),
             'supports_json_object_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_thinking': True,
@@ -1802,6 +2045,30 @@ def test_github_copilot_google_gemini_3_pro():
             ),
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/heif',
+                    'image/jpeg',
+                    'image/png',
+                    'image/webp',
+                }
+            ),
+            'supported_audio_media_types': frozenset(
+                {
+                    'audio/aac',
+                    'audio/aiff',
+                    'audio/flac',
+                    'audio/mp4',
+                    'audio/mpeg',
+                    'audio/ogg',
+                    'audio/opus',
+                    'audio/wav',
+                }
+            ),
             'openai_chat_supports_max_completion_tokens': True,
             'openai_chat_thinking_field': 'reasoning_text',
         }
@@ -1814,6 +2081,7 @@ def test_github_copilot_xai_grok_4_5():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supported_image_media_types': frozenset({'image/jpeg', 'image/png', 'image/webp'}),
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_thinking': True,
@@ -2035,6 +2303,18 @@ def test_azure_mistral_prefix():
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'tool_call_id_length': 9,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/jpeg',
+                    'image/png',
+                    'image/tiff',
+                    'image/webp',
+                }
+            ),
             'openai_chat_supports_document_input': False,
             'openai_responses_supports_websocket': False,
             'openai_chat_supports_max_completion_tokens': False,
@@ -2050,6 +2330,18 @@ def test_azure_mistral_small_latest():
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'tool_call_id_length': 9,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/jpeg',
+                    'image/png',
+                    'image/tiff',
+                    'image/webp',
+                }
+            ),
             'openai_chat_supports_document_input': False,
             'openai_responses_supports_websocket': False,
             'openai_chat_supports_max_completion_tokens': False,
@@ -2065,6 +2357,18 @@ def test_azure_ministral_3b():
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'tool_call_id_length': 9,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/jpeg',
+                    'image/png',
+                    'image/tiff',
+                    'image/webp',
+                }
+            ),
             'openai_chat_supports_document_input': False,
             'openai_responses_supports_websocket': False,
             'openai_chat_supports_max_completion_tokens': False,
@@ -2080,6 +2384,18 @@ def test_azure_magistral_small_latest():
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'tool_call_id_length': 9,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/jpeg',
+                    'image/png',
+                    'image/tiff',
+                    'image/webp',
+                }
+            ),
             'openai_chat_supports_document_input': False,
             'openai_chat_supports_max_completion_tokens': False,
             'supports_thinking': True,
@@ -2107,6 +2423,7 @@ def test_azure_grok_prefix():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
+            'supported_image_media_types': frozenset({'image/jpeg', 'image/png', 'image/webp'}),
             'supports_json_object_output': True,
             'json_schema_transformer': _AzureGrokJsonSchemaTransformer,
             'grok_supports_builtin_tools': True,
@@ -2215,6 +2532,7 @@ def test_xai_provider_grok_4():
     profile = XaiProvider.model_profile('grok-4')
     assert _normalize(profile) == snapshot(
         {
+            'supported_image_media_types': frozenset({'image/jpeg', 'image/png', 'image/webp'}),
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'grok_supports_builtin_tools': True,
@@ -2227,6 +2545,7 @@ def test_xai_provider_grok_3_mini():
     profile = XaiProvider.model_profile('grok-3-mini')
     assert _normalize(profile) == snapshot(
         {
+            'supported_image_media_types': frozenset({'image/jpeg', 'image/png', 'image/webp'}),
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_thinking': True,
@@ -2419,6 +2738,18 @@ def test_litellm_magistral():
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'tool_call_id_length': 9,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/jpeg',
+                    'image/png',
+                    'image/tiff',
+                    'image/webp',
+                }
+            ),
             'supports_thinking': True,
             'thinking_always_enabled': True,
         }
@@ -2441,6 +2772,18 @@ def test_litellm_mistral_small_latest():
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'tool_call_id_length': 9,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/jpeg',
+                    'image/png',
+                    'image/tiff',
+                    'image/webp',
+                }
+            ),
         }
     )
 
@@ -2643,6 +2986,7 @@ def test_github_xai_grok():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
+            'supported_image_media_types': frozenset({'image/jpeg', 'image/png', 'image/webp'}),
             'supports_json_object_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'grok_supports_builtin_tools': True,
@@ -2761,6 +3105,30 @@ def test_vercel_vertex_gemini():
             ),
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/heif',
+                    'image/jpeg',
+                    'image/png',
+                    'image/webp',
+                }
+            ),
+            'supported_audio_media_types': frozenset(
+                {
+                    'audio/aac',
+                    'audio/aiff',
+                    'audio/flac',
+                    'audio/mp4',
+                    'audio/mpeg',
+                    'audio/ogg',
+                    'audio/opus',
+                    'audio/wav',
+                }
+            ),
         }
     )
 
@@ -2771,6 +3139,7 @@ def test_vercel_xai_grok():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
+            'supported_image_media_types': frozenset({'image/jpeg', 'image/png', 'image/webp'}),
             'supports_json_object_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'grok_supports_builtin_tools': True,

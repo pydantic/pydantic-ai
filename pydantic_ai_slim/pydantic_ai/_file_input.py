@@ -5,13 +5,33 @@ from __future__ import annotations as _annotations
 from typing import TYPE_CHECKING, Literal, get_args
 
 from ._utils import is_text_like_media_type
-from .messages import AudioUrl, BinaryContent, DocumentMediaType, DocumentUrl, FileUrl, ImageUrl, VideoUrl
+from .messages import (
+    AudioMediaType,
+    AudioUrl,
+    BinaryContent,
+    DocumentMediaType,
+    DocumentUrl,
+    FileUrl,
+    ImageMediaType,
+    ImageUrl,
+    VideoMediaType,
+    VideoUrl,
+)
 
 if TYPE_CHECKING:
     from .profiles import ModelProfile
 
 FileInputKind = Literal['image', 'document', 'audio', 'video']
 """The kinds of file the profile's file-input flags cover."""
+
+KNOWN_IMAGE_MEDIA_TYPES: frozenset[str] = frozenset(get_args(ImageMediaType))
+"""Every `ImageMediaType`: the default for `ModelProfile.supported_image_media_types`."""
+
+KNOWN_AUDIO_MEDIA_TYPES: frozenset[str] = frozenset(get_args(AudioMediaType))
+"""Every `AudioMediaType`: the default for `ModelProfile.supported_audio_media_types`."""
+
+KNOWN_VIDEO_MEDIA_TYPES: frozenset[str] = frozenset(get_args(VideoMediaType))
+"""Every `VideoMediaType`: the default for `ModelProfile.supported_video_media_types`."""
 
 KNOWN_DOCUMENT_MEDIA_TYPES: frozenset[DocumentMediaType] = frozenset(get_args(DocumentMediaType))
 """Every `DocumentMediaType`: the default for `ModelProfile.supported_document_media_types`."""
@@ -26,27 +46,43 @@ SendableFile = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
 
 
 def unsupported_file_input(item: SendableFile, profile: ModelProfile) -> str | None:
-    """What `item` is that the model cannot read, such as `'audio files'`, or `None` when it can be sent.
+    """What `item` is that the model cannot read, such as `'audio files'` or `'image/heic images'`, or `None`.
 
-    Binary content that is neither an image, audio, video nor a document is left to the model adapter.
+    A file is judged by its kind's flag, then by its media type against the kind's `supported_*_media_types`,
+    as given: adapters send `image/jpg` or `image/png; name=a.png` under that spelling, which the provider may not
+    take. A URL whose media type can't be inferred is judged by kind alone. A document of a text media type that
+    `DocumentMediaType` doesn't list, such as `text/x-python`, is judged as `text/plain`, which is how adapters
+    send it. Binary content that is neither an image, audio, video nor a document is left to the model adapter.
     """
     match item:
         case ImageUrl() | BinaryContent(is_image=True):
-            return None if profile.get('supports_image_input', True) else 'images'
+            if not profile.get('supports_image_input', True):
+                return 'images'
+            supported = profile.get('supported_image_media_types', KNOWN_IMAGE_MEDIA_TYPES)
+            noun = 'images'
         case AudioUrl() | BinaryContent(is_audio=True):
-            return None if profile.get('supports_audio_file_input', True) else 'audio files'
+            if not profile.get('supports_audio_file_input', True):
+                return 'audio files'
+            supported = profile.get('supported_audio_media_types', KNOWN_AUDIO_MEDIA_TYPES)
+            noun = 'audio files'
         case VideoUrl() | BinaryContent(is_video=True):
-            return None if profile.get('supports_video_input', True) else 'video'
+            if not profile.get('supports_video_input', True):
+                return 'video'
+            supported = profile.get('supported_video_media_types', KNOWN_VIDEO_MEDIA_TYPES)
+            noun = 'video'
         case DocumentUrl() | BinaryContent(is_document=True):
             if not profile.get('supports_document_input', True):
                 return 'documents'
-            media_type = inferred_media_type(item)
             supported = profile.get('supported_document_media_types', KNOWN_DOCUMENT_MEDIA_TYPES)
-            if media_type in KNOWN_DOCUMENT_MEDIA_TYPES and media_type not in supported:
-                return f'{media_type} documents'
+            noun = 'documents'
         case _:
-            pass
-    return None
+            return None
+    if (media_type := inferred_media_type(item)) is None:
+        return None
+    judged_as = media_type
+    if noun == 'documents' and media_type not in KNOWN_DOCUMENT_MEDIA_TYPES and is_text_like_media_type(media_type):
+        judged_as = 'text/plain'
+    return None if judged_as in supported else f'{media_type} {noun}'
 
 
 def unsupported_file_note(item: SendableFile, unsupported: str) -> str:

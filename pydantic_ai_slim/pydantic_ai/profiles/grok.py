@@ -115,6 +115,9 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
 
     profile: GrokModelProfile = GrokModelProfile(
         supports_tools=True,
+        # The xAI API rejects GIFs: 'Downloaded response does not contain a valid JPG, PNG, WebP, or ICO image'
+        # (checked live with `grok-4-1-fast-non-reasoning`, 2026-11-04).
+        supported_image_media_types=frozenset({'image/jpeg', 'image/png', 'image/webp'}),
         supports_json_schema_output=True,
         supports_json_object_output=True,
         supports_thinking=bool(grok_reasoning_efforts),

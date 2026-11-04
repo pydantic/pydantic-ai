@@ -8,7 +8,12 @@ from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
 from typing_extensions import TypedDict
 
-from .._file_input import KNOWN_DOCUMENT_MEDIA_TYPES
+from .._file_input import (
+    KNOWN_AUDIO_MEDIA_TYPES,
+    KNOWN_DOCUMENT_MEDIA_TYPES,
+    KNOWN_IMAGE_MEDIA_TYPES,
+    KNOWN_VIDEO_MEDIA_TYPES,
+)
 from .._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
 from ..exceptions import PydanticAIDeprecationWarning
 from ..messages import CachePoint, DocumentMediaType, ModelRequest, ModelResponse, UserPromptPart
@@ -106,9 +111,10 @@ class ModelProfile(TypedDict, total=False):
     supports_image_input: bool
     """Whether the model accepts images. Default: `True`.
 
-    The file-input flags (this one, `supports_document_input`, `supported_document_media_types`,
-    `supports_audio_file_input` and `supports_video_input`) say which files can be sent to the model.
-    A model adapter turns off what its message mapping cannot send, whatever the profile says.
+    The file-input flags (this one, `supports_document_input`, `supports_audio_file_input`,
+    `supports_video_input`, and the `supported_*_media_types` sets that narrow each kind to media types)
+    say which files can be sent to the model. A model adapter turns off what its message mapping cannot
+    send, whatever the profile says.
 
     A file a tool returns that the model cannot take is replaced, in the request only, by a note naming
     it: see [Where a returned file is sent](../tools-advanced.md#tool-return-file-provenance). A file in a
@@ -119,6 +125,14 @@ class ModelProfile(TypedDict, total=False):
     Shipped profiles turn these off where an adapter or a model family is known not to take the file; `True`
     means nothing says otherwise, not that the model was checked. A text-only model served through an adapter
     that sends images (a text-only Llama on vLLM, say) needs `profile=ModelProfile(supports_image_input=False)`.
+    """
+
+    supported_image_media_types: frozenset[str]
+    """The image media types the model accepts, when it accepts images at all. Default: every media type
+    in `ImageMediaType` (JPEG, PNG, GIF and WebP).
+
+    An image of any other media type, such as `image/heic`, counts as one the model can't read unless
+    this set lists it. See `supports_image_input` for how the file-input flags are used.
     """
 
     supports_document_input: bool
@@ -132,9 +146,10 @@ class ModelProfile(TypedDict, total=False):
     """The document media types the model accepts, when it accepts documents at all. Default: every
     media type in `DocumentMediaType`.
 
-    Only narrows those known types: a document with any other media type is judged by
-    `supports_document_input` alone. Anthropic, for example, reads PDFs and plain text but not Word or
-    Excel files. See `supports_image_input` for how the file-input flags are used.
+    A document of any other media type counts as one the model can't read unless this set lists it,
+    except a text media type `DocumentMediaType` doesn't list, such as `text/x-python`, which is judged as
+    `text/plain`. Anthropic, for example, reads PDFs and plain text but not Word or Excel files. See
+    `supports_image_input` for how the file-input flags are used.
     """
 
     supports_audio_file_input: bool
@@ -145,10 +160,26 @@ class ModelProfile(TypedDict, total=False):
     `supports_image_input` for how the file-input flags are used.
     """
 
+    supported_audio_media_types: frozenset[str]
+    """The audio media types the model accepts, when it accepts audio files at all. Default: every media
+    type in `AudioMediaType`.
+
+    Audio of any other media type, such as `audio/mp4`, counts as audio the model can't read unless this
+    set lists it. See `supports_image_input` for how the file-input flags are used.
+    """
+
     supports_video_input: bool
     """Whether the model accepts video. Default: `True`.
 
     See `supports_image_input` for how the file-input flags are used.
+    """
+
+    supported_video_media_types: frozenset[str]
+    """The video media types the model accepts, when it accepts video at all. Default: every media type in
+    `VideoMediaType`.
+
+    Video of any other media type counts as video the model can't read unless this set lists it. See
+    `supports_image_input` for how the file-input flags are used.
     """
 
     supports_inline_system_prompts: bool
@@ -484,10 +515,13 @@ DEFAULT_PROFILE: ModelProfile = {
     'supports_image_output': False,
     'supports_audio_input': False,
     'supports_image_input': True,
+    'supported_image_media_types': KNOWN_IMAGE_MEDIA_TYPES,
     'supports_document_input': True,
     'supported_document_media_types': KNOWN_DOCUMENT_MEDIA_TYPES,
     'supports_audio_file_input': True,
+    'supported_audio_media_types': KNOWN_AUDIO_MEDIA_TYPES,
     'supports_video_input': True,
+    'supported_video_media_types': KNOWN_VIDEO_MEDIA_TYPES,
     'default_structured_output_mode': 'tool',
     'prompted_output_template': DEFAULT_PROMPTED_OUTPUT_TEMPLATE,
     'native_output_requires_schema_in_instructions': False,

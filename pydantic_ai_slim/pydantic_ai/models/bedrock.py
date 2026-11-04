@@ -76,6 +76,7 @@ from pydantic_ai import (
     _utils,
     usage,
 )
+from pydantic_ai._file_input import KNOWN_DOCUMENT_MEDIA_TYPES, KNOWN_IMAGE_MEDIA_TYPES, KNOWN_VIDEO_MEDIA_TYPES
 from pydantic_ai._gateway_cost import fill_gateway_header_cost
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
@@ -903,8 +904,14 @@ _CACHE_SETTINGS_KEYS = (
 class BedrockConverseModel(Model[BaseClient]):
     """A model that uses the Bedrock Converse API."""
 
-    # The Converse API has no audio content block.
+    # The Converse API has no audio content block, and names each file's format, which only the media types
+    # core knows have.
     _unsupported_file_inputs = frozenset({'audio'})
+    _supported_media_types = {
+        'image': KNOWN_IMAGE_MEDIA_TYPES,
+        'document': KNOWN_DOCUMENT_MEDIA_TYPES,
+        'video': KNOWN_VIDEO_MEDIA_TYPES,
+    }
 
     unsupported_settings = frozenset(
         {

@@ -1563,6 +1563,14 @@ def _resolve_legacy_cache_retention(
     return timedelta(hours=24) if settings.get('openai_prompt_cache_retention') == '24h' else None
 
 
+_CHAT_AUDIO_FORMATS: dict[str, Literal['wav', 'mp3']] = {'audio/wav': 'wav', 'audio/mpeg': 'mp3'}
+"""The audio Chat Completions' `input_audio` takes, by media type."""
+
+
+def _chat_audio_format_error(media_type: str) -> str:
+    return f'OpenAI Chat Completions takes WAV and MP3 audio only, not {media_type!r}.'
+
+
 @dataclass(init=False)
 class OpenAIChatModel(Model[AsyncOpenAI]):
     """A model that uses the OpenAI API.
@@ -1572,8 +1580,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    # Chat Completions has no video content part.
+    # Chat Completions has no video content part, and `input_audio` takes only WAV and MP3.
     _unsupported_file_inputs = frozenset({'video'})
+    _supported_media_types = {'audio': frozenset({'audio/wav', 'audio/mpeg'})}
 
     unsupported_settings = frozenset({'top_k'})
 
@@ -2687,11 +2696,13 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 image_url['detail'] = metadata.get('detail', 'auto')
             return ChatCompletionContentPartImageParam(image_url=image_url, type='image_url')
         elif item.is_audio:
-            assert item.format in ('wav', 'mp3')
+            audio_format = _CHAT_AUDIO_FORMATS.get(item.media_type)
+            if audio_format is None:
+                raise UserError(_chat_audio_format_error(item.media_type))
             if profile.get('openai_chat_audio_input_encoding', 'base64') == 'uri':
-                audio = InputAudio(data=item.data_uri, format=item.format)
+                audio = InputAudio(data=item.data_uri, format=audio_format)
             else:
-                audio = InputAudio(data=item.base64, format=item.format)
+                audio = InputAudio(data=item.base64, format=audio_format)
             return ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio')
         elif item.is_document:
             if not profile.get('openai_chat_supports_document_input', True):
@@ -2713,11 +2724,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         profile = self.profile
         data_format = 'base64_uri' if profile.get('openai_chat_audio_input_encoding', 'base64') == 'uri' else 'base64'
         downloaded_item = await download_item(item, data_format=data_format, type_format='extension')
-        assert downloaded_item['data_type'] in (
-            'wav',
-            'mp3',
-        ), f'Unsupported audio format: {downloaded_item["data_type"]}'
-        audio = InputAudio(data=downloaded_item['data'], format=downloaded_item['data_type'])
+        data_type = downloaded_item['data_type']
+        if data_type not in ('wav', 'mp3'):
+            raise UserError(_chat_audio_format_error(item.media_type))
+        audio = InputAudio(data=downloaded_item['data'], format=data_type)
         return ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio')
 
     async def _map_document_url_item(self, item: DocumentUrl) -> ChatCompletionContentPartParam:

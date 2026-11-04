@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import re
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
+from .._file_input import KNOWN_AUDIO_MEDIA_TYPES, KNOWN_DOCUMENT_MEDIA_TYPES, KNOWN_IMAGE_MEDIA_TYPES
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import UserError
 from ..native_tools import WebSearchTool
@@ -231,6 +232,26 @@ _REALTIME_MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]
 """Live model name prefixes mapped to the thinking levels they accept."""
 
 
+_GEMINI_IMAGE_MEDIA_TYPES = KNOWN_IMAGE_MEDIA_TYPES | {'image/heic', 'image/heif', 'image/avif', 'image/bmp'}
+"""Images Gemini reads, as checked live on the Gemini API and Vertex AI (2026-11-04).
+
+HEIF is documented at https://ai.google.dev/gemini-api/docs/image-understanding. TIFF is left out: the Gemini API
+rejects it, while Vertex AI reads it.
+"""
+
+_GEMINI_AUDIO_MEDIA_TYPES = KNOWN_AUDIO_MEDIA_TYPES | {'audio/mp4', 'audio/opus'}
+"""Audio Gemini reads, as checked live on the Gemini API and Vertex AI (2026-11-04)."""
+
+_OFFICE_DOCUMENT_MEDIA_TYPES = frozenset(
+    {
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/msword',
+        'application/vnd.ms-excel',
+    }
+)
+
+
 def google_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model."""
     is_image_model = 'image' in model_name
@@ -294,7 +315,18 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     )
     if thinking_levels is not None:
         profile['google_thinking_levels'] = thinking_levels
+    _set_gemini_file_input(profile, is_gemma=is_gemma, is_older_gemini=is_older_gemini)
     return profile
+
+
+def _set_gemini_file_input(profile: ModelProfile, *, is_gemma: bool, is_older_gemini: bool) -> None:
+    if not is_gemma:
+        profile['supported_image_media_types'] = _GEMINI_IMAGE_MEDIA_TYPES
+        profile['supported_audio_media_types'] = _GEMINI_AUDIO_MEDIA_TYPES
+    if is_older_gemini:
+        # Gemini 2.5 answers Word and Excel files with a 500 on the Gemini API and Vertex AI alike, where
+        # Gemini 3 reads them (checked live 2026-11-04).
+        profile['supported_document_media_types'] = KNOWN_DOCUMENT_MEDIA_TYPES - _OFFICE_DOCUMENT_MEDIA_TYPES
 
 
 _REALTIME_MODELS_MISSING_VIDEO_IN_TEXT_TURNS = (
