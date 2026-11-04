@@ -1210,12 +1210,12 @@ def test_enqueue_from_a_capability_stamps_its_id() -> None:
 
 @dataclass
 class _UserCeilingReporter(Reporter):
-    max_authority = 'user'
+    authority = 'user'
 
 
 @dataclass
 class _NoAuthorityReporter(Reporter):
-    max_authority = 'none'
+    authority = 'none'
 
 
 def _run_with_ceiling(ceiling: Literal['user', 'none'], *parts: Any) -> tuple[list[ModelMessage], list[ModelMessage]]:
@@ -1312,17 +1312,17 @@ def _sources_by_capability(capabilities: list[AbstractCapability[Any]]) -> dict[
     }
 
 
-def test_with_max_authority_lowers_one_instance_of_a_class() -> None:
+def test_with_authority_lowers_one_instance_of_a_class() -> None:
     trusted = Reporter([nudge()], id='trusted')
-    untrusted = Reporter([nudge()], id='untrusted').with_max_authority('none')
-    assert trusted.max_authority == untrusted.max_authority == 'operator'
+    untrusted = Reporter([nudge()], id='untrusted').with_authority('none')
+    assert trusted.authority == untrusted.authority == 'operator'
     assert _sources_by_capability([trusted, untrusted]) == {
         'trusted': OperatorSource(),
         'untrusted': CapabilitySource('untrusted', authority='none'),
     }
 
 
-def test_with_max_authority_renders_each_instance_in_its_own_voice() -> None:
+def test_with_authority_renders_each_instance_in_its_own_voice() -> None:
     """Two instances of one class, one lowered: the operator's instruction is a system message, the other framed data."""
     received: list[list[ModelMessage]] = []
 
@@ -1334,7 +1334,7 @@ def test_with_max_authority_renders_each_instance_in_its_own_voice() -> None:
         FunctionModel(respond, profile=INLINE),
         capabilities=[
             Reporter([nudge('Be brief.')], id='trusted'),
-            Reporter([nudge('Be terse.')], id='untrusted').with_max_authority('none'),
+            Reporter([nudge('Be terse.')], id='untrusted').with_authority('none'),
         ],
     )
     agent.run_sync('Run the tests.')
@@ -1360,9 +1360,9 @@ def test_with_max_authority_renders_each_instance_in_its_own_voice() -> None:
     )
 
 
-def test_with_max_authority_never_raises_authority() -> None:
-    raised = _NoAuthorityReporter([nudge()], id='plugin').with_max_authority('operator')
-    lowered_twice = Reporter([nudge()], id='twice').with_max_authority('user').with_max_authority('operator')
+def test_with_authority_never_raises_authority() -> None:
+    raised = _NoAuthorityReporter([nudge()], id='plugin').with_authority('operator')
+    lowered_twice = Reporter([nudge()], id='twice').with_authority('user').with_authority('operator')
     assert _sources_by_capability([raised, lowered_twice]) == {
         'plugin': CapabilitySource('plugin', authority='none'),
         'twice': CapabilitySource('twice', authority='user'),
@@ -1372,19 +1372,19 @@ def test_with_max_authority_never_raises_authority() -> None:
 @dataclass
 class _FreshPerRunReporter(Reporter):
     async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
-        # A fresh instance through the constructor, which knows nothing of `with_max_authority`.
+        # A fresh instance through the constructor, which knows nothing of `with_authority`.
         return replace(self)
 
 
-def test_with_max_authority_survives_a_fresh_instance_from_for_run() -> None:
-    reporter = _FreshPerRunReporter([nudge()], id='fresh').with_max_authority('user')
+def test_with_authority_survives_a_fresh_instance_from_for_run() -> None:
+    reporter = _FreshPerRunReporter([nudge()], id='fresh').with_authority('user')
     assert _sources_by_capability([reporter]) == {'fresh': CapabilitySource('fresh', authority='user')}
 
 
 def test_a_wrapper_keeps_the_authority_of_what_it_wraps() -> None:
     """Wrapping a capability, as `prefix_tools` does, never raises the authority of what it enqueues."""
     by_class = _NoAuthorityReporter([nudge()], id='by_class').prefix_tools('ns')
-    by_instance = Reporter([nudge()], id='by_instance').with_max_authority('user').prefix_tools('ns')
+    by_instance = Reporter([nudge()], id='by_instance').with_authority('user').prefix_tools('ns')
     assert _sources_by_capability([by_class, by_instance]) == {
         'by_class': CapabilitySource('by_class', authority='none'),
         'by_instance': CapabilitySource('by_instance', authority='user'),
@@ -1430,14 +1430,14 @@ def test_enqueue_lowers_authority_before_the_part_is_queued() -> None:
     assert reporter.queue.sources == [CapabilitySource('plugin', authority='none')]
 
 
-def test_a_wrapper_lowered_with_max_authority_lowers_what_it_wraps() -> None:
-    wrapper = Reporter([nudge()], id='wrapped').prefix_tools('ns').with_max_authority('none')
+def test_a_wrapper_lowered_with_authority_lowers_what_it_wraps() -> None:
+    wrapper = Reporter([nudge()], id='wrapped').prefix_tools('ns').with_authority('none')
     assert _sources_by_capability([wrapper]) == {'wrapped': CapabilitySource('wrapped', authority='none')}
 
 
-def test_a_combined_capability_lowered_with_max_authority_lowers_its_children() -> None:
+def test_a_combined_capability_lowered_with_authority_lowers_its_children() -> None:
     """Composition merges a container's children into the agent's and dispatches each on its own."""
-    combined = CombinedCapability([Reporter([nudge()], id='child')]).with_max_authority('none')
+    combined = CombinedCapability([Reporter([nudge()], id='child')]).with_authority('none')
     assert _sources_by_capability([combined]) == {'child': CapabilitySource('child', authority='none')}
 
 
@@ -1447,8 +1447,8 @@ class _FreshCombinedPerRunReporter(Reporter):
         return CombinedCapability([Reporter(self.parts, id='inner')])
 
 
-def test_with_max_authority_reaches_a_combined_capability_returned_from_for_run() -> None:
-    reporter = _FreshCombinedPerRunReporter([nudge()], id='outer').with_max_authority('none')
+def test_with_authority_reaches_a_combined_capability_returned_from_for_run() -> None:
+    reporter = _FreshCombinedPerRunReporter([nudge()], id='outer').with_authority('none')
     assert _sources_by_capability([reporter]) == {'inner': CapabilitySource('inner', authority='none')}
 
 
@@ -1459,9 +1459,9 @@ class _SingletonReporter(Reporter):
 
 @pytest.mark.parametrize('lowered_first', [True, False])
 def test_merged_capabilities_keep_the_lowest_authority(lowered_first: bool) -> None:
-    lowered = _SingletonReporter(parts=[nudge()]).with_max_authority('none')
+    lowered = _SingletonReporter(parts=[nudge()]).with_authority('none')
     # Lowered less, so taking the later value, as other fields merge, would raise it back in one of the orders.
-    less = _SingletonReporter(parts=[nudge()]).with_max_authority('user')
+    less = _SingletonReporter(parts=[nudge()]).with_authority('user')
     capabilities: list[AbstractCapability[Any]] = [lowered, less] if lowered_first else [less, lowered]
     assert _sources_by_capability(capabilities) == {'singleton': CapabilitySource('singleton', authority='none')}
 

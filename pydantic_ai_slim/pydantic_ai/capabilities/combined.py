@@ -294,14 +294,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             or any(c.listens_to(event) for c in self._dispatch)
         )
 
-    def with_max_authority(self, authority: Authority) -> Self:
+    def with_authority(self, authority: Authority) -> Self:
         """Return a copy whose children, and so what each of them enqueues, carry no more than `authority`.
 
         Composition merges a container's children into the enclosing one and dispatches each on its own, so the ceiling
         is set on every child as well as on the container.
         """
-        lowered = super().with_max_authority(authority)
-        return lowered._rebound([child.with_max_authority(authority) for child in self.capabilities])
+        lowered = super().with_authority(authority)
+        return lowered._rebound([child.with_authority(authority) for child in self.capabilities])
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> CombinedCapability[AgentDepsT]:
         new_caps = [capability._keep_authority(capability.for_agent(agent)) for capability in self.capabilities]
