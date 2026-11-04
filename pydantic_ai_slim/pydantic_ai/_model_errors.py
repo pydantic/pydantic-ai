@@ -200,7 +200,7 @@ def google_exceeds_daily_quota(body: object) -> bool:
     return False
 
 
-def google_status_category(status: str | None, message: object, body: object = None) -> HTTPErrorCategory | None:
+def google_status_category(status: str | None, message: object, body: object) -> HTTPErrorCategory | None:
     """The error category for a Google API error status, like `RESOURCE_EXHAUSTED`, and the error `body`'s details.
 
     Gemini sends `RESOURCE_EXHAUSTED` for both per-minute rate limits and the daily quota, with the same message, so
