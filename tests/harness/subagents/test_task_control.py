@@ -27,7 +27,7 @@ from pydantic import TypeAdapter
 from pydantic_ai import Agent, AgentRunResult, RunContext
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability, on_event
-from pydantic_ai.exceptions import ApprovalRequired, UserError
+from pydantic_ai.exceptions import ApprovalRequired, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     CapabilityEvent,
     FinalResultEvent,
@@ -2542,11 +2542,10 @@ class TestTaskControlBoundaries:
                 controlled(remote_agents=[RemoteSubAgent(name='remote')], transport=InMemoryTransport()),
                 id='remote_agents',
             ),
+            pytest.param(controlled(auto_background_after=1), id='auto_background_after'),
         ],
     )
-    async def test_task_control_refuses_durable_execution_with_self_or_remote_agents(
-        self, capability: SubAgents[Any]
-    ) -> None:
+    async def test_task_control_refuses_durable_execution_it_cannot_replay(self, capability: SubAgents[Any]) -> None:
         agent = Agent(TestModel(), name='durable', capabilities=[capability, RecordingDurability()])
         with pytest.raises(UserError, match='with `include_self` or `remote_agents`'):
             await agent.run('Go.')
@@ -2583,8 +2582,28 @@ class TestTaskControlBoundaries:
         assert not assigned.can_ask_questions
         assert 'which messages cannot reach' in str(result.all_messages())
         assert len(recorder.of(TaskForceCancelEvent)) == 1
+        assert 'It is one-shot and cannot be resumed.' in tool_returns(result.all_messages())[-1]
         assert 'outcome="cancelled"' in task_texts(result.all_messages())[-1]
         assert 'durable__capability__sub_agents.delegate' in {name for name, _ in durability.calls}
+
+    async def test_a_durable_task_keeps_its_outcome(self) -> None:
+        def broken(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise UnexpectedModelBehavior('boom')
+
+        recorder = Recorder()
+        parent = Agent(
+            scripted(call('delegate_task', agent_name='researcher', task='Go.'), echo_last_return),
+            name='durable',
+            capabilities=[
+                controlled(researcher(Agent(FunctionModel(broken)), on_failure='Gave up.')),
+                recorder,
+                RecordingDurability(),
+            ],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        [failed] = recorder.of(TaskFailedEvent)
+        assert result.output == f'Task {failed.task_id} (failed):\nGave up.'
 
     @pytest.mark.parametrize(
         'capability',

@@ -309,8 +309,9 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     """Let delegations outlive the tool call, and give the model tools to manage them. Off by default.
 
     See `TaskControl`. Only one `SubAgents` on an agent can set it. On Temporal and DBOS, each task runs in a durable
-    unit of its own, without questions or messages. Under durable execution, `include_self`, `remote_agents`, other
-    durable engines, and a bound `DelegationTasks` owner raise a `UserError`.
+    unit of its own, which can't ask questions, take messages, or be resumed. Under durable execution, `include_self`,
+    `remote_agents`, `auto_background_after` outside Temporal, other durable engines, and a bound `DelegationTasks`
+    owner raise a `UserError`.
     """
 
     dynamic_agents: DynamicAgents[AgentDepsT] | None = field(default=None, kw_only=True)
@@ -539,16 +540,21 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             self._created.pop(ctx.run_id or '', None)
 
     def _require_durable_support(self, ctx: RunContext[AgentDepsT], owner: DelegationTasks | None) -> None:
-        if self.task_control is not None and (self.include_self or self.task_control.remote_agents):
-            raise UserError(
-                '`SubAgents` `task_control` is not supported under durable execution with `include_self` or '
-                '`remote_agents`.'
-            )
         if self.task_control is None and self.dynamic_agents is None:
             return
         durability = BaseDurabilityCapability.from_agent(ctx.agent) if ctx.agent is not None else None
         assert durability is not None, 'Only called in a durable context.'
         spec = durability.engine_spec
+        if (control := self.task_control) is not None and (
+            self.include_self
+            or control.remote_agents
+            # Only Temporal replays the timer: elsewhere, a recovered task settles before it fires.
+            or (control.auto_background_after is not None and spec.tool_config_key != 'temporal')
+        ):
+            raise UserError(
+                '`SubAgents` `task_control` is not supported under durable execution with `include_self` or '
+                '`remote_agents`, nor with `auto_background_after` outside Temporal.'
+            )
         # Replay rebuilds the roster only if `create_agent` runs in workflow code: an engine that runs function tools
         # there, or Temporal, which honors the toolset's `{'temporal': False}`.
         in_workflow = 'function' not in spec.wrapped_toolset_kinds or spec.tool_config_key == 'temporal'
