@@ -6,7 +6,7 @@ import base64
 import posixpath
 import shlex
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import TypeAlias, cast
 
 import anyio
@@ -73,9 +73,13 @@ AuthorityLayer: TypeAlias = tuple[Authority, Mapping[str, Authority]]
 """One wrapper's authority: its level for the workspace's files, and the levels it gives paths, keyed by path."""
 
 
-def _lowest(*levels: Authority) -> Authority:
+def _lowest(levels: Iterable[Authority]) -> Authority:
     """The lowest of `levels`; `'operator'`, the highest, when there are none."""
-    return min((*levels, 'operator'), key=_AUTHORITY_RANK.__getitem__)
+    lowest: Authority = 'operator'
+    for level in levels:
+        if _AUTHORITY_RANK[level] < _AUTHORITY_RANK[lowest]:
+            lowest = level
+    return lowest
 
 
 def _is_within(path: str, directory: str) -> bool:
@@ -420,7 +424,7 @@ class Workspace(WorkspaceBackend):
         other levels for some paths: ask [`authority_of`][pydantic_ai.workspaces.Workspace.authority_of] for a
         given file's.
         """
-        return _lowest(*(level for level, _ in self._authority_layers()))
+        return _lowest(level for level, _ in self._authority_layers())
 
     def _authority_layers(self) -> list[AuthorityLayer]:
         """The authority each wrapper sets, innermost first."""
@@ -451,7 +455,7 @@ class Workspace(WorkspaceBackend):
             resolved: dict[str, Authority] = {}
             for key, key_level in path_authority.items():
                 real_key = await self.realpath(await self.resolve(key, base=root))
-                resolved[real_key] = _lowest(key_level, resolved.get(real_key, key_level))
+                resolved[real_key] = _lowest((key_level, resolved.get(real_key, key_level)))
             layers.append((level, resolved))
         zones = [root, *(key for _, path_authority in layers for key in path_authority)]
 
@@ -469,7 +473,7 @@ class Workspace(WorkspaceBackend):
                 parent = await self.realpath(location)
                 if parent != location and any(_is_within(location, zone) for zone in zones):
                     locations.append(location)
-        return _lowest(*(_layer_authority(location, layer) for location in locations for layer in layers))
+        return _lowest(_layer_authority(location, layer) for location in locations for layer in layers)
 
     def durable_policy(self) -> tuple[object, ...]:
         """Configuration a durable unit must rebuild with this wrapper.

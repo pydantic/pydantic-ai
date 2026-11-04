@@ -4411,7 +4411,7 @@ Authority: TypeAlias = Literal['operator', 'user', 'none']
 - `'none'`: data, such as a tool's output, another model's text or a file someone else wrote.
 
 A [`Workspace`][pydantic_ai.workspaces.Workspace]'s [`authority`][pydantic_ai.workspaces.Workspace.authority] is
-the authority of the files in it, and [`authority_of`][pydantic_ai.workspaces.Workspace.authority_of] gives one file's.
+the authority of the files in it.
 """
 
 
