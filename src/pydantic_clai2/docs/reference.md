@@ -32,6 +32,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/accounts` | Add, rename, reorder, and sign out of accounts |
 | `/keys` | Manage saved API keys |
 | `/permissions [full\|auto\|read-only]` | Show or set what runs without asking |
+| `/project [approve NAME...\|all \| revoke NAME...\|all]` | Review what `.clai/settings.json` sets, and approve or revoke its keys for this repository |
 | `/set [KEY [VALUE]]` | Change a setting; no arguments opens the menu (alias `/settings`) |
 | `/config show\|get\|set\|reset` | Read or write saved settings; writes apply on restart |
 | `/system_prompt` | View the system prompt and edit your own instructions |
@@ -429,9 +430,9 @@ launch uses the approvals you saved and prints the keys it leaves out (on stderr
 for `-p`).
 
 The project's `instructions` are still sent while they wait, but as the
-repository's text rather than as your own: on the user channel, marked as
-coming from `.clai/settings.json` and not approved, never in the system prompt
-where your own `run.instructions` go. Once approved, they take the place of
+repository's text rather than as your own: framed on the user channel, with a
+note from CLAI that they come from `.clai/settings.json` and are not approved,
+never in the system prompt where your own `run.instructions` go. Once approved, they take the place of
 your own instructions, as before.
 
 For instruction-loading settings, see [Repository instructions](#repository-instructions).
