@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal
 
 from pydantic import ConfigDict, Discriminator, Tag, with_config
 from temporalio import workflow
@@ -12,7 +12,11 @@ from typing_extensions import Self, assert_never
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
-from pydantic_ai.messages import ToolReturn, ToolReturnContent
+from pydantic_ai.messages import (
+    ToolReturn,
+    ToolReturnContent,
+    _RecordsContentFiles,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
@@ -70,7 +74,9 @@ _ToolReturnResult = Annotated[
 
 
 @dataclass
-class _ToolReturn:
+class _ToolReturn(_RecordsContentFiles):
+    _content_field: ClassVar[str] = 'result'
+
     result: _ToolReturnResult
     kind: Literal['tool_return'] = 'tool_return'
 

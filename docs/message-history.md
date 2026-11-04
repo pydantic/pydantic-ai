@@ -311,6 +311,25 @@ result2 = agent.run_sync(  # (3)!
 
 _(This example is complete, it can be run "as is")_
 
+A file item a tool returned, such as an [`ImageUrl`][pydantic_ai.messages.ImageUrl] or
+[`UploadedFile`][pydantic_ai.messages.UploadedFile], is reconstructed as its own type on load. A tool result
+records the file items it holds when it is serialized, and only those are reconstructed, so a mapping a tool
+returned stays that mapping even when it spells out one of these items. History saved by an earlier version
+has no such record. In it, a mapping shaped like a URL item is reconstructed only as an HTTP(S) URL with
+`force_download` reset, and uploaded files and non-HTTP URLs stay mappings. If that history's tool results
+came only from your own code, not from data a third party wrote, such as a record an MCP server or an
+external API returned, load it with
+`ModelMessagesTypeAdapter.validate_json(data, context={'pydantic_ai': {'rebuild_unrecorded_tool_files': True}})`
+(or `validate_python`) and its files load as they did before. This rebuilds every file-shaped mapping in those
+tool results as a file, whatever produced it. Save the history again afterwards, and it carries the record and
+no longer needs the context. Load other history without it; saving that history again keeps only what it loaded
+as. [Durable execution](durable_execution/overview.md) decodes its own journal this way, so a run in flight
+across an upgrade keeps the files its earlier steps recorded.
+
+The record identifies each item by its saved form. To change a file item in stored history, such as to refresh a
+presigned URL, load the history, edit the item and save it again: an item edited in the stored JSON directly no
+longer matches its record, and loads as a mapping.
+
 ## Other ways of using messages
 
 Since messages are defined by simple dataclasses, you can manually create and manipulate, e.g. for testing.

@@ -2,17 +2,19 @@ from __future__ import annotations as _annotations
 
 import base64
 import hashlib
+import json
 import mimetypes
 import os
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
 from mimetypes import MimeTypes
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, TypeAlias, TypeGuard, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Generic, Literal, TypeAlias, TypeGuard, cast, overload
 from urllib.parse import urlparse
 
 import pydantic
@@ -21,6 +23,7 @@ from genai_prices import calc_price, types as genai_types
 from opentelemetry._logs import LogRecord
 from opentelemetry.util.types import AnyValue
 from pydantic.dataclasses import dataclass as pydantic_dataclass
+from pydantic_core import PydanticCustomError
 from typing_extensions import TypeAliasType, TypeVar, deprecated
 
 from . import _otel_messages, _utils
@@ -261,6 +264,13 @@ class FileUrl(ABC):
         distinguish multiple files.
         """
         return self._identifier or _multi_modal_content_identifier(self.url)
+
+    @pydantic.model_serializer(mode='wrap')
+    def _serialize(self, handler: pydantic.SerializerFunctionWrapHandler):
+        # Left unannotated: a return annotation would replace the serialization JSON schema with its own.
+        serialized = handler(self)
+        _record_file(serialized)
+        return serialized
 
     @abstractmethod
     def _infer_media_type(self) -> str:
@@ -838,6 +848,13 @@ class UploadedFile:
         """
         return self._identifier or _multi_modal_content_identifier(self.file_id)
 
+    @pydantic.model_serializer(mode='wrap')
+    def _serialize(self, handler: pydantic.SerializerFunctionWrapHandler):
+        # Left unannotated: a return annotation would replace the serialization JSON schema with its own.
+        serialized = handler(self)
+        _record_file(serialized)
+        return serialized
+
     @property
     def format(self) -> str:
         """A general-purpose media-type-to-format mapping.
@@ -878,6 +895,249 @@ def is_multi_modal_content(obj: Any) -> TypeGuard[MultiModalContent]:
 UserContent: TypeAlias = str | TextContent | MultiModalContent | CachePoint
 
 
+_FILE_DIGESTS_KEY = 'content_file_digests'
+"""The key a tool result records the files its content holds under when serialized; see `_RecordsContentFiles`."""
+
+
+class _Unrecorded:
+    """The file record of a tool result serialized before records existed."""
+
+
+_UNRECORDED = _Unrecorded()
+
+
+@dataclass
+class _ContentFileRecord:
+    """What serializing a tool result's content found, for the result to write next to it."""
+
+    digests: list[str] = field(default_factory=list[str])
+    needed: bool = False
+
+
+_dumped_file_digests: ContextVar[list[str] | None] = ContextVar('_dumped_file_digests', default=None)
+"""Collects the digests of the file items serialized while a tool result's content is."""
+
+_content_file_record: ContextVar[_ContentFileRecord | None] = ContextVar('_content_file_record', default=None)
+"""The record of the tool result being serialized, which its content's serializer fills."""
+
+_loaded_file_digests: ContextVar[frozenset[str] | _Unrecorded | None] = ContextVar('_loaded_file_digests', default=None)
+"""The file record of the tool result being validated, or `None` outside one."""
+
+
+def _file_digest(serialized: Mapping[str, Any]) -> str | None:
+    """A digest of a file item's serialized form, or `None` for one that has no JSON form.
+
+    The digest is taken of the item's default JSON form, so it is the same for a JSON dump, a python dump,
+    and a python dump encoded as JSON later. A file item with no JSON form, such as one whose
+    `vendor_metadata` holds an arbitrary object, isn't recorded, so it loads as a mapping rather than
+    making the dump fail.
+    """
+    try:
+        jsonable = pydantic_core.to_jsonable_python(serialized)
+        canonical = json.dumps(jsonable, sort_keys=True, separators=(',', ':'))
+    except (TypeError, ValueError, pydantic_core.PydanticSerializationError):
+        return None
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _record_file(serialized: Any) -> None:
+    """Record a file item serialized in a tool result's content, so validating the result rebuilds it."""
+    digests = _dumped_file_digests.get()
+    if digests is not None and isinstance(serialized, Mapping):
+        digest = _file_digest(cast(Mapping[str, Any], serialized))
+        if digest is not None:
+            digests.append(digest)
+
+
+class _OwnSerializer:
+    """A class's own pydantic serializer, built on first use, so serializing an instance by inference uses it.
+
+    `pydantic_core.to_json` and `to_jsonable_python`, and the converters that call them, such as Temporal's,
+    serialize a plain dataclass field by field and skip its serializer decorators. A pydantic dataclass
+    carries `__pydantic_serializer__`, which inference uses instead; this gives a plain dataclass the same,
+    so its tool result content is serialized with its file record either way.
+    """
+
+    def __init__(self) -> None:
+        self._serializers: dict[type, pydantic_core.SchemaSerializer] = {}
+
+    def __get__(self, instance: object, owner: type) -> pydantic_core.SchemaSerializer:
+        if (serializer := self._serializers.get(owner)) is None:
+            # The same bytes encoding as `ModelMessagesTypeAdapter`, so a history dumps the same either way.
+            # `TypeAdapter` takes no config for a dataclass, so the config goes to the serializer itself.
+            serializer = self._serializers[owner] = pydantic_core.SchemaSerializer(
+                pydantic.TypeAdapter(owner).core_schema, pydantic_core.core_schema.CoreConfig(ser_json_bytes='base64')
+            )
+        return serializer
+
+
+class _RecordsContentFiles:
+    """Keep the file items in a tool result's content, and only those, file items across serialization.
+
+    A tool result is arbitrary data: a mapping a tool returns can spell out the serialized form of one of
+    our file items, and is then indistinguishable from one in a dump. Rebuilding such a mapping as a file
+    would hand back something other than what the tool returned: an item of ours, sent to the model as a
+    file, without the keys its type doesn't declare.
+
+    So a tool result records the digest of each file item its content held when serialized, under
+    `content_file_digests`, next to the content where the data can't reach it. It writes the record, empty
+    if need be, whenever the content isn't a scalar, so a missing record means history saved before records
+    existed. On validation, a mapping in the content claiming a URL or uploaded-file `kind` is rebuilt as
+    that item only if its digest is in the record (see `_check_file_provenance`); otherwise it stays a
+    mapping, with the keys the tool put in it. A mapping identical to a recorded item is that item, and is
+    rebuilt too: it can only ever be a file the application itself serialized in the content.
+
+    The content is the field a subclass names in `_content_field`. Files elsewhere, such as in `metadata`
+    or `ToolReturn.content`, aren't recorded. An object held in the content is part of it, so a file anywhere
+    inside one, even in a nested result's `metadata`, is recorded with the content.
+    """
+
+    _content_field: ClassVar[str]
+    __pydantic_serializer__: ClassVar[Any] = _OwnSerializer()
+
+    @pydantic.field_serializer('content', 'return_value', 'result', mode='wrap', check_fields=False)
+    def _serialize_content_recording_files(
+        self, value: Any, handler: pydantic.SerializerFunctionWrapHandler, info: pydantic.FieldSerializationInfo
+    ):
+        # Left unannotated: a return annotation would replace the serialization JSON schema with its own.
+        record = _content_file_record.get()
+        if record is None or info.field_name != self._content_field:
+            return handler(value)
+        record.needed = not isinstance(value, str | int | float | bool | None)
+        outer_digests = _dumped_file_digests.get()
+        token = _dumped_file_digests.set(record.digests)
+        try:
+            return handler(value)
+        finally:
+            _dumped_file_digests.reset(token)
+            # A result nested in another one's content is part of that content, and so are its files.
+            if outer_digests is not None:
+                outer_digests.extend(record.digests)
+
+    @pydantic.model_serializer(mode='wrap')
+    def _serialize_recording_files(self, handler: pydantic.SerializerFunctionWrapHandler):
+        # Left unannotated: a return annotation would replace the serialization JSON schema with its own.
+        record = _ContentFileRecord()
+        token = _content_file_record.set(record)
+        try:
+            serialized = handler(self)
+        finally:
+            _content_file_record.reset(token)
+        if record.needed and isinstance(serialized, dict):
+            return {**cast(dict[str, Any], serialized), _FILE_DIGESTS_KEY: sorted(set(record.digests))}
+        return serialized
+
+    @pydantic.model_validator(mode='wrap')
+    @classmethod
+    def _validate_recorded_files(
+        cls, value: Any, handler: pydantic.ModelWrapValidatorHandler[Any], info: pydantic.ValidationInfo
+    ) -> Any:
+        if not isinstance(value, Mapping):
+            return handler(value)
+        mapping = cast(Mapping[str, Any], value)
+        digests = mapping.get(_FILE_DIGESTS_KEY)
+        record: frozenset[str] | _Unrecorded | None
+        if isinstance(digests, list):
+            entries = cast(list[Any], digests)
+            if not all(isinstance(digest, str) for digest in entries):
+                raise PydanticCustomError('invalid_file_record', '`content_file_digests` must be a list of strings')
+            record = frozenset(cast(list[str], entries))
+        else:
+            # History saved before records existed: its file-shaped data is rebuilt only when the caller asks.
+            record = None if _rebuilds_unrecorded_tool_files(info.context) else _UNRECORDED
+        token = _loaded_file_digests.set(record)
+        try:
+            return handler({key: item for key, item in mapping.items() if key != _FILE_DIGESTS_KEY})
+        finally:
+            _loaded_file_digests.reset(token)
+
+
+_JOURNAL_CONTEXT: Mapping[str, Any] = {'pydantic_ai': {'rebuild_unrecorded_tool_files': True}}
+"""The validation context durable execution decodes its own journal with.
+
+A journal entry written before tool results recorded their files carries no record, and the worker that
+wrote it is the application's own, so it loads as it did then rather than losing files mid-run.
+"""
+
+
+def _rebuilds_unrecorded_tool_files(context: Any) -> bool:
+    """Whether a validation context carries `{'pydantic_ai': {'rebuild_unrecorded_tool_files': True}}`."""
+    if not isinstance(context, Mapping):
+        return False
+    options = cast(Mapping[str, Any], context).get('pydantic_ai')
+    return (
+        isinstance(options, Mapping) and cast(Mapping[str, Any], options).get('rebuild_unrecorded_tool_files') is True
+    )
+
+
+def _check_file_provenance(value: Any) -> Any:
+    """Let a mapping claiming a file `kind` in a tool result validate as that file only if the result recorded it.
+
+    Outside a tool result (a user prompt, or a UI adapter rehydrating a client-side tool's output on
+    purpose), and for an instance of ours, this passes the value through.
+
+    History saved before records existed can't tell its files from mappings shaped like them. In it, such a
+    mapping is rebuilt only into what a client-submitted file may be after `sanitize_messages`: an HTTP(S)
+    URL with `force_download` reset. An `UploadedFile` or a non-HTTP URL stays a mapping.
+    """
+    record = _loaded_file_digests.get()
+    if record is None or not isinstance(value, Mapping):
+        return value
+    mapping = cast(Mapping[str, Any], value)
+    if isinstance(record, _Unrecorded):
+        url = mapping.get('url')
+        if mapping.get('kind') == 'uploaded-file' or not (
+            isinstance(url, str) and urlparse(url).scheme.lower() in ('http', 'https')
+        ):
+            raise PydanticCustomError('unrecorded_file', 'Not a file this tool result recorded')
+        if mapping.get('force_download', False) is not False:
+            return {**mapping, 'force_download': False}
+        return mapping
+    # Only a mapping with no keys beyond those a dump of its kind writes can be a recorded item, so anything
+    # else is told apart without serializing and hashing it, which nested data would otherwise pay per level.
+    if record and set(mapping) <= _FILE_ITEM_KEYS.get(mapping.get('kind'), frozenset()):
+        if _file_digest(mapping) in record:
+            return mapping
+    raise PydanticCustomError('unrecorded_file', 'Not a file this tool result recorded')
+
+
+_FILE_URL_ITEM_KEYS = frozenset({'url', 'force_download', 'vendor_metadata', 'kind', 'media_type', 'identifier'})
+_FILE_ITEM_KEYS: dict[Any, frozenset[str]] = {
+    **{kind: _FILE_URL_ITEM_KEYS for kind in ('image-url', 'audio-url', 'document-url', 'video-url')},
+    'uploaded-file': frozenset({'file_id', 'provider_name', 'vendor_metadata', 'kind', 'media_type', 'identifier'}),
+}
+"""The keys a dump of each recorded file kind can write; `test_file_item_keys_match_their_dumps` pins them."""
+
+
+_binary_content_ta: pydantic.TypeAdapter[BinaryContent] = pydantic.TypeAdapter(BinaryContent)
+
+
+def _rebuild_binary_content(value: Any) -> Any:
+    """Rebuild a `BinaryContent` mapping in a tool result as the item, however the result is validated.
+
+    A tool result's container hands its content to validation as Python data even when the history is
+    loaded from JSON, and in Python mode the content union would otherwise prefer the plain mapping over a
+    `BinaryContent` whose `data` is still base64 text.
+    """
+    if isinstance(value, Mapping):
+        return _binary_content_ta.validate_python(value)
+    return value
+
+
+_RecordedFile = pydantic.BeforeValidator(_check_file_provenance)
+
+_ToolReturnMultiModalContent = Annotated[
+    Annotated[ImageUrl, _RecordedFile]
+    | Annotated[AudioUrl, _RecordedFile]
+    | Annotated[DocumentUrl, _RecordedFile]
+    | Annotated[VideoUrl, _RecordedFile]
+    | Annotated[BinaryContent, pydantic.BeforeValidator(_rebuild_binary_content)]
+    | Annotated[UploadedFile, _RecordedFile],
+    pydantic.Discriminator('kind'),
+]
+"""`MultiModalContent` as a tool result validates it: a URL or uploaded file only if the result recorded it."""
+
+
 _ToolReturnValueT = TypeVar('_ToolReturnValueT', default=Any)
 """Type variable for the return value type in `ToolReturn[T]`.
 
@@ -888,13 +1148,15 @@ schema is generated from the inner type.
 
 
 @dataclass(repr=False)
-class ToolReturn(Generic[_ToolReturnValueT]):
+class ToolReturn(_RecordsContentFiles, Generic[_ToolReturnValueT]):
     """A structured tool return that separates the tool result from additional content sent to the model.
 
     Can be parameterized with a type to enable return schema generation:
     - `ToolReturn[User]` — generates a return schema for `User`
     - `ToolReturn` (bare) — no return schema generated
     """
+
+    _content_field: ClassVar[str] = 'return_value'
 
     return_value: ToolReturnContent
     """The return value to be used in the tool response."""
@@ -1092,7 +1354,7 @@ else:
     # BinaryContent/FileUrl objects nested inside dicts/lists during deserialization
     ToolReturnContent = TypeAliasType(
         'ToolReturnContent',
-        MultiModalContent | Sequence['ToolReturnContent'] | Mapping[str, 'ToolReturnContent'] | Any,
+        _ToolReturnMultiModalContent | Sequence['ToolReturnContent'] | Mapping[str, 'ToolReturnContent'] | Any,
     )
 
 
@@ -1110,8 +1372,10 @@ Distinct from [`ToolKind`][pydantic_ai.tools.ToolKind] (invocation semantics —
 
 
 @dataclass(repr=False)
-class BaseToolReturnPart:
+class BaseToolReturnPart(_RecordsContentFiles):
     """Base class for tool return parts."""
+
+    _content_field: ClassVar[str] = 'content'
 
     tool_name: str
     """The name of the tool that was called."""
