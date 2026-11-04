@@ -2,7 +2,6 @@
 
 import json
 import os
-import re
 from collections.abc import Sequence
 from dataclasses import replace
 from io import StringIO
@@ -15,6 +14,7 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from pydantic import TypeAdapter
 from rich.console import Console
+from termflow.ansi.utils import ANSI_ESCAPE_RE
 from termflow.tui.completion import CompleteEvent, Document
 from termflow.tui.keys import Key
 
@@ -1337,7 +1337,7 @@ def test_browser_marks_sessions_to_import() -> None:
     # A narrower pane drops the tokens before the source, and the source before it squeezes out the title.
     for width, counts in ((80, 'Claude Code · 123 msgs'), (22, '123 msgs'), (22, 'to import')):
         importing[0] = counts == 'to import'
-        frame = re.sub(r'\x1b\[[0-9;]*m', '', '\n'.join(browser.frame(width=width, height=20)))
+        frame = ANSI_ESCAPE_RE.sub('', '\n'.join(browser.frame(width=width, height=20)))
         card = next((line for line in frame.splitlines() if '> ' in line and ' Fr' in line), frame)
         assert card.endswith(f' {counts}') and card.count('·') == counts.count('·'), frame
     assert browser.handle_key('d') is None
