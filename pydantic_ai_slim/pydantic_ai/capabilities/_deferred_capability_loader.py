@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pydantic_ai._instructions import AgentInstructions
+from pydantic_ai._instructions import AgentInstructions, SourcedInstruction, append_on_change_by_default
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._system_prompt import SystemPromptRunner
-from pydantic_ai.native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._deferred_capability_loader import DeferredCapabilityLoaderToolset
@@ -16,6 +15,9 @@ from .abstract import (
     CapabilityOrdering,
 )
 from .instrumentation import Instrumentation
+
+DEFERRED_CAPABILITY_CATALOG_ID = 'deferred_capabilities'
+"""The source key of the deferred capability catalog's instruction block."""
 
 DEFERRED_CAPABILITY_CATALOG_PREFIX = (
     'The following capabilities are deferred and can be loaded using the `load_capability` tool. '
@@ -72,8 +74,9 @@ async def _render_deferred_capability_catalog(ctx: RunContext[AgentDepsT]) -> st
     # surface or fail the run before this catalog matters. Both signals are authored, never
     # mutated mid-run, so the chosen variant is as byte-stable across the run as the rest of
     # this catalog.
-    has_search_surface = TOOL_SEARCH_FUNCTION_TOOL_NAME in ctx.tools or any(
-        tool_def.defer_loading and tool_def.capability_id is None for tool_def in ctx.tools.values()
+    has_search_surface = any(
+        tool_def.tool_kind == 'tool-search' or (tool_def.defer_loading and tool_def.capability_id is None)
+        for tool_def in ctx.tools.values()
     )
     prefix = (
         DEFERRED_CAPABILITY_CATALOG_PREFIX_WITH_SEARCH if has_search_surface else DEFERRED_CAPABILITY_CATALOG_PREFIX
@@ -87,6 +90,12 @@ class DeferredCapabilityLoader(AbstractCapability[AgentDepsT]):
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         return _render_deferred_capability_catalog
+
+    def _collect_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
+        # The catalog gets a key of its own, though this capability has no `id`, so a catalog that changes
+        # between runs (a skill added to the workspace) is appended as a change instead of rewriting the
+        # cached prompt.
+        return append_on_change_by_default(super()._collect_instructions(), key=DEFERRED_CAPABILITY_CATALOG_ID)
 
     def get_ordering(self) -> CapabilityOrdering | None:
         return CapabilityOrdering(position='outermost', wrapped_by=[Instrumentation])

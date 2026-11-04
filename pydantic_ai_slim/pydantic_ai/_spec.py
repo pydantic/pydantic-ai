@@ -10,7 +10,7 @@ import inspect
 import types
 import typing
 from collections.abc import Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypeVar, cast
 
 from pydantic import (
     BaseModel,
@@ -24,7 +24,7 @@ from pydantic import (
 )
 from pydantic_core import to_jsonable_python
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_ai._utils import get_function_type_hints
 
@@ -224,7 +224,7 @@ def load_from_registry(
     if cls is None:
         raise ValueError(
             f'{label.capitalize()} {name!r} is not in the provided `{custom_types_param}`. Valid choices: {list(registry.keys())}.'
-            f' If you are trying to use a custom {label}, you must include its type in the `{custom_types_param}` argument.'
+            f' If you are trying to use a custom {label}, you must include it in the `{custom_types_param}` argument.'
         )
     try:
         if instantiate is not None:

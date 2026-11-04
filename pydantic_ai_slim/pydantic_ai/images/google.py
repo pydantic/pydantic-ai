@@ -2,11 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Literal, cast
+from typing import Literal, assert_never, cast
 
-from typing_extensions import assert_never
-
-from pydantic_ai._utils import is_str_dict
+from pydantic_ai._utils import is_google_files_api_url, is_str_dict
 from pydantic_ai.exceptions import (
     ContentFilterError,
     ModelAPIError,
@@ -16,6 +14,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import BinaryImage, ImageUrl, UploadedFile
 from pydantic_ai.models import check_allow_model_requests, download_item
+from pydantic_ai.models._decode_errors import map_decode_errors
 from pydantic_ai.providers import Provider, infer_provider
 
 from ._google_geometry import resolve_google_geometry
@@ -34,13 +33,16 @@ try:
         FileDataDict,
         GenerateContentConfigDict,
         GenerateContentResponse,
+        GenerateContentResponsePromptFeedback,
         HttpOptionsDict,
         ImageConfigDict,
+        Part,
         PartDict,
     )
 
     from pydantic_ai.models.google import (
         _GEMINI_API_PROVIDER_NAMES,  # pyright: ignore[reportPrivateUsage]
+        _GOOGLE_CLOUD_PROVIDER_NAMES,  # pyright: ignore[reportPrivateUsage]
         _metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
     )
 except ImportError as _import_error:
@@ -217,11 +219,12 @@ class GoogleImageGenerationModel(ImageGenerationModel):
         contents = await self._map_contents(prompt, images)
 
         try:
-            response = await self._client.aio.models.generate_content(
-                model=self.model_name,
-                contents=contents,
-                config=resolved.config,
-            )
+            with map_decode_errors(self.model_name, errors.UnknownApiResponseError):
+                response = await self._client.aio.models.generate_content(
+                    model=self.model_name,
+                    contents=contents,
+                    config=resolved.config,
+                )
         except errors.APIError as e:
             if (status_code := e.code) >= 400:
                 body = cast(object, e.details)  # pyright: ignore[reportUnknownMemberType]
@@ -242,73 +245,95 @@ class GoogleImageGenerationModel(ImageGenerationModel):
         return [ContentDict(role='user', parts=parts)]
 
     async def _map_input_image(self, image: ImageGenerationInput) -> PartDict:
-        if isinstance(image, BinaryImage):
-            part = PartDict(inline_data=BlobDict(data=image.data, mime_type=image.media_type))
-        elif isinstance(image, UploadedFile):
+        match image:
+            case BinaryImage():
+                part = PartDict(inline_data=BlobDict(data=image.data, mime_type=image.media_type))
+            case UploadedFile():
+                part = self._map_uploaded_file(image)
+            case ImageUrl():
+                part = await self._map_image_url(image)
+            case _:
+                assert_never(image)
+
+        if image.vendor_metadata and (media_resolution := image.vendor_metadata.get('media_resolution')) is not None:
+            part['media_resolution'] = media_resolution
+        return part
+
+    def _map_uploaded_file(self, image: UploadedFile) -> PartDict:
+        if self._is_google_cloud:
             # Checked before the provider name: a file uploaded through the Gemini Files API carries
             # `provider_name='google'`, which passes the name check on a Vertex-backed `GoogleProvider`
-            # and would otherwise be sent as a `fileData` part Vertex cannot resolve.
-            if self._is_google_cloud:
+            # and would otherwise be sent as a `fileData` part Vertex cannot resolve. Vertex's file
+            # store is Cloud Storage, so a `gs://` URI is the reference it resolves — the same
+            # `fileData` route `GoogleModel` takes for the conversational API.
+            if not image.file_id.startswith('gs://'):
                 raise UserError(
-                    'The Gemini Files API is not available on Google Cloud (Vertex AI), and Google image generation '
-                    'does not accept the `gs://` URIs Vertex uses instead, so `UploadedFile` cannot be used on this '
-                    'transport. Pass reference images as `BinaryImage` or `ImageUrl` instead.'
+                    'The Gemini Files API is not available on Google Cloud (Vertex AI), so Google image '
+                    'generation on this transport requires `UploadedFile.file_id` to be a Cloud Storage URI '
+                    'starting with `gs://`. Pass other reference images as `BinaryImage` or `ImageUrl` instead.'
                 )
+            self._validate_uploaded_file_provider(image)
+        else:
             self._validate_uploaded_file_provider(image)
             if not image.file_id.startswith('https://'):
                 raise UserError(
                     'Google image generation requires `UploadedFile.file_id` to be a Google Files API URI '
                     'starting with `https://`'
                 )
-            part = PartDict(file_data=FileDataDict(file_uri=image.file_id, mime_type=image.media_type))
-        elif isinstance(image, ImageUrl):
-            # Only the Gemini Developer API can resolve a Files API URI, so on the Vertex transport the
-            # URL is downloaded and inlined rather than forwarded as a `fileData` part.
-            if (
-                not image.force_download
-                and not self._is_google_cloud
-                and image.url.startswith('https://generativelanguage.googleapis.com/v1beta/files')
-            ):
-                # Files API URIs carry no extension, so `media_type` can't be inferred from the URL.
-                try:
-                    media_type = image.media_type
-                except ValueError as e:
-                    raise UserError(
-                        'Google Files API image URLs carry no file extension, so `ImageUrl.media_type` '
-                        'cannot be inferred. Pass it explicitly, e.g. '
-                        "`ImageUrl(url, media_type='image/png')`."
-                    ) from e
-                part = PartDict(file_data=FileDataDict(file_uri=image.url, mime_type=media_type))
-            else:
-                downloaded_image = await download_item(image, data_format='bytes')
-                part = PartDict(
-                    inline_data=BlobDict(
-                        data=downloaded_image['data'],
-                        mime_type=downloaded_image['data_type'],
-                    )
-                )
-        else:
-            assert_never(image)
+        return PartDict(file_data=FileDataDict(file_uri=image.file_id, mime_type=image.media_type))
 
-        if image.vendor_metadata and (media_resolution := image.vendor_metadata.get('media_resolution')) is not None:
-            part['media_resolution'] = media_resolution
-        return part
+    async def _map_image_url(self, image: ImageUrl) -> PartDict:
+        # A URL the selected transport resolves itself — a Files API URI on the Gemini Developer API,
+        # a Cloud Storage `gs://` URI on Vertex — is forwarded as a `fileData` part rather than
+        # downloaded and inlined. Neither transport can resolve the other's references: Vertex has no
+        # Files API, and a `gs://` URL is not downloadable, so on the Gemini API it fails in
+        # `download_item` like any other unsupported scheme.
+        if not image.force_download and self._is_provider_hosted_url(image.url):
+            # Files API URIs carry no extension, and a Cloud Storage object name need not either,
+            # so `media_type` can't always be inferred from the URL.
+            try:
+                media_type = image.media_type
+            except ValueError as e:
+                raise UserError(
+                    'Google Files API and Cloud Storage image URLs can carry no file extension, so '
+                    '`ImageUrl.media_type` cannot be inferred. Pass it explicitly, e.g. '
+                    "`ImageUrl(url, media_type='image/png')`."
+                ) from e
+            return PartDict(file_data=FileDataDict(file_uri=image.url, mime_type=media_type))
+        downloaded_image = await download_item(image, data_format='bytes')
+        return PartDict(
+            inline_data=BlobDict(
+                data=downloaded_image['data'],
+                mime_type=downloaded_image['data_type'],
+            )
+        )
+
+    def _is_provider_hosted_url(self, url: str) -> bool:
+        """Whether `url` names a file the selected transport resolves itself, so it travels as `fileData`.
+
+        Keyed on the client's transport like the `UploadedFile` handling: only the Gemini Developer API
+        resolves Files API URIs, and only Vertex resolves Cloud Storage `gs://` URIs.
+        """
+        if self._is_google_cloud:
+            return url.startswith('gs://')
+        return is_google_files_api_url(url)
 
     def _validate_uploaded_file_provider(self, item: UploadedFile) -> None:
-        """Raise `UserError` unless the file carries a Gemini Developer API provider name.
+        """Raise `UserError` unless the file carries a provider name of the selected transport's family.
 
-        Only reachable on that transport, as `_map_input_image` rejects every `UploadedFile` on Vertex
-        before this runs, so the accepted set is that transport's name family rather than `self.system`
-        alone. `google-gla` is the pre-v2 name for the transport and is still stamped on files in
-        persisted message history, and `self.system` covers the construction where `GoogleCloudProvider`
-        stores a Gemini API client as-is and keeps `name` `'google-cloud'`.
+        The accepted set is the transport's name family rather than `self.system` alone: `google-gla`
+        is the pre-v2 name for the Gemini Developer API and is still stamped on files in persisted
+        message history, and `google-vertex` is the pre-v2 name for Google Cloud. `self.system` covers
+        the constructions where a provider stores the other transport's client as-is and keeps its own
+        `name` (a Gemini API client in `GoogleCloudProvider`, a Vertex client in `GoogleProvider`).
 
         Wider than `GoogleModel._matching_provider_names`, which accepts a name family only when
         `self.system` belongs to one and otherwise matches `self.system` alone: here the family is
         accepted whatever `self.system` is, so a custom `BaseGoogleProvider` wrapping a Gemini API
         client can still reference files uploaded through the Files API.
         """
-        accepted = _GEMINI_API_PROVIDER_NAMES | {self.system}
+        family = _GOOGLE_CLOUD_PROVIDER_NAMES if self._is_google_cloud else _GEMINI_API_PROVIDER_NAMES
+        accepted = family | {self.system}
         if item.provider_name not in accepted:
             raise UserError(
                 f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with {type(self).__name__}. '
@@ -325,41 +350,12 @@ class GoogleImageGenerationModel(ImageGenerationModel):
             if candidate.content is None:
                 continue
             for part in candidate.content.parts or []:
-                if part.thought or part.inline_data is None or part.inline_data.data is None:
-                    continue
-                # `mime_type` is optional on `Blob`, and the family is not PNG-only — `gemini-3-pro-image`
-                # returns JPEG — so sniff the bytes before falling back rather than labelling them PNG.
-                # Unlike OpenAI this trusts the provider's own claim first: Google's is accurate, and
-                # overriding it would mislabel formats the sniffer doesn't know.
-                media_type = (
-                    part.inline_data.mime_type or image_media_type_from_bytes(part.inline_data.data) or 'image/png'
-                )
-                image_provider_details: dict[str, object] | None = (
-                    {'has_thought_signature': True} if part.thought_signature else None
-                )
-                images.append(
-                    GeneratedImage(
-                        content=BinaryImage(data=part.inline_data.data, media_type=media_type),
-                        output_format=output_format_from_media_type(media_type),
-                        provider_details=image_provider_details,
-                    )
-                )
+                if (image := _map_image_part(part)) is not None:
+                    images.append(image)
 
         provider_details = _response_provider_details(response)
         if not images:
-            body = str(provider_details) if provider_details else None
-            finish_reason = provider_details.get('finish_reason')
-            block_reason = provider_details.get('block_reason')
-            if block_reason is not None or finish_reason in _CONTENT_FILTER_FINISH_REASONS:
-                raise ContentFilterError(
-                    f'Google image generation was blocked for content moderation '
-                    f'(reason: {block_reason or finish_reason})',
-                    body,
-                )
-            message = 'Google image generation response did not contain any images'
-            if finish_reason is not None:
-                message = f'{message} (finish_reason: {finish_reason})'
-            raise UnexpectedModelBehavior(message, body)
+            raise _missing_images_error(provider_details)
 
         return ImageGenerationResult(
             images=images,
@@ -417,6 +413,39 @@ def _resolve_google_settings(settings: GoogleImageGenerationSettings, *, model_n
     )
 
 
+def _map_image_part(part: Part) -> GeneratedImage | None:
+    if part.thought or part.inline_data is None or part.inline_data.data is None:
+        return None
+    # `mime_type` is optional on `Blob`, and the family is not PNG-only — `gemini-3-pro-image`
+    # returns JPEG — so sniff the bytes before falling back rather than labelling them PNG.
+    # Unlike OpenAI this trusts the provider's own claim first: Google's is accurate, and
+    # overriding it would mislabel formats the sniffer doesn't know.
+    media_type = part.inline_data.mime_type or image_media_type_from_bytes(part.inline_data.data) or 'image/png'
+    image_provider_details: dict[str, object] | None = (
+        {'has_thought_signature': True} if part.thought_signature else None
+    )
+    return GeneratedImage(
+        content=BinaryImage(data=part.inline_data.data, media_type=media_type),
+        output_format=output_format_from_media_type(media_type),
+        provider_details=image_provider_details,
+    )
+
+
+def _missing_images_error(provider_details: dict[str, object]) -> ContentFilterError | UnexpectedModelBehavior:
+    body = str(provider_details) if provider_details else None
+    finish_reason = provider_details.get('finish_reason')
+    block_reason = provider_details.get('block_reason')
+    if block_reason is not None or finish_reason in _CONTENT_FILTER_FINISH_REASONS:
+        return ContentFilterError(
+            f'Google image generation was blocked for content moderation (reason: {block_reason or finish_reason})',
+            body,
+        )
+    message = 'Google image generation response did not contain any images'
+    if finish_reason is not None:
+        message = f'{message} (finish_reason: {finish_reason})'
+    return UnexpectedModelBehavior(message, body)
+
+
 def _response_provider_details(response: GenerateContentResponse) -> dict[str, object]:
     provider_details: dict[str, object] = {}
     candidate = response.candidates[0] if response.candidates else None
@@ -425,17 +454,22 @@ def _response_provider_details(response: GenerateContentResponse) -> dict[str, o
         provider_details['finish_reason'] = candidate.finish_reason.value
     if candidate and candidate.safety_ratings:
         provider_details['safety_ratings'] = [rating.model_dump(by_alias=True) for rating in candidate.safety_ratings]
-    if response.prompt_feedback and response.prompt_feedback.block_reason:
-        provider_details['block_reason'] = response.prompt_feedback.block_reason.value
-        if response.prompt_feedback.block_reason_message:
-            provider_details['block_reason_message'] = response.prompt_feedback.block_reason_message
-        if response.prompt_feedback.safety_ratings:
-            provider_details['safety_ratings'] = [
-                rating.model_dump(by_alias=True) for rating in response.prompt_feedback.safety_ratings
-            ]
+    provider_details.update(_block_details(response.prompt_feedback))
     if response.create_time is not None:
         provider_details['timestamp'] = response.create_time
     if response.usage_metadata and response.usage_metadata.traffic_type:
         provider_details['traffic_type'] = response.usage_metadata.traffic_type.value
 
     return provider_details
+
+
+def _block_details(prompt_feedback: GenerateContentResponsePromptFeedback | None) -> dict[str, object]:
+    """The block reason, its message, and the prompt's safety ratings, when the prompt was blocked."""
+    if not prompt_feedback or not prompt_feedback.block_reason:
+        return {}
+    details: dict[str, object] = {'block_reason': prompt_feedback.block_reason.value}
+    if prompt_feedback.block_reason_message:
+        details['block_reason_message'] = prompt_feedback.block_reason_message
+    if prompt_feedback.safety_ratings:
+        details['safety_ratings'] = [rating.model_dump(by_alias=True) for rating in prompt_feedback.safety_ratings]
+    return details

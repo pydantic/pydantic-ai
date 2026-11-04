@@ -39,7 +39,7 @@ with try_import() as imports_successful:
         judge_output_expected,
     )
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')]
 
 
 @pytest.fixture(autouse=True)
@@ -72,7 +72,6 @@ def test_grading_output():
     assert schema['properties']['reason']['description'] == ('A concise 1-2 sentence justification for the verdict.')
 
 
-@pytest.mark.anyio
 async def test_judge_prompts_constrain_reason():
     """Every judge sends the concise-reason instruction in its system prompt (#5034).
 
@@ -433,7 +432,6 @@ def test_build_prompt_section_order_matches_few_shot_examples(
         assert example_tags[start : start + len(expected_tags)] == expected_tags
 
 
-@pytest.mark.anyio
 async def test_judge_output_mock(mocker: MockerFixture):
     """Test judge_output function with mocked agent."""
     # Mock the agent run method
@@ -455,7 +453,6 @@ async def test_judge_output_mock(mocker: MockerFixture):
     assert '<Rubric>\nContent contains a greeting\n</Rubric>' in call_args[0]
 
 
-@pytest.mark.anyio
 async def test_judge_output_with_model_settings_mock(mocker: MockerFixture):
     """Test judge_output function with model_settings and mocked agent."""
     mock_result = mocker.MagicMock()
@@ -483,7 +480,6 @@ async def test_judge_output_with_model_settings_mock(mocker: MockerFixture):
     assert 'model' in call_kwargs
 
 
-@pytest.mark.anyio
 async def test_judge_input_output_mock(mocker: MockerFixture):
     """Test judge_input_output function with mocked agent."""
     # Mock the agent run method
@@ -574,7 +570,6 @@ async def test_judge_input_output_binary_content_mock(mocker: MockerFixture, ima
     assert image_content in raw_prompt, 'Expected the exact BinaryContent instance to be in the prompt list'
 
 
-@pytest.mark.anyio
 async def test_judge_input_output_with_model_settings_mock(mocker: MockerFixture):
     """Test judge_input_output function with model_settings and mocked agent."""
     mock_result = mocker.MagicMock()
@@ -604,7 +599,6 @@ async def test_judge_input_output_with_model_settings_mock(mocker: MockerFixture
     assert 'model' in call_kwargs
 
 
-@pytest.mark.anyio
 async def test_judge_input_output_expected_mock(mocker: MockerFixture, image_content: BinaryContent):
     """Test judge_input_output_expected function with mocked agent."""
     # Mock the agent run method
@@ -667,7 +661,6 @@ Output contains input
     )
 
 
-@pytest.mark.anyio
 async def test_judge_input_output_expected_with_model_settings_mock(
     mocker: MockerFixture, image_content: BinaryContent
 ):
@@ -818,7 +811,6 @@ Output contains input with settings
     )
 
 
-@pytest.mark.anyio
 async def test_judge_output_expected_mock(mocker: MockerFixture):
     """Test judge_output_expected function with mocked agent."""
     # Mock the agent run method
@@ -841,7 +833,6 @@ async def test_judge_output_expected_mock(mocker: MockerFixture):
     assert '<Rubric>\nOutput contains input\n</Rubric>' in call_args[0]
 
 
-@pytest.mark.anyio
 async def test_judge_output_expected_with_model_settings_mock(mocker: MockerFixture, image_content: BinaryContent):
     """Test judge_output_expected function with model_settings and mocked agent."""
     mock_result = mocker.MagicMock()

@@ -1,14 +1,43 @@
+import inspect
 from collections.abc import Generator
+from importlib.util import find_spec
 from threading import Thread
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from pydantic_graph._utils import get_event_loop, infer_obj_name, run_until_complete
+from pydantic_graph._utils import get_event_loop, get_traceparent, infer_obj_name, logfire_span, run_until_complete
 from pydantic_graph.exceptions import UnsupportedEventLoopError
 
 from .._inline_snapshot import snapshot
 from ..conftest import undrivable_event_loop
+
+if TYPE_CHECKING:
+    from logfire.testing import CaptureLogfire
+
+
+@pytest.mark.skipif(find_spec('logfire') is not None, reason='requires API-only Logfire')
+def test_get_traceparent_from_api_only_logfire_span():
+    pytest.importorskip('opentelemetry.trace')
+    with logfire_span('test API-only traceparent') as span:
+        assert get_traceparent(span) == ''
+
+
+@pytest.mark.skipif(find_spec('logfire') is None, reason='logfire not installed')
+def test_get_traceparent_from_logfire_span(capfire: 'CaptureLogfire'):
+    with logfire_span('test traceparent') as span:
+        traceparent = get_traceparent(span)
+
+    (exported_span,) = (
+        span
+        for span in capfire.exporter.exported_spans
+        if span.attributes and span.attributes.get('logfire.span_type') == 'span'
+    )
+    span_context = exported_span.context
+    assert span_context is not None
+    assert traceparent == (
+        f'00-{span_context.trace_id:032x}-{span_context.span_id:016x}-{span_context.trace_flags:02x}'
+    )
 
 
 def test_get_event_loop_in_thread():
@@ -33,15 +62,17 @@ def test_infer_obj_name():
     assert result is None
 
 
-def test_infer_obj_name_no_frame():
+def test_infer_obj_name_no_frame(monkeypatch: pytest.MonkeyPatch):
     """Test infer_obj_name when frame inspection fails."""
-    # This is hard to trigger without mocking, but we can test that the function
-    # returns None gracefully when it can't find the object
     some_obj = object()
 
     # Call with depth that would exceed the call stack
     result = infer_obj_name(some_obj, depth=1000)
     assert result is None
+
+    # Python implementations without stack frame support return `None` from `inspect.currentframe()`
+    monkeypatch.setattr(inspect, 'currentframe', lambda: None)
+    assert infer_obj_name(some_obj, depth=1) is None
 
 
 global_obj = object()

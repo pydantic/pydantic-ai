@@ -1,3 +1,4 @@
+# description: Fails a pull request when an external contributor changes files under .github/.
 name: Protect .github
 
 # Files under `.github/` — workflows, composite actions, and the scripts they run —

@@ -1,0 +1,2074 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  data:
+    setup:
+      model: publishers/google/models/gemini-live-2.5-flash
+      generationConfig:
+        responseModalities:
+        - AUDIO
+      systemInstruction:
+        parts:
+        - text: You are a voice assistant. Asked for a story, tell it at length straight
+            away, without questions.
+        role: user
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: message
+  direction: received
+  data:
+    setupComplete:
+      sessionId: 158ad00b-93dd-4e13-ae28-e449d6d8ffa9
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AgABAAAAAQADAAAAAQABAAIAAAADAAEAAQABAP3_AgD_
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: 4v3c_mD_DP8oAJUASgCoACsBXQDy_z8AA__M_9n-cP9c
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: 6hehFiMVcBQzEkUQow3QC_0JhAk1CdQITwgtCN0I4wge
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: MBQTFZUZaRoSF8ASeg-gDl0PwQ7JD38PagtzBkkEJQjV
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: zgXvBF8E8wMlBQkEqQKTALUAgP6A_bz82vwk-p772vWU
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: ZP_r_v_-Ov-q_rf_Iv4PAPL-if-z_1L_8_8FAAcAjf-Y
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: ZflX-gj7Ufyp_zoCHASkAqUBmgGrAjYEpgE1AOn_IwBM
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: kxOpEmoOuQo4BwgEvAKfA-IGmwpjDYEQJxP7E8kSZg8d
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: JuiV5wnnaeb45fblVeZu56no2OnR6tLrC-1v7sfvOPGV
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: DBFxEMkPAg_TDhQP2g6RDSMMlgrpCV8JeAi5B-IG3wWe
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: zwmNCTMJnQjUB_IGEAZxBbkERAT5A-cD-gNZBNUETwXl
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: -_Ul97z4PfpD_CH-GQDlAfcDtQV5B-8IVgqZC64McQ0p
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: 8wL-A44DRgEM_kL7o_gh9RfxFu2V6sTpL-md6EboZunY
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: NP3J_Of72fhp9E3wyewu6Rrl3eHr343f_d4f3mzdmt3c
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: bOvh7FjuUPDU8qH1ZPi6-uz89_60ACYCeAPuBGwG2Acg
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: TQ0TAAz8pQPd-vn-d_7_Adj4UQIW9-4JkfHK_pgRvPYO
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: Hv4_Br0JkfLEBOAKuvyV8x8Zyvj6Ckz4wAT0AZD_kP3z
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: dBOKE_YT7hOCEyITnxJQEhMSOxExEGQOIAwQCfcEcwBm
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: zBTaFTQVahMZEJ8Mwwg0BRQDngFJAn8DNAUdB5sHcgdu
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: V9fM1mLWlNfb3Gbn9u6870rsB-vj7x74BQL7CQsOOQ-n
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: vv2k_v7-uf90AHkBzgLXA54ETgUqBr4GFweGBrcFHAWs
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: Uf2d_BP82Pt4-yn7-PqI-hD6bPkZ-eb4zfhg-L_3cfdo
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: YO2l7ODrmOtu67nqROqy6SjoR-cS5xbmauWx5HPkweYC
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: U_Es8MHuoO2z7Dfs5Oui60vr6-pI6uvpc-m86P_ngufn
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: MgIkAhgCBQLhAbcBkgFUASEB2ACNAE0ABwDU_6D_dP9M
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: ov3m-lb4i_fb-Bn8-wAdB3ENZhQQG5geQh6GGrIVYBDn
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: CwGUACwAlACtAL8AlQBPABgALgDBAGsBvAFUAQMBJwGj
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: 0fdN-rH9WAFDBSsHlAfNBNr_avt_-R75qveT9x74zfm-
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: xgC6AEUAhP--_sb94fyg_EL9S_8-AqQF2widC7wNkA6J
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: 6Q8e-hf9SwPI8mYHkeX2D-r9uvHQHQLw6AGZCHUGzPYf
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: LP3cAFD-mf56_xMAFvyaAAb_JP5N_q0Apv4f_lT_JACo
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: RAYQBukF1wW_BXYFEwWRBBgEsANQA_YCcwLVAUMBwQBE
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: SwFmAWsBTwEOAbIAZQAEAJr_Kv_m_vD-JP9p_6f_4f_C
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: qP6l_o3-Yf4g_uH9tf2y_db9I_5-_tb-I_9n_6r_9P9E
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: CAABAPP_8P_p__b_BgAfADgARwBTAE8ARQA1AB8AEgAD
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription: {}
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      inputTranscription:
+        text: Please tell me a long story about a lighthouse keeper.
+        finished: true
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: Alright
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: ' let''s immerse ourselves in the tale of Elara a lighthouse keeper
+          with a'
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: ' spirit as unwavering as the beacon she tended Elara''s lighthouse
+          perched atop jagged'
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: ' cliffs was more than just a structure it was a sentinel against the
+          raging sea a symbol of hope for sailors navigating treacherous waters Her
+          days were a symphony of solitude and duty'
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: ' marked by the rhythmic crash of waves and the mournful cries of gulls
+          Each morning she would meticulously clean the lamp a massive Fresnel lens
+          that magnified its glow across'
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: ' the vast expanse of the ocean Its brilliance was a testament to her
+          dedication a guiding star in the darkest of nights.But Elara''s life wasn''t
+          without its shadows The isolation could be a heavy cloak and the relentless
+          roar of the sea a'
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: ' constant reminder of the world beyond her reach Yet she found solace
+          in the simple routines in the warmth of her cottage and in the occasional
+          visit from a weathered fisherman who would share tales of distant lands
+          and bountiful catches Her only companion was a stray'
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: ' cat named Mist a creature as enigmatic as the fog that often enveloped
+          the lighthouse Mist with her sleek black fur and piercing green eyes was
+          a silent observer a comforting presence in Elara''s solitary existence.One
+          particularly tempestuous night a fierce storm descended upon the coast The
+          waves crashed against the cliffs with an unprecedented fury and the wind
+          howled'
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: ' like a banshee Elara her heart pounding in her chest knew that this
+          was a night that would test her resolve The storm threatened to extinguish
+          her beacon to plunge the coastline into darkness and imperil the ships at
+          sea With steely determination she fought against the raging elements ascending
+          the spiral staircase to the lantern room The wind sh'
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: rieked around her and the lighthouse trembled but Elara held firm.Suddenly
+          a massive wave slammed against the lighthouse sending a jarring tremor through
+          the structure The lamp flickered then died A gasp escaped Elara's lips her
+          worst fear realized But she was not one to surrender to despair Drawing
+          upon an inner strength she didn
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: '''t know she possessed Elara began the arduous task of relighting the
+          lamp Her hands raw and bleeding she worked tirelessly the wind and rain
+          lashing at her She thought of the sailors lost in the storm of the lives
+          that depended on her perseverance With a final surge of effort the lamp
+          flickered back to life its beam'
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: ' cutting through the inky blackness a defiant symbol of hope against
+          the storm''s fury.When dawn broke the storm had subsided leaving behind
+          a trail of destruction but also a sense of triumph Elara exhausted but resolute
+          looked out at the calmer sea Her lighthouse stood tall a testament to her
+          courage and unwavering dedication From that day forward Elara was'
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: ' known not just as a lighthouse keeper but as a guardian of hope a
+          woman whose spirit shone as brightly as the beacon she tended Her story
+          became a legend whispered among sailors a reminder of the quiet heroism
+          that often goes unnoticed.'
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        finished: true
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: AAAAAAAAAAAAAAAAAAAAAP//AAAAAAAAAAAAAP//AAAA
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: d/91/3P/dv91/3j/dv98/3r/cv9z/3L/cv9y/3T/cv92
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: hRljEzQMaATL/Hf2OPF07ebrU+xu7vjxN/cd/foCqgiY
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: GgAaABcAGgAbABoAHAAbABsAGgAbABsAGgAcABgAHQAZ
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: FQAiABQAGQAWABcAEAAdABQACgASABIACwAXABgAFQAT
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: TwFYAV4BbgFyAXoBhAGSAZwBnQGtAboBuwHDAcsB0gHd
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: q//N/pcEuwaUCDgL8g0KEqUWLRWHEogXbheRFmIZHhcY
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: /P6/+a4CtACg/uACO/5b/wEBVvupAYAEEftcATz+7/35
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: FgAXABMAFgAXABUAFgAWABQAFQAWABUAFQAWAA8AFgAR
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: Mx2+GEsS8Qr6AVL9bP2q/2j/qPuR+H32//aa+Q78pfpz
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: dfym/HT9uf0//p7+Hf+h/+D/rAAvAfoANwHMAcYCtQMf
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: gPPt8rjyivIC9Or0PvcB+tD7Jv5z/mv+yf7m/mkBsAM/
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: GgAaABQAGQAYABYAFwAWABQAFQAVABUAFAAUAAwAEwAO
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: cvpX+179C/+T/4X//P57/if/nAFYBDsGhQfkB9wHTQj9
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: R/R39ID1SvVq9h35y/ly+sr6Lvo19W/wwu1A68np3+px
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: RABxAHwA1gAQAUkBNgEQAfEA4gAOAfYAGgH3AMwAfwAt
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: swA7AJv_PQA6AM7_xgCC_xUBsv82AFYAiP8oAI8Ao_8J
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: FgGxANQAvgA7AQMBGQH3AP4A5ADbAAsBigBBAZIAeAAR
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: TgSxA/ECeQKMAq8CUANQA2oDOAMwA1kDcQK/AbsBEQLS
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: 6A0uD3kQAhHoEK8P8Q5jDVEO2g84EFMQhg+KDf0MTg1A
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: BAg+B/QFuwShAxoDmALmAcQAYP+h/kj+iP5+/q79efzt
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: pwnv_9786wLb_d8BSf6F_JQIB_tJBZP-J_t7A6n9GwHc
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: zvwnAUL7cgeB80QJYQdF6t4HZwrx9w76NAGmCYz0N/5p
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: Zfr7/TMBfQVbCFsJkAjEBkkG2QXyBfEGFghcCUYLDA41
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: fgxODakM2wuTCdMHmgVMAw4BDv5v/Hb8lf8jAjUDhQOf
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: gP47_XoA0_0D_bb96P3E_l792_4z_Jb98PzA_y79G_56
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: RQBPAEQAQAA5ADcAPAA7ADgAMQAzADEALQAsACsALAAm
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: 2+5Q7jvt+utc6t7oaOje55zmKOVK5EzjfuJF4r/hkeAL
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: qQTzBFsFKQZMBrYGowbABkkHkQfjB14H9AaYBgUGnQVW
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: Rv7E/hD/Cv9H/6z/mABZATECTAOdA8cD6APOAwwELATJ
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: ov93ApAFEgmeDDMQWhOkFKcTbBAxDNwIoQbvBNICDAE-
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: CgALAAgABgACAAAA/v/+//z//v8AAAAAAAABAAMABwAH
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: 4Au+EFETShFXDSUL/Ql5CoUIUANQ/xP9Kv4i//n8Gfm5
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: jwIxAiYCFwIfAiECJwIRAskBnwFXATYBMAHaAFUANQBc
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AwAGAAYACQAJAAoAEAASABcAEwAUABAAEwAQABAAEgAW
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: Z/5m/kf+HP7r/cn9yf3F/a79e/0s/ef83fz9/CT9Rf1J
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: CwAjAB0AEwAMAAIAAAD1//b/7//W/9D/2f/Z/9X/1f/V
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: KQAwACwALAArACwALAArACoALgAsACsALQAuAC8ALwAs
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: G-1n7BHs5esJ7Gvr_ukt6Q7o5ues5zrnHua749nhaeBa
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: BAADAAUAAQAEAAcACAAHAAkABgAEAAQABQAGAAQABAAF
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: fPV99XL0avTZ9RH3d/cW9xL2LfW69Yv3N/lM+XD4o/eC
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: M/0lAJ0DDgfWCa0MJhDOESoT7BSyFnIYhhmqGqsajRqT
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: EQXOBHIErQQTBWQFqAUuBZ4GvgZRBVMEYQODAZwA8P/T
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: VPcM9kz1N_XU9Bj0cfNk8pzxXPGj8UfyXPIQ8U3vxe7l
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: igYaBrgFQAXFBBkEjAP2Aq0CfQJjAnMCmgL3AisDOgMl
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: m/+U/5P/mv+Z/5D/kP+S/5L/kf+S/4z/if+M/4j/iv+G
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: iwAzAAX8Ff8TA//+0QGSBh7/0/n8+iUDKgJf/xMB5gGB
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      interrupted: true
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: VgIMA4AGWgoZDb8MuAlOBQwB3f5___cC9AdVDNwOYw7w
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      turnComplete: true
+      groundingMetadata: {}
+    usageMetadata:
+      promptTokenCount: 117
+      candidatesTokenCount: 779
+      totalTokenCount: 896
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 32
+      - modality: AUDIO
+        tokenCount: 85
+      candidatesTokensDetails:
+      - modality: TEXT
+        tokenCount: 579
+      - modality: AUDIO
+        tokenCount: 200
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: 9v7m_tL-zf7J_tX-4P7m_uL-1_7I_rj-tP62_sf-4v7v
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: HwAgABwAIAAfAB4AIAAgAB0AHwAhAB8AHgAgABkAIAAb
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: CQAGAAIABAAHAAIAAwABAAAAAAAAAAAA_v_-__X__v_3
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: IfD176Lv1u5Y7tXtK-3V7ALs7OsP7L3sy-yc7CrsUOvg
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: rwpCCswJTQnNCEgIvwc1B6oGHwaWBQkFfwTxA2sD5AJg
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: 6u5KATcRDPr7_c8LUvSD-wD8zv4WBekG0v7u-WD0cAI3
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: 7u9N7XfqSumC6RToTuXP4QDgjN8_3w_frN4b3f_ZmdeB
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: cQoo_mj5fwpR7UwJqeroCHLyXQFsA8v71_9qASkND_b5
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: avbe-2QIyffR_rwQOOa3C0n8KfogBMv8uPiaCNHvhQNr
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: Sv8F_X_67fk6_O0AWwXcB8wICghjB6UIPgvFDSEPGA_Y
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: Fwb7BH4DOQJGAZ4ANABG_27-vv1K_e78cfy--zr7G_sK
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: W_-W_7n_8P_2_-n_9__5__7_c_9e_x3_NP-D_8X_HwAl
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: nvpr-j36Gvr6-eD5x_mz-ab5n_mi-af5sfm9-cz54Pnz
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: OgQk_5_6evgO-Hb47fhw-VP6vvuo_Tb_7P-H_8r-fP7a
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: _guPC5EKFQl5B8UFMATAApsBJgFUAfkBoALqAvwCCwNV
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: 5wO8BFICv_1XDZkB9wMEBMH-df2LBkr9Rv-MBPQLFvQB
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: A__r_s7-of5t_i3-9P28_Yf9T_0Q_cn8h_xE_AP8xvuL
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: i_uW-0X7Cvsd-177wvvw--X7m_tn-0z7b_vJ-9_7r_tF
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: Jf9P_1D_O_8H_wL_Kv9a_2X_Xv9j_2n_iv-n_7L_yP_C
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: 6v_m_-H_4f_e_9v_2f_V_9L_0P_P_8v_yP_I_8H_xf-9
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: zP_K_8X_x__D_8P_wP-__7z_u_-5_7j_tf-2_7D_tP-t
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: 6__q_-b_5__k_-X_4__h_-D_3__e_9z_2v_b_9b_2f_V
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: 7v_u_-r_7P_p_-n_6P_m_-T_5P_i_-H_3__g_9z_3__a
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: FwAWABYAFwAWABcAFgAXABYAFwAXABcAFwAWABYAFwAW
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription: {}
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      inputTranscription:
+        text: Stop there and just say goodbye to me.
+        finished: true
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: Goodbye
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: ' for now I hope our paths cross again soon.'
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        finished: true
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: AQABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAEAAAAA
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: WgF1AYUBmgGqAbgByAHcAeYB8gH6AQgCFQIeAikCMwI7
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: mv8p/yUBigLQAEABl/8SAcv+df1g/08BUv9CAG0BNwDd
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: mv1NCXsO1AtzB/EEbANjAfb/of8Y/w4BUgZXCvsNIQw9
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: of3eAH0DuAUOBwgIdAgOCDkHpQXNA68BpP/W/Sv83frL
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: IQAaACUANgAwABwAEAAcADIAVABeAE4AQABDAFEAXQBU
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: ARGqDdgI2QYSB+YIuAujDlUPaQzVB0sCGv5Q+kn4jfea
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: Jv9o//v+l/+L/6r/hP/x/4AANQC0AOEA4wA5AW0BmQGj
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: CR7RINQgaCBhHB8ULwon/9D3+vGH7qHtv++t9Xn7pwAO
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: 1AIW/kgC2v4hALIB/v1uAC38nAH9/R4DDwAO+mYBugHT
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: RP4D/jX9LP06/Xf8SPrk9vDzRfKF8vbz7/S59Mr0OPYG
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: lv/SAe0D3gXtBoEGoAZBBU4EtAMzAwAEUwQGBmwIpQmF
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: +fzUAd8DeAAtAz0AOAGP/on19f98CMMCpgHU+NX5kAfA
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: 2v7I/r3+tv6m/qD+k/6C/nP+av5v/oH+j/6X/pn+lf6Y
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      turnComplete: true
+      groundingMetadata: {}
+    usageMetadata:
+      promptTokenCount: 260
+      candidatesTokenCount: 95
+      totalTokenCount: 355
+      promptTokensDetails:
+      - modality: AUDIO
+        tokenCount: 153
+      - modality: TEXT
+        tokenCount: 107
+      candidatesTokensDetails:
+      - modality: TEXT
+        tokenCount: 20
+      - modality: AUDIO
+        tokenCount: 75
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      audio:
+        data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        mime_type: audio/pcm;rate=16000

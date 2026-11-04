@@ -17,10 +17,14 @@ See: https://docs.claude.com/en/docs/build-with-claude/structured-outputs
 from __future__ import annotations as _annotations
 
 import warnings
-from typing import Annotated, Any
+from enum import Enum, IntEnum
+from typing import Annotated, Any, Literal
 
 import pytest
 from pydantic import BaseModel, Field
+
+from pydantic_ai import BoolCriteria, Choices, UseEnumMemberDocstrings
+from pydantic_ai.tools import GenerateToolJsonSchema
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
@@ -135,6 +139,145 @@ def test_strict_true_nested_model():
             'properties': {'name': {'type': 'string'}, 'address': {'$ref': '#/$defs/Address'}},
             'additionalProperties': False,
             'required': ['name', 'address'],
+        }
+    )
+
+
+class Area(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
+    billing = 'billing'
+    """Charges and invoices."""
+    bug = 'bug'
+    """Something is broken."""
+
+
+class Priority(UseEnumMemberDocstrings, IntEnum):
+    low = 1
+    """Can wait a week."""
+    high = 2
+    """Needs attention today."""
+
+
+class Weight(UseEnumMemberDocstrings, Enum):
+    half = 0.5
+    """Half the usual weight."""
+    unknown = 'unknown'
+    """Not weighed yet."""
+
+
+def test_strict_true_described_options():
+    """With strict=True, untyped `const` options become typed one-value `enum`s.
+
+    Described enums, `Choices` and `BoolCriteria` all render their options this way. Anthropic's
+    `transform_schema()` raises on an option without a `type`, and moves a `const` into the description,
+    which would leave the option unconstrained. A unit test: `walk()` runs the SDK's `transform_schema()`
+    on the generated schema, which is where the error was raised, so no request is needed.
+    """
+
+    class Ticket(BaseModel):
+        area: Area
+        priority: Priority
+        weight: Weight
+        team: Annotated[str, Choices({'finance': 'Money matters.', 'eng': 'Engineering.'})]
+        urgent: Annotated[bool, BoolCriteria(true='The customer is blocked.', false='The customer can wait.')]
+
+    schema = Ticket.model_json_schema(schema_generator=GenerateToolJsonSchema)
+    transformer = AnthropicJsonSchemaTransformer(schema, strict=True)
+    transformed = transformer.walk()
+
+    assert transformed == snapshot(
+        {
+            '$defs': {
+                'Area': {
+                    'anyOf': [
+                        {'type': 'string', 'enum': ['billing'], 'description': 'Charges and invoices.'},
+                        {'type': 'string', 'enum': ['bug'], 'description': 'Something is broken.'},
+                    ]
+                },
+                'Priority': {
+                    'anyOf': [
+                        {'type': 'integer', 'enum': [1], 'description': 'Can wait a week.'},
+                        {'type': 'integer', 'enum': [2], 'description': 'Needs attention today.'},
+                    ]
+                },
+                'Weight': {
+                    'anyOf': [
+                        {'type': 'number', 'enum': [0.5], 'description': 'Half the usual weight.'},
+                        {'type': 'string', 'enum': ['unknown'], 'description': 'Not weighed yet.'},
+                    ]
+                },
+            },
+            'type': 'object',
+            'properties': {
+                'area': {'$ref': '#/$defs/Area'},
+                'priority': {'$ref': '#/$defs/Priority'},
+                'weight': {'$ref': '#/$defs/Weight'},
+                'team': {
+                    'anyOf': [
+                        {'type': 'string', 'enum': ['finance'], 'description': 'Money matters.'},
+                        {'type': 'string', 'enum': ['eng'], 'description': 'Engineering.'},
+                    ]
+                },
+                'urgent': {
+                    'anyOf': [
+                        {'type': 'boolean', 'enum': [True], 'description': 'The customer is blocked.'},
+                        {'type': 'boolean', 'enum': [False], 'description': 'The customer can wait.'},
+                    ]
+                },
+            },
+            'additionalProperties': False,
+            'required': ['area', 'priority', 'weight', 'team', 'urgent'],
+        }
+    )
+
+
+def test_strict_true_typed_const():
+    """With strict=True, a typed `const` becomes a one-value `enum`, keeping its declared `type`.
+
+    Pydantic emits a typed `const` for a single-value `Literal`, including a tagged union's discriminator.
+    Anthropic's `transform_schema()` moves a `const` into the description, which would leave the model free to
+    return any tag. A unit test: `walk()` runs the SDK's `transform_schema()`, which is where the constraint
+    was lost, and the request a recording would capture doesn't show whether the model was held to it.
+    """
+
+    class Cat(BaseModel):
+        kind: Literal['cat']
+
+    class Dog(BaseModel):
+        kind: Literal['dog']
+
+    class Pet(BaseModel):
+        pet: Annotated[Cat | Dog, Field(discriminator='kind')]
+        legs: Literal[4]
+
+    transformer = AnthropicJsonSchemaTransformer(Pet.model_json_schema(), strict=True)
+    transformed = transformer.walk()
+
+    assert transformed == snapshot(
+        {
+            '$defs': {
+                'Cat': {
+                    'type': 'object',
+                    'properties': {'kind': {'type': 'string', 'enum': ['cat']}},
+                    'additionalProperties': False,
+                    'required': ['kind'],
+                },
+                'Dog': {
+                    'type': 'object',
+                    'properties': {'kind': {'type': 'string', 'enum': ['dog']}},
+                    'additionalProperties': False,
+                    'required': ['kind'],
+                },
+            },
+            'type': 'object',
+            'properties': {
+                'pet': {
+                    'anyOf': [{'$ref': '#/$defs/Cat'}, {'$ref': '#/$defs/Dog'}],
+                    'description': "{discriminator: {'mapping': {'cat': '#/$defs/Cat', 'dog': '#/$defs/Dog'}, 'propertyName': 'kind'}}",
+                },
+                'legs': {'type': 'integer', 'enum': [4]},
+            },
+            'additionalProperties': False,
+            'required': ['pet', 'legs'],
         }
     )
 
@@ -356,6 +499,42 @@ def test_model_profile_fable_5():
 
 
 @pytest.mark.parametrize(
+    ('model_name', 'thinks_by_default', 'always_thinks'),
+    [
+        ('claude-sonnet-4-6', False, False),
+        ('claude-opus-4-8', False, False),
+        ('claude-opus-5', True, False),
+        ('claude-sonnet-5', True, False),
+        ('claude-opus-5-5', True, True),
+        ('claude-sonnet-5-5', True, False),
+        ('claude-haiku-5-5', True, False),
+        ('claude-fable-5', True, True),
+        ('claude-fable-5-1', True, True),
+        ('claude-mythos-5-1', True, True),
+        ('claude-mythos-preview', True, True),
+    ],
+)
+def test_model_profile_thinking_defaults(model_name: str, thinks_by_default: bool, always_thinks: bool):
+    """Which models think without a `thinking` setting, and which can't turn thinking off.
+
+    Verified live for every model except Mythos. Haiku 5.5's adaptive default was verified with
+    `anthropic_effort='high'` and no `thinking` parameter; the response included thinking tokens. Anthropic [documents
+    Haiku 5.5 as adaptive-on by default](https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide#configure-thinking)
+    and accepts `thinking={'type': 'disabled'}` at effort `high` or below. With no `thinking` parameter,
+    Claude Opus 5, Sonnet 5, Opus 5.5, Fable 5 and Fable 5.1 return thinking tokens where Sonnet 4.6 and Opus 4.8
+    return none; Opus 5.5, Fable 5 and Fable 5.1 reject both `thinking={'type': 'disabled'}` and
+    `{'type': 'between_tools'}` with a 400. Sonnet 5.5 rejects `disabled` but turns thinking off with `between_tools`.
+    """
+    profile = anthropic_model_profile(model_name)
+    assert profile is not None
+    assert profile.get('thinking_enabled_by_default') is thinks_by_default
+    assert profile.get('thinking_always_enabled') is always_thinks
+    assert profile.get('forced_tool_choice_disables_thinking') is True
+    if thinks_by_default:
+        assert profile.get('anthropic_supports_adaptive_thinking') is True
+
+
+@pytest.mark.parametrize(
     ('model_name', 'supports_forcing'),
     [
         ('claude-fable-5-1', False),
@@ -363,21 +542,27 @@ def test_model_profile_fable_5():
         ('claude-fable-5', True),
         ('claude-mythos-5', True),
         ('claude-mythos-preview', True),
+        ('claude-opus-5-5', False),
         ('claude-opus-5', True),
+        ('claude-sonnet-5-5', False),
+        ('claude-haiku-5-5', True),
+        ('claude-sonnet-5', True),
     ],
 )
 def test_model_profile_forced_tool_choice(model_name: str, supports_forcing: bool):
-    """Only the 5.1 generation rejects a forced `tool_choice` outright.
+    """The 5.1 generation, Opus 5.5, and Sonnet 5.5 reject a forced `tool_choice` outright.
 
-    Anthropic's forcing-tool-use table names Claude Fable 5.1 and Claude Mythos 5.1 and no other
-    model. Verified live: `claude-fable-5-1` returns a 400 for `{'type': 'any'}` and
-    `{'type': 'tool'}` while `claude-fable-5` returns 200 for both, on the GA and beta endpoints.
+    Anthropic's forcing-tool-use table names Claude Fable 5.1 and Claude Mythos 5.1, and the Opus 5.5
+    and Sonnet 5.5 migration guides list forced tool use among their breaking changes. Verified live:
+    `claude-fable-5-1`, `claude-opus-5-5`, and `claude-sonnet-5-5` return a 400 for `{'type': 'any'}`
+    and `{'type': 'tool'}` while `claude-fable-5`, `claude-opus-5`, and `claude-sonnet-5` return 200
+    for both.
     The Mythos ids are Project Glasswing-only and unreachable with our credentials, so they follow
     the table.
     """
     profile = anthropic_model_profile(model_name)
     assert profile is not None
-    assert profile.get('anthropic_supports_forced_tool_choice') is supports_forcing
+    assert profile.get('supports_forced_tool_choice') is supports_forcing
 
 
 def test_model_profile_mythos_5():
@@ -415,27 +600,36 @@ def test_model_profile_fable_5_1():
 
     The pair diverges on forced `tool_choice`: `claude-fable-5-1` returns a 400 while
     `claude-fable-5` accepts forcing, so only 5.1 carries
-    `anthropic_supports_forced_tool_choice=False` — see `test_model_profile_forced_tool_choice`.
+    `supports_forced_tool_choice=False` — see `test_model_profile_forced_tool_choice`.
     """
     profile = anthropic_model_profile('claude-fable-5-1')
     assert profile == snapshot(
         {
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'mimics_assistant_message_formatting': True,
             'supports_json_schema_output': True,
             'anthropic_supports_fast_speed': False,
             'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'thinking_enabled_by_default': True,
+            'forced_tool_choice_disables_thinking': True,
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_effort': True,
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_supports_xhigh_effort': True,
+            'anthropic_supports_max_effort': True,
             'anthropic_disallows_budget_thinking': True,
             'anthropic_disallows_sampling_settings': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
+            'anthropic_disables_thinking_with_between_tools': False,
+            'anthropic_distrusts_system_after_tool_result': False,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_task_budgets': True,
-            'anthropic_supports_forced_tool_choice': False,
+            'supports_forced_tool_choice': False,
             'anthropic_binds_thinking_blocks': True,
+            'anthropic_max_output_tokens': 128000,
+            'anthropic_rejects_max_tokens_beyond_context_window': False,
             'tool_deferral_mode': 'standalone',
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
@@ -473,7 +667,7 @@ def test_model_profile_sonnet_5():
     assert profile.get('anthropic_default_code_execution_tool_version') == '20260120'
 
     # Sonnet-5-specific: forcing is allowed (unlike Fable/Mythos), fast speed is not (Opus-only)
-    assert profile.get('anthropic_supports_forced_tool_choice') is True
+    assert profile.get('supports_forced_tool_choice') is True
     assert profile.get('anthropic_supports_fast_speed') is False
 
 
@@ -495,21 +689,30 @@ def test_model_profile_opus_5():
     assert profile == snapshot(
         {
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'mimics_assistant_message_formatting': True,
             'supports_json_schema_output': True,
             'anthropic_supports_fast_speed': True,
             'supports_thinking': True,
+            'thinking_always_enabled': False,
+            'thinking_enabled_by_default': True,
+            'forced_tool_choice_disables_thinking': True,
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_effort': True,
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_supports_xhigh_effort': True,
+            'anthropic_supports_max_effort': True,
             'anthropic_disallows_budget_thinking': True,
             'anthropic_disallows_sampling_settings': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': True,
+            'anthropic_disables_thinking_with_between_tools': False,
+            'anthropic_distrusts_system_after_tool_result': False,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_task_budgets': True,
-            'anthropic_supports_forced_tool_choice': True,
+            'supports_forced_tool_choice': True,
             'anthropic_binds_thinking_blocks': False,
+            'anthropic_max_output_tokens': 128000,
+            'anthropic_rejects_max_tokens_beyond_context_window': False,
             'tool_deferral_mode': 'standalone',
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
@@ -521,6 +724,94 @@ def test_model_profile_opus_5():
     opus_4_8 = anthropic_model_profile('claude-opus-4-8')
     assert opus_4_8 is not None
     assert opus_4_8.get('anthropic_disallows_top_effort_when_thinking_disabled') is not True
+
+
+def test_model_profile_opus_5_5():
+    """Claude Opus 5.5 carries Opus 5's capability surface plus Fable 5.1's two breaking changes.
+
+    Verified live against the Anthropic API by probing `claude-opus-5-5` side by side with
+    `claude-opus-5`: both reject sampling settings and budget-based thinking, and both accept adaptive
+    thinking, `low`/`xhigh`/`max` effort, task budgets, json-schema output, strict tools, tool search,
+    the advisor tool, code execution `20260120`, web search/fetch `20260209`, a mid-conversation
+    `system` entry, and `tool_addition` by reference. Both return the same fast-mode quota error for
+    `anthropic_speed='fast'`, and Anthropic documents fast mode for Opus 5.5.
+
+    Where Opus 5.5 diverges from Opus 5, it matches Fable 5.1: it returns a 400 for a forced
+    `tool_choice` and for a thinking block replayed after the `system` prompt changes (with an explicit
+    `prefix_mismatch_behavior` of `'error'`). It also rejects `thinking: {'type': 'disabled'}` at every
+    effort level, so thinking can't be turned off and the `xhigh`/`max`-specific guard Opus 5 carries
+    doesn't apply.
+    """
+    profile = anthropic_model_profile('claude-opus-5-5')
+    opus_5 = anthropic_model_profile('claude-opus-5')
+    assert profile is not None
+    assert opus_5 is not None
+    assert profile == {
+        **opus_5,
+        'thinking_always_enabled': True,
+        'anthropic_disallows_top_effort_when_thinking_disabled': False,
+        'supports_forced_tool_choice': False,
+        'anthropic_binds_thinking_blocks': True,
+    }
+
+
+def test_model_profile_sonnet_5_5():
+    """Claude Sonnet 5.5 carries Sonnet 5's capability surface plus the forcing and binding changes.
+
+    Verified live against the Anthropic API by probing `claude-sonnet-5-5` side by side with
+    `claude-sonnet-5`: both reject sampling settings, budget-based thinking, and fast mode, and both
+    accept adaptive thinking at `xhigh` effort, task budgets, and json-schema output.
+
+    Where Sonnet 5.5 diverges, it matches Opus 5.5: it returns a 400 for a forced `tool_choice` and for a
+    thinking block replayed after the `system` prompt changes (with an explicit
+    `prefix_mismatch_behavior` of `'error'`). It also rejects `thinking: {'type': 'disabled'}` in favor of
+    `{'type': 'between_tools'}`, which turns thinking off and, like disabled thinking on Opus 5, returns a 400 for
+    `xhigh` and `max` effort; live on the Anthropic API and on Bedrock.
+    """
+    profile = anthropic_model_profile('claude-sonnet-5-5')
+    sonnet_5 = anthropic_model_profile('claude-sonnet-5')
+    assert profile is not None
+    assert sonnet_5 is not None
+    assert profile == {
+        **sonnet_5,
+        'supports_forced_tool_choice': False,
+        'anthropic_binds_thinking_blocks': True,
+        'anthropic_disallows_top_effort_when_thinking_disabled': True,
+        'anthropic_disables_thinking_with_between_tools': True,
+    }
+
+
+def test_model_profile_haiku_5_5():
+    """Haiku 5.5 uses Opus 5's existing defaults with two model-specific overrides.
+
+    Anthropic documents Haiku 5.5's 128K output, adaptive default, `xhigh`/`max`, manual budget-thinking and
+    non-default sampling rejection, disabled-thinking effort cap, task-budget support, and prefix binding. Fast mode
+    docs list only Opus models; web-search docs cover dynamic filtering on Claude 4.6 and later. Live probes confirmed
+    adaptive `xhigh`/`max` returned signed thinking blocks; adaptive default with no `thinking` setting and effort `high`
+    also returned signed thinking blocks and positive thinking-token usage. Other live probes confirmed forced tool
+    choice, task-budget acceptance, `code_execution_20260120`, BM25 search, Advisor, web-search request acceptance,
+    deferred tool addition, inline system messages, and the `drop_block` transformation after a prefix change. The only
+    Haiku-specific profile overrides are fast speed disabled, thinking-block binding enabled, and a text block
+    before a `system` entry that follows a tool result; unchanged fields retain Opus 5's existing profile defaults. See Anthropic's
+    [overview](https://platform.claude.com/docs/en/models/haiku-5-5/overview),
+    [mid-conversation system messages](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#placement-after-tool-results),
+    [migration guide](https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide),
+    [thinking configuration](https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting),
+    [effort](https://platform.claude.com/docs/en/build-with-claude/effort),
+    [task-budget support](https://platform.claude.com/docs/en/build-with-claude/task-budgets),
+    [fast mode](https://platform.claude.com/docs/en/build-with-claude/fast-mode), and
+    [web search and dynamic filtering](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool).
+    """
+    profile = anthropic_model_profile('claude-haiku-5-5')
+    opus_5 = anthropic_model_profile('claude-opus-5')
+    assert profile is not None
+    assert opus_5 is not None
+    assert profile == {
+        **opus_5,
+        'anthropic_supports_fast_speed': False,
+        'anthropic_binds_thinking_blocks': True,
+        'anthropic_distrusts_system_after_tool_result': True,
+    }
 
 
 @pytest.mark.parametrize(

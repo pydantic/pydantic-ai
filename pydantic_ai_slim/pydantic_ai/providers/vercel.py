@@ -15,6 +15,7 @@ from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.groq import groq_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
+from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 try:
     from openai import AsyncOpenAI
@@ -26,11 +27,11 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 
-class VercelProvider(_OpenAICompatibleProvider):
+class VercelProvider(_OpenAISDKProvider):
     """Provider for Vercel AI Gateway API."""
 
     @property
@@ -57,6 +58,7 @@ class VercelProvider(_OpenAICompatibleProvider):
             'openai': openai_model_profile,
             'vertex': google_model_profile,
             'xai': grok_model_profile,
+            'zai': _glm_5_3_schema_profile,
         }
 
         profile = None

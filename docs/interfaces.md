@@ -1,3 +1,7 @@
+---
+description: "Run the same Pydantic AI agent headless, in a terminal, behind a web UI or your own frontend, in an editor, over voice, or as a server for other agents."
+---
+
 # Interfaces
 
 A Pydantic AI [agent](agent.md) is plain Python with no interface baked in: the same agent can run headless inside your backend, chat in a terminal, serve a web UI, power your own frontend, live inside an editor, answer to other agents, hold a spoken conversation, or work on a repository with nobody watching. Each surface has its own page:

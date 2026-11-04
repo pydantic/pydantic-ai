@@ -1,9 +1,10 @@
+---
+description: "Use Claude, Gemini, GPT and Kimi models from your GitHub Copilot subscription with Pydantic AI, with device login, plan-dependent model IDs and thinking."
+---
+
 # GitHub Copilot
 
 [GitHub Copilot](https://docs.github.com/en/copilot) serves Anthropic, OpenAI, Google, xAI and MoonshotAI models, metered in AI credits drawn from your Copilot subscription at published per-model token rates. Pydantic AI talks to Copilot's OpenAI-compatible Chat Completions API, which reaches only the ids Copilot exposes there: Claude, Gemini and Kimi ids and `gpt-5.4` at the time of writing, while every xAI Grok id and most other GPT ids are served on the Responses API alone and are out of reach until Pydantic AI speaks it. See [Model ids depend on your plan](#model-ids-depend-on-your-plan) to check yours.
-
-!!! note "This is not GitHub Models"
-    [`GitHubProvider`][pydantic_ai.providers.github.GitHubProvider] and the `github:` prefix served [GitHub Models](openai.md#github-models), which was retired in July 2026. Copilot is a different API with a different host, its own model ids, and its own credentials.
 
 ## Install
 
@@ -21,10 +22,64 @@ Copilot authenticates with a bearer token. An OAuth user token — what `gh auth
 | --- | --- |
 | OAuth user token (`gho_`) | Works. |
 | Copilot API token (`tid=…`) | Works, for plans that issue one. |
-| Fine-grained PAT (`github_pat_`) with **Copilot Requests** | Listed by [GitHub's Copilot SDK docs](https://docs.github.com/copilot/how-tos/copilot-sdk/authenticate-copilot-sdk/authenticate-copilot-sdk), but rejected with `401 unauthorized` on the Individual plan we tested. |
+| Fine-grained PAT (`github_pat_`) with **Copilot Requests** | Listed by [GitHub's Copilot SDK docs](https://docs.github.com/copilot/how-tos/copilot-sdk/authenticate-copilot-sdk/authenticate-copilot-sdk), but rejected with `401 unauthorized` on the Individual plan we tested, under the default `vscode-chat` [integration id](#integration-id). |
 | Classic PAT (`ghp_`) | Not supported by GitHub. |
 
+## Device login
+
+Use [`GitHubCopilotOAuthFlow`][pydantic_ai.providers.github_copilot.GitHubCopilotOAuthFlow] to obtain a token through GitHub's device flow:
+
+```python {test="skip"}
+import os
+import sys
+
+import anyio
+
+from pydantic_ai import Agent
+from pydantic_ai.models.github_copilot import GitHubCopilotModel
+from pydantic_ai.providers.github_copilot import (
+    GitHubCopilotOAuthFlow,
+    GitHubCopilotProvider,
+)
+
+
+async def main() -> None:
+    flow = GitHubCopilotOAuthFlow(client_id=os.environ['GITHUB_OAUTH_CLIENT_ID'])
+    authorization = await flow.start()
+    sys.stdout.write(f'Open {authorization.verification_uri}\nEnter code: {authorization.user_code}\n')
+    sys.stdout.flush()
+    credentials = await flow.wait_for_authorization()
+
+    provider = GitHubCopilotProvider(api_key=credentials.access_token)
+    async with provider:
+        agent = Agent(GitHubCopilotModel('claude-haiku-4.5', provider=provider))
+        result = await agent.run('Explain Python context managers in two sentences.')
+    sys.stdout.write(f'{result.output}\n')
+
+
+anyio.run(main)
+```
+
+[`GitHubCopilotOAuthFlow`][pydantic_ai.providers.github_copilot.GitHubCopilotOAuthFlow] implements GitHub.com's [device authorization flow](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#device-flow). Register an OAuth application and enable device flow in its settings. `GITHUB_OAUTH_CLIENT_ID` is application configuration used by this example, not a variable Pydantic AI reads automatically.
+
+!!! warning "Only approve device codes from your own login attempt"
+    Use device flow for constrained clients such as CLI or headless applications. Applications that can receive browser redirects should use authorization code with PKCE instead. Anyone can initiate a device grant with a public client ID; entering a code supplied by an attacker authorizes their client, not yours. Tell users to approve only codes shown by the application they are signing into, not codes received in messages. See [RFC 8628's phishing guidance](https://www.rfc-editor.org/rfc/rfc8628.html#section-5.4).
+
+The helper requires your application's `client_id`; it does not borrow another application's identity. It requests no scopes by default. Pass `scope=` if your application needs GitHub permissions.
+
+!!! warning "GitHub authorization does not establish Copilot access"
+    A successful login returns a GitHub OAuth token, not proof that Copilot accepts that application's token or that the account has an eligible subscription. Verify both for your application. The existing-token examples below remain available when you already have working credentials.
+
+`start()` returns a [`GitHubCopilotDeviceAuthorization`][pydantic_ai.providers.github_copilot.GitHubCopilotDeviceAuthorization]. Display its `user_code` and `verification_uri`, then await `wait_for_authorization()`. Polling respects GitHub's interval and increases it when GitHub responds with `slow_down`. The local deadline is `expires_in` seconds after the device-code response arrives; time spent displaying the code still counts toward it. Expiry, denial, and invalid responses raise [`UserError`][pydantic_ai.exceptions.UserError]; transport errors propagate unchanged. Cancellation stops polling. Call `start()` again to retry after any outcome, and use a separate flow instance for each concurrent login.
+
+Your application owns browser opening and credential storage. [`GitHubCopilotCredentials`][pydantic_ai.providers.github_copilot.GitHubCopilotCredentials] excludes tokens from `repr`, but serialized credentials still contain secrets. Keep them in your application's credential store, not logs. An injected `http_client` stays caller-owned; without one, the helper closes its temporary clients after each request. OAuth redirects are not followed, and this helper supports GitHub.com, not enterprise authorization hosts.
+
+!!! note "Credential renewal stays application-owned"
+    Some OAuth applications issue expiring access tokens. The result preserves `refresh_token`, `expires_in`, and `refresh_token_expires_in` when GitHub supplies them; durations are seconds from issuance. Persist the issuance time with these values if you save the credentials. `GitHubCopilotProvider(api_key=...)` does not renew tokens. Your application must refresh them through GitHub's documented flow or ask the user to sign in again.
+
 ## Environment variable
+
+If you already have a token, set `GITHUB_COPILOT_API_KEY` before starting your application:
 
 ```bash
 export GITHUB_COPILOT_API_KEY='your-copilot-token'
@@ -73,13 +128,13 @@ Copilot's catalog varies by subscription and changes often, so Pydantic AI ships
 
 ```bash
 curl -H "Authorization: Bearer $GITHUB_COPILOT_API_KEY" \
-     -H "Copilot-Integration-Id: vscode-chat" \
+     -H "Copilot-Integration-Id: ${GITHUB_COPILOT_INTEGRATION_ID:-vscode-chat}" \
      https://api.githubcopilot.com/models
 ```
 
 Each entry's `supported_endpoints` says which API serves it; Pydantic AI needs `/chat/completions` in that list.
 
-The listing depends on the `Copilot-Integration-Id` header, which `GitHubCopilotProvider` sends on every request, so an `Authorization`-only call returns fewer ids than the provider can actually reach — the Gemini ids, at the time of writing.
+The listing depends on the `Copilot-Integration-Id` header, which `GitHubCopilotProvider` sends on every request ([`vscode-chat` by default](#integration-id)), so an `Authorization`-only call returns fewer ids than the provider can actually reach — the Gemini ids, at the time of writing.
 
 Two `400` responses tell you why an id didn't work:
 
@@ -105,10 +160,11 @@ Which ids surface their reasoning depends on the family. Copilot returns Anthrop
 
 The Claude ids also reason *adaptively*: the effort you set is a ceiling rather than an instruction, so Copilot may answer an easy question with no reasoning at any effort, and a `ThinkingPart` is not guaranteed on every response.
 
-`thinking` is forwarded as `reasoning_effort` and Copilot decides what it accepts, per model: ask for a level an id doesn't list and it answers `400 invalid_reasoning_effort` naming the levels it does. Three cases worth knowing:
+`thinking` is forwarded as `reasoning_effort` and Copilot decides what it accepts, per model: ask for a level an id doesn't list and it answers `400 invalid_reasoning_effort` naming the levels it does. Four cases worth knowing:
 
 - `thinking=False` becomes `reasoning_effort='none'`, which only some ids offer. The `claude-` and `gemini-` ids list `low` upwards and no `none`, so it `400`s there rather than silently doing nothing.
 - `thinking=True` becomes `reasoning_effort='medium'`, which `kimi-k3` does not list (its levels are `low`, `high`, `max`), so pick an explicit level for that one.
+- `thinking='max'` becomes `reasoning_effort='xhigh'`, which `kimi-k3` does not list either, so set `openai_reasoning_effort='max'` for it.
 - An id whose entry carries no `reasoning_effort` key at all, such as `claude-haiku-4.5`, rejects every value.
 
 ## Custom endpoints
@@ -131,8 +187,28 @@ agent = Agent(model)
 ...
 ```
 
+## Integration id
+
+Every request carries a `Copilot-Integration-Id` header. Copilot attributes the traffic to it and ties its quota and model allowlist to it, so a different id can change which models the `/models` listing returns and which ones Copilot serves. It can also decide whether a credential is accepted: in our testing through the GitHub Agentic Workflows api-proxy, Copilot rejected a fine-grained PAT under `vscode-chat` with `400 Personal Access Tokens are not supported for this endpoint`, and accepted it under `agentic-workflows`. The provider sends `vscode-chat` by default. Pass `integration_id` to send another id, or set the `GITHUB_COPILOT_INTEGRATION_ID` environment variable, the name the [Copilot CLI reads](https://docs.github.com/en/copilot/how-tos/copilot-sdk/setup/multi-tenancy#integration-id); the argument takes precedence. GitHub Agentic Workflows, for example, identifies itself as `agentic-workflows`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.github_copilot import GitHubCopilotModel
+from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
+
+model = GitHubCopilotModel(
+    'claude-haiku-4.5',
+    provider=GitHubCopilotProvider(
+        api_key='your-copilot-token',
+        integration_id='agentic-workflows',
+    ),
+)
+agent = Agent(model)
+...
+```
+
 ## Not supported
 
 Copilot's Responses (`/responses`) and Messages (`/v1/messages`) APIs and realtime are not implemented. Neither are embeddings, but because `github-copilot` counts as an OpenAI-chat-compatible provider, `Embedder('github-copilot:...')` still builds an [`OpenAIEmbeddingModel`](../embeddings.md) rather than raising — it points at the gateway's `/embeddings`, which answers `400`. Cost and context-window data are also unavailable: [genai-prices](https://github.com/pydantic/genai-prices) gained a `github-copilot` entry in [genai-prices#683](https://github.com/pydantic/genai-prices/pull/683), but no published release carries it yet.
 
-Copilot's Claude ids inherit Anthropic's sampling restriction. On Opus 4.7, Opus 4.8, Opus 5, Sonnet 5, Fable 5 and Mythos 5 — and on any id whose name starts with one of those — `temperature` and `top_p` are dropped from the request rather than forwarded, silently, exactly as they are when you reach the same models through the [Anthropic API](anthropic.md). Only those two keys go: `top_k` has no Chat Completions equivalent to drop, and a `temperature` you pass in `extra_body`, or any `openai_*` setting, is still sent. Every other id — `claude-haiku-4.5` among them — forwards both unchanged.
+Copilot's Claude ids inherit Anthropic's sampling restriction. On Opus 4.7, Opus 4.8, Opus 5, Sonnet 5, Fable 5, Mythos 5, and Haiku 5.5 — and on any id whose name starts with one of those — `temperature` and `top_p` are dropped from the request rather than forwarded, silently, exactly as they are when you reach the same models through the [Anthropic API](anthropic.md). Only those two keys go: `top_k` has no Chat Completions equivalent to drop, and a `temperature` you pass in `extra_body`, or any `openai_*` setting, is still sent. Every other id — `claude-haiku-4.5` among them — forwards both unchanged.

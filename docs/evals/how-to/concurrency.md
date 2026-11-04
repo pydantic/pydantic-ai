@@ -1,3 +1,7 @@
+---
+description: "Control how many Pydantic Evals cases run in parallel with max_concurrency, to balance evaluation throughput against provider rate limits and resource use."
+---
+
 # Concurrency & Performance
 
 Control how evaluation cases are executed in parallel.

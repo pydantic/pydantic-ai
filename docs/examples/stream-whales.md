@@ -1,3 +1,7 @@
+---
+description: "A Pydantic AI example that streams structured output about whales, validating the data as it arrives and displaying it as a live table with rich."
+---
+
 Information about whales — an example of streamed structured response validation.
 
 Demonstrates:

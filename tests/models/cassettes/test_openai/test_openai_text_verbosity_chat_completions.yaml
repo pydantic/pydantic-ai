@@ -1,0 +1,155 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "111"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content: What is 2+2?
+        model: gpt-5.6-luna
+        stream: false
+        verbosity: low
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "739"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: chatcmpl-EUdLNAdMtxCINLxt41tZdtpc5jxyq
+        object: chat.completion
+        created: 1790969785
+        model: gpt-5.6-luna
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: "4"
+            refusal: null
+            annotations: []
+          finish_reason: stop
+        usage:
+          prompt_tokens: 13
+          completion_tokens: 4
+          total_tokens: 17
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+          completion_tokens_details:
+            reasoning_tokens: 0
+            audio_tokens: 0
+            accepted_prediction_tokens: 0
+            rejected_prediction_tokens: 0
+        service_tier: default
+        system_fingerprint: null
+  recorded_at: 2026-10-02T19:36:25.635089+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "93"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content: What is 2+2?
+        model: gpt-5.6-luna
+        stream: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "600"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: chatcmpl-EUdLOmEiJanQ4oXBev6bR1aB9UB5S
+        object: chat.completion
+        created: 1790969786
+        model: gpt-5.6-luna
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: "4"
+            refusal: null
+            annotations: []
+          finish_reason: stop
+        usage:
+          prompt_tokens: 13
+          completion_tokens: 4
+          total_tokens: 17
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+          completion_tokens_details:
+            reasoning_tokens: 0
+            audio_tokens: 0
+            accepted_prediction_tokens: 0
+            rejected_prediction_tokens: 0
+        service_tier: default
+        system_fingerprint: null
+  recorded_at: 2026-10-02T19:36:26.817088+00:00

@@ -1,3 +1,7 @@
+---
+description: "Integrate a new durable execution engine with Pydantic AI using the stable backend builder, routing model requests, tool calls and events through your engine."
+---
+
 # Building a durable execution backend
 
 Pydantic AI's durable execution builder lets an integration route model requests, tool discovery,
@@ -9,9 +13,12 @@ The complete implementations for [Temporal][pydantic_ai.durable_exec.temporal.Te
 [DBOS][pydantic_ai.durable_exec.dbos.DBOSDurability], and
 [Prefect][pydantic_ai.durable_exec.prefect.PrefectDurability] are useful references. The external
 [Restate](https://github.com/restatedev/sdk-python/tree/main/python/restate/ext/pydantic),
-[AWS Lambda](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/aws_lambda),
-and Absurd
-integrations show the same public builder with JSON journals.
+[AWS Lambda](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda),
+[Absurd](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/absurd),
+and [pgtask](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/pgtask)
+integrations show the same public builder with JSON journals, and
+[Render Workflows](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/render)
+shows an engine whose durable units run in another process.
 
 ## Choose a backend tier
 
@@ -58,7 +65,7 @@ class TerminalError(Exception):
     pass
 
 
-class ImmediateBackend(JournalCallableOperationBackend[None]):
+class ImmediateBackend(JournalCallableOperationBackend):
     def __init__(self, agent_name: str, default_model_id: str | None) -> None:
         super().__init__(
             agent_name=agent_name,
@@ -78,7 +85,7 @@ class ImmediateBackend(JournalCallableOperationBackend[None]):
         return await body()
 
 
-class ImmediateDurability(BaseDurabilityCapability[None]):
+class ImmediateDurability(BaseDurabilityCapability):
     engine_spec = DurabilityEngineSpec(
         engine_name='Immediate',
         durable_unit_noun='operation',
@@ -159,6 +166,66 @@ must therefore include a default branch when matching IDs. Use that branch to ap
 configuration or raise an actionable unsupported-operation error. Do not rely on an exhaustive
 match that assumes the current union will never gain another arm.
 
+## Durable units in another process
+
+Some engines run a durable unit on a different worker than the run that dispatched it, so its
+parameters have to cross the boundary as data. A backend's
+[`parameter_transports`][pydantic_ai.durable_exec.DurableOperationBackend.parameter_transports]
+decides how. The default [`ParameterTransports`][pydantic_ai.durable_exec.ParameterTransports]
+passes every operation's parameters through unchanged. An engine whose units run out of process
+subclasses it and passes an instance to `RegisteredOperationBackend.__init__`. Each method returns a
+[`ParameterTransport`][pydantic_ai.durable_exec.ParameterTransport] that dumps one of the public
+parameter types to the engine's wire format at dispatch and loads it back worker-side:
+[`ModelRequestParams`][pydantic_ai.durable_exec.ModelRequestParams],
+[`ModelCompactMessagesParams`][pydantic_ai.durable_exec.ModelCompactMessagesParams],
+[`ModelCancelSuspendedResponseParams`][pydantic_ai.durable_exec.ModelCancelSuspendedResponseParams],
+[`EventStreamHandlerParams`][pydantic_ai.durable_exec.EventStreamHandlerParams],
+[`ToolsetGetToolsParams`][pydantic_ai.durable_exec.ToolsetGetToolsParams],
+[`ToolsetCallToolParams`][pydantic_ai.durable_exec.ToolsetCallToolParams],
+[`DynamicToolsetCallToolParams`][pydantic_ai.durable_exec.DynamicToolsetCallToolParams],
+[`CapabilityOperationParams`][pydantic_ai.durable_exec.CapabilityOperationParams], and
+[`WorkspaceCallParams`][pydantic_ai.durable_exec.WorkspaceCallParams].
+The backend's `register` receives each [`DurableOperation`][pydantic_ai.durable_exec.DurableOperation]
+and returns a [`BoundDurableOperation`][pydantic_ai.durable_exec.BoundDurableOperation]. Run its
+worker-side handler inside [`durable_unit_scope`][pydantic_ai.durable_exec.durable_unit_scope], so
+a durable operation called from inside the unit runs directly instead of scheduling another unit.
+
+Every parameter type carries the run's `RunContext` (as `run_context`, or `ctx` on the toolset
+parameters; it is `None` when a suspended response is cancelled outside a run), and that context
+holds objects that cannot be serialized. Use [`DurableRunContext`][pydantic_ai.durable_exec.DurableRunContext] for it:
+`DurableRunContext.serialize_run_context(ctx)` returns a mapping of the fields that can cross,
+which the engine encodes with its own codec, and `DurableRunContext.restore(...)` rebuilds the
+context worker-side and re-attaches the worker's agent and workspace. The run's validation context
+is rebuilt from the agent's `validation_context` setting the first time it's read.
+
+Function tool arguments arrive as JSON-decoded values, not the Python values the tool's schema
+produces. Override `ParameterTransports.prepare_function_call` to return
+[`revalidate_function_call`][pydantic_ai.durable_exec.revalidate_function_call]'s result, which
+looks the tool up again when it wasn't transported and validates the arguments worker-side.
+Reading a field that wasn't carried raises a `UserError` instead of returning a default that could
+be mistaken for run state. Override `unavailable_field_message` to word that error for your engine.
+Your users can subclass your context and override `serialize_run_context` to carry more fields.
+Temporal's [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] is one such subclass.
+
+The other building blocks an out-of-process engine works with:
+
+- [`DurableOperationConfig`][pydantic_ai.durable_exec.DurableOperationConfig] is the protocol
+  `RoleBasedOperationConfig` implements, for engines that resolve config their own way.
+- [`ResultCodec`][pydantic_ai.durable_exec.ResultCodec] and
+  [`CacheIdentity`][pydantic_ai.durable_exec.CacheIdentity] are the `result_codec` and
+  `cache_identity` of a `DurableOperation`: how its result crosses the boundary, and which inputs a
+  hash-keyed engine uses as its cache key.
+- [`CallToolResult`][pydantic_ai.durable_exec.CallToolResult],
+  [`DynamicToolsResult`][pydantic_ai.durable_exec.DynamicToolsResult] and
+  [`WorkspaceCallResult`][pydantic_ai.durable_exec.WorkspaceCallResult] are the result types of the
+  tool call, dynamic toolset discovery and workspace operations. A capability operation's result
+  type is [`capability_operation_result_type`][pydantic_ai.durable_exec.capability_operation_result_type]
+  applied to its [`CapabilityMethodDeclaration`][pydantic_ai.durable_exec.CapabilityMethodDeclaration]'s
+  `result_type`. Pass these to your codec when an engine decodes results itself.
+- [`ModelRequestContextProjection`][pydantic_ai.durable_exec.ModelRequestContextProjection] is the
+  serializable form of a model request context, which carries a live model that cannot cross the
+  boundary.
+
 ## Persisted names and recovery
 
 Operation names are persisted compatibility data. They do not depend on the Python class name.
@@ -179,6 +246,14 @@ checkpoint commits. Tools and decorated capability operations should therefore b
 engine provides a suitable at-most-once mode. Test replay and recovery, resource teardown,
 control-flow exceptions, persisted-output upgrades, and ordinary execution outside the durable
 runtime before publishing an integration.
+
+A replayed or recovered run must also get the same identity. Inside the durable context, override
+[`get_default_run_id()`][pydantic_ai.capabilities.AbstractCapability.get_default_run_id] to return a
+replay-stable ID, such as one derived from the workflow instance ID, and return
+[`conversation_id_from_run_id(run_id)`][pydantic_ai.durable_exec.conversation_id_from_run_id] from
+[`get_default_conversation_id()`][pydantic_ai.capabilities.AbstractCapability.get_default_conversation_id],
+as the Temporal, DBOS and Prefect capabilities do. Each agent run in the same workflow needs its own
+`run_id`.
 
 See [durable capability operations](../capabilities/custom.md#durable-capability-operations) for how
 capability authors contribute decorated methods that arrive through the same backend.

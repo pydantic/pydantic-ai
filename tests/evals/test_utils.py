@@ -2,21 +2,17 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import functools
-import sys
 from collections.abc import Callable
 from functools import partial
 from typing import Any
 
+import anyio.from_thread
+import anyio.to_thread
 import pytest
+import trio
 from dirty_equals import HasRepr
 
-from ..conftest import try_import
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup  # pragma: lax no cover
-else:
-    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
-
+from ..conftest import no_leaked_tasks, try_import
 
 with try_import() as imports_successful:
     from pydantic_evals._utils import (
@@ -26,10 +22,11 @@ with try_import() as imports_successful:
         get_unwrapped_function_name,
         is_set,
         run_until_complete,
+        running_on_asyncio,
         task_group_gather,
     )
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')]
 
 
 def test_run_until_complete_cleans_up_own_task_on_interrupt():
@@ -48,7 +45,6 @@ def test_run_until_complete_cleans_up_own_task_on_interrupt():
             cleaned.append('cleaned')
 
     loop = get_event_loop()
-    tasks_before = asyncio.all_tasks(loop)
     real_run_until_complete = loop.run_until_complete
     calls = 0
 
@@ -62,13 +58,12 @@ def test_run_until_complete_cleans_up_own_task_on_interrupt():
             raise KeyboardInterrupt
         return real_run_until_complete(future)
 
-    with pytest.MonkeyPatch.context() as mp:
+    with no_leaked_tasks(loop), pytest.MonkeyPatch.context() as mp:
         mp.setattr(loop, 'run_until_complete', interrupt_once)
         with pytest.raises(KeyboardInterrupt):
             run_until_complete(coro())
 
     assert cleaned == ['cleaned']  # our coroutine's cleanup ran
-    assert asyncio.all_tasks(loop) == tasks_before  # our task didn't leak, nothing else was touched
 
 
 def test_run_until_complete_propagates_coroutine_error():
@@ -202,3 +197,36 @@ async def test_task_group_gather_with_error():
     assert exc_info.value == HasRepr(
         repr(ExceptionGroup('unhandled errors in a TaskGroup', [ValueError('Task 2 failed')]))
     )
+
+
+async def test_running_on_asyncio():
+    assert running_on_asyncio()
+    # `anyio.from_thread.run_sync` calls it on the loop, but outside any asyncio task.
+    assert await anyio.to_thread.run_sync(anyio.from_thread.run_sync, running_on_asyncio)
+    assert not await anyio.to_thread.run_sync(running_on_asyncio)
+
+
+def test_trio_guest_mode_is_not_asyncio():
+    # Trio guest mode runs Trio tasks on a thread whose asyncio loop is running.
+    results: list[bool] = []
+
+    async def guest() -> None:
+        results.append(running_on_asyncio())
+
+    async def host() -> None:
+        done = asyncio.Event()
+        trio.lowlevel.start_guest_run(
+            guest,
+            run_sync_soon_threadsafe=asyncio.get_running_loop().call_soon_threadsafe,
+            done_callback=lambda _: done.set(),
+        )
+        await done.wait()
+
+    asyncio.run(host())
+    assert results == [False]
+
+
+async def test_running_on_asyncio_without_sniffio(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr('pydantic_evals._utils._sniffio', None)
+    assert running_on_asyncio()
+    assert not await anyio.to_thread.run_sync(running_on_asyncio)
