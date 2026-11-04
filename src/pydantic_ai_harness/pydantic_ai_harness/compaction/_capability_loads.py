@@ -227,15 +227,15 @@ def _load_reveals(messages: Sequence[ModelMessage]) -> set[str]:
 
 
 def keep_tool_discoveries(
-    original: Sequence[ModelMessage], compacted: list[ModelMessage], *, kept_from: int
+    original: Sequence[ModelMessage], compacted: list[ModelMessage], *, index: int
 ) -> list[ModelMessage]:
-    """Record again each tool discovery *compacted* lost from *original*, as a `ToolAvailabilityDeltaPart`.
+    """Record again at *index* each tool discovery *compacted* lost from *original*, as a `ToolAvailabilityDeltaPart`.
 
     A discovery is lost when *original*'s post-compaction window records it and *compacted*'s doesn't, whether
     it was a local `search_tools` exchange, a provider's native search result or a tool's `ToolReturn(tools=...)`.
-    The reveal names the lost tools in the order they were discovered and goes where `keep_capability_loads`
-    puts its records. A tool a capability load revealed is left to that load: it is recorded with it, or
-    unloaded with it. A no-op when nothing was lost, including on its own result.
+    The reveal names the lost tools in the order they were discovered. A tool a capability load revealed is left
+    to that load: it is recorded with it, or unloaded with it. A no-op when nothing was lost, including on its
+    own result.
     """
     # Every reveal counts, a plain tool's cache-safe addition included: each records what the model was shown.
     # Tools the run no longer registers aren't filtered out, as adapters drop names a request doesn't declare.
@@ -244,7 +244,6 @@ def keep_tool_discoveries(
     lost = [name for name in discovered_tool_names_in_order(original) if name not in after and name not in by_loads]
     if not lost:
         return compacted
-    index = _insert_index(compacted, kept_from)
     return [*compacted[:index], ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=lost)]), *compacted[index:]]
 
 
@@ -259,12 +258,13 @@ def keep_loaded_state(
     """Keep the capability loads and tool discoveries *compacted* lost from *original*.
 
     See `keep_capability_loads` and `keep_tool_discoveries`; *kept_from* is the index in *compacted* where the
-    kept messages start.
+    kept messages start. The reveal goes ahead of the load records wherever they go: consecutive requests merge
+    when a run starts, and right after a `CapabilityLoadDeltaPart` it would pass for what that load revealed.
     """
     result = keep_capability_loads(
         original, compacted, kept_from=kept_from, deferred_ids=deferred_ids, preserve=preserve
     )
-    return keep_tool_discoveries(original, result, kept_from=kept_from + len(result) - len(compacted))
+    return keep_tool_discoveries(original, result, index=_insert_index(compacted, kept_from))
 
 
 def is_load_part(part: ModelRequestPart | ModelResponsePart) -> bool:

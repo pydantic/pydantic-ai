@@ -19,6 +19,7 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent, RunContext, Tool, ToolReturn
 from pydantic_ai.capabilities import AbstractCapability, Capability, ToolSearch, Toolset
 from pydantic_ai.messages import (
+    CapabilityLoadDeltaPart,
     CompactionPart,
     ModelMessage,
     ModelRequest,
@@ -302,6 +303,74 @@ class TestToolDiscoveriesAcrossCompaction:
 
         # The opt-out unloads the capability, so its tool isn't revealed again as if it had been discovered.
         assert _reveals(compacted) == []
+
+    @pytest.mark.parametrize(
+        'make',
+        [
+            pytest.param(
+                partial(SlidingWindowCompaction[None], preserve_first_user_message=False),
+                id='without-compaction-part',
+            ),
+            pytest.param(
+                partial(SummarizingCompaction[None], model=FunctionModel(_summarize)), id='after-compaction-part'
+            ),
+        ],
+    )
+    async def test_a_recorded_discovery_is_not_taken_for_what_a_recorded_load_revealed(
+        self, make: Callable[..., AbstractCapability[None]]
+    ) -> None:
+        def open_style(ctx: RunContext[None]) -> str:
+            """Load the style capability from code."""
+            ctx.load_capability('style')
+            return 'Opened.'
+
+        def load_then_search(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            step = sum(isinstance(message, ModelResponse) for message in messages)
+            if step == 0:
+                return ModelResponse(parts=[ToolCallPart('open_style', {})])
+            if step == 1:
+                return ModelResponse(parts=[ToolCallPart('search_tools', {'queries': ['forecast']})])
+            return ModelResponse(parts=[TextPart('Found it.')])
+
+        def capabilities(*compaction: AbstractCapability[None]) -> list[AbstractCapability[None]]:
+            # The load reveals no tools of its own, so a reveal right after its delta can only be someone else's.
+            style = Capability[None](id='style', description='Style.', instructions='Be terse.', defer_loading=True)
+            return [*_capabilities(), style, *compaction]
+
+        first = await Agent(
+            FunctionModel(load_then_search), deps_type=type(None), capabilities=capabilities(), tools=[open_style]
+        ).run('Weather in Athens?')
+
+        def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('Hello.')])
+
+        second = await Agent(
+            FunctionModel(answer),
+            deps_type=type(None),
+            capabilities=capabilities(make(max_messages=1, keep_messages=1)),
+            tools=[open_style],
+        ).run('Hello?', message_history=first.all_messages())
+        # Whether or not there's a compaction part to go after, the reveal goes ahead of the load's record.
+        recorded = [
+            part
+            for message in second.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolAvailabilityDeltaPart | CapabilityLoadDeltaPart) and part.tool_call_id is None
+        ]
+        assert recorded == [
+            ToolAvailabilityDeltaPart(tools_added=['get_forecast']),
+            CapabilityLoadDeltaPart(loaded=['style']),
+        ]
+
+        # The next run merges the two records into one request. Unloading the capability leaves the tool discovered.
+        later_turn = _LaterTurn()
+        await Agent(
+            FunctionModel(later_turn),
+            deps_type=type(None),
+            capabilities=capabilities(make(max_messages=1, keep_messages=1, preserve_loaded_capabilities=False)),
+            tools=[open_style],
+        ).run('And in Oslo?', message_history=second.all_messages())
+        assert 'get_forecast' in later_turn.tools[0]
 
     @pytest.mark.parametrize('discover', DISCOVERIES)
     async def test_recording_again_on_its_own_result_changes_nothing(self, discover: Discover) -> None:
