@@ -164,7 +164,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         self._event_step_contexts: dict[tuple[str | None, str | None], dict[int, deque[DBOSContext | None]]] = {}
         self._child_workflow_toolsets: dict[str, DurableFunctionToolset[AgentDepsT]] = {}
         self._child_workflow_metadata_capability = False
-        self._dbos_metadata_capabilities: list[SetToolMetadata[AgentDepsT]] = []
+        self._set_tool_metadata_capabilities: list[SetToolMetadata[AgentDepsT]] = []
         self._init_legacy_context_vars()
 
     def _init_legacy_context_vars(self) -> None:
@@ -206,7 +206,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         # --- MCP toolset wrapping ---
         self._register_toolsets(agent)
         self._child_workflow_metadata_capability = False
-        self._dbos_metadata_capabilities = []
+        self._set_tool_metadata_capabilities = []
         agent.root_capability.apply(self._detect_child_workflow_metadata)
         self._child_workflow_toolsets = {}
         for toolset in agent.toolsets:
@@ -324,8 +324,8 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         # `SetToolMetadata` can select tools in any toolset, so it enables child workflows for all of them.
         if capability_selects_child_workflow(capability, 'dbos'):
             self._child_workflow_metadata_capability = True
-        if isinstance(capability, SetToolMetadata) and 'dbos' in capability.metadata:
-            self._dbos_metadata_capabilities.append(capability)
+        if isinstance(capability, SetToolMetadata):
+            self._set_tool_metadata_capabilities.append(capability)
 
     def _register_child_workflow(self, toolset: AbstractToolset[AgentDepsT]) -> None:
         """Register the DBOS workflow that runs `toolset`'s tools with `child_workflow` metadata."""
@@ -465,8 +465,8 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             return False
         # `SetToolMetadata` wraps the toolset outside this hook, so merge its metadata as routing will see it.
         metadata = tool_def.metadata or {}
-        for capability in reversed(self._dbos_metadata_capabilities):
-            if await matches_tool_selector(capability.tools, ctx, tool_def):
+        for capability in reversed(self._set_tool_metadata_capabilities):
+            if await matches_tool_selector(capability.tools, ctx, replace(tool_def, metadata=metadata)):
                 metadata = {**metadata, **capability.metadata}
         return selects_child_workflow(metadata, 'dbos')
 
