@@ -6,10 +6,39 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal, TypeAlias
 
+from pydantic import JsonValue
+
 from .exceptions import UserError
 
 JsonSchema = dict[str, Any]
 _JsonSchemaNode: TypeAlias = JsonSchema | bool
+
+MAX_INLINED_SCHEMA_VALUES = 250_000
+"""The most JSON values inlining a schema's `$ref`s may copy into it.
+
+Each object, array, string, number, boolean and null in an inlined definition counts as one value, at every site the
+definition is inlined to. A `$ref` in it counts as the definition it refers to. A string counts as one value, whatever
+its length.
+"""
+
+
+class InlinedSchemaTooLargeError(UserError):
+    """A schema whose `$ref`s expand past `MAX_INLINED_SCHEMA_VALUES` once inlined, with `subject` naming it."""
+
+    subject: str
+    """What the schema belongs to, as the message names it."""
+    remedy: str
+    """What the message suggests doing about it."""
+
+    def __init__(self, subject: str, remedy: str = 'Refer to large definitions from fewer places.'):
+        self.subject = subject
+        self.remedy = remedy
+        super().__init__(
+            f'{subject} is too large: its `$ref`s expand to more than {MAX_INLINED_SCHEMA_VALUES:,} JSON values. {remedy}'
+        )
+
+    def __reduce__(self) -> tuple[type[InlinedSchemaTooLargeError], tuple[str, str]]:
+        return self.__class__, (self.subject, self.remedy)
 
 
 @dataclass(init=False)
@@ -49,6 +78,7 @@ class JsonSchemaTransformer(ABC):
         self.defs: dict[str, JsonSchema] = deepcopy(self.schema.get('$defs', {}))
         self.refs_stack: list[str] = []
         self.recursive_refs = set[str]()
+        self._inlined_values = 0
 
     @abstractmethod
     def transform(self, schema: JsonSchema) -> JsonSchema:
@@ -57,6 +87,7 @@ class JsonSchemaTransformer(ABC):
 
     def walk(self) -> JsonSchema:
         schema = deepcopy(self.schema)
+        self._inlined_values = 0
 
         # First, handle everything but $defs:
         schema.pop('$defs', None)
@@ -105,6 +136,9 @@ class JsonSchemaTransformer(ABC):
                     raise UserError(f'Could not find $ref definition for {key}')
                 schema = def_schema
 
+        if self.refs_stack:
+            self._count_inlined_values(schema)
+
         # Handle the schema based on its type / structure
         type_ = schema.get('type')
         if type_ == 'object':
@@ -122,6 +156,49 @@ class JsonSchemaTransformer(ABC):
             self.refs_stack = self.refs_stack[:-nested_refs]
 
         return schema
+
+    def _count_inlined_values(self, schema: JsonSchema) -> None:
+        """Count the JSON values of `schema`, part of an inlined definition, toward `MAX_INLINED_SCHEMA_VALUES`.
+
+        Inlining walks a definition again at every site that refers to it, so counting at each visit counts every
+        copy. The subschemas `_handle_object`, `_handle_array` and `_handle_union` pass to `_handle` are counted at that
+        visit, so they are left out here, by the same tests those methods apply.
+        """
+        type_ = schema.get('type')
+        member_keys: tuple[str, ...] = ()
+        value_keys: tuple[str, ...] = ()
+        if type_ == 'object':
+            member_keys, value_keys = ('properties', 'patternProperties'), ('additionalProperties',)
+        elif type_ == 'array':
+            member_keys, value_keys = ('prefixItems',), ('items',) if schema.get('items') else ()
+        elif type_ is None:
+            member_keys = ('anyOf', 'oneOf')
+
+        # The node and every value in it, except the subschemas the walk visits next: the schema members of
+        # `member_keys` (their container still counts) and a schema under `value_keys`.
+        containers = 1
+        stack: list[JsonValue] = []
+        for key, raw_value in schema.items():
+            value: JsonValue = raw_value
+            if key in member_keys and isinstance(value, (dict, list)):
+                containers += 1
+                members = value.values() if isinstance(value, dict) else value
+                stack.extend(member for member in members if not isinstance(member, dict))
+            elif not (key in value_keys and isinstance(value, dict)):
+                stack.append(value)
+
+        self._inlined_values += containers
+        while self._inlined_values <= MAX_INLINED_SCHEMA_VALUES:
+            if not stack:
+                return
+            value = stack.pop()
+            self._inlined_values += 1
+            if isinstance(value, dict):
+                stack.extend(value.values())
+            elif isinstance(value, list):
+                stack.extend(value)
+        # Stopped as soon as the count passed the limit: a schema can share one object at many places.
+        raise InlinedSchemaTooLargeError('JSON schema')
 
     def _handle_object(self, schema: JsonSchema) -> JsonSchema:
         if properties := schema.get('properties'):

@@ -1649,6 +1649,25 @@ async def test_limited_instrumentation(capfire: CaptureLogfire):
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_instrumentation_records_settings_without_extra_headers_and_extra_body(capfire: CaptureLogfire):
+    """`embedding_settings` leaves out the request header and body overrides."""
+    embedder = Embedder(TestEmbeddingModel(), instrument=InstrumentationSettings())
+    await embedder.embed_query(
+        'Hello, world!',
+        settings={
+            'dimensions': 8,
+            'extra_headers': {'X-Custom': 'header-value'},
+            'extra_body': {'custom': 'body-value'},
+        },
+    )
+    await embedder.embed_query('Hello, world!', settings={'extra_headers': {'X-Custom': 'header-value'}})
+
+    with_dimensions, only_extra_headers = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    assert with_dimensions['attributes']['embedding_settings'] == {'dimensions': 8}
+    assert 'embedding_settings' not in only_extra_headers['attributes']
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 @pytest.mark.parametrize('include_content', [True, False])
 async def test_instrumentation_exception_honors_include_content(capfire: CaptureLogfire, include_content: bool):
     """A failing embedding request follows `include_content` like the agent's spans do.
