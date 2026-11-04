@@ -146,6 +146,7 @@ Where the exec has no group of its own (crun 1.14.1), the stop kills the process
 share its group number, found by parent ID in `/proc`, so a command in a session of its own keeps running there too.
 A descendant whose parent already exited has lost that link, and one forked after the scan isn't seen; both keep
 running.
+If the process's own `/proc` entry can't be read, its group is unknown and only the process itself is killed.
 Groups are signalled as `kill -SIGNAL -PGID`, without `--`, which BusyBox's `kill` rejects, as does dash's after `-0`.
 """
 
