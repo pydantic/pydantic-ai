@@ -177,6 +177,7 @@ def create_shell(
     workspace: Path | None = None,
     process: ClaiProcess[DepsT] | None = None,
     signals: bool = True,
+    settings_for: Callable[[ProjectSettings], Settings] | None = None,
 ) -> 'SessionRuntime[DepsT, OutputT]':
     """Build one session's runtime, without attaching terminal input in headless mode.
 
@@ -184,6 +185,7 @@ def create_shell(
     what the session shares with the others in this CLAI, its built-in plugins included; without one,
     it gets its own over `store` and `builtin_plugins`, which are otherwise unused.
     `signals` lets Ctrl-C cancel this session's turns; only the session the terminal shows takes it.
+    `settings_for` gives the settings CLAI starts with beside a project file, which `/project` applies from.
     """
     settings = (
         Settings.model_validate(settings.model_dump(exclude_unset=True))
@@ -219,7 +221,9 @@ def create_shell(
         # turn holds the change, and its model, until it ends.
         shell.show_model()
 
-    context = CommandContext(settings=settings, store=store, apply_setting=apply_setting, project=project)
+    context = CommandContext(
+        settings=settings, store=store, apply_setting=apply_setting, project=project, settings_for=settings_for
+    )
     session.project_instructions = lambda: ProjectInstructions[DepsT].pending(context.project)
     models.pool_accounts = lambda: context.settings.pool_accounts
 

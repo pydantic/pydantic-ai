@@ -123,6 +123,7 @@ def _web_session(
         process=process,
         # Ctrl-C reaches the session CLAI started with, which ends CLAI; the others are interrupted from the browser.
         signals=process is None,
+        settings_for=settings_for,
     )
     SessionWorkspace(
         session=shell.session,

@@ -219,6 +219,7 @@ async def chat(
             project=project,
             transcript=transcript,
             load_plugins=load_plugins,
+            settings_for=settings_for,
         )
     fresh = False
     warming: Thread | None = None
@@ -337,6 +338,7 @@ async def chat(
                             transcript=transcript,
                             load_plugins=load_plugins,
                             workspace=Path(shell.session.workspace),
+                            settings_for=shell.context.settings_for,
                         )
                     )
                 except Exception as exc:  # noqa: BLE001 -- development edits must not discard the conversation.
@@ -404,6 +406,7 @@ def _opener(
             workspace=directory or launched_in,
             process=shell.process,
             signals=False,
+            settings_for=settings,
         )
 
     return build

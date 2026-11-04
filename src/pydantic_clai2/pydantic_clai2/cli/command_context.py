@@ -10,7 +10,7 @@ from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from pydantic_ai.settings import ModelSettings
 from pydantic_clai2.commands import Command, set_completions
-from pydantic_clai2.config import SETTING_FIELDS, STRING_SETTINGS, Settings
+from pydantic_clai2.config import SETTING_FIELDS, STRING_SETTINGS, Settings, resolve_settings
 from pydantic_clai2.config.project_settings import ProjectSettings, with_current_approvals
 from pydantic_clai2.config.settings_store import SettingsStore, setting_json
 from pydantic_clai2.ui import telemetry
@@ -47,6 +47,8 @@ class CommandContext:
     """
     edits: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     """Held by each save, so the terminal's `/set` menu, typed commands, and the web UI, each on its own thread, never lose one."""
+    settings_for: Callable[[ProjectSettings], Settings] | None = None
+    """The settings CLAI starts with beside a project file, launch flags included; without it, saved ones, then the project's."""
     saved: Callable[[str], None] = lambda key: None
     """Told the key `/set` saved or reset, once applied here, so the process's other live sessions can follow."""
 
@@ -86,7 +88,7 @@ class CommandContext:
                 with self.edits:
                     self.store.approve_project_settings(root, {key: project.pending[key] for key in keys})
                     self._use_project(with_current_approvals(project, store=self.store))
-                return f'Approved {_file_names(keys)} for {terminal_text(str(root))}. Applied.'
+                return f'Approved {_file_names(keys)} for {terminal_text(str(root))}. Applied, unless a launch flag sets it.'
             case ['revoke', *names] if names:
                 approved = {key: value for key, value in project.overrides.items() if key in project.approved}
                 keys = _project_keys(names, approved, verb='revoke')
@@ -106,20 +108,22 @@ class CommandContext:
         return ('all', *(SETTING_FIELDS[key] for key in self.project.overrides if key in self.project.approved))
 
     def _use_project(self, project: ProjectSettings) -> None:
-        """Adopt `project` for this session, applying each key that starts or stops applying: its value, else yours.
+        """Adopt `project` for this session, applying each key that starts or stops applying, as CLAI would start with it.
 
         That includes a key another live session approved or revoked since; such a session is not told at the time.
         """
         changed = sorted(self.project.overrides.keys() ^ project.overrides.keys())
         self.project = project
-        saved = self.store.overrides()
+        starting = (
+            self.settings_for(project)
+            if self.settings_for is not None
+            else resolve_settings(self.store.overrides() | project.overrides)
+        )
         for key in changed:
             field = SETTING_FIELDS[key]
             updated = self.settings.model_dump(exclude_unset=True)
-            if key in project.overrides:
-                updated[field] = project.overrides[key]
-            elif key in saved:
-                updated[field] = saved[key]
+            if field in starting.model_fields_set:
+                updated[field] = starting.model_dump(include={field})[field]
             else:
                 updated.pop(field, None)
             self.settings = Settings.model_validate(updated)
