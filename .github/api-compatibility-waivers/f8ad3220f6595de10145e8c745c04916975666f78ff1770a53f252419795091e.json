@@ -1,5 +1,5 @@
 {
-  "against": "v2.65.0",
+  "against": "v2.66.0",
   "reason": "clai2's `repo_context` now walks up by default: to the nearest `repo_context.walk_up_roots` entry (home by default), or to the repository root when none contains the workspace; its type is unchanged. Set `walk_up` to `false` to scan only the workspace.",
   "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11691"
 }
