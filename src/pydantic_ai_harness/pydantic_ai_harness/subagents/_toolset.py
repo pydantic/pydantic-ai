@@ -685,21 +685,17 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 resumable=sub_agent.resumable,
                 working_directory=directory,
             )
-        if self._records(ctx, agent_name):
-            return await self._delegate_recorded(ctx, agent_name, task, key)
+        if (recorded := await self._delegate_recorded(ctx, agent_name, task, key)) is not None:
+            return recorded
         return await self._run_delegation(ctx, agent_name, sub_agent, task=task, key=key, workspace=workspace)
 
-    def _records(self, ctx: RunContext[AgentDepsT], agent_name: str) -> bool:
-        """Whether a delegation gets a durable unit of its own: under durability with `dynamic_agents`, unless to `self`."""
-        return (
-            self._record_delegation is not None
-            and ctx.in_durable_context
-            and not (self._include_self and agent_name == SELF_AGENT_NAME)
-        )
-
-    async def _delegate_recorded(self, ctx: RunContext[AgentDepsT], agent_name: str, task: str, key: str | None) -> str:
+    async def _delegate_recorded(
+        self, ctx: RunContext[AgentDepsT], agent_name: str, task: str, key: str | None
+    ) -> str | None:
+        """Run the delegation in a durable unit of its own if it gets one, else return `None`."""
         record = self._record_delegation
-        assert record is not None, 'Only called when `_records` holds.'
+        if record is None or not ctx.in_durable_context or (self._include_self and agent_name == SELF_AGENT_NAME):
+            return None
         created = self._created.get(ctx.run_id or '', {}).get(agent_name)
         recorded = await record(ctx, agent_name, task, key, created[0] if created else None)
         if recorded.retry:
