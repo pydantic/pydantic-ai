@@ -964,8 +964,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     those protocols. Persist the ref server-side and pass an authorized `workspace=` instead.
     """
 
-    _saved_entries: list[ConversationEntry] | None = field(default=None, init=False, repr=False)
-    """The entries this run's `conversation_store` save stored, until `_announce_saved_entries` sends them."""
+    _saved_run: tuple[AgentRunResult[Any], list[ConversationEntry]] | None = field(default=None, init=False, repr=False)
+    """The result the last `conversation_store` save stored, with its entries, for `_announce_saved_entries`."""
 
     def __post_init__(self) -> None:
         # A store holds the history on the server, so an explicit `'client'` can't be told from the default.
@@ -1325,7 +1325,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         if (store := self.conversation_store) is None:
             return
         try:
-            self._saved_entries = await store.save(result, scope=self.conversation_scope)
+            self._saved_run = result, await store.save(result, scope=self.conversation_scope)
         except ConversationConflict as e:
             raise UserError(_CONVERSATION_CHANGED) from e
         except UserError:
@@ -1365,10 +1365,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         """Wrap `on_complete` so the stored entries reach the client before whatever it sends."""
 
         async def announce(result: AgentRunResult[Any]) -> AsyncIterator[EventT]:
-            # Taken once, so a later stream through this adapter can't announce this run's save.
-            entries, self._saved_entries = self._saved_entries, None
-            if entries is not None:
-                for event in self._conversation_saved_events(result.conversation.conversation_id, entries):
+            # Only for the run that was saved: any stream can go through this adapter's `transform_stream`.
+            if self._saved_run is not None and self._saved_run[0] is result:
+                for event in self._conversation_saved_events(result.conversation.conversation_id, self._saved_run[1]):
                     yield event
             if on_complete is not None:
                 async for event in dispatch_callback(on_complete, result):

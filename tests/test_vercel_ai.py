@@ -14088,6 +14088,21 @@ async def test_conversation_store_announces_a_save_once():
     assert [chunk for chunk in again if isinstance(chunk, DataChunk) and chunk.type == 'data-conversation-saved'] == []
 
 
+async def test_conversation_store_announces_a_save_only_for_the_run_it_saved():
+    """A stream that isn't the saved run gets no saved-entries part, even if the saved run never announced its own."""
+    agent, _, _ = server_history_agent()
+    store = InMemoryConversationStore()
+    adapter = VercelAIAdapter(agent, SubmitMessage(id='chat', messages=[_HI]), sdk_version=6, conversation_store=store)
+    _ = [event async for event in adapter.run_stream_native()]
+    assert await store.read_record('chat') is not None
+
+    async with agent.run_stream_events('hi', conversation_id='other') as native:
+        chunks = [chunk async for chunk in adapter.transform_stream(native)]
+
+    assert [chunk for chunk in chunks if isinstance(chunk, DataChunk) and chunk.type == 'data-conversation-saved'] == []
+    assert await store.read_record('other') is None
+
+
 async def test_conversation_store_regenerate_branches():
     """A regenerate replaces the stored turn, and the store keeps what it replaced as a branch."""
     agent, requests, _ = server_history_agent()
