@@ -105,7 +105,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.toolsets import ExternalToolset, FunctionToolset
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
-from pydantic_ai.usage import UsageLimits
+from pydantic_ai.usage import RunUsage, UsageLimits
 
 from ._inline_snapshot import snapshot
 from .conftest import (
@@ -14386,6 +14386,37 @@ async def test_conversation_store_failure_is_logged_not_sent_to_the_client(
     assert logged.exc_info is not None and logged.exc_info[1] is store.error
 
 
+@pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
+@pytest.mark.parametrize(
+    ('error', 'detail', 'logged'),
+    [
+        pytest.param(RuntimeError('postgres://admin:hunter2@10.0.0.5/chats is down'), _LOAD_FAILED, True, id='failure'),
+        pytest.param(UserError('This conversation is archived.'), 'This conversation is archived.', False, id='user'),
+    ],
+)
+async def test_dispatch_request_conversation_store_failure_before_the_run(
+    error: Exception, detail: str, logged: bool, caplog: pytest.LogCaptureFixture
+):
+    agent, requests, _ = server_history_agent()
+    body = SubmitMessage(id='chat', messages=[_HI]).model_dump_json(by_alias=True).encode()
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': body}
+
+    request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+    response = await VercelAIAdapter.dispatch_request(
+        request, agent=agent, conversation_store=_FailingStore('read_record', error)
+    )
+
+    assert response.status_code == 500
+    assert json.loads(bytes(response.body)) == {'detail': detail}
+    assert requests == []
+    assert ('hunter2' in caplog.text) is logged
+
+
 @pytest.mark.parametrize('failing', ['load', 'save'])
 async def test_conversation_store_user_error_reaches_the_client(failing: str, caplog: pytest.LogCaptureFixture):
     """A `UserError` from a store was written for whoever made the request, so it's sent as is."""
@@ -14443,6 +14474,8 @@ async def test_conversation_store_misuse():
     adapter = VercelAIAdapter(agent, run_input, conversation_store=store)
     with pytest.raises(UserError, match='Pass either `message_history` or a `conversation_store`, not both'):
         adapter.run_stream_native(message_history=[])
+    with pytest.raises(UserError, match='Pass either `usage` or a `conversation_store`, not both'):
+        adapter.run_stream_native(usage=RunUsage())
     with pytest.raises(UserError, match='needs the ID of the conversation to load'):
         adapter.run_stream_native(conversation_id='new')
 

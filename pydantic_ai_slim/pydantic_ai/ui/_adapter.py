@@ -21,7 +21,7 @@ from typing import (
 )
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
-from pydantic_core import to_jsonable_python
+from pydantic_core import to_json, to_jsonable_python
 from typing_extensions import TypeVar
 
 from pydantic_ai import CancellationToken, DeferredToolRequests, DeferredToolResults, _instructions
@@ -189,6 +189,17 @@ def conversation_not_found_response() -> Response:
         content='{"detail":"Conversation not found."}',
         media_type='application/json',
         status_code=HTTPStatus.NOT_FOUND,
+    )
+
+
+def conversation_load_failed_response(e: UserError) -> Response:
+    """Build the 500 response returned when a `conversation_store` fails before a run starts."""
+    from starlette.responses import Response
+
+    return Response(
+        content=to_json({'detail': str(e)}),
+        media_type='application/json',
+        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
     )
 
 
@@ -694,10 +705,17 @@ _CONVERSATION_LOAD_FAILED = 'The conversation could not be loaded, so this reque
 _CONVERSATION_SAVE_FAILED = 'The conversation could not be saved, so this turn was not saved. Try again later.'
 
 
-def _check_conversation_store_run(message_history: Sequence[ModelMessage] | None, conversation_id: str | None) -> None:
+def _check_conversation_store_run(
+    message_history: Sequence[ModelMessage] | None, conversation_id: str | None, usage: RunUsage | None
+) -> None:
     """Raise a `UserError` for a run that can't use a `conversation_store` as it was called."""
     if message_history is not None:
         raise UserError('Pass either `message_history` or a `conversation_store`, not both.')
+    if usage is not None:
+        raise UserError(
+            'Pass either `usage` or a `conversation_store`, not both: the run adds to the usage of the stored '
+            'conversation. To limit a run, pass `usage_limits`.'
+        )
     if conversation_id is None or conversation_id == 'new':
         raise UserError(
             'A `conversation_store` needs the ID of the conversation to load: the request carries none, '
@@ -857,7 +875,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     `'server'`, whose rules for the client's new turn the adapter follows.
     A run method then loads the conversation the request names
     ([`conversation_id`][pydantic_ai.ui.UIAdapter.conversation_id], or the one passed to it) instead of
-    taking `message_history`, runs the agent on it and the client's new turn, and saves what the run
+    taking `message_history` or `usage`, runs the agent on it and the client's new turn, and saves what the run
     added. A regenerate or edit keeps the turn it replaces as a branch of the stored conversation,
     which only changes once the run completes. An approval, denial or tool result from the client has to answer a call the stored
     conversation's deferred tool requests are waiting on with that kind of answer.
@@ -1202,11 +1220,11 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         return [*(message_history or []), *frontend_messages]
 
     def _check_conversation_store_run(
-        self, message_history: Sequence[ModelMessage] | None, conversation_id: str | None
+        self, message_history: Sequence[ModelMessage] | None, conversation_id: str | None, usage: RunUsage | None
     ) -> None:
         """Raise a `UserError` for a run that can't use `conversation_store` as it was called."""
         if self.conversation_store is not None:
-            _check_conversation_store_run(message_history, conversation_id)
+            _check_conversation_store_run(message_history, conversation_id, usage)
 
     async def _saving_conversation(self, events: AsyncIterator[NativeEvent]) -> AsyncIterator[NativeEvent]:
         """Pass `events` on, saving the run to `conversation_store` before its result."""
@@ -1299,7 +1317,13 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         every scope, an adapter that names no scope can't reach a scoped conversation by its client-supplied ID.
         """
         assert self.conversation_store is not None
-        record = await self.conversation_store.read_record(conversation_id)
+        try:
+            record = await self.conversation_store.read_record(conversation_id)
+        except UserError:
+            raise
+        except Exception as e:
+            logger.exception('Checking conversation %r in the `conversation_store` failed.', conversation_id)
+            raise UserError(_CONVERSATION_LOAD_FAILED) from e
         return record is None or record.scope == self.conversation_scope
 
     async def _save_conversation(self, result: AgentRunResult[Any]) -> None:
@@ -1405,7 +1429,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         deferred.
 
         With a [`conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store], the `UserError` for
-        passing `message_history` as well or for having no conversation ID to load also raises at the call
+        passing `message_history` or `usage` as well or for having no conversation ID to load also raises at the call
         site, but the conversation is loaded on the first iteration of the returned stream, so a `UserError`
         for a conversation that wasn't found surfaces there. So does one for a store that failed to load
         it, which holds the store's own exception as its `__cause__` and leaves its text out of the stream.
@@ -1438,7 +1462,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         """
         if conversation_id is None:
             conversation_id = self.conversation_id
-        self._check_conversation_store_run(message_history, conversation_id)
+        self._check_conversation_store_run(message_history, conversation_id, usage)
 
         # A `UserError` rejecting the request is handed back as a failing stream so it reaches
         # `transform_stream`'s error handling; the early return keeps the run setup below, like
@@ -1726,7 +1750,11 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         except ValidationError as e:
             return validation_error_response(e)
 
-        if not await adapter._conversation_found(conversation_id):
+        try:
+            found = await adapter._conversation_found(conversation_id)
+        except UserError as e:
+            return conversation_load_failed_response(e)
+        if not found:
             return conversation_not_found_response()
 
         return adapter.streaming_response(
