@@ -182,7 +182,7 @@ def validation_error_response(e: ValidationError) -> Response:
 
 
 def conversation_not_found_response() -> Response:
-    """Build the 404 response returned when a `conversation_store` conversation belongs to another scope."""
+    """Build the 404 response returned when the request names a conversation `conversation_scope` can't reach."""
     from starlette.responses import Response
 
     return Response(
@@ -885,8 +885,6 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     scope leaves the conversation as it is, so freeing the ID takes one from your app without a scope.
     """
 
-    _saved_entries: list[ConversationEntry] | None = field(default=None, init=False, repr=False)
-
     allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'})
     """URL schemes that are allowed for [`FileUrl`][pydantic_ai.messages.FileUrl] parts
     ([`ImageUrl`][pydantic_ai.messages.ImageUrl], [`DocumentUrl`][pydantic_ai.messages.DocumentUrl],
@@ -965,6 +963,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     only affects `sanitize_messages` and custom adapters; it does not round-trip a reference through
     those protocols. Persist the ref server-side and pass an authorized `workspace=` instead.
     """
+
+    _saved_entries: list[ConversationEntry] | None = field(default=None, init=False, repr=False)
+    """The entries this run's `conversation_store` save stored, until `_announce_saved_entries` sends them."""
 
     def __post_init__(self) -> None:
         # A store holds the history on the server, so an explicit `'client'` can't be told from the default.
@@ -1364,8 +1365,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         """Wrap `on_complete` so the stored entries reach the client before whatever it sends."""
 
         async def announce(result: AgentRunResult[Any]) -> AsyncIterator[EventT]:
-            if self._saved_entries is not None:
-                for event in self._conversation_saved_events(result.conversation.conversation_id, self._saved_entries):
+            # Taken once, so a later stream through this adapter can't announce this run's save.
+            entries, self._saved_entries = self._saved_entries, None
+            if entries is not None:
+                for event in self._conversation_saved_events(result.conversation.conversation_id, entries):
                     yield event
             if on_complete is not None:
                 async for event in dispatch_callback(on_complete, result):

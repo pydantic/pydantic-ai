@@ -14073,6 +14073,21 @@ async def test_conversation_store_loads_and_saves_each_turn():
     )
 
 
+async def test_conversation_store_announces_a_save_once():
+    """An adapter reused for a stream it didn't run doesn't announce its earlier run's save again."""
+    agent, _, _ = server_history_agent()
+    adapter = VercelAIAdapter(
+        agent, SubmitMessage(id='chat', messages=[_HI]), sdk_version=6, conversation_store=InMemoryConversationStore()
+    )
+    chunks = [chunk async for chunk in adapter.run_stream()]
+    assert _saved_entry_ids(chunks)
+
+    async with agent.run_stream_events('hi') as native:
+        again = [chunk async for chunk in adapter.transform_stream(native)]
+
+    assert [chunk for chunk in again if isinstance(chunk, DataChunk) and chunk.type == 'data-conversation-saved'] == []
+
+
 async def test_conversation_store_regenerate_branches():
     """A regenerate replaces the stored turn, and the store keeps what it replaced as a branch."""
     agent, requests, _ = server_history_agent()
