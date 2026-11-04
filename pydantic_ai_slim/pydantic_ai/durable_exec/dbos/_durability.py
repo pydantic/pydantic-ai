@@ -2,31 +2,39 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Mapping
+from contextlib import nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 from weakref import WeakKeyDictionary
 
-from dbos import DBOS
+from dbos import DBOS, SetWorkflowTimeout
 from dbos._error import DBOSWorkflowCancelledError, DBOSWorkflowConflictIDError
 
 from pydantic_ai._utils import now_utc
 from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.agent.abstract import AbstractAgent
-from pydantic_ai.capabilities.abstract import WrapRunHandler
+from pydantic_ai.capabilities import SetToolMetadata
+from pydantic_ai.capabilities.abstract import AbstractCapability, WrapRunHandler
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability, conversation_id_from_run_id
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
-from pydantic_ai.durable_exec._operation import EventStreamHandlerParams, ToolsetKind
+from pydantic_ai.durable_exec._operation import EventStreamHandlerParams, ToolsetCallToolId, ToolsetKind
+from pydantic_ai.durable_exec._run_context import DurableRunContext
 from pydantic_ai.durable_exec._spec import DurabilityEngineSpec
+from pydantic_ai.durable_exec._toolset import CallToolResult, DurableFunctionToolset, wrap_tool_call_result
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent
 from pydantic_ai.models import Model
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
+from pydantic_ai.toolsets.function import FunctionToolsetTool
 
 from ._agent import DBOSParallelExecutionMode
 from ._operation_backend import DBOSBoundOperation, DBOSOperationBackend, DBOSOperationConfig
-from ._utils import StepConfig, guard_enqueue_in_workflow, in_workflow_code, using_durable_sleep
+from ._operation_names import DBOSOperationNamer
+from ._utils import ChildWorkflowConfig, StepConfig, guard_enqueue_in_workflow, in_workflow_code, using_durable_sleep
 
 if TYPE_CHECKING:
     from dbos._context import DBOSContext
@@ -81,10 +89,11 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         # the workflow was cancelled tries to record its result after the cancel handed ownership off.
         cancellation_error_types=(DBOSWorkflowCancelledError, DBOSWorkflowConflictIDError),
     )
-    # No `tool_config_key`: DBOS takes no per-tool config, and tool metadata is ignored (as it was
-    # before this capability existed). It can't be supported without changing durable history: a step
-    # is registered once per name, and DBOS tool-call step names deliberately carry no tool name
-    # (every tool in a toolset shares one step), so per-tool config would be first-tool-wins.
+    # No `tool_config_key`: DBOS takes no per-tool step config, and tool metadata other than
+    # `{'dbos': {'child_workflow': ...}}` is ignored (as it was before this capability existed). It
+    # can't be supported without changing durable history: a step is registered once per name, and
+    # DBOS tool-call step names deliberately carry no tool name (every tool in a toolset shares one
+    # step), so per-tool config would be first-tool-wins.
 
     def __init__(
         self,
@@ -144,6 +153,8 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         self._legacy_run_sync_workflow: Any = None
         self._operation_backend: DBOSOperationBackend | None = None
         self._event_step_contexts: dict[tuple[str | None, str | None], dict[int, deque[DBOSContext | None]]] = {}
+        self._child_workflow_toolsets: dict[str, DurableFunctionToolset[AgentDepsT]] = {}
+        self._child_workflow_metadata_capability = False
         self._init_legacy_context_vars()
 
     def _init_legacy_context_vars(self) -> None:
@@ -184,6 +195,11 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
 
         # --- MCP toolset wrapping ---
         self._register_toolsets(agent)
+        self._child_workflow_toolsets = {}
+        for toolset in agent.toolsets:
+            toolset.apply(self._register_child_workflow)
+        self._child_workflow_metadata_capability = False
+        agent.root_capability.apply(self._detect_child_workflow_metadata)
 
         if self._register_legacy_workflows:
             # A wrapper-era workflow recorded only model and MCP steps: `DBOSAgent` delivered model
@@ -263,6 +279,77 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         assert self._operation_backend is not None
         return self._operation_backend
 
+    def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
+        wrapped = super().get_wrapper_toolset(toolset)
+        swapped = False
+
+        def swap(ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+            nonlocal swapped
+            child = self._child_workflow_toolsets.get(ts._explicit_id or '')  # pyright: ignore[reportPrivateUsage]
+            # Toolsets without `child_workflow` tools stay unwrapped, as function toolsets always were.
+            if child is None or child.wrapped is not ts:
+                return ts
+            if not self._child_workflow_metadata_capability and not any(
+                _selects_child_workflow(tool.metadata) for tool in cast(FunctionToolset[AgentDepsT], ts).tools.values()
+            ):
+                return ts
+            swapped = True
+            return child
+
+        replaced = (wrapped or toolset).visit_and_replace(swap)
+        return replaced if swapped else wrapped
+
+    def _detect_child_workflow_metadata(self, capability: AbstractCapability[AgentDepsT]) -> None:
+        # `SetToolMetadata` can select tools in any toolset, so it enables child workflows for all of them.
+        if isinstance(capability, SetToolMetadata) and _selects_child_workflow(capability.metadata):
+            self._child_workflow_metadata_capability = True
+
+    def _register_child_workflow(self, toolset: AbstractToolset[AgentDepsT]) -> None:
+        """Register the DBOS workflow that runs `toolset`'s tools with `child_workflow` metadata."""
+        toolset_id = toolset._explicit_id  # pyright: ignore[reportPrivateUsage]
+        if (
+            not isinstance(toolset, FunctionToolset)
+            or toolset_id is None
+            or toolset_id in self._child_workflow_toolsets
+        ):
+            return
+        operation_name = DBOSOperationNamer(self.name).operation_name(
+            ToolsetCallToolId('function', toolset_id=toolset_id)
+        )
+
+        @DBOS.workflow(name=f'{operation_name}__child_workflow')
+        async def call_tool_workflow(
+            tool_name: str, tool_args: dict[str, Any], serialized_ctx: dict[str, Any], deps: Any
+        ) -> CallToolResult:
+            ctx = DurableRunContext.restore(serialized_ctx, deps=deps, agent=self._agent, engine_spec=self.engine_spec)
+            tool = (await toolset.get_tools(ctx))[tool_name]
+            with self._tool_run_context_scope(ctx) as durable_ctx:
+                return await wrap_tool_call_result(toolset.call_tool(tool_name, tool_args, durable_ctx, tool))
+
+        async def call_tool_operation(
+            name: str,
+            tool_args: dict[str, Any],
+            *,
+            ctx: RunContext[AgentDepsT],
+            tool: ToolsetTool[AgentDepsT],
+            config: Mapping[str, Any],
+        ) -> Any:
+            timeout = config.get('workflow_timeout_sec')
+            with SetWorkflowTimeout(timeout) if timeout is not None else nullcontext():
+                payload = await call_tool_workflow(
+                    name, tool_args, DurableRunContext.serialize_run_context(ctx), ctx.deps
+                )
+            return self._unwrap_tool_result(payload)
+
+        self._child_workflow_toolsets[toolset_id] = DurableFunctionToolset(
+            toolset,
+            in_durable_context=in_workflow_code,
+            call_tool_operation=call_tool_operation,
+            resolve_tool_config=_child_workflow_config,
+            lifecycle='enter-always',
+            durable_registrations=[call_tool_workflow],
+        )
+
     def _toolset_base_config(self, kind: ToolsetKind) -> StepConfig:
         return self._mcp_step_config
 
@@ -333,3 +420,28 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         finally:
             if reserve_events:
                 self._event_step_contexts.pop(key)
+
+
+def _selects_child_workflow(metadata: Mapping[str, Any] | None) -> bool:
+    config = (metadata or {}).get('dbos')
+    return isinstance(config, dict) and 'child_workflow' in config
+
+
+def _child_workflow_config(tool: ToolsetTool[Any] | None, name: str) -> ChildWorkflowConfig | Literal[False]:
+    if tool is None or not _selects_child_workflow(tool.tool_def.metadata):
+        return False
+    config: dict[str, Any] = cast(dict[str, Any], tool.tool_def.metadata)['dbos']
+    child_config = config['child_workflow']
+    if (
+        len(config) != 1
+        or not isinstance(child_config, dict)
+        or not cast(dict[str, Any], child_config).keys() <= ChildWorkflowConfig.__annotations__.keys()
+    ):
+        raise UserError(
+            f'Tool {name!r} has invalid DBOS metadata: expected `{{"child_workflow": ChildWorkflowConfig(...)}}`.'
+        )
+    if not (isinstance(tool, FunctionToolsetTool) and tool.is_async):
+        raise UserError(
+            f'DBOS metadata for tool {name!r} selects a child workflow, but only async function tools can run as one.'
+        )
+    return cast(ChildWorkflowConfig, child_config)

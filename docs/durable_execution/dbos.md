@@ -248,6 +248,46 @@ The deadline bounds the agent run, not the workflow. To bound the whole workflow
 
 When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)), each segment runs in a separate model request step, and the wait between polls is a durable `DBOS.sleep` step, so recovery skips completed waits. The suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] and background job ID are checkpointed between segments, while the final response is merged and usage is recorded once. A [`message_history`](../message-history.md) ending in a suspended response is passed to the first step. Size step timeouts for one provider round trip. If an error abandons a suspended job, its provider teardown runs in a dedicated cancellation step. [Batched requests](../batch.md#durable-execution) work the same way: submitting a request and each check on its batch are separate steps, with durable sleeps between checks.
 
+### Child workflows
+
+An async function tool can run as a DBOS [child workflow](https://docs.dbos.dev/python/tutorials/workflow-tutorial#child-workflows) instead of in the parent workflow's code. This is useful when the tool runs a nested agent with its own `DBOSDurability`: the nested model requests and tool calls are recorded as steps in the child's history instead of the parent's, and recovery resumes the child from its own checkpoints.
+
+Set the tool's `'dbos'` metadata to `{'child_workflow': ChildWorkflowConfig(...)}`, directly or with [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata]:
+
+```python {title="dbos_child_workflow.py" test="skip"}
+from dbos import DBOS
+
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.dbos import ChildWorkflowConfig, DBOSDurability
+from pydantic_ai.toolsets import FunctionToolset
+
+researcher = Agent('{{ openai:medium }}', name='researcher', capabilities=[DBOSDurability()])
+
+delegation = FunctionToolset(id='delegation')
+
+
+@delegation.tool_plain(
+    metadata={'dbos': {'child_workflow': ChildWorkflowConfig(workflow_timeout_sec=600)}}
+)
+async def research(topic: str) -> str:
+    """Research a topic in depth."""
+    result = await researcher.run(f'Research: {topic}')
+    return result.output
+
+
+lead = Agent(
+    '{{ openai:medium }}', name='lead', toolsets=[delegation], capabilities=[DBOSDurability()]
+)
+
+
+@DBOS.workflow()
+async def lead_workflow(prompt: str) -> str:
+    result = await lead.run(prompt)
+    return result.output
+```
+
+Each `research` call starts a `lead__function_toolset__delegation.call_tool__child_workflow` workflow; the agent's own tools use the toolset `id` `<agent>`. The tool arguments, the serialized run context, and `deps` are the child's workflow inputs, so they must be serializable, and context fields that aren't serialized, like `ctx.messages`, raise a `UserError` in the tool. Child workflows are only supported for async tools in a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] with a unique `id`.
+
 ### Parallel Tool Execution
 
 Under DBOS, tools are executed in parallel by default to minimize latency. Tool result events are emitted in tool-call order after all parallel tool calls complete.
@@ -277,7 +317,7 @@ You can customize DBOS step behavior, such as retries, by passing [`StepConfig`]
 - `model_step_config`: The DBOS step config to use for model request steps. No retries if omitted. The model request step carries the [durable-execution retry layer](../retries.md#the-layers) — see [Retry multiplication](../retries.md#retry-multiplication) for how `StepConfig` retries stack with the SDK client's and transport's retries.
 - `event_stream_handler_step_config`: The DBOS step config to use for event stream handler steps (`DBOSDurability` only). No retries if omitted.
 
-Unlike the [Temporal](temporal.md#per-tool-activity-config) and [Prefect](prefect.md#tool-wrapping) integrations, DBOS takes no per-tool config: tool metadata (a `'dbos'` key or otherwise) is ignored, and there's no way to opt an individual tool out of step wrapping.
+Unlike the [Temporal](temporal.md#per-tool-activity-config) and [Prefect](prefect.md#tool-wrapping) integrations, DBOS takes no per-tool step config: tool metadata other than [`child_workflow`](#child-workflows) is ignored, and there's no way to opt an individual tool out of step wrapping.
 
 For custom tools, you can annotate them directly with [`@DBOS.step`](https://docs.dbos.dev/python/reference/decorators#step) or [`@DBOS.workflow`](https://docs.dbos.dev/python/reference/decorators#workflow) decorators as needed. These decorators have no effect outside DBOS workflows, so tools remain usable in non-DBOS agents.
 

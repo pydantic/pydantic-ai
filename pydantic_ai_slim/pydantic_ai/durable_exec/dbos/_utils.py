@@ -19,6 +19,13 @@ class StepConfig(TypedDict, total=False):
     backoff_rate: float
 
 
+class ChildWorkflowConfig(TypedDict, total=False):
+    """Configuration for a tool call run as a DBOS child workflow."""
+
+    workflow_timeout_sec: float
+    """Passed to DBOS's `SetWorkflowTimeout` when the child workflow starts."""
+
+
 def guard_enqueue_in_workflow(ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
     """Make `ctx.enqueue()` raise inside a workflow's step-wrapped tool call.
 
