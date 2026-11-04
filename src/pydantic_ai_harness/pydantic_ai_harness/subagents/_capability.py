@@ -40,7 +40,6 @@ from pydantic_ai_harness.subagents._toolset import (
     CONTROL_TOOL_NAMES,
     CREATE_AGENT_TOOL_NAME,
     DEFAULT_MAX_DEPTH,
-    IN_WORKFLOW,
     SELF_AGENT_NAME,
     RecordedDelegation,
     SubAgent,
@@ -90,15 +89,6 @@ the delegates run rather than *who* they are -- so merging them applies one harn
 other's sub-agents. Enumerating those instead would mean a field added
 later merges silently by default, which is the wrong way round for a decision nobody made.
 """
-
-
-def _tools_run_in_workflow(ctx: RunContext[Any]) -> bool:
-    """Whether the durable engine runs `create_agent` in workflow code, where replay rebuilds the roster."""
-    durability = BaseDurabilityCapability.from_agent(ctx.agent) if ctx.agent is not None else None
-    if durability is None:  # pragma: no cover - only asked in a durable context
-        return False
-    spec = durability.engine_spec
-    return 'function' not in spec.wrapped_toolset_kinds or spec.tool_config_key in IN_WORKFLOW
 
 
 @dataclass
@@ -550,7 +540,15 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     def _require_durable_support(self, ctx: RunContext[AgentDepsT], owner: DelegationTasks | None) -> None:
         if self.task_control is not None:
             raise UserError('`SubAgents` `task_control` is not supported under durable execution.')
-        if self.dynamic_agents is not None and (owner is not None or not _tools_run_in_workflow(ctx)):
+        if self.dynamic_agents is None:
+            return
+        durability = BaseDurabilityCapability.from_agent(ctx.agent) if ctx.agent is not None else None
+        assert durability is not None, 'Only called in a durable context.'
+        spec = durability.engine_spec
+        # Replay rebuilds the roster only if `create_agent` runs in workflow code: an engine that runs function tools
+        # there, or Temporal, which honors the toolset's `{'temporal': False}`.
+        in_workflow = 'function' not in spec.wrapped_toolset_kinds or spec.tool_config_key == 'temporal'
+        if owner is not None or not in_workflow:
             raise UserError(
                 '`SubAgents` `dynamic_agents` is only supported under durable execution on an engine that runs its '
                 'tools in workflow code, such as Temporal or DBOS, outside a `DelegationTasks` owner.'
