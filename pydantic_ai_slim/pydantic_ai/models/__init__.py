@@ -3966,10 +3966,8 @@ def _narrowed_file_input(
             profile.get('supported_image_media_types', KNOWN_IMAGE_MEDIA_TYPES) & image_media_types
         )
     if (document_media_types := adapter_media_types.get('document')) is not None:
-        narrowed['supported_document_media_types'] = frozenset(
-            media_type
-            for media_type in profile.get('supported_document_media_types', KNOWN_DOCUMENT_MEDIA_TYPES)
-            if media_type in document_media_types
+        narrowed['supported_document_media_types'] = (
+            profile.get('supported_document_media_types', KNOWN_DOCUMENT_MEDIA_TYPES) & document_media_types
         )
     if (audio_media_types := adapter_media_types.get('audio')) is not None:
         narrowed['supported_audio_media_types'] = (

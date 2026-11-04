@@ -752,3 +752,16 @@ def test_adapter_narrowing_applies_over_the_user_profile():
             'File song (audio/mpeg) was not sent: this model cannot read audio files.',
         ]
     )
+
+
+async def test_document_media_type_the_profile_adds_is_sent():
+    """A document type `DocumentMediaType` doesn't list, such as PowerPoint, can be added to the profile's set."""
+    sent: list[list[ModelMessage]] = []
+    document = DocumentUrl('https://example.com/slides.pptx')
+    pptx = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+    profile = ModelProfile(supported_document_media_types=frozenset({'application/pdf', pptx}))
+
+    await agent_with_tool_file(FunctionModel(calls_get_file_then(sent), profile=profile), document).run('Get the file.')
+
+    [request] = sent
+    assert tool_returns(request)[0].content == document

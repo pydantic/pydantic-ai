@@ -16,7 +16,7 @@ from .._file_input import (
 )
 from .._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
 from ..exceptions import PydanticAIDeprecationWarning
-from ..messages import CachePoint, DocumentMediaType, ModelRequest, ModelResponse, UserPromptPart
+from ..messages import CachePoint, ModelRequest, ModelResponse, UserPromptPart
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..output import StructuredOutputMode
 from ..settings import CacheRetention
@@ -142,7 +142,7 @@ class ModelProfile(TypedDict, total=False):
     See `supports_image_input` for how the file-input flags are used.
     """
 
-    supported_document_media_types: frozenset[DocumentMediaType]
+    supported_document_media_types: frozenset[str]
     """The document media types the model accepts, when it accepts documents at all. Default: every
     media type in `DocumentMediaType`.
 
