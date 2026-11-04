@@ -1136,7 +1136,9 @@ def rebuild_with_cleared(
                     and part.tool_call_id in clear_input_ids
                     and part.args != _CLEARED_TOOL_ARGS
                 ):
-                    response_parts.append(replace(part, args=_CLEARED_TOOL_ARGS))
+                    # The OpenAI Responses API resolves an item ID to its stored copy and ignores the
+                    # args sent with it, so a cleared call can't keep its ID.
+                    response_parts.append(replace(part, args=_CLEARED_TOOL_ARGS, id=None))
                     changed = True
                 else:
                     response_parts.append(part)
