@@ -367,11 +367,27 @@ def in_second_model_prompt() -> bool:
     return _in_second_model_prompt.get()
 
 
-LookalikeSource = Literal['user', 'tool', 'file']
-"""Who wrote text that resembles a framework frame: the user, a tool, or the author of a file."""
+LookalikeSource = Literal['user', 'tool', 'file', 'retry', 'thinking']
+"""Who wrote text that resembles a framework frame.
 
-_LOOKALIKE_ITEM: Final[dict[LookalikeSource, str]] = {'user': 'user message', 'tool': 'tool result', 'file': 'file'}
-_LOOKALIKE_AUTHOR: Final[dict[LookalikeSource, str]] = {'user': 'user', 'tool': 'tool', 'file': 'author of the file'}
+The user, a tool, the author of a file, the earlier reply that retry feedback quotes, or the assistant in reasoning
+carried into a user turn.
+"""
+
+_LOOKALIKE_ITEM: Final[dict[LookalikeSource, str]] = {
+    'user': 'user message',
+    'tool': 'tool result',
+    'file': 'file',
+    'retry': 'retry feedback',
+    'thinking': f'<{ASSISTANT_THINKING_TAG}> reasoning',
+}
+_LOOKALIKE_AUTHOR: Final[dict[LookalikeSource, str]] = {
+    'user': 'user',
+    'tool': 'tool',
+    'file': 'author of the file',
+    'retry': 'earlier reply it quotes',
+    'thinking': 'assistant',
+}
 
 
 def lookalike_frame_note(
@@ -522,9 +538,8 @@ _lookalike_frame: re.Pattern[str] = _lookalike_pattern(_system_voice_tags)
 def add_system_voice_tag(name: str) -> None:
     """Count text that opens the tag `name` or its diff `<{name}_diff>` as a lookalike frame, like a `<system>` opener.
 
-    The single source of the tags the lookalike check looks for: core's `system`, `context` and `context_diff`,
-    plus the tag of any instruction or system-voice capability part that declares its own. Adding a tag twice is a
-    no-op. Private: capability parts are the supported way to declare one.
+    The single source of the tags the lookalike check looks for: core's `system`, `context` and `context_diff`, plus
+    any added here. Adding a tag twice is a no-op. Private.
 
     Raises:
         UserError: If `name` isn't lowercase snake_case, or ends in the reserved `_diff`.

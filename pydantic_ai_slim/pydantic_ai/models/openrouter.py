@@ -1464,6 +1464,12 @@ class OpenRouterModel(OpenAIChatModel):
         assert isinstance(response, _OpenRouterChatCompletion)
         return _map_openrouter_usage(response, self._provider.name, self._provider.base_url, self.model_name)
 
+    @override
+    def _carries_thinking_in_user_turn(self, message: ModelResponse, part: ThinkingPart) -> bool:
+        return not self.accepts_stateless_artifacts(message, part) and super()._carries_thinking_in_user_turn(
+            message, part
+        )
+
     @dataclass
     class _MapModelResponseContext(OpenAIChatModel._MapModelResponseContext):  # type: ignore[reportPrivateUsage]
         reasoning_details: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])

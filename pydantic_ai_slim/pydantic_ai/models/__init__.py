@@ -155,6 +155,7 @@ from ..messages import (
     _render_append_parts,  # pyright: ignore[reportPrivateUsage]
     _render_system_prompt_context,  # pyright: ignore[reportPrivateUsage]
     _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
+    _retry_feedback_text,  # pyright: ignore[reportPrivateUsage]
     _StatelessArtifactPredicate,  # pyright: ignore[reportPrivateUsage]
     _tagged_append_parts,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
@@ -1776,7 +1777,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         (`supports_request_scoped_system_prompts`) gets the same tags and stays a `SystemPromptPart`. On such a
         profile the instructions open with a sentence saying what the tag means (see `_get_instruction_parts`).
         Nothing the user or a tool wrote is
-        rewritten. A user, tool or file item whose text resembles
+        rewritten. A user, tool, file, retry feedback or carried reasoning item whose text resembles
         a frame gets a note next to it, and on a profile with inline system messages the first request with a
         frame or a note gets the announcement (see `_note_lookalike_frames`). It also converts
         `SpeechPart`s from realtime session history into `UserPromptPart`s /
@@ -1831,8 +1832,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         # history was authored with, and a note or announcement in the first request is not part of it.
         first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
         standing_prompt_count = _standing_system_prompt_count(first_request) if first_request else 0
-        # Kept as stored, after speech becomes user text: only text from the user, tools and files is checked for
-        # lookalike frames below, never the frames the framework renders from a retry.
+        # Kept as stored, after speech becomes user text: lookalike frames below are looked for in what the user, a
+        # tool or a file wrote and in the text retry feedback quotes, never in the fence the framework renders around it.
         authored = messages
         # Translated before every later step — the tool-availability announcement and the `<system>`
         # wrap below it — so they see the plain parts a retry becomes rather than the retry itself.
@@ -1991,7 +1992,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         return False
 
     def _note_lookalike_frames(self, authored: list[ModelMessage], messages: list[ModelMessage]) -> list[ModelMessage]:
-        """Note each user, tool or file item whose text resembles a framework frame, and announce the notes where needed.
+        """Note each item whose text resembles a framework frame, and announce the notes where needed.
 
         `authored` is the history as stored and `messages` the same history with retries translated, part for part.
         An item from the user or a tool (an uploaded text file or a tool's text file included) whose text contains a
@@ -2000,6 +2001,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         user's, the tool's or the file author's (`lookalike_frame_note`). Nothing in the item itself changes. The
         note goes ahead of a user prompt and after the request's tool results, or wherever this adapter's ClassVars
         say its API needs it, and is worded "following" or "preceding" to match.
+
+        Retry feedback gets the same for the text it quotes, not for the fence around it. So does reasoning this adapter
+        carries into a user turn, with its note last in the request before that reply: the request has gone out by the
+        time the reply is replayed, so anywhere earlier in it would move the prompt cache's prefix. Only an opening
+        reply has no request to hold a note, so its reasoning goes without one.
 
         On a model with inline system messages, the first request with a frame on the user channel or a note also
         gets the announcement, as a mid-conversation `SystemPromptPart` (on the others it opens the
@@ -2024,7 +2030,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             parts, frame_at = self._request_with_lookalike_notes(
                 original, message, first_request=index == first_request_index
             )
-            frame_at = self._frame_index_with_thinking(parts, frame_at, following=messages[index + 1 : index + 2])
+            following = messages[index + 1 : index + 2]
+            frame_at = self._frame_index_with_thinking(parts, frame_at, following=following)
             if frame_at is not None and pending_announcement:
                 pending_announcement = False
                 announcement = _FrameworkNote(
@@ -2032,6 +2039,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                     timestamp=message.timestamp or _utils.now_utc(),
                 )
                 parts.insert(frame_at, announcement)
+            if note := self._carried_thinking_note(message, following):
+                parts.append(note)
             if _parts_changed(parts, message.parts):
                 message = replace(message, parts=parts)
                 changed = True
@@ -2274,15 +2283,29 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """
         if frame_at is not None:
             return frame_at
-        carries_thinking = any(
-            isinstance(response, ModelResponse)
-            and any(
-                isinstance(part, ThinkingPart) and self._carries_thinking_in_user_turn(response, part)
-                for part in response.parts
-            )
+        return len(parts) if self._carried_thinking(following) else None
+
+    def _carried_thinking(self, following: list[ModelMessage]) -> list[ThinkingPart]:
+        """The reasoning in `following` that this adapter replays in a user turn."""
+        return [
+            part
             for response in following
-        )
-        return len(parts) if carries_thinking else None
+            if isinstance(response, ModelResponse)
+            for part in response.parts
+            if isinstance(part, ThinkingPart) and self._carries_thinking_in_user_turn(response, part)
+        ]
+
+    def _carried_thinking_note(self, request: ModelRequest, following: list[ModelMessage]) -> _FrameworkNote | None:
+        """The note for lookalikes in the reasoning in `following` this adapter replays in a user turn, if any.
+
+        One note covers all of a reply's reasoning, which goes out in one user turn.
+        """
+        tags = [tag for part in self._carried_thinking(following) for tag in lookalike_tags(part.content)]
+        if not tags:
+            return None
+        # Where system messages follow the user content, the reasoning is that content.
+        preceding = self.profile.get('supports_inline_system_prompts', False) and self._system_entries_follow_user_turn
+        return self._lookalike_note(request, 'thinking', tags, preceding=preceding, genuine_change=False)
 
     def _carries_thinking_in_user_turn(self, message: ModelResponse, part: ThinkingPart) -> bool:
         """Whether this adapter replays `part` of `message` as an `<assistant_thinking>` frame in a user turn.
@@ -4413,10 +4436,11 @@ def _lookalike_sources(part: ModelRequestPart) -> list[tuple[LookalikeSource, li
     """Who wrote the text in `part` that resembles a framework frame, with the system-voice tags it opens.
 
     A user prompt's text and its text files are checked separately, so each gets a note naming its author. A tool
-    result is checked whole, its text files included. Text files are read as UTF-8; other files have no text to check.
+    result is checked whole, its text files included. Retry feedback is checked for the text it quotes, not for the
+    frame core puts around it. Text files are read as UTF-8; other files have no text to check.
     """
     # TODO(v3): remove `RetryPromptPart`
-    if isinstance(part, RetryPromptPart) and part.tool_name is not None:  # pyright: ignore[reportDeprecated]
+    if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
         part = _translate_legacy_retry_part(part)
     found: dict[LookalikeSource, list[str]] = {}
     for source, text in _lookalike_texts(part):
@@ -4453,6 +4477,8 @@ def _lookalike_texts(part: ModelRequestPart) -> Iterator[tuple[LookalikeSource, 
         for item in part.content_items(mode='str', wrap_if_error=False):
             text = _text_file_content(item)
             yield 'tool', _text_of(item) if text is None else text
+    elif isinstance(part, RetryFeedbackPart):
+        yield 'retry', _retry_feedback_text(part)
 
 
 def _text_of(item: object) -> str | None:
