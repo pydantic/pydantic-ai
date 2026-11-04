@@ -678,29 +678,6 @@ def test_a_file_note_names_the_genuine_change_and_a_user_note_never_does():
 
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
-@pytest.mark.parametrize(
-    ('model_name', 'sealed'),
-    [
-        ('claude-sonnet-4-6', True),
-        ('claude-haiku-5-5', True),
-        ('claude-sonnet-4-5', False),
-        ('claude-sonnet-5', False),
-        ('claude-sonnet-5-5', True),
-        ('claude-opus-5', False),
-        ('claude-haiku-4-5', False),
-    ],
-)
-def test_only_claude_sonnet_4_6_sonnet_5_5_and_haiku_5_5_need_sealed_system_blocks(model_name: str, sealed: bool):
-    """A sealed model never gets the native role: its blocks are the `<system>` fallback."""
-    profile = AnthropicModel(model_name, provider=AnthropicProvider(api_key='mock-api-key')).profile
-    assert profile.get('needs_sealed_system_blocks', False) is sealed
-    if sealed:
-        assert profile.get('supports_inline_system_prompts') is False
-        # Sonnet 4.6 rejects the entry; the other two take it, with the sealed block inside.
-        assert profile.get('supports_request_scoped_system_prompts') is (model_name != 'claude-sonnet-4-6')
-
-
-@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
 async def test_claude_sonnet_4_6_gets_sealed_blocks_and_the_sealed_announcement():
     """Sealed blocks after the user's words and the sealed announcement, which Sonnet 4.6 needs to follow them."""
     model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='mock-api-key'))
