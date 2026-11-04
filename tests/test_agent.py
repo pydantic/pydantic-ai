@@ -4910,7 +4910,10 @@ def test_text_output_function_validation_error_with_finish_reason_length_is_retr
             return ModelResponse(parts=[TextPart('{"name": "Paris", "popu')], finish_reason='length')
         return ModelResponse(parts=[TextPart('{"name": "Paris", "population": 2}')])
 
-    agent = Agent(FunctionModel(respond), output_type=TextOutput(_City.model_validate_json))
+    def parse(text: str) -> _City:
+        return _City.model_validate_json(text)
+
+    agent = Agent(FunctionModel(respond), output_type=TextOutput(parse))
     assert agent.run_sync('Hello').output == _City(name='Paris', population=2)
 
 
