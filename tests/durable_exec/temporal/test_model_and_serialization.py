@@ -9,7 +9,7 @@ from collections.abc import AsyncGenerator, AsyncIterable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 from unittest.mock import AsyncMock, Mock, patch
 
 import httpx2
@@ -26,6 +26,7 @@ from pydantic_ai import (
     DocumentUrl,
     FilePart,
     FunctionToolset,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -120,7 +121,10 @@ try:
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
     from temporalio.workflow import ActivityConfig
 
-    from pydantic_ai.durable_exec._toolset import CallToolResult
+    from pydantic_ai.durable_exec._toolset import (
+        CallToolResult,
+        _ToolReturn,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
         LogfirePlugin,
@@ -3869,3 +3873,24 @@ def test_an_activity_failure_without_an_application_error_is_raised_unchanged():
         with rebuilt_model_errors():
             raise activity_error
     assert raised.value is activity_error
+
+
+def test_payload_converter_decodes_journal_entries_written_before_records():
+    """A tool-call result an earlier worker journaled has no file record, and still decodes with every file.
+
+    The application's own worker wrote it, so a workflow in flight across an upgrade keeps its tool results.
+    """
+    files: list[DocumentUrl | ImageUrl | UploadedFile] = [
+        UploadedFile('file-1', 'openai'),
+        DocumentUrl('s3://bucket/report.pdf'),
+        ImageUrl('https://example.com/chart.png', force_download=True),
+    ]
+    result = _ToolReturn(result=files)
+    journaled = TypeAdapter[Any](CallToolResult).dump_python(result, mode='json')
+    del journaled['content_file_digests']
+    payload = temporalio.api.common.v1.Payload(
+        metadata={'encoding': b'json/plain'}, data=json.dumps(journaled).encode()
+    )
+
+    converter = temporal_payload_converter.PydanticAIJSONPlainPayloadConverter()
+    assert converter.from_payload(payload, cast(type, CallToolResult)) == result

@@ -1701,6 +1701,77 @@ async def test_a_boolean_schema_is_an_unsupported_argument(allow_model_requests:
         await Agent(model, output_type=Triage, tools=[tool]).run('Where is my order?')
 
 
+_VALUE_LIMIT = 1_000
+"""The limit these tests patch in, so their schemas stay small."""
+
+
+def _doubling_definitions(combine: Literal['properties', 'anyOf']) -> dict[str, Any]:
+    """Definitions that each refer to the one below twice, so resolving them doubles per level, past `_VALUE_LIMIT`.
+
+    As `properties`, every level doubles the fields; as `anyOf`, it doubles the options of a single field.
+    """
+    defs: dict[str, Any] = {'D0': {'type': 'boolean'}}
+    levels = _VALUE_LIMIT.bit_length()
+    for i in range(1, levels + 1):
+        ref = {'$ref': f'#/$defs/D{i - 1}'}
+        defs[f'D{i}'] = (
+            {'type': 'object', 'properties': {'a': ref, 'b': ref}} if combine == 'properties' else {'anyOf': [ref, ref]}
+        )
+    return {
+        'type': 'object',
+        'properties': {'query': {'$ref': f'#/$defs/D{levels}', 'description': 'What to look up.'}},
+        '$defs': defs,
+    }
+
+
+async def test_arguments_past_the_value_limit_are_not_filled(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+):
+    """Arguments whose `$ref`s expand past the limit make the route unfillable, before a fill is asked for.
+
+    Only as `properties`: as `anyOf`, the field is one no fill could answer anyway, limit or not.
+    """
+    monkeypatch.setattr('pydantic_ai._json_schema.MAX_INLINED_SCHEMA_VALUES', _VALUE_LIMIT, raising=False)
+    tool = Tool.from_schema(
+        look_up, name='look_up', description='Look the order up.', json_schema=_doubling_definitions('properties')
+    )
+    model = RoutingDecisionModel({'Triage': 0.1, 'look_up': 0.9})
+
+    with pytest.raises(UnfillableRoute, match="picked 'look_up'"):
+        await Agent(model, output_type=Triage, tools=[tool]).run('Where is my order?')
+
+    assert [list(request.questions) for request in model.requests] == snapshot(
+        [['Triage.urgent', 'Triage.action', 'route']]
+    )
+
+
+@pytest.mark.parametrize('combine', ['properties', 'anyOf'])
+async def test_an_output_type_past_the_value_limit_is_refused(
+    allow_model_requests: None, combine: Literal['properties', 'anyOf'], monkeypatch: pytest.MonkeyPatch
+):
+    """Alone, an output type whose `$ref`s expand past the limit is refused before a request is sent."""
+    monkeypatch.setattr('pydantic_ai._json_schema.MAX_INLINED_SCHEMA_VALUES', _VALUE_LIMIT, raising=False)
+    output_tool = ToolDefinition(
+        name='final_result',
+        description='Look the order up.',
+        kind='output',
+        parameters_json_schema=_doubling_definitions(combine),
+    )
+    model = InMemoryDecisionModel()
+
+    with pytest.raises(
+        UserError,
+        match=f"The JSON schema of output tool 'final_result' is too large: .* more than {_VALUE_LIMIT:,} JSON values",
+    ):
+        await model.request(
+            [ModelRequest(parts=[UserPromptPart('Where is my order?')])],
+            None,
+            ModelRequestParameters(output_tools=[output_tool], output_mode='tool', allow_text_output=False),
+        )
+
+    assert model.requests == []
+
+
 @pytest.mark.parametrize('schema', [True, False, {'$ref': '#/$defs/Anything'}, {'$ref': '#/$defs/Nothing'}])
 async def test_a_boolean_schema_is_an_unsupported_output_field(allow_model_requests: None, schema: Any):
     output_tool = ToolDefinition(
