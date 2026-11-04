@@ -121,3 +121,25 @@ async def test_default_max_tokens_without_a_known_safe_maximum(
     await agent.run('What is 17 * 23?', model_settings=model_settings)
 
     assert get_mock_chat_completion_kwargs(mock_client)[0]['max_tokens'] == max_tokens
+
+
+@pytest.mark.parametrize(
+    'model_settings',
+    [
+        pytest.param({'anthropic_betas': ['output-300k-2026-03-24']}, id='anthropic_betas'),
+        pytest.param(
+            {'extra_headers': {'anthropic-beta': 'files-api-2025-04-14, output-300k-2026-03-24'}}, id='header'
+        ),
+    ],
+)
+async def test_max_tokens_is_left_alone_with_an_output_extending_beta(
+    allow_model_requests: None, model_settings: AnthropicModelSettings
+) -> None:
+    """A beta like `output-300k-2026-03-24`, for Message Batches, raises the maximum output, so it isn't capped."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='391', type='text')], BetaUsage(input_tokens=5, output_tokens=2))
+    )
+    agent = Agent(AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client)))
+    await agent.run('What is 17 * 23?', model_settings={**model_settings, 'max_tokens': 300_000})
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['max_tokens'] == 300_000

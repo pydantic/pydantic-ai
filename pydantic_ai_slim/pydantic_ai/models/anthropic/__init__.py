@@ -910,6 +910,17 @@ class _PreparedMessagesCreate:
     initial_effective_thinking: dict[str, object] | Omit
 
 
+def _extends_max_output(model_settings: AnthropicModelSettings) -> bool:
+    """Whether the request asks for a beta that raises the maximum output, like `output-300k-2026-03-24` on batches.
+
+    Then `anthropic_max_output_tokens` isn't the limit, so a larger `max_tokens` is left for the API to judge.
+    """
+    betas = [str(beta) for beta in model_settings.get('anthropic_betas') or []]
+    if header := (model_settings.get('extra_headers') or {}).get('anthropic-beta'):
+        betas.extend(beta.strip() for beta in header.split(','))
+    return any(beta.startswith('output-') for beta in betas)
+
+
 def _default_max_tokens(thinking: dict[str, object] | Omit, profile: AnthropicModelProfile) -> int:
     """The `max_tokens` to send when the request doesn't set one.
 
@@ -1489,7 +1500,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
         if exceeded := self._strict_schema_limit_exceeded(prepared_settings, model_request_parameters):
             raise limit_exceeded_error(exceeded, self.model_name)
-        prepared_settings = cap_max_tokens(prepared_settings, profile.get('anthropic_max_output_tokens'))
+        if not _extends_max_output(cast(AnthropicModelSettings, prepared_settings or {})):
+            prepared_settings = cap_max_tokens(prepared_settings, profile.get('anthropic_max_output_tokens'))
         if profile.get('anthropic_disallows_sampling_settings', False) and prepared_settings:
             filtered: ModelSettings = {**prepared_settings}
             self._drop_unsupported_sampling_settings(filtered)
