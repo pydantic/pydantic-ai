@@ -1,8 +1,10 @@
 """SQLite preferences with short transactions and explicit schema ownership."""
 
+import hashlib
 import os
 import sqlite3
-from collections.abc import Generator, Iterable
+import stat
+from collections.abc import Generator, Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -57,6 +59,26 @@ class StoredAccount:
     """The plugin `/login` name that signed it in, such as `claude`; `None` when CLAI keeps its credentials."""
 
 
+_OPEN_FLAGS = os.O_RDONLY | getattr(os, 'O_BINARY', 0) | getattr(os, 'O_NONBLOCK', 0)
+"""`O_NONBLOCK` so opening a FIFO a repository ships returns at once instead of waiting for a writer."""
+
+
+def read_regular_file(path: Path) -> bytes:
+    """The bytes of the regular file at `path`, through symlinks; an `OSError` for anything else."""
+    with os.fdopen(os.open(path, _OPEN_FLAGS), 'rb') as file:
+        if not stat.S_ISREG(os.fstat(file.fileno()).st_mode):
+            raise OSError(f'{path} is not a regular file')
+        return file.read()
+
+
+def file_sha256(path: Path) -> str:
+    """The SHA-256 of a file's bytes, as `approve_files` records it; `''` when it is not a regular file CLAI can read."""
+    try:
+        return hashlib.sha256(read_regular_file(path)).hexdigest()
+    except OSError:
+        return ''
+
+
 def config_dir() -> Path:
     """The user's CLAI folder, honouring `XDG_CONFIG_HOME`."""
     return Path(os.getenv('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'pydantic-clai2'
@@ -91,6 +113,11 @@ class SettingsStore:
             # which those builds would refuse.
             connection.execute(
                 'CREATE TABLE IF NOT EXISTS plugin_requirements (id TEXT PRIMARY KEY, requirements_json TEXT NOT NULL)'
+            )
+            # The contents `/plugins enable` approved for each project file, by absolute path, sit beside
+            # `plugins` for the same reason: builds that do not check contents never read them.
+            connection.execute(
+                'CREATE TABLE IF NOT EXISTS approved_files (path TEXT PRIMARY KEY, sha256 TEXT NOT NULL)'
             )
             # Fallback chains are their own table for the same reason: builds without chains never read it.
             connection.execute(
@@ -363,6 +390,20 @@ class SettingsStore:
         with self._connect() as connection:
             connection.execute('DELETE FROM plugins WHERE id IN (?, ?)', (current_id, stored_id))
             connection.execute('DELETE FROM plugin_requirements WHERE id IN (?, ?)', (current_id, stored_id))
+
+    def approved_sha256(self, path: Path) -> str | None:
+        """The SHA-256 of the file at `path` as `/plugins enable` last approved it, or `None` if it never did."""
+        with self._connect() as connection:
+            row = connection.execute('SELECT sha256 FROM approved_files WHERE path = ?', (str(path),)).fetchone()
+        return row[0] if row else None
+
+    def approve_files(self, digests: Mapping[Path, str]) -> None:
+        """Remember each file's SHA-256 as approved now, by its absolute path."""
+        with self._connect() as connection:
+            connection.executemany(
+                'INSERT INTO approved_files VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET sha256 = excluded.sha256',
+                [(str(path), digest) for path, digest in digests.items()],
+            )
 
     def model_settings(self, model: str) -> dict[str, JsonValue]:
         """Saved overrides for one model; empty when none."""

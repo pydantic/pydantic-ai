@@ -386,6 +386,8 @@ export interface SessionEntry {
   archived: boolean
   /** Whether it opens live, as `Transcript.openable` says, so a click opens it without fetching its transcript first. */
   openable: boolean
+  /** The agent it was imported from, `Claude Code` or `Codex`; `null` for CLAI's own sessions. */
+  source: string | null
 }
 
 export interface Worktree {
