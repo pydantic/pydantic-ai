@@ -66,7 +66,6 @@ from pydantic_ai import (
     WebCitationSource,
     capture_run_messages,
 )
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import AbstractCapability, NativeTool, ProcessHistory
 from pydantic_ai.direct import model_request as direct_model_request
@@ -160,7 +159,6 @@ with try_import() as imports_successful:
     from pydantic_ai.models.openai import (
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
-        _map_openai_image_generation_tool,  # pyright: ignore[reportPrivateUsage]
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
         _response_error_type,  # pyright: ignore[reportPrivateUsage]
     )
@@ -1348,23 +1346,6 @@ async def test_openai_responses_image_generation_tool_options(allow_model_reques
             }
         ]
     )
-
-
-def test_image_generation_tool_provider_field_deprecation() -> None:
-    """Unit test because this pins local compatibility precedence, not provider behavior."""
-    with pytest.warns(
-        PydanticAIDeprecationWarning, match=r'fields `action`, `model` are deprecated'
-    ) as warning_records:
-        tool = ImageGenerationTool(
-            action='generate',
-            model='gpt-image-2',
-            provider_settings={'openai': {'action': 'edit'}},
-        )
-
-    assert warning_records[0].filename == __file__
-    mapped_tool = _map_openai_image_generation_tool(tool)
-    assert mapped_tool.get('action') == 'edit'
-    assert mapped_tool.get('model') == 'gpt-image-2'
 
 
 async def test_openai_responses_image_generation_tool_input_fidelity_set(allow_model_requests: None) -> None:

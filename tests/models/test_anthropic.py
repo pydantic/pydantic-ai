@@ -69,7 +69,6 @@ from pydantic_ai import (
 from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
 from pydantic_ai._utils import PeekableAsyncStream
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     AbstractCapability,
     Capability,
@@ -9335,26 +9334,6 @@ def test_anthropic_advisor_tool_request_shape():
     assert next(t for t in tools if t.get('name') == 'advisor') == snapshot(
         {'type': 'advisor_20260301', 'name': 'advisor', 'model': 'claude-fable-5'}
     )
-
-
-def test_advisor_tool_provider_field_deprecation() -> None:
-    """Unit test because this pins local compatibility precedence, not provider behavior."""
-    m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='test-key'))
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'field `caching` is deprecated'):
-        legacy_tool = AdvisorTool(model='claude-opus-4-8', caching='5m')
-        overridden_tool = AdvisorTool(
-            model='claude-opus-4-8',
-            caching='5m',
-            provider_settings={'anthropic': {'caching': '1h'}},
-        )
-
-    caching: list[object] = []
-    for tool in (legacy_tool, overridden_tool):
-        tools, _, _ = m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
-            [], ModelRequestParameters(native_tools=[tool]), AnthropicModelSettings()
-        )
-        caching.append(next(t for t in tools if t.get('name') == 'advisor').get('caching'))
-    assert caching == [{'type': 'ephemeral', 'ttl': '5m'}, {'type': 'ephemeral', 'ttl': '1h'}]
 
 
 def test_anthropic_advisor_tool_profile_gating():

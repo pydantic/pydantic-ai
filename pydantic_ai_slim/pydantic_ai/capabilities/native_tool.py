@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import pydantic
 
-from pydantic_ai.native_tools import AbstractNativeTool, warn_moved_provider_fields
+from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.tools import AgentDepsT, AgentNativeTool
 
 from .abstract import AbstractCapability
@@ -50,8 +50,8 @@ class NativeTool(AbstractCapability[AgentDepsT]):
                 '`NativeTool.from_spec()` requires either a `tool` argument or keyword arguments'
                 ' specifying the native tool type (e.g. `kind="web_search"`)'
             )
-        # Validation doesn't warn about moved fields, but a spec's author can act on the warning. A tool passed in
-        # already warned when it was built.
+        # Validation doesn't warn about moved fields, but a spec's author can act on the warning, so build the tool
+        # again outside it. A tool passed in already warned when it was built.
         if not isinstance(tool, AbstractNativeTool):
-            warn_moved_provider_fields(validated, stacklevel=3)
+            validated = replace(validated)
         return cls(tool=validated)

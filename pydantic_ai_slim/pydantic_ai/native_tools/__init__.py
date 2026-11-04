@@ -3,10 +3,10 @@ from __future__ import annotations as _annotations
 import warnings
 from abc import ABC
 from collections.abc import Sequence
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from datetime import datetime
 from functools import cache
-from typing import Annotated, Any, ClassVar, Literal, Union
+from typing import Annotated, Any, Literal, Union, cast
 
 import pydantic
 from pydantic_core import core_schema
@@ -17,6 +17,7 @@ from pydantic_ai._warnings import (
     provider_field_warnings_suppressed,
     suppress_provider_field_warnings,
 )
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import UploadedFile
 
 __all__ = (
@@ -68,29 +69,32 @@ def _validate_without_provider_field_warnings(value: Any, handler: core_schema.V
         return handler(value)
 
 
-def warn_moved_provider_fields(tool: AbstractNativeTool, *, stacklevel: int = 4) -> None:
-    """Warn about fields set on `tool` that moved to `provider_settings`.
+def _check_moved_fields(
+    tool: AbstractNativeTool, system: str, provider_settings: Any, moved_fields: dict[str, tuple[Any, Any]]
+) -> None:
+    """Reject moved fields that disagree with `provider_settings`, and warn about the ones that are set.
 
-    The default `stacklevel` points at whoever constructs the tool, through `__init__` and `__post_init__`.
+    `moved_fields` maps each deprecated field to its value and its default. The warning's `stacklevel` points at
+    whoever constructs the tool, through `__init__` and `__post_init__`.
     """
-    moved = tool.moved_provider_fields
-    if moved is None or provider_field_warnings_suppressed():
+    set_fields = {name: value for name, (value, default) in moved_fields.items() if value != default}
+    nested = cast(dict[str, dict[str, Any]], provider_settings or {}).get(system, {})
+    for name, value in set_fields.items():
+        if name in nested and nested[name] != value:
+            raise UserError(
+                f'`{type(tool).__name__}` field `{name}` conflicts with `provider_settings["{system}"]["{name}"]`; '
+                'set only `provider_settings`.'
+            )
+    if not set_fields or provider_field_warnings_suppressed.get():
         return
 
-    system, names = moved
-    defaults = {field.name: field.default for field in fields(tool)}
-    set_names = [name for name in names if getattr(tool, name) != defaults[name]]
-    if not set_names:
-        return
-
-    formatted_fields = ', '.join(f'`{name}`' for name in set_names)
-    label = 'field' if len(set_names) == 1 else 'fields'
-    verb = 'is' if len(set_names) == 1 else 'are'
+    formatted_fields = ', '.join(f'`{name}`' for name in set_fields)
+    label, verb = ('field', 'is') if len(set_fields) == 1 else ('fields', 'are')
     warnings.warn(
         f'`{type(tool).__name__}` {label} {formatted_fields} {verb} deprecated and will be removed in v3; '
         f'use `provider_settings={{"{system}": {{...}}}}` instead.',
         PydanticAIDeprecationWarning,
-        stacklevel=stacklevel,
+        stacklevel=4,
     )
 
 
@@ -145,9 +149,6 @@ class AbstractNativeTool(ABC):
 
     kind: str = 'unknown_native_tool'
     """Native tool identifier, this should be available on all native tools as a discriminator."""
-
-    moved_provider_fields: ClassVar[tuple[str, tuple[str, ...]] | None] = None
-    """The `provider_settings` key and the deprecated fields that moved there, if any."""
 
     optional: bool = False
     """Whether this instance is a best-effort upgrade rather than a hard requirement.
@@ -804,17 +805,25 @@ class ImageGenerationTool(AbstractNativeTool):
     * OpenAI Responses (maps '1:1', '2:3', and '3:2' to supported sizes)
     """
 
-    moved_provider_fields: ClassVar[tuple[str, tuple[str, ...]] | None] = (
-        'openai',
-        ('action', 'background', 'input_fidelity', 'moderation', 'model', 'partial_images', 'quality'),
-    )
-
     kind: str = 'image_generation'
     """The kind of tool."""
 
     def __post_init__(self) -> None:
         _validate_provider_settings(ImageGenerationProviderSettings, self.provider_settings)
-        warn_moved_provider_fields(self)
+        _check_moved_fields(
+            self,
+            'openai',
+            self.provider_settings,
+            {
+                'action': (self.action, 'auto'),
+                'background': (self.background, 'auto'),
+                'input_fidelity': (self.input_fidelity, None),
+                'moderation': (self.moderation, 'auto'),
+                'model': (self.model, None),
+                'partial_images': (self.partial_images, 0),
+                'quality': (self.quality, 'auto'),
+            },
+        )
 
 
 @dataclass(kw_only=True)
@@ -981,14 +990,17 @@ class FileSearchTool(AbstractNativeTool):
     * xAI (defaults to `hybrid` server-side)
     """
 
-    moved_provider_fields: ClassVar[tuple[str, tuple[str, ...]] | None] = ('xai', ('instructions', 'retrieval_mode'))
-
     kind: str = 'file_search'
     """The kind of tool."""
 
     def __post_init__(self) -> None:
         _validate_provider_settings(FileSearchProviderSettings, self.provider_settings)
-        warn_moved_provider_fields(self)
+        _check_moved_fields(
+            self,
+            'xai',
+            self.provider_settings,
+            {'instructions': (self.instructions, None), 'retrieval_mode': (self.retrieval_mode, None)},
+        )
 
 
 @pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
@@ -1083,14 +1095,12 @@ class AdvisorTool(AbstractNativeTool):
     OpenRouter's advisor tool has no equivalent knob and ignores `caching`.
     """
 
-    moved_provider_fields: ClassVar[tuple[str, tuple[str, ...]] | None] = ('anthropic', ('caching',))
-
     kind: str = 'advisor'
     """The kind of tool."""
 
     def __post_init__(self) -> None:
-        warn_moved_provider_fields(self)
         _validate_provider_settings(AdvisorProviderSettings, self.provider_settings)
+        _check_moved_fields(self, 'anthropic', self.provider_settings, {'caching': (self.caching, None)})
         if self.max_tokens is not None and self.max_tokens < 1024:
             raise ValueError('AdvisorTool.max_tokens must be at least 1024')
 

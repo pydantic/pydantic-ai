@@ -956,7 +956,7 @@ agent = Agent(
 
 Setting any option selects Anthropic's `web_search_20260318` or `web_fetch_20260318` tool version. Without one, Pydantic AI keeps choosing the version from the model and client, as described above.
 
-On a model without dynamic filtering, these versions are sent with `allowed_callers=['direct']`, so they don't bring code execution with them. `response_inclusion` has no effect then, or when [citations](#web-tool-callers) route the tools to direct calls, because direct results are returned in full. Set [`anthropic_web_tools_allowed_callers`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_web_tools_allowed_callers] to override that. `response_inclusion` only affects results consumed by code execution, so it has no effect on direct calls.
+On a model without dynamic filtering, these versions are sent with `allowed_callers=['direct']`, so they don't bring code execution with them; set [`anthropic_web_tools_allowed_callers`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_web_tools_allowed_callers] to override that. `response_inclusion` only affects results consumed by code execution, so it has no effect on direct calls, including when [citations](#web-tool-callers) route the tools to them.
 
 These options are always forwarded, so a client whose API doesn't accept these versions reports that itself. This applies to `AsyncAnthropicVertex`, which otherwise stays on older web tool versions.
 

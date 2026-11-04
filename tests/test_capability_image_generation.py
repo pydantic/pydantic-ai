@@ -8,7 +8,6 @@ from __future__ import annotations
 import dataclasses
 import inspect
 import re
-import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from functools import cached_property
@@ -1477,16 +1476,14 @@ class TestImageGenerationCapability:
 
     def test_image_generation_capability_fields_do_not_warn_and_stay_readable(self):
         """Capability users get no deprecation warning, and the built tool's fields read as they always have."""
-        with warnings.catch_warnings():
-            warnings.simplefilter('error', PydanticAIDeprecationWarning)
-            tool = ImageGeneration(
-                action='generate',
-                background='opaque',
-                input_fidelity='high',
-                moderation='low',
-                image_model='gpt-image-2',
-                quality='high',
-            ).get_native_tools()[0]
+        tool = ImageGeneration(
+            action='generate',
+            background='opaque',
+            input_fidelity='high',
+            moderation='low',
+            image_model='gpt-image-2',
+            quality='high',
+        ).get_native_tools()[0]
 
         assert isinstance(tool, ImageGenerationTool)
         assert (tool.action, tool.background, tool.input_fidelity, tool.moderation, tool.model, tool.quality) == (
@@ -1520,10 +1517,8 @@ class TestImageGenerationCapability:
         with pytest.warns(PydanticAIDeprecationWarning, match=r'field `quality` is deprecated'):
             native = ImageGenerationTool(quality='high')
 
-        with warnings.catch_warnings():
-            warnings.simplefilter('error', PydanticAIDeprecationWarning)
-            cap = ImageGeneration[None](native=native, fallback_subagent_model='test', output_format='jpeg')
-            resolved = cap._resolved_native()  # pyright: ignore[reportPrivateUsage]
+        cap = ImageGeneration[None](native=native, fallback_subagent_model='test', output_format='jpeg')
+        resolved = cap._resolved_native()  # pyright: ignore[reportPrivateUsage]
 
         assert isinstance(resolved, ImageGenerationTool)
         assert (resolved.quality, resolved.output_format) == ('high', 'jpeg')

@@ -821,7 +821,6 @@ def _openrouter_settings_to_openai_settings(
 
 
 def _map_web_search_parameters(tool: WebSearchTool) -> dict[str, Any]:
-    settings = (tool.provider_settings or {}).get('openrouter', {})
     parameters: dict[str, Any] = {'search_context_size': tool.search_context_size}
     if (user_location := tool.user_location) is not None:
         parameters['user_location'] = {'type': 'approximate', **user_location}
@@ -831,10 +830,7 @@ def _map_web_search_parameters(tool: WebSearchTool) -> dict[str, Any]:
         parameters['excluded_domains'] = blocked_domains
     if (max_uses := tool.max_uses) is not None:
         parameters['max_uses'] = max_uses
-    for key in ('engine', 'mode', 'max_results', 'max_total_results', 'max_characters'):
-        if (value := settings.get(key)) is not None:
-            parameters[key] = value
-    return parameters
+    return {**parameters, **(tool.provider_settings or {}).get('openrouter', {})}
 
 
 class OpenRouterModel(OpenAIChatModel):

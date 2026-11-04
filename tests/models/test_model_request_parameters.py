@@ -2,15 +2,17 @@ from dataclasses import replace
 from typing import Literal
 
 import pytest
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.native_tools import (
+    AbstractNativeTool,
+    AdvisorTool,
     CodeExecutionTool,
+    FileSearchTool,
     ImageGenerationTool,
     MCPServerTool,
     MemoryTool,
-    OpenRouterWebSearchToolSettings,
     WebFetchTool,
     WebSearchTool,
     WebSearchUserLocation,
@@ -196,20 +198,31 @@ def test_model_request_parameters_are_serializable():
     assert ta.validate_python(dumped) == params
 
 
-def test_provider_native_tool_settings_are_serializable():
-    params = ModelRequestParameters(
-        native_tools=[
-            WebSearchTool(
-                provider_settings={
-                    'openrouter': OpenRouterWebSearchToolSettings(engine='exa', max_results=3),
-                }
-            )
-        ]
-    )
+@pytest.mark.parametrize(
+    'tool',
+    [
+        WebSearchTool(provider_settings={'anthropic': {'response_inclusion': 'excluded'}}),
+        WebSearchTool(provider_settings={'openrouter': {'engine': 'exa', 'max_results': 3}}),
+        WebFetchTool(provider_settings={'anthropic': {'use_cache': False}}),
+        AdvisorTool(model='advisor', provider_settings={'openrouter': {'forward_transcript': True}}),
+        AdvisorTool(model='advisor', provider_settings={'anthropic': {'caching': '5m'}}),
+        ImageGenerationTool(provider_settings={'openai': {'quality': 'high'}}),
+        FileSearchTool(file_store_ids=['store'], provider_settings={'xai': {'retrieval_mode': 'keyword'}}),
+    ],
+)
+def test_provider_settings_survive_serialization(tool: AbstractNativeTool):
+    """Durable execution sends native tools through this round trip between activities."""
+    params = ModelRequestParameters(native_tools=[tool])
 
-    dumped = ta.dump_python(params)
+    assert ta.validate_json(ta.dump_json(params)) == params
 
-    assert ta.validate_python(dumped) == params
+
+def test_provider_settings_payload_with_unknown_option_is_rejected():
+    """A payload from a newer version fails loudly, rather than silently dropping the option."""
+    payload = {'native_tools': [{'kind': 'web_search', 'provider_settings': {'openrouter': {'future': 1}}}]}
+
+    with pytest.raises(ValidationError, match='Extra inputs are not permitted'):
+        ta.validate_python(payload)
 
 
 def test_model_request_parameters_cache_round_trip():
