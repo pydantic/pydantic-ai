@@ -1628,6 +1628,18 @@ toml = [
 ]
 
 [[package]]
+name = "croniter"
+version = "6.2.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "python-dateutil" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/37/57/2e2a65aee2a70483cb28e2b7e15a072d00a523207593b44400d4717bb100/croniter-6.2.4.tar.gz", hash = "sha256:fc124f751b1b04805c2a04b061898b436b45ab2320b045e1e052ea895de65189", size = 166267, upload-time = "2026-07-10T09:52:59.955Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cd/ba/d678e5bd329646ca51d3c92addbc77804e86d21f4b6b6a027218e6abb010/croniter-6.2.4-py3-none-any.whl", hash = "sha256:8ef3d544107a5c05a150a2d78f8bf5a8eb9c5c4d93405a736b824109574e3f4d", size = 46677, upload-time = "2026-07-10T09:52:58.425Z" },
+]
+
+[[package]]
 name = "cronsim"
 version = "2.7"
 source = { registry = "https://pypi.org/simple" }
@@ -1968,19 +1980,19 @@ wheels = [
 
 [[package]]
 name = "dbos"
-version = "2.29.0"
+version = "3.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
+    { name = "croniter" },
     { name = "psycopg", extra = ["binary"] },
     { name = "python-dateutil" },
     { name = "pyyaml" },
     { name = "sqlalchemy", extra = ["asyncio"] },
-    { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/10/4b/8ca257ab318110169254756a7d28df63ea3f3efd52e8fc4fe6d2dfb7798a/dbos-2.29.0.tar.gz", hash = "sha256:ae6015bba43b5842a4a99abcc7826ca00c758af767ebaf79e6304c0b4f58ec46", size = 613970, upload-time = "2026-07-30T15:04:45.059Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2d/08/052506573c83ccc7703170bddd41eda9d9940d09d75d5062a0f6b318280f/dbos-3.4.0.tar.gz", hash = "sha256:e152a517686fd1875b6eb3d6bf83c87f700a6c244fe872b6da7955f750e18953", size = 567255, upload-time = "2026-10-28T15:25:35.464Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8f/3f/c5c05b9e20b4796dc18a1558f6ee4378116d21da303aab74a2518adc99e9/dbos-2.29.0-py3-none-any.whl", hash = "sha256:49104b64b8917dc3d321704f1d20058486c86129420b96b910f1e725fbdebca6", size = 242746, upload-time = "2026-07-30T15:04:43.273Z" },
+    { url = "https://files.pythonhosted.org/packages/00/30/cf52e34d3c6d9b852b0178d558e1d903c36b4dd97d8ab7158b4af8171f4a/dbos-3.4.0-py3-none-any.whl", hash = "sha256:78f6015dbcfffb1a981a371a37a46b1991949b3bf9b5f03d1588f53475081912", size = 269879, upload-time = "2026-10-28T15:25:33.671Z" },
 ]
 
 [[package]]
