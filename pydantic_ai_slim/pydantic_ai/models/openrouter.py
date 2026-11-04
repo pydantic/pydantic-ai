@@ -26,11 +26,7 @@ from ..messages import (
     UserContent,
     VideoUrl,
 )
-from ..native_tools import (
-    AbstractNativeTool,
-    AdvisorTool,
-    WebSearchTool,
-)
+from ..native_tools import AbstractNativeTool, AdvisorTool, WebSearchTool
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
@@ -824,6 +820,23 @@ def _openrouter_settings_to_openai_settings(
     return OpenAIChatModelSettings(**model_settings)  # type: ignore[reportCallIssue]
 
 
+def _map_web_search_parameters(tool: WebSearchTool) -> dict[str, Any]:
+    settings = (tool.provider_settings or {}).get('openrouter', {})
+    parameters: dict[str, Any] = {'search_context_size': tool.search_context_size}
+    if (user_location := tool.user_location) is not None:
+        parameters['user_location'] = {'type': 'approximate', **user_location}
+    if (allowed_domains := tool.allowed_domains) is not None:
+        parameters['allowed_domains'] = allowed_domains
+    if (blocked_domains := tool.blocked_domains) is not None:
+        parameters['excluded_domains'] = blocked_domains
+    if (max_uses := tool.max_uses) is not None:
+        parameters['max_uses'] = max_uses
+    for key in ('engine', 'mode', 'max_results', 'max_total_results', 'max_characters'):
+        if (value := settings.get(key)) is not None:
+            parameters[key] = value
+    return parameters
+
+
 class OpenRouterModel(OpenAIChatModel):
     """Extends OpenAIChatModel to capture extra metadata for Openrouter."""
 
@@ -1304,25 +1317,11 @@ class OpenRouterModel(OpenAIChatModel):
 
         web_search = next((t for t in model_request_parameters.native_tools if isinstance(t, WebSearchTool)), None)
         if web_search is not None:
-            web_search_settings = (web_search.provider_settings or {}).get('openrouter', {})
-            parameters: dict[str, Any] = {'search_context_size': web_search.search_context_size}
-            if (user_location := web_search.user_location) is not None:
-                parameters['user_location'] = {'type': 'approximate', **user_location}
-            if (allowed_domains := web_search.allowed_domains) is not None:
-                parameters['allowed_domains'] = allowed_domains
-            if (blocked_domains := web_search.blocked_domains) is not None:
-                parameters['excluded_domains'] = blocked_domains
-            if (max_uses := web_search.max_uses) is not None:
-                parameters['max_uses'] = max_uses
-            parameters.update(
-                {
-                    key: value
-                    for key in ('engine', 'mode', 'max_results', 'max_total_results', 'max_characters')
-                    if (value := web_search_settings.get(key)) is not None
-                }
-            )
             tools.append(
-                cast(chat.ChatCompletionToolParam, {'type': 'openrouter:web_search', 'parameters': parameters})
+                cast(
+                    chat.ChatCompletionToolParam,
+                    {'type': 'openrouter:web_search', 'parameters': _map_web_search_parameters(web_search)},
+                )
             )
 
         return tools, tool_choice
