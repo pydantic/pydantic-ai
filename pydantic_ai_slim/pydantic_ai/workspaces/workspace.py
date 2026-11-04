@@ -466,7 +466,9 @@ class Workspace(WorkspaceBackend):
         for key, key_level in written.items():
             real_key = await self.realpath(key)
             if real_key != key:
-                others = {other: other_level for other, other_level in written.items() if other != key}
+                others: dict[str, Authority] = {
+                    other: other_level for other, other_level in written.items() if other != key
+                }
                 in_workspace = any(_is_within(key, zone) for zone in (root, *others))
                 cap = _layer_authority(key, (level, others)) if in_workspace else key_level
                 resolved.append((real_key, _lowest_authority((key_level, cap))))
