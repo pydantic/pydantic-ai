@@ -1305,6 +1305,16 @@ class _OwnSerializer:
         return serializer
 
 
+class _SerializesItself:
+    """Serializes with the class's own pydantic serializer, also when serialized by inference.
+
+    `pydantic_core.to_json` and Temporal's payload converter otherwise serialize a plain dataclass field by field,
+    ignoring `Field(exclude=True)`: for `CompactionRecord.replaced`, the whole history a compaction replaced.
+    """
+
+    __pydantic_serializer__: ClassVar[Any] = _OwnSerializer()
+
+
 class _RecordsContentFiles:
     """Keep the file items in a tool result's content, and only those, file items across serialization.
 
@@ -7641,7 +7651,7 @@ class CompactionStartEvent:
 
 
 @dataclass(repr=False, kw_only=True)
-class CompactionRecord:
+class CompactionRecord(_SerializesItself):
     """A compaction a run kept, on [`AgentRunResult.compactions`][pydantic_ai.agent.AgentRunResult.compactions].
 
     The run's message history only shows the compacted history, so this is how you tell what a compaction
@@ -7710,7 +7720,7 @@ class CompactionRecord:
 
 
 @dataclass(repr=False, kw_only=True)
-class CompactionEndEvent:
+class CompactionEndEvent(_SerializesItself):
     """Emitted after a capability's [`compact_history`][pydantic_ai.capabilities.AbstractCapability.compact_history] hook compacted the history.
 
     The compacted history is sent with the attempt it was made for. If that attempt fails and the request moves
