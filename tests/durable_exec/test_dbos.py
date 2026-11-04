@@ -6414,10 +6414,15 @@ async def test_dbos_child_workflow_tool_survives_recovery(dbos: DBOS) -> None:
 
 
 async def test_dbos_child_workflow_via_set_tool_metadata(dbos: DBOS) -> None:
-    """`SetToolMetadata` selects child workflows too; the tool's `deps` cross into the child, and outside a workflow it runs inline."""
+    """`SetToolMetadata` selects child workflows too: `deps` and the prepared tool cross into the child, and outside a workflow the tool runs inline."""
     delegation = FunctionToolset[str](id='delegation')
 
-    @delegation.tool
+    async def prepare(ctx: RunContext[str], tool_def: ToolDefinition) -> ToolDefinition:
+        # Runs in the parent, where the whole run context is available; the child reuses its result.
+        assert ctx.messages
+        return tool_def
+
+    @delegation.tool(prepare=prepare)
     async def delegate(ctx: RunContext[str]) -> str:
         return f'{ctx.deps} in {DBOS.workflow_id}'
 

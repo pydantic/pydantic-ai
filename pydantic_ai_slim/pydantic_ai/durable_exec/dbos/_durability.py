@@ -28,7 +28,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent
 from pydantic_ai.models import Model
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
@@ -342,10 +342,16 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             tool: ToolsetTool[AgentDepsT],
             config: Mapping[str, Any],
         ) -> Any:
+            assert isinstance(tool, FunctionToolsetTool)  # `_child_workflow_config` admits only these
             timeout = config.get('workflow_timeout_sec')
             with SetWorkflowTimeout(timeout) if timeout is not None else nullcontext():
                 payload = await call_tool_workflow(
-                    name, tool_args, DurableRunContext.serialize_run_context(ctx), ctx.deps
+                    name,
+                    tool_args,
+                    tool.tool_def,
+                    tool.original_name,
+                    DurableRunContext.serialize_run_context(ctx),
+                    ctx.deps,
                 )
             return self._unwrap_tool_result(payload)
 
@@ -363,11 +369,14 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         toolset: FunctionToolset[AgentDepsT],
         tool_name: str,
         tool_args: dict[str, Any],
+        tool_def: ToolDefinition,
+        original_name: str | None,
         serialized_ctx: dict[str, Any],
         deps: Any,
     ) -> CallToolResult:
         ctx = DurableRunContext.restore(serialized_ctx, deps=deps, agent=self._agent, engine_spec=self.engine_spec)
-        tool = (await toolset.get_tools(ctx))[tool_name]
+        # The tool was prepared in the parent, against the full run context.
+        tool = toolset.tool_for_tool_def(tool_def, ctx=ctx, original_name=original_name)
         # A recovered child doesn't run inside the parent's run, so nested runs inherit its deadline from `ctx`.
         with (
             provide_run_deadline(ctx.deadline) if ctx.deadline is not None else nullcontext(),
