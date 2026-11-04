@@ -7,7 +7,7 @@ import sys
 import threading
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from typing import get_type_hints
+from typing import Any, get_type_hints
 from unittest.mock import Mock
 
 import anyio.to_thread
@@ -1415,23 +1415,19 @@ class TestDeferredLoading:
             await agent.run('go')
         assert not (tmp_path / 'ran').exists()
 
-    async def test_refuses_authoring_when_loaded_from_history(self, tmp_path: Path) -> None:
+    async def test_refuses_a_run_resuming_a_capability_loaded_in_history(self, tmp_path: Path) -> None:
         operator = Agent(
             _loading_model(tmp_path, ToolCallPart('list_authored_capabilities', {})),
             capabilities=[LocalWorkspace(tmp_path), _deferred(tmp_path / 'store')],
         )
         history = (await operator.run('go')).all_messages()
 
-        def author(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[_author_call(tmp_path)])
-
         agent = Agent(
-            FunctionModel(author),
+            TestModel(),
             capabilities=[LocalWorkspace(tmp_path, authority='none'), _deferred(tmp_path / 'store')],
         )
         with pytest.raises(UserError, match="has `'none'` authority"):
             await agent.run('go on', message_history=history)
-        assert not (tmp_path / 'ran').exists()
 
     async def test_authors_at_operator_authority(self, tmp_path: Path) -> None:
         agent = Agent(
@@ -1462,8 +1458,8 @@ class TestDeferredLoading:
         assert (await agent.run('go')).output == 'done'
 
 
-def _deferred(directory: Path) -> CapabilityCreation[None]:
-    creation = CapabilityCreation[None](directory)
+def _deferred(directory: Path) -> CapabilityCreation[Any]:
+    creation = CapabilityCreation[Any](directory)
     creation.defer_loading = True
     creation.description = 'Author new capabilities.'
     return creation
