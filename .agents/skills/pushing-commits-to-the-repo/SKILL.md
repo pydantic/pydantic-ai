@@ -90,11 +90,11 @@ After diagnosing, post a PR comment that names each failed job and its cause, wi
 
 Claim a flake through its GitHub issue before you fix it, so that two agents never fix the same flake.
 
-1. Search the open issues for the failing test: `gh issue list -R pydantic/pydantic-ai --state open --search '<test name> in:title'`.
-2. If no issue names the test, file one. Title it `Flaky <test node id>`, label it `flake`, and link the failing CI run in the body.
+1. Search the open issues for the failing test: `gh issue list -R pydantic/pydantic-ai --state open --search '<test name> in:title'`. Also search the closed `flake` issues: `gh issue list -R pydantic/pydantic-ai --state closed --label flake --search '<test name> in:title'`. If a closed issue's fix PR has merged to `main`, merge `main` into your branch instead of fixing the flake again.
+2. If no open issue names the test, file one. Title it `Flaky <test node id>`, label it `flake`, and link the failing CI run in the body.
 3. Cite the issue as evidence that the failure is a known flake.
 4. A claim is a comment on the issue that says you are fixing the flake and names your branch. Agents often share one GitHub account, so a claim is yours only when it names your branch.
-5. A claim expires one hour after it is posted, unless an open fix PR closes the issue. If an unexpired claim names another branch, do not fix the flake.
+5. A claim expires one hour after it is posted, unless an open fix PR closes the issue. List the PRs that close the issue with `gh issue view <issue> --json closedByPullRequestsReferences`, then read each one's state with `gh pr view <number> --json state`. If an unexpired claim names another branch, do not fix the flake.
 6. A plain assignment with no claim comment is a maintainer's own claim. It does not expire. Leave that flake to them.
 7. To claim an unclaimed issue, or one whose claim expired, post your claim comment. Also assign yourself when you can, as a visible marker. Claim the issue before you write the fix. Open the fix PR within one hour of the claim.
 8. The fix PR closes the issue: put `Closes #<issue>` in its body.
