@@ -25,6 +25,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai._file_input import unsupported_file_note
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelMessagesTypeAdapter
 from pydantic_ai.models import Model
@@ -337,7 +338,6 @@ def test_only_successful_string_returns_are_wrapped():
                 ToolCallPart('a', {}, tool_call_id='1'),
                 ToolCallPart('b', {}, tool_call_id='2'),
                 ToolCallPart('c', {}, tool_call_id='3'),
-                ToolCallPart('d', {}, tool_call_id='4'),
             ]
         ),
         ModelRequest(
@@ -345,8 +345,6 @@ def test_only_successful_string_returns_are_wrapped():
                 ToolReturnPart('a', 'plain', tool_call_id='1'),
                 ToolReturnPart('b', {'status': 'ok'}, tool_call_id='2'),
                 ToolReturnPart('c', 'Not allowed.', tool_call_id='3', outcome='denied'),
-                # The model can't read audio, so the framework's note goes out in place of the file, unwrapped.
-                ToolReturnPart('d', BinaryContent(b'RIFF', media_type='audio/wav'), tool_call_id='4'),
             ]
         ),
     ]
@@ -354,9 +352,33 @@ def test_only_successful_string_returns_are_wrapped():
     [request] = model.prepare_messages(messages)[-1:]
 
     assert isinstance(request, ModelRequest)
-    contents = [part.content for part in request.parts if isinstance(part, ToolReturnPart)]
-    assert contents[:3] == ['{"tool_output": "plain"}', {'status': 'ok'}, 'Not allowed.']
-    assert isinstance(contents[3], str) and not contents[3].startswith('{"tool_output"')
+    assert [part.content for part in request.parts if isinstance(part, ToolReturnPart)] == [
+        '{"tool_output": "plain"}',
+        {'status': 'ok'},
+        'Not allowed.',
+    ]
+
+
+def test_a_note_in_place_of_an_unreadable_file_goes_out_as_written():
+    """The framework's note in place of a file the model can't read isn't wrapped as the tool's output."""
+    model = FunctionModel(
+        lambda _messages, _info: ModelResponse(parts=[TextPart('ok')]),
+        profile=ModelProfile(needs_json_string_tool_returns=True, supports_audio_file_input=False),
+    )
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Record it.')]),
+        ModelResponse(parts=[ToolCallPart('record', {}, tool_call_id='1')]),
+        ModelRequest(
+            parts=[ToolReturnPart('record', BinaryContent(b'RIFF', media_type='audio/wav'), tool_call_id='1')]
+        ),
+    ]
+
+    [request] = model.prepare_messages(messages)[-1:]
+
+    assert isinstance(request, ModelRequest)
+    assert [part.content for part in request.parts if isinstance(part, ToolReturnPart)] == [
+        unsupported_file_note(BinaryContent(b'RIFF', media_type='audio/wav'), 'audio files')
+    ]
 
 
 def _completion(message: ChatCompletionMessage) -> ChatCompletion:
