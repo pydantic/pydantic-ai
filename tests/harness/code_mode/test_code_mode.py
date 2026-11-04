@@ -25,7 +25,7 @@ from uuid import UUID
 import anyio
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel, create_model
+from pydantic import BaseModel, Field, TypeAdapter, create_model
 from pydantic_core import SchemaValidator, core_schema
 from pydantic_monty import (
     NOT_HANDLED,
@@ -1989,6 +1989,138 @@ class TestCodeMode:
         assert 'x: send_Any, y: Any' in description
         with pytest.raises(ModelRetry, match='Type error in code'):
             await self._run_code_with_tools("await send(x={'a': 1}, y=1)", tool_def)
+
+    # ---------------------------------------------------------------------------
+    # Names Python can't write
+    # ---------------------------------------------------------------------------
+
+    @pytest.mark.parametrize('alias', ['from', 'user-id', '\ufb01eld'])
+    async def test_field_python_cannot_write_is_checked(self, alias: str) -> None:
+        """A class body can't hold these, so on the previous stubs the model's correct call failed the type check."""
+        mail: type[BaseModel] = create_model('Mail', sender=(str, Field(alias=alias)))
+        args: type[BaseModel] = create_model('Args', mail=(mail, ...))
+        tool_def = ToolDefinition(
+            name='send', parameters_json_schema=args.model_json_schema(), return_schema={'type': 'string'}
+        )
+        output, _ = await self._run_code_with_tools(f'print(await send(mail={{{alias!r}: "a"}}))', tool_def)
+        assert output == {'output': 'ok\n'}
+        with pytest.raises(ModelRetry, match='Type error in code'):
+            await self._run_code_with_tools(f'await send(mail={{{alias!r}: 1}})', tool_def)
+
+    async def test_field_named_like_a_type_it_uses_is_checked(self) -> None:
+        """In a class body `b: str` reads the field `str`, so the checker stopped checking the whole type."""
+        mail: type[BaseModel] = create_model('Mail', str=(str, ...), b=(str, ...))
+        args: type[BaseModel] = create_model('Args', mail=(mail, ...))
+        tool_def = ToolDefinition(
+            name='send', parameters_json_schema=args.model_json_schema(), return_schema={'type': 'string'}
+        )
+        output, _ = await self._run_code_with_tools("print(await send(mail={'str': 'a', 'b': 'c'}))", tool_def)
+        assert output == {'output': 'ok\n'}
+        with pytest.raises(ModelRetry, match='Type error in code'):
+            await self._run_code_with_tools("await send(mail={'str': 1, 'b': 2})", tool_def)
+
+    async def test_functional_definition_can_refer_to_itself_and_to_later_definitions(self) -> None:
+        """The form is an assignment, so the checker must still read the names it uses ahead of their definitions."""
+        tool_def = ToolDefinition(
+            name='send',
+            parameters_json_schema={
+                'type': 'object',
+                '$defs': {
+                    'Mail': {
+                        'type': 'object',
+                        'properties': {
+                            'from': {'type': 'string'},
+                            'next': {'anyOf': [{'$ref': '#/$defs/Mail'}, {'type': 'null'}]},
+                            'inner': {'$ref': '#/$defs/Zed'},
+                        },
+                        'required': ['from', 'inner'],
+                    },
+                    'Zed': {'type': 'object', 'properties': {'z': {'type': 'integer'}}, 'required': ['z']},
+                },
+                'properties': {'mail': {'$ref': '#/$defs/Mail'}},
+                'required': ['mail'],
+            },
+            return_schema={'type': 'string'},
+        )
+        inner_ok, nested_ok = "'inner': {'z': 1}", "{'from': 'b', 'inner': {'z': 2}}"
+        output, _ = await self._run_code_with_tools(
+            f"print(await send(mail={{'from': 'a', {inner_ok}, 'next': {nested_ok}}}))", tool_def
+        )
+        assert output == {'output': 'ok\n'}
+        for wrong in (
+            "{'from': 'a', 'inner': {'z': 'x'}}",
+            f"{{'from': 'a', {inner_ok}, 'next': {{'from': 1, {inner_ok}}}}}",
+        ):
+            with pytest.raises(ModelRetry, match='Type error in code'):
+                await self._run_code_with_tools(f'await send(mail={wrong})', tool_def)
+
+    @staticmethod
+    def _tool_with_param(name: str) -> ToolDefinition:
+        """The schema an MCP server can send. A Python function can't declare these parameter names."""
+        return ToolDefinition(
+            name='send',
+            parameters_json_schema={
+                'type': 'object',
+                'properties': {name: {'type': 'string'}, 'count': {'type': 'integer'}},
+                'required': [name, 'count'],
+            },
+            return_schema={'type': 'string'},
+        )
+
+    @pytest.mark.parametrize('name', ['from', 'user-id', '\ufb01eld'])
+    async def test_param_python_cannot_write_reaches_the_tool_by_its_exact_name(self, name: str) -> None:
+        received: list[dict[str, Any]] = []
+
+        class RecordingToolset(_StaticToolset):
+            async def call_tool(
+                self, name: str, tool_args: dict[str, Any], ctx: RunContext[object], tool: ToolsetTool[object]
+            ) -> Any:
+                received.append(tool_args)
+                return 'ok'
+
+        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(
+            RecordingToolset([self._tool_with_param(name)])
+        )
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+        await wrapper.call_tool(
+            'run_code', {'code': f'await send(**{{{name!r}: "a", "count": 1}})'}, ctx, tools['run_code']
+        )
+        assert received == [{name: 'a', 'count': 1}]
+
+    @pytest.mark.parametrize('name', ['from', 'user-id'])
+    async def test_param_python_cannot_write_leaves_other_tools_checked(self, name: str) -> None:
+        """These names made the stubs a syntax error, which turned the type check off for the whole catalog."""
+        other = ToolDefinition(
+            name='other',
+            parameters_json_schema={'type': 'object', 'properties': {'n': {'type': 'integer'}}, 'required': ['n']},
+            return_schema={'type': 'string'},
+        )
+        with pytest.raises(ModelRetry, match='Type error in code'):
+            await self._run_code_with_tools("await other(n='x')", self._tool_with_param(name), other)
+
+    async def test_wrong_value_for_param_python_cannot_write_is_left_to_the_tools_own_validation(self) -> None:
+        """The limit of `**kwargs: Any`: the type check accepts this call, so only the tool's validator can refuse it."""
+
+        class ValidatingToolset(_StaticToolset):
+            async def get_tools(self, ctx: RunContext[object]) -> dict[str, ToolsetTool[object]]:
+                validator = TypeAdapter(TypedDict('Args', {'from': str, 'count': int})).validator
+                return {
+                    name: dc_replace(tool, args_validator=validator)
+                    for name, tool in (await super().get_tools(ctx)).items()
+                }
+
+        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(
+            ValidatingToolset([self._tool_with_param('from')], results={'send': 'ok'})
+        )
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+        with pytest.raises(ModelRetry, match='valid string'):
+            await wrapper.call_tool(
+                'run_code', {'code': "await send(**{'from': 1, 'count': 1})"}, ctx, tools['run_code']
+            )
 
     # ---------------------------------------------------------------------------
     # Deferred tools
