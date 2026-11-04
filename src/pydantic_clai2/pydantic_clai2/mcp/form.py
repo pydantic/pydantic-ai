@@ -155,14 +155,18 @@ class ServerForm:
             if isinstance(timeout, int | float) and timeout < OAUTH_TIMEOUT:
                 self._raised_from, data['timeout'] = timeout, OAUTH_TIMEOUT
             self.status = None
-            headers = data.get('headers')
-            if isinstance(headers, dict) and any(key.lower() == 'authorization' for key in headers):
-                kept = {key: value for key, value in headers.items() if key.lower() != 'authorization'}
-                data['headers'] = kept
-                if not kept:
-                    data.pop('headers')
-                self.status = 'Removed the Authorization header; OAuth sets it after sign-in'
+            self._drop_authorization(data)
         self.config = json.dumps(data, indent=2)
+
+    def _drop_authorization(self, data: dict[str, JsonValue]) -> None:
+        """Remove `Authorization` headers from `data`, which OAuth replaces after sign-in."""
+        headers = data.get('headers')
+        if isinstance(headers, dict) and any(key.lower() == 'authorization' for key in headers):
+            kept = {key: value for key, value in headers.items() if key.lower() != 'authorization'}
+            data['headers'] = kept
+            if not kept:
+                data.pop('headers')
+            self.status = 'Removed the Authorization header; OAuth sets it after sign-in'
 
     @property
     def on_demand(self) -> bool:
@@ -376,22 +380,9 @@ async def _edit_row(form: ServerForm, row: str, dialogs: Dialogs, editor: Editor
         if name:
             form.name = name
     elif row == TYPE:
-        options = [Option(value=kind, label=kind, description=TYPE_DESCRIPTIONS[kind]) for kind in SERVER_TYPES]
-        picked = await dialogs.choose(title='Server Type', options=options, current=form.type)
-        for kind in SERVER_TYPES:
-            if kind == picked:
-                form.select_type(kind)
+        await _edit_type(form, dialogs)
     elif row == TARGET:
-        remote = form.type != 'stdio'
-        target = await dialogs.text(
-            title=form.target_label,
-            label=form.target_label,
-            placeholder='https://example.com/mcp' if remote else 'uvx my-mcp-server --flag',
-            initial=form.target(),
-            check=form.target_problem,
-        )
-        if target:
-            form.set_target(target)
+        await _edit_target(form, dialogs)
     elif row == OAUTH:
         form.toggle_oauth()
     elif row == ON_DEMAND:
@@ -409,6 +400,27 @@ async def _edit_row(form: ServerForm, row: str, dialogs: Dialogs, editor: Editor
         await _edit_json(form, dialogs, editor)
     else:  # EXAMPLE: `choose` answers only with a row it offered.
         form.load_example()
+
+
+async def _edit_type(form: ServerForm, dialogs: Dialogs) -> None:
+    options = [Option(value=kind, label=kind, description=TYPE_DESCRIPTIONS[kind]) for kind in SERVER_TYPES]
+    picked = await dialogs.choose(title='Server Type', options=options, current=form.type)
+    for kind in SERVER_TYPES:
+        if kind == picked:
+            form.select_type(kind)
+
+
+async def _edit_target(form: ServerForm, dialogs: Dialogs) -> None:
+    remote = form.type != 'stdio'
+    target = await dialogs.text(
+        title=form.target_label,
+        label=form.target_label,
+        placeholder='https://example.com/mcp' if remote else 'uvx my-mcp-server --flag',
+        initial=form.target(),
+        check=form.target_problem,
+    )
+    if target:
+        form.set_target(target)
 
 
 async def _edit_json(form: ServerForm, dialogs: Dialogs, editor: Editor | None) -> None:

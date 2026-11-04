@@ -14,6 +14,7 @@ from pydantic_ai.profiles.nvidia import nvidia_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.thinkingmachines import thinkingmachines_model_profile
+from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 try:
     from openai import AsyncOpenAI
@@ -52,6 +53,7 @@ class TogetherProvider(_OpenAISDKProvider):
             'qwen': qwen_model_profile,
             'meta-llama': meta_model_profile,
             'mistralai': mistral_model_profile,
+            'zai-org': _glm_5_3_schema_profile,
             'nvidia': nvidia_model_profile,
             'thinkingmachines': thinkingmachines_model_profile,
         }

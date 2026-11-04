@@ -14,6 +14,7 @@ from pydantic_ai.profiles.nvidia import nvidia_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.thinkingmachines import thinkingmachines_model_profile
+from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 try:
     from openai import AsyncOpenAI
@@ -66,6 +67,11 @@ class FireworksProvider(_OpenAISDKProvider):
                 if model_name.startswith(provider):
                     profile = profile_func(model_name)
                     break
+
+        # Fireworks spells GLM-5.3 `glm-5p3`, and also serves it through routers, e.g. `accounts/fireworks/routers/glm-5p3-fast`.
+        model_name = model_name.removeprefix('accounts/fireworks/routers/')
+        if model_name.startswith('glm-5p3'):
+            profile = _glm_5_3_schema_profile(model_name.replace('glm-5p3', 'glm-5.3', 1))
 
         # As the Fireworks API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer,
         # unless json_schema_transformer is set explicitly.
