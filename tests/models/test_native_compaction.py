@@ -12,15 +12,16 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from pydantic_ai import Agent, CompactionPart, ModelMessage, ModelResponse, RunContext
+from pydantic_ai import Agent, CompactionPart, ModelMessage, ModelRequest, ModelResponse, RunContext, ToolReturnPart
 from pydantic_ai.capabilities import AbstractCapability, NativeCompaction
 from pydantic_ai.models import Model
+from pydantic_ai.toolsets import FunctionToolset
 
 from .._inline_snapshot import snapshot
 from ..conftest import RequestCapture, try_import
 
 with try_import() as openai_available:
-    from pydantic_ai.models.openai import OpenAICompaction, OpenAIResponsesModel
+    from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as anthropic_available:
@@ -107,26 +108,44 @@ async def test_run_compact(allow_model_requests: None, compacting_model: Model):
     assert record.part == compaction_part(second.all_messages())
 
 
-@pytest.mark.skipif(not openai_available(), reason='openai not installed')
-async def test_stateless_openai_compaction_without_the_profile_flag(allow_model_requests: None, openai_api_key: str):
-    """`OpenAICompaction(stateless=True)` compacts on a Responses model whatever its profile's generic flag says.
+async def test_native_compaction_with_a_tool_requesting_it(allow_model_requests: None, compacting_model: Model):
+    """A tool requests compaction mid-run: the provider accepts its compaction item followed by the kept tool turn.
 
-    An OpenAI-compatible provider may not set `supports_compaction_on_demand`, which `NativeCompaction` relies on.
+    The compacted history is the compaction response, then the response with the tool call and the request with its
+    result, which the follow-up request is answered from.
     """
-    model = OpenAIResponsesModel(
-        'gpt-5.4-nano',
-        provider=OpenAIProvider(api_key=openai_api_key),
-        profile={'supports_compaction_on_demand': False},
-    )
+    toolset = FunctionToolset[Any]()
+
+    @toolset.tool
+    def compact_conversation(ctx: RunContext[Any]) -> str:
+        """Compact the conversation, then report the user's favorite color."""
+        ctx.request_compaction()
+        return 'Compacted. Reminder: the favorite color is teal.'
+
     agent = Agent(
-        model, instructions='Answer in one short sentence.', capabilities=[OpenAICompaction(message_count_threshold=2)]
+        compacting_model,
+        instructions='Answer in one short sentence.',
+        toolsets=[toolset],
+        capabilities=[NativeCompaction()],
     )
     first = await agent.run('My name is Bob and my favorite color is teal.')
-    second = await agent.run('What is my favorite color?', message_history=first.all_messages())
+
+    second = await agent.run(
+        'Call the compact_conversation tool, then tell me my favorite color.', message_history=first.all_messages()
+    )
 
     assert 'teal' in second.output.lower()
-    assert compaction_part(second.all_messages()).provider_name == 'openai'
-    assert [record.handler for record in second.compactions] == ['native']
+    [record] = second.compactions
+    assert (record.handler, record.reason, record.kept_from) == ('native', 'manual', 1)
+    messages = second.all_messages()
+    assert compaction_part(messages).provider_name == compacting_model.system
+    _, call_response, result_request, final_response = messages
+    assert isinstance(call_response, ModelResponse)
+    assert [call.tool_name for call in call_response.tool_calls] == ['compact_conversation']
+    assert isinstance(result_request, ModelRequest)
+    [tool_return] = [part for part in result_request.parts if isinstance(part, ToolReturnPart)]
+    assert tool_return.tool_call_id == call_response.tool_calls[0].tool_call_id
+    assert isinstance(final_response, ModelResponse)
 
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
