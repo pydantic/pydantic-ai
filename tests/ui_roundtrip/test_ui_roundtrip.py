@@ -998,6 +998,8 @@ class Client(ABC):
     def sanitize(self, adapter: UIAdapter[Any, Any, Any, Any, Any], messages: list[ModelMessage]) -> list[ModelMessage]:
         with warnings.catch_warnings():
             warnings.filterwarnings('ignore', 'Parts carrying the system voice were stripped', UserWarning)
+            # The server's own history has capability parts, which `dump_messages()` never sends to a client.
+            warnings.filterwarnings('ignore', 'Capability parts were dropped', UserWarning)
             return adapter.sanitize_messages(messages)
 
     async def turn(
