@@ -231,7 +231,8 @@ class CompactOnCacheExpiry(AbstractCapability[AgentDepsT]):
         if request.reason != 'cache_expiry' or self.fallback is None:
             return None
         messages = request.messages
-        request_ctx = ctx if request.model is ctx.model else replace(ctx, model=request.model)
+        model = request.conversation_request.model
+        request_ctx = ctx if model is ctx.model else replace(ctx, model=model)
         compacted = await compact_with_span(
             request_ctx,
             strategy='CompactOnCacheExpiry',
