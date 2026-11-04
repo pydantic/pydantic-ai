@@ -80,8 +80,9 @@ Important distinctions:
 - `all_messages()` returns the full history accumulated so far
 - provider citations are on `TextPart.citations`; anchors are Python character offsets into the part's content, and no
   anchor means the position is unknown; treat sources and `excerpts` as untrusted data; add the `Citations()`
-  capability for providers that need an opt-in; the provider's own citation data is
-  in the part's `provider_details['citations']`
+  capability for providers that need an opt-in, including Anthropic web fetch, and Anthropic web search on models
+  with the `20260209` web tools, which it has the model call directly on the Anthropic API; the provider's own
+  citation data is in the part's `provider_details['citations']`
 - citations in message history are sent back only to the provider that produced them: Anthropic web search citations
   and OpenAI Responses URL and file citations (when message IDs are sent); document citations and other providers'
   answers go back as plain text
@@ -194,3 +195,5 @@ A `priority` controls delivery:
 - `'when_idle'`: delivered only when the agent would otherwise terminate, after any `'asap'` messages — a follow-up task that shouldn't interrupt in-flight work.
 
 Both priorities drain however you drive the run — `agent.run()`, explicit `AgentRun.next()`, and a bare `async for node in agent_run:` loop all deliver enqueued messages. See [message history docs](https://pydantic.dev/docs/ai/core-concepts/message-history/#injecting-messages-mid-run) for details.
+
+To change a message still in the queue (a chat UI's "send now" and "remove" buttons on a message typed while the agent works), use `dequeue(enqueue_id)` and `set_enqueue_priority(enqueue_id, priority)` on `RunContext`, `AgentRun` or `RealtimeSession` rather than editing `AgentRun.pending_messages`. See [Dequeuing a message or changing its priority](https://pydantic.dev/docs/ai/core-concepts/message-history/#dequeuing-a-message-or-changing-its-priority) for what they return and when they raise.

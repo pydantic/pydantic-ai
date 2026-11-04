@@ -80,7 +80,7 @@ Redis runs a script to completion without interleaving another command, so no ot
 observes a response part-applied -- neither across the four counters of one window nor across
 the windows themselves. Issued as separate commands instead, a failure between them leaves a
 window counting some of a response and not the rest, which reads as a smaller number than was
-really spent and so releases the brake later than it should.
+really spent and so refuses requests later than it should.
 
 The totals come back as bulk strings, read with `HMGET` after the increments rather than taken
 from what `HINCRBY` returns. `HINCRBY` is exact 64-bit integer arithmetic and the increment
@@ -319,8 +319,8 @@ class RedisSpendStore:
         means the outcome is unknown rather than that nothing happened. Retrying
         therefore risks counting the response twice, which is why
         `SpendLimits.wrap_model_request` does not retry and lets the error end the run
-        instead. Over-counting a response the provider did bill is the direction a
-        brake can survive; under-counting is not.
+        instead. Over-counting a billed response refuses requests early; under-counting
+        lets requests through past the ceiling.
 
         A `SpendEntry.token` makes the retry that *is* safe: a durable engine
         re-executing an accrual it already committed finds the marker for it already
@@ -425,9 +425,7 @@ class RedisSpendStore:
         response it should hold. The cap only bites where `Budget.retain` is shorter than
         `dedup_retain`, and it can only shorten the window a replay is recognised in.
 
-        Both err towards counting a billed response twice rather than not at all, which is
-        the preference `add` states: over-counting is a brake that trips early, and
-        under-counting is one that releases late.
+        Both err towards counting a billed response twice rather than not at all.
         """
         if entry.token is None or self.dedup_retain is None:
             return 0

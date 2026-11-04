@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+import warnings
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Literal, overload
 
@@ -30,13 +31,16 @@ except ImportError as _import_error:
     ) from _import_error
 
 
+_LONG_DECODE_TIMEOUT = 20 * 60
+"""Google [recommends](https://ai.google.dev/gemini-api/docs/generate-content/long-decode) 20 minutes for long decode."""
+
+
 def _create_google_httpx2_client() -> httpx2.AsyncClient:
     """Create the HTTP client a Google provider owns, with a 20-minute timeout instead of `DEFAULT_HTTP_TIMEOUT`.
 
-    Google [recommends](https://ai.google.dev/gemini-api/docs/generate-content/long-decode) a 20-minute read timeout
-    for long decode. The Gateway's Google route creates this client too.
+    The Gateway's Google route creates this client too.
     """
-    return create_async_httpx2_client(timeout=httpx2.Timeout(20 * 60, connect=5))
+    return create_async_httpx2_client(timeout=httpx2.Timeout(_LONG_DECODE_TIMEOUT, connect=5))
 
 
 class BaseGoogleProvider(Provider[Client], ABC):
@@ -99,6 +103,15 @@ class BaseGoogleProvider(Provider[Client], ABC):
             # 3 frames up from the helper: this method, the provider `__init__` calling it, and the
             # user's `GoogleProvider(...)` call, which is where the warning should land.
             warn_if_legacy_httpx_client(http_client, consumer='Google providers', stacklevel=3)
+            timeout = http_client.timeout
+            if (timeout.connect, timeout.read, timeout.write, timeout.pool) == (5.0, 5.0, 5.0, 5.0):
+                warnings.warn(
+                    "The `http_client` passed to the Google provider has httpx's default 5-second timeout, so a "
+                    'request fails when the model takes more than 5 seconds to respond. Give the client a longer '
+                    f'`timeout`, like the {_LONG_DECODE_TIMEOUT // 60} minutes Google recommends for long decode.',
+                    UserWarning,
+                    stacklevel=3,
+                )
         # google-genai's `HttpOptions.timeout` defaults to None, which makes the SDK pass
         # `timeout=None` to httpx and override any timeout on the supplied client. Pin the timeout
         # here (ms) so requests actually time out. The SDK sends it as a scalar, which would set the

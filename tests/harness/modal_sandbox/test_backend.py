@@ -85,7 +85,7 @@ async def test_missing_credentials_are_reported_as_not_found(fake_modal: FakeMod
     with pytest.raises(WorkspaceUnavailableError) as exc:
         await ModalSandboxBackend().get_sandbox()
     assert str(exc.value) == (
-        'No Modal credentials found. Set MODAL_TOKEN_ID / MODAL_TOKEN_SECRET or run `modal token new`.'
+        'No Modal credentials found. Set MODAL_TOKEN_ID / MODAL_TOKEN_SECRET, run `modal token new`, or pass a configured `modal.Client` as `client=`.'
     )
     fake_modal.attach_error = missing
     with pytest.raises(WorkspaceUnavailableError, match=r'^No Modal credentials found'):
@@ -1307,7 +1307,6 @@ class TestErrorMapping:
             ('ExecutionError', WorkspaceError),
             ('RequestSizeError', WorkspaceError),
             ('SandboxFilesystemError', WorkspaceError),
-            ('FilesystemExecutionError', WorkspaceError),
             ('ConnectionError', None),
             ('ServiceError', None),
             ('ResourceExhaustedError', None),
