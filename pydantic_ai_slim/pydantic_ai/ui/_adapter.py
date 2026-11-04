@@ -1421,6 +1421,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         site, but the conversation is loaded on the first iteration of the returned stream, so a `UserError`
         for a conversation that wasn't found surfaces there. So does one for a store that failed to load
         it, which holds the store's own exception as its `__cause__` and leaves its text out of the stream.
+        By then, the run's setup has happened, such as writing the client's state to `deps.state`.
 
         Args:
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
@@ -1454,7 +1455,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
         # A `UserError` rejecting the request is handed back as a failing stream so it reaches
         # `transform_stream`'s error handling; the early return keeps the run setup below, like
-        # writing `deps.state`, from running for a request that never starts.
+        # writing `deps.state`, from running for a request that never starts. A `conversation_store`
+        # is only loaded in `stream_events`, so a request it rejects has been through that setup.
         try:
             if deferred_tool_results is None:
                 deferred_tool_results = self.deferred_tool_results

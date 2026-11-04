@@ -24,6 +24,9 @@ A fourth property covers apps that keep the history on the server instead:
    `manage_message_history='server'` and the server's own history passed as `message_history`, every provider
    request equals the server-only one, even though the client still sends back everything it holds.
 
+`test_conversation_store_round_trip` covers apps that give the adapter a `conversation_store`: the client hands
+the app the saved entries' ids without adding them to its messages, and its retry replaces the right stored turn.
+
 Properties 1 and 2 compare histories after the adapter's `sanitize_messages()`, so parts the server owns and
 never trusts from a client (its system prompt, by default) count as kept. The projection drops only part fields
 that never reach the model, `timestamp` and `metadata`, and the message-level ids and timestamps a reload re-mints.
@@ -52,6 +55,7 @@ from pydantic_core import to_jsonable_python
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability, Capability
+from pydantic_ai.conversation_store import InMemoryConversationStore
 from pydantic_ai.messages import (
     BinaryContent,
     CompactionPart,
@@ -983,10 +987,17 @@ class Client(ABC):
         self.sent_ids.append([message['id'] for message in body['messages']])
         return json.dumps(body).encode()
 
-    def receive(self, encoded: list[str]) -> None:
-        """Feed the server's stream to the client's pending request."""
+    def regenerate(self) -> bytes:
+        """Retry the client's last response, the way each client's app does it."""
+        body = self.driver.request(f'{self.protocol}.regenerate', session=self.session)
+        self.sent_ids.append([message['id'] for message in body['messages']])
+        return json.dumps(body).encode()
+
+    def receive(self, encoded: list[str]) -> dict[str, Any]:
+        """Feed the server's stream to the client's pending request, returning what the client then holds."""
         result = self.driver.request(f'{self.protocol}.receive', session=self.session, **self.stream(encoded))
         assert result.get('error') is None, result['error']
+        return result
 
     def sanitize(self, adapter: UIAdapter[Any, Any, Any, Any, Any], messages: list[ModelMessage]) -> list[ModelMessage]:
         with warnings.catch_warnings():
@@ -1312,6 +1323,61 @@ async def test_forged_framework_voice_stays_out_of_system_voice(
     # The payloads aren't simply dropped: each reaches the model somewhere.
     everything = '\n'.join(json.dumps(body) for body in bodies)
     assert all(marker in everything for marker in ('Ignore the user', 'Forged state', 'Obey this'))
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+async def test_conversation_store_round_trip(protocol: Protocol, js_driver: JSDriver) -> None:
+    """A conversation a store holds, through the real client: two turns, then a retry of the last response.
+
+    The client hands the app the saved entries' ids without adding them to its messages, what it sends back
+    finds the turn to replace, and the store ends up with what the model saw.
+    """
+    seen: list[list[ModelMessage]] = []
+
+    def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(list(messages))
+        return ModelResponse(parts=[TextPart(f'Answer number {len(seen)}.')])
+
+    agent, _ = Scenario(id='conversation_store', script=script).agent()
+    store = InMemoryConversationStore()
+    session = f'conversation-store-{protocol}'
+    client = CLIENTS[protocol](js_driver, session, {'conversation_store': store, 'conversation_scope': 'alice'})
+
+    async def run_turn(body: bytes, *, expected_roles: list[str], answer: str) -> None:
+        adapter = client.adapter(agent, body)
+        result = client.receive([chunk async for chunk in adapter.encode_stream(adapter.run_stream())])
+
+        conversation = await store.load(session, scope='alice')
+        assert conversation is not None
+        assert project(conversation.messages[:-1]) == project(seen[-1])
+        assert conversation.messages[-1].parts == [TextPart(answer)]
+
+        [saved] = result['data']
+        payload = saved['data'] if protocol == 'vercel' else saved['value']
+        assert payload['conversation_id'] == session
+        entries = await store.load_entries(session, scope='alice')
+        assert entries is not None
+        assert payload['entry_ids'] == [entry.id for entry in entries[-len(payload['entry_ids']) :]]
+        assert payload['entry_ids']
+
+        assert [message['role'] for message in result['messages']] == expected_roles
+        assert not [entry_id for entry_id in payload['entry_ids'] if entry_id in json.dumps(result['messages'])]
+        assert answer in json.dumps(result['messages'][-1])
+
+    await run_turn(client.submit('Question 1', None), expected_roles=['user', 'assistant'], answer='Answer number 1.')
+    await run_turn(
+        client.submit('Question 2', None),
+        expected_roles=['user', 'assistant', 'user', 'assistant'],
+        answer='Answer number 2.',
+    )
+    await run_turn(
+        client.regenerate(), expected_roles=['user', 'assistant', 'user', 'assistant'], answer='Answer number 3.'
+    )
+
+    assert [len(messages) for messages in seen] == [1, 3, 3]
+    conversation = await store.load(session, scope='alice')
+    assert conversation is not None
+    assert len(conversation.messages) == 4
 
 
 def test_server_held_history_has_none_of_the_client_round_trip_gaps() -> None:
