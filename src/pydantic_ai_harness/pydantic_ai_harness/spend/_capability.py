@@ -1,17 +1,4 @@
-"""Track what an agent spends, and stop it when a budget is gone.
-
-`UsageLimits` in Pydantic AI caps tokens, requests and cost for the duration of
-one run. `SpendLimits` covers what that leaves: periods longer than a run,
-partitioning by tenant or user, and a counter that several worker processes
-share. It prices each model response it records with
-[`ModelResponse.cost()`][pydantic_ai.messages.ModelResponse.cost], adds it to every
-configured window, and refuses the next request once a window is spent.
-
-The gate is local and immediate. Provider usage APIs and observability backends
-aggregate after the fact and are read by polling, so a number there moves only
-once the requests behind it have already been made -- enough to reconcile a
-counter, not enough to stop the request a runaway loop is about to make.
-"""
+"""The `SpendLimits` capability: per-window spend budgets that refuse requests once spent."""
 
 from __future__ import annotations
 
@@ -90,8 +77,8 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
     Once a recorded response spends a window, `SpendLimits` refuses the next
     request. It does not guarantee that spend stays under the ceiling: the request
     that crosses the line completes, and concurrent runs can each pass the check
-    before any of them records anything. This is a brake on a runaway loop, not an
-    accounting ledger.
+    before any of them records anything. Reconcile against the provider's billing
+    when exact totals matter.
 
     State lives across runs on purpose, so `for_run` is left alone: a daily
     budget that reset every run would not be a daily budget. Per-run isolation
@@ -179,11 +166,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
     """`store` as something that takes every window at once, adapting a legacy one."""
 
     def __post_init__(self) -> None:
-        """Reject an `on_unpriced` that arrived as plain data and is not one of the two policies.
-
-        Anything other than `'raise'` behaves as `'zero'`, so a typo in a spec
-        would quietly turn unpriced responses free instead of failing the run.
-        """
+        """Validate the configuration and adapt `store` to `BatchSpendStore`."""
         if self.on_spend is not None:
             warnings.warn(
                 '`SpendLimits.on_spend` is deprecated; subscribe to `SpendRecordedEvent` with `@agent.on_event` '
@@ -192,16 +175,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                 stacklevel=2,
             )
 
-        # Budgets sharing a name, window and scope share a counter deliberately, which is how
-        # one window carries a USD and a token ceiling. Two ceilings of the SAME kind on one
-        # counter is not that: it reads as two independent limits and behaves as the smaller
-        # one. Comparing against a single remembered budget per slot missed any collision a
-        # later budget displaced, so the slot carries every attribute the counter key does.
         if self.defer_loading is True:
-            # Both hooks are skipped while a deferred capability is unloaded, so an
-            # exhausted budget would let requests through until the model happened to
-            # load it, and the responses it missed would never be counted. A brake that
-            # the thing being braked decides when to apply is not a brake.
             raise UserError(
                 '`defer_loading` is not supported on `SpendLimits`: the enforcement and accounting '
                 'hooks do not run until the capability is loaded, so an exhausted budget would not '
@@ -229,9 +203,8 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
 
         # Budgets sharing a key share one counter, and one counter has one expiry: the accrual
         # writes whichever `retain` the first of them carries, so declaration order would decide
-        # when a `'forever'` ceiling quietly rolls over. Rejected rather than reconciled -- taking
-        # the longest would silently extend the shorter budget's horizon, which is the same class
-        # of surprise pointing the other way.
+        # when a `'forever'` ceiling rolls over. Rejected rather than reconciled: taking the
+        # longest would extend the shorter budget's horizon instead.
         retention: dict[tuple[str, str, bool], Budget[AgentDepsT]] = {}
         for budget in self.budgets:
             counter = (budget.name, budget.window, budget.scope is None)
@@ -245,6 +218,8 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                 )
             retention[counter] = budget
 
+        # One counter can carry a USD and a token ceiling, but two ceilings of the same kind
+        # on one counter would behave as the smaller one, not as two independent limits.
         seen: set[tuple[str, str, str, int]] = set()
         for budget in self.budgets:
             for kind, ceiling in (('usd', budget.usd), ('tokens', budget.tokens)):
@@ -258,6 +233,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                         'Give them different `name`s.'
                     )
                 seen.add(slot)
+        # A spec delivers `on_unpriced` as plain data, and anything but `'raise'` would behave as `'zero'`.
         if self.on_unpriced not in _UNPRICED_POLICIES:
             raise UserError(
                 f'SpendLimits.on_unpriced must be one of {sorted(_UNPRICED_POLICIES)}; got {self.on_unpriced!r}.'
@@ -312,7 +288,8 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         Billed attempts that did not produce the response, such as responses a `FallbackModel`
         rejected, are accrued too: from `ModelResponse.failed_attempts` ahead of the response that
         carries them, and from the attempts core records on the request context when every model
-        failed, whether or not a hook then recovered from the error.
+        failed, whether or not a hook then recovered from the error. A response a hook rejected to
+        make another attempt, as the `ModelFallback` capability does, is accrued as a failed attempt too.
 
         The segments of a continuation chain are observed too, so the merged response they
         produce can be accrued boundary by boundary: see `_accrue_response`.
@@ -328,6 +305,9 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
             usage_responses = request_context._usage_responses[usage_response_offset:]  # pyright: ignore[reportPrivateUsage]
             # Segments are attributed only to a lifecycle's single committed response, which core merged them into.
             boundaries = _continuation_boundaries(request_context, segments) if len(usage_responses) == 1 else []
+            # A response a hook rejected to make another attempt, such as one the `ModelFallback` capability rejected,
+            # is a failed attempt like one a `FallbackModel` rejected, though core lists it as a billed response.
+            rejected = request_context._rejected_usage_responses  # pyright: ignore[reportPrivateUsage]
             errors: list[Exception | None] = []
             for response_index, usage_response in enumerate(usage_responses, start=usage_response_offset):
                 response_token = cache(partial(self._dedup_token, ctx, usage_response, response_index))
@@ -338,7 +318,15 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                 anchors = [*boundary_tokens, (usage_response, response_token)]
                 for billed in _billed_attempts(usage_response.failed_attempts or (), partial(_anchored_token, anchors)):
                     errors.append(await self._accrue_safely(ctx, *billed, failed_attempt=True))
-                errors.append(await self._accrue_safely(ctx, usage_response, response_token, boundary_tokens))
+                errors.append(
+                    await self._accrue_safely(
+                        ctx,
+                        usage_response,
+                        response_token,
+                        boundary_tokens,
+                        failed_attempt=any(usage_response is response for response in rejected),
+                    )
+                )
             unanswered = request_context._usage_attempts[usage_attempt_offset:]  # pyright: ignore[reportPrivateUsage]
             if unanswered:
                 unanswered_token = cache(partial(_unanswered_token, ctx, unanswered))
@@ -562,18 +550,13 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
     ) -> tuple[BudgetStatus, ...]:
         """Where each budget stands.
 
-        Inside a run, pass `ctx` and every budget resolves. Without one -- the
-        reading a cost display wants, and the check to make before starting a
-        durable workflow -- budgets on a
-        `run` or `conversation` window are omitted, since those periods have no
-        meaning outside a run, and a budget declaring a `scope` is omitted
-        unless `scope` names the partition to read, since its callable has no
-        run context to resolve against.
+        Inside a run, pass `ctx` and every budget resolves. Without one, budgets on a
+        `run` or `conversation` window are omitted, since those periods have no meaning
+        outside a run, and a budget declaring a `scope` is omitted unless `scope` names
+        the partition to read.
 
-        Reach for [`exhausted`][pydantic_ai_harness.spend.SpendLimits.exhausted] when the
-        answer gates something: `any(s.exhausted for s in ...)` over a tuple that happens to
-        be empty is a brake that reads as enforcement and inspects nothing, and a `SpendLimits`
-        whose budgets are all scoped returns exactly that tuple.
+        Use [`exhausted`][pydantic_ai_harness.spend.SpendLimits.exhausted] when the answer
+        gates something.
         """
         statuses, _ = await self._resolve(ctx, scope)
         return statuses
@@ -583,9 +566,8 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
     ) -> tuple[tuple[BudgetStatus, ...], tuple[str, ...]]:
         """The readable budgets, and the names of the ones this call cannot resolve.
 
-        `ctx` and `scope` are two answers to the same question, so supplying both is refused
-        rather than resolved by precedence: a run's own scope silently winning would report
-        one tenant's money under another tenant's name, and the caller has no way to tell.
+        `ctx` and `scope` both name the partition, so supplying both is refused rather than
+        resolved by precedence, which would report one tenant's spend under another's name.
         """
         if ctx is not None and scope is not None:
             raise UserError(
@@ -610,17 +592,14 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         *,
         scope: str | None = None,
     ) -> bool:
-        """Whether any budget this call can read is exhausted, refusing to guess about the rest.
+        """Whether any budget is exhausted, raising if some budget cannot be read.
 
-        An admission check, and only that. It reads the counters; it reserves nothing and
-        records nothing, so work started on the strength of it is measured only if the agent
-        also carries this capability. Under durable execution, the agent's clock reads,
-        counter reads, and accruals are journaled. The store still has to survive worker
-        replacement for a budget shared across those workers.
+        An admission check: it reads the counters and reserves or records nothing, so work
+        started after it is measured only if the agent also carries this capability.
 
-        `status()` omits what it cannot resolve, and `any(...)` over the remainder is a brake
-        that silently checks nothing when every budget is scoped -- so this raises instead,
-        naming the budgets that need a `scope` or a `ctx`.
+        `status()` omits the budgets it cannot resolve, so `any(s.exhausted for s in ...)`
+        returns `False` without checking anything when every budget is scoped. This raises
+        `UserError` instead, naming the budgets that need a `scope` or a `ctx`.
         """
         statuses, unresolved = await self._resolve(ctx, scope)
         if unresolved:
@@ -652,10 +631,8 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         `budgets` arrive as mappings and become `Budget` instances, with `usd`
         accepted as a string so YAML cannot round a price through a float. The
         callables and the store have no spec representation and are rejected
-        rather than dropped: a spec that promises per-tenant scoping and does
-        not deliver it is worse than a spec that refuses to load. `**unsupported`
-        stays so that rejection keeps naming the field; core drops it from the schema,
-        so it costs nothing there.
+        rather than dropped. `**unsupported` keeps that rejection naming the field;
+        core drops it from the schema.
         """
         callables = sorted({'store', 'price', 'on_spend', 'clock'} & unsupported.keys())
         if callables:
@@ -678,17 +655,9 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
     async def _now(self) -> datetime:
         """Read the clock durably, naming the remedy when Temporal runs it in orchestration.
 
-        These hooks run in workflow code, and the default clock calls `datetime.now`, which
-        Temporal's workflow sandbox restricts. The sandbox's own error names
-        `datetime.datetime.now` and not what it means here, so it is translated. Matched by
-        class name rather than by importing `temporalio`, which this package does not depend
-        on, and which core's own `pydantic_ai/durable_exec/AGENTS.md` rules out: "Prefer generic
-        capabilities/toolsets/models extension points over engine-specific escape hatches."
-
-        A durability capability dispatches this method to an activity, step, or task. The
-        translation remains for an agent run directly inside a Temporal workflow without
-        durability attached, where the decorator deliberately calls through to this method.
-        Passing the module through the sandbox would only silence the useful symptom.
+        Without a durability capability, an agent run inside a Temporal workflow reads the clock in
+        the workflow sandbox, whose `RestrictedWorkflowAccessError` (matched by class name, since
+        `temporalio` is not a dependency) is translated into advice to attach `TemporalDurability`.
         """
         try:
             return self.clock()
@@ -771,12 +740,10 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
 
     @durable_operation('read')
     async def _read(self, keys: Sequence[str]) -> Mapping[str, Spent]:
-        """What each key holds, without asking the store about none of them.
+        """What each key holds, skipping the store when there are no keys.
 
-        A `SpendLimits` configured to report rather than enforce, or one whose budgets this
-        call cannot resolve, has no key to read. Asking anyway spends a round trip on a
-        store that answers it and fails outright on one that treats an empty batch as a
-        caller error, and neither buys anything. `add_many` is guarded the same way.
+        A store may treat an empty batch as a caller error, so neither `get_many` nor
+        `add_many` is called with one.
         """
         return await self._store.get_many(keys) if keys else {}
 
@@ -786,13 +753,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         return await self._store.add_many(entries) if entries else {}
 
     async def _keyed(self, ctx: RunContext[AgentDepsT]) -> list[tuple[Budget[AgentDepsT], str]]:
-        """Each budget paired with the store key it accumulates under right now.
-
-        No collision check here. Every part of a key is fixed at construction -- `name`,
-        `window`, and the scope callable -- and `__post_init__` rejects the combinations
-        that would collide, so two budgets share a key only where sharing one is the
-        point. Checking again would repeat that work on every model request.
-        """
+        """Each budget paired with the store key it accumulates under right now."""
         now = await self._now()
         return [(budget, self._key(budget, ctx, now, None)) for budget in self.budgets]
 

@@ -19,6 +19,8 @@ pip install 'pydantic-ai-harness[logfire]'
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/logfire/)
 
+![The prompt lives in Logfire as the managed variable prompt__support_agent, with labels such as production and staging. At the start of each run, ManagedPrompt resolves it in the wrap_run hook and uses the value as the run's instructions, which the model receives. The resolved label and version are set as baggage, so the agent run span and its children record which prompt produced them, and those traces go back to Logfire.](https://pydantic.dev/docs/ai/img/harness/managed-prompt.svg)
+
 ## `ManagedPrompt`
 
 `ManagedPrompt` takes an agent's instructions from a Logfire-managed
@@ -38,6 +40,8 @@ instructions for that run. While the run is active, the selected label (and the 
 later) is set as baggage, so every span in the run records which prompt produced it.
 
 ### Usage
+
+If Logfire is not set up yet, run `uvx logfire-cli wizard --task pydantic-ai` once from your project; see [Using Logfire](https://pydantic.dev/docs/ai/integrations/logfire/#using-logfire) for details.
 
 Pass the prompt name and a default value. The name `support_agent` is declared as the managed
 variable `prompt__support_agent`, the naming Logfire's Prompt management uses (hyphens in a

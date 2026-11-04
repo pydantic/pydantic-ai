@@ -26,7 +26,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 
 from ._agent import DBOSParallelExecutionMode
 from ._operation_backend import DBOSBoundOperation, DBOSOperationBackend, DBOSOperationConfig
-from ._utils import StepConfig, guard_enqueue_in_workflow, using_durable_sleep
+from ._utils import StepConfig, guard_enqueue_in_workflow, in_workflow_code, using_durable_sleep
 
 if TYPE_CHECKING:
     from dbos._context import DBOSContext
@@ -224,7 +224,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
 
     @property
     def in_durable_context(self) -> bool:
-        return DBOS.workflow_id is not None and DBOS.step_id is None
+        return in_workflow_code()
 
     def get_default_run_id(self) -> str | None:
         if not self.in_durable_context:

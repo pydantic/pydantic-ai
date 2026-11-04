@@ -48,6 +48,7 @@ from .conftest import try_import
 
 with try_import() as imports_successful:
     from anthropic import AsyncAnthropicBedrock, AsyncAnthropicFoundry, AsyncAnthropicVertex
+    from anthropic.types.beta import BetaToolUnionParam
     from google.genai import Client
     from openai import AsyncAzureOpenAI, AsyncOpenAI
 
@@ -1274,7 +1275,8 @@ async def test_anthropic_file_and_container_ids_by_client(case: AnthropicClientC
         ModelResponse(parts=[TextPart('ok')], provider_name='anthropic', provider_details={'container_id': 'cntr_1'}),
         ModelRequest(parts=[UserPromptPart('again')]),
     ]
-    container, from_history = model._get_container(history, {})  # pyright: ignore[reportPrivateUsage]
+    code_execution: list[BetaToolUnionParam] = [{'type': 'code_execution_20250825', 'name': 'code_execution'}]
+    container, from_history = model._get_container(history, {}, code_execution)  # pyright: ignore[reportPrivateUsage]
     assert (container, from_history) == (('cntr_1', True) if case.accepts_ids else (None, False))
     assert model._container_upload_file_ids(tool) == (['file_1'] if case.accepts_ids else [])  # pyright: ignore[reportPrivateUsage]
 
@@ -1298,7 +1300,9 @@ async def test_anthropic_file_and_container_ids_by_client(case: AnthropicClientC
             state='suspended',
         ),
     ]
-    assert model._get_container(paused, {}) == (('cntr_2', False) if case.accepts_ids else (None, False))  # pyright: ignore[reportPrivateUsage]
+    assert model._get_container(paused, {}, code_execution) == (  # pyright: ignore[reportPrivateUsage]
+        ('cntr_2', False) if case.accepts_ids else (None, False)
+    )
 
 
 # `OpenAICompatibleProvider`.

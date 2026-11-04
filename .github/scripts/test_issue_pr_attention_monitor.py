@@ -2956,7 +2956,10 @@ def _workflow_jobs() -> list[tuple[str, str, list[dict[str, Any]]]]:
 
 
 def test_every_script_running_job_installs_the_same_pinned_boundary_dependency():
-    """pydantic is the scripts' one required package; every job that runs one pins it, to one version."""
+    """pydantic is the scripts' one required package; every job that runs one pins it and its whole closure, to one set.
+
+    `--no-deps` keeps pip from resolving anything past the pins, so no fresh transitive release reaches a job.
+    """
     boundary = _boundary_script_names(_script_sources())
     pins: set[str] = set()
     checked: list[tuple[str, str]] = []
@@ -2965,7 +2968,10 @@ def test_every_script_running_job_installs_the_same_pinned_boundary_dependency()
         if not any(f'.github/scripts/{name}' in run for run in runs for name in boundary):
             continue
         checked.append((file_name, job_name))
-        installs = re.findall(r"pip install --quiet 'pydantic==([0-9][0-9a-z.]*)'", '\n'.join(runs))
+        commands = re.sub(r'\s+', ' ', '\n'.join(runs).replace('\\\n', ' '))
+        installs = re.findall(
+            r"pip install --quiet ('pydantic==[0-9][0-9a-z.]*'(?: '[a-z-]+==[0-9][0-9a-z.]*')+) --no-deps", commands
+        )
         assert installs, (file_name, job_name)
         pins.update(installs)
     # The discovery itself is under test: if the glob or the import scan break,
@@ -3056,7 +3062,7 @@ def test_weekly_digest_workflow_is_monday_or_manual_read_only_and_secret_isolate
     for job_name in ('notify', 'alert'):
         assert 'environment' not in jobs[job_name]
         action = jobs[job_name]['steps'][0]
-        assert action['uses'] == 'slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c'
+        assert action['uses'] == 'slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d'
         assert action['with']['webhook'] == '${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}'
 
 

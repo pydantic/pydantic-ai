@@ -4,6 +4,8 @@ Let an agent read and send Slack messages, browse channels, and work with canvas
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+![Inside your agent, the Slack capability connects to Slack's hosted MCP server at mcp.slack.com/mcp with a Slack user token (xoxp-); bot tokens (xoxb-) are not accepted. The model sees the server's tool names unchanged, such as slack_send_message, and messages it posts appear as that user. Your auth function returns the token for each run.](https://pydantic.dev/docs/ai/img/harness/slack.svg)
+
 ## Install and connect
 
 uv:
@@ -128,7 +130,7 @@ Handle the approval requests with the [deferred tools workflow](https://pydantic
 
 ## Connection customization
 
-Use `auth` in almost every case. Pass `client` only when you need control of the connection itself: your own FastMCP client or transport, for example one with a different authentication scheme, a proxy, or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth` raises an error. `read_only` and `include_instructions` still apply. `include_instructions=False` stops the server's own instructions from reaching the agent.
+Pass `client` when you need control of the connection itself: your own FastMCP client or transport, for example one with a different authentication scheme, a proxy, or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth` raises an error. `read_only` still applies. `include_instructions=False` stops the server's own instructions from reaching the agent.
 
 A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately. To use two connections, give each a distinct `id` and `tool_prefix`.
 

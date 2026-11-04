@@ -19,6 +19,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_clai2 import warm_imports
+from pydantic_clai2.clai_docs import ClaiDocs
 from pydantic_clai2.cli.self_update import WebHandoff
 from pydantic_clai2.commands import (
     Commands,
@@ -27,7 +28,6 @@ from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.builtins import DEFAULT_PLUGINS, STOCK_PLUGINS
 from pydantic_clai2.config.project_settings import ProjectSettings, load_project_settings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.customization import customization_guide
 from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins import (
     SessionEndReason,
@@ -58,7 +58,7 @@ OutputT = TypeVar('OutputT')
 
 def create_agent(model: str | None = None) -> Agent[None, str]:
     """Build the base CLAI agent. The coding tools come from the built-in `coder` plugin, not from here."""
-    return Agent(model, deps_type=type(None), capabilities=[customization_guide()])
+    return Agent(model, deps_type=type(None), capabilities=[ClaiDocs()])
 
 
 def create_stock_agent(model: Model | str | None = None) -> StockAgent[None, str]:
@@ -66,7 +66,7 @@ def create_stock_agent(model: Model | str | None = None) -> StockAgent[None, str
 
     It is named `clai2`, which its run spans carry and which Logfire Agent Control addresses it by.
     """
-    return StockAgent(model, deps_type=type(None), output_type=str, capabilities=[customization_guide()], name='clai2')
+    return StockAgent(model, deps_type=type(None), output_type=str, capabilities=[ClaiDocs()], name='clai2')
 
 
 @asynccontextmanager

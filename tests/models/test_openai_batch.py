@@ -13,6 +13,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 from inline_snapshot import snapshot
@@ -97,6 +98,27 @@ def test_batching_a_chat_completions_model_points_to_the_responses_api(
     with pytest.raises(UserError) as exc_info:
         BatchPool().wrap(model_factory())
     assert str(exc_info.value) == message
+
+
+def test_batching_a_chat_completions_model_points_to_the_responses_api_by_profile_not_provider_name() -> None:
+    """The hint follows `openai_supports_batch_api`, which `OpenAIResponsesModel` batches on, not the provider's name."""
+
+    class RenamedOpenAIProvider(OpenAIProvider):
+        @property
+        def name(self) -> str:
+            return 'my-openai'
+
+    provider = RenamedOpenAIProvider(api_key='k')
+    assert OpenAIResponsesModel('gpt-4.1-nano', provider=provider).batch_max_requests is not None
+    with pytest.raises(UserError, match='batch it through the Responses API'):
+        BatchPool().wrap(OpenAIChatModel('gpt-4.1-nano', provider=provider))
+
+    no_batch_profile = OpenAIModelProfile(openai_supports_batch_api=False)
+    with pytest.raises(UserError) as exc_info:
+        BatchPool().wrap(
+            OpenAIChatModel('gpt-4.1-nano', provider=OpenAIProvider(api_key='k'), profile=no_batch_profile)
+        )
+    assert str(exc_info.value) == "`OpenAIChatModel` 'gpt-4.1-nano' has no batch API."
 
 
 @pytest.mark.parametrize(
@@ -335,7 +357,6 @@ async def test_batch_create_refuses_a_different_client_or_model(allow_model_requ
     'settings,match',
     [
         ({'timeout': 10}, 'per-request `timeout`'),
-        ({'max_retries': 0}, 'per-request `max_retries`'),
         ({'extra_headers': {'X-Tenant': 'a'}}, 'per-request `extra_headers`'),
         ({'openai_background': True}, '`openai_background`'),
         ({'extra_body': {'stream': True}}, '`stream` or `background`'),
@@ -348,6 +369,12 @@ async def test_batch_encode_rejects_what_a_batch_cannot_honor(settings: dict[str
         await _model().batch_encode(_request(**settings))
 
 
+async def test_batch_encode_ignores_max_retries() -> None:
+    """OpenAI runs a batched request itself, so an SDK retry count is ignored rather than rejected."""
+    encoded = await _model().batch_encode(_request(max_retries=0))
+    assert encoded == await _model().batch_encode(_request())
+
+
 async def test_batch_requires_a_static_api_key() -> None:
     """A key callback could choose a different credential per request, while a batch is submitted and polled with one."""
 
@@ -357,6 +384,22 @@ async def test_batch_requires_a_static_api_key() -> None:
     model = OpenAIResponsesModel('gpt-4.1-nano', provider=OpenAIProvider(openai_client=AsyncOpenAI(api_key=api_key)))
     with pytest.raises(UserError, match='requires a static API key'):
         await model.batch_encode(_request())
+
+
+async def test_batch_keeps_azure_ad_token_provider_support() -> None:
+    token = Mock(return_value='unused-token')
+    client = AsyncAzureOpenAI(
+        azure_endpoint='https://example.openai.azure.com',
+        api_version='2024-10-21',
+        azure_ad_token_provider=token,
+    )
+    model = OpenAIResponsesModel(
+        'gpt-4.1-nano',
+        provider=AzureProvider(openai_client=client),
+        profile=OpenAIModelProfile(openai_supports_batch_api=True),
+    )
+    assert openai_batch._batch_client(model) is client  # pyright: ignore[reportPrivateUsage]
+    token.assert_not_called()
 
 
 async def test_batch_rejects_a_workload_identity() -> None:

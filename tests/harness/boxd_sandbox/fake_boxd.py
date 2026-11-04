@@ -150,29 +150,27 @@ class _FakeExecCall:
         )
         machine.processes.append(process)
         assert process.stdout is not None and process.stderr is not None
+        # `None` ends the stream, so no chunk depends on whether it was read before or after exit.
         chunks: asyncio.Queue[Any] = asyncio.Queue()
 
         async def read(pipe: asyncio.StreamReader, is_stderr: bool) -> None:
             while data := await pipe.read(65536):
                 await chunks.put(_ExecChunk(data=data, is_stderr=is_stderr))
 
-        readers = [asyncio.create_task(read(process.stdout, False)), asyncio.create_task(read(process.stderr, True))]
-        owner.readers.extend(readers)
-        exited = asyncio.create_task(_exited(process))
-        try:
-            while not exited.done():
-                getter = asyncio.create_task(chunks.get())
-                await asyncio.wait([getter, exited], return_when=asyncio.FIRST_COMPLETED)
-                if getter.done():
-                    yield getter.result()
-                else:
-                    getter.cancel()
+        async def end_after_exit() -> None:
+            await _exited(process)
             # A background child can hold the pipes open; read on briefly, as production returns at exit.
             await asyncio.wait(readers, timeout=_DRAIN_GRACE)
-            while not chunks.empty():
-                yield chunks.get_nowait()
+            await chunks.put(None)
+
+        readers = [asyncio.create_task(read(process.stdout, False)), asyncio.create_task(read(process.stderr, True))]
+        owner.readers.extend(readers)
+        ender = asyncio.create_task(end_after_exit())
+        try:
+            while (chunk := await chunks.get()) is not None:
+                yield chunk
         finally:
-            for task in (*readers, exited):
+            for task in (*readers, ender):
                 task.cancel()
         if owner.stream_error is not None:
             raise owner.stream_error

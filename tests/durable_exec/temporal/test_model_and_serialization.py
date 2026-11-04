@@ -8,10 +8,11 @@ import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
+import httpx2
 import pytest
 from pydantic import BaseModel, TypeAdapter
 from pydantic_core import to_jsonable_python
@@ -55,6 +56,7 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.direct import model_request_stream
+from pydantic_ai.durable_exec._utils import mark_streamed_before_failing, streamed_before_failing
 from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelAuthenticationError,
@@ -65,6 +67,7 @@ from pydantic_ai.exceptions import (
     ModelRequestRejectedError,
     ModelServerError,
     ModelTimeoutError,
+    RetryModelRequest,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -73,6 +76,7 @@ from pydantic_ai.messages import (
     CustomEvent,
     InstructionId,
     InstructionPart,
+    ModelRequestAttempt,
     ThinkingPart,
     ToolsetInstructionSource,
     UnknownCustomEvent,
@@ -140,6 +144,8 @@ try:
         _retry_policy_type,  # pyright: ignore[reportPrivateUsage]
         model_errors_as_application_errors,
         rebuilt_model_errors,
+        rebuilt_retry_requests,
+        retry_requests_as_application_errors,
     )
     from pydantic_ai.durable_exec.temporal._replay_safe_tracer_provider import ReplaySafeSDKTracerProvider
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
@@ -200,9 +206,11 @@ with workflow.unsafe.imports_passed_through():
     # https://github.com/temporalio/sdk-python/blob/3244f8bffebee05e0e7efefb1240a75039903dda/tests/test_client.py#L112C1-L113C1
 
     from ..._inline_snapshot import snapshot
+    from ...append_only import drain_events
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
     from ...conftest import IsDatetime, IsStr, try_import
+    from ..responses_websocket import responses_reply, websocket_model
 
     # `_shared` loads the same sandbox-sensitive modules, so import it passed-through as well.
     from ._shared import (
@@ -913,7 +921,7 @@ async def test_oversized_model_response_payload(client: Client):
     ):
         with workflow_raises(
             UserError,
-            f"The response from model 'function:oversized-response-model' is too large for Temporal. {payload_limit_detail(2134331)}. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. A generated image is the usual cause, so ask the model for a smaller one through the model settings. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads",
+            f"The response from model 'function:oversized-response-model' is too large for Temporal. {payload_limit_detail(2134347)}. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. A generated image is the usual cause, so ask the model for a smaller one through the model settings. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads",
         ):
             await client.execute_workflow(
                 OversizedModelResponseWorkflow.run,
@@ -1097,6 +1105,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         'workspace',  # live facade cannot cross the activity boundary; only a concrete ref is optionally carried
         # Live toolsets the run holds entered; an activity may run in another process, so it enters its own
         '_run_held_toolsets',
+        '_dispatched_tool_name',  # names a tool in the workflow-side `tool_manager`, which an activity doesn't have
     }
     carried_only_when_set = {
         '_tool_name_path',  # set while a name-changing wrapper lists a toolset; defaults to `()` otherwise
@@ -1693,6 +1702,7 @@ def test_temporal_model_canonical_system_follows_active_model():
 
     assert (temporal_model.canonical_system, temporal_model.compatible_systems) == ('test', frozenset())
     assert not temporal_model.accepts_stateless_artifacts(anthropic_response, anthropic_response.parts[0])
+    assert not temporal_model.accepts_server_state(anthropic_response)
     assert temporal_model._model_for_response(anthropic_response) is default_model  # pyright: ignore[reportPrivateUsage]
 
     with temporal_model.using_model('alt'):
@@ -1706,6 +1716,7 @@ def test_temporal_model_canonical_system_follows_active_model():
     with temporal_model.using_model('anthropic:claude-sonnet-4-5'):
         assert (temporal_model.canonical_system, temporal_model.compatible_systems) == ('anthropic', frozenset())
         assert temporal_model.accepts_stateless_artifacts(anthropic_response, anthropic_response.parts[0])
+        assert temporal_model.accepts_server_state(anthropic_response)
         assert temporal_model._model_for_response(anthropic_response) is temporal_model  # pyright: ignore[reportPrivateUsage]
 
 
@@ -1922,6 +1933,40 @@ async def test_temporal_activities_manage_inferred_model_lifecycle(monkeypatch: 
         'cancel',
         'exit',
     ]
+
+
+async def test_temporal_model_activities_use_http_for_responses_websocket(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An activity without an external model owner uses HTTP instead of opening a socket for one request."""
+    pytest.importorskip('websockets')
+    connect = AsyncMock()
+    monkeypatch.setattr('openai.lib._websocket._WebSocketConnect', connect)
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(responses_reply)) as client:
+        responses_model = websocket_model(client)
+        temporal_model = TemporalModel(
+            responses_model,
+            activity_name_prefix='test__responses_websocket',
+            activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+            deps_type=type(None),
+            event_stream_handler=drain_events,
+        )
+        ctx = RunContext[None](deps=None, model=responses_model, usage=RunUsage(), run_id='responses-websocket')
+        params = _RequestParams(
+            messages=[ModelRequest.user_text_prompt('hello')],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+            serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+            model_id=None,
+        )
+        response = await ActivityEnvironment().run(temporal_model.request_activity, params, None)
+        stream_response = await ActivityEnvironment().run(
+            temporal_model.request_stream_activity,
+            params,
+            None,  # pyright: ignore[reportArgumentType]
+        )
+    assert response.text == stream_response.text == 'from HTTP'
+    connect.assert_not_called()
 
 
 @pytest.mark.parametrize('legacy_payload', [True, False])
@@ -3307,6 +3352,7 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                     ],
                     usage=RequestUsage(input_tokens=61, output_tokens=2),
                     model_name='test',
+                    model_id='test:test',
                     timestamp=IsDatetime(),
                     provider_name='test',
                     run_id=IsStr(),
@@ -3341,6 +3387,7 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                     ],
                     usage=RequestUsage(input_tokens=62, output_tokens=34),
                     model_name='test',
+                    model_id='test:test',
                     timestamp=IsDatetime(),
                     provider_name='test',
                     run_id=IsStr(),
@@ -3502,6 +3549,77 @@ def _crossed(error: ModelAPIError) -> BaseException:
         with rebuilt_model_errors():
             raise _activity_error(raised.value)
     return rebuilt.value
+
+
+def test_what_a_stream_produced_before_failing_crosses_with_its_error():
+    """The partial response of a stream that failed after producing output reaches the workflow unchanged.
+
+    Through JSON, as the details of the activity's failure are stored, so the run commits it with its usage.
+    """
+    partial = ModelResponse(
+        parts=[
+            ThinkingPart(content='thinking', id='rs_1', signature='sig', provider_name='openai'),
+            TextPart('partial answer'),
+            ToolCallPart('lookup', {'q': 'x'}, tool_call_id='call_1'),
+        ],
+        usage=RequestUsage(input_tokens=10, output_tokens=3),
+        model_name='primary',
+        provider_name='openai',
+        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+        state='interrupted',
+        failed_attempts=[
+            ModelRequestAttempt(
+                model_name='earlier',
+                provider_name='anthropic',
+                outcome='error',
+                error='ModelAPIError: boom',
+                timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+                duration=timedelta(seconds=1),
+            )
+        ],
+    )
+    error = ModelAPIError('primary', 'stream broke')
+    mark_streamed_before_failing(error, partial)
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors():
+            raise error
+    wire = ApplicationError(
+        raised.value.message,
+        *json.loads(json.dumps(list(raised.value.details))),
+        type=raised.value.type,
+        non_retryable=raised.value.non_retryable,
+    )
+    with pytest.raises(ModelAPIError) as rebuilt:
+        with rebuilt_model_errors():
+            raise _activity_error(wire)
+    assert streamed_before_failing(rebuilt.value) == partial
+
+
+@pytest.mark.parametrize('model', ['backup', None])
+def test_retry_model_request_crosses_a_capability_activity(model: str | None):
+    """A `RetryModelRequest` a durable capability hook raises reaches the workflow as itself, with its model's name."""
+    with pytest.raises(ApplicationError) as raised:
+        with retry_requests_as_application_errors():
+            raise RetryModelRequest(model)
+    assert raised.value.non_retryable
+    with pytest.raises(RetryModelRequest) as rebuilt:
+        with rebuilt_retry_requests():
+            raise _activity_error(raised.value)
+    assert rebuilt.value.model == model
+
+
+def test_retry_model_request_for_a_model_instance_cant_cross_a_capability_activity():
+    with pytest.raises(UserError, match='can only name the model to attempt by its name'):
+        with retry_requests_as_application_errors():
+            raise RetryModelRequest(TestModel())
+
+
+def test_other_capability_activity_failures_are_raised_as_they_were():
+    failure = _activity_error(ApplicationError('boom', type='ValueError'))
+    with pytest.raises(ActivityError) as raised:
+        with rebuilt_retry_requests():
+            raise failure
+    assert raised.value is failure
 
 
 def test_model_http_error_crosses_with_its_fields():
