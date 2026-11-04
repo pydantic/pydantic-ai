@@ -35,6 +35,7 @@ from pydantic_ai import (
     PartStartEvent,
     RetryFeedbackPart,
     RetryInfo,
+    StructuredContent,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -194,6 +195,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 parts=[TextPart(content='world')],
                 usage=RequestUsage(unmeasured_requests=1),
                 model_name='llama-3.3-70b-versatile-123',
+                model_id='groq:llama-3.3-70b-versatile',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
@@ -216,6 +218,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 parts=[TextPart(content='world')],
                 usage=RequestUsage(unmeasured_requests=1),
                 model_name='llama-3.3-70b-versatile-123',
+                model_id='groq:llama-3.3-70b-versatile',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
@@ -283,6 +286,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 ],
                 usage=RequestUsage(unmeasured_requests=1),
                 model_name='llama-3.3-70b-versatile-123',
+                model_id='groq:llama-3.3-70b-versatile',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
@@ -386,6 +390,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=2, output_tokens=1),
                 model_name='llama-3.3-70b-versatile-123',
+                model_id='groq:llama-3.3-70b-versatile',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
@@ -423,6 +428,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=3, output_tokens=2),
                 model_name='llama-3.3-70b-versatile-123',
+                model_id='groq:llama-3.3-70b-versatile',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
@@ -452,6 +458,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 parts=[TextPart(content='final response')],
                 usage=RequestUsage(unmeasured_requests=1),
                 model_name='llama-3.3-70b-versatile-123',
+                model_id='groq:llama-3.3-70b-versatile',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
@@ -560,6 +567,45 @@ async def test_map_text_content_input(allow_model_requests: None, groq_api_key: 
     )
 
 
+async def test_structured_content_input(allow_model_requests: None, groq_api_key: str):
+    """A model without native structured input is sent the text the item rendered to, beside the other text.
+
+    The body is read off the wire with a request hook, which fires on replay too, so it's what the code sends now
+    rather than what the cassette recorded. `GroqProvider` takes a legacy `httpx.AsyncClient`, so the shared
+    `request_capture` fixture, an `httpx2` client, can't be injected.
+    """
+    sent: list[httpx.Request] = []
+
+    async def record(request: httpx.Request) -> None:
+        sent.append(request)
+
+    http_client = httpx.AsyncClient(event_hooks={'request': [record]})
+    m = GroqModel('openai/gpt-oss-20b', provider=GroqProvider(api_key=groq_api_key, http_client=http_client))
+    agent = Agent(m, instructions='Answer from the UI state, in one short sentence.')
+
+    result = await agent.run(
+        [
+            StructuredContent({'url': '/products/42', 'cart': {'items': 2, 'total': 949.0}}, tag='ui_state'),
+            'How many items are in my cart?',
+        ]
+    )
+
+    [request] = sent
+    assert json.loads(request.content)['messages'][1] == snapshot(
+        {
+            'role': 'user',
+            'content': [
+                {
+                    'text': '<ui_state>{"url":"/products/42","cart":{"items":2,"total":949.0}}</ui_state>',
+                    'type': 'text',
+                },
+                {'text': 'How many items are in my cart?', 'type': 'text'},
+            ],
+        }
+    )
+    assert result.output == snapshot('Your cart contains 2 items.')
+
+
 async def test_image_url_input(allow_model_requests: None, groq_api_key: str):
     m = GroqModel('meta-llama/llama-4-scout-17b-16e-instruct', provider=GroqProvider(api_key=groq_api_key))
     agent = Agent(m)
@@ -607,6 +653,7 @@ async def test_image_as_binary_content_tool_response(
                 parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='911ra51k8')],
                 usage=RequestUsage(input_tokens=712, output_tokens=20, cost=Decimal('0.0001544')),
                 model_name='meta-llama/llama-4-maverick-17b-128e-instruct',
+                model_id='groq:meta-llama/llama-4-maverick-17b-128e-instruct',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
@@ -633,6 +680,7 @@ async def test_image_as_binary_content_tool_response(
                 parts=[TextPart(content='The fruit in the image is a kiwi.')],
                 usage=RequestUsage(input_tokens=1501, output_tokens=11, cost=Decimal('0.0003068')),
                 model_name='meta-llama/llama-4-maverick-17b-128e-instruct',
+                model_id='groq:meta-llama/llama-4-maverick-17b-128e-instruct',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
@@ -847,6 +895,7 @@ async def test_groq_model_instructions(allow_model_requests: None, groq_api_key:
                 parts=[TextPart(content='The capital of France is Paris.')],
                 usage=RequestUsage(input_tokens=48, output_tokens=8, cost=Decimal('0.00003464')),
                 model_name='llama-3.3-70b-versatile',
+                model_id='groq:llama-3.3-70b-versatile',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
@@ -1122,6 +1171,7 @@ It's worth noting that the weather in San Francisco can be quite variable, and t
                 ],
                 usage=RequestUsage(input_tokens=5296, output_tokens=387),
                 model_name='groq/compound',
+                model_id='groq:groq/compound',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
@@ -1296,6 +1346,7 @@ search(What is the weather in San Francisco today?)
                 ],
                 usage=RequestUsage(input_tokens=5003, output_tokens=359),
                 model_name='groq/compound',
+                model_id='groq:compound-beta',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
@@ -1951,6 +2002,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 parts=[IsInstance(ThinkingPart), IsInstance(TextPart)],
                 usage=RequestUsage(input_tokens=21, output_tokens=1414, cost=Decimal('0.00141561')),
                 model_name='deepseek-r1-distill-llama-70b',
+                model_id='groq:deepseek-r1-distill-llama-70b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
@@ -1984,6 +2036,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 parts=[IsInstance(ThinkingPart), IsInstance(TextPart)],
                 usage=RequestUsage(input_tokens=21, output_tokens=1414, cost=Decimal('0.00141561')),
                 model_name='deepseek-r1-distill-llama-70b',
+                model_id='groq:deepseek-r1-distill-llama-70b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
@@ -2012,6 +2065,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 parts=[IsInstance(ThinkingPart), IsInstance(TextPart)],
                 usage=RequestUsage(input_tokens=524, output_tokens=1590, cost=Decimal('0.0019671')),
                 model_name='deepseek-r1-distill-llama-70b',
+                model_id='groq:deepseek-r1-distill-llama-70b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
@@ -2139,6 +2193,7 @@ Enjoy your homemade Uruguayan alfajores!\
                 ],
                 usage=RequestUsage(input_tokens=21, output_tokens=988, cost=Decimal('0.00099387')),
                 model_name='deepseek-r1-distill-llama-70b',
+                model_id='groq:deepseek-r1-distill-llama-70b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
@@ -3508,6 +3563,7 @@ By following these steps, you can create authentic Argentinian alfajores that sh
                 ],
                 usage=RequestUsage(input_tokens=573, output_tokens=1509, cost=Decimal('0.00192366')),
                 model_name='deepseek-r1-distill-llama-70b',
+                model_id='groq:deepseek-r1-distill-llama-70b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
@@ -5371,6 +5427,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                 ],
                 usage=RequestUsage(cost=Decimal('0.000')),
                 model_name='openai/gpt-oss-120b',
+                model_id='groq:openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
@@ -5426,6 +5483,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                     cost=Decimal('0.00007635'),
                 ),
                 model_name='openai/gpt-oss-120b',
+                model_id='groq:openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
@@ -5467,6 +5525,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                     cost=Decimal('0.0000888'),
                 ),
                 model_name='openai/gpt-oss-120b',
+                model_id='groq:openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
@@ -5525,6 +5584,7 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
                 ],
                 usage=RequestUsage(unmeasured_requests=1),
                 model_name='openai/gpt-oss-120b',
+                model_id='groq:openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
@@ -5581,6 +5641,7 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
                     cost=Decimal('0.0000750'),
                 ),
                 model_name='openai/gpt-oss-120b',
+                model_id='groq:openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
@@ -5619,6 +5680,7 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
                     cost=Decimal('0.00008565'),
                 ),
                 model_name='openai/gpt-oss-120b',
+                model_id='groq:openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
@@ -5661,6 +5723,7 @@ async def test_tool_use_failed_error_with_text(allow_model_requests: None, groq_
                 parts=[TextPart(content='maybe')],
                 usage=RequestUsage(cost=Decimal('0.000')),
                 model_name='openai/gpt-oss-120b',
+                model_id='groq:openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
@@ -5710,6 +5773,7 @@ The user wants me to fix the errors. They attempted to get plain "maybe" but sys
                     cost=Decimal('0.0001425'),
                 ),
                 model_name='openai/gpt-oss-120b',
+                model_id='groq:openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
@@ -5781,6 +5845,7 @@ We need to respond with just the string maybe, not JSON, and no tool call. So ju
                 ],
                 usage=RequestUsage(unmeasured_requests=1),
                 model_name='openai/gpt-oss-120b',
+                model_id='groq:openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
@@ -5828,6 +5893,7 @@ We need to respond with just the string maybe, not JSON, and no tool call. So ju
                     cost=Decimal('0.00015945'),
                 ),
                 model_name='openai/gpt-oss-120b',
+                model_id='groq:openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
@@ -5900,6 +5966,7 @@ async def test_groq_native_output(allow_model_requests: None, groq_api_key: str)
                 ],
                 usage=RequestUsage(input_tokens=178, output_tokens=94, cost=Decimal('0.0000831')),
                 model_name='openai/gpt-oss-120b',
+                model_id='groq:openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
@@ -5950,6 +6017,7 @@ async def test_groq_prompted_output(allow_model_requests: None, groq_api_key: st
                 ],
                 usage=RequestUsage(input_tokens=177, output_tokens=87, cost=Decimal('0.00007875')),
                 model_name='openai/gpt-oss-120b',
+                model_id='groq:openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
@@ -5991,6 +6059,7 @@ async def test_stream_cancel(allow_model_requests: None):
                 parts=[TextPart(content='hello ')],
                 usage=RequestUsage(cost=Decimal('0.00')),
                 model_name='llama-3.3-70b-versatile',
+                model_id='groq:llama-3.3-70b-versatile',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',

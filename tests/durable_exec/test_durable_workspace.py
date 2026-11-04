@@ -47,6 +47,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
+    AuthorityWorkspace,
     FileEntry,
     LocalWorkspaceBackend,
     ReadOnlyWorkspace,
@@ -312,6 +313,18 @@ async def test_a_matching_explicit_workspace_policy_is_kept(tmp_path: Path) -> N
     assert isinstance(result.workspace, DurableWorkspace)
     assert isinstance(result.workspace.wrapped, PolicyWorkspace)
     assert result.workspace.wrapped.durable_policy() == ('open',)
+
+
+async def test_an_explicit_workspace_with_another_authority_is_rejected(tmp_path: Path) -> None:
+    agent = Agent(TestModel(), name='ws', capabilities=[LocalWorkspace(tmp_path, authority='user'), FakeDurability()])
+    backend = LocalWorkspaceBackend(tmp_path)
+
+    with pytest.raises(UserError, match=r'a `workspace=` policy would be lost'):
+        await agent.run('go', workspace=AuthorityWorkspace(Workspace(backend), authority='none'))
+
+    result = await agent.run('go', workspace=AuthorityWorkspace(Workspace(backend), authority='user'))
+    assert isinstance(result.workspace, DurableWorkspace)
+    assert result.workspace.authority == 'user'
 
 
 def test_a_policy_capability_follows_the_wrapped_answer(tmp_path: Path) -> None:

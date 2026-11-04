@@ -22,7 +22,7 @@ from pydantic_clai2.models.profiles import parse_model
 from pydantic_clai2.openrouter_auth import OpenRouterAuth
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.menus.slash_search import slash_search
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 
 
 class Connection(BaseModel):

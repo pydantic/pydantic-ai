@@ -1,0 +1,18 @@
+# Changes to these paths need an approving review from a code owner who is not the PR's author.
+# The `main` ruleset enforces it and dismisses the approval when a later push changes the diff.
+# `.github/workflows/AGENTS.md` ("Code owners") explains the scopes.
+# `@pydantic/pydantic-ai-admin` is not an owner: it also holds repo admins outside the Pydantic AI team, so its admins are named instead.
+
+# Dependencies, at any depth
+pyproject.toml            @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
+uv.lock                   @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
+
+# CI config
+/.github/workflows/       @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
+/.github/actions/         @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
+/.github/scripts/         @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
+/.pre-commit-config.yaml  @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
+/Makefile                 @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
+
+# This file. Unowned, a PR could drop an owner and the next PR change that path unreviewed.
+/.github/CODEOWNERS       @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini

@@ -36,7 +36,7 @@ from pydantic_clai2.mcp import OAuthSignIn, SignIn as MCPSignIn, TokenStore, htt
 from pydantic_clai2.plugins import PluginHost, SessionStart
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
 from pydantic_clai2.plugins.menus import Option
-from pydantic_clai2.runtime._session import WorkspacelessCapability
+from pydantic_clai2.runtime.session import WorkspacelessCapability
 from pydantic_clai2.ui.menus import dialogs
 from pydantic_clai2.ui.menus.field_menu import Runners
 from pydantic_clai2.ui.menus.menu_worker import worker_stopping
@@ -114,7 +114,9 @@ class Shell:
         plugin = entry.loaded.plugin
         assert isinstance(plugin, day_ai.DayAIPlugin)
         assert self.loader.capabilities() == [WorkspacelessCapability(plugin.for_run)]
-        return await plugin.for_run(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
+        capability = await plugin.for_run(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
+        assert capability is None or capability.defer_loading
+        return capability
 
     async def client(self) -> object:
         capability = await self.run_capability()
@@ -142,7 +144,11 @@ def script(
 
 
 def with_key(name: str = 'DAY_AI_ACCESS_TOKEN', *, include_instructions: bool = True) -> list[DayAI[None]]:
-    return [DayAI[None](auth=SavedKey(name=name, setup=SETUP), include_instructions=include_instructions)]
+    return [
+        DayAI[None](
+            defer_loading=True, auth=SavedKey(name=name, setup=SETUP), include_instructions=include_instructions
+        )
+    ]
 
 
 async def store_sign_in() -> None:

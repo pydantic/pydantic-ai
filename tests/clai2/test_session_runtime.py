@@ -17,9 +17,9 @@ from pydantic_ai_harness.subagents import DelegationEndEvent, DelegationStartEve
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import TaskEvent
-from pydantic_clai2.runtime._session import resolve_model_name
+from pydantic_clai2.plugins import TaskProgress
 from pydantic_clai2.runtime.process import ClaiProcess
+from pydantic_clai2.runtime.session import resolve_model_name
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.runtime.tasks import TaskRouter, Tasks
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
@@ -145,11 +145,11 @@ async def test_task_events_reach_only_the_session_holding_the_conversation() -> 
     router = TaskRouter(directory=None)
     held = {'a': 'a', 'b': 'b'}
     woken: list[str] = []
-    fired: dict[str, list[TaskEvent]] = {'a': [], 'b': []}
+    fired: dict[str, list[TaskProgress]] = {'a': [], 'b': []}
     outputs = {'a': io.StringIO(), 'b': io.StringIO()}
 
     def view(name: str) -> Tasks:
-        async def fire(event: TaskEvent) -> None:
+        async def fire(event: TaskProgress) -> None:
             fired[name].append(event)
 
         tasks = Tasks(

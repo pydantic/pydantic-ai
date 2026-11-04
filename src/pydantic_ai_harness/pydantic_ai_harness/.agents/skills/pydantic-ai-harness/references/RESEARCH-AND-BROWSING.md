@@ -251,10 +251,13 @@ Gotchas:
   `BROWSER_USE_API_KEY`, outside your observability. Pass `llm` for a cheaper sub-agent model.
 - Costs: `use_vision=True` sends a screenshot every step; a judge call runs per task unless
   `BrowserAgentSettings(use_judge=False)`.
+- Usage: browser calls on Pydantic AI models (host model, model `llm`, `*_llm` settings) count toward
+  the host run's usage and `UsageLimits`; exhaustion raises `UsageLimitExceeded` from `browse_web`.
+  Native browser-use chat models (`ChatAnthropic`, `ChatBrowserUse`) are not counted.
 - Flat `sensitive_data` values require explicit-hostname `allowed_domains` (globs rejected) and are
   substituted only on allowlisted pages; prefer the domain-scoped form `{'https://site': {'key': 'value'}}`.
-  Secret values are replaced with their placeholder in the `browse_web` result. Screenshots are not
-  redacted.
+  Secret values, and their JSON-escaped and `quote_plus`-encoded forms, are replaced with
+  their placeholder in the `browse_web` result. Screenshots are not redacted.
 - `session_scope='agent'` reuses one browser across calls (serialized); close with `aclose()` or
   `async with BrowserUse(...) as browser:`. Under `TemporalDurability`, `Agent(...)` raises
   `UserError` with either scope (its toolset has no stable id).
@@ -304,8 +307,9 @@ cookies + localStorage object, for logged-in runs), `cdp_url=None` (attach to a 
 `'navigation'`, `'subframe'`, `'data'` (fetch, XHR, WebSocket, beacon) and `'subresource'`
 (images, scripts, fonts). `refuse(request)` checks in order: private IP literal, host that did not
 resolve, private resolved address, `blocked_domains`, then `allowed_domains` only for kinds in
-`allowlist_reach`. Add `'subframe'` or `'subresource'` to `allowlist_reach` to bound those too, or
-subclass and override `refuse` (call `super().refuse(request)` for the default verdict).
+`allowlist_reach`. A host the domain lists refuse is not looked up. Add `'subframe'` or
+`'subresource'` to `allowlist_reach` to bound those too, or subclass and override `refuse` (call
+`super().refuse(request)` for the default verdict).
 
 ```python {test="skip"}
 from pydantic_ai_harness.playwright import EgressPolicy, EgressRequest
@@ -322,7 +326,8 @@ print(policy.refuse(EgressRequest('https://evil.test/', 'subframe', resolved_add
 Gotchas:
 
 - Without network, every hostname is refused as unresolved when `block_private_addresses=True`
-  (the browser resolves names first). Test the allowlist by calling `policy.refuse(...)` with
+  (the browser resolves names first), except one the domain lists refuse, which gets the
+  domain-list reason without a lookup. Test the allowlist by calling `policy.refuse(...)` with
   `resolved_addresses`, as above.
 - `policy` together with `allowed_domains` or `block_private_addresses=False` raises `UserError`; put
   those on the `EgressPolicy` instead. A wildcard entry like `'*.example.com'` raises.

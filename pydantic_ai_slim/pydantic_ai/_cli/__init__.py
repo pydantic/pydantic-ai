@@ -3,9 +3,11 @@ from __future__ import annotations as _annotations
 import argparse
 import functools
 import json
+import shutil
 import sys
-from collections.abc import Sequence
-from contextlib import AsyncExitStack, ExitStack
+from collections.abc import Generator, Sequence
+from contextlib import AsyncExitStack, ExitStack, contextmanager, suppress
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -17,7 +19,7 @@ from .. import __version__, _display, models, usage as _usage
 from .._run_context import AgentDepsT
 from ..agent import AbstractAgent, Agent
 from ..exceptions import UserError
-from ..messages import FunctionToolCallEvent, FunctionToolResultEvent, ModelMessage, ModelResponse
+from ..messages import AgentStreamEvent, FunctionToolCallEvent, FunctionToolResultEvent, ModelMessage, ModelResponse
 from ..models import infer_model, known_model_names
 from ..native_tools import NATIVE_TOOLS_REQUIRING_CONFIG, SUPPORTED_NATIVE_TOOLS
 from ..output import OutputDataT
@@ -176,6 +178,7 @@ def _print_intro(
             tools=details.tools,
             capabilities=details.capabilities,
             observability=not details.instrumented,
+            logfire_cli_available=shutil.which('uvx') is not None,
             # The console already knows how wide the terminal is, `COLUMNS` and all, and re-asks it
             # every time. Without one it answers 80 whether it read that off `COLUMNS` or had nothing
             # to go on, so the width comes from the stream instead, which tells those two apart.
@@ -398,38 +401,53 @@ def _run_chat_command(
             return 1
 
     model_name = agent.model if isinstance(agent.model, str) else agent.model.model_id
-    # Nothing can print a second one later: `ask_agent` claims it before every run.
-    if _display.banner_available(is_terminal=console.is_terminal):
-        _print_intro(console, agent, agent_path=args.agent, toolsets=toolsets)
-    elif args.agent and model_arg_set:
-        console.print(
-            f'{name_version} using custom agent [magenta]{args.agent}[/magenta] with [magenta]{model_name}[/magenta]',
-            highlight=False,
-        )
-    elif args.agent:
-        console.print(f'{name_version} using custom agent [magenta]{args.agent}[/magenta]', highlight=False)
-    else:
-        console.print(f'{name_version} with [magenta]{model_name}[/magenta]', highlight=False)
+    _print_clai_intro(
+        console, agent, name_version, model_name, agent_path=args.agent, model_arg_set=model_arg_set, toolsets=toolsets
+    )
 
     stream = not args.no_stream
-    if args.code_theme == 'light':
-        code_theme = 'default'
-    elif args.code_theme == 'dark':
-        code_theme = 'monokai'
-    else:
-        code_theme = args.code_theme  # pragma: no cover
+    match args.code_theme:
+        case 'light':
+            code_theme = 'default'
+        case 'dark':
+            code_theme = 'monokai'
+        case _:  # pragma: no cover
+            code_theme = args.code_theme
 
     if args.prompt:
-        try:
+        with suppress(KeyboardInterrupt):
             anyio.run(functools.partial(ask_agent, agent, args.prompt, stream, console, code_theme, toolsets=toolsets))
-        except KeyboardInterrupt:
-            pass
         return 0
 
     try:
         return anyio.run(functools.partial(run_chat, stream, agent, console, code_theme, prog_name, toolsets=toolsets))
     except KeyboardInterrupt:  # pragma: no cover
         return 0
+
+
+def _print_clai_intro(
+    console: Console,
+    agent: Agent[object, str],
+    name_version: str,
+    model_name: str,
+    *,
+    agent_path: str | None,
+    model_arg_set: bool,
+    toolsets: Sequence[AbstractToolset[Any]] | None,
+) -> None:
+    """Print the banner the chat command opens with, or a line naming its agent and model when the banner isn't available."""
+    # Nothing can print a second one later: `ask_agent` claims it before every run.
+    if _display.banner_available(is_terminal=console.is_terminal):
+        _print_intro(console, agent, agent_path=agent_path, toolsets=toolsets)
+    elif agent_path and model_arg_set:
+        console.print(
+            f'{name_version} using custom agent [magenta]{agent_path}[/magenta] with [magenta]{model_name}[/magenta]',
+            highlight=False,
+        )
+    elif agent_path:
+        console.print(f'{name_version} using custom agent [magenta]{agent_path}[/magenta]', highlight=False)
+    else:
+        console.print(f'{name_version} with [magenta]{model_name}[/magenta]', highlight=False)
 
 
 async def run_chat(
@@ -492,30 +510,38 @@ async def run_chat(
                 )
                 if exit_value is not None:
                     return exit_value
-            else:
-                try:
-                    messages = await ask_agent(
-                        agent,
-                        text,
-                        stream,
-                        console,
-                        code_theme,
-                        deps=deps,
-                        messages=messages,
-                        model=model,
-                        model_settings=model_settings,
-                        usage_limits=usage_limits,
-                        toolsets=toolsets,
-                        usage=session_usage,
-                    )
-                    session_turns += 1
-                except anyio.get_cancelled_exc_class():
-                    console.print('[dim]Interrupted[/dim]')  # pragma: no cover
-                except Exception as e:
-                    cause = getattr(e, '__cause__', None)
-                    console.print(f'\n[red]{type(e).__name__}:[/red] {e}')
-                    if cause:
-                        console.print(f'[dim]Caused by: {cause}[/dim]')
+                continue
+
+            with _report_turn_errors(console):
+                messages = await ask_agent(
+                    agent,
+                    text,
+                    stream,
+                    console,
+                    code_theme,
+                    deps=deps,
+                    messages=messages,
+                    model=model,
+                    model_settings=model_settings,
+                    usage_limits=usage_limits,
+                    toolsets=toolsets,
+                    usage=session_usage,
+                )
+                session_turns += 1
+
+
+@contextmanager
+def _report_turn_errors(console: Console) -> Generator[None]:
+    """Print the error a chat turn fails with, and let the session go on to the next prompt."""
+    try:
+        yield
+    except anyio.get_cancelled_exc_class():
+        console.print('[dim]Interrupted[/dim]')  # pragma: no cover
+    except Exception as e:
+        cause = getattr(e, '__cause__', None)
+        console.print(f'\n[red]{type(e).__name__}:[/red] {e}')
+        if cause:
+            console.print(f'[dim]Caused by: {cause}[/dim]')
 
 
 async def ask_agent(
@@ -571,11 +597,7 @@ async def ask_agent(
                 usage=turn_usage,
             ) as agent_run:
                 live = Live('', refresh_per_second=15, console=console, vertical_overflow='ellipsis')
-                content_pieces: list[str] = []
-                # Tool calls run concurrently and can return out of order, so in-flight calls are
-                # keyed by call id — rendering only the latest would erase the others' indicators.
-                pending_calls: dict[str, str] = {}
-                updated_content = ''
+                display = _StreamedRunDisplay(live, code_theme)
                 live_started = False
 
                 async for node in agent_run:
@@ -592,37 +614,56 @@ async def ask_agent(
                                 live_started = True
 
                             async for content in handle_stream.stream_output(debounce_by=None):
-                                updated_content = str(content)
-                                display = '\n\n'.join([*content_pieces, updated_content])
-                                live.update(Markdown(display, code_theme=code_theme))
+                                display.show_text(str(content))
 
                     elif Agent.is_call_tools_node(node):
-                        # Freeze the text streamed so far so tool-call lines append below it rather
-                        # than overwriting it on the next model request node.
-                        if updated_content:
-                            content_pieces.append(updated_content)
-                            updated_content = ''
-
+                        display.freeze_text()
                         async with node.stream(agent_run.ctx) as handle_stream:
                             async for event in handle_stream:
-                                if isinstance(event, FunctionToolCallEvent):
-                                    # `args_valid is None`: the call won't run, e.g. it was skipped
-                                    # because a final result was already processed.
-                                    if event.args_valid is not None:
-                                        pending_calls[event.tool_call_id] = event.part.tool_name
-                                elif isinstance(event, FunctionToolResultEvent):
-                                    # Pop on any result, a retried one included: it would otherwise stay
-                                    # pending and pin its indicator for the rest of the run.
-                                    if pending_calls.pop(event.tool_call_id, None) is not None:
-                                        content_pieces.append(f'> Called tool `{event.part.tool_name}`.')
-                                calling = [f'> _Calling tool `{name}`…_' for name in pending_calls.values()]
-                                live.update(Markdown('\n\n'.join([*content_pieces, *calling]), code_theme=code_theme))
+                                display.show_tool_event(event)
 
             assert agent_run.result is not None
             return agent_run.result.all_messages()
     finally:
         if usage is not None:
             usage.incr(turn_usage)  # usage-attribution: the CLI's own cross-turn total, not a run's usage
+
+
+@dataclass
+class _StreamedRunDisplay:
+    """What `ask_agent` shows while a streamed run is in flight: the text streamed so far and the tool calls it made."""
+
+    live: Live
+    code_theme: str
+    content_pieces: list[str] = field(default_factory=list[str])
+    # Tool calls run concurrently and can return out of order, so in-flight calls are
+    # keyed by call id — rendering only the latest would erase the others' indicators.
+    pending_calls: dict[str, str] = field(default_factory=dict[str, str])
+    updated_content: str = ''
+
+    def show_text(self, content: str) -> None:
+        self.updated_content = content
+        self.live.update(Markdown('\n\n'.join([*self.content_pieces, content]), code_theme=self.code_theme))
+
+    def freeze_text(self) -> None:
+        """Freeze the text streamed so far, so tool-call lines append below it rather than overwriting it on the next model request node."""
+        if self.updated_content:
+            self.content_pieces.append(self.updated_content)
+            self.updated_content = ''
+
+    def show_tool_event(self, event: AgentStreamEvent) -> None:
+        if isinstance(event, FunctionToolCallEvent):
+            # `args_valid is None`: the call won't run, e.g. it was skipped
+            # because a final result was already processed.
+            if event.args_valid is not None:
+                self.pending_calls[event.tool_call_id] = event.part.tool_name
+        elif isinstance(event, FunctionToolResultEvent):
+            # Pop on any result, a retried one included: it would otherwise stay
+            # pending and pin its indicator for the rest of the run.
+            if self.pending_calls.pop(event.tool_call_id, None) is not None:
+                self.content_pieces.append(f'> Called tool `{event.part.tool_name}`.')
+        calling = [f'> _Calling tool `{name}`…_' for name in self.pending_calls.values()]
+        self.live.update(Markdown('\n\n'.join([*self.content_pieces, *calling]), code_theme=self.code_theme))
 
 
 class CustomAutoSuggest(AutoSuggestFromHistory):
@@ -682,56 +723,63 @@ def handle_slash_command(
     usage: _usage.RunUsage | None = None,
     turns: int = 0,
 ) -> tuple[int | None, bool]:
-    if ident_prompt == '/markdown':
-        try:
-            parts = messages[-1].parts
-        except IndexError:
-            console.print('[dim]No markdown output available.[/dim]')
-        else:
-            console.print('[dim]Markdown output of last question:[/dim]\n')
-            for part in parts:
-                if part.part_kind == 'text':
-                    console.print(
-                        Syntax(
-                            part.content,
-                            lexer='markdown',
-                            theme=code_theme,
-                            word_wrap=True,
-                            background_color='default',
-                        )
-                    )
-
-    elif ident_prompt == '/multiline':
-        multiline = not multiline
-        if multiline:
-            console.print(
-                'Enabling multiline mode. [dim]Press [Meta+Enter] or [Esc] followed by [Enter] to accept input.[/dim]'
-            )
-        else:
-            console.print('Disabling multiline mode.')
-        return None, multiline
-    elif ident_prompt == '/exit':
-        console.print('[dim]Exiting…[/dim]')
-        return 0, multiline
-    elif ident_prompt == '/cp':
-        if not messages or not isinstance(messages[-1], ModelResponse):
-            console.print('[dim]No output available to copy.[/dim]')
-        else:
-            text_to_copy = messages[-1].text
-            if text_to_copy and (text_to_copy := text_to_copy.strip()):
-                pyperclip.copy(text_to_copy)
-                console.print('[dim]Copied last output to clipboard.[/dim]')
+    match ident_prompt:
+        case '/markdown':
+            _print_last_markdown(messages, console, code_theme)
+        case '/multiline':
+            multiline = not multiline
+            if multiline:
+                console.print(
+                    'Enabling multiline mode. [dim]Press [Meta+Enter] or [Esc] followed by [Enter] to accept input.[/dim]'
+                )
             else:
-                console.print('[dim]No text content to copy.[/dim]')
-    elif ident_prompt == '/usage' or ident_prompt.startswith('/usage-'):
-        # A flag is separated by a space, which is replaced with `-` upstream, so `/usage --json`
-        # arrives as `/usage---json`. Requiring the `/usage-` prefix keeps `/usagex` an unknown command.
-        option = ident_prompt[len('/usage') :].strip('-')
-        if option in ('', 'json'):
-            # `soft_wrap` keeps the JSON on a single line for piping; the text has no markup to render.
-            console.print(format_usage(usage or _usage.RunUsage(), turns, as_json=option == 'json'), soft_wrap=True)
-        else:
-            console.print(f'[red]Unknown `/usage` option[/red] [magenta]`{ident_prompt}`[/magenta]')
-    else:
-        console.print(f'[red]Unknown command[/red] [magenta]`{ident_prompt}`[/magenta]')
+                console.print('Disabling multiline mode.')
+        case '/exit':
+            console.print('[dim]Exiting…[/dim]')
+            return 0, multiline
+        case '/cp':
+            _copy_last_output(messages, console)
+        case _ if ident_prompt == '/usage' or ident_prompt.startswith('/usage-'):
+            # A flag is separated by a space, which is replaced with `-` upstream, so `/usage --json`
+            # arrives as `/usage---json`. Requiring the `/usage-` prefix keeps `/usagex` an unknown command.
+            option = ident_prompt[len('/usage') :].strip('-')
+            if option in ('', 'json'):
+                # `soft_wrap` keeps the JSON on a single line for piping; the text has no markup to render.
+                console.print(format_usage(usage or _usage.RunUsage(), turns, as_json=option == 'json'), soft_wrap=True)
+            else:
+                console.print(f'[red]Unknown `/usage` option[/red] [magenta]`{ident_prompt}`[/magenta]')
+        case _:
+            console.print(f'[red]Unknown command[/red] [magenta]`{ident_prompt}`[/magenta]')
     return None, multiline
+
+
+def _print_last_markdown(messages: list[ModelMessage], console: Console, code_theme: str) -> None:
+    try:
+        parts = messages[-1].parts
+    except IndexError:
+        console.print('[dim]No markdown output available.[/dim]')
+        return
+    console.print('[dim]Markdown output of last question:[/dim]\n')
+    for part in parts:
+        if part.part_kind == 'text':
+            console.print(
+                Syntax(
+                    part.content,
+                    lexer='markdown',
+                    theme=code_theme,
+                    word_wrap=True,
+                    background_color='default',
+                )
+            )
+
+
+def _copy_last_output(messages: list[ModelMessage], console: Console) -> None:
+    if not messages or not isinstance(messages[-1], ModelResponse):
+        console.print('[dim]No output available to copy.[/dim]')
+        return
+    text_to_copy = messages[-1].text
+    if text_to_copy and (text_to_copy := text_to_copy.strip()):
+        pyperclip.copy(text_to_copy)
+        console.print('[dim]Copied last output to clipboard.[/dim]')
+    else:
+        console.print('[dim]No text content to copy.[/dim]')

@@ -1,0 +1,26 @@
+--- expected
++++ actual
+@@ -339 +339 @@
+-   "content": "<context id=\"capability:progress:state\">\nThe user has asked 2 question(s) so far.\n</context>\nA later <context> element with the same id replaces the earlier one and stays in effect until replaced again."
++   "content": "<context id=\"capability:progress:state\">\nThe user has asked 3 question(s) so far.\n</context>\nA later <context> element with the same id replaces the earlier one and stays in effect until replaced again."
+@@ -425,4 +424,0 @@
+-  },
+-  {
+-   "role": "system",
+-   "content": "<context id=\"capability:progress:state\">\nThe user has asked 3 question(s) so far.\n</context>"
+@@ -486 +482 @@
+-   "content": "<context id=\"capability:progress:state\">\nThe user has asked 2 question(s) so far.\n</context>\nA later <context> element with the same id replaces the earlier one and stays in effect until replaced again."
++   "content": "<context id=\"capability:progress:state\">\nThe user has asked 3 question(s) so far.\n</context>\nA later <context> element with the same id replaces the earlier one and stays in effect until replaced again."
+@@ -572,4 +567,0 @@
+-  },
+-  {
+-   "role": "system",
+-   "content": "<context id=\"capability:progress:state\">\nThe user has asked 3 question(s) so far.\n</context>"
+@@ -652 +644 @@
+-   "content": "<context id=\"capability:progress:state\">\nThe user has asked 2 question(s) so far.\n</context>\nA later <context> element with the same id replaces the earlier one and stays in effect until replaced again."
++   "content": "<context id=\"capability:progress:state\">\nThe user has asked 3 question(s) so far.\n</context>\nA later <context> element with the same id replaces the earlier one and stays in effect until replaced again."
+@@ -738,4 +729,0 @@
+-  },
+-  {
+-   "role": "system",
+-   "content": "<context id=\"capability:progress:state\">\nThe user has asked 3 question(s) so far.\n</context>"

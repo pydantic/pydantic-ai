@@ -15,7 +15,7 @@ from pydantic_ai_harness.step_persistence.conversations import ConversationSumma
 from pydantic_clai2.builtin_plugins.web.protocol import ServerMessage, SessionsChanged
 from pydantic_clai2.builtin_plugins.web.workspace_tools import reported
 from pydantic_clai2.plugins import PluginHost, SessionCatalog
-from pydantic_clai2.runtime.imported_sessions import imported_from, source_label
+from pydantic_clai2.runtime.imported_sessions import imported_from
 from pydantic_clai2.runtime.project_identity import ProjectIdentity, placements, project_identity
 
 SCAN = 5000
@@ -142,7 +142,7 @@ def _cell(text: str) -> str:
 def _from(entry: ConversationSummary) -> str:
     """What a title adds for a session imported from another agent."""
     source = imported_from(entry)
-    return '' if source is None else f' (from {source_label(source)})'
+    return '' if source is None else f' (from {source})'
 
 
 def _active(moment: datetime, now: datetime) -> str:

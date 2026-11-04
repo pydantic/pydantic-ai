@@ -1,0 +1,279 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "2937"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 4096
+        messages:
+        - role: user
+          content:
+          - text: "Record project decision DB-1: Use PostgreSQL 17 as the primary database. The reason: the team already runs it in two other services. Acknowledge it in one sentence."
+            type: text
+        - role: assistant
+          content:
+          - text: "Recorded DB-1: Use PostgreSQL 17 as the primary database."
+            type: text
+        - role: user
+          content:
+          - text: "Record project decision FE-1: Use React 19 for the web client. The reason: server components cut the bundle size for the dashboard. Acknowledge it in one sentence."
+            type: text
+        - role: assistant
+          content:
+          - text: "Recorded FE-1: Use React 19 for the web client."
+            type: text
+        - role: user
+          content:
+          - text: "Record project decision DB-2: Put pgbouncer in front of PostgreSQL. The reason: the worker fleet opens too many short-lived connections. Acknowledge it in one sentence."
+            type: text
+        - role: assistant
+          content:
+          - text: "Recorded DB-2: Put pgbouncer in front of PostgreSQL."
+            type: text
+        - role: user
+          content:
+          - text: "Record project decision OPS-1: Deploy on Fly.io in two regions. The reason: latency for European customers was over 300 ms. Acknowledge it in one sentence."
+            type: text
+        - role: assistant
+          content:
+          - text: "Recorded OPS-1: Deploy on Fly.io in two regions."
+            type: text
+        - role: user
+          content:
+          - text: "Record project decision DB-3: Take nightly base backups to S3 with 30-day retention. The reason: compliance asked for a month of history. Acknowledge it in one sentence."
+            type: text
+        - role: assistant
+          content:
+          - text: "Recorded DB-3: Take nightly base backups to S3 with 30-day retention."
+            type: text
+        - role: user
+          content:
+          - text: "Record project decision FE-2: Use Tailwind CSS for styling. The reason: the design system tokens map onto its theme config. Acknowledge it in one sentence."
+            type: text
+        - role: assistant
+          content:
+          - text: "Recorded FE-2: Use Tailwind CSS for styling."
+            type: text
+        - role: user
+          content:
+          - text: "Record project decision OPS-2: Ship logs and traces to Logfire. The reason: one place to debug both the API and the workers. Acknowledge it in one sentence."
+            type: text
+        - role: assistant
+          content:
+          - text: "Recorded OPS-2: Ship logs and traces to Logfire."
+            type: text
+        - role: user
+          content:
+          - text: "Record project decision DB-4: Run migrations with Alembic in a pre-deploy step. The reason: a failed migration must block the release. Acknowledge it in one sentence."
+            type: text
+        - role: assistant
+          content:
+          - text: "Recorded DB-4: Run migrations with Alembic in a pre-deploy step."
+            type: text
+        - role: user
+          content:
+          - text: Next, help me pick a job queue for the workers.
+            type: text
+        model: claude-haiku-5-5
+        compaction:
+          type: summarize
+        stream: false
+        system:
+        - type: text
+          text: You keep track of the decisions for a web application project.
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=3102
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-1f093db8ae794dbe115db75d3fdca682-a8103edd477ef137-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        model: claude-haiku-5-5
+        id: msg_011CgRYVbGb7hoRdMTnyovfB
+        type: message
+        role: assistant
+        content:
+        - type: compaction
+          content: |-
+            I'm keeping a log of project decisions for a web application. Each decision was recorded with a one-sentence acknowledgment.
+
+            **Recorded decisions:**
+            - **DB-1:** Use PostgreSQL 17 as the primary database. Reason: the team already runs it in two other services.
+            - **FE-1:** Use React 19 for the web client. Reason: server components cut the bundle size for the dashboard.
+            - **DB-2:** Put pgbouncer in front of PostgreSQL. Reason: the worker fleet opens too many short-lived connections.
+            - **OPS-1:** Deploy on Fly.io in two regions. Reason: latency for European customers was over 300 ms.
+            - **DB-3:** Take nightly base backups to S3 with 30-day retention. Reason: compliance asked for a month of history.
+            - **FE-2:** Use Tailwind CSS for styling. Reason: the design system tokens map onto its theme config.
+            - **OPS-2:** Ship logs and traces to Logfire. Reason: one place to debug both the API and the workers.
+            - **DB-4:** Run migrations with Alembic in a pre-deploy step. Reason: a failed migration must block the release.
+
+            **Open task:** The user has asked for help choosing a job queue for the workers. No queue has been selected or recorded yet. When evaluating options, consider the existing stack: PostgreSQL 17 with pgbouncer (the worker fleet already strains connection limits, so a queue that adds many short-lived connections or polling load is a concern), deployment on Fly.io across two regions, and Logfire for observability. Once a choice is made, it should be recorded with a DB- or OPS-style ID and a one-sentence reason, following the same format as the other entries.
+          signature: >-
+            CAISmwkKHggTGALyARdjb21wYWN0aW9uX3NpZ25hdHVyZV92MRIMHvnr12OMTZQ913qnGgyZ/42tNDOiO4qGglgiMCgXDRRNAb2JubJXkpxlD1UI2QZQmPDIS14Q/XbE8MmRm88NaUPgSM4UnmVIBjl/GiqqCOTxf6pMDDGxu7sCNKJ9deLGjXTNQe4GN5ySXuALkLAMaXXVxE6HWaNREjWc0zZGMI+XhA95V0LcDDmSuNZ9I0sQBabH29PkNKNslJwsbNCTryoXXaUbBLVu/pcqOi69d6nG707coShrvUHcKH4lkTuj2bNfBpGBCj9oOzxFTNZwE+0+Ct1d4huP9QnT2zXmWM0mEqhT3FIcTCtfORbKm0jNZMceudRrQKoQ0YeD/rulxa7foYuz9LI/n7EPN6MicLKC09SXyUQWyDEzh1OkpYycPIz8YCTVVtJnj6YYhQH2jVJYnU03QKXkBCrs+XaaBwp5qlFq8j7jpxndwwJeq+l5NZWlnhBhObtnspJ+k7cA8JhOk+hHA53q5RuRJoHopNFlq/XgEqdOMWKRKMO7+dE7wD0HPy0dzUL2nR96z/iYYjd6yasVt6AvPr/DM8Kiz9h/RfwUSxplqT3ZGJmaMda0H+13uxW281Z0R74J/3ZQ9pJxtlhAwdq0d/BOBRxxjVBtUAwPDh7uyexJBncrBFJZEriZncm0R0OSUda9qcawRzBlsFwm0IWbYcx/BGOtYS5PvxU6L7oCu98yQNrYZcD7KpHV2okc9XAawtldD5Z1Cq3OMn/uWhe2sXECZxxwJhVl7TV8AJ1w4xybVdzGDaGvpcPKwVSorIVEKtjA5i71c6dpnaPHvHGGOlPPOsEurHaffqbD1FXL3t+F1cRBwLaiW4TsoCap+EkXjW0LZKDCMGpcx8fY8WiQikepK+DyNnnAGRCXdSuYAScWEoYMnPps37PIqEQwrCqgqECeBUrGJAEXA2THFT7CM3FeezRivkGdKEpmVHG8TctmDH5BLoHDwsAoLLx9LzaS49xnnPtpx6P0bBuO/ih4z4I6PPrnZBRDjsDRJa1tdw6D7yOd38hP4CSfl8t/rMPsi0X+xA8clEPWRAIhcHgG/91o/DnqdtjCvisgg4lIk3HmWPU+Pb9cOPFojkS9wvmC87NX1KTnIbgjZFKTWrDkaJXIurK0W2uN0+5DtslaneZ8Lknjqr+coIjVr15cQLt0QR57W7YqeDaVUlabS/PkHpQxl61+N1E4KrIcVCWO+wLQnm0mT9c5DKHLD+zPzf2s66W/uz4R9oaCW7Ba+9UhtA7S+D1y7wo044VBF6RpJA+gdTOs17EVtWZ24rox5AZm/vZoWD4yXTsuqLAV3pF3rExJc9YYMUktx/x9KkbyK117uSxCxrC+SHULUWRs6ylqOu7VRwMSZNDXyxtPOQcmT1rpVpBT7qNWsBJa+6Y2ap7NwvVAU8rVwSysCTgyDigHS7YyRH13+JRlNW/Qy4ojIiCUPaK9xn+D89euEVFEBs072Y/JGDqMmgY7xmtC6nLJMhdZGCLfk/YmQxXkWeog2xymRk+p9S6NjKoRPvwAC1AYCw==
+        container: null
+        stop_reason: compaction
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 0
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          iterations:
+          - input_tokens: 790
+            output_tokens: 642
+            cache_read_input_tokens: 0
+            cache_creation_input_tokens: 0
+            cache_creation:
+              ephemeral_5m_input_tokens: 0
+              ephemeral_1h_input_tokens: 0
+            type: compaction
+          output_tokens: 0
+          service_tier: standard
+          inference_geo: global
+          speed: standard
+        diagnostics: null
+  recorded_at: 2026-10-26T21:17:10.999796+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "3470"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 512
+        messages:
+        - role: assistant
+          content:
+          - content: |-
+              I'm keeping a log of project decisions for a web application. Each decision was recorded with a one-sentence acknowledgment.
+
+              **Recorded decisions:**
+              - **DB-1:** Use PostgreSQL 17 as the primary database. Reason: the team already runs it in two other services.
+              - **FE-1:** Use React 19 for the web client. Reason: server components cut the bundle size for the dashboard.
+              - **DB-2:** Put pgbouncer in front of PostgreSQL. Reason: the worker fleet opens too many short-lived connections.
+              - **OPS-1:** Deploy on Fly.io in two regions. Reason: latency for European customers was over 300 ms.
+              - **DB-3:** Take nightly base backups to S3 with 30-day retention. Reason: compliance asked for a month of history.
+              - **FE-2:** Use Tailwind CSS for styling. Reason: the design system tokens map onto its theme config.
+              - **OPS-2:** Ship logs and traces to Logfire. Reason: one place to debug both the API and the workers.
+              - **DB-4:** Run migrations with Alembic in a pre-deploy step. Reason: a failed migration must block the release.
+
+              **Open task:** The user has asked for help choosing a job queue for the workers. No queue has been selected or recorded yet. When evaluating options, consider the existing stack: PostgreSQL 17 with pgbouncer (the worker fleet already strains connection limits, so a queue that adds many short-lived connections or polling load is a concern), deployment on Fly.io across two regions, and Logfire for observability. Once a choice is made, it should be recorded with a DB- or OPS-style ID and a one-sentence reason, following the same format as the other entries.
+            type: compaction
+            signature: >-
+              CAISmwkKHggTGALyARdjb21wYWN0aW9uX3NpZ25hdHVyZV92MRIMHvnr12OMTZQ913qnGgyZ/42tNDOiO4qGglgiMCgXDRRNAb2JubJXkpxlD1UI2QZQmPDIS14Q/XbE8MmRm88NaUPgSM4UnmVIBjl/GiqqCOTxf6pMDDGxu7sCNKJ9deLGjXTNQe4GN5ySXuALkLAMaXXVxE6HWaNREjWc0zZGMI+XhA95V0LcDDmSuNZ9I0sQBabH29PkNKNslJwsbNCTryoXXaUbBLVu/pcqOi69d6nG707coShrvUHcKH4lkTuj2bNfBpGBCj9oOzxFTNZwE+0+Ct1d4huP9QnT2zXmWM0mEqhT3FIcTCtfORbKm0jNZMceudRrQKoQ0YeD/rulxa7foYuz9LI/n7EPN6MicLKC09SXyUQWyDEzh1OkpYycPIz8YCTVVtJnj6YYhQH2jVJYnU03QKXkBCrs+XaaBwp5qlFq8j7jpxndwwJeq+l5NZWlnhBhObtnspJ+k7cA8JhOk+hHA53q5RuRJoHopNFlq/XgEqdOMWKRKMO7+dE7wD0HPy0dzUL2nR96z/iYYjd6yasVt6AvPr/DM8Kiz9h/RfwUSxplqT3ZGJmaMda0H+13uxW281Z0R74J/3ZQ9pJxtlhAwdq0d/BOBRxxjVBtUAwPDh7uyexJBncrBFJZEriZncm0R0OSUda9qcawRzBlsFwm0IWbYcx/BGOtYS5PvxU6L7oCu98yQNrYZcD7KpHV2okc9XAawtldD5Z1Cq3OMn/uWhe2sXECZxxwJhVl7TV8AJ1w4xybVdzGDaGvpcPKwVSorIVEKtjA5i71c6dpnaPHvHGGOlPPOsEurHaffqbD1FXL3t+F1cRBwLaiW4TsoCap+EkXjW0LZKDCMGpcx8fY8WiQikepK+DyNnnAGRCXdSuYAScWEoYMnPps37PIqEQwrCqgqECeBUrGJAEXA2THFT7CM3FeezRivkGdKEpmVHG8TctmDH5BLoHDwsAoLLx9LzaS49xnnPtpx6P0bBuO/ih4z4I6PPrnZBRDjsDRJa1tdw6D7yOd38hP4CSfl8t/rMPsi0X+xA8clEPWRAIhcHgG/91o/DnqdtjCvisgg4lIk3HmWPU+Pb9cOPFojkS9wvmC87NX1KTnIbgjZFKTWrDkaJXIurK0W2uN0+5DtslaneZ8Lknjqr+coIjVr15cQLt0QR57W7YqeDaVUlabS/PkHpQxl61+N1E4KrIcVCWO+wLQnm0mT9c5DKHLD+zPzf2s66W/uz4R9oaCW7Ba+9UhtA7S+D1y7wo044VBF6RpJA+gdTOs17EVtWZ24rox5AZm/vZoWD4yXTsuqLAV3pF3rExJc9YYMUktx/x9KkbyK117uSxCxrC+SHULUWRs6ylqOu7VRwMSZNDXyxtPOQcmT1rpVpBT7qNWsBJa+6Y2ap7NwvVAU8rVwSysCTgyDigHS7YyRH13+JRlNW/Qy4ojIiCUPaK9xn+D89euEVFEBs072Y/JGDqMmgY7xmtC6nLJMhdZGCLfk/YmQxXkWeog2xymRk+p9S6NjKoRPvwAC1AYCw==
+        - role: user
+          content:
+          - text: >-
+              Which database did we pick, and what sits in front of it? Answer in one
+              sentence.
+            type: text
+        model: claude-haiku-5-5
+        stream: false
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=1339
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-86d3a69fc766345682c763e8797704a1-3640b0d3b49a5d23-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        model: claude-haiku-5-5
+        id: msg_011CgRYVpz74Jvi6qA955RGL
+        type: message
+        role: assistant
+        content:
+        - type: thinking
+          thinking: ""
+          signature: >-
+            CAQSxwYKEAgTGAI4AUIIdGhpbmtpbmcSDHFoLju4UzC4sOalMRoMBSXkGCywdpxgbPpiIjDS0iw/nrQOZfGYQTZGskidzF1KpyKjrG2ceYknm5JDys2UDvuXWL6gPczE8U72O6gq5AW6oET25rWywXHmr+qfyCgE1W0RFs8hUbWSfLna9w7CFbU8tRwMKQrd0oxWBRm36oOLZoWIDuLwsMiOhdFapslIWjC/bRmUBdEiruhrTGygEzbREmsG3meOdfM9BHQSUQON3Gd+XlVeEuhFL56vtpU17sZIOk3vlj6Ef2wHRUCQQrAiKYglW+bk38oItBvhm4HSWbpLfokohCMQiHXf+hsUn9uCSDKxpYygUXeRNXwnDh9+Lh3CDWZ8xN3Tkn3tyHIpzv4A1KhQ3BrimEtnU2YLFe4FijYUpJA7DTJVbEnW3msXYSC8ep9cA3i2liGJp+UUj3ed95t+k6NqBBENFM2Q3my3yk/+pyAw0WXR+ai7Wpsgn3axtRHWTp7B3IK8fx+NOd9tk4/0TYOWW6Zb2V3FJ4UHYW0oCeKwgiMSLuruJqRPGhgQpcf7izgrMmw67p7aMSOZ5xDW9a4/AJqDnR+NN9W6stWvJYl49E6v2vIMv7ZlL2kBI9W7mOLXmcXCsA7csHr3EpX12d0L+HGA8KqbYx3E6pps1nh+kGGkFDgM7LtLWszeA+lijw7gjfPlRX/FMdImQCxQT+59HwuVlOyTHj1w6vENRWCjB9hprSdoFMm/EffawfRUZ53Ytjkyuyj1pa5rlNUA2p1k66t6DTFxdkW4HKnWzpvgKN3Gl3Qg0+WDQn0QkZC36yXyLuKPT9mR3PFpXQv3Cz+LZsmn+ZEHm8ruwnBvX5oQMv1HVdpPrFVhKawrI33YJxh8XE7qw5Gz1u6OsACj9Paq/LFAC9Sh57zwF7rhGPPELIlWaVRKE7QTIViG4MaFJ1vTqPhXH+1EzmEvdJfneqTbV57iuOgPmokKKwwQZ/LrkOzygAh4XYFpgA/QRdldq0hEFTIfhIDLBSOs6QX0jQVcavzd9N3U2LolPVfGw1gCkHbBWLxeiNJkPM9L1lh8X30bxh3sf3d6VM9aKCx03VAiXn+sOecGw6CGmxgB
+        - type: text
+          text: >-
+            We picked PostgreSQL 17 as the primary database, with pgbouncer in front of it
+            to handle the worker fleet's connection load.
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 640
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          iterations:
+          - input_tokens: 640
+            output_tokens: 93
+            cache_read_input_tokens: 0
+            cache_creation_input_tokens: 0
+            cache_creation:
+              ephemeral_5m_input_tokens: 0
+              ephemeral_1h_input_tokens: 0
+            type: message
+          output_tokens: 93
+          output_tokens_details:
+            thinking_tokens: 47
+          service_tier: standard
+          inference_geo: global
+          speed: standard
+        diagnostics: null
+  recorded_at: 2026-10-26T21:17:12.431787+00:00

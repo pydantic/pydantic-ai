@@ -1,13 +1,17 @@
 """Connect to a trusted vLLM server using core's OpenAI-compatible provider."""
 
 import json
+from collections.abc import Mapping
 from functools import partial
 
 import httpx
+import httpx2
 from anyio import to_thread
+from openai import AsyncOpenAI
 from prompt_toolkit import PromptSession
 from pydantic import BaseModel, Field, HttpUrl, SecretStr, TypeAdapter, ValidationError
 from termflow.tui import MenuBuilder, MenuItem
+from typing_extensions import override
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.openai import OpenAIChatModel
@@ -18,6 +22,44 @@ from pydantic_clai2.config.credential_store import load_codex_credentials
 from pydantic_clai2.models.profiles import parse_model
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.menus.slash_search import slash_search
+
+MAX_RETRIES = 5
+"""Retries per request, with the OpenAI SDK's exponential backoff and jitter (0.5s doubling to 8s)."""
+
+
+class RetryingClient(AsyncOpenAI):
+    """Also retry 403: a gateway in front of vLLM, such as Cloudflare, can send one under load for a valid key.
+
+    Bounded by `max_retries` like every other retry, so a revoked key still fails. 401 is not retried.
+    """
+
+    @override
+    def _should_retry(self, response: httpx2.Response) -> bool:
+        if super()._should_retry(response):
+            return True
+        return response.status_code == 403 and response.headers.get('x-should-retry') != 'false'
+
+
+class RetryingProvider(VLLMProvider):
+    """Core's vLLM provider with a `RetryingClient`; the provider still owns, refreshes, and closes its HTTP client."""
+
+    @override
+    def _create_openai_client(
+        self,
+        *,
+        base_url: str | None,
+        api_key: str | None,
+        http_client: httpx.AsyncClient | httpx2.AsyncClient | None,
+        default_headers: Mapping[str, str] | None = None,
+    ) -> AsyncOpenAI:
+        return RetryingClient(
+            base_url=base_url,
+            api_key=api_key,
+            # As in core: OpenAI 3 accepts legacy HTTPX at runtime, outside its type annotations.
+            http_client=self._get_http_client(http_client),  # pyright: ignore[reportArgumentType]
+            default_headers=default_headers,
+            max_retries=MAX_RETRIES,
+        )
 
 
 class Connection(BaseModel):
@@ -89,7 +131,7 @@ def model(name: str) -> OpenAIChatModel:
         connection = Connection.model_validate_json(raw)
     except ValidationError:
         raise UserError(f'Stored connection is invalid. Reconfigure through {setup}.') from None
-    provider = VLLMProvider(
+    provider = RetryingProvider(
         base_url=api_url(connection.url), api_key=resolve_key(token=connection.token) or 'not-required'
     )
     return OpenAIChatModel(ref.name, provider=provider)

@@ -1,0 +1,94 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "129"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: openai/o3
+        stream: false
+        messages:
+        - role: user
+          content: "Reply with exactly: OK"
+        reasoning:
+          effort: low
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1792687799-NoLjQFh1SsGCryrXeFO6
+        object: chat.completion
+        created: 1792687799
+        model: openai/o3
+        provider: OpenAI
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: completed
+          message:
+            role: assistant
+            content: OK
+            refusal: null
+            reasoning: null
+            reasoning_details:
+            - type: reasoning.encrypted
+              data: >-
+                gAAAAABq2j64fcljA0cbFuExQgnyoBiezLw9lgbnI8uMNvzX0KrqXdH6mBbvNpiImKRcdQuVHzmELV9NRs2k32tuK-ebfzgux3xSPQLk-1vSKzN54F3F-gBZW3ZsSmnkK8qA1b1X_PIudBESnutpOo5aq0CziDOP_2NVdI-apMkubzgz7NgqKrDsvg1zjEAJHxWMJteThnUgCW7uWN81_GOO0jHoZJp9gOMDrq1INiQE0Q-99SllafNAF-eo2ir95_giiS1dtpuerrQrWvrXBxIqyths_CpnniLfcL15KRlBVCilK-HI4ImHmDHY65JDCgqhKb48Aw5c_zGwFymfxKxjVjMEyf5C9rxfvROXTay6QNKt-L66C4nivLeMm6E8BnTGgu67RoWGUp9dDok8D8e3j0FSloLpHjbUOhsT5nqrAciXtz-tHewAnUVzghXWcNpR80tGCcmSPliZDwutNGG15ir0olJxOsH7S-RN3rZwGKtTaJdoCSNDlxG8NABiGGmcE0izBvR3gjxBX09YQ28NVQf-uj7KqBsod00L5wuqBcaox06HTfh8jXRZTJcV3IlvlpVyV-AA2Fgpl-jjYBqN8s7XMV3luh1RrvA62kOelJA5H3u8uju_igBKmnvA7Qo_m7KYEqScQYsxPz5lco7e96FBD5QKVkPEKWqvMm8kDZ5RSbKCBD4CnJa4Dd2sRKdhT-tdkB45XC7_ensSfYWAYDVgK7e3WayUHf95y7lVAN5jge1ucKX81oGURuFh4sUT5eRzm2w5kzru5q45E0BbxFPWQg34FLThcFNaxJJjBp-E9GIknFn1HyUUVe6XGUaT8y8_9LijtsQ2gA8k8zmG6J4GBF3u-eRH7yU1AiW7HRK3VZwCTTps8JzaXHfN40mQ0FJH9SsJYC8bw_xUt-2QZRsbB0mhMEnE2M8S3XKH_K5USDa9T5FvZHAJgP_RE8bssoA_5vTb9k8cm0_tJ5B2wmDMq1I-IPBkJP_jsFAswKv743qEXrQDFY0REtGJqwWKMEJ7LQiUSGTiWuJc9zedxGmwLSwt0A1nQzX5aY3zrzBREbM6c9D34Hw0VzV5hEJEYr4Tsp-93RPLHzwmrLBj5stid2fxGQEYIjzy8uUSLYuBIPSEvnNTkGRcFT0FsUJ9H_w5OLfgljcjYSZfZuedGBygyvLNVmFLaeyz5vObdiaGNQZ_86ndqNUlP1RwEcmGCECayPAoXxjwunDrb6ZzlzKxaknXQNohglu5LyqUMtqr1dv6XdT6c4hGXwhO9a490PSyIRPIpilc31_2ix6an1G4LeAd5_Q8Gdz9GpJT3xcKRxoDD08JyVAG8b-hwlPqYtsdE_hsUwEKw3IGsbV3uWDxYaCRuhBR_K_47ZvvlfPLVPsQfNmlRwqKFTdjjWGKNu5deSaxkRL5oFzAGjNlpu1tK1lMMleJEKyAaawtbW967x2KT6ErzOSkXOkGS8-zVKPIizvQNYD1YdfUx7xY8mqA4WBsCLAe_jOv6pI8jhiz4_oY_dvnAXzGrX27RqPcMp5CoATEuzPSM_t92svufHsCAbwjI9bdWFoomaYke6DdbuOSwI7cy-5MLRp0pPdf2QwbI2ULsGqRzgUrJN3wQZoGvEGSmgY9Ktm4amKJW1nUuZ4IfPUzV1guEzrpP__Cnx5nb0SXq-LEWA_kRfVQQEttzNmJ0Mt5kYPGhL0AIm23uV5xvYY4q1mrzBIBCz0dUn4LjpHac1_kjpGp3Oj_XsQW20X6khi7eyXVuBVkh7NML7EQQRYMAQBylJPpgZlPM4yI4ftFWqRFyK3HfuxX135GXz6dllFs_sp_Q4bACefDWWxIqTKHSES-U2LHSwqF_QvvC31xJ2WUrSbtYeJDgP8IaW14k-jm197IvNoICOGy-s3DKcLOIXiKGTX5cXgYEpHjWBeftUpOeA-mA9Ncr2QzFa5oEIxjUpcmxY-L8EbH08dNbOt0n_gJ6dBoBv5S26_wRC8hn1NprYluox2V1bdxQV-Zzulx4Mt9i2203hKhtfpPbshZFuzA_SvEiYR49C6Fj9xs.eyJlbmRwb2ludF9zbHVnIjoib3BlbmFpL28zLTIwMjUtMDQtMTZ8b3BlbmFpIn0
+              format: openai-responses-v1
+              id: rs_0dc6236873002643016ada3eb8229887d1bbdd2d160913f23e
+              index: 0
+        usage:
+          prompt_tokens: 11
+          completion_tokens: 45
+          total_tokens: 56
+          cost: 0.000382
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.000382
+            upstream_inference_prompt_cost: 0.000022
+            upstream_inference_completions_cost: 0.00036
+          completion_tokens_details:
+            reasoning_tokens: 0
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-22T16:50:00.944895+00:00

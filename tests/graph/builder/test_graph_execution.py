@@ -25,6 +25,7 @@ class ExecutionState:
     counter: int = 0
 
 
+@pytest.mark.usefixtures('young_gc')
 def test_run_sync_replaces_closed_event_loop(closed_event_loop: asyncio.AbstractEventLoop):
     """`Graph.run_sync` must replace a closed thread-current event loop."""
     builder = GraphBuilder(state_type=ExecutionState, output_type=int)
@@ -396,10 +397,12 @@ async def test_multiple_sequential_joins():
     collect = g.join(reduce_list_extend, initial_factory=list[int], parent_fork_id='source_fork', node_id='collect')
     mediator = g.join(reduce_list_extend, initial_factory=list[int], node_id='mediator')
 
-    # Broadcasting: send the value from source to all three steps
+    # Broadcasting: send the value from source to all three steps.
+    # `add_three` goes first so `collect` has an active reducer before its intermediate join `mediator` does,
+    # and `collect` must wait for `mediator` to be finalized first.
     g.add(
         g.edge_from(g.start_node).to(source),
-        g.edge_from(source).to(add_one, add_two, add_three, fork_id='source_fork'),
+        g.edge_from(source).to(add_three, add_one, add_two, fork_id='source_fork'),
         g.edge_from(add_one, add_two).to(mediator),
         g.edge_from(mediator).to(collect),
         g.edge_from(add_three).to(collect),

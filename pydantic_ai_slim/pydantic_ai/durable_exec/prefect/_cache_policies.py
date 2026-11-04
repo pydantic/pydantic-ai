@@ -244,7 +244,8 @@ def _replace_toolset_tools(
         if _is_container(value):
             return _map_container(value, project)
         if _is_toolset_tool(value):
-            return {'toolset': value.toolset.id, 'tool_def': _cacheable_value(value.tool_def)}
+            # Keyed by the `id` chosen for the toolset, so a hostname-derived one leaves keys as they were.
+            return {'toolset': value.toolset._explicit_id, 'tool_def': _cacheable_value(value.tool_def)}  # pyright: ignore[reportPrivateUsage]
         if _is_tool_definition(value):
             return _cacheable_value(value)
         return value

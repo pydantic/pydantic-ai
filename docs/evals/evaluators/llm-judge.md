@@ -456,6 +456,84 @@ dataset = Dataset(
 )
 ```
 
+## Validating a Judge Against Human Labels
+
+A judge can disagree with your own reading of the rubric. Before a judge gates anything, such as a release check or an [online evaluation](../online-evaluation.md) alert, measure how often it agrees with people:
+
+1. Collect a sample of outputs your application produced, with both good and bad examples.
+2. Have a person apply the rubric to each output, and record the verdict in the case metadata.
+3. Run the judge as a case evaluator over the stored outputs, using a task that returns each output unchanged, so the judge sees exactly what the person labeled.
+4. Compare the judge's verdicts with the human verdicts in a [report evaluator](report-evaluators.md).
+
+[`ConfusionMatrixEvaluator`][pydantic_evals.evaluators.ConfusionMatrixEvaluator] reads predictions from the output, metadata or labels, not from assertions, so a short custom report evaluator tabulates the judge's pass/fail assertion instead:
+
+```python
+from dataclasses import dataclass
+
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import LLMJudge, ReportEvaluator, ReportEvaluatorContext
+from pydantic_evals.reporting.analyses import ConfusionMatrix, ReportAnalysis, ScalarResult
+
+# Outputs your application produced, each with the verdict of a person applying the rubric
+labeled_outputs = [
+    ('Your refund for order 12345 has been issued.', 'pass'),
+    ('Refunds are handled by our billing team.', 'fail'),
+]
+
+
+def replay(output: str) -> str:
+    return output
+
+
+@dataclass
+class JudgeAgreement(ReportEvaluator):
+    assertion_name: str
+
+    def evaluate(self, ctx: ReportEvaluatorContext) -> list[ReportAnalysis]:
+        verdicts = ['fail', 'pass']
+        matrix = [[0, 0], [0, 0]]
+        for case in ctx.report.cases:
+            judged = case.assertions.get(self.assertion_name)
+            human_verdict = (case.metadata or {}).get('human_verdict')
+            if judged is None or human_verdict not in verdicts:  # the judge failed, or the case is unlabeled
+                continue
+            matrix[verdicts.index(human_verdict)][1 if judged.value else 0] += 1
+        judged_cases = sum(map(sum, matrix))
+        agreed = matrix[0][0] + matrix[1][1]
+        return [
+            ConfusionMatrix(
+                title='Human verdict (rows) vs. judge verdict (columns)',
+                class_labels=verdicts,
+                matrix=matrix,
+            ),
+            ScalarResult(
+                title='Judge agreement',
+                value=agreed / judged_cases * 100 if judged_cases else 0,
+                unit='%',
+            ),
+        ]
+
+
+dataset = Dataset(
+    name='refund_judge_validation',
+    cases=[
+        Case(inputs=output, metadata={'human_verdict': verdict})
+        for output, verdict in labeled_outputs
+    ],
+    evaluators=[
+        LLMJudge(
+            rubric='The response confirms that the refund was issued and quotes the order ID.',
+            model='{{ openai:small }}',
+            assertion={'evaluation_name': 'judge_pass', 'include_reason': True},
+        ),
+    ],
+    report_evaluators=[JudgeAgreement(assertion_name='judge_pass')],
+)
+report = dataset.evaluate_sync(replay)
+```
+
+The analyses are on `report.analyses`, and in [Logfire](report-evaluators.md#viewing-analyses-in-logfire) when it's configured. For a gate, watch the matrix's `fail` row, `pass` column: outputs a person failed that the judge let through. Read the judge's reasons on the cases it got wrong, refine the rubric or switch the judge model, and re-run until the agreement is acceptable. Keep the labeled dataset, and re-run it whenever you change the rubric or the judge model.
+
 ## Best Practices
 
 ### 1. Be Specific in Rubrics
@@ -692,3 +770,4 @@ LLMJudge(rubric='...')  # Uses Claude
 
 - **[Custom Evaluators](custom.md)** - Write custom evaluation logic
 - **[Native Evaluators](built-in.md)** - Complete evaluator reference
+- **[LLM-as-a-Judge: A Practical Guide with Pydantic Evals](https://pydantic.dev/articles/llm-as-a-judge)** - Case-specific judges and writing good rubrics, on the Pydantic blog

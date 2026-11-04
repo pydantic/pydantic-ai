@@ -50,7 +50,8 @@ def gh_host(url: str) -> str:
     return host.removeprefix('copilot-api.')
 
 
-def _environment() -> dict[str, str]:
+def gh_environment() -> dict[str, str]:
+    """The environment to run `gh` in: without token variables, so it uses its own login."""
     # Token variables would make `gh` report them instead of its login, and refuse `auth login`.
     return {name: value for name, value in os.environ.items() if name not in _TOKEN_VARIABLES}
 
@@ -63,7 +64,7 @@ def gh_token(hostname: str) -> str | None:
             capture_output=True,
             text=True,
             encoding='utf-8',
-            env=_environment(),
+            env=gh_environment(),
             stdin=subprocess.DEVNULL,
             check=False,
             timeout=TOKEN_TIMEOUT,
@@ -125,7 +126,7 @@ def start_login(hostname: str, *, stopping: Callable[[], bool] = lambda: False) 
         stderr=subprocess.STDOUT,
         text=True,
         encoding='utf-8',
-        env=_environment(),
+        env=gh_environment(),
     )
     output: queue.Queue[str | None] = queue.Queue()
     # A thread reads the pipe, so a `gh` that never prints cannot block cancellation or the deadline.

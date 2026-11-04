@@ -156,7 +156,9 @@ class WorkspaceCallParams:
 
 class WorkspaceCallCacheIdentity(CacheIdentity[WorkspaceCallParams]):
     def project(self, params: WorkspaceCallParams) -> tuple[object, ...]:
-        return (params.call, params.ref)
+        # Keep run_id last: PrefectOperationBackend reads the tail for its per-run counter.
+        # _bind_workspace_operation binds this projection with the WORKSPACE_OPERATION_ID singleton.
+        return (params.call, params.ref, params.run_context.run_id)
 
 
 _EXPECTED_ERRORS: tuple[type[Exception], ...] = (

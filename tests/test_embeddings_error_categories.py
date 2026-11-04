@@ -22,12 +22,15 @@ import pytest
 
 from pydantic_ai import (
     ModelAPIError,
+    ModelAuthenticationError,
     ModelConnectionError,
     ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelNotFoundError,
     ModelOverloadedError,
     ModelQuotaExceededError,
     ModelRateLimitError,
+    ModelRequestRejectedError,
     ModelServerError,
     ModelTimeoutError,
     ModelUnavailableError,
@@ -69,7 +72,14 @@ _CATEGORIES: tuple[type[ModelAPIError], ...] = (
     ModelConnectionError,
     ModelTimeoutError,
     ModelContextWindowExceededError,
+    ModelRequestRejectedError,
+    ModelAuthenticationError,
+    ModelNotFoundError,
 )
+
+_REJECTED: set[type[ModelAPIError]] = {ModelHTTPError, ModelRequestRejectedError}
+_AUTHENTICATION: set[type[ModelAPIError]] = {ModelHTTPError, ModelRequestRejectedError, ModelAuthenticationError}
+_NOT_FOUND: set[type[ModelAPIError]] = {ModelHTTPError, ModelRequestRejectedError, ModelNotFoundError}
 
 
 def _categories(exc: ModelAPIError) -> set[type[ModelAPIError]]:
@@ -186,7 +196,7 @@ CASES = [
                 }
             },
         ),
-        categories={ModelHTTPError},
+        categories=_REJECTED,
         attrs={'status_code': 400, 'provider_error_type': 'invalid_request_error'},
     ),
     Case(
@@ -236,7 +246,7 @@ CASES = [
                 '3334',
             },
         ),
-        categories={ModelHTTPError},
+        categories=_REJECTED,
         attrs={'status_code': 400},
     ),
     Case(
@@ -273,8 +283,73 @@ CASES = [
         id='google-invalid-argument',
         model=_google,
         handler=_json(400, {'error': {'code': 400, 'message': 'Invalid value', 'status': 'INVALID_ARGUMENT'}}),
-        categories={ModelHTTPError},
+        categories=_REJECTED,
         attrs={'status_code': 400, 'provider_error_code': 'INVALID_ARGUMENT'},
+    ),
+    Case(
+        id='openai-invalid-api-key',
+        model=_openai,
+        handler=_json(
+            401,
+            {
+                'error': {
+                    'message': 'Incorrect API key provided',
+                    'type': 'invalid_request_error',
+                    'code': 'invalid_api_key',
+                }
+            },
+        ),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 401, 'provider_error_code': 'invalid_api_key'},
+    ),
+    Case(
+        id='openai-model-not-found',
+        model=_openai,
+        handler=_json(
+            404,
+            {
+                'error': {
+                    'message': 'The model `text-embedding-3-small` does not exist or you do not have access to it.',
+                    'type': 'invalid_request_error',
+                    'code': 'model_not_found',
+                }
+            },
+        ),
+        categories=_NOT_FOUND,
+        attrs={'status_code': 404, 'provider_error_code': 'model_not_found'},
+    ),
+    Case(
+        id='cohere-unauthorized',
+        model=_cohere,
+        handler=_json(401, {'id': 'x', 'message': 'invalid api token'}),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 401},
+    ),
+    Case(
+        id='google-api-key-invalid',
+        model=_google,
+        handler=_json(
+            400,
+            {
+                'error': {
+                    'code': 400,
+                    'message': 'API key not valid. Please pass a valid API key.',
+                    'status': 'INVALID_ARGUMENT',
+                    'details': [
+                        {'@type': 'type.googleapis.com/google.rpc.ErrorInfo', 'reason': 'API_KEY_INVALID'},
+                    ],
+                }
+            },
+        ),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 400, 'provider_error_code': 'INVALID_ARGUMENT'},
+    ),
+    Case(
+        id='google-not-found',
+        model=_google,
+        handler=_json(404, {'error': {'code': 404, 'message': 'Model not found.', 'status': 'NOT_FOUND'}}),
+        categories=_NOT_FOUND,
+        attrs={'status_code': 404, 'provider_error_code': 'NOT_FOUND'},
     ),
     Case(
         id='google-timeout',
@@ -348,9 +423,34 @@ def _bedrock_error(code: str, message: str, status_code: int) -> ClientError:
                 '400 Bad Request: Too many input tokens. Max input tokens: 8192, request input token count: 30524 ',
                 400,
             ),
-            {ModelHTTPError},
+            _REJECTED,
             {'status_code': 400, 'provider_error_code': 'ValidationException'},
             id='input-too-long',
+        ),
+        pytest.param(
+            lambda: _bedrock_error(
+                'AccessDeniedException', "You don't have access to the model with the specified model ID.", 403
+            ),
+            _AUTHENTICATION,
+            {'status_code': 403, 'provider_error_code': 'AccessDeniedException'},
+            id='access-denied',
+        ),
+        pytest.param(
+            # Transient despite its 403: AWS says to try again once the Marketplace subscription is processed.
+            lambda: _bedrock_error(
+                'MPAgreementBeingCreated',
+                'Your AWS Marketplace subscription for this model is still being processed. Try again after 15 minutes.',
+                403,
+            ),
+            {ModelHTTPError, ModelUnavailableError},
+            {'status_code': 403, 'provider_error_code': 'MPAgreementBeingCreated'},
+            id='marketplace-agreement-being-created',
+        ),
+        pytest.param(
+            lambda: _bedrock_error('ResourceNotFoundException', 'Model not found.', 404),
+            _NOT_FOUND,
+            {'status_code': 404, 'provider_error_code': 'ResourceNotFoundException'},
+            id='resource-not-found',
         ),
         pytest.param(
             lambda: ReadTimeoutError(endpoint_url='https://bedrock.stub'),
@@ -440,9 +540,29 @@ def voyageai_modules() -> tuple[ModuleType, ModuleType, ModuleType]:
                 400,
                 {'detail': 'Model nonexistent is not supported.'},
             ),
-            set[type[ModelAPIError]](),
-            {'message': 'Model nonexistent is not supported.'},
+            _REJECTED,
+            {'status_code': 400, 'body': {'detail': 'Model nonexistent is not supported.'}},
             id='invalid-request',
+        ),
+        pytest.param(
+            'AuthenticationError',
+            (
+                'Provided API key is invalid.',
+                '{"detail": "Provided API key is invalid."}',
+                401,
+                {'detail': 'Provided API key is invalid.'},
+            ),
+            _AUTHENTICATION,
+            {'status_code': 401},
+            id='authentication',
+        ),
+        pytest.param(
+            # A 4xx without a category stays a plain `ModelAPIError`, as before.
+            'InvalidRequestError',
+            ('Conflict.', '{"detail": "Conflict."}', 409, {'detail': 'Conflict.'}),
+            set[type[ModelAPIError]](),
+            {'message': 'Conflict.'},
+            id='uncategorized',
         ),
         pytest.param(
             'Timeout',

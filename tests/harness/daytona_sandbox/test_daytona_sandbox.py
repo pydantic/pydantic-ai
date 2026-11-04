@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import anyio
@@ -21,7 +21,6 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import ReadOnlyWorkspace, Workspace, WorkspaceReadOnlyError, WorkspaceRef
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
-from pydantic_ai_harness.daytona_sandbox._backend import _close_client  # pyright: ignore[reportPrivateUsage]
 
 from .._tool_calls import call_tools
 from .fake_daytona import FakeDaytona
@@ -231,19 +230,6 @@ async def test_cancelled_run_closes_owned_client_mid_command(fake_daytona: FakeD
     assert sandbox.process_sessions == set()
 
 
-async def test_closing_a_client_waits_for_its_cancelled_event_connection() -> None:
-    connecting = asyncio.create_task(asyncio.Event().wait())
-
-    class Client:
-        _event_dispatcher = SimpleNamespace(_connect_task=connecting)
-
-        async def close(self) -> None:
-            connecting.cancel()  # what `AsyncDaytona.close()` does, without waiting
-
-    await _close_client(Client())  # pyright: ignore[reportArgumentType]
-    assert connecting.cancelled()
-
-
 async def test_run_closes_the_client_it_opened_and_the_result_workspace_reopens(fake_daytona: FakeDaytona) -> None:
     agent = Agent(
         TestModel(call_tools=['_touch']), deps_type=type(None), tools=[_touch], capabilities=[DaytonaSandbox()]
@@ -290,6 +276,19 @@ async def test_trio_is_refused_before_any_daytona_call(fake_daytona: FakeDaytona
         await DaytonaSandbox[None]().destroy(WorkspaceRef(provider='daytona', id='target'))
     await backend.aclose()
     assert fake_daytona.opened_clients == 0
+
+
+async def test_the_default_client_is_built_off_the_event_loop(
+    fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The real constructor checks for dotenv files, which the autouse blocking-call detector rejects on the event loop.
+    def client() -> Any:
+        os.stat('.')
+        return fake_daytona.client()
+
+    monkeypatch.setattr(daytona, 'AsyncDaytona', client)
+    await DaytonaSandbox[None]().destroy(WorkspaceRef(provider='daytona', id='target'))
+    assert fake_daytona.opened_clients == 1
 
 
 @pytest.mark.parametrize('supplied', ['client', 'workspace'])

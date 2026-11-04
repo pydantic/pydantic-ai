@@ -42,10 +42,9 @@ async def test_xai_unified_thinking(allow_model_requests: None, xai_provider: Xa
 
 
 async def test_xai_unified_thinking_false(allow_model_requests: None, xai_provider: XaiProvider):
-    """End-to-end smoke test that thinking=False runs against grok-3-mini.
+    """End-to-end smoke test that thinking=False runs against grok-3-mini, which accepts `reasoning_effort='none'`.
 
-    That `reasoning_effort` is omitted for grok-3-mini + False is asserted at the wire level by
-    `test_xai_unified_thinking_omits_reasoning_effort`.
+    The mapping is asserted at the wire level by `test_xai_grok_3_mini_unified_thinking_reasoning_effort`.
     """
     m = XaiModel('grok-3-mini', provider=xai_provider)
     agent = Agent(m, model_settings={'thinking': False})
@@ -68,6 +67,19 @@ async def test_xai_grok_45_thinking(allow_model_requests: None, xai_provider: Xa
     assert '4' in result.output
     response = next(m for m in result.all_messages() if isinstance(m, ModelResponse))
     assert any(isinstance(p, ThinkingPart) for p in response.parts)
+
+
+async def test_xai_grok_45_thinking_false(allow_model_requests: None, xai_provider: XaiProvider):
+    """End-to-end smoke test that `thinking=False` on Grok 4.5, which rejects `reasoning_effort='none'`, sends
+    its lowest effort, `'low'`, and is accepted.
+
+    The mapping is asserted at the wire level by `test_xai_grok_45_unified_thinking_reasoning_effort`.
+    """
+    m = XaiModel('grok-4.5', provider=xai_provider)
+    agent = Agent(m, model_settings={'thinking': False})
+
+    result = await agent.run('What is 2+2?')
+    assert '4' in result.output
 
 
 async def test_xai_grok_47_thinking(allow_model_requests: None, xai_provider: XaiProvider):
@@ -120,9 +132,8 @@ async def test_xai_grok_43_unified_thinking_reasoning_effort(
 @pytest.mark.parametrize(
     ('thinking', 'expected_reasoning_effort'),
     [
-        # Grok 4.5 rejects `'none'`, so `thinking=False` maps to nothing: reasoning_effort is omitted
-        # and the always-on model silently ignores the disable request.
-        (False, None),
+        # Grok 4.5 rejects `'none'`, so `thinking=False` sends its lowest effort instead.
+        (False, 'low'),
         # `True` has no `'none'` to omit to, so it falls back to `'medium'`.
         (True, 'medium'),
         ('minimal', 'low'),
@@ -133,7 +144,7 @@ async def test_xai_grok_43_unified_thinking_reasoning_effort(
     ],
 )
 async def test_xai_grok_45_unified_thinking_reasoning_effort(
-    allow_model_requests: None, thinking: ThinkingLevel, expected_reasoning_effort: str | None
+    allow_model_requests: None, thinking: ThinkingLevel, expected_reasoning_effort: str
 ) -> None:
     response = create_response(content='ok')
     mock_client = MockXai.create_mock([response])
@@ -144,17 +155,14 @@ async def test_xai_grok_45_unified_thinking_reasoning_effort(
 
     assert result.output == 'ok'
     kwargs = get_mock_chat_create_kwargs(mock_client)[0]
-    if expected_reasoning_effort is None:
-        assert 'reasoning_effort' not in kwargs
-    else:
-        assert kwargs['reasoning_effort'] == expected_reasoning_effort
+    assert kwargs['reasoning_effort'] == expected_reasoning_effort
 
 
 @pytest.mark.parametrize(
     ('thinking', 'expected_reasoning_effort'),
     [
-        # `thinking=False` is silently ignored: grok-4.7 is always-on, so no `reasoning_effort` is sent.
-        (False, None),
+        # Grok 4.7 rejects `'none'`, so `thinking=False` sends its lowest effort instead.
+        (False, 'low'),
         # `True` uses Grok 4.7's documented high default by omitting `reasoning_effort`.
         (True, None),
         ('minimal', 'low'),
@@ -213,34 +221,37 @@ async def test_xai_grok_43_explicit_reasoning_effort_takes_precedence(allow_mode
     assert get_mock_chat_create_kwargs(mock_client)[0]['reasoning_effort'] == 'none'
 
 
-async def test_xai_grok_3_mini_unified_medium_maps_to_high(allow_model_requests: None) -> None:
+@pytest.mark.parametrize('model_name', ['grok-3-mini', 'grok-3-mini-fast'])
+@pytest.mark.parametrize(
+    ('thinking', 'expected_reasoning_effort'),
+    [
+        # Grok 3 Mini accepts `'none'`, so `thinking=False` turns reasoning off; the other levels keep
+        # mapping onto its `low`/`high`.
+        (False, 'none'),
+        (True, 'high'),
+        ('minimal', 'low'),
+        ('medium', 'high'),
+        ('xhigh', 'high'),
+    ],
+)
+async def test_xai_grok_3_mini_unified_thinking_reasoning_effort(
+    allow_model_requests: None, model_name: str, thinking: ThinkingLevel, expected_reasoning_effort: str
+) -> None:
     response = create_response(content='ok')
     mock_client = MockXai.create_mock([response])
-    m = XaiModel('grok-3-mini', provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, model_settings=ModelSettings(thinking='medium'))
+    m = XaiModel(model_name, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(thinking=thinking))
 
     result = await agent.run('Hello')
 
     assert result.output == 'ok'
-    assert get_mock_chat_create_kwargs(mock_client)[0]['reasoning_effort'] == 'high'
-
-
-async def test_xai_grok_3_mini_unified_true_maps_to_high(allow_model_requests: None) -> None:
-    response = create_response(content='ok')
-    mock_client = MockXai.create_mock([response])
-    m = XaiModel('grok-3-mini', provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, model_settings=ModelSettings(thinking=True))
-
-    result = await agent.run('Hello')
-
-    assert result.output == 'ok'
-    assert get_mock_chat_create_kwargs(mock_client)[0]['reasoning_effort'] == 'high'
+    kwargs = get_mock_chat_create_kwargs(mock_client)[0]
+    assert kwargs['reasoning_effort'] == expected_reasoning_effort
 
 
 @pytest.mark.parametrize(
     ('model_name', 'thinking', 'profile'),
     [
-        ('grok-3-mini', False, None),
         ('grok-3-fast', 'high', None),
         ('grok-custom', 'high', GrokModelProfile(supports_thinking=True)),
     ],

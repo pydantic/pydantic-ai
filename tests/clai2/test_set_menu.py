@@ -191,3 +191,35 @@ def test_editor_opens_holding_a_printable_value(value: str, initial: str) -> Non
     menu = FieldMenu(_Stored(value))
     editor = menu.build_editor(menu.rows[0])
     assert (editor.text, editor._placeholder) == (initial, 'empty resets to (empty)')  # pyright: ignore[reportPrivateUsage]
+
+
+def test_repo_context_settings_edit_paths_and_json_lists(tmp_path: Path) -> None:
+    context, applied = make_context(tmp_path)
+    source = SettingsSource(context)
+    menu = FieldMenu(source)
+    rows = {row.key: row for row in menu.rows}
+    roots = rows['repo_context.walk_up_roots']
+    targets = rows['repo_context.autoload_symlink_roots']
+    assert roots.default == '["~"]'
+    assert targets.default == '[]'
+    assert source.current(roots) == '["~"]'
+    assert source.current(targets) == '[]'
+    assert source.problem(roots, '~') is not None
+    assert source.problem(roots, '["relative"]') is not None
+    assert source.problem(targets, '/not-json') is not None
+    assert source.problem(targets, '["relative"]') is not None
+    raw_roots = '["~/my projects", "/offline mount"]'
+    assert source.apply(roots, raw_roots) == 'Saved repo_context.walk_up_roots. Applied.'
+    raw = '["~/shared tooling", "/offline instructions"]'
+    assert source.apply(targets, raw) == 'Saved repo_context.autoload_symlink_roots. Applied.'
+    assert source.current(roots) == raw_roots
+    assert source.current(targets) == raw
+    assert menu.initial(roots) == raw_roots, 'lists must roundtrip as JSON, not Python repr'
+    assert menu.initial(targets) == raw, 'lists must roundtrip as JSON, not Python repr'
+    assert context.store.load().repo_context_walk_up_roots == ['~/my projects', '/offline mount']
+    assert context.store.load().repo_context_autoload_symlink_roots == ['~/shared tooling', '/offline instructions']
+    source.reset(roots)
+    source.reset(targets)
+    assert context.settings.repo_context_walk_up_roots == ['~']
+    assert context.settings.repo_context_autoload_symlink_roots == []
+    assert applied == [roots.key, targets.key, roots.key, targets.key]

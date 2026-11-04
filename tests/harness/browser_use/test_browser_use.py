@@ -1360,6 +1360,53 @@ class TestSensitiveDataSafety:
             '(typed <secret>x_password</secret> into a field that rejected it).'
         )
 
+    async def test_url_encoded_secret_values_are_redacted(self, kill_calls: list[BrowserSession]) -> None:
+        """A blocked `search` reports the URL it built, with the value encoded by `quote_plus`."""
+        history = _FakeHistory(
+            step_errors=[
+                'Failed to search duckduckgo for "p@ss word": Navigation to non-allowed URL: '
+                'https://duckduckgo.com/?q=p%40ss+word',
+            ]
+        )
+        capability = BrowserUse[None](
+            sensitive_data={'https://safe.example': {'x_password': 'p@ss word'}},
+            browser_agent=_FakeFactory(_FakeBrowserAgent(history)),
+        )
+
+        result = await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        assert result == (
+            'The browser agent stopped without producing a result (Failed to search duckduckgo for '
+            '"<secret>x_password</secret>": Navigation to non-allowed URL: '
+            'https://duckduckgo.com/?q=<secret>x_password</secret>).'
+        )
+
+    async def test_a_value_equal_to_another_secret_s_encoding_keeps_its_own_placeholder(
+        self, kill_calls: list[BrowserSession]
+    ) -> None:
+        """`p%40ss+word` is `b` itself and `a` URL-encoded; the secret whose value it is names it."""
+        history = _FakeHistory(step_errors=['typed p%40ss+word'])
+        capability = BrowserUse[None](
+            sensitive_data={'https://safe.example': {'a': 'p@ss word', 'b': 'p%40ss+word'}},
+            browser_agent=_FakeFactory(_FakeBrowserAgent(history)),
+        )
+
+        result = await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        assert result == 'The browser agent stopped without producing a result (typed <secret>b</secret>).'
+
+    async def test_secret_with_a_lone_surrogate_is_redacted(self, kill_calls: list[BrowserSession]) -> None:
+        """`os.environ` decodes invalid UTF-8 as lone surrogates, which strict URL encoding cannot encode."""
+        history = _FakeHistory(step_errors=['typed hunter\udcff2'])
+        capability = BrowserUse[None](
+            sensitive_data={'https://safe.example': {'x_password': 'hunter\udcff2'}},
+            browser_agent=_FakeFactory(_FakeBrowserAgent(history)),
+        )
+
+        result = await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        assert result == 'The browser agent stopped without producing a result (typed <secret>x_password</secret>).'
+
     async def test_a_secret_in_a_non_string_schema_field_keeps_the_json_valid(
         self, kill_calls: list[BrowserSession]
     ) -> None:
@@ -1747,6 +1794,13 @@ class TestAgentSpec:
         assert capability.output_schema is None
         assert capability.agent_settings is None
         assert capability.browser_agent is None
+
+    def test_from_spec_sets_the_base_capability_fields(self) -> None:
+        """`id`, `description` and `defer_loading` live on `AbstractCapability`, so a spec must name them too."""
+        definitions = AgentSpec.model_json_schema_with_capabilities([BrowserUse])['$defs']
+        assert {'id', 'description', 'defer_loading'} <= definitions['spec_params_BrowserUse']['properties'].keys()
+        capability = BrowserUse[None].from_spec(id='second', description='The second one.', defer_loading=True)
+        assert (capability.id, capability.description, capability.defer_loading) == ('second', 'The second one.', True)
 
     def test_agent_loads_from_spec_file(self, tmp_path: Path) -> None:
         spec = tmp_path / 'agent.yaml'

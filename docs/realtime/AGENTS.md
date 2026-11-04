@@ -11,7 +11,7 @@ else: `overview.md` (front door, provider matrix, limitations table — every li
 tracking issue), `audio.md` (media I/O: audio, images, transcripts), `events.md` (event vocabulary
 and its overlap with standard run events; the turn-boundary rule lives here), `turns.md`,
 `tools.md` (tools only), `capabilities.md` (per-hook support story), `history.md`, `deployment.md`
-(frontend transports), `lifecycle.md` (connection lifecycle only), `observability.md`,
+(frontend transports and hosting), `lifecycle.md` (connection lifecycle only), `observability.md`,
 `troubleshooting.md` (the symptom-first index — per-page "Edge cases" must not duplicate it), and
 the five provider pages (canonical for installs, model names, settings, quirks).
 

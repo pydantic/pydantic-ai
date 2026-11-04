@@ -91,6 +91,7 @@ from .codec import (
     ConversationItemCreated,
     InputRejected,
     InputTranscript,
+    OutputSpeechTimestamps,
     OutputTranscript,
     RealtimeCodecEvent,
     ResponseDone,
@@ -103,6 +104,14 @@ _WAV_MEDIA_TYPE = 'audio/wav'
 
 MAX_CUTTABLE_OUTPUT_ITEMS = 32
 """How many recent assistant audio items a barge-in can still cut off: far more than can be queued for playback."""
+
+
+def _interrupted_at(part: SpeechPart, interrupted_at_ms: int | None) -> SpeechPart:
+    """`part`, interrupted `interrupted_at_ms` into its audio: speech timed from there on was never heard."""
+    timestamps = part.timestamps
+    if interrupted_at_ms is not None and timestamps is not None:
+        timestamps = [timestamp for timestamp in timestamps if timestamp.start_ms < interrupted_at_ms]
+    return replace(part, interrupted_at_ms=interrupted_at_ms, timestamps=timestamps)
 
 
 # --- commands: what the caller did -------------------------------------------------------------------
@@ -180,7 +189,7 @@ class Interrupted:
 
 @dataclass(frozen=True, kw_only=True)
 class ExchangeAbandoned:
-    """The session hit a failure that stops the model getting what it needs (a tool raised, a limit tripped).
+    """The session hit a failure that stops the model getting what it needs (a limit tripped, a result couldn't go out).
 
     Nothing owed until now is waited for any more; what is asked for afterwards is.
     """
@@ -364,6 +373,8 @@ class _Response:
     open_part_item: str | None = None
     open_part_index: int = 0
     """The stream index of `open_part` (see `SessionCore._take_index`)."""
+    open_part_position: int = 0
+    """Where `open_part` goes in `parts` once it closes: where it started, ahead of tool calls made while it was open."""
     open_transcript: str = ''
     open_audio: bytearray = field(default_factory=bytearray)
     closed_parts: dict[str, tuple[int, SpeechPart | TextPart]] = field(
@@ -448,6 +459,7 @@ class SessionCore:
         responses_are_requests: bool = True,
         answers_tool_calls_per_response: bool = False,
         tracks_tool_rounds: bool = False,
+        speech_spans_tool_calls: bool = False,
         input_transcription_enabled: bool = True,
         retain_input_audio: bool = False,
         retain_output_audio: bool = False,
@@ -469,6 +481,8 @@ class SessionCore:
         """Whether one reply answers all the tool results of a response, rather than one per result."""
         self._tracks_tool_rounds = tracks_tool_rounds
         """Whether to say when tool rounds are over (`ToolRoundsOver`), for a connection that prunes them."""
+        self._speech_spans_calls = speech_spans_tool_calls
+        """Whether the model's speech goes on through its tool calls, as one part, rather than ending at each one."""
         self._transcription = input_transcription_enabled
         self._retain_input = retain_input_audio
         self._retain_output = retain_output_audio
@@ -582,6 +596,8 @@ class SessionCore:
             self._end_response(item)
         elif isinstance(item, (AudioDelta, OutputTranscript)):
             self._response_content(item)
+        elif isinstance(item, OutputSpeechTimestamps):
+            self._speech_timestamps(item)
         elif isinstance(item, ToolCall):
             self._tool_call(item)
         elif isinstance(item, RealtimeSessionReconnectEvent):
@@ -802,6 +818,25 @@ class SessionCore:
         if appended:
             self._effects.append(PartDeltaEvent(index=index, delta=delta))
 
+    def _speech_timestamps(self, event: OutputSpeechTimestamps) -> None:
+        response = self._open_response(event.response_id)
+        if (
+            response is None
+            or not event.timestamps
+            or (event.item_id is not None and event.item_id in self._replayed_items)
+        ):
+            return
+        delta = SpeechPartDelta(speaker='assistant', timestamps=event.timestamps)
+        if event.item_id is not None and event.item_id != response.open_part_item:
+            closed = response.closed_parts.get(event.item_id)
+            if closed is not None and isinstance(closed_part := closed[1], SpeechPart):
+                # Timing of an item that already closed goes on the part the item made, as a late transcript does.
+                self._restream_closed_part(response, event.item_id, delta.apply(closed_part), delta)
+                return
+        part = self._open_part(response, output_text=False, item_id=event.item_id)
+        response.open_part = delta.apply(part)
+        self._effects.append(PartDeltaEvent(index=response.open_part_index, delta=delta))
+
     def _open_part(self, response: _Response, *, output_text: bool, item_id: str | None) -> SpeechPart | TextPart:
         part = response.open_part
         if part is not None:
@@ -819,6 +854,7 @@ class SessionCore:
             part = response.open_part = self._with_item_details(response, part, item_id)
             response.open_part_item = item_id
             response.open_part_index = index = self._take_index()
+            response.open_part_position = len(response.parts)
             response.open_transcript = ''
             self._part_items[index] = item_id
             while len(self._part_items) > MAX_CUTTABLE_OUTPUT_ITEMS:
@@ -836,37 +872,56 @@ class SessionCore:
         closed = response.closed_parts.get(event.item_id)
         if closed is None or event.output_text != isinstance(closed[1], TextPart):
             return False
-        stream_index, part = closed
-        position = next(position for position, existing in enumerate(response.parts) if existing is part)
+        part = closed[1]
         updated: SpeechPart | TextPart
-        restarted: SpeechPart | TextPart
         delta: SpeechPartDelta | TextPartDelta
         if isinstance(part, TextPart):
             updated, appended = fold_part_transcript(part, event.text)
-            restarted, delta = part, TextPartDelta(content_delta=appended)
+            delta = TextPartDelta(content_delta=appended)
         else:
             updated, appended = fold_part_transcript(part, event.text)
-            # Retained audio appears at a part's end, not at its start.
-            restarted = replace(part, audio=None)
             delta = SpeechPartDelta(speaker='assistant', transcript_delta=appended, transcript=updated.transcript or '')
-        response.parts[position] = updated
-        response.closed_parts[event.item_id] = (stream_index, updated)
-        if appended:
-            # Streamed again under the index it ended with, which a `PartStartEvent` replaces, so the item still
-            # streams as one part.
-            self._effects.extend(
-                [
-                    PartStartEvent(index=stream_index, part=restarted),
-                    PartDeltaEvent(index=stream_index, delta=delta),
-                    PartEndEvent(index=stream_index, part=updated),
-                ]
-            )
+        self._restream_closed_part(response, event.item_id, updated, delta if appended else None)
         return True
+
+    def _restream_closed_part(
+        self,
+        response: _Response,
+        item_id: str,
+        updated: SpeechPart | TextPart,
+        delta: SpeechPartDelta | TextPartDelta | None,
+    ) -> None:
+        """Replace the part `item_id` already closed with `updated` and, given the `delta`, stream it again.
+
+        It streams again under the index it ended with, which a `PartStartEvent` replaces, so the item still streams
+        as one part.
+        """
+        stream_index, part = response.closed_parts[item_id]
+        position = next(position for position, existing in enumerate(response.parts) if existing is part)
+        response.parts[position] = updated
+        response.closed_parts[item_id] = (stream_index, updated)
+        if delta is None:
+            return
+        # Retained audio appears at a part's end, not at its start.
+        restarted = replace(part, audio=None) if isinstance(part, SpeechPart) else part
+        self._effects.extend(
+            [
+                PartStartEvent(index=stream_index, part=restarted),
+                PartDeltaEvent(index=stream_index, delta=delta),
+                PartEndEvent(index=stream_index, part=updated),
+            ]
+        )
 
     def _with_item_details(
         self, response: _Response, part: SpeechPart | TextPart, item_id: str | None
     ) -> SpeechPart | TextPart:
-        if item_id is None or (details := response.item_details.get(item_id)) is None:
+        if item_id is None:
+            return part
+        if isinstance(part, SpeechPart):
+            # Only speech takes the item ID: a `TextPart.id` is replayed to the API that produced it, and a realtime
+            # item ID means nothing to a standard model.
+            part = replace(part, id=item_id, provider_name=self._provider_name)
+        if (details := response.item_details.get(item_id)) is None:
             return part
         return replace(part, provider_name=self._provider_name, provider_details=details)
 
@@ -881,7 +936,7 @@ class SessionCore:
                 wav = pcm_to_wav(bytes(response.open_audio), self._output_rate)
                 audio = BinaryContent(data=wav, media_type=_WAV_MEDIA_TYPE)
                 part = replace(part, audio=self._audio_budget.track(audio, len(response.open_audio), output=True))
-        response.parts.append(part)
+        response.parts.insert(response.open_part_position, part)
         if response.open_part_item is not None:
             response.closed_parts[response.open_part_item] = (response.open_part_index, part)
         self._effects.append(PartEndEvent(index=response.open_part_index, part=part))
@@ -902,7 +957,8 @@ class SessionCore:
         ):
             # Repeated (a resumed conversation replaying it, say): the call is already recorded, once.
             return
-        self._close_part(response)
+        if not self._speech_spans_calls:
+            self._close_part(response)
         call = ToolCallPart(tool_name=event.tool_name, args=event.args, tool_call_id=event.tool_call_id)
         response.parts.append(call)
         index = self._take_index()
@@ -939,15 +995,20 @@ class SessionCore:
             return
         del self._call_response[call_id]
         response.tool_calls.remove(call_id)
-        response.parts = [
-            part for part in response.parts if not (isinstance(part, ToolCallPart) and part.tool_call_id == call_id)
-        ]
+        position = next(
+            position
+            for position, part in enumerate(response.parts)
+            if isinstance(part, ToolCallPart) and part.tool_call_id == call_id
+        )
+        del response.parts[position]
+        if response.open_part is not None and position < response.open_part_position:
+            response.open_part_position -= 1
 
     def _tool_returned(self, command: ToolReturned) -> None:
         self._returns[command.tool_call_id] = command.request
         self._settled_calls.add(command.tool_call_id)
         if command.tool_call_id not in self._result_input:
-            # Settled without its result going out (cancelled, or the tool raised).
+            # Settled without its result going out (cancelled, stopped by a usage limit, or its send failed).
             self._call_unanswered(command.tool_call_id)
 
     def _call_unanswered(self, call_id: str) -> None:
@@ -1112,8 +1173,8 @@ class SessionCore:
         """Stop waiting for what is owed (see `ExchangeAbandoned`), ending the exchange under way if nothing else will.
 
         A response still under way, or one that ended in the frame being applied, ends it as it ends (see `end_frame`),
-        as nothing owed before now holds it open. Otherwise no response is coming to end it: the result of a tool that
-        raised doesn't go out, so the model never answers it.
+        as nothing owed before now holds it open. Otherwise no response is coming to end it: a usage limit stopped a tool
+        result from going out, or a failure result couldn't be sent, so the model never answers it.
         """
         owed = self.wait_tokens()
         self._abandoned.update((token.kind, token.key) for token in owed)
@@ -1159,7 +1220,7 @@ class SessionCore:
         if interrupted or cut:
             for index in range(len(parts) - 1, -1, -1):
                 if isinstance(part := parts[index], SpeechPart):
-                    parts[index] = replace(part, interrupted_at_ms=response.interrupted_at_ms)
+                    parts[index] = _interrupted_at(part, response.interrupted_at_ms)
                     break
         finish_reason = event.finish_reason or response.usage_finish_reason
         if finish_reason is None and not interrupted and event.provider_details is None:
@@ -1219,7 +1280,7 @@ class SessionCore:
         assert isinstance(part, SpeechPart)
         updated = part
         if cut.heard_ms is not None and (part.interrupted_at_ms is None or cut.heard_ms < part.interrupted_at_ms):
-            updated = replace(updated, interrupted_at_ms=cut.heard_ms)
+            updated = _interrupted_at(updated, cut.heard_ms)
         if cut.heard_transcript is not None and (cut.heard_transcript or None) != part.transcript:
             details = dict(part.provider_details or {})
             details.setdefault('original_transcript', part.transcript)
@@ -1521,6 +1582,10 @@ class SessionCore:
             if outcome == 'pending':
                 self._obligations[input_id] = 'void'
         self._settled_calls.update(self._call_response)
+
+    def release_annotator(self) -> None:
+        """Drop the response annotator, which holds a bound method back to the session."""
+        self._annotate_response = None
 
     def set_conversation_id(self, conversation_id: str) -> None:
         """The conversation id the session resolved late: what the core records from now on, and has recorded, carries it."""

@@ -287,14 +287,15 @@ def test_zai_quota_exact_null_reset_probe_round_trips_exhausted_weekly_health(tm
     assert result.quota.reset_at == '2026-10-20T17:38:02Z'
 
 
-def test_zai_quota_missing_reset_on_idle_window_stays_invalid() -> None:
-    """An omitted reset timestamp remains invalid even when the token window is idle."""
+@pytest.mark.parametrize('percentage', [0, 1, 100])
+def test_zai_quota_missing_reset_is_valid_only_on_idle_window(percentage: int) -> None:
+    """An omitted reset is valid only before the token window has consumed quota."""
     payload: dict[str, object] = {
         'code': 200,
         'success': True,
         'data': {
             'limits': [
-                {'type': 'TOKENS_LIMIT', 'unit': 3, 'number': 5, 'percentage': 0},
+                {'type': 'TOKENS_LIMIT', 'unit': 3, 'number': 5, 'percentage': percentage},
                 {
                     'type': 'TOKENS_LIMIT',
                     'unit': 6,
@@ -308,8 +309,20 @@ def test_zai_quota_missing_reset_on_idle_window_stays_invalid() -> None:
 
     quota = _parse_zai_quota(payload)
 
-    assert quota.status == 'unknown'
-    assert quota.diagnostic == 'invalid_reset_time'
+    decision = health.check_health('nightly-sweep', 'task-1', 'schedule', 1, quota, [])
+
+    if percentage == 0:
+        assert quota.status == 'healthy'
+        assert quota.interval_remaining_percent == 100
+        assert quota.interval_reset_at is None
+        assert quota.weekly_remaining_percent == 84
+        assert quota.weekly_reset_at == '2026-10-08T14:54:29Z'
+        assert quota.diagnostic is None
+        assert decision.ready
+    else:
+        assert quota.status == 'unknown'
+        assert quota.diagnostic == 'invalid_reset_time'
+        assert not decision.ready
 
 
 def test_zai_quota_idle_interval_with_remaining_weekly_quota_is_healthy() -> None:
@@ -2586,7 +2599,7 @@ def test_scheduled_recovery_closes_null_reset_incident_after_cool_down(
         return health.Quota('healthy')
 
     monkeypatch.setattr(health, '_fetch_zai_quota', fetch_healthy)
-    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 15, 12, tzinfo=dt.timezone.utc))
+    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 15, 12, tzinfo=dt.UTC))
 
     assert _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=None)) == 0
     assert client.closed == [1]
@@ -2610,7 +2623,7 @@ def test_scheduled_recovery_keeps_aged_null_reset_incident_while_unhealthy(
         return quota
 
     monkeypatch.setattr(health, '_fetch_zai_quota', fetch_unhealthy)
-    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 15, 12, tzinfo=dt.timezone.utc))
+    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 15, 12, tzinfo=dt.UTC))
 
     assert _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=None)) == 0
     assert client.closed == []
@@ -2634,7 +2647,7 @@ def test_scheduled_recovery_leaves_credential_and_scoped_incidents_open(monkeypa
         return health.Quota('healthy')
 
     monkeypatch.setattr(health, '_fetch_zai_quota', fetch_healthy)
-    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 15, 12, tzinfo=dt.timezone.utc))
+    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 15, 12, tzinfo=dt.UTC))
 
     assert _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=None)) == 0
     assert client.closed == []
@@ -2691,7 +2704,9 @@ def test_open_incidents_records_each_page_and_the_incidents_it_returned(
     assert summary.read_text(encoding='utf-8') == f'{evidence}\n\n'
 
 
-def test_empty_open_incident_read_says_none(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_empty_open_incident_read_says_none(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     """An empty read is logged as such instead of looking like a skipped read."""
     monkeypatch.setattr(
         health.urllib.request.OpenerDirector,

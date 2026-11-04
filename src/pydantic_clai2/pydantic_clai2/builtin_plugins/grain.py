@@ -29,7 +29,7 @@ from pydantic_clai2.plugins import Plugin, PluginHost, SessionStart
 from pydantic_clai2.plugins.keys import choose_key
 from pydantic_clai2.plugins.menus import Dialogs, FieldRow, Option, SettingsMenu
 from pydantic_clai2.plugins.sign_in import SUBCOMMANDS, run_subcommand, sign_in_now, warn_if_signed_out
-from pydantic_clai2.runtime._session import WorkspacelessCapability
+from pydantic_clai2.runtime.session import WorkspacelessCapability
 from pydantic_clai2.ui.menus import dialogs as terminal
 from pydantic_clai2.ui.rendering import theme
 
@@ -126,14 +126,19 @@ class GrainConnection:
         if isinstance(source, OAuthSignIn):
             if not await to_thread.run_sync(source.signed_in, abandon_on_cancel=True):
                 return None
-            return Grain[None](client=source.client(), read_only=read_only, include_instructions=instructions)
+            return Grain[None](
+                defer_loading=True, client=source.client(), read_only=read_only, include_instructions=instructions
+            )
         identity = (source.name if isinstance(source, KeyReference) else None, self.settings)
         if self._built is None or self._built[0] != identity:
             if source is None:
-                built = Grain[None](read_only=read_only, include_instructions=instructions)
+                built = Grain[None](defer_loading=True, read_only=read_only, include_instructions=instructions)
             else:
                 built = Grain[None](
-                    auth=partial(_resolve, source), read_only=read_only, include_instructions=instructions
+                    defer_loading=True,
+                    auth=partial(_resolve, source),
+                    read_only=read_only,
+                    include_instructions=instructions,
                 )
             self._built = (identity, built)
         return self._built[1]
