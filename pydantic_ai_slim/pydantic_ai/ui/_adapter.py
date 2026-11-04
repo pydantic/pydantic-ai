@@ -25,6 +25,7 @@ from pydantic_core import to_json, to_jsonable_python
 from typing_extensions import TypeVar
 
 from pydantic_ai import CancellationToken, DeferredToolRequests, DeferredToolResults, _instructions
+from pydantic_ai._conversation_marks import mark_stored
 from pydantic_ai._instrumentation import record_exception
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
@@ -981,6 +982,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     those protocols. Persist the ref server-side and pass an authorized `workspace=` instead.
     """
 
+    _resubmitted_turn: _ServerHeldTurn | None = field(default=None, init=False, repr=False)
+    """The turn the run's result replaces a stored one with, when the client resubmitted a message."""
+
     _saved_run: tuple[AgentRunResult[Any], list[ConversationEntry]] | None = field(default=None, init=False, repr=False)
     """The result the last `conversation_store` save stored, with its entries, for `_announce_saved_entries`."""
 
@@ -1268,18 +1272,21 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         if deferred_tool_results is not None:
             _reject_answers_for_calls_not_pending(turn, deferred_tool_results, waiting_on=waiting_on)
         new_turn = self.sanitize_messages(turn.new_turn, deferred_tool_results=deferred_tool_results)
+        self._resubmitted_turn = replace(turn, new_turn=new_turn) if turn.cut_at is not None else None
         if loaded is None:
             return Conversation(messages=new_turn, conversation_id=conversation_id)
         if turn.cut_at is not None:
-            # A resubmitted message replaces its turn. Without a `new_message_index`, the save compares the
-            # history with the stored one and keeps the turn it replaces as a branch, so the stored
-            # conversation only changes if the run completes.
-            return Conversation(
+            # A resubmitted message replaces its turn, which the save keeps as a branch, so the stored
+            # conversation only changes if the run completes. The mark makes the result say which of its
+            # messages follow the kept history, for `_save_resubmitted_turn`.
+            conversation = Conversation(
                 messages=[*turn.history, *new_turn],
                 usage=loaded.usage,
                 conversation_id=conversation_id,
                 revision=loaded.revision,
             )
+            mark_stored(conversation, turn.history)
+            return conversation
         loaded.messages.extend(new_turn)
         return loaded
 
@@ -1337,7 +1344,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         if (store := self.conversation_store) is None:
             return
         try:
-            self._saved_run = result, await store.save(result, scope=self.conversation_scope)
+            entries = (
+                await store.save(result, scope=self.conversation_scope)
+                if self._resubmitted_turn is None
+                else await self._save_resubmitted_turn(store, self._resubmitted_turn, result)
+            )
+            self._saved_run = result, entries
         except ConversationConflict as e:
             raise UserError(_CONVERSATION_CHANGED) from e
         except UserError:
@@ -1346,6 +1358,24 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             # The stream sends an exception's text to the client, and a store's can hold queries or hosts.
             _report_store_failure(f'Saving conversation {result.conversation_id!r} to', e)
             raise UserError(_CONVERSATION_SAVE_FAILED) from e
+
+    async def _save_resubmitted_turn(
+        self, store: ConversationStore, turn: _ServerHeldTurn, result: AgentRunResult[Any]
+    ) -> list[ConversationEntry]:
+        """Save the kept stored history, the resubmitted turn and what the run added, branching off the turn it replaces.
+
+        Not the result's own messages: a capability may have trimmed or rewritten the history the run was
+        sent, which `store.save` would take for a rewrite of the stored history from its first difference.
+        """
+        conversation = result.conversation
+        index = conversation.new_message_index
+        # Without an index, a capability rewrote the turn itself, so the result can't say where it starts.
+        added = conversation.messages[index:] if index is not None else [*turn.new_turn, *result.new_messages()]
+        saved = replace(conversation, messages=[*turn.history, *added], new_message_index=None)
+        entries = await store.save(saved, scope=self.conversation_scope)
+        assert saved.revision is not None
+        result._conversation_saved(saved.revision)  # pyright: ignore[reportPrivateUsage]
+        return entries
 
     def _conversation_saved_events(self, conversation_id: str, entries: Sequence[ConversationEntry]) -> list[EventT]:
         """The protocol events that tell the client which entries a [`conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store] save stored.

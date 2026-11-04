@@ -5,8 +5,8 @@ import inspect
 import json
 import uuid
 import warnings
-from collections.abc import AsyncIterator, MutableMapping, Sequence
-from dataclasses import dataclass
+from collections.abc import AsyncIterator, Callable, MutableMapping, Sequence
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
@@ -22,7 +22,7 @@ from pydantic_ai._output import build_retried_tool_return
 from pydantic_ai._run_context import RunContext, get_current_run_context
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import AbstractCapability, Capability, NativeTool
+from pydantic_ai.capabilities import AbstractCapability, Capability, NativeTool, ProcessHistory
 from pydantic_ai.conversation import Conversation
 from pydantic_ai.conversation_store import ConversationEntry, ConversationRecord, InMemoryConversationStore
 from pydantic_ai.exceptions import ModelRetry, UserError
@@ -14129,6 +14129,116 @@ async def test_conversation_store_regenerate_branches():
     )
     record = await store.read_record('chat')
     assert record is not None and len(record.branches) == 1
+
+
+def _keep_last_two(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return messages[-2:]
+
+
+def _redact_earlier_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return [
+        replace(message, parts=[UserPromptPart('[redacted]')])
+        if isinstance(message, ModelRequest) and message is not messages[-1]
+        else message
+        for message in messages
+    ]
+
+
+def _shout_last_prompt(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return [*messages[:-1], replace(messages[-1], parts=[UserPromptPart('SHOUTED')])]
+
+
+def _store_agent(process: Callable[[list[ModelMessage]], list[ModelMessage]]) -> tuple[Any, list[list[ModelMessage]]]:
+    requests: list[list[ModelMessage]] = []
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        requests.append(messages)
+        yield f'answer {len(requests)}'
+
+    agent = Agent(
+        FunctionModel(stream_function=stream_function),
+        output_type=[str, DeferredToolRequests],
+        instructions='Be terse.',
+        capabilities=[ProcessHistory(process)],
+    )
+    return agent, requests
+
+
+_EDITED = UIMessage(id='u2', role='user', parts=[TextUIPart(text='edited')])
+_RESUBMISSIONS = [
+    pytest.param(
+        RegenerateMessage(trigger='regenerate-message', id='chat', messages=[_HI, _OK, _AND_NOW], message_id='x'),
+        'and now?',
+        id='regenerate',
+    ),
+    pytest.param(SubmitMessage(id='chat', messages=[_HI, _OK, _EDITED]), 'edited', id='edit'),
+]
+
+
+@pytest.mark.parametrize('process', [_keep_last_two, _redact_earlier_prompts])
+@pytest.mark.parametrize(('resubmission', 'prompt'), _RESUBMISSIONS)
+async def test_conversation_store_resubmission_keeps_a_history_a_capability_rewrote(
+    process: Callable[[list[ModelMessage]], list[ModelMessage]],
+    resubmission: SubmitMessage | RegenerateMessage,
+    prompt: str,
+):
+    """A capability changes what the model is sent, not the stored history before the turn a resubmission replaces."""
+    agent, requests = _store_agent(process)
+    store = InMemoryConversationStore()
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]))
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI, _OK, _AND_NOW]))
+    before = await store.load('chat')
+    assert before is not None
+
+    results: list[AgentRunResult[Any]] = []
+    adapter = VercelAIAdapter(agent, resubmission, sdk_version=6, conversation_store=store)
+    _ = [chunk async for chunk in adapter.run_stream(on_complete=results.append)]
+
+    assert requests[-1][:-1] != before.messages[:2]  # The capability changed the history the model was sent.
+    after = await store.load('chat')
+    assert after is not None
+    assert after.messages[:2] == before.messages[:2]
+    assert conversation_view(after.messages[2:]) == [f'user-prompt: {prompt}', 'text: answer 3']
+    record = await store.read_record('chat')
+    assert record is not None and len(record.branches) == 1
+
+    # The turn is stored as the run stamped it, like one of an ordinary save.
+    turn = after.messages[2]
+    assert isinstance(turn, ModelRequest)
+    assert turn.run_id == results[0].run_id
+    assert turn.instructions == 'Be terse.'
+
+    # The result carries the save, and the conversation goes on from it.
+    [result] = results
+    assert result.conversation.revision == record.revision
+    following = UIMessage(id='u3', role='user', parts=[TextUIPart(text='and then?')])
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI, _OK, _AND_NOW, _OK, following]))
+    final = await store.load('chat')
+    assert final is not None
+    assert final.messages[:4] == after.messages
+    assert conversation_view(final.messages[4:]) == ['user-prompt: and then?', 'text: answer 4']
+
+
+@pytest.mark.parametrize(('resubmission', 'prompt'), _RESUBMISSIONS)
+async def test_conversation_store_resubmission_stores_the_turn_a_capability_rewrote_as_sent(
+    resubmission: SubmitMessage | RegenerateMessage, prompt: str
+):
+    """A capability that rewrites the resubmitted turn itself doesn't change it in the store either."""
+    agent, requests = _store_agent(_shout_last_prompt)
+    store = InMemoryConversationStore()
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]))
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI, _OK, _AND_NOW]))
+    before = await store.load('chat')
+    assert before is not None
+
+    adapter = VercelAIAdapter(agent, resubmission, sdk_version=6, conversation_store=store)
+    _ = [chunk async for chunk in adapter.run_stream()]
+
+    assert conversation_view(requests[-1][-1:]) == ['user-prompt: SHOUTED']
+    after = await store.load('chat')
+    assert after is not None
+    assert after.messages[:2] == before.messages[:2]
+    assert conversation_view(after.messages[2:]) == [f'user-prompt: {prompt}', 'text: answer 3']
 
 
 async def test_conversation_store_tool_approval():
