@@ -192,6 +192,7 @@ If you don't pass `run_id` or `conversation_id` to [`Agent.run()`][pydantic_ai.a
 ### Workspaces
 
 Attach the [workspace](../workspace.md) capability, such as `LocalWorkspace`, when you construct the agent, and use `ctx.workspace` as in any run. Each workspace call made in workflow code, including from function tools, which DBOS runs in the workflow, is a step, so file contents and command output count toward the [size guidance above](#agent-run-context-and-dependencies).
+A tool that runs in a [child workflow](#child-workflows) records its workspace calls as steps of the child workflow instead, after one more step that reattaches to the workspace.
 
 DBOS stores workflow-side workspace call arguments (commands, `env=`, file contents) in history.
 Keep secrets in the workspace capability's `env=` instead of passing them to workspace calls;
