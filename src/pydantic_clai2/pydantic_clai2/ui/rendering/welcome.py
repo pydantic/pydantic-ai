@@ -7,6 +7,7 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.runtime.worktrees import Worktree
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.branding import print_banner
+from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 
 def print_welcome(project: ProjectSettings, console: Console, *, worktree: Worktree | None = None) -> None:
@@ -27,7 +28,7 @@ def print_welcome(project: ProjectSettings, console: Console, *, worktree: Workt
 def _report_project(project: ProjectSettings, console: Console) -> None:
     if project.path is None:
         return
-    console.print(f'Project settings: {project.path}', style=theme.color(theme.MUTED))
+    console.print(f'Project settings: {terminal_text(str(project.path))}', style=theme.color(theme.MUTED))
     if project.unknown:
         console.print(f'Ignoring unknown settings: {", ".join(project.unknown)}', style=theme.color(theme.WARNING))
     if project.pending_notice is not None:

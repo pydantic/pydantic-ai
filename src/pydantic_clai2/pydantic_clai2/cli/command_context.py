@@ -14,6 +14,7 @@ from pydantic_clai2.config import SETTING_FIELDS, STRING_SETTINGS, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings, with_current_approvals
 from pydantic_clai2.config.settings_store import SettingsStore, setting_json
 from pydantic_clai2.ui import telemetry
+from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 if TYPE_CHECKING:
     from pydantic_clai2.runtime.session import FamilyDefaults
@@ -70,8 +71,9 @@ class CommandContext:
     def project_command(self, args: list[str]) -> str:
         """`/project` lists what the project file sets; `approve` and `revoke` decide its other keys for this repository.
 
-        Only a person at the prompt approves: the agent never runs `/commands`, so a file it or a repository
-        writes cannot approve itself. An approval keeps the value approved, so a changed value waits again.
+        The model's tools never reach `/commands`, and a file a repository ships cannot approve itself. This
+        does not hold against a process that drives CLAI's input or writes the user's settings database, such as
+        an agent's shell. An approval keeps the value approved, so a changed value waits again.
         """
         project, root = self.project, self.project.root
         if root is None:
@@ -83,15 +85,15 @@ class CommandContext:
                 keys = _project_keys(names, project.pending, verb='approve')
                 with self.edits:
                     self.store.approve_project_settings(root, {key: project.pending[key] for key in keys})
-                    self._use_project(with_current_approvals(project, store=self.store), keys)
-                return f'Approved {_file_names(keys)} for {root}. Applied.'
+                    self._use_project(with_current_approvals(project, store=self.store))
+                return f'Approved {_file_names(keys)} for {terminal_text(str(root))}. Applied.'
             case ['revoke', *names] if names:
                 approved = {key: value for key, value in project.overrides.items() if key in project.approved}
                 keys = _project_keys(names, approved, verb='revoke')
                 with self.edits:
                     self.store.revoke_project_settings(root, keys)
-                    self._use_project(with_current_approvals(project, store=self.store), keys)
-                return f'Revoked {_file_names(keys)} for {root}.'
+                    self._use_project(with_current_approvals(project, store=self.store))
+                return f'Revoked {_file_names(keys)} for {terminal_text(str(root))}.'
             case _:
                 raise ValueError(PROJECT_USAGE)
 
@@ -103,14 +105,15 @@ class CommandContext:
             return ('all', *(SETTING_FIELDS[key] for key in self.project.pending))
         return ('all', *(SETTING_FIELDS[key] for key in self.project.overrides if key in self.project.approved))
 
-    def _use_project(self, project: ProjectSettings, keys: Iterable[str]) -> None:
-        """Adopt `project` for this session, applying `keys`: its value when it sets one, else your saved one or the default.
+    def _use_project(self, project: ProjectSettings) -> None:
+        """Adopt `project` for this session, applying each key that starts or stops applying: its value, else yours.
 
-        Other live sessions are not told: each keeps the project file it started with until it starts again.
+        That includes a key another live session approved or revoked since; such a session is not told at the time.
         """
+        changed = sorted(self.project.overrides.keys() ^ project.overrides.keys())
         self.project = project
         saved = self.store.overrides()
-        for key in keys:
+        for key in changed:
             field = SETTING_FIELDS[key]
             updated = self.settings.model_dump(exclude_unset=True)
             if key in project.overrides:
@@ -272,7 +275,8 @@ def _project_listing(project: ProjectSettings) -> str:
         lines.append(f'  {SETTING_FIELDS[key]} (waiting for approval): {setting_json(value)}')
     if project.pending:
         lines.append('/project approve NAME... (or all) applies them here and in later sessions in this repository.')
-    return '\n'.join(lines)
+    # A value's JSON still holds C1 controls, and the path comes from directory names in the repository.
+    return terminal_text('\n'.join(lines))
 
 
 def _shown(key: str, settings: Settings) -> bool | int | float | str:

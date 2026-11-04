@@ -39,6 +39,7 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import TurnStart
 from pydantic_clai2.runtime.project_instructions import ORIGIN, ProjectInstructions
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
+from pydantic_clai2.ui.rendering.welcome import print_welcome
 from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN
 
 USER_ONLY = {
@@ -490,3 +491,53 @@ async def test_a_headless_run_keeps_to_a_stricter_project_mode(
     written = {path for path in tmp_path.rglob('*') if path.is_file()} - before - {tmp_path / 'sessions.db'}
     assert bool({path for path in written if not path.name.startswith('sessions.db')}) is not declared
     assert capsys.readouterr().err == '', 'the mode applied, so nothing is reported as left out'
+
+
+def shell_in(directory: Path, store: SettingsStore) -> SessionRuntime[None, str]:
+    project = load_project_settings(directory, store=store)
+    return create_shell(
+        Agent(TestModel(), deps_type=type(None), output_type=str),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=cli._settings_for(store, model=None, request_limit=None)(project),  # pyright: ignore[reportPrivateUsage]
+        store=store,
+        builtin_plugins=(),
+        project=project,
+        headless=True,
+    )
+
+
+def test_a_session_applies_what_another_approved_when_it_next_decides(tmp_path: Path) -> None:
+    """Its listing never reports an approval as applied while it runs without that value."""
+    write(tmp_path, {'tool_retries': 0, 'request_limit': 7})
+    store = SettingsStore(tmp_path / 'config.db')
+    here, there = shell_in(tmp_path, store), shell_in(tmp_path, store)
+    here.context.project_command(['approve', 'tool_retries'])
+    assert there.context.settings.tool_retries == 3, 'told nothing yet'
+    there.context.project_command(['approve', 'request_limit'])
+    assert (there.context.settings.tool_retries, there.context.settings.request_limit) == (0, 7)
+    assert there.session.tool_retries == 0
+    here.context.project_command(['revoke', 'tool_retries'])
+    there.context.project_command(['revoke', 'request_limit'])
+    assert (there.context.settings.tool_retries, there.context.project.pending) == (
+        3,
+        {'run.tool_retries': 0, 'run.request_limit': 7},
+    )
+
+
+def test_project_output_makes_control_characters_inert(tmp_path: Path) -> None:
+    repo = tmp_path / 'repo\x1b[31m'
+    write(repo, {'instructions': 'Rule\x9b31m', 'tool_retries': 0})
+    store = SettingsStore(tmp_path / 'config.db')
+    context = shell_in(repo, store).context
+    listing = context.project_command([])
+    approved = context.project_command(['approve', 'tool_retries'])
+    revoked = context.project_command(['revoke', 'tool_retries'])
+    output = io.StringIO()
+    print_welcome(context.project, Console(file=output, width=300))
+    for text in (listing, approved, revoked, output.getvalue()):
+        assert 'repo\\x1b[31m' in text
+    assert '\x1b' not in listing + approved + revoked and '\x9b' not in listing
+    assert 'Rule\\x9b31m' in listing
