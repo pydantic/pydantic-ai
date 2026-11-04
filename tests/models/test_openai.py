@@ -2748,7 +2748,11 @@ async def test_openai_moderation(allow_model_requests: None, openai_api_key: str
 async def test_openai_moderation_stream(allow_model_requests: None, openai_api_key: str):
     """The streaming moderation chunk carries no choices, so it's read before the choice guard."""
     model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    settings = OpenAIChatModelSettings(openai_moderation={'model': 'omni-moderation-latest'})
+    # With `openai_include_unmapped_response_data` on, a real OpenAI stream adds nothing: every field it sends, including
+    # the per-chunk `obfuscation` padding, is one the SDK declares, so `provider_details` has no `unmapped` key.
+    settings = OpenAIChatModelSettings(
+        openai_moderation={'model': 'omni-moderation-latest'}, openai_include_unmapped_response_data=True
+    )
     agent = Agent(model=model, model_settings=settings)
 
     async with agent.run_stream('What is the capital of France?') as result:
