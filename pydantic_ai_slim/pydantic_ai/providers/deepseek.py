@@ -6,7 +6,7 @@ from typing import Literal, overload
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
-from pydantic_ai.profiles.deepseek import deepseek_model_profile
+from pydantic_ai.profiles.deepseek import _DEEPSEEK_V4_PATTERN, deepseek_model_profile  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 
 try:
@@ -46,7 +46,7 @@ class DeepSeekProvider(_OpenAISDKProvider):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         profile = deepseek_model_profile(model_name)
-        is_flash_or_v4 = model_name == 'deepseek-flash' or model_name.startswith('deepseek-v4-')
+        is_flash_or_v4 = model_name == 'deepseek-flash' or _DEEPSEEK_V4_PATTERN.match(model_name) is not None
         thinks_by_default = is_flash_or_v4 or model_name == 'deepseek-reasoner'
 
         # As DeepSeekProvider is most often used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
@@ -74,8 +74,8 @@ class DeepSeekProvider(_OpenAISDKProvider):
                 # DeepSeek rejects a forced tool choice only while thinking is on, answering
                 # `Thinking mode does not support this tool_choice`. `deepseek-reasoner` cannot turn
                 # thinking off, so for it the restriction is unconditional; Flash and V4 models can, so
-                # theirs is evaluated per request. `startswith` covers future deepseek-v4-* SKUs
-                # without listing each one.
+                # theirs is evaluated per request. The shared V4 point-release matcher covers future
+                # deepseek-v4-* SKUs without listing each one.
                 supports_forced_tool_choice=model_name != 'deepseek-reasoner',
                 supports_forced_tool_choice_with_thinking=not is_flash_or_v4,
                 # Thinking is on by default on Flash, V4 models and `deepseek-reasoner`; every other

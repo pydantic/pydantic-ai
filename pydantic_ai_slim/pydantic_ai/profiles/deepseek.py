@@ -1,6 +1,12 @@
 from __future__ import annotations as _annotations
 
+import re
+
 from . import ModelProfile
+
+# DeepSeek ships V4 point releases under several spellings for the same models:
+# `deepseek-v4.1-flash`, `deepseek-v4p1-flash` and `deepseek-v4-1-flash` all denote V4.1.
+_DEEPSEEK_V4_PATTERN = re.compile(r'deepseek-v4(?:[.p-]\d+)?-')
 
 
 def deepseek_model_profile(model_name: str) -> ModelProfile | None:
@@ -8,7 +14,7 @@ def deepseek_model_profile(model_name: str) -> ModelProfile | None:
     is_r1 = model_name == 'r1' or model_name.startswith('deepseek-r1') or model_name == 'deepseek-reasoner'
     # V4 models (deepseek-v4-flash, deepseek-v4-pro, …) support thinking via reasoning_effort
     # but do not always enable it — thinking_always_enabled stays False.
-    is_v4 = model_name.startswith('deepseek-v4-')
+    is_v4 = _DEEPSEEK_V4_PATTERN.match(model_name) is not None
     # `default_cache_retention` is intentionally left unset (None): DeepSeek's context-caching docs only
     # say unused cache "will be automatically cleared, usually within a few hours to a few days" and
     # commit to no retention floor, so we can't predict a cold cache. https://api-docs.deepseek.com/guides/kv_cache

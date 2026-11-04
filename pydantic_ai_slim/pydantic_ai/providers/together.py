@@ -6,7 +6,7 @@ from typing import overload
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
-from pydantic_ai.profiles.deepseek import deepseek_model_profile
+from pydantic_ai.profiles.deepseek import _DEEPSEEK_V4_PATTERN, deepseek_model_profile  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
@@ -62,7 +62,7 @@ class TogetherProvider(_OpenAISDKProvider):
             if provider in provider_to_profile:
                 profile = provider_to_profile[provider](model_name)
 
-            if provider == 'deepseek-ai' and model_name.startswith('deepseek-v4-'):
+            if provider == 'deepseek-ai' and _DEEPSEEK_V4_PATTERN.match(model_name):
                 # DeepSeek's V4 models reject a forced tool choice while thinking is on, and thinking is
                 # their default. Whether Together honors DeepSeek's thinking toggle is unverified, so the
                 # restriction is unconditional here rather than per request as it is on `DeepSeekProvider`.

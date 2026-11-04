@@ -98,6 +98,7 @@ with try_import() as openai_imports:
     from pydantic_ai.providers.github import GitHubProvider  # pyright: ignore[reportDeprecated]
     from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
     from pydantic_ai.providers.heroku import HerokuProvider
+    from pydantic_ai.providers.huggingface import HuggingFaceProvider
     from pydantic_ai.providers.litellm import LiteLLMProvider
     from pydantic_ai.providers.meta import MetaProvider
     from pydantic_ai.providers.moonshotai import MoonshotAIProvider
@@ -2492,6 +2493,57 @@ def test_together_qwen():
 def test_sambanova_llama():
     profile = SambaNovaProvider.model_profile('Meta-Llama-3.3-70B-Instruct')
     assert _normalize(profile) == snapshot({'json_schema_transformer': InlineDefsJsonSchemaTransformer})
+
+
+def test_gateway_deepseek_v4_point_release_profiles():
+    """V4 point-release ids resolve to the same profile as their plain V4 id on every gateway routing to `deepseek_model_profile`."""
+    cases = (
+        (
+            TogetherProvider,
+            'deepseek-ai/DeepSeek-V4-Flash',
+            (
+                'deepseek-ai/DeepSeek-V4.1-Flash',
+                'deepseek-ai/DeepSeek-V4p1-Flash',
+                'deepseek-ai/DeepSeek-V4-1-Flash-1017',
+            ),
+        ),
+        (
+            NebiusProvider,
+            'deepseek-ai/DeepSeek-V4-Flash',
+            ('deepseek-ai/DeepSeek-V4.1-Flash', 'deepseek-ai/DeepSeek-V4p1-Flash'),
+        ),
+        (
+            HuggingFaceProvider,
+            'deepseek-ai/DeepSeek-V4-Flash',
+            ('deepseek-ai/DeepSeek-V4.1-Flash', 'deepseek-ai/DeepSeek-V4p1-Flash'),
+        ),
+        (VercelProvider, 'deepseek-v4-flash', ('deepseek-v4.1-flash', 'deepseek-v4p1-flash', 'deepseek-v4-1-flash')),
+        (OllamaProvider, 'deepseek-v4-flash', ('deepseek-v4.1-flash', 'deepseek-v4p1-flash', 'deepseek-v4-1-flash')),
+        (VLLMProvider, 'deepseek-ai/DeepSeek-V4-Flash', ('deepseek-ai/DeepSeek-V4.1-Flash', 'deepseek-v4.1-flash')),
+    )
+    for provider, plain_name, point_release_names in cases:
+        plain_profile = provider.model_profile(plain_name)
+        assert plain_profile is not None, (provider.__name__, plain_name)
+        expected = _normalize(plain_profile)
+        for name in point_release_names:
+            profile = provider.model_profile(name)
+            assert profile is not None, (provider.__name__, name)
+            assert _normalize(profile) == expected, (provider.__name__, name)
+
+
+def test_deepseek_v3_2_not_matched_as_v4():
+    """`deepseek-v3.2` must not receive the V4 treatment on either gate."""
+    profile = DeepSeekProvider(api_key='test').model_profile('deepseek-v3.2')
+    assert profile is not None
+    assert profile['supports_forced_tool_choice_with_thinking'] is True
+
+    v4_profile = DeepSeekProvider(api_key='test').model_profile('deepseek-v4-flash')
+    assert v4_profile is not None
+    assert _normalize(profile) != _normalize(v4_profile)
+
+    together_profile = TogetherProvider.model_profile('deepseek-ai/DeepSeek-V3.2')
+    assert together_profile is not None
+    assert together_profile.get('supports_forced_tool_choice') is not False
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
