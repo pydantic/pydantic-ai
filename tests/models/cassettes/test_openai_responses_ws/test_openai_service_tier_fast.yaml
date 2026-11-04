@@ -1,0 +1,321 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: response.create
+    model: gpt-6.1-sol
+    input:
+    - role: user
+      content: Say hi.
+    reasoning:
+      context: all_turns
+    service_tier: fast
+    include:
+    - reasoning.encrypted_content
+- kind: message
+  direction: received
+  at: 0.223
+  data:
+    type: response.created
+    response:
+      id: resp_09c3c1b5ec8440fa006aeb8950396087d187015c195e4b406c
+      object: response
+      created_at: 1793821008
+      status: in_progress
+      access_programs: null
+      background: false
+      completed_at: null
+      error: null
+      frequency_penalty: 0.0
+      image:
+        context_compression: enabled
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-6.1-sol
+      moderation: null
+      output: []
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: fast
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage: null
+      user: null
+      metadata: {}
+    sequence_number: 0
+- kind: message
+  direction: received
+  at: 0.257
+  data:
+    type: response.in_progress
+    response:
+      id: resp_09c3c1b5ec8440fa006aeb8950396087d187015c195e4b406c
+      object: response
+      created_at: 1793821008
+      status: in_progress
+      access_programs: null
+      background: false
+      completed_at: null
+      error: null
+      frequency_penalty: 0.0
+      image:
+        context_compression: enabled
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-6.1-sol
+      moderation: null
+      output: []
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: fast
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage: null
+      user: null
+      metadata: {}
+    sequence_number: 1
+- kind: message
+  direction: received
+  at: 0.979
+  data:
+    type: response.output_item.added
+    item:
+      id: msg_09c3c1b5ec8440fa006aeb89510d2c87d19240c6e072f2e9b1
+      type: message
+      status: in_progress
+      content: []
+      phase: final_answer
+      role: assistant
+    output_index: 0
+    sequence_number: 2
+- kind: message
+  direction: received
+  at: 0.98
+  data:
+    type: response.content_part.added
+    content_index: 0
+    item_id: msg_09c3c1b5ec8440fa006aeb89510d2c87d19240c6e072f2e9b1
+    output_index: 0
+    part:
+      type: output_text
+      annotations: []
+      logprobs: []
+      text: ''
+    sequence_number: 3
+- kind: message
+  direction: received
+  at: 0.991
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: Hi
+    item_id: msg_09c3c1b5ec8440fa006aeb89510d2c87d19240c6e072f2e9b1
+    logprobs: []
+    obfuscation: rQ4ohXDyAg987N
+    output_index: 0
+    sequence_number: 4
+- kind: message
+  direction: received
+  at: 0.997
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: '!'
+    item_id: msg_09c3c1b5ec8440fa006aeb89510d2c87d19240c6e072f2e9b1
+    logprobs: []
+    obfuscation: 94EnIV2C49d8fzp
+    output_index: 0
+    sequence_number: 5
+- kind: message
+  direction: received
+  at: 1.07
+  data:
+    type: response.output_text.done
+    content_index: 0
+    item_id: msg_09c3c1b5ec8440fa006aeb89510d2c87d19240c6e072f2e9b1
+    logprobs: []
+    output_index: 0
+    sequence_number: 6
+    text: Hi!
+- kind: message
+  direction: received
+  at: 1.07
+  data:
+    type: response.content_part.done
+    content_index: 0
+    item_id: msg_09c3c1b5ec8440fa006aeb89510d2c87d19240c6e072f2e9b1
+    output_index: 0
+    part:
+      type: output_text
+      annotations: []
+      logprobs: []
+      text: Hi!
+    sequence_number: 7
+- kind: message
+  direction: received
+  at: 1.072
+  data:
+    type: response.output_item.done
+    item:
+      id: msg_09c3c1b5ec8440fa006aeb89510d2c87d19240c6e072f2e9b1
+      type: message
+      status: completed
+      content:
+      - type: output_text
+        annotations: []
+        logprobs: []
+        text: Hi!
+      phase: final_answer
+      role: assistant
+    output_index: 0
+    sequence_number: 8
+- kind: message
+  direction: received
+  at: 1.29
+  data:
+    type: response.completed
+    response:
+      id: resp_09c3c1b5ec8440fa006aeb8950396087d187015c195e4b406c
+      object: response
+      created_at: 1793821008
+      status: completed
+      access_programs: null
+      background: false
+      completed_at: 1793821009
+      error: null
+      frequency_penalty: 0.0
+      image:
+        context_compression: enabled
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-6.1-sol
+      moderation: null
+      output:
+      - id: msg_09c3c1b5ec8440fa006aeb89510d2c87d19240c6e072f2e9b1
+        type: message
+        status: completed
+        content:
+        - type: output_text
+          annotations: []
+          logprobs: []
+          text: Hi!
+        phase: final_answer
+        role: assistant
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: fast
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 9
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 6
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 15
+      user: null
+      metadata: {}
+    sequence_number: 9

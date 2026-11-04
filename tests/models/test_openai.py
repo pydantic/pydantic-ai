@@ -703,15 +703,29 @@ async def test_request_list_content(allow_model_requests: None):
     assert result.output == 'hello world'
 
 
-@pytest.mark.parametrize('tier', ['fast', 'ultrafast'])
-def test_openai_service_tier_is_sent_unchanged(allow_model_requests: None, tier: Literal['fast', 'ultrafast']) -> None:
-    """OpenAI only accepts `ultrafast` on the Responses API, but Chat Completions leaves that error to the API."""
-    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
-    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_openai_service_tier_fast(allow_model_requests: None, openai_api_key: str) -> None:
+    model = OpenAIChatModel('gpt-6.1-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    result = await Agent(model).run('Say hi.', model_settings=OpenAIChatModelSettings(openai_service_tier='fast'))
+    assert result.response.provider_details is not None
+    assert result.response.provider_details['service_tier'] == 'fast'
 
-    agent.run_sync('hello', model_settings=OpenAIChatModelSettings(openai_service_tier=tier))
 
-    assert get_mock_chat_completion_kwargs(mock_client)[0]['service_tier'] == tier
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_openai_service_tier_ultrafast_rejected_on_chat(allow_model_requests: None, openai_api_key: str) -> None:
+    """The setting's type allows `ultrafast` here because the Responses settings inherit it; OpenAI rejects it."""
+    model = OpenAIChatModel('gpt-6.1-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    with pytest.raises(ModelHTTPError) as error:
+        await Agent(model).run('Say hi.', model_settings=OpenAIChatModelSettings(openai_service_tier='ultrafast'))
+    assert error.value.status_code == 400
+    assert error.value.body == snapshot(
+        {
+            'message': 'Invalid service_tier argument',
+            'type': 'invalid_request_error',
+            'param': 'service_tier',
+            'code': None,
+        }
+    )
 
 
 def test_service_tier_comes_from_response(allow_model_requests: None) -> None:

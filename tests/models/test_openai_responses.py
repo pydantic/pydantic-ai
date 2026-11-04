@@ -20662,25 +20662,15 @@ async def test_responses_stream_provider_details_hook_builtin_wins_collisions(
     }
 
 
+@pytest.mark.vcr(additional_matchers=['body'])
 @pytest.mark.parametrize('tier', ['fast', 'ultrafast'])
-async def test_openai_service_tier_is_sent_unchanged(
-    allow_model_requests: None, tier: Literal['fast', 'ultrafast']
+async def test_openai_service_tier_fast_and_ultrafast(
+    allow_model_requests: None, openai_api_key: str, tier: Literal['fast', 'ultrafast']
 ) -> None:
-    mock_client = MockOpenAIResponses.create_mock(
-        response_message(
-            [
-                ResponseOutputMessage(
-                    id='message-1',
-                    content=[ResponseOutputText(text='ok', type='output_text', annotations=[])],
-                    role='assistant',
-                    status='completed',
-                    type='message',
-                )
-            ]
-        )
+    model = OpenAIResponsesModel('gpt-6.1-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    result = await Agent(model).run(
+        'Say hi.',
+        model_settings=OpenAIResponsesModelSettings(openai_service_tier=tier, max_tokens=64),
     )
-    agent = Agent(OpenAIResponsesModel('gpt-6-astra', provider=OpenAIProvider(openai_client=mock_client)))
-
-    await agent.run('hello', model_settings=OpenAIResponsesModelSettings(openai_service_tier=tier))
-
-    assert get_mock_responses_kwargs(mock_client)[0]['service_tier'] == tier
+    assert result.response.provider_details is not None
+    assert result.response.provider_details['service_tier'] == tier
