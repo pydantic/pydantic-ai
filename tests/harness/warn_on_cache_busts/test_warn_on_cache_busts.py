@@ -835,7 +835,12 @@ async def test_cache_ttl_seconds_is_deprecated_and_ignored() -> None:
     with pytest.warns(HarnessDeprecationWarning, match=r'`WarnOnCacheBusts\(cache_ttl_seconds=...\)` is deprecated'):
         monitor = WarnOnCacheBusts[None](cache_ttl_seconds=1.0)
     agent = _agent([_usage(read=0, write=8000), _usage(read=100)], monitor)
-    with pytest.warns(CacheBustWarning) as record:
+    # Record only the two categories this test is about. `pytest.warns` records every warning and
+    # turns off the suite's filters, so a `ResourceWarning` the suite ignores, raised when the
+    # garbage collector frees another test's socket during the run, would land in the list.
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter('always', CacheBustWarning)
+        warnings.simplefilter('always', HarnessDeprecationWarning)
         await agent.run('hi')
     assert [type(w.message) for w in record] == [CacheBustWarning]
 
