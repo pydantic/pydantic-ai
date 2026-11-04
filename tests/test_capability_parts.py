@@ -17,7 +17,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai._capability_parts import effective_authority, render_capability_parts
 from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai._event_registry import set_replay_isolation_guard
-from pydantic_ai.capabilities import AbstractCapability, Hooks
+from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, Hooks
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CAPABILITY_PART_TYPES,
@@ -1419,6 +1419,23 @@ def test_enqueue_lowers_authority_before_the_part_is_queued() -> None:
 def test_a_wrapper_lowered_with_authority_lowers_what_it_wraps() -> None:
     wrapper = Reporter([nudge()], id='wrapped').prefix_tools('ns').with_authority('none')
     assert _sources_by_capability([wrapper]) == {'wrapped': CapabilitySource('wrapped', authority='none')}
+
+
+def test_a_combined_capability_lowered_with_authority_lowers_its_children() -> None:
+    """Composition merges a container's children into the agent's and dispatches each on its own."""
+    combined = CombinedCapability([Reporter([nudge()], id='child')]).with_authority('none')
+    assert _sources_by_capability([combined]) == {'child': CapabilitySource('child', authority='none')}
+
+
+@dataclass
+class _FreshCombinedPerRunReporter(Reporter):
+    async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return CombinedCapability([Reporter(self.parts, id='inner')])
+
+
+def test_with_authority_reaches_a_combined_capability_returned_from_for_run() -> None:
+    reporter = _FreshCombinedPerRunReporter([nudge()], id='outer').with_authority('none')
+    assert _sources_by_capability([reporter]) == {'inner': CapabilitySource('inner', authority='none')}
 
 
 @dataclass
