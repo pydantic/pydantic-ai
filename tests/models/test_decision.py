@@ -1760,7 +1760,8 @@ async def test_an_output_type_past_the_value_limit_is_refused(
     model = InMemoryDecisionModel()
 
     with pytest.raises(
-        UserError, match=f"Output 'final_result' is too large: .* more than {_VALUE_LIMIT:,} JSON values"
+        UserError,
+        match=f"The JSON schema of output tool 'final_result' is too large: .* more than {_VALUE_LIMIT:,} JSON values",
     ):
         await model.request(
             [ModelRequest(parts=[UserPromptPart('Where is my order?')])],

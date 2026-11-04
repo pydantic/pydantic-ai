@@ -32,7 +32,8 @@ class InlinedSchemaTooLargeError(UserError):
         self.subject = subject
         super().__init__(
             f'{subject} is too large: its `$ref`s expand to more than {MAX_INLINED_SCHEMA_VALUES:,} JSON values. '
-            'Refer to large definitions from fewer places.'
+            'Refer to large definitions from fewer places, or leave the schema out of the request: for a tool, with '
+            '`prepare_tools` or a `FilteredToolset`.'
         )
 
     def __reduce__(self) -> tuple[type[InlinedSchemaTooLargeError], tuple[str]]:
@@ -43,8 +44,8 @@ class InlinedSchemaTooLargeError(UserError):
 class InlinedValues:
     """A count of the JSON values that inlining `$ref`s copies into a schema, which stops at `MAX_INLINED_SCHEMA_VALUES`.
 
-    Every copy of a definition counts in full, so the count is the size of what inlining copies, and passing the limit
-    stops the inlining before the rest is built.
+    Every copy of a definition counts in full, so the count is the number of values inlining copies, and passing the
+    limit stops the inlining before the rest is built. A string counts as one value, whatever its length.
     """
 
     subject: str
@@ -58,6 +59,9 @@ class InlinedValues:
         while stack:
             value = stack.pop()
             values += 1
+            if self.count + values > MAX_INLINED_SCHEMA_VALUES:
+                # Stop as soon as the copy passes the limit: a definition can share one object at many places.
+                raise InlinedSchemaTooLargeError(self.subject)
             if isinstance(value, dict):
                 stack.extend(value.values())
             elif isinstance(value, list):

@@ -1648,7 +1648,7 @@ def _fields(output_tool: ToolDefinition) -> _Fields:
     defs: dict[str, Any] = schema.get('$defs', {})
     context: dict[str, list[str]] = {}
     # Resolving a `$ref` inlines its definition into the field, so each one counts as an inlined copy.
-    inlined = InlinedValues(f'Output {output_tool.name!r}')
+    inlined = InlinedValues(f'The JSON schema of {output_tool.kind} tool {output_tool.name!r}')
 
     def resolve(prop: dict[str, Any] | bool) -> dict[str, Any]:
         prop = _schema(prop)
