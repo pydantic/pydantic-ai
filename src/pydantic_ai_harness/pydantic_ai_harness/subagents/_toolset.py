@@ -426,7 +426,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         dynamic_agents: DynamicAgents[AgentDepsT] | None = None,
         created: dict[str, dict[str, tuple[DynamicAgentSpec, SubAgent[AgentDepsT]]]] | None = None,
         workspace_resolver: WorkspaceResolver[AgentDepsT] | None = None,
-        record_delegation: RecordDelegation | None = None,
+        _record_delegation: RecordDelegation | None = None,
     ) -> None:
         super().__init__(id=id)
         if dynamic_agents is not None and created is None:
@@ -447,7 +447,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         self._created: dict[str, dict[str, tuple[DynamicAgentSpec, SubAgent[AgentDepsT]]]] = (
             created if created is not None else {}
         )
-        self._record_delegation = record_delegation
+        self._record_delegation = _record_delegation
         # Names a `create_agent` call holds while listeners see it, keyed by run_id: parallel calls see them taken.
         self._creating: dict[str, set[str]] = {}
         self._agents: dict[str, SubAgent[AgentDepsT]] = dict(agents)
@@ -704,7 +704,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             raise ModelRetry(recorded.output)
         return recorded.output
 
-    async def run_recorded(
+    async def _run_recorded(
         self,
         ctx: RunContext[AgentDepsT],
         agent_name: str,
