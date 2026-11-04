@@ -21,7 +21,13 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.github_copilot import GitHubCopilotCredentials, GitHubCopilotOAuthFlow
 from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexOAuthFlow
 from pydantic_clai2.auth import CodexAuth, login_command
-from pydantic_clai2.builtin_plugins.web.protocol import DialogClosed, DialogOpened, DialogShown, SettingsChanged
+from pydantic_clai2.builtin_plugins.web.protocol import (
+    PROTOCOL,
+    DialogClosed,
+    DialogOpened,
+    DialogShown,
+    SettingsChanged,
+)
 from pydantic_clai2.config import api_keys
 from pydantic_clai2.config.credential_store import has_credentials, load_codex_credentials, save_codex_credentials
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -37,7 +43,7 @@ from tests.clai2.test_auth import CREDENTIALS, fake_browser, never_called_back, 
 from tests.clai2.test_github_copilot import device_flow as device_flow
 from tests.clai2.test_web import TOKEN, MakeWeb, Web, make_web as make_web, receive_until
 
-SOCKET = f'/ws?token={TOKEN}'
+SOCKET = f'/ws?token={TOKEN}&protocol={PROTOCOL}'
 ORIGIN = {'origin': 'http://testserver'}
 CODEX = json.dumps({'access_token': 'a', 'refresh_token': 'r', 'account_id': 'x'})
 

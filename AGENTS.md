@@ -49,6 +49,10 @@ In this case, unless the user appears to be uniquely well-suited to build a feat
 
 (It's also worth noting that overly lengthy AI-generated issues, comments, and proposals are less likely to be helpful and more likely to be ignored than a user's attempt at explaining what they want in their own (possibly translated) words: if they are not able to, they are unlikely to be the right person to be requesting and helping implement the change.)
 
+## Filing issues for maintainers
+
+When filing an issue for a maintainer, including a non-follow-up issue, use the [maintainer routing guidance](.agents/skills/file-followup-issue/SKILL.md#maintainer-routing-mechanics).
+
 # Philosophy
 
 Pydantic AI is meant to be a light-weight library that any Python developer who wants to work with LLMs and agents (whether simple or complex) should feel no hesitation to pull into their project. It's not meant to be everything to everyone, but it should enable people to build just about anything.
@@ -138,7 +142,7 @@ Do not use subprocesses to test logic that can run in-process. Starting another 
 
 ## When to verify
 
-Pre-commit runs `make lint` and `make format` automatically on every commit. CI runs the repository-wide type check, test, and coverage gates. Do not run repository-wide Pyright, pytest, or coverage locally. While iterating, only run targeted checks on the files/tests you have a specific reason to suspect:
+Pre-commit runs `make lint`, `make format` and the [cognitive complexity check](agent_docs/complexity.md) automatically on every commit. CI runs the repository-wide type check, test, and coverage gates. Do not run repository-wide Pyright, pytest, or coverage locally. While iterating, only run targeted checks on the files/tests you have a specific reason to suspect:
 
 - typecheck a single file: `PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright path/to/file.py`
 - run a single test: `uv run pytest path/to/test.py::test_name`

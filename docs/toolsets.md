@@ -603,6 +603,8 @@ mcp = MCPToolset('http://localhost:8000/mcp')
 agent = Agent('{{ openai:medium }}', toolsets=[mcp.defer_loading()])
 ```
 
+Deferred loading hides each tool individually, and the model searches for the ones it needs. To instead hide a group of tools behind a workflow or skill, so they only appear once the model loads it along with its instructions, pass the toolset to an [on-demand capability](capabilities/on-demand.md#hide-tools-until-loaded). Use tool search for a large catalog of independent tools; use an on-demand capability when tools belong to a workflow that the model opts into as a unit.
+
 ### Including Return Schemas
 
 [`IncludeReturnSchemasToolset`][pydantic_ai.toolsets.IncludeReturnSchemasToolset] wraps a toolset and sets `include_return_schema=True` on all its tools, causing the model to receive return type information. For models that natively support return schemas (e.g. Google Gemini), the schema is passed as a structured API field. For other models, it is injected into the tool description as JSON text.

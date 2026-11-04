@@ -11,11 +11,13 @@ description: Connect a Pydantic AI agent to Pylon's hosted MCP server to work wi
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![Inside your agent, the Pylon capability connects to Pylon's hosted MCP server at mcp.usepylon.com with an OAuth access token, and the model sees the server's tools under the pylon_ prefix. Pylon REST API tokens are rejected. The agent sees the same issues, accounts and contacts the signed-in user sees, and read_only=True drops tools the server does not mark read-only.](../img/harness/pylon.svg)
+
 ## Before you start
 
 You need a Pylon Member or Admin seat with the `MCP Access` role; Viewer and Integration users cannot sign in. Pylon MCP takes an OAuth access token. Pylon REST API tokens do not work with it.
 
-Pylon issues these tokens only through OAuth. Your application gets one by running the standard MCP authorization flow: the server names its authorization server and supports dynamic client registration, so any MCP OAuth client library can sign the user in. Store the token it returns and pass it as `auth` or `PYLON_ACCESS_TOKEN`.
+Your application gets one by running the standard MCP authorization flow: the server names its authorization server and supports dynamic client registration, so any MCP OAuth client library can sign the user in. Store the token it returns and pass it as `auth` or `PYLON_ACCESS_TOKEN`.
 
 ## Installation
 
@@ -76,7 +78,19 @@ Each run connects as its own user, so concurrent runs never share an account.
 
 Your app gets each user's token, stores it, and refreshes it. For example, a "Connect Pylon" button that runs the OAuth flow from [Before you start](#before-you-start) and saves the token to their account. Before each run, put it in the deps, or load it in an async `auth` function.
 
-With durable execution such as Temporal, read the token from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `pylon`, so `defer_loading=True` works without one. To add more than one `Pylon` to an agent, give each a distinct `id` and wrap them in [PrefixTools](../capabilities/prefix-tools.md), since their tool names are the same; two that share an `id` but differ raise an error.
+With durable execution such as Temporal, read the token from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `pylon`, so `defer_loading=True` works without one. To add more than one `Pylon` to an agent, give each a distinct `id` and `tool_prefix`; two that share an `id` but differ raise an error.
+
+## Tool names
+
+The agent sees each of the server's tools under the `pylon_` prefix, as in `pylon_<tool>`, so they don't collide with other tools on the agent. Set `tool_prefix` to use a different prefix, or `tool_prefix=None` to keep the names the server gives them.
+
+`read_only` selects tools by what the server marks as read-only, not by name, so the prefix does not change what it keeps. A [toolset wrapper](../toolsets.md) on `capability.get_toolset()`, such as `filtered()`, sees the names the agent sees, prefix included.
+
+## Upgrading
+
+`Pylon` used to give the agent the server's tool names unprefixed. They now reach the agent as `pylon_<tool>`. Code that refers to them by name, such as a `filtered()` wrapper, an approval rule, or a `ToolGuardrail(tools=[...])`, needs the new names. A rule that no longer matches stops applying, so an approval rule or guardrail that named an old tool lets its calls through without approval or checks until you update it. Pass `tool_prefix=None` to keep the old names. If you wrapped `Pylon` in [PrefixTools](../capabilities/prefix-tools.md) to avoid collisions, you can drop the wrapper and set `tool_prefix` instead; keeping it adds both prefixes.
+
+- **Durable runs in flight.** A Temporal or DBOS run replays the model responses it recorded, and their tool calls use the old names, so a run started before the change that calls a `Pylon` tool after it no longer replays. Activity and step names come from the capability's `id`, which is unchanged. Let those runs finish, keep `tool_prefix=None` until they have, or deploy the change with [Temporal worker versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning) or a new DBOS application version.
 
 ## Tool selection and approval
 
@@ -101,13 +115,13 @@ Handle the approval requests with the [deferred tools workflow](../deferred-tool
 
 ## Connection customization
 
-Use `auth` in almost every case. Pass `client` only when you need control of the connection itself: your own FastMCP client or transport, for example one with a proxy or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth` raises an error. `read_only` and `include_instructions` still apply. `include_instructions=False` stops the server's own instructions from reaching the agent.
+Pass `client` when you need control of the connection itself: your own FastMCP client or transport, for example one with a proxy or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth` raises an error. `read_only` still applies. `include_instructions=False` stops the server's own instructions from reaching the agent.
 
 A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately.
 
 ## Telemetry
 
-`Pylon` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) already records each Pylon tool call as a tool span, and connecting makes no decision worth a span of its own.
+`Pylon` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) already records each Pylon tool call as a tool span.
 
 ## Define the agent in YAML or JSON
 
@@ -130,8 +144,6 @@ from pydantic_ai_harness import Pylon
 
 agent = Agent.from_file('agent.yaml', custom_capability_types=[Pylon])
 ```
-
-Pass `custom_capability_types` so the loader can create `Pylon` from the file.
 
 ## API reference
 

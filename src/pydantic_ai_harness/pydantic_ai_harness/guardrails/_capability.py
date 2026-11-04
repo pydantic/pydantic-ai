@@ -240,14 +240,9 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
     the model and the original in the run's message history, so a redacted
     secret is not retained or replayed on a later step. When an outer
     capability sent the model a copy of the prompt part with changed text, the
-    guard is called again on the original's own text, so a guard with side
-    effects or a per-call cost (an LLM classifier) runs twice for that request.
-    Only a redaction from that call is written to the history, so the copy's
-    request-only text never reaches it; `allow` leaves the original as it was,
-    and `block` blocks the run before anything is rewritten. A request rebuilt
-    with a new prompt part is not tied to the history, so only the part sent to
-    the model is rewritten. A later guard in a chain that blocks ends the chain
-    before any rewrite happens.
+    guard is called again on the original's own text, so it runs twice for that
+    request (see "Capability ordering" in the docs). A later guard in a chain
+    that blocks ends the chain before any rewrite happens.
 
     `retry` is not valid for an input guardrail, and neither is `replace` on a
     multimodal prompt, including the history's original of a text copy: the
@@ -277,15 +272,11 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
     policy, `messages` for conversation-aware checks. The parameter is detected
     from the signature, so prompt-only guards stay as-is.
 
-    Set `parallel=True` to run the guard concurrently with the model call
-    rather than before it, overlapping a slow guard (an LLM classifier, a
-    network call) with the model round-trip so it adds no latency on the pass
-    path. The model call is cancelled the moment the guard reports a
-    violation. Trade-off: sequential mode never calls the model on a blocked
-    prompt, whereas parallel mode has already started it -- if the guard trips
-    only after the model has responded, those tokens were still spent. Tool
-    calls still wait for the verdict, including the nested ones `CodeMode`
-    starts while the model streams. Prefer sequential for fast local guards.
+    Set `parallel=True` to run the guard concurrently with the model call, so
+    a slow guard (an LLM classifier, a network call) adds no latency when it
+    allows. The model call is cancelled when the guard blocks, but tokens it
+    already spent are not recovered. Tool calls still wait for the verdict,
+    including the nested ones `CodeMode` starts while the model streams.
     `replace` (redaction) is incompatible with `parallel=True`, since the
     model call has already started with the original prompt.
 
@@ -298,11 +289,10 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
     input either, so its first request screens the most recent prompt in the
     history again.
 
-    Ordering: declares `position='innermost'` so any capability that rewrites
-    the user prompt (a prompt rewriter, a history processor) runs first and the
-    guard sees the rewritten text. A `UserPromptPart` that an outer capability
-    adds to this request only, such as a `SystemReminders` reminder, is not the
-    user's prompt: the guard neither screens nor rewrites it.
+    Declares `position='innermost'` so any capability that rewrites the user
+    prompt runs first and the guard sees the rewritten text. A `UserPromptPart`
+    an outer capability adds to this request only, such as a `SystemReminders`
+    reminder, is neither screened nor rewritten.
     """
 
     guard: InputGuardrailFunc[AgentDepsT] | Sequence[InputGuardrailFunc[AgentDepsT]]

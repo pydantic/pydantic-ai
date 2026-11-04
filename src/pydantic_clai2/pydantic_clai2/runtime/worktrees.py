@@ -4,9 +4,12 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
+
+from pydantic_clai2.ui.stderr_relay import terminal_stderr
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -36,7 +39,7 @@ class Worktree:
 
 def open_worktree(*, name: str) -> Worktree:
     """Reopen `.worktrees/NAME`, or check it out on `clai-NAME`, reusing that branch if it exists."""
-    name = name or f'worktree-{uuid4().hex[:8]}'
+    name = name or _generated_name()
     if re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]*', name) is None:
         raise ValueError('Worktree names must start with a letter or digit and contain only letters, digits, - or _.')
     try:
@@ -96,6 +99,39 @@ def add_worktree(*, repo: Path, path: Path, branch: str, base: str) -> Worktree:
     return Worktree(path=path, branch=branch, head=head, created=True, new_branch=True)
 
 
+def new_worktree(*, repo: Path, branch: str, base: str) -> Worktree:
+    """Check out a new `branch` from `base` in `.worktrees/` of the checkout `repo` is in, where `clai2 --worktree` puts them.
+
+    The folder is the branch with anything but letters, digits, `.`, `-`, and `_` turned into `-`. Without
+    a branch, the name is generated and the branch is `clai-NAME`, as with `--worktree` without NAME; without
+    a base, it is the checkout's `HEAD`. Raises `ValueError` outside Git, or when the folder exists or Git refuses.
+    """
+    root = repository_root(repo)
+    if branch:
+        try:
+            _git('-C', str(root), 'check-ref-format', '--branch', branch)
+        except subprocess.CalledProcessError as exc:
+            raise ValueError(f'Cannot create worktree: {exc.stderr.strip()}') from exc
+        try:
+            _git('-C', str(root), 'show-ref', '--verify', '--quiet', f'refs/heads/{branch}')
+        except subprocess.CalledProcessError:
+            pass
+        else:
+            raise ValueError(f'Cannot create worktree: branch {branch} already exists. Pick another name.')
+        folder = re.sub(r'[^A-Za-z0-9._-]+', '-', branch)
+    else:
+        folder = _generated_name()
+        branch = f'clai-{folder}'
+    path = root / '.worktrees' / folder
+    if path.exists():
+        raise ValueError(f'Cannot create worktree: {path} already exists. Pick another name.')
+    return add_worktree(repo=root, path=path, branch=branch, base=commit_of(repo=root, ref=base, remote=False))
+
+
+def _generated_name() -> str:
+    return f'worktree-{uuid4().hex[:8]}'
+
+
 def repository_root(path: Path) -> Path:
     """The top of the Git checkout `path` is in; `ValueError` outside one."""
     try:
@@ -138,7 +174,7 @@ def commit_of(*, repo: Path, ref: str, remote: bool) -> str:
 def remove_worktree(*, path: Path) -> None:
     """Remove the linked worktree at `path` and its uncommitted changes, keeping its branch; `ValueError` if Git refuses."""
     try:
-        common = (path / _git('-C', str(path), 'rev-parse', '--git-common-dir')).resolve()
+        common = _common_directory(path=path)
         _git('-C', str(common), 'worktree', 'remove', '--force', '--', str(path))
     except subprocess.CalledProcessError as exc:
         raise ValueError(f'Cannot remove worktree {path}: {exc.stderr.strip()}') from exc
@@ -190,11 +226,15 @@ def current_worktree() -> Worktree | None:
     return Worktree(path=Path(root).resolve(), branch=branch, head=head, created=False)
 
 
-def offer_worktree_cleanup(*, worktree: Worktree | None) -> None:
+def offer_worktree_cleanup(
+    *, worktree: Worktree | None, read_remove_commands: Callable[[], Mapping[str, Sequence[str]]] | None = None
+) -> None:
     """After interactive shutdown, remove an unchanged checkout marked `remove_if_unchanged`, or offer to remove a changed one.
 
     Uncommitted or untracked files, or a commit other than the one at launch, count as changes. Other
-    unchanged checkouts are kept without asking. A confirmed removal keeps the branch and dirty files.
+    unchanged checkouts are kept without asking. By default, a confirmed removal keeps the branch and
+    dirty files. A registered command owns explicitly confirmed removal for its repository only.
+    `read_remove_commands` reads configuration only when a changed checkout needs a prompt.
     """
     if worktree is None or not sys.stdin.isatty():
         return
@@ -210,15 +250,63 @@ def offer_worktree_cleanup(*, worktree: Worktree | None) -> None:
             _remove(worktree, unchanged=True)
         return
     try:
-        answer = input(f'Remove worktree {root}? The branch will be kept. [y/N] ')
+        remove_commands: Mapping[str, Sequence[str]] = (
+            read_remove_commands() if read_remove_commands is not None else {}
+        )
+    except (OSError, ValueError) as exc:
+        print(f'Cannot read removal commands for {root}; using Git cleanup: {exc}', file=sys.stderr)
+        remove_commands = {}
+    custom: tuple[Path, list[str]] | None = None
+    if remove_commands:
+        try:
+            common = _common_directory(path=worktree.path)
+            registered = remove_commands.get(str(common))
+            if registered is not None:
+                custom = _prepare_removal_command(path=worktree.path, common=common, command=registered)
+        except (OSError, subprocess.CalledProcessError, UnicodeDecodeError) as exc:
+            print(f'Worktree kept at {root}: cannot prepare removal command: {exc}', file=sys.stderr)
+            return
+    prompt = f'Remove worktree {root}? The branch will be kept. [y/N] '
+    if custom is not None:
+        print(f'Registered removal command: {custom[1]!r}')
+        prompt = (
+            f'Run registered removal command for worktree {root}? '
+            'It may delete the branch and uncommitted files. [y/N] '
+        )
+    try:
+        answer = input(prompt)
     except (EOFError, KeyboardInterrupt):
         answer = ''
         print()
     if answer.strip().lower() not in ('y', 'yes'):
         print(f'Worktree kept at {root}.')
         return
-    if _remove(worktree, unchanged=False):
+    if custom is not None:
+        _remove_with_command(path=worktree.path, repo=custom[0], command=custom[1])
+    elif _remove(worktree, unchanged=False):
         print(f'Removed worktree {root}. Branch kept.')
+
+
+def _remove_with_command(*, path: Path, repo: Path, command: list[str]) -> None:
+    """Let a user-confirmed command own removal, with the restored terminal and no Git fallback."""
+    original = Path.cwd()
+    try:
+        os.chdir(repo)
+        subprocess.run(command, check=True, stderr=terminal_stderr())
+    except (OSError, subprocess.CalledProcessError, KeyboardInterrupt) as exc:
+        detail = 'interrupted' if isinstance(exc, KeyboardInterrupt) else str(exc)
+        print(f'Worktree removal command {command!r} failed for {path}: {detail}', file=sys.stderr)
+    else:
+        if path.exists():
+            print(
+                f'Worktree removal command {command!r} completed without removing the worktree at {path}.',
+                file=sys.stderr,
+            )
+        else:
+            print(f'Removed worktree {path}.')
+    finally:
+        if original.exists():
+            os.chdir(original)
 
 
 def _remove(worktree: Worktree, *, unchanged: bool) -> bool:
@@ -226,7 +314,7 @@ def _remove(worktree: Worktree, *, unchanged: bool) -> bool:
     root = str(worktree.path)
     original = Path.cwd()
     try:
-        common = (worktree.path / _git('-C', root, 'rev-parse', '--git-common-dir')).resolve()
+        common = _common_directory(path=worktree.path)
         # Run outside the checkout so successful removal leaves a valid working directory.
         os.chdir(common.parent)
         _git('-C', str(common), 'worktree', 'remove', '--', root)
@@ -242,6 +330,24 @@ def _remove(worktree: Worktree, *, unchanged: bool) -> bool:
         except (OSError, subprocess.CalledProcessError):
             pass  # A kept branch loses nothing; it is `git branch -d` away.
     return True
+
+
+def _common_directory(*, path: Path) -> Path:
+    """Anchor Git's potentially relative common directory to the checkout that reported it."""
+    return (path / _git('-C', str(path), 'rev-parse', '--git-common-dir')).resolve()
+
+
+def _prepare_removal_command(*, path: Path, common: Path, command: Sequence[str]) -> tuple[Path, list[str]]:
+    """Derive the main Git location and substitute whole-token command arguments."""
+    # A NUL-delimited worktree listing would require Git 2.36 or newer.
+    bare = _git('-C', str(common), 'rev-parse', '--is-bare-repository') == 'true'
+    repo = common if bare or common.name != '.git' else common.parent
+    values = {
+        '{path}': str(path),
+        '{branch}': _git('-C', str(path), 'branch', '--show-current'),
+        '{repo}': str(repo),
+    }
+    return repo, [values.get(arg, arg) for arg in command]
 
 
 def _git(*args: str) -> str:

@@ -150,9 +150,9 @@ const lines = (text: string, sign: string) =>
     .map((line) => sign + line)
     .join('\n')
 
-/** The diffs a replayed edit or write made, rebuilt from its arguments; live runs send the real ones. */
+/** The diffs an edit or write made, or tried to make, rebuilt from its arguments; live runs and reloaded edits send their own. */
 function argumentDiffs(item: Item, args: Args): Diff[] {
-  if (item.diffs.length > 0 || item.state === 'error') return item.diffs
+  if (item.diffs.length > 0) return item.diffs
   const path = str(args.path)
   if (item.name === 'write_file' && typeof args.content === 'string') {
     const content = args.content.split('\n').slice(0, 400).join('\n')
@@ -245,11 +245,26 @@ function FailureResult({ text }: { text: string }) {
   )
 }
 
+/** The lines each file-change diff shows until the user asks for the rest, so long diffs don't mount whole. */
+const PREVIEW_LINES = 8
+
+/** The lines of output a running command's card shows as they arrive. */
+const LIVE_LINES = 8
+
+/** The last `LIVE_LINES` a running call printed: a shell's own, or those of the calls in a `run_code` cell. */
+function liveTail(item: Item): string {
+  const outputs = item.name === 'run_code' ? item.calls.map((call) => call.output) : [item.output]
+  const lines = outputs.filter(Boolean).flatMap((output) => output.replace(/\n$/, '').split('\n'))
+  return lines.slice(-LIVE_LINES).join('\n')
+}
+
 /** One tool call as a quiet row; open it for the arguments, output, diff, and result. A file change starts open. */
 export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
   const cards = useContext(OpenCardsContext)
   const args = parseArgs(raw.args)
-  const item = { ...raw, diffs: argumentDiffs(raw, args) }
+  const attempted = argumentDiffs(raw, args)
+  // A failed call changed nothing: its row shows no stats and starts closed; open, it shows what it tried.
+  const item = { ...raw, diffs: raw.state === 'error' ? raw.diffs : attempted }
   const changed = item.diffs.length > 0
   const open = cards.open.get(raw.id) ?? changed
   const openWorkspace = useContext(WorkspaceLinkContext)
@@ -268,6 +283,8 @@ export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
   const reason = item.state === 'error' || refused ? failure(item.text).summary : ''
   const firstLine = summary.subject.split('\n')[0] ?? ''
   const workspace = orchestrating && item.state !== 'running' && !refused ? workspaceOf(item, args) : null
+  // An open shell card already shows all of its output.
+  const live = item.state === 'running' && !(open && item.name === 'shell') ? liveTail(raw) : ''
   const row = (
     <button className="row-toggle tool-row" onClick={() => cards.toggle(raw.id, open)} aria-expanded={open}>
       <span className="tool-icon">{summary.icon}</span>
@@ -304,7 +321,12 @@ export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
         row
       )}
       <WorkerChips item={raw} />
-      {open && <ToolDetails item={item} args={args} />}
+      {open && <ToolDetails item={{ ...item, diffs: attempted }} args={args} />}
+      {live && (
+        <div className="tool-body">
+          <pre className="terminal">{live}</pre>
+        </div>
+      )}
     </div>
   )
 })
@@ -335,10 +357,15 @@ function ToolDetails({ item, args }: { item: Item; args: Args }) {
       </div>
     )
   }
+  // A failed edit or write leads with why it failed, then what it tried to change.
+  const errorFirst = item.state === 'error' && item.diffs.length > 0
+  const result =
+    item.text && (item.state === 'error' ? <FailureResult text={item.text} /> : <pre className="result">{item.text}</pre>)
   return (
     <div className="tool-body">
+      {errorFirst && result}
       {item.diffs.map((diff, index) => (
-        <DiffView key={index} diff={diff} />
+        <DiffView key={index} diff={diff} preview={PREVIEW_LINES} />
       ))}
       {Object.keys(args).length > 0 && item.diffs.length === 0 && (
         <pre className="code-small">
@@ -348,7 +375,7 @@ function ToolDetails({ item, args }: { item: Item; args: Args }) {
           />
         </pre>
       )}
-      {item.text && (item.state === 'error' ? <FailureResult text={item.text} /> : <pre className="result">{item.text}</pre>)}
+      {!errorFirst && result}
     </div>
   )
 }

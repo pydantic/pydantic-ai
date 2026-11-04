@@ -73,6 +73,8 @@ from pydantic_ai.exceptions import RunCancelled, RunTimedOut
 from pydantic_ai.messages import (
     BinaryContent,
     CapabilityEvent,
+    CapabilityLoadDeltaEvent,
+    CapabilityLoadDeltaPart,
     CompactionPart,
     CustomEvent,
     DeferredToolRequestsEvent,
@@ -766,10 +768,12 @@ def test_call_tool_result_carries_every_tool_manager_control_flow_exception() ->
                     'cost': None,
                 },
                 'model_name': None,
+                'model_id': None,
                 'timestamp': '2020-01-01T00:00:00Z',
                 'kind': 'response',
                 'provider_name': None,
                 'provider_url': None,
+                'canonical_system': None,
                 'provider_details': None,
                 'provider_response_id': None,
                 'finish_reason': None,
@@ -880,7 +884,12 @@ def test_model_request_context_projection_payload_golden() -> None:
         },
         'model_id': 'restricted',
         'streaming': False,
+        'attempt': 1,
     }
+    # A payload recorded before `attempt` was projected is the first attempt.
+    recorded = JSON_CODEC.dump(ModelRequestContextProjection, projection)
+    del recorded['attempt']
+    assert JSON_CODEC.load(ModelRequestContextProjection, recorded) == projection
 
 
 def test_model_request_context_projection_is_exhaustive() -> None:
@@ -900,6 +909,9 @@ def test_model_request_context_projection_is_exhaustive() -> None:
         # Private usage record the agent graph appends to caller-side as the model responds; `apply`
         # updates the caller's own context in place, so the record stays with the run.
         '_usage_response_ledger',
+        # The live wrapper a capability's `get_wrapper_model` built around `model`, with the model it wraps; the
+        # durable unit re-applies the hook to the model it rebuilds, so it's never carried across.
+        '_serving_wrapper',
     }
     projected = {field.name for field in fields(ModelRequestContextProjection)}
     context_fields = {field.name for field in fields(ModelRequestContext)}
@@ -923,6 +935,7 @@ def test_model_request_context_projection_is_exhaustive() -> None:
         model_id='test:alias',
         streaming=True,
     )
+    context.attempt = 2
     default_context = ModelRequestContext(
         model=model, messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
     )
@@ -1000,9 +1013,11 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
         ToolReturnPart('tool', 'result', tool_call_id='call'),
         RetryFeedbackPart('retry', retry=RetryInfo('model_retry')),
         ToolAvailabilityDeltaPart(),
+        CapabilityLoadDeltaPart(loaded=['refunds'], tool_call_id='call'),
         ModelSettingsDeltaPart(settings={'thinking': 'high'}),
         InstructionDeltaPart(id=None, content='delta'),
         InstructionBaselinePart(instructions=[InstructionPart('baseline')]),
+        CompactionPart(content='summary'),
     ]
     response_parts: list[ModelResponsePart] = [
         TextPart('text'),
@@ -1033,6 +1048,7 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
         FunctionToolCallEvent(part=ToolCallPart('tool', tool_call_id='call')),
         FunctionToolResultEvent(part=ToolReturnPart('tool', 'result', tool_call_id='call')),
         ToolAvailabilityDeltaEvent(part=ToolAvailabilityDeltaPart()),
+        CapabilityLoadDeltaEvent(part=CapabilityLoadDeltaPart(loaded=['refunds'])),
         ModelSettingsDeltaEvent(part=ModelSettingsDeltaPart(settings={'thinking': 'high'})),
         OutputToolCallEvent(part=ToolCallPart('final_result', tool_call_id='output')),
         OutputToolResultEvent(part=ToolReturnPart('final_result', 'done', tool_call_id='output')),

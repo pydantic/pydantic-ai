@@ -1,16 +1,21 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import base64
+import functools
 import hashlib
 import hmac
+import importlib
 import itertools
 import json
+import threading
 import warnings
 from collections import deque
 from collections.abc import (
     AsyncGenerator,
     AsyncIterable,
     AsyncIterator,
+    Awaitable,
     Callable,
     Generator,
     Iterable,
@@ -18,24 +23,43 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
-from typing import Annotated, Any, Literal, Never, TypeVar, assert_never, cast, get_args, overload
+from random import random
+from types import TracebackType
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    Literal,
+    Never,
+    Self,
+    TypeAlias,
+    TypeVar,
+    assert_never,
+    cast,
+    get_args,
+    overload,
+)
 
-from httpx2 import Timeout as HTTPX2Timeout
-from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError
+import anyio
+import httpx2
+from httpx2 import URL as HTTPX2URL, Timeout as HTTPX2Timeout
+from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError, field_validator
 from pydantic_core import to_json
 from typing_extensions import Protocol, TypedDict
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._file_input import KNOWN_DOCUMENT_MEDIA_TYPES, TEXT_DOCUMENT_MEDIA_TYPES
+from .._framing import neutralize_voice_tag
 from .._http import to_httpx2_timeout
-from .._instrumentation import get_instructions
+from .._instrumentation import current_model_request_span, get_instructions
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
+from .._removed_names import removed_names_getattr
 from .._run_context import RunContext
-from .._thinking_part import split_content_into_text_and_thinking
+from .._thinking_part import render_replayed_thinking, split_content_into_text_and_thinking
 from .._utils import (
     format_inlined_text_file as _format_inlined_text_file,
     guard_tool_call_id as _guard_tool_call_id,
@@ -45,10 +69,12 @@ from .._utils import (
     number_to_datetime,
 )
 from ..capabilities.abstract import AbstractCapability
+from ..durable_exec._operation_backend import in_durable_unit
 from ..exceptions import (
     ModelConnectionError,
     ModelRequestRejectedError,
     SuspendedResponseExpired,
+    UnsupportedSettingWarning,
     UserError,
 )
 from ..messages import (
@@ -98,6 +124,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     WebCitationSource,
+    _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
     is_multi_modal_content,
 )
 from ..native_tools import (
@@ -127,6 +154,8 @@ from ..profiles.openai import (
     validate_openai_profile,
 )
 from ..providers import Provider, infer_provider
+from ..providers._oauth_provider import OAuthCredentialsProvider
+from ..providers.gateway import is_gateway_provider
 from ..settings import CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
 from . import (
@@ -159,7 +188,22 @@ from ._tool_choice import (
     tool_forcing_unavailable_reason,
 )
 
+if TYPE_CHECKING:
+    from .batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
+
 _OPENAI_BACKGROUND_POLL_INTERVAL = 2.0
+_RESPONSES_TRANSPORT_ATTRIBUTE = 'pydantic_ai.transport'
+
+# Initial/max backoff and downward jitter follow the OpenAI SDK's retry algorithm.
+_WEBSOCKET_RETRY_INITIAL_DELAY = 0.5
+_WEBSOCKET_RETRY_MAX_DELAY = 8.0
+_WEBSOCKET_RETRY_JITTER_RATIO = 0.25
+_WEBSOCKET_RETRY_MAX_EXPONENT = 4  # The base delay has reached its cap after four doublings.
+# Longer server-directed waits remain caller-owned rather than blocking a socket request.
+_WEBSOCKET_RETRY_AFTER_LIMIT = 60.0
+
+if TYPE_CHECKING:
+    from ._openai_responses_websocket import ResponsesWebSocket, ResponsesWebSocketStream
 
 try:
     from openai import (
@@ -173,6 +217,7 @@ try:
         AsyncStream,
         NotGiven,
         Omit,
+        OpenAIError,
         omit,
     )
     from openai.types import AllModels, chat, responses
@@ -198,6 +243,7 @@ try:
     from openai.types.chat.chat_completion_tool_choice_option_param import ChatCompletionToolChoiceOptionParam
     from openai.types.chat.completion_create_params import (
         Moderation,
+        PromptCacheOptions as ChatPromptCacheOptions,
         WebSearchOptions,
         WebSearchOptionsUserLocation,
         WebSearchOptionsUserLocationApproximate,
@@ -233,6 +279,7 @@ try:
     from openai.types.responses.tool_choice_function_param import ToolChoiceFunctionParam
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
+    from openai.types.websocket_connection_options import WebSocketConnectionOptions
 
     OMIT = omit
 except ImportError as _import_error:
@@ -268,26 +315,55 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'openai') -> Gene
         # The SDK raises the base `APIError` for an error object inside a stream, after the HTTP 200 has already
         # been received; it gets the status the same error has before a stream opens.
         raise _model_errors.stream_error(model_name, e.message, e.body) from e
+    except httpx2.HTTPStatusError as e:
+        # A retrying transport raises this for a status it gave up on, and `openai` lets it through unwrapped.
+        raise _model_errors.transport_status_error(model_name, e.response) from e
 
 
 def _map_status_error(e: APIStatusError, model_name: str, model_id_namespace: str) -> ModelHTTPError:
-    body: object | None = e.body
+    return _status_error(
+        model_name,
+        model_id_namespace,
+        status_code=e.status_code,
+        body=e.body,
+        code=e.code,
+        error_type=e.type,
+        message=e.message,
+        headers=dict(e.response.headers),
+    )
+
+
+def _status_error(
+    model_name: str,
+    model_id_namespace: str,
+    *,
+    status_code: int,
+    body: object | None,
+    code: str | None,
+    error_type: str | None,
+    message: str | None,
+    headers: Mapping[str, str] | None = None,
+) -> ModelHTTPError:
+    """The error for an HTTP error status, which a batch also reports for each request that failed."""
     suggested_model_id = None
-    if e.code == 'model_not_found':
+    if code == 'model_not_found':
         suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-    category = _model_errors.openai_compatible_category(e.status_code, e.code, e.type, e.message)
-    if e.status_code == 403 and _flags_input(body.get('metadata') if _utils.is_str_dict(body) else None):
+    category = _model_errors.openai_compatible_category(status_code, code, error_type, message)
+    if model_id_namespace == 'zai':
+        # Z.ai's numeric codes mean something only from Z.ai, so other OpenAI-compatible APIs don't get this mapping.
+        category = _model_errors.zai_code_category(code) or category
+    if status_code == 403 and _flags_input(body.get('metadata') if _utils.is_str_dict(body) else None):
         # OpenRouter sends a 403 for flagged input too: a rejected request, not a credentials problem.
         category = ModelRequestRejectedError
     return ModelHTTPError.for_category(
         category,
-        status_code=e.status_code,
+        status_code=status_code,
         model_name=model_name,
         body=body,
-        headers=dict(e.response.headers),
+        headers=headers,
         suggested_model_id=suggested_model_id,
-        provider_error_code=e.code,
-        provider_error_type=e.type,
+        provider_error_code=code,
+        provider_error_type=error_type,
     )
 
 
@@ -304,8 +380,12 @@ def _map_connection_error(e: APIConnectionError, model_name: str) -> ModelConnec
 
 
 def _response_error_type(error: responses.ResponseError) -> str | None:
-    """The provider error `type`, like Azure's `too_many_requests`, which the SDK model doesn't declare."""
-    return error_type if isinstance(error_type := (error.model_extra or {}).get('type'), str) else None
+    """The provider error `type`, like Azure's `too_many_requests`.
+
+    `openai` declares the field from 3.32.0; before that it's an extra, which `getattr` also reads.
+    """
+    error_type: object = getattr(error, 'type', None)
+    return error_type if isinstance(error_type, str) else None
 
 
 def _response_error(
@@ -379,7 +459,7 @@ DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset(
 
 _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION = 'Search for relevant tools.'
 
-OpenAIModelName = str | AllModels | Literal['gpt-6.1-sol']
+OpenAIModelName = str | AllModels | Literal['gpt-6.1-sol', 'gpt-6.1-terra']
 """
 Possible OpenAI model names.
 
@@ -390,9 +470,11 @@ See [the OpenAI docs](https://platform.openai.com/docs/models) for a full list.
 Using this more broad type for the model name instead of the ChatModel definition
 allows this model to be used more easily with other model types (ie, Ollama, Deepseek).
 
-The id in the local `Literal` is bridged because `AllModels` doesn't list it at the floor the
+`gpt-6.1-sol` is bridged because `AllModels` doesn't list it at the floor the
 `openai` extra declares; it arrived in `openai` 3.21.0
 (https://github.com/openai/openai-python/pull/3986). Drop it once the floor is bumped past it.
+`gpt-6.1-terra` is also bridged: it is not yet listed in `openai` 3.31.0.
+Drop its bridge once the SDK floor includes the release that adds it.
 """
 
 MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME: Literal['x-openai-connector'] = 'x-openai-connector'
@@ -458,9 +540,38 @@ _OPENAI_IMAGE_SIZE = Literal['auto', '1024x1024', '1024x1536', '1536x1024']
 _OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = get_args(_OPENAI_IMAGE_SIZE)
 
 
+def _join_text_content_parts(content: object) -> object:
+    """Join a list of content parts into the string the Chat Completions API specifies, keeping only their text.
+
+    Some OpenAI-compatible servers (Mistral models served by the Albert API, for one) return `content` as a list of
+    parts like `[{'type': 'text', 'text': '...'}]`, especially when the answer carries references. Parts other than
+    text, like those references, are dropped. Anything that isn't a list is returned unchanged; a list with no text
+    becomes `None`.
+    """
+    if not isinstance(content, list):
+        return content
+    texts: list[str] = []
+    for part in cast(list[object], content):
+        if isinstance(part, str):
+            texts.append(part)
+        elif _utils.is_str_dict(part) and part.get('type') == 'text' and isinstance(text := part.get('text'), str):
+            texts.append(text)
+    return ''.join(texts) or None
+
+
+class _ChatCompletionMessage(chat.ChatCompletionMessage):
+    @field_validator('content', mode='before')
+    @classmethod
+    def _join_content_parts(cls, value: object) -> object:
+        return _join_text_content_parts(value)
+
+
 class _ChatCompletionChoice(chat_completion.Choice):
     finish_reason: Annotated[str, Field(min_length=1)]  # type: ignore[reportIncompatibleVariableOverride]
     """OpenAI-compatible providers can return arbitrary `finish_reason` values (e.g. `"guardrail_intervened"`)."""
+
+    message: _ChatCompletionMessage  # type: ignore[reportIncompatibleVariableOverride]
+    """OpenAI-compatible providers can return `content` as a list of parts rather than a string."""
 
 
 class _ChatCompletion(chat.ChatCompletion):
@@ -574,6 +685,15 @@ def _map_openai_image_generation_tool(tool: ImageGenerationTool) -> responses.to
 
 def _is_azure(client: AsyncOpenAI, system: str) -> bool:
     return system == 'azure' or isinstance(client, AsyncAzureOpenAI)
+
+
+def _echoed_store(response: responses.Response, model_settings: OpenAIResponsesModelSettings) -> bool | None:
+    # Socket responses echo storage, which determines whether their IDs can be used outside that socket.
+    if model_settings.get('openai_transport') == 'websocket' and isinstance(
+        store := (response.model_extra or {}).get('store'), bool
+    ):
+        return store
+    return None
 
 
 def _check_azure_content_filter(
@@ -756,6 +876,9 @@ def _drop_unsupported_params(profile: OpenAIModelProfile, model_settings: OpenAI
         model_settings.pop(setting, None)
 
 
+_ResponsesTimeout = float | HTTPX2Timeout | NotGiven
+
+
 @dataclass
 class _ResponsesRequestParams:
     """Typed request parameters shared by Responses API calls."""
@@ -774,14 +897,50 @@ class _ResponsesRequestParams:
     context_management: list[ContextManagement] | Omit
 
 
+class _ResponsesCreateParams(TypedDict):
+    """Body arguments of a response creation, shared by `client.responses.create` and the batch API."""
+
+    model: OpenAIModelName
+    input: list[responses.ResponseInputItemParam]
+    instructions: str | Omit
+    parallel_tool_calls: bool | Omit
+    tools: list[responses.ToolParam] | Omit
+    tool_choice: ResponsesToolChoice | Omit
+    previous_response_id: str | Omit
+    reasoning: Reasoning | Omit
+    text: responses.ResponseTextConfigParam | Omit
+    truncation: Literal['auto', 'disabled'] | Omit
+    context_management: list[ContextManagement] | Omit
+    max_output_tokens: int | Omit
+    temperature: float | Omit
+    top_p: float | Omit
+    service_tier: Literal['auto', 'default', 'flex', 'priority'] | Omit
+    conversation: str | Omit
+    top_logprobs: int | Omit
+    store: bool | Omit | None
+    user: str | Omit
+    include: list[responses.ResponseIncludable] | Omit
+    prompt_cache_key: str | Omit
+    prompt_cache_retention: Literal['in_memory', '24h'] | Omit
+    prompt_cache_options: ResponsesPromptCacheOptions | Omit
+    moderation: Moderation | Omit
+
+
+_OpenAIPromptCacheTTL: TypeAlias = Literal['30m', '12h']
+"""The prompt cache TTLs OpenAI accepts on GPT-5.6 and later."""
+
+
 class OpenAIPromptCacheOptions(TypedDict, total=False):
     """Options for OpenAI prompt caching on GPT-5.6 models."""
 
     mode: Literal['implicit', 'explicit']
     """Whether OpenAI may create an implicit cache breakpoint. Defaults to `implicit`."""
 
-    ttl: Literal['30m']
-    """The minimum lifetime for cache breakpoints. Defaults to `30m`, the only currently supported value."""
+    ttl: Literal['30m', '12h']
+    """The minimum lifetime for cache breakpoints. Defaults to `30m`.
+
+    `12h` is accepted only by the Responses API; Chat Completions rejects it with a 400.
+    """
 
 
 class _OpenAIPromptCacheBreakpoint(TypedDict):
@@ -820,6 +979,11 @@ def _cacheable_instruction_count(instruction_parts: Sequence[InstructionPart]) -
 
     Agent runs sort static parts first, but a direct `Model.request` caller may not, and a dynamic
     part must never end up inside the cached prefix.
+
+    Unlike Anthropic and Bedrock, this places no second breakpoint after the `on_change='append'` blocks that follow
+    the static parts. OpenAI keeps only a request's last four breakpoints, so with a second one a `CachePoint` or two
+    would push out the breakpoint after the static instructions first, which is the one every conversation shares
+    even when its append blocks differ.
     """
     return next((i for i, part in enumerate(instruction_parts) if part.dynamic), len(instruction_parts))
 
@@ -943,8 +1107,9 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     the conversation history across retries and subsequent requests within the same run.
 
     When set to `False` on `OpenAIResponsesModel`, image generation calls in the message history are
-    not sent back to the model, as the API can only look them up in a stored response. The model then
-    doesn't see that it generated those images.
+    not sent back to the model outside a live Responses WebSocket continuation, as the API can only
+    look them up in a stored response or the connection-local cache. The model then doesn't see that
+    it generated those images.
     """
 
     openai_user: str
@@ -1147,9 +1312,9 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """
 
     openai_previous_response_id: Literal['auto'] | str
-    """Reference a prior OpenAI response to continue a conversation server-side, omitting already-stored messages from the input.
+    """Reference a prior OpenAI response to continue a conversation server-side, omitting cached messages from the input.
 
-    - `'auto'`: chain to the most recent `provider_response_id` in the message history.
+    - `'auto'`: chain to the most recent usable `provider_response_id` in the message history.
       If the history contains no such response, no `previous_response_id` is sent.
     - A concrete response ID string: use it as the seed for the first request in the run
       (e.g. to continue from a prior turn). On subsequent in-run requests (retries,
@@ -1159,14 +1324,20 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
 
     In both cases, messages that precede the chosen response in the history are omitted
     from the input, since OpenAI reconstructs them from server-side state. A response is only
-    chosen while it and those messages are unchanged: each response created with this setting records a
-    digest of its parts and the history it was created from as
+    chosen while it and those messages are unchanged: each response created with this setting, or with
+    `openai_transport='websocket'`, records a digest of its parts and the history it was created from as
     [`ModelResponse.history_digest`][pydantic_ai.messages.ModelResponse.history_digest], and if a
     history processor or compaction has changed either since, the full history is sent instead.
 
     Requires the referenced response to have been stored (see
     [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store],
-    which defaults to `True` on OpenAI's side). Not compatible with Zero Data Retention.
+    which defaults to `True` on OpenAI's side), except on the Responses WebSocket that created it:
+    a request on that socket can continue from a response it hasn't stored, while it's still the
+    latest on its lane. A response the socket reports as unstored isn't continued from anywhere else, and a
+    socket request with `openai_store=False` continues only from its lane's response.
+    Defaults to `'auto'` for requests using `openai_transport='websocket'`, including HTTP overflow
+    (see [`openai_transport`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_transport])
+    unless `openai_conversation_id` is set.
 
     See the [OpenAI Responses API documentation](https://platform.openai.com/docs/guides/reasoning#keeping-reasoning-items-in-context)
     for more information.
@@ -1230,6 +1401,21 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     `'in_progress'`), the agent automatically polls for completion using `retrieve()`.
     """
 
+    openai_transport: Literal['http', 'websocket']
+    """How to send requests to the Responses API. Defaults to `'http'`.
+
+    With `'websocket'`, the model sends each request on one
+    [Responses WebSocket](https://developers.openai.com/api/docs/guides/websocket-mode) it keeps open while an agent run,
+    `async with model:` or `async with agent:` is using it, so the requests of a tool-calling run go over one
+    connection and send only their new input. Requests the socket can't take use HTTP; see
+    [Responses WebSockets](../../models/openai.md#responses-websockets) for which, and for the
+    `pydantic-ai-slim[openai-realtime]` install. Other models ignore this setting.
+
+    When neither `openai_previous_response_id` nor `openai_conversation_id` is set, this mode defaults
+    `openai_previous_response_id` to `'auto'`. That default, history digests and echoed storage metadata also apply
+    to HTTP requests, including setups that cannot use a socket.
+    """
+
     openai_prompt_cache_diagnostics: bool
     """Whether to request [prompt cache diagnostics](https://developers.openai.com/api/docs/guides/prompt-caching/diagnostics). Defaults to `True`.
 
@@ -1273,13 +1459,15 @@ independent of the GPT-5.6 cache options, so it combines with the unified settin
 def _openai_effective_cache_settings(settings: OpenAIChatModelSettings) -> tuple[CacheSetting | None, ...]:
     """The cache settings that take effect when any of `_CACHE_SETTINGS_KEYS` is present.
 
-    The implicit breakpoint (`mode='implicit'`, the default) caches at the 30-minute TTL, as does an
-    instruction breakpoint; with `mode='explicit'` and no instruction breakpoint, only `CachePoint`s cache.
+    The implicit breakpoint (`mode='implicit'`, the default) caches at the request-wide `ttl` (30 minutes by
+    default), as does an instruction breakpoint; with `mode='explicit'` and no instruction breakpoint, only
+    `CachePoint`s cache.
     """
     options = settings.get('openai_prompt_cache_options') or {}
+    ttl = options.get('ttl', '30m')
     return (
-        '30m' if options.get('mode', 'implicit') == 'implicit' else None,
-        '30m' if settings.get('openai_cache_instructions') else None,
+        ttl if options.get('mode', 'implicit') == 'implicit' else None,
+        ttl if settings.get('openai_cache_instructions') else None,
     )
 
 
@@ -1303,19 +1491,23 @@ def _translate_openai_cache(
     ):
         return model_settings
     translated = cast(OpenAIChatModelSettings, {**(model_settings or {})})
-    # `'30m'` is the only TTL OpenAI accepts, so every retention snaps to it.
-    _, messages = split_cache_setting(params.cache)
+    # The retention has been snapped to the profile's `supported_cache_retentions`, which OpenAI's TTLs make up.
+    retention, messages = split_cache_setting(params.cache)
+    ttl: _OpenAIPromptCacheTTL = '12h' if retention == '12h' else '30m'
     translated['openai_prompt_cache_options'] = (
-        {'mode': 'implicit', 'ttl': '30m'} if messages else _PREFIX_ONLY_CACHE_OPTIONS
+        {'mode': 'implicit', 'ttl': ttl} if messages else _PREFIX_ONLY_CACHE_OPTIONS[ttl]
     )
     translated['openai_cache_instructions'] = True
     return translated
 
 
-_PREFIX_ONLY_CACHE_OPTIONS: OpenAIPromptCacheOptions = {'mode': 'explicit', 'ttl': '30m'}
-"""The prompt cache options the unified `cache` setting maps `messages=False` to.
+_PREFIX_ONLY_CACHE_OPTIONS: dict[_OpenAIPromptCacheTTL, OpenAIPromptCacheOptions] = {
+    '30m': {'mode': 'explicit', 'ttl': '30m'},
+    '12h': {'mode': 'explicit', 'ttl': '12h'},
+}
+"""The prompt cache options the unified `cache` setting maps `messages=False` to, per TTL.
 
-Never mutated: `_keep_implicit_cache_without_breakpoints` checks for this exact object, so that options a
+Never mutated: `_keep_implicit_cache_without_breakpoints` checks for these exact objects, so that options a
 caller set with the same values, which take precedence over the unified setting, are left alone.
 """
 
@@ -1347,10 +1539,13 @@ def _keep_implicit_cache_without_breakpoints(
     instead. Checking the mapped request rather than repeating those gates keeps the two from drifting.
     Mutates `settings`.
     """
-    if settings.get('openai_prompt_cache_options') is _PREFIX_ONLY_CACHE_OPTIONS and not _has_prompt_cache_breakpoint(
-        items
+    options = settings.get('openai_prompt_cache_options')
+    if (
+        options is not None
+        and any(options is prefix_only for prefix_only in _PREFIX_ONLY_CACHE_OPTIONS.values())
+        and not _has_prompt_cache_breakpoint(items)
     ):
-        settings['openai_prompt_cache_options'] = {'mode': 'implicit', 'ttl': '30m'}
+        settings['openai_prompt_cache_options'] = {'mode': 'implicit', 'ttl': options.get('ttl', '30m')}
 
 
 def _resolve_legacy_cache_retention(
@@ -1439,6 +1634,28 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         return _resolve_legacy_cache_retention(
             self.profile, self.settings, model_settings
         ) or super().resolve_cache_retention(model_settings)
+
+    def _no_batch_api_message(self) -> str:
+        if self.system == 'openai':
+            return (
+                f'`{type(self).__name__}` {self.model_name!r} has no batch API: batch it through the Responses API, with '
+                '`OpenAIResponsesModel` or the `openai:` prefix.'
+            )
+        return super()._no_batch_api_message()
+
+    def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
+        """Leave the `'12h'` cache retention out of `supported_cache_retentions`, before the user's `profile=` applies.
+
+        Chat Completions rejects `prompt_cache_options.ttl='12h'` with a 400 (verified live on every GPT-5.6, GPT-6
+        and GPT-6.1 model), while the Responses API on the same models accepts it, and the providers declare their
+        tiers per model rather than per API.
+        """
+        retentions = profile.get('supported_cache_retentions', ())
+        if '12h' not in retentions:
+            return profile
+        return merge_profile(
+            profile, ModelProfile(supported_cache_retentions=tuple(tier for tier in retentions if tier != '12h'))
+        )
 
     def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
         return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
@@ -1594,6 +1811,12 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         )
         model_settings_cast = cast(OpenAIChatModelSettings, model_settings or {})
         response = await self._completions_create(messages, True, model_settings_cast, model_request_parameters)
+        if isinstance(response, ModelResponse):
+            # Azure rejected the prompt with its content filter before the stream opened.
+            yield _ModelResponseStreamedResponse(
+                model_request_parameters=model_request_parameters, _model_response=response
+            )
+            return
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters, model_settings_cast)
 
@@ -1604,7 +1827,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         stream: Literal[True],
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> AsyncStream[ChatCompletionChunk]: ...
+    ) -> AsyncStream[ChatCompletionChunk] | ModelResponse: ...
 
     @overload
     async def _completions_create(
@@ -1688,7 +1911,11 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     verbosity=model_settings.get('openai_text_verbosity', OMIT),
                     prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
                     prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
-                    prompt_cache_options=model_settings.get('openai_prompt_cache_options', OMIT),
+                    # Passed through as given: Chat Completions rejects a `'12h'` TTL with a 400, and the unified
+                    # `cache` setting never sends one here (see `_instance_profile_defaults`).
+                    prompt_cache_options=cast(
+                        'ChatPromptCacheOptions | Omit', model_settings.get('openai_prompt_cache_options', OMIT)
+                    ),
                     extra_headers=extra_headers,
                     extra_body=self._thinking_false_extra_body(model_settings, model_request_parameters),
                 )
@@ -1784,6 +2011,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 provider_response_id=response.id or None,
                 provider_name=self._provider.name,
                 provider_url=self._provider.base_url,
+                canonical_system=self._canonical_system_stamp,
                 finish_reason='content_filter',
             )
 
@@ -1832,6 +2060,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             provider_response_id=response.id or None,
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
+            canonical_system=self._canonical_system_stamp,
             finish_reason=finish_reason,
         )
 
@@ -1892,7 +2121,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         # so we set it from a later chunk in `OpenAIChatStreamedResponse`.
         model_name = first_chunk.model or self.model_name
 
-        return self._streamed_response_cls(
+        streamed_response = self._streamed_response_cls(
             model_request_parameters=model_request_parameters,
             _model_name=model_name,
             _model_profile=self.profile,
@@ -1902,6 +2131,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             _provider_url=self._provider.base_url,
             _model_settings=model_settings,
         )
+        streamed_response.canonical_system = self._canonical_system_stamp
+        return streamed_response
 
     @property
     def _streamed_response_cls(self) -> type[OpenAIStreamedResponse]:
@@ -2037,11 +2268,16 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         texts: list[str] = field(default_factory=list[str])
         thinkings: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
+        carried_thinkings: list[str] = field(default_factory=list[str])
+        """Reasoning rendered for a user message ahead of the assistant message, as `render_replayed_thinking` decides."""
         tool_calls: list[ChatCompletionMessageFunctionToolCallParam] = field(
             default_factory=list[ChatCompletionMessageFunctionToolCallParam]
         )
+        message: ModelResponse | None = field(default=None, init=False)
+        """The response being mapped, set by `map_assistant_message`, for deciding which of its stateless data to send back."""
 
         def map_assistant_message(self, message: ModelResponse) -> chat.ChatCompletionAssistantMessageParam | None:
+            self.message = message
             for item in message.parts:
                 if isinstance(item, TextPart):
                     self._map_response_text_part(item)
@@ -2055,7 +2291,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     self._map_response_file_part(item)
                 # Reached from Harness tests that switch to Chat after another provider's compaction.
                 elif isinstance(item, CompactionPart):  # pragma: lax no cover
-                    # Compaction parts are not sent back to the Chat Completions API.
+                    # Provider-produced compaction parts are not sent back to the Chat Completions API.
                     pass
                 elif isinstance(item, SpeechPart):  # pragma: no cover
                     # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
@@ -2128,15 +2364,29 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     self.thinkings.setdefault(item.id, []).append(item.content)
                 else:
                     # Fall back to tags mode
-                    start_tag, end_tag = self._model.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
-                    self.texts.append('\n'.join([start_tag, item.content, end_tag]))
+                    self._map_response_thinking_as_text(item)
             elif include_method == 'tags':
-                start_tag, end_tag = self._model.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
-                self.texts.append('\n'.join([start_tag, item.content, end_tag]))
+                self._map_response_thinking_as_text(item)
             elif include_method == 'field':
                 field = profile.get('openai_chat_thinking_field', None)
                 if field:  # pragma: no branch
                     self.thinkings.setdefault(field, []).append(item.content)
+
+        def accepts_stateless_artifacts(self, item: ModelResponsePart) -> bool:
+            """Whether the model sends back the stateless signed or encrypted data `item` carries.
+
+            See [`Model.accepts_stateless_artifacts`][pydantic_ai.models.Model.accepts_stateless_artifacts].
+            """
+            assert self.message is not None, '`map_assistant_message` sets the response before mapping its parts'
+            return self._model.accepts_stateless_artifacts(self.message, item)
+
+        def _map_response_thinking_as_text(self, item: ThinkingPart) -> None:
+            text, carry_in_user_turn = render_replayed_thinking(item.content, self._model.profile)
+            if not carry_in_user_turn:
+                self.texts.append(text)
+            elif item.content:
+                # An empty wrapper in the user turn would tell the model the assistant thought nothing.
+                self.carried_thinkings.append(text)
 
         def _map_response_tool_call_part(self, item: ToolCallPart) -> None:
             """Maps a `ToolCallPart` to the response context.
@@ -2146,9 +2396,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             """
             tool_call = self._model._map_tool_call(item)
             if (
-                item.provider_name == self._model.system
-                and item.provider_details
+                item.provider_details
                 and (extra_content := item.provider_details.get('extra_content'))
+                and self.accepts_stateless_artifacts(item)
             ):
                 tool_call = _ChatCompletionMessageFunctionToolCallParam(**tool_call, extra_content=extra_content)
             self.tool_calls.append(tool_call)
@@ -2180,6 +2430,25 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """
         return self._MapModelResponseContext(self).map_assistant_message(message)
 
+    def _map_carried_thinking(self, message: ModelResponse) -> chat.ChatCompletionUserMessageParam | None:
+        """Build the user message that carries this `ModelResponse`'s reasoning ahead of its assistant message.
+
+        That is reasoning that can't be sent natively, for a profile with
+        [`mimics_assistant_message_formatting`][pydantic_ai.profiles.ModelProfile.mimics_assistant_message_formatting]:
+        replayed in the assistant turn, it teaches the model to write thinking tags into its visible answers.
+        `_MapModelResponseContext` decides which reasoning that is while mapping the assistant message, and
+        leaves it out of that message. This maps the response a second time to collect it, so that
+        `_map_model_response` keeps returning a single message for subclasses that override it.
+        Returns `None` when there is nothing to carry.
+        """
+        if not any(isinstance(part, ThinkingPart) for part in message.parts):
+            return None
+        context = self._MapModelResponseContext(self)
+        context.map_assistant_message(message)
+        if not context.carried_thinkings:
+            return None
+        return chat.ChatCompletionUserMessageParam(role='user', content='\n\n'.join(context.carried_thinkings))
+
     def _map_finish_reason(self, key: str) -> FinishReason | None:
         """Hooks that maps a finish reason key to a [FinishReason][pydantic_ai.messages.FinishReason].
 
@@ -2201,36 +2470,31 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         # the run is reasoning. A turn another model or provider produced, or one served with thinking off,
         # can lack it: a `FallbackModel` step, a resumed run, or a foreign native tool search that
         # `prepare_messages` splits into a synthesized `search_tools` turn. `'field'` mode sets the configured
-        # field empty on every such turn once the history holds a `ThinkingPart`, or, for a profile that sets
-        # `openai_chat_thinking_requires_field_on_tool_calls`, once the request itself thinks, as it can before
-        # any step has thought; `'auto'` mode is handled after mapping, below.
+        # field empty on every such turn from the first response that holds a `ThinkingPart` on, or, for a
+        # profile that sets `openai_chat_thinking_requires_field_on_tool_calls`, on every such turn once the
+        # request itself thinks, as it can before any step has thought; `'auto'` mode is handled after mapping,
+        # below. A turn before the first `ThinkingPart` was already sent without the field, so a later response
+        # that thinks doesn't add it there: the turn goes out the same way in every request, keeping the
+        # cached prefix.
         send_back_thinking = profile.get('openai_chat_send_back_thinking_parts', 'auto')
-        thinking_active = any(
-            isinstance(part, ThinkingPart)
-            for message in messages
-            if isinstance(message, ModelResponse)
-            for part in message.parts
-        )
-        backfill_field = (
-            profile.get('openai_chat_thinking_field', None)
-            if send_back_thinking == 'field'
-            and (
-                thinking_active
-                or (
-                    profile.get('openai_chat_thinking_requires_field_on_tool_calls', False)
-                    and self._request_thinks(model_settings, model_request_parameters)
-                )
-            )
-            else None
+        backfill_field = profile.get('openai_chat_thinking_field', None) if send_back_thinking == 'field' else None
+        backfill = bool(
+            backfill_field
+            and profile.get('openai_chat_thinking_requires_field_on_tool_calls', False)
+            and self._request_thinks(model_settings, model_request_parameters)
         )
         for message in messages:
             if isinstance(message, ModelRequest):
                 async for item in self._map_user_message(message):
                     openai_messages.append(item)
             elif isinstance(message, ModelResponse):
+                backfill = backfill or any(isinstance(part, ThinkingPart) for part in message.parts)
+                if (carried_thinking := self._map_carried_thinking(message)) is not None:
+                    openai_messages.append(carried_thinking)
                 if (mapped := self._map_model_response(message)) is not None:
                     if (
-                        backfill_field
+                        backfill
+                        and backfill_field
                         and mapped['role'] == 'assistant'
                         and mapped.get('tool_calls')
                         and backfill_field not in mapped
@@ -2376,6 +2640,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 )
             elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
                 raise _unprojected_instruction_delta_error()
+            elif isinstance(part, ModelSettingsDeltaPart):
+                if (update := self._map_model_settings_delta(part)) is not None:
+                    yield update
             elif isinstance(part, _UnpreparedPart):  # pragma: no cover
                 raise _unprepared_part_error(part)
             elif isinstance(part, SpeechPart):
@@ -2385,6 +2652,14 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 assert_never(part)
         if file_content:
             yield await self._map_user_prompt(UserPromptPart(content=file_content))
+
+    def _map_model_settings_delta(self, part: ModelSettingsDeltaPart) -> chat.ChatCompletionMessageParam | None:
+        """Map a `ModelSettingsDeltaPart` to the message that changes the setting mid-conversation, or `None` for none.
+
+        Chat Completions has no such message, so `prepare_messages` drops the parts and this raises. A subclass that
+        sets `_renders_effort_deltas` for an API that extends Chat Completions with one overrides it.
+        """
+        raise _unprepared_part_error(part)
 
     async def _map_image_url_item(self, item: ImageUrl) -> ChatCompletionContentPartImageParam:
         """Map an ImageUrl to a chat completion image content part."""
@@ -2564,8 +2839,12 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             f'The {self._provider.name!r} provider does not support document input via the Chat Completions API.'
         )
 
-    @staticmethod
-    def _inline_text_file_part(text: str, *, media_type: str, identifier: str) -> ChatCompletionContentPartTextParam:
+    def _inline_text_file_part(
+        self, text: str, *, media_type: str, identifier: str
+    ) -> ChatCompletionContentPartTextParam:
+        if not self.profile.get('supports_inline_system_prompts', False):
+            # Inlined as user text, where the framework's own voice is `<system>`-tagged user text too.
+            text = neutralize_voice_tag(text)
         return ChatCompletionContentPartTextParam(
             text=_format_inlined_text_file(text, media_type=media_type, identifier=identifier),
             type='text',
@@ -2748,6 +3027,13 @@ def _map_chat_content(
     ]
 
 
+def _batch_module():
+    """The batch module, imported on first use, so an error importing it doesn't surface as a missing `openai` SDK."""
+    from . import _openai_batch
+
+    return _openai_batch
+
+
 class _Hasher(Protocol):
     def update(self, data: bytes, /) -> None: ...
     def copy(self) -> _Hasher: ...
@@ -2842,6 +3128,133 @@ def _with_history_digest(response: ModelResponse, history: _Hasher | None) -> Mo
     return replace(response, history_digest=_continuation_digest(history, response.parts))
 
 
+@dataclass(eq=False)
+class _ResponsesWebSocketState:
+    """A model's socket and request capacity on one event loop."""
+
+    loop: asyncio.AbstractEventLoop
+    leases: int = 0
+    contexts: int = 0
+    reusable: bool = False
+    """An agent run or an outer model scope has made this state reusable across requests."""
+    in_flight: int = 0
+    socket: ResponsesWebSocket | None = None
+    open_lock: anyio.Lock | None = None
+    connection_failed: bool = False
+
+    async def reserve(
+        self,
+        connect: Callable[[], Awaitable[ResponsesWebSocket]],
+        response_id: str | None,
+        headers: Mapping[str, str],
+    ) -> ResponsesWebSocketStream | None:
+        """Reserve a lane, opening a socket first if there's none, or the current one failed, closed or aged out.
+
+        Returns `None` when opening a connection failed, the socket has no free lane, opened with other headers, or when
+        there's no socket left to use once the request's lease has ended. Only requests on this state's loop call this.
+        """
+        socket = self.socket
+        if socket is None or not socket.accepts_requests:
+            if self.open_lock is None:
+                self.open_lock = anyio.Lock()
+            async with self.open_lock:
+                if self.socket is socket:
+                    # The lease that let this request choose the socket may have ended while it waited for the lock,
+                    # and a socket opened now would only serve this one request.
+                    if not self.leases or self.connection_failed:
+                        return None
+                    try:
+                        self.socket = await connect()
+                    except (APIConnectionError, ModelConnectionError):
+                        # Do not repeat an unavailable transport's handshake for every tool-loop request.
+                        self.connection_failed = True
+                        raise
+                    if socket is not None:
+                        # A socket replaced near OpenAI's time limit closes once its responses finish.
+                        await socket.close_if_idle()
+            socket = self.socket
+            assert socket is not None
+        if socket.headers != headers:
+            return None
+        return socket.reserve(response_id)
+
+
+@dataclass(eq=False)
+class _ResponsesWebSocketHolder:
+    """Loop-local sockets shared by a model and its request copies.
+
+    Each loop opens its own socket; teardown on another loop schedules closure on the socket's loop.
+    Entries are removed when their last lease and request finish, including after failed handshakes.
+    """
+
+    states: dict[asyncio.AbstractEventLoop, _ResponsesWebSocketState] = field(
+        default_factory=dict[asyncio.AbstractEventLoop, _ResponsesWebSocketState]
+    )
+    # A context can exit on another thread. Never hold this lock during network I/O.
+    lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
+
+    def acquire(self, *, context: bool = False, reusable: bool = True) -> _ResponsesWebSocketState | None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return None
+        with self.lock:
+            if (state := self.states.get(loop)) is None:
+                state = self.states[loop] = _ResponsesWebSocketState(loop)
+            state.leases += 1
+            state.contexts += context
+            state.reusable |= reusable
+            return state
+
+    async def exit(self) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        with self.lock:
+            state = self.states.get(loop) if loop is not None else None
+            if state is None or not state.contexts:
+                # A context closed on another loop has no scope identity. Release an entered loop's lease;
+                # in-flight requests keep its socket alive, and response provenance stays with that socket.
+                state = next((state for state in self.states.values() if state.contexts), None)
+            if state is not None:
+                state.contexts -= 1
+                state.leases -= 1
+        if state is not None:
+            await self.close_if_unused(state)
+
+    async def release(self, state: _ResponsesWebSocketState) -> None:
+        with self.lock:
+            state.leases -= 1
+        await self.close_if_unused(state)
+
+    @asynccontextmanager
+    async def lease(self) -> AsyncGenerator[None]:
+        state = self.acquire()
+        try:
+            yield
+        finally:
+            if state is not None:
+                await self.release(state)
+
+    async def close_if_unused(self, state: _ResponsesWebSocketState) -> None:
+        with self.lock:
+            if state.leases or state.in_flight or self.states.get(state.loop) is not state:
+                return
+            self.states.pop(state.loop)
+            socket, state.socket = state.socket, None
+            state.open_lock = None
+        if socket is not None:
+            if not state.loop.is_running():
+                # Its asyncio transport belongs to a stopped loop and cannot be awaited from another one.
+                return
+            if state.loop is not asyncio.get_running_loop():
+                future = asyncio.run_coroutine_threadsafe(socket.close(), state.loop)
+                await anyio.to_thread.run_sync(future.result)
+            else:
+                await socket.close()
+
+
 @dataclass(init=False)
 class OpenAIResponsesModel(Model[AsyncOpenAI]):
     """A model that uses the OpenAI Responses API.
@@ -2871,12 +3284,36 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     # keeps serving them: a latent directive that never fired before the boundary still governs
     # post-compaction replies without being re-sent (live-verified).
     compaction_retains_standing_prompt = True
+    _honors_compaction_boundaries = True
     # Audio content goes nowhere the API reads it and video has no input type, so neither is sent.
     _unsupported_file_inputs = frozenset({'audio', 'video'})
 
     _model_name: OpenAIModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)
+    _websocket: _ResponsesWebSocketHolder = field(repr=False, compare=False)
     _history_digest_key: bytes | None = field(default=None, repr=False)
+    _websocket_connection_options: WebSocketConnectionOptions | None = field(default=None, repr=False)
+    _websocket_stream: ResponsesWebSocketStream | None = field(default=None, repr=False, compare=False)
+    """The lane a copy of the model sends its one request on, over the Responses WebSocket."""
+
+    async def __aenter__(self) -> Self:
+        await super().__aenter__()
+        # A Responses WebSocket a request opens stays open until the model exits, so later runs reuse it.
+        # Engines enter freshly resolved models inside individual units. That scope cannot amortize a socket.
+        self._websocket.acquire(context=True, reusable=not in_durable_unit())
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool | None:
+        await self._websocket.exit()
+        return await super().__aexit__(exc_type, exc_val, exc_tb)
+
+    def _run_scope(self) -> AbstractAsyncContextManager[None]:
+        return self._websocket.lease()
 
     def __init__(
         self,
@@ -2891,6 +3328,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
         history_digest_key: bytes | None = None,
+        websocket_connection_options: WebSocketConnectionOptions | None = None,
     ):
         """Initialize an OpenAI Responses model.
 
@@ -2904,9 +3342,16 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 stored history can't be used to test guesses at content redacted from it later. Every model
                 continuing the same conversations needs the same key; a response recorded with another key, or
                 none, is resent rather than continued from.
+            websocket_connection_options: Options for the `websockets` connection of the Responses WebSocket that
+                [`openai_transport='websocket'`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_transport]
+                opens, typed as the OpenAI SDK's `WebSocketConnectionOptions`. `max_size` and `max_queue` default to
+                `None`, which lifts the `websockets` limits on message size and on unread frames.
         """
         self._model_name = model_name
         self._history_digest_key = history_digest_key
+        self._websocket_connection_options = websocket_connection_options
+        # Shared by reference with the copies a request makes, so they all use one socket.
+        self._websocket = _ResponsesWebSocketHolder()
 
         if isinstance(provider, str):
             provider = infer_provider('gateway/openai' if provider == 'gateway' else provider)
@@ -2923,6 +3368,47 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     @property
     def base_url(self) -> str:
         return str(self.client.base_url)
+
+    @property
+    def batch_max_requests(self) -> int | None:
+        # A batch runs each request without streaming, which an endpoint that only streams can't serve.
+        if not self.profile.get('openai_supports_batch_api', False) or self.profile.get(
+            'openai_responses_requires_streaming', False
+        ):
+            return None
+        return 50_000
+
+    @property
+    def batch_max_bytes(self) -> int | None:
+        return None if self.batch_max_requests is None else _batch_module().MAX_BATCH_BYTES
+
+    def batch_request_size(self, request: EncodedBatchRequest) -> int:
+        return _batch_module().request_size(request)
+
+    def _batch_credential(self) -> str:
+        return _batch_module().batch_credential(self)
+
+    async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
+        return await _batch_module().batch_encode(self, request)
+
+    async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            return await _batch_module().batch_create(self, requests)
+
+    async def batch_status(self, batch: Batch) -> Batch:
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            return await _batch_module().batch_status(self, batch)
+
+    async def batch_results(self, batch: Batch) -> list[BatchResult]:
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            return await _batch_module().batch_results(self, batch)
+
+    async def batch_cancel(self, batch: Batch) -> Batch:
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            return await _batch_module().batch_cancel(self, batch)
+
+    def batch_decode(self, result: BatchResult, request: BatchRequest) -> ModelResponse:
+        return _batch_module().batch_decode(self, result, request)
 
     @property
     def model_name(self) -> OpenAIModelName:
@@ -2956,10 +3442,162 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         model_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
-        return _translate_openai_cache(self.profile, model_settings, model_request_parameters), model_request_parameters
+        model_settings = _translate_openai_cache(self.profile, model_settings, model_request_parameters)
+        if (
+            model_settings is not None
+            and model_settings.get('openai_transport') == 'websocket'
+            and 'openai_previous_response_id' not in model_settings
+            and 'openai_conversation_id' not in model_settings
+        ):
+            # Keep continuation consistent when a request in WebSocket mode falls back to HTTP.
+            continued: OpenAIResponsesModelSettings = {**model_settings, 'openai_previous_response_id': 'auto'}
+            return continued, model_request_parameters
+        return model_settings, model_request_parameters
 
     def _unsupported_settings(self) -> frozenset[str]:
         return _with_profile_unsupported_settings(self.unsupported_settings, self.profile)
+
+    def _websocket_unsupported_reason(self) -> str | None:
+        """Why this request cannot use a Responses WebSocket, or `None` when it can."""
+        if not self.profile.get('openai_responses_supports_websocket', True):
+            return (
+                'its profile sets `openai_responses_supports_websocket=False`, as its provider, SDK client or model '
+                "class can't open a Responses WebSocket. To try one on Azure OpenAI or the Pydantic AI Gateway "
+                'with static credentials, pass '
+                '`profile=OpenAIModelProfile(openai_responses_supports_websocket=True)` to the model.'
+            )
+        # Profiles are cached, but the HTTP client's authentication can change after the socket opened.
+        # Azure clients and lightweight SDK wrappers do not initialize every optional attribute.
+        client = self._provider.client
+        if (
+            getattr(client, '_api_key_provider', None) is not None
+            or getattr(client, 'workload_identity', None) is not None
+            or callable(getattr(client, '_azure_ad_token_provider', None))
+            or getattr(getattr(client, '_client', None), 'auth', None) is not None
+        ):
+            return 'the SDK client resolves authentication per request; use HTTP to apply its current credentials.'
+        try:
+            importlib.import_module('pydantic_ai.models._openai_responses_websocket')
+        except ImportError:
+            return 'install `pydantic-ai-slim[openai-realtime]` to use Responses WebSockets.'
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return 'Responses WebSockets need the asyncio event loop.'
+        return None
+
+    def _warn_websocket_unsupported(self, reason: str) -> None:
+        warnings.warn(
+            f"The `openai_transport='websocket'` setting cannot open a socket for model {self.model_id!r}; using HTTP "
+            f"with the mode's `openai_previous_response_id='auto'` default and history metadata: {reason}",
+            UnsupportedSettingWarning,
+            stacklevel=2,
+        )
+
+    @asynccontextmanager
+    async def _websocket_transport(
+        self, messages: list[ModelMessage], model_settings: ModelSettings | None
+    ) -> AsyncGenerator[Self | None]:
+        """Yield a copy of this model bound to a lane of its Responses WebSocket, or `None` to send the request over HTTP.
+
+        Only a request whose settings ask for `openai_transport='websocket'` uses the socket, and only while an agent
+        run, `async with model:` or `async with agent:` holds it open on the request's event loop.
+        """
+        merged_settings = merge_model_settings(self.settings, model_settings)
+        settings: OpenAIResponsesModelSettings = {**merged_settings} if merged_settings else {}
+        if settings.get('openai_transport') != 'websocket':
+            yield None
+            return
+        if (reason := self._websocket_unsupported_reason()) is not None:
+            self._warn_websocket_unsupported(reason)
+            yield None
+            return
+        loop = asyncio.get_running_loop()
+        holder = self._websocket
+        extra_body = settings.get('extra_body')
+        with holder.lock:
+            state = holder.states.get(loop)
+            if state is not None and state.leases and state.reusable:
+                state.in_flight += 1
+            else:
+                state = None
+        if state is None:
+            yield None
+            return
+        try:
+            if (
+                # The socket can't run a background response, or retrieve a suspended one.
+                settings.get('openai_background')
+                or (_is_str_dict(extra_body) and extra_body.get('background'))
+                or self._get_continuation_info(messages, settings) is not None
+            ):
+                yield None
+                return
+            response = await self._reserve_websocket_lane(loop, messages, settings)
+            if response is None:
+                yield None
+                return
+            async with response:
+                yield _utils.replace_no_init(self, _websocket_stream=response)
+        finally:
+            with holder.lock:
+                state.in_flight -= 1
+            await holder.close_if_unused(state)
+
+    async def _reserve_websocket_lane(
+        self, loop: asyncio.AbstractEventLoop, messages: Sequence[ModelMessage], settings: OpenAIResponsesModelSettings
+    ) -> ResponsesWebSocketStream | None:
+        """Reserve a lane for a request on this model's socket, opening one first if needed; `None` to use HTTP."""
+        from ._openai_responses_websocket import NAMED_LANE_LIMIT, ResponsesWebSocket
+
+        headers = {key.lower(): value for key, value in settings.get('extra_headers', {}).items()}
+        headers.setdefault('user-agent', get_user_agent())
+        _, timeout = self._build_request_options(settings)
+        stream_id_lanes = self.profile.get('openai_responses_supports_websocket_stream_id')
+        if stream_id_lanes is None:
+            # This is the one host-based exception `models/AGENTS.md` names: lanes on an endpoint that doesn't route
+            # events by `stream_id` hand one conversation another's answer, while lanes off only send concurrent
+            # requests over HTTP. OpenAI runs named lanes; Azure OpenAI and xAI document one response in flight per
+            # connection, and xAI accepts a `stream_id` without echoing it on its events. The socket's host is
+            # `websocket_base_url`'s when the SDK client sets one.
+            # https://developers.openai.com/api/docs/guides/websocket-mode
+            # https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/websockets
+            # https://docs.x.ai/developers/advanced-api-usage/websocket-mode
+            websocket_url = HTTPX2URL(self.client.websocket_base_url or self.client.base_url)
+            stream_id_lanes = websocket_url.host == 'api.openai.com'
+        connect = functools.partial(
+            ResponsesWebSocket.connect,
+            self.client,
+            self.model_name,
+            headers,
+            self._resolve_websocket_timeout(timeout),
+            self._websocket_connection_options or {},
+            NAMED_LANE_LIMIT if stream_id_lanes else 0,
+            functools.partial(_status_error, self.model_name, self._provider.model_id_namespace),
+        )
+        # The lane that cached the conversation's latest response can continue from it.
+        response_id = next(
+            (
+                m.provider_response_id
+                for m in reversed(messages)
+                if isinstance(m, ModelResponse) and m.provider_name == self.system
+            ),
+            None,
+        )
+        try:
+            with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+                return await self._websocket.states[loop].reserve(
+                    connect, response_id, ResponsesWebSocket.effective_headers(self.client, headers)
+                )
+        except OpenAIError as exc:
+            # The SDK raises this before connecting when it can't authenticate a socket for the client, like Bedrock
+            # Mantle's SigV4 and native API key clients.
+            self._warn_websocket_unsupported(f'the OpenAI SDK could not configure the WebSocket connection: {exc}')
+            return None
+        except ModelConnectionError as exc:
+            # Reservation only opens a connection and selects a lane; it has not sent `response.create`.
+            self._warn_websocket_unsupported(f'the WebSocket connection could not be established: {exc}')
+            return None
 
     @property
     def system(self) -> str:
@@ -2995,12 +3633,31 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     @cached_property
     def profile(self) -> OpenAIModelProfile:
-        profile = cast(OpenAIModelProfile, super().profile)
+        profile = super().profile
         # A model can be more capable on the Responses API than on Chat Completions, and the two
         # share one profile: DeepSeek honors `text.format` of type `json_schema` here while its
         # Chat Completions endpoint rejects it, so the generic flag can only be raised per model class.
         if profile.get('openai_responses_supports_json_schema_output', False):
-            return cast(OpenAIModelProfile, merge_profile(profile, ModelProfile(supports_json_schema_output=True)))
+            profile = merge_profile(profile, ModelProfile(supports_json_schema_output=True))
+        if isinstance(self._provider, OAuthCredentialsProvider):
+            # These providers authenticate HTTP requests without configuring the SDK socket client.
+            profile = merge_profile(profile, OpenAIModelProfile(openai_responses_supports_websocket=False))
+        return cast(OpenAIModelProfile, profile)
+
+    def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
+        """Turn off Batch API and Responses WebSocket defaults for Azure clients and the gateway.
+
+        Every model resolves this, so it reads only the client's type and the provider's identity, never client state
+        such as URLs, which a mocked or partly built client may not have yet.
+        """
+        if _is_azure(self._provider.client, self._provider.name) or is_gateway_provider(self._provider):
+            # Azure batches need a batch deployment; the gateway doesn't serve the Batch API yet.
+            profile = merge_profile(profile, OpenAIModelProfile(openai_supports_batch_api=False))
+        # An Azure-named custom provider may advertise socket support with an ordinary OpenAI client.
+        if isinstance(self._provider.client, AsyncAzureOpenAI) or is_gateway_provider(self._provider):
+            # Responses WebSockets aren't verified on the Azure client, and the gateway's handshake fails with a 503
+            # while HTTP succeeds (live, 2026-10-22).
+            return merge_profile(profile, OpenAIModelProfile(openai_responses_supports_websocket=False))
         return profile
 
     @classmethod
@@ -3076,6 +3733,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             timestamp=_now_utc(),
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
+            canonical_system=self._canonical_system_stamp,
         )
 
     async def _responses_compact(
@@ -3088,7 +3746,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> responses.CompactedResponse | ModelResponse:
         """Call the OpenAI Responses compaction endpoint."""
         previous_response_id, messages = self._resolve_previous_response_id(
-            model_settings.get('openai_previous_response_id'), messages, allow_no_new_messages=True
+            model_settings.get('openai_previous_response_id'),
+            messages,
+            store=self._resolve_store(model_settings),
+            allow_no_new_messages=True,
         )
         # The endpoint doesn't take `configuration_update` items: the compacted window carries no effort change.
         # Removed after resolving the response to continue, which matches the history as stored.
@@ -3135,6 +3796,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         check_allow_model_requests()
+        if self._websocket_stream is None:
+            async with self._websocket_transport(messages, model_settings) as websocket_model:
+                if websocket_model is not None:
+                    return await websocket_model.request(messages, model_settings, model_request_parameters)
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -3151,7 +3816,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 self._process_response(response, settings, model_request_parameters),
                 self._resumed_history_to_record(messages[:-1], suspended, settings, model_request_parameters),
             )
-        elif self.profile.get('openai_responses_requires_streaming', False):
+        elif self._websocket_stream is not None or self.profile.get('openai_responses_requires_streaming', False):
             # Stream-only backend (e.g. Codex subscription auth): drain a forced stream via the
             # streamed-response path, which handles `response.completed` arriving with an empty `output`.
             # Note: if a higher-level path to enforce streaming is ever added, this branch belongs there instead.
@@ -3191,10 +3856,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> _Hasher | None:
         """The history a new response is created from, to digest with it, when a later request may continue from it.
 
-        A request's `instructions` are left out, since the server doesn't keep the top-level field with a response,
-        unless this request sends them as an input message instead, which the server does keep.
+        In WebSocket mode that's every response, including one sent over HTTP instead, since a later socket request
+        continues from it by default.
+        A request's top-level instructions are omitted unless sent as input.
         """
-        if settings.get('openai_previous_response_id') is None:
+        if settings.get('openai_previous_response_id') is None and settings.get('openai_transport') != 'websocket':
             return None
         return _history_hasher(
             messages,
@@ -3310,6 +3976,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         run_context: RunContext[Any] | None = None,
     ) -> AsyncGenerator[StreamedResponse]:
         check_allow_model_requests()
+        if self._websocket_stream is None:
+            async with self._websocket_transport(messages, model_settings) as websocket_model:
+                if websocket_model is not None:
+                    async with websocket_model.request_stream(
+                        messages, model_settings, model_request_parameters, run_context
+                    ) as streamed_response:
+                        yield streamed_response
+                    return
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -3506,6 +4180,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         finish_reason: FinishReason | None = None
         provider_details: dict[str, Any] = dict(self._process_provider_details(response) or {})
+        if (store := _echoed_store(response, model_settings)) is not None:
+            provider_details['store'] = store
         raw_finish_reason = details.reason if (details := response.incomplete_details) else response.status
         if raw_finish_reason:
             provider_details['finish_reason'] = raw_finish_reason
@@ -3541,6 +4217,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             timestamp=_now_utc(),
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
+            canonical_system=self._canonical_system_stamp,
             finish_reason=finish_reason,
             state=state,
             provider_details=provider_details or None,
@@ -3548,7 +4225,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     async def _process_streamed_response(
         self,
-        response: AsyncStream[responses.ResponseStreamEvent],
+        response: AsyncStream[responses.ResponseStreamEvent] | ResponsesWebSocketStream,
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
         *,
@@ -3558,7 +4235,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> OpenAIResponsesStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response: _utils.PeekableAsyncStream[
-            responses.ResponseStreamEvent, AsyncStream[responses.ResponseStreamEvent]
+            responses.ResponseStreamEvent, AsyncStream[responses.ResponseStreamEvent] | ResponsesWebSocketStream
         ] = _utils.PeekableAsyncStream(response)
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             first_chunk = await peekable_response.peek()
@@ -3591,6 +4268,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         tool_call_ids_are_response_scoped = self.profile.get(
             'openai_responses_tool_call_ids_are_response_scoped', False
         )
+        is_websocket = False
+        if self._websocket_stream is not None:
+            from ._openai_responses_websocket import ResponsesWebSocketStream
+
+            # A retry can overflow to HTTP after this request copy reserved a socket lane.
+            is_websocket = isinstance(response, ResponsesWebSocketStream)
         streamed_response = OpenAIResponsesStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=model_name,
@@ -3601,9 +4284,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             _provider_url=self._provider.base_url,
             _provider_timestamp=provider_timestamp,
             _history=history,
+            _is_websocket=is_websocket,
             _tool_call_ids_are_response_scoped=tool_call_ids_are_response_scoped,
             _process_provider_details=self._process_provider_details,
         )
+        streamed_response.canonical_system = self._canonical_system_stamp
         if tool_call_ids_are_response_scoped:
             # Response-scoped tool-call IDs are qualified with the response ID as chunks arrive, so the
             # ID must be known before iteration. This is only needed (and only set eagerly) for the
@@ -3882,11 +4567,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     @staticmethod
     def _build_request_options(
         model_settings: OpenAIResponsesModelSettings,
-    ) -> tuple[dict[str, str], float | HTTPX2Timeout | NotGiven]:
+    ) -> tuple[dict[str, str], _ResponsesTimeout]:
         extra_headers = dict(model_settings.get('extra_headers', {}))
         extra_headers.setdefault('User-Agent', get_user_agent())
         timeout = to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN))
         return extra_headers, timeout
+
+    def _resolve_websocket_timeout(self, timeout: _ResponsesTimeout) -> HTTPX2Timeout:
+        """Resolve at each use: request preparation may change settings after lane reservation."""
+        return HTTPX2Timeout(self.client.timeout if isinstance(timeout, NotGiven) else timeout)
 
     def _prepare_responses_settings(
         self,
@@ -3912,7 +4601,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         stream: Literal[True],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> AsyncStream[responses.ResponseStreamEvent]: ...
+    ) -> AsyncStream[responses.ResponseStreamEvent] | ResponsesWebSocketStream: ...
 
     async def _responses_create(
         self,
@@ -3920,7 +4609,129 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         stream: bool,
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ModelResponse:
+    ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ResponsesWebSocketStream | ModelResponse:
+        given_settings = model_settings
+        create_params, model_settings = await self._prepare_responses_create(
+            messages, model_settings, model_request_parameters
+        )
+        extra_headers, timeout = self._build_request_options(model_settings)
+
+        if (websocket_stream := self._websocket_stream) is not None:
+            if (span := current_model_request_span()) is not None:
+                span.set_attribute(_RESPONSES_TRANSPORT_ATTRIBUTE, 'websocket')
+            body: dict[str, object] = dict(create_params)
+            if (extra_body := model_settings.get('extra_body')) is not None:
+                if not _is_str_dict(extra_body):
+                    raise UserError('Responses WebSocket `extra_body` must have string keys.')
+                body.update(extra_body)
+            if any(key in body for key in ('stream', 'stream_id', 'type')):
+                raise UserError('Responses WebSocket `extra_body` cannot set `stream`, `stream_id`, or `type`.')
+            try:
+                if await websocket_stream.send(
+                    {key: value for key, value in body.items() if not isinstance(value, Omit)},
+                    self._resolve_websocket_timeout(timeout),
+                ):
+                    # Only an explicit rejection before the response starts may be retried. Prime the stream so
+                    # later errors, including failures after partial output, stay with the caller's retry policy.
+                    websocket_stream.pending_event = await anext(websocket_stream)
+                    return websocket_stream
+            except ModelHTTPError as exc:
+                max_retries = model_settings.get('max_retries', self.client.max_retries)
+                retry_after = exc.retry_after
+                if (
+                    websocket_stream.rejection_retries >= max_retries
+                    or not (exc.status_code in (408, 409, 429) or exc.status_code >= 500)
+                    or (exc.headers or {}).get('x-should-retry') == 'false'
+                    or (retry_after is not None and retry_after > _WEBSOCKET_RETRY_AFTER_LIMIT)
+                ):
+                    raise
+                await websocket_stream.close()
+                delay = retry_after
+                if delay is None:
+                    delay = min(
+                        _WEBSOCKET_RETRY_INITIAL_DELAY
+                        * 2 ** min(websocket_stream.rejection_retries, _WEBSOCKET_RETRY_MAX_EXPONENT),
+                        _WEBSOCKET_RETRY_MAX_DELAY,
+                    )
+                    delay *= 1 - _WEBSOCKET_RETRY_JITTER_RATIO * random()
+                await anyio.sleep(delay)
+                retry = await self._reserve_websocket_lane(asyncio.get_running_loop(), messages, given_settings)
+                if retry is None:
+                    http_settings: OpenAIResponsesModelSettings = {
+                        **given_settings,
+                        'max_retries': max_retries - websocket_stream.rejection_retries - 1,
+                    }
+                    return await _utils.replace_no_init(self, _websocket_stream=None)._responses_create(
+                        messages, stream, http_settings, model_request_parameters
+                    )
+                retry.rejection_retries = websocket_stream.rejection_retries + 1
+                return await self._create_on_websocket_lane(
+                    retry, messages, stream, given_settings, model_request_parameters
+                )
+            # The server closed the socket while it was idle, so nothing was sent: rebuild the request for a new socket
+            # once, since what it can continue from depends on the lane.
+            retry = (
+                None
+                if websocket_stream.retried
+                else await self._reserve_websocket_lane(asyncio.get_running_loop(), messages, given_settings)
+            )
+            if retry is None:
+                http_settings: OpenAIResponsesModelSettings = {
+                    **given_settings,
+                    'max_retries': max(
+                        0,
+                        model_settings.get('max_retries', self.client.max_retries) - websocket_stream.rejection_retries,
+                    ),
+                }
+                return await _utils.replace_no_init(self, _websocket_stream=None)._responses_create(
+                    messages, stream, http_settings, model_request_parameters
+                )
+            retry.retried = True
+            retry.rejection_retries = websocket_stream.rejection_retries
+            return await self._create_on_websocket_lane(
+                retry, messages, stream, given_settings, model_request_parameters
+            )
+
+        if model_settings.get('openai_transport') == 'websocket' and (span := current_model_request_span()) is not None:
+            span.set_attribute(_RESPONSES_TRANSPORT_ATTRIBUTE, 'http')
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
+            try:
+                return await with_max_retries(self.client, model_settings).responses.create(
+                    **create_params,
+                    stream=stream,
+                    background=model_settings.get('openai_background', OMIT),
+                    timeout=timeout,
+                    extra_headers=extra_headers,
+                    extra_body=model_settings.get('extra_body'),
+                )
+            except APIStatusError as e:
+                if model_response := _check_azure_content_filter(e, self.client, self.system, self.model_name):
+                    return model_response
+                raise
+
+    async def _create_on_websocket_lane(
+        self,
+        retry: ResponsesWebSocketStream,
+        messages: list[ModelRequest | ModelResponse],
+        stream: bool,
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ResponsesWebSocketStream | ModelResponse:
+        try:
+            return await _utils.replace_no_init(self, _websocket_stream=retry)._responses_create(
+                messages, stream, model_settings, model_request_parameters
+            )
+        except BaseException:
+            await retry.close()
+            raise
+
+    async def _prepare_responses_create(
+        self,
+        messages: list[ModelRequest | ModelResponse],
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[_ResponsesCreateParams, OpenAIResponsesModelSettings]:
+        """Build the body arguments of a create call, and the settings that carry its request options."""
         profile = self.profile
 
         include = self._build_include(model_settings)
@@ -3937,7 +4748,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         _keep_implicit_cache_without_breakpoints(model_settings, request_params.input)
         _drop_unsupported_params(profile, model_settings)
         store = self._resolve_store(model_settings)
-        extra_headers, timeout = self._build_request_options(model_settings)
 
         # The SDK's Responses `PromptCacheOptions` has keys ours doesn't expose, so the TypedDicts aren't assignable.
         prompt_cache_options: ResponsesPromptCacheOptions | Omit = OMIT
@@ -3945,50 +4755,41 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         comparison_response_id = self._prompt_cache_comparison_response_id(messages, model_settings)
         if cache_options is not None or comparison_response_id is not None:
             prompt_cache_options = (
-                ResponsesPromptCacheOptions(**cache_options)
+                # The SDK's `ttl` type only lists `'30m'`, but the Responses API also accepts `'12h'`.
+                cast(ResponsesPromptCacheOptions, {**cache_options})
                 if cache_options is not None
                 else ResponsesPromptCacheOptions()
             )
             if comparison_response_id is not None:
                 prompt_cache_options['comparison_response_id'] = comparison_response_id
 
-        with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
-            try:
-                return await with_max_retries(self.client, model_settings).responses.create(
-                    model=request_params.model,
-                    input=request_params.input,
-                    instructions=request_params.instructions,
-                    parallel_tool_calls=request_params.parallel_tool_calls,
-                    tools=request_params.tools,
-                    tool_choice=request_params.tool_choice,
-                    previous_response_id=request_params.previous_response_id,
-                    reasoning=request_params.reasoning,
-                    text=request_params.text,
-                    truncation=request_params.truncation,
-                    context_management=request_params.context_management,
-                    max_output_tokens=model_settings.get('max_tokens', OMIT),
-                    stream=stream,
-                    temperature=model_settings.get('temperature', OMIT),
-                    top_p=model_settings.get('top_p', OMIT),
-                    service_tier=_resolve_openai_service_tier(model_settings),
-                    conversation=request_params.conversation,
-                    top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
-                    store=store,
-                    user=model_settings.get('openai_user', OMIT),
-                    include=include or OMIT,
-                    prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
-                    prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
-                    prompt_cache_options=prompt_cache_options,
-                    background=model_settings.get('openai_background', OMIT),
-                    moderation=model_settings.get('openai_moderation', OMIT),
-                    timeout=timeout,
-                    extra_headers=extra_headers,
-                    extra_body=model_settings.get('extra_body'),
-                )
-            except APIStatusError as e:
-                if model_response := _check_azure_content_filter(e, self.client, self.system, self.model_name):
-                    return model_response
-                raise
+        create_params = _ResponsesCreateParams(
+            model=request_params.model,
+            input=request_params.input,
+            instructions=request_params.instructions,
+            parallel_tool_calls=request_params.parallel_tool_calls,
+            tools=request_params.tools,
+            tool_choice=request_params.tool_choice,
+            previous_response_id=request_params.previous_response_id,
+            reasoning=request_params.reasoning,
+            text=request_params.text,
+            truncation=request_params.truncation,
+            context_management=request_params.context_management,
+            max_output_tokens=model_settings.get('max_tokens', OMIT),
+            temperature=model_settings.get('temperature', OMIT),
+            top_p=model_settings.get('top_p', OMIT),
+            service_tier=_resolve_openai_service_tier(model_settings),
+            conversation=request_params.conversation,
+            top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
+            store=store,
+            user=model_settings.get('openai_user', OMIT),
+            include=include or OMIT,
+            prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
+            prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
+            prompt_cache_options=prompt_cache_options,
+            moderation=model_settings.get('openai_moderation', OMIT),
+        )
+        return create_params, model_settings
 
     def _resolve_store(self, model_settings: OpenAIResponsesModelSettings) -> bool | Omit | None:
         if self.profile.get('openai_responses_requires_store_false', False):
@@ -4081,6 +4882,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """Retrieve a background response by ID, optionally streaming."""
         include = self._build_include(model_settings, is_retrieve=True)
         extra_headers, timeout = self._build_request_options(model_settings)
+        if model_settings.get('openai_transport') == 'websocket' and (span := current_model_request_span()) is not None:
+            span.set_attribute(_RESPONSES_TRANSPORT_ATTRIBUTE, 'http')
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
                 return await with_max_retries(self.client, model_settings).responses.retrieve(
@@ -4353,7 +5156,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         setting: str | None,
         messages: list[ModelMessage],
         *,
+        store: bool | Omit | None = OMIT,
         allow_no_new_messages: bool = False,
+        websocket_mode: bool = False,
     ) -> tuple[str | None, list[ModelMessage]]:
         # Resolve the effective `previous_response_id` and trim already-stored messages.
         #
@@ -4369,7 +5174,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if setting is None:
             return None, messages
         auto_id, trimmed, at_boundary = self._get_previous_response_id_and_new_messages(
-            messages, allow_no_new_messages=allow_no_new_messages
+            messages, store=store, allow_no_new_messages=allow_no_new_messages, websocket_mode=websocket_mode
         )
         if auto_id is not None:
             return auto_id, trimmed
@@ -4382,7 +5187,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> str | None:
         """The response to compare this request against for prompt cache diagnostics, if they should be requested.
 
-        That is the most recent response from this provider. OpenAI rejects an ID that doesn't start with `resp` with
+        That is the most recent response from this provider, unless a later compaction satisfies `_is_compaction_boundary`.
+        OpenAI rejects an ID that doesn't start with `resp` with
         a 400, so a response from an endpoint that issues other IDs is skipped. So is one from the `/compact`
         endpoint: like `previous_response_id`, it's a boundary, and a request after it starts a new prefix anyway.
         """
@@ -4391,38 +5197,84 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         ):
             return None
         for message in reversed(messages):
-            if isinstance(message, ModelResponse) and message.provider_name == self.system:
-                if message.provider_details and message.provider_details.get('compaction'):
-                    return None
+            if isinstance(message, ModelResponse) and self._is_compaction_boundary(message):
+                return None
+            if isinstance(message, ModelResponse) and self.accepts_server_state(message):
                 response_id = message.provider_response_id
+                if not self._is_response_id_reachable(
+                    message,
+                    self._resolve_store(model_settings),
+                    websocket_mode=model_settings.get('openai_transport') == 'websocket',
+                ):
+                    return None
                 return response_id if response_id and response_id.startswith('resp_') else None
         return None
 
+    def _is_compaction_boundary(self, response: ModelResponse) -> bool:
+        """Keep accepted inline server state chainable; otherwise use the portable compaction boundary."""
+        if self.accepts_server_state(response):
+            return bool(response.provider_details and response.provider_details.get('compaction'))
+        return any(
+            isinstance(part, CompactionPart)
+            and _compaction_part_is_wire_boundary(
+                response,
+                part,
+                self.accepts_stateless_artifacts,
+                requires_encrypted_content=self.compaction_requires_encrypted_content,
+            )
+            for part in response.parts
+        )
+
+    def _is_response_id_reachable(
+        self, response: ModelResponse, store: bool | Omit | None, *, websocket_mode: bool = False
+    ) -> bool:
+        """Whether a request with the resolved `openai_store` value `store` can continue from `response`.
+
+        A Responses WebSocket keeps the latest response on each lane in its cache, so a request on that lane can always
+        continue from it. A response the socket created without storing it is kept nowhere else. Any other response
+        is reachable wherever it's stored, as over HTTP, except from a socket request that doesn't store either: that
+        conversation may never have been stored, as with Zero Data Retention, so only the lane's cache is relied on.
+        """
+        stream = self._websocket_stream
+        if stream is not None:
+            response_id = response.provider_response_id
+            if response_id is not None and stream.lane.latest_response_id == response_id:
+                return True
+        details = response.provider_details or {}
+        if (stream is not None or websocket_mode) and (store is False or details.get('store') is False):
+            return False
+        return details.get('transport') != 'websocket' or details.get('store') is True
+
     def _get_previous_response_id_and_new_messages(
-        self, messages: list[ModelMessage], *, allow_no_new_messages: bool = False
+        self,
+        messages: list[ModelMessage],
+        *,
+        store: bool | Omit | None = OMIT,
+        allow_no_new_messages: bool = False,
+        websocket_mode: bool = False,
     ) -> tuple[str | None, list[ModelMessage], bool]:
         # Find the most recent `provider_response_id` from messages produced by this
         # provider, and return it along with the messages that came after it (which
         # still need to be sent as new input). When nothing suitable is found, returns
         # `(None, messages)` with the full list unchanged. The third element says whether
-        # the most recent response from this provider is a chain boundary (a compaction, or
-        # a changed history), which a concrete seed must not cross either.
+        # retained history has a chain boundary (an accepted compaction, or changed
+        # history from this provider), which a concrete seed must not cross either.
         previous_response_id = None
         trimmed_messages: list[ModelMessage] = []
         for index in range(len(messages) - 1, -1, -1):
             m = messages[index]
-            if isinstance(m, ModelResponse) and m.provider_name == self.system:
-                # Responses from the stateless `/compact` endpoint can't be used as
-                # `previous_response_id`, so the compaction acts as a hard chain boundary:
-                # the next request must pass the `CompactionPart` via the `input` array
-                # (handled by `_map_messages`) without a `previous_response_id`.
-                if m.provider_details and m.provider_details.get('compaction'):
-                    return None, messages, True
+            if isinstance(m, ModelResponse) and self._is_compaction_boundary(m):
+                # Continue from the compaction item instead of restoring the older server-side context.
+                return None, messages, True
+            if isinstance(m, ModelResponse) and self.accepts_server_state(m):
                 # The server continues from this response and the history it was created with, so if
                 # either has changed since (a history processor redacted or trimmed them, say),
                 # continuing would silently drop the change: resend everything instead.
                 if self._history_changed(m, messages[:index]):
                     return None, messages, True
+                # A response cached only on another socket, or one that's gone, means replaying the history.
+                if not self._is_response_id_reachable(m, store, websocket_mode=websocket_mode):
+                    return None, messages, False
                 previous_response_id = m.provider_response_id
                 break
             else:
@@ -4448,7 +5300,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             conversation_id, messages = self._resolve_conversation_id(conversation_id_setting, messages)
             return None, conversation_id, messages
 
-        previous_response_id, messages = self._resolve_previous_response_id(previous_response_id_setting, messages)
+        previous_response_id, messages = self._resolve_previous_response_id(
+            previous_response_id_setting,
+            messages,
+            store=self._resolve_store(model_settings),
+            websocket_mode=model_settings.get('openai_transport') == 'websocket',
+        )
         return previous_response_id, None, messages
 
     def _resolve_conversation_id(
@@ -4476,7 +5333,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> tuple[str | None, list[ModelMessage]]:
         trimmed_messages: list[ModelMessage] = []
         for m in reversed(messages):
-            if isinstance(m, ModelResponse) and m.provider_name == self.system:
+            if isinstance(m, ModelResponse) and self.accepts_server_state(m):
                 candidate = m.provider_details and m.provider_details.get('conversation_id')
                 if (
                     pydantic_ai_conversation_id is not None
@@ -4634,12 +5491,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
-                response_from_same_provider = message.provider_name == self.system
+                # Server-side state is only sent back to the endpoint that created it. A part from this provider in a
+                # response from another (or none) has no endpoint of its own, so it's judged by name as before.
+                same_endpoint = message.provider_name != self.system or self.accepts_server_state(message)
+                response_from_same_provider = message.provider_name == self.system and same_endpoint
                 message_item: responses.ResponseOutputMessageParam | None = None
                 reasoning_item: responses.ResponseReasoningItemParam | None = None
                 web_search_item: responses.ResponseFunctionWebSearchParam | None = None
                 file_search_item: responses.ResponseFileSearchToolCallParam | None = None
                 code_interpreter_item: responses.ResponseCodeInterpreterToolCallParam | None = None
+                response_start = len(openai_messages)
+                carried_thinkings: list[str] = []
                 response_parts: Sequence[ModelResponsePart] = message.parts
                 if not profile.get('openai_responses_supports_interleaved_function_calls', True):
                     response_parts = _group_settled_portable_function_calls(
@@ -4649,11 +5511,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         client_tool_search_active=client_tool_search_active,
                     )
                 for item in response_parts:
-                    from_same_provider = item.provider_name == self.system or (
-                        item.provider_name is None and message.provider_name == self.system
+                    from_same_provider = same_endpoint and (
+                        item.provider_name == self.system
+                        or (item.provider_name is None and message.provider_name == self.system)
                     )
-                    response_id_from_same_provider = message.provider_name == self.system or (
-                        message.provider_name is None and item.provider_name == self.system
+                    response_id_from_same_provider = same_endpoint and (
+                        message.provider_name == self.system
+                        or (message.provider_name is None and item.provider_name == self.system)
                     )
                     response_from_same_provider |= response_id_from_same_provider
                     # Two distinct gates. For native tool items whose state lives server-side
@@ -4759,7 +5623,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                 param['namespace'] = synthesized_ns
                             openai_messages.append(param)
                     elif isinstance(item, NativeToolCallPart):
-                        if from_same_provider and item.tool_name == ToolSearchTool.kind and item.tool_call_id:
+                        # Hosted tool-search items carry their state inline, so they replay to any provider
+                        # that accepts this one's stateless data; their IDs stay with the same provider.
+                        if (
+                            (from_same_provider or self.accepts_stateless_artifacts(message, item))
+                            and item.tool_name == ToolSearchTool.kind
+                            and item.tool_call_id
+                        ):
                             call_id, status, _ = _tool_search_replay_details(item)
                             tool_search_call = responses.response_input_item_param.ToolSearchCall(
                                 call_id=call_id,
@@ -4862,7 +5732,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
                     elif isinstance(item, NativeToolReturnPart):
                         if (
-                            from_same_provider
+                            (from_same_provider or self.accepts_stateless_artifacts(message, item))
                             and isinstance(item, NativeToolSearchReturnPart)
                             and not _lacks_tool_search_output_identity(item)
                         ):
@@ -4910,15 +5780,20 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         # collide with one of those sentinels without carrying native wire data.
                         synthetic_chat_reasoning = item.id in ('content', 'reasoning', 'reasoning_content')
                         native_reasoning = not synthetic_chat_reasoning or bool(item.signature or raw_content)
-                        if item.id and native_reasoning and (should_send_item_id or raw_content):
-                            signature: str | None = None
-                            if (
-                                item.signature
-                                and item.provider_name == self.system
-                                and profile.get('openai_supports_encrypted_reasoning_content', False)
-                            ):
-                                signature = item.signature
-
+                        # Encrypted reasoning carries its state inline, so it's also sent back to a provider
+                        # that accepts this one's encrypted data, with the item ID it was issued under.
+                        signature: str | None = None
+                        if (
+                            item.signature
+                            and profile.get('openai_supports_encrypted_reasoning_content', False)
+                            and self.accepts_stateless_artifacts(message, item)
+                        ):
+                            signature = item.signature
+                        if (
+                            item.id
+                            and native_reasoning
+                            and (should_send_item_id or raw_content or (send_item_ids and signature))
+                        ):
                             if (reasoning_item is None or reasoning_item['id'] != item.id) and (
                                 signature or item.content or raw_content
                             ):  # pragma: no branch
@@ -4945,15 +5820,18 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                     ReasoningContent(text=text, type='reasoning_text') for text in raw_content
                                 ]
                         else:
-                            start_tag, end_tag = profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
-                            openai_messages.append(
-                                responses.EasyInputMessageParam(
-                                    role='assistant', content='\n'.join([start_tag, item.content, end_tag])
+                            thinking_text, carry_in_user_turn = render_replayed_thinking(item.content, profile)
+                            if not carry_in_user_turn:
+                                openai_messages.append(
+                                    responses.EasyInputMessageParam(role='assistant', content=thinking_text)
                                 )
-                            )
+                            elif item.content:
+                                # An empty wrapper in the user turn would tell the model the assistant thought nothing.
+                                carried_thinkings.append(thinking_text)
                     elif isinstance(item, CompactionPart):
+                        # The same predicate `_trim_before_compaction` drops history before a compaction part by.
                         if (
-                            item.provider_name == self.system
+                            self.accepts_stateless_artifacts(message, item)
                             and item.provider_details
                             and 'encrypted_content' in item.provider_details
                         ):
@@ -4969,6 +5847,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         raise _unconverted_speech_part_error()
                     else:
                         assert_never(item)
+                if carried_thinkings:
+                    # See `ModelProfile.mimics_assistant_message_formatting`: reasoning replayed in an
+                    # assistant turn teaches the model to write thinking tags into its visible answers.
+                    openai_messages.insert(
+                        response_start,
+                        responses.EasyInputMessageParam(role='user', content='\n\n'.join(carried_thinkings)),
+                    )
                 response_id = (
                     message.provider_response_id
                     if response_scoped_tool_call_ids and response_from_same_provider
@@ -5391,9 +6276,9 @@ class OpenAIStreamedResponse(StreamedResponse):
 
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the mapping.
         """
-        # Handle the text part of the response
-        content = choice.delta.content
-        if content:
+        # Handle the text part of the response. Some OpenAI-compatible servers stream it as a list of parts.
+        content = _join_text_content_parts(choice.delta.content)
+        if isinstance(content, str) and content:
             self._raw_text_content += content
             emitted = False
             for event in self._parts_manager.handle_text_delta(
@@ -5431,18 +6316,17 @@ class OpenAIStreamedResponse(StreamedResponse):
         """
         for dtc in choice.delta.tool_calls or []:
             provider_details = _map_tool_call_provider_details(dtc)
-            maybe_event = self._parts_manager.handle_tool_call_delta(
+            for event in self._parts_manager.handle_tool_call_delta_events(
                 vendor_part_id=dtc.index,
                 tool_name=dtc.function.name if dtc.function is not None else None,
                 args=dtc.function.arguments if dtc.function is not None else None,
                 tool_call_id=dtc.id,
                 provider_name=self.provider_name if provider_details else None,
                 provider_details=provider_details,
-            )
-            if maybe_event is not None:
-                if isinstance(maybe_event, PartStartEvent):
+            ):
+                if isinstance(event, PartStartEvent):
                     self._advance_part_boundary('tool')
-                yield maybe_event
+                yield event
 
     def _map_provider_details(self, chunk: ChatCompletionChunk) -> dict[str, Any] | None:
         """Hook that generates the provider details from chunk content.
@@ -5515,6 +6399,7 @@ class _ModelResponseStreamedResponse(StreamedResponse):
         self._usage = self._model_response.usage
         self.provider_response_id = self._model_response.provider_response_id
         self.provider_details = self._model_response.provider_details
+        self.canonical_system = self._model_response.canonical_system
         self.finish_reason = self._model_response.finish_reason
         self.state = self._model_response.state
         self.metadata = self._model_response.metadata
@@ -5557,7 +6442,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     _model_name: OpenAIModelName
     _model_settings: OpenAIResponsesModelSettings
-    _response: _utils.PeekableAsyncStream[responses.ResponseStreamEvent, AsyncStream[responses.ResponseStreamEvent]]
+    _response: _utils.PeekableAsyncStream[
+        responses.ResponseStreamEvent, AsyncStream[responses.ResponseStreamEvent] | ResponsesWebSocketStream
+    ]
     _provider_name: str
     _model_id_namespace: str
     _provider_url: str
@@ -5571,9 +6458,14 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _last_sequence_number: int | None = field(default=None, init=False)
     _history: _Hasher | None = None
     """The history this response was created from, digested with its parts as `ModelResponse.history_digest`."""
+    # Custom HTTP clients can return streams outside the SDK's AsyncStream class.
+    _is_websocket: bool = False
 
     def get(self) -> ModelResponse:
-        return _with_history_digest(super().get(), self._history)
+        response = super().get()
+        if self._is_websocket:
+            response.provider_details = {**(response.provider_details or {}), 'transport': 'websocket'}
+        return _with_history_digest(response, self._history)
 
     def _set_state(self, status: ResponseStatus | None) -> None:
         # `_track_background` stamps the `background` marker from `response.background` on every status
@@ -5611,10 +6503,16 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 **(self.provider_details or {}),
                 'prompt_cache_diagnostics': diagnostics.model_dump(mode='json'),
             }
+        if (store := _echoed_store(response, self._model_settings)) is not None:
+            self.provider_details = {**(self.provider_details or {}), 'store': store}
         # Merged last so built-in provider details win on collisions, as in `_process_response`; those set later in
         # the stream, like `finish_reason`, do too.
         if hook_provider_details := self._process_provider_details(response):
             self.provider_details = {**hook_provider_details, **(self.provider_details or {})}
+
+    def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
+        # Closing a WebSocket response interrupts its pending read with a connection error at the `read` phase.
+        return (ModelConnectionError,) if self._is_websocket else super().get_stream_cancel_errors()
 
     async def close_stream(self) -> None:
         await self._response.source.close()
@@ -5658,23 +6556,23 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     provider_details=provider_details,
                 )
 
-            def finalize_function_call(item_id: str, final_args: str) -> ModelResponseStreamEvent | None:
+            def finalize_function_call(item_id: str, final_args: str) -> Iterator[ModelResponseStreamEvent]:
                 if item_id in finalized_function_calls or not final_args:
-                    return None
+                    return
                 existing_part = self._parts_manager.get_part_by_vendor_id(item_id)
                 if not isinstance(existing_part, ToolCallPart):
                     # A stream resumed after `output_item.added` has no complete part yet;
                     # `output_item.done` creates it from the full item.
-                    return None
+                    return
 
                 received_args = function_call_args.get(item_id, '')
                 if received_args == final_args:
                     finalized_function_calls.add(item_id)
-                    return None
+                    return
 
                 if final_args.startswith(received_args):
                     # The Codex backend can send arguments only in the done events.
-                    event = self._parts_manager.handle_tool_call_delta(
+                    yield from self._parts_manager.handle_tool_call_delta_events(
                         vendor_part_id=item_id,
                         args=final_args[len(received_args) :],
                     )
@@ -5689,11 +6587,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         'Please open an issue at https://github.com/pydantic/pydantic-ai/issues.',
                         UserWarning,
                     )
-                    return None
+                    return
 
                 function_call_args[item_id] = final_args
                 finalized_function_calls.add(item_id)
-                return event
 
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
@@ -5794,15 +6691,14 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     # skip its deltas and let `output_item.done` create it; never mutate finalized args.
                     if chunk.item_id in function_call_args and chunk.item_id not in finalized_function_calls:
                         function_call_args[chunk.item_id] += chunk.delta
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                        for event in self._parts_manager.handle_tool_call_delta_events(
                             vendor_part_id=chunk.item_id,
                             args=chunk.delta,
-                        )
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
+                        ):
+                            yield event
 
                 elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDoneEvent):
-                    if event := finalize_function_call(chunk.item_id, chunk.arguments):
+                    for event in finalize_function_call(chunk.item_id, chunk.arguments):
                         yield event
 
                 elif isinstance(chunk, (responses.ResponseInProgressEvent, responses.ResponseQueuedEvent)):
@@ -5866,19 +6762,15 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         args_json = call_part.args_as_json_str()
                         # Drop the final `"}` so that we can add code deltas
                         args_json_delta = args_json[:-2]
-                        assert args_json_delta.endswith('"code":"'), (
-                            f'Expected {args_json_delta!r} to end in `"code":"`'
-                        )
 
                         yield self._parts_manager.handle_part(
                             vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
                         )
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                        for event in self._parts_manager.handle_tool_call_delta_events(
                             vendor_part_id=f'{chunk.item.id}-call',
                             args=args_json_delta,
-                        )
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
+                        ):
+                            yield event
                     elif isinstance(chunk.item, responses.response_output_item.ImageGenerationCall):
                         call_part, _, _ = _map_image_generation_tool_call(chunk.item, self.provider_name)
                         yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
@@ -5895,12 +6787,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         yield self._parts_manager.handle_part(
                             vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
                         )
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                        for event in self._parts_manager.handle_tool_call_delta_events(
                             vendor_part_id=f'{chunk.item.id}-call',
                             args=args_json_delta,
-                        )
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
+                        ):
+                            yield event
                     elif isinstance(chunk.item, responses.response_output_item.McpListTools):
                         call_part, _ = _map_mcp_list_tools(chunk.item, self.provider_name)
                         yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
@@ -5923,8 +6814,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         if not isinstance(self._parts_manager.get_part_by_vendor_id(item_id), ToolCallPart):
                             yield handle_function_call_part(chunk.item)
                             finalized_function_calls.add(item_id)
-                        elif event := finalize_function_call(item_id, chunk.item.arguments):
-                            yield event
+                        else:
+                            for event in finalize_function_call(item_id, chunk.item.arguments):
+                                yield event
                     elif isinstance(chunk.item, responses.ResponseReasoningItem):
                         if signature := chunk.item.encrypted_content:  # pragma: no branch
                             # Add the signature to the part corresponding to the first summary/raw CoT
@@ -5947,47 +6839,18 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     elif isinstance(chunk.item, responses.ResponseFunctionWebSearch):
                         call_part, return_part = _map_web_search_tool_call(chunk.item, self.provider_name)
 
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                        for event in self._parts_manager.handle_tool_call_delta_events(
                             vendor_part_id=f'{chunk.item.id}-call',
                             args=call_part.args,
-                        )
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
+                        ):
+                            yield event
 
                         yield self._parts_manager.handle_part(
                             vendor_part_id=f'{chunk.item.id}-return', part=return_part
                         )
                     elif isinstance(chunk.item, responses.ResponseToolSearchCall):
-                        if chunk.item.execution == 'client':
-                            # Feed the final args through the tool-call delta path so the
-                            # part manager resolves its pending args; there's no paired
-                            # `tool_search_output` — the return part is produced by the
-                            # local tool runner after the stream completes.
-                            #
-                            # OpenAI Responses streaming sometimes assigns a different
-                            # `call_id` between the `output_item.added` and `output_item.done`
-                            # frames for client-executed `tool_search_call`s; the server's
-                            # log of record is the latter. Pass it through here so the
-                            # `tool_search_output` we replay on the next turn references the
-                            # call_id the API actually expects.
-                            client_call_part = _map_client_tool_search_call(chunk.item, self.provider_name)
-                            client_args_json = client_call_part.args_as_json_str()
-                            maybe_event = self._parts_manager.handle_tool_call_delta(
-                                vendor_part_id=chunk.item.id,
-                                args=client_args_json,
-                                tool_call_id=client_call_part.tool_call_id,
-                            )
-                            if maybe_event is not None:  # pragma: no branch
-                                yield maybe_event
-                        else:
-                            call_part = _map_tool_search_call(chunk.item, self.provider_name)
-                            maybe_event = self._parts_manager.handle_tool_call_delta(
-                                vendor_part_id=f'{chunk.item.id}-call',
-                                args=cast('str | dict[str, Any] | None', call_part.args),
-                                provider_details=call_part.provider_details,
-                            )
-                            if maybe_event is not None:  # pragma: no branch
-                                yield maybe_event
+                        for event in self._handle_tool_search_call_done(chunk.item):
+                            yield event
                     elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):
                         if chunk.item.execution == 'server':
                             call_id = _match_tool_search_output_to_call(
@@ -6004,12 +6867,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     elif isinstance(chunk.item, responses.ResponseFileSearchToolCall):
                         call_part, return_part = _map_file_search_tool_call(chunk.item, self.provider_name)
 
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                        for event in self._parts_manager.handle_tool_call_delta_events(
                             vendor_part_id=f'{chunk.item.id}-call',
                             args=call_part.args,
-                        )
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
+                        ):
+                            yield event
 
                         yield self._parts_manager.handle_part(
                             vendor_part_id=f'{chunk.item.id}-return', part=return_part
@@ -6180,20 +7042,18 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
                 elif isinstance(chunk, responses.ResponseCodeInterpreterCallCodeDeltaEvent):
                     json_args_delta = to_json(chunk.delta).decode()[1:-1]  # Drop the surrounding `"`
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                    for event in self._parts_manager.handle_tool_call_delta_events(
                         vendor_part_id=f'{chunk.item_id}-call',
                         args=json_args_delta,
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    ):
+                        yield event
 
                 elif isinstance(chunk, responses.ResponseCodeInterpreterCallCodeDoneEvent):
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                    for event in self._parts_manager.handle_tool_call_delta_events(
                         vendor_part_id=f'{chunk.item_id}-call',
                         args='"}',
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    ):
+                        yield event
 
                 elif isinstance(chunk, responses.ResponseCodeInterpreterCallCompletedEvent):
                     pass  # there's nothing we need to do here
@@ -6227,20 +7087,18 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item_id}-file', part=file_part)
 
                 elif isinstance(chunk, responses.ResponseMcpCallArgumentsDoneEvent):
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                    for event in self._parts_manager.handle_tool_call_delta_events(
                         vendor_part_id=f'{chunk.item_id}-call',
                         args='}',
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    ):
+                        yield event
 
                 elif isinstance(chunk, responses.ResponseMcpCallArgumentsDeltaEvent):
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                    for event in self._parts_manager.handle_tool_call_delta_events(
                         vendor_part_id=f'{chunk.item_id}-call',
                         args=chunk.delta,
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    ):
+                        yield event
 
                 elif isinstance(chunk, responses.ResponseMcpListToolsInProgressEvent):
                     pass  # there's nothing we need to do here
@@ -6287,6 +7145,37 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 **(self.provider_details or {}),
                 'last_sequence_number': self._last_sequence_number,
             }
+
+    def _handle_tool_search_call_done(
+        self, item: responses.ResponseToolSearchCall
+    ) -> Iterator[ModelResponseStreamEvent]:
+        """Complete the tool search call part `output_item.added` started with the item's final arguments."""
+        if item.execution == 'client':
+            # Feed the final args through the tool-call delta path so the
+            # part manager resolves its pending args; there's no paired
+            # `tool_search_output` — the return part is produced by the
+            # local tool runner after the stream completes.
+            #
+            # OpenAI Responses streaming sometimes assigns a different
+            # `call_id` between the `output_item.added` and `output_item.done`
+            # frames for client-executed `tool_search_call`s; the server's
+            # log of record is the latter. Pass it through here so the
+            # `tool_search_output` we replay on the next turn references the
+            # call_id the API actually expects.
+            client_call_part = _map_client_tool_search_call(item, self.provider_name)
+            client_args_json = client_call_part.args_as_json_str()
+            yield from self._parts_manager.handle_tool_call_delta_events(
+                vendor_part_id=item.id,
+                args=client_args_json,
+                tool_call_id=client_call_part.tool_call_id,
+            )
+        else:
+            call_part = _map_tool_search_call(item, self.provider_name)
+            yield from self._parts_manager.handle_tool_call_delta_events(
+                vendor_part_id=f'{item.id}-call',
+                args=cast('str | dict[str, Any] | None', call_part.args),
+                provider_details=call_part.provider_details,
+            )
 
     def _store_conversation_id(self, response: responses.Response) -> None:
         if response.conversation:
@@ -7361,3 +8250,13 @@ def _map_mcp_call(
             provider_name=provider_name,
         ),
     )
+
+
+_REMOVED_IN_V2 = {
+    'OpenAIModel': 'use `OpenAIChatModel` (the same Chat Completions API), or `OpenAIResponsesModel`.',
+    'OpenAIModelSettings': 'use `OpenAIChatModelSettings`.',
+}
+
+# Kept from type checkers, which would otherwise accept any name on this module.
+if not TYPE_CHECKING:  # pragma: no branch
+    __getattr__ = removed_names_getattr(__name__, _REMOVED_IN_V2)

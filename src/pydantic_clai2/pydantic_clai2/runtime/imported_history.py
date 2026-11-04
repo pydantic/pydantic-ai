@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Iterator, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterator, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from itertools import islice
 from pathlib import Path
@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     ModelResponsePart,
     TextContent,
+    TextPart,
     ToolCallPart,
     ToolReturnContent,
     ToolReturnPart,
@@ -61,6 +62,8 @@ class Header:
     title: str
     named: bool = False
     """Whether `title` is a name the other agent gave the session, rather than its first prompt."""
+    listed: bool = True
+    """Whether the browser lists the session; one it does not, such as a script's, can still be imported by ID."""
 
 
 def records(path: Path, *, limit: int | None = None) -> Iterator[JsonObject]:
@@ -143,6 +146,33 @@ def imported_context(
     return UserPromptPart([TextContent(content, metadata=metadata), *files], timestamp=at)
 
 
+def framed(history: Sequence[ModelMessage], *, source: str, opening: str, closing: str) -> list[ModelMessage]:
+    """`history` between notes on the change of harness, as `imported_context`, or nothing when there is no history."""
+    built = list(history)
+    if not built:
+        return []
+    first = built[0]
+    start = imported_context(opening, source=source, kind='import_start', at=first.timestamp or timestamp(None))
+    end = imported_context(closing, source=source, kind='import_end', at=built[-1].timestamp or timestamp(None))
+    if isinstance(first, ModelRequest):
+        built[0] = replace(first, parts=[start, *first.parts])
+    else:
+        built.insert(0, ModelRequest(parts=[start], timestamp=start.timestamp))
+    if isinstance(last := built[-1], ModelRequest):
+        built[-1] = replace(last, parts=[*last.parts, end])
+    else:
+        built.append(ModelRequest(parts=[end], timestamp=end.timestamp))
+    return built
+
+
+def final_answer(history: Sequence[ModelMessage]) -> str | None:
+    """The text of the reply that ends `history`, or `None` when it ends on work not yet answered, or a call."""
+    last = history[-1] if history else None
+    if not isinstance(last, ModelResponse) or last.tool_calls:
+        return None
+    return '\n\n'.join(part.content for part in last.parts if isinstance(part, TextPart))
+
+
 def is_typed_prompt(part: ModelRequestPart) -> TypeGuard[UserPromptPart]:
     """Whether `part` is a prompt the user typed, not a task's report or context another agent's harness added."""
     return isinstance(part, UserPromptPart) and not is_task_report(part) and not is_imported_context(part)
@@ -150,11 +180,17 @@ def is_typed_prompt(part: ModelRequestPart) -> TypeGuard[UserPromptPart]:
 
 def is_imported_context(part: ModelRequestPart) -> bool:
     """Whether `part` is `imported_context`, rather than something the user typed."""
+    return imported_kind(part) is not None
+
+
+def imported_kind(part: ModelRequestPart) -> str | None:
+    """The `kind` of `imported_context`, such as an attachment type, or `None` for any other part."""
     if not isinstance(part, UserPromptPart) or isinstance(part.content, str) or not part.content:
-        return False
+        return None
     first = part.content[0]
-    metadata: object = first.metadata if isinstance(first, TextContent) else None
-    return isinstance(metadata, dict) and cast(dict[str, object], metadata).get('origin') == IMPORTED_CONTEXT_ORIGIN
+    raw: object = first.metadata if isinstance(first, TextContent) else None
+    metadata = cast(dict[str, object], raw) if isinstance(raw, dict) else {}
+    return text(metadata.get('kind')) if metadata.get('origin') == IMPORTED_CONTEXT_ORIGIN else None
 
 
 @dataclass(kw_only=True)
@@ -224,6 +260,30 @@ class HistoryBuilder:
         response = next((turn for turn in reversed(self._turns) if isinstance(turn, _Response)), None)
         if response is not None:
             response.usage = usage
+
+    def rollback(self, turns: int, *, starts: Callable[[ModelRequestPart], bool], ahead: Callable[[str], bool]) -> None:
+        """Drop the last `turns` turns, each begun by a part that `starts` one.
+
+        The context the harness added `ahead` of a turn, by its `kind`, goes with it, except ahead of the
+        first turn: that is the session's own, which rolling back every turn keeps.
+        """
+        found = [
+            (index, turn, position)
+            for index, turn in enumerate(self._turns)
+            if isinstance(turn, _Request)
+            for position, part in enumerate(turn.parts)
+            if starts(part)
+        ]
+        if turns <= 0 or not found:
+            return
+        index, request, position = found[-min(turns, len(found))]
+        while turns < len(found) and position and ahead(imported_kind(request.parts[position - 1]) or ''):
+            position -= 1
+        # Results of calls from before the turn stay: they answer the reply the turn followed.
+        del self._turns[index + 1 :]
+        del request.parts[position:]
+        if not request.parts:
+            self._turns.pop()
 
     def reset(self) -> None:
         """Forget everything so far, as compaction replaces the history the model sees."""

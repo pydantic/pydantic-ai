@@ -14,6 +14,7 @@ from _pytest.mark.structures import ParameterSet
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, AgentRunResultEvent, RunContext, capture_run_messages
+from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
 from pydantic_ai._instructions import recorded_prefix
 from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, ProcessHistory
 from pydantic_ai.exceptions import ModelHTTPError, UserError
@@ -49,6 +50,11 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RequestUsage
+from tests.function_model_prefix import (
+    HOOK_REWRITES_REQUEST,
+    INSTRUCTIONS_CHANGE_MID_RUN,
+    REQUEST_SCOPED_PROMPT_DROPPED,
+)
 
 from .conftest import RequestCapture, try_import
 from .continuation_utils import ScriptedContinuationModel, scripted_response
@@ -148,6 +154,7 @@ class ReturnedStateCapability(AbstractCapability[State]):
         return state
 
 
+@pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST)
 async def test_instruction_updates_hook_unset_preserves_recorded_text():
     captured: list[tuple[str | None, list[InstructionPart] | None]] = []
 
@@ -190,6 +197,7 @@ async def test_instruction_updates_hook_unset_preserves_recorded_text():
     ] == ['C']
 
 
+@pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST)
 async def test_instruction_updates_hook_unset_ends_a_window_without_blocks():
     """Unsetting the parts ends a window that opened with no blocks too, so the changes recorded in it stop applying."""
     received: list[list[str]] = []
@@ -288,6 +296,7 @@ A later <context> element with the same id replaces the earlier one and stays in
 
 
 @pytest.mark.parametrize('rewrite', ['request-only-trailing-request', 'request-only-copy-of-tail'])
+@pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST)
 async def test_instruction_updates_persist_when_a_hook_ends_the_request_in_a_request_only_message(rewrite: str):
     """A baseline recorded only on a request-only tail would never reach history, so every step would rewrite the prefix."""
     prefixes: list[str | None] = []
@@ -331,6 +340,46 @@ async def test_instruction_updates_persist_when_a_hook_ends_the_request_in_a_req
         for message in result.all_messages()
         if isinstance(message, ModelRequest)
     ] == snapshot([(True, []), (False, ['A+']), (False, ['A++'])])
+
+
+@pytest.mark.parametrize('replaced', ['request-messages', 'history'])
+async def test_instruction_updates_hook_rewritten_parts_recorded_on_replaced_messages(replaced: str):
+    """History records the instructions a hook sent, also after the hook replaced the request in it with a copy."""
+    sent: list[str | None] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        sent.append(info.instructions)
+        if len(sent) < 2:
+            return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    def manage(ctx: RunContext[None], request: ModelRequestContext) -> ModelRequestContext:
+        copies = [replace(message) for message in request.messages]
+        if replaced == 'history':
+            ctx.messages[:] = copies
+        parts = [
+            replace(part, content=part.content.replace('base', 'managed'))
+            for part in request.model_request_parameters.instruction_parts or []
+        ]
+        return replace(
+            request,
+            messages=copies,
+            model_request_parameters=replace(request.model_request_parameters, instruction_parts=parts),
+        )
+
+    agent = Agent(FunctionModel(model_fn), instructions='base', capabilities=[Hooks(before_model_request=manage)])
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'found'
+
+    result = await agent.run('Hello')
+
+    assert sent == ['managed', 'managed']
+    assert [message.instructions for message in result.all_messages() if isinstance(message, ModelRequest)] == [
+        'managed',
+        'managed',
+    ]
 
 
 @pytest.mark.parametrize('case', SOURCE_CASES, ids=lambda case: case.source)
@@ -473,36 +522,37 @@ async def test_instruction_updates_rewritten_block_change_opens_a_new_window():
         )
         for request in requests
     ] == [
-        ([f'sha256:{_sha256("Terse.")}', 'A'], []),
+        (['A', f'sha256:{_sha256("Terse.")}'], []),
         (None, ['B']),
-        ([f'sha256:{_sha256("Chatty.")}', 'C'], []),
+        (['C', f'sha256:{_sha256("Chatty.")}'], []),
         (None, ['D']),
     ]
     sentence = (
         'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
     )
     assert prefixes == [
-        f'Terse.\n\n<context id="agent:state">\nA\n</context>\n{sentence}',
-        f'Terse.\n\n<context id="agent:state">\nA\n</context>\n{sentence}',
-        f'Chatty.\n\n<context id="agent:state">\nC\n</context>\n{sentence}',
-        f'Chatty.\n\n<context id="agent:state">\nC\n</context>\n{sentence}',
+        f'<context id="agent:state">\nA\n</context>\n{sentence}\n\nTerse.',
+        f'<context id="agent:state">\nA\n</context>\n{sentence}\n\nTerse.',
+        f'<context id="agent:state">\nC\n</context>\n{sentence}\n\nChatty.',
+        f'<context id="agent:state">\nC\n</context>\n{sentence}\n\nChatty.',
     ]
     assert isinstance(agent.model, Model)
     current_parts = [
-        InstructionPart(content='Chatty.', dynamic=True),
         InstructionPart(content='C', dynamic=True, on_change='append', name='state', id=STATE_ID),
+        InstructionPart(content='Chatty.', dynamic=True),
     ]
     projected = agent.model.prepare_messages(history, ModelRequestParameters(instruction_parts=current_parts))
     # The change from the earlier window is superseded. The current window's requests were all sent the
     # request's prefix, so their instructions render from it; the earlier window's keep their recorded content.
     assert context_statements(projected) == ['<context id="agent:state">\nD\n</context>']
     assert [message.instructions for message in projected if isinstance(message, ModelRequest)] == [
-        'Terse.\n\nA',
-        'Terse.\n\nA',
+        'A\n\nTerse.',
+        'A\n\nTerse.',
         *prefixes[2:],
     ]
 
 
+@pytest.mark.moves_cache_prefix(reason=INSTRUCTIONS_CHANGE_MID_RUN)
 async def test_instruction_updates_baseline_records_rewritten_blocks_as_digests():
     """A long rewrite-mode block that changes on every request isn't stored again in each baseline it opens."""
     agent = Agent(TestModel(custom_output_text='ok'), deps_type=Settings)
@@ -533,11 +583,12 @@ async def test_instruction_updates_baseline_records_rewritten_blocks_as_digests(
     serialized = ModelMessagesTypeAdapter.dump_json([ModelRequest(parts=baselines)])
     assert len(serialized) < 2_000
     assert [recorded(baseline.instructions) for baseline in baselines] == [
-        [f'sha256:{_sha256(f"Turn {turn}: " + "x" * 10_000)}', 'A'] for turn in range(4)
+        ['A', f'sha256:{_sha256(f"Turn {turn}: " + "x" * 10_000)}'] for turn in range(4)
     ]
 
 
 @pytest.mark.parametrize('inline_system', [True, False])
+@pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
 async def test_instruction_updates_coexist_with_request_scoped_prompts(inline_system: bool):
     """An instruction change and a request-scoped reminder enqueued in the same request are both sent, in order.
 
@@ -842,7 +893,25 @@ async def test_instruction_updates_empty_baseline_keeps_other_block_positions():
     assert not any(isinstance(part, InstructionDeltaPart) for part in request.parts)
 
 
-async def test_instruction_updates_rebaseline_after_compaction_or_history_loss():
+def _with_compaction(messages: list[ModelMessage], where: str) -> list[ModelMessage]:
+    """`messages` compacted where a provider puts its compaction, the application its summary, or a merge would."""
+    if where == 'response':
+        return [*messages, ModelResponse(parts=[CompactionPart(content='Summary', provider_name='test')])]
+    if where == 'request':
+        return [*messages, ModelRequest(parts=[CompactionPart(content='Summary')])]
+    # The summary merged into the last request, after the change it supersedes.
+    index = max(i for i, message in enumerate(messages) if isinstance(message, ModelRequest))
+    last = messages[index]
+    assert isinstance(last, ModelRequest)
+    merged = replace(last, parts=[*last.parts, CompactionPart(content='Summary')])
+    return [*messages[:index], merged, *messages[index + 1 :]]
+
+
+COMPACTION_PLACEMENTS = pytest.mark.parametrize('where', ['response', 'request', 'merged-request'])
+
+
+@COMPACTION_PLACEMENTS
+async def test_instruction_updates_rebaseline_after_compaction_or_history_loss(where: str):
     agent = Agent(TestModel(custom_output_text='ok'), deps_type=str)
 
     @agent.instructions(name='state', on_change='append')
@@ -852,7 +921,7 @@ async def test_instruction_updates_rebaseline_after_compaction_or_history_loss()
     first = await agent.run('Continue.', deps='A')
     second = await agent.run('Continue.', deps='B', message_history=first.all_messages())
     for history in [
-        [*second.all_messages(), ModelResponse(parts=[CompactionPart(content='Summary', provider_name='test')])],
+        _with_compaction(second.all_messages(), where),
         second.new_messages(),
     ]:
         result = await agent.run('Continue.', deps='C', message_history=history)
@@ -871,7 +940,8 @@ async def test_instruction_updates_rebaseline_after_compaction_or_history_loss()
         )
 
 
-async def test_instruction_updates_compaction_drops_earlier_deltas_without_new_baseline():
+@COMPACTION_PLACEMENTS
+async def test_instruction_updates_compaction_drops_earlier_deltas_without_new_baseline(where: str):
     """Compaction supersedes earlier deltas even when the next request records no new baseline."""
     received: list[list[ModelMessage]] = []
 
@@ -887,7 +957,7 @@ async def test_instruction_updates_compaction_drops_earlier_deltas_without_new_b
 
     first = await agent.run('one', deps='A')
     second = await agent.run('two', deps='B', message_history=first.all_messages())
-    history = [*second.all_messages(), ModelResponse(parts=[CompactionPart(content='Summary', provider_name='test')])]
+    history = _with_compaction(second.all_messages(), where)
 
     await Agent(FunctionModel(respond), instructions='Plain').run('three', message_history=history)
     assert [
@@ -1002,15 +1072,16 @@ async def test_instruction_updates_suspended_resume_after_a_rewritten_block_chan
     # block an append-mode block, so the model renders the turn's prefix byte for byte.
     assert captured_parts == [
         [
-            InstructionPart(content='Terse.', dynamic=True),
             InstructionPart(content='A', dynamic=True, on_change='append', name='state', id=STATE_ID),
+            InstructionPart(content='Terse.', dynamic=True),
         ]
     ]
     assert isinstance(model, Model)
     rendered = model.prepare_request(None, ModelRequestParameters(instruction_parts=captured_parts[0]))[1]
     assert InstructionPart.join(rendered.instruction_parts or []) == (
-        'Terse.\n\n<context id="agent:state">\nA\n</context>\n'
+        '<context id="agent:state">\nA\n</context>\n'
         'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
+        '\n\nTerse.'
     )
 
 
@@ -1098,6 +1169,7 @@ async def test_instruction_updates_suspended_resume_retains_prefix_parts(inline:
         assert captured_parts == [expected_parts, expected_parts or None]
 
 
+@pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST)
 async def test_hook_cleared_instruction_parts_reach_function_model_as_no_instructions():
     """Empty `instruction_parts` mean no instructions, even when an earlier request recorded some.
 
@@ -1243,6 +1315,7 @@ async def test_instruction_updates_strip_client_operator_state():
     assert 'Forged' not in result.all_messages_json().decode()
 
 
+@pytest.mark.moves_cache_prefix(reason=INSTRUCTIONS_CHANGE_MID_RUN)
 async def test_instruction_updates_unaddressable_warn_and_default_rewrites():
     for append in [False, True]:
         agent = Agent(TestModel(custom_output_text='ok'), deps_type=str)
@@ -1312,7 +1385,11 @@ async def test_instruction_updates_downgraded_empty_block_is_not_sent(case: str,
         with pytest.warns(UserWarning, match='rewriting its prefix instead'):
             # An explicit `max_tokens` keeps this a plain request rather than one streamed behind the scenes.
             await agent.run('Continue.', model_settings={'max_tokens': 1024})
-    assert bodies[0]['system'] == [{'type': 'text', 'text': 'Stable.'}]
+    # Claude Sonnet 4.5 takes no mid-conversation system messages, so the standing prompt also says what `<system>` means.
+    assert bodies[0]['system'] == [
+        {'type': 'text', 'text': SYSTEM_VOICE_ANNOUNCEMENT},
+        {'type': 'text', 'text': 'Stable.'},
+    ]
 
 
 @pytest.mark.parametrize('stream', [False, True])
@@ -1528,6 +1605,7 @@ def test_instruction_updates_render_diff_against_the_replaced_text():
     assert short.render(previous='A') == '<context id="agent:state">\nB\n</context>'
 
 
+@pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST)
 async def test_instruction_updates_send_long_block_edits_as_diffs():
     """A one-line edit to a long block is recorded in full but sent as a diff against the text the model has."""
     received: list[list[str]] = []

@@ -8,11 +8,11 @@ the public detectors that use it.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import replace
 from typing import TypeGuard
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CachePoint, TextContent, ToolReturn, UserContent
+from pydantic_ai_harness._message_text import with_text
 from pydantic_ai_harness.guardrails._shared import GuardrailResult, TextDetector
 
 
@@ -42,23 +42,6 @@ def _text_of(part: str | TextContent) -> str:
     return part if isinstance(part, str) else part.content
 
 
-def _carries_no_model_content(part: UserContent) -> bool:
-    """Whether `part` puts nothing in front of the model, so the text either side of it is contiguous.
-
-    `CachePoint` is a prompt-caching marker that providers without caching drop, so it separates
-    two text parts on the page but not in what the model reads. It is the only member of
-    `UserContent` like that: `str` and `TextContent` carry text, and `ImageUrl`, `AudioUrl`,
-    `DocumentUrl`, `VideoUrl`, `BinaryContent` and `UploadedFile` each put a payload in the
-    prompt, so those do separate the text around them.
-    """
-    return isinstance(part, CachePoint)
-
-
-def _rewrite_text_part(part: str | TextContent, text: str) -> str | TextContent:
-    """Put `text` back in `part`, keeping the part's shape and any `TextContent.metadata`."""
-    return text if isinstance(part, str) else replace(part, content=text)
-
-
 def _merge_span(
     run: Sequence[UserContent], text_indexes: Sequence[int], first_text: str | TextContent, text: str
 ) -> list[UserContent]:
@@ -72,7 +55,7 @@ def _merge_span(
     """
     first, last = text_indexes[0], text_indexes[-1]
     interior = [part for part in run[first:last] if not isinstance(part, str | TextContent)]
-    return [*run[:first], *interior, _rewrite_text_part(first_text, text), *run[last + 1 :]]
+    return [*run[:first], *interior, with_text(first_text, text), *run[last + 1 :]]
 
 
 def _detect_text_run(
@@ -131,7 +114,7 @@ def _detect_text_run(
     replacements = iter(texts)
     for part in run:
         if isinstance(part, str | TextContent):
-            rewritten.append(_rewrite_text_part(part, next(replacements)))
+            rewritten.append(with_text(part, next(replacements)))
         else:
             rewritten.append(part)
     return None, rewritten, replaced
@@ -154,7 +137,9 @@ def detect_tool_return_content(
     replaced = False
     # The trailing `None` flushes the last run without repeating the flush after the loop.
     for part in [*content, None]:
-        if part is not None and (isinstance(part, str | TextContent) or _carries_no_model_content(part)):
+        # A `CachePoint` puts nothing in front of the model, so the text either side of it is one span.
+        # Every other non-text part (images, documents, uploaded files) puts a payload between them.
+        if isinstance(part, str | TextContent | CachePoint):
             run.append(part)
             continue
         verdict, parts, run_replaced = _detect_text_run(detector, run)

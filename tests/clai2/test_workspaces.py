@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
-from pydantic_clai2._app import DEFAULT_PLUGINS
+from pydantic_clai2.app import DEFAULT_PLUGINS
 from pydantic_clai2.builtin_plugins.workspaces import (
     USAGE,
     Workspaces,

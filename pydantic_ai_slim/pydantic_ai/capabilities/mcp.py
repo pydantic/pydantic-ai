@@ -63,8 +63,32 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
     allowed_tools: list[str] | None
     """Filter to only these tools. Applied to both native and local."""
 
+    tool_prefix: str | bool | None
+    """Prepended with `_` to the names of the server's tools, as in `<prefix>_<tool>`, so they don't collide with other tools.
+
+    - `None` (default) or `False`: keep the names the server gives its tools.
+    - `True`: use the explicit `id` as the prefix. Requires `id=`; an `id` derived from the URL is never used.
+    - A string: use that string as the prefix.
+
+    Applies to the local tools. `allowed_tools` keeps matching the server's own names, and the toolset's
+    `id` doesn't change. Native MCP tools are named by the model provider and aren't prefixed.
+    """
+
     description: str | None = None
     """Description of the MCP server. Native-only; ignored by local tools."""
+
+    include_instructions: bool = True
+    """Whether to add the server's instructions to the agent's instructions.
+
+    On by default. The server writes this text, and the model receives it with the same authority
+    as instructions you write yourself, so set this to `False` for servers you don't trust, such as
+    ones your end users supply.
+
+    Applies to the local toolset the capability builds from `url=` or a non-toolset `local=` input.
+    A pre-built [`MCPToolset`][pydantic_ai.mcp.MCPToolset] passed as `local=` keeps its own
+    [`include_instructions`][pydantic_ai.mcp.MCPToolset.include_instructions], and native MCP is
+    handled by the model provider.
+    """
 
     _telemetry_url_derived_id: str | None = field(init=False, repr=False, compare=False, default=None)
     """Whether the final configured ID came from the URL (retained by capability merges)."""
@@ -81,9 +105,20 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         authorization_token: str | MCPAuthorizationTokenFunc[AgentDepsT] | None = None,
         headers: dict[str, str] | MCPHeadersFunc[AgentDepsT] | None = None,
         allowed_tools: list[str] | None = None,
+        tool_prefix: str | bool | None = None,
         description: str | None = None,
+        include_instructions: bool = True,
         defer_loading: bool = False,
     ) -> None:
+        if tool_prefix == '':
+            raise UserError(
+                "MCP(tool_prefix='') would prefix nothing. Pass `tool_prefix=None` to keep the server's tool names."
+            )
+        if tool_prefix is True and id is None:
+            raise UserError(
+                'MCP(tool_prefix=True) uses the explicit `id` as the prefix, but no `id=` was passed. '
+                "Pass `id='…'`, or pass the prefix itself as `tool_prefix='…'`."
+            )
         # Native MCP requires a URL only when the capability auto-constructs an `MCPServerTool`
         # (i.e. `native=True`). Explicit `MCPServerTool(...)` instances and per-run callables
         # carry their own URL, so the capability's `url=` isn't needed in those cases.
@@ -132,7 +167,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             # Stamp the derived id so this leaf can be used with durable execution too. `self.url` is
             # usually `None` here (the input carries its own connection), so the id comes from an
             # explicit `id=` or a native `MCPServerTool`, matching the `_build_local` URL path.
-            local = MCPToolset(local, include_instructions=True, id=self._derive_id(self.url))
+            local = MCPToolset(local, include_instructions=include_instructions, id=self._derive_id(self.url))
             # Without a URL of its own the capability has no marker to give, so a client or transport the
             # toolset derived its `id` from keeps the toolset's own.
             if self._telemetry_url_derived_id is not None:
@@ -141,7 +176,9 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         self.authorization_token = authorization_token
         self.headers = headers
         self.allowed_tools = allowed_tools
+        self.tool_prefix = tool_prefix
         self.description = description
+        self.include_instructions = include_instructions
         self.defer_loading = defer_loading
         self.__post_init__()
 
@@ -278,7 +315,12 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             # Stamp the derived id onto the local toolset so it can be used with durable execution
             # (which wraps leaf toolsets by `id`). `url` is always concrete here, so derivation from
             # it succeeds even when `self.url` is `None` (the `local='https://…'` override path).
-            toolset = MCPToolset(url, headers=local_headers, include_instructions=True, id=self._derive_id(url))
+            toolset = MCPToolset(
+                url,
+                headers=local_headers,
+                include_instructions=self.include_instructions,
+                id=self._derive_id(url),
+            )
             if self.id is None and not isinstance(self.native, MCPServerTool):
                 toolset._telemetry_url_derived_id = toolset.id  # pyright: ignore[reportPrivateUsage]
             else:
@@ -294,9 +336,16 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
         toolset = super().get_toolset()
-        if toolset is not None and self.allowed_tools is not None:
+        if toolset is None:
+            return None
+        if self.allowed_tools is not None:
             allowed = set(self.allowed_tools)
-            return toolset.filtered(lambda _ctx, tool_def: tool_def.name in allowed)
+            toolset = toolset.filtered(lambda _ctx, tool_def: tool_def.name in allowed)
+        # Prefixed last, so `allowed_tools` matches the server's own names. `__init__` only accepts
+        # `True` beside an explicit `id`, never one derived from the URL.
+        prefix = self.id if self.tool_prefix is True else self.tool_prefix
+        if prefix:
+            toolset = toolset.prefixed(prefix)
         return toolset
 
     @classmethod
@@ -310,7 +359,9 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         authorization_token: str | None = None,
         headers: dict[str, str] | None = None,
         allowed_tools: list[str] | None = None,
+        tool_prefix: str | bool | None = None,
         description: str | None = None,
+        include_instructions: bool = True,
         defer_loading: bool = False,
     ) -> MCP[AgentDepsT]:
         """Construct an `MCP` capability from spec-serializable args.
@@ -330,7 +381,9 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             authorization_token=authorization_token,
             headers=headers,
             allowed_tools=allowed_tools,
+            tool_prefix=tool_prefix,
             description=description,
+            include_instructions=include_instructions,
             defer_loading=defer_loading,
         )
 

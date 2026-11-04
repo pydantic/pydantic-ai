@@ -7,8 +7,9 @@ Every tool the run has, plugin and MCP tools included, becomes a function inside
 `CodeMode`'s `run_code` except `write_file` and `edit_file`, which stay native so their diffs
 render as usual, and, in a run that prompts a task for the user (`task_prompts`), the delegate tool its
 scripted model calls. `shell` folds in too, as Code Puppy's shell tool does: harness `CodeMode` keeps
-tools marked with `code_arg_name` metadata native by default, so `SpeculativeExecution` clears
-that marker on `shell` only (`FOLDED_CODE_TOOLS`). Without it, a coding turn is all native `shell` calls
+tools marked with `code_arg_name` metadata native by default, so `SpeculativeExecution` sets
+`FOLD_INTO_CODE_MODE` on `shell` only (`FOLDED_CODE_TOOLS`), which keeps `code_arg_name` for
+`/permissions` and instrumentation. Without it, a coding turn is all native `shell` calls
 and eager execution never starts a build or test while the model is still writing.
 
 Only the read-only tools in `SPECULATIVE_TOOLS`, provided by the capability listed there, may
@@ -45,6 +46,7 @@ from pydantic_ai.tools import AgentDepsT, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness.code_mode import (
+    FOLD_INTO_CODE_MODE,
     CodeMode,
     CodeModeToolset,
     SpeculativeCallClaimedEvent,
@@ -53,8 +55,9 @@ from pydantic_ai_harness.code_mode import (
 )
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.guardrails import ToolGuardrail
+from pydantic_ai_harness.permissions import Permissions
 from pydantic_ai_harness.subagents import DelegationTasks
-from pydantic_clai2.customization import CustomizationGuide, read_clai_customization_guide
+from pydantic_clai2.clai_docs import ClaiDocs
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL, EagerExecutionCompletedEvent, EagerTiming
 from pydantic_clai2.runtime.repl_state import ReplStates
 from pydantic_clai2.runtime.sandbox_calls import (
@@ -73,13 +76,14 @@ SPECULATIVE_TOOLS: Mapping[str, type[object]] = {
     'list_files': FileSystem,
     'read_file': FileSystem,
     'grep': FileSystem,
-    read_clai_customization_guide.__name__: CustomizationGuide,
+    'search_clai_docs': ClaiDocs,
+    'read_clai_docs': ClaiDocs,
 }
 """Tools that are pure with respect to the workspace, so safe to start early, re-run, or discard,
 keyed to the capability that must provide them.
 
 A plugin or MCP tool can share one of these names when `Coder` is off, so the name alone does not
-vouch for it. The customization guide reads a file shipped inside the package and takes no arguments.
+vouch for it. CLAI's docs tools only read files shipped inside the installed packages.
 """
 
 NATIVE_TOOLS = frozenset({'write_file', 'edit_file'})
@@ -306,16 +310,27 @@ async def _workspace_mount(workspace: Workspace, mode: _MountMode | None) -> Mou
     return MountDir(virtual_path=directory, host_path=directory, mode='read-only' if workspace.read_only else mode)
 
 
+def _permitted(
+    mode: _MountMode | None, permissions: Permissions[AgentDepsT] | None, ctx: RunContext[AgentDepsT]
+) -> _MountMode | None:
+    """`mode`, read-only while `permissions` is in `read-only` mode, whose file writes ask first."""
+    if mode == 'read-write' and permissions is not None and permissions.mode_for(ctx) == 'read-only':
+        return 'read-only'
+    return mode
+
+
 @dataclass
 class _MountWorkspace(WrapperToolset[AgentDepsT]):
     """Give `CodeMode`'s toolset this run's `_workspace_mount`, once the run's workspace is known."""
 
     mode: _MountMode | None = None
+    permissions: Permissions[AgentDepsT] | None = None
+    """The run's `Permissions`: in `read-only` mode `pathlib` must not write what the file tools would ask about."""
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         code_mode = self.wrapped
         assert isinstance(code_mode, CodeModeToolset)
-        mount = await _workspace_mount(ctx.workspace, self.mode)
+        mount = await _workspace_mount(ctx.workspace, _permitted(self.mode, self.permissions, ctx))
         return await replace(code_mode, mount=mount).for_run(ctx)
 
 
@@ -328,12 +343,14 @@ class WorkspaceCodeMode(CodeMode[AgentDepsT]):
     """
 
     mount_mode: _MountMode | None = None
+    permissions: Permissions[AgentDepsT] | None = None
+    """The run's `Permissions`, whose `read-only` mode mounts the directory read-only for that run."""
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """`CodeMode`'s toolset, mounted per run by `_MountWorkspace`."""
         code_mode = super().get_wrapper_toolset(toolset)
         assert code_mode is not None
-        return _MountWorkspace(code_mode, mode=self.mount_mode)
+        return _MountWorkspace(code_mode, mode=self.mount_mode, permissions=self.permissions)
 
 
 def _sandboxed(ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> bool:
@@ -352,7 +369,7 @@ def _declarations(ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> dict
     """
     metadata: dict[str, object] = dict(tool_def.metadata or {})
     if tool_def.name in FOLDED_CODE_TOOLS:
-        metadata.pop('code_arg_name', None)
+        metadata[FOLD_INTO_CODE_MODE] = True
     owner = SPECULATIVE_TOOLS.get(tool_def.name)
     trusted = owner is not None and isinstance(ctx.capabilities.get(tool_def.capability_id or ''), owner)
     metadata['read_only'] = trusted
@@ -373,6 +390,8 @@ class SpeculativeExecution(AbstractCapability[AgentDepsT]):
     """Whether read-only calls launch early, so the guidance teaches the snippet shape that suits it."""
     repl_states: ReplStates | None = None
     """Where `WorkspaceCodeMode` keeps the session's REPL, so the guidance says whether state outlives the run."""
+    permissions: Permissions[AgentDepsT] | None = None
+    """The run's `Permissions`, whose `read-only` mode mounts the directory read-only, as the guidance then says."""
 
     def get_instructions(self) -> Callable[[RunContext[AgentDepsT]], str]:
         """Code Puppy's guidance, with CLAI's tool and argument names, the run's actual mount, and its REPL's lifetime."""
@@ -380,7 +399,8 @@ class SpeculativeExecution(AbstractCapability[AgentDepsT]):
         def describe(ctx: RunContext[AgentDepsT]) -> str:
             local = self.mount is None or _is_local(ctx.workspace)
             keeps_state = self.repl_states is not None and self.repl_states.keeps(ctx)
-            return guidance(self.mount if local else 'remote', speculate=self.speculate, keeps_state=keeps_state)
+            mount = _permitted(self.mount, self.permissions, ctx) if local else 'remote'
+            return guidance(mount, speculate=self.speculate, keeps_state=keeps_state)
 
         return describe
 
@@ -457,9 +477,9 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
             await ctx.emit(event_type(tool_call_id=call.tool_call_id, call=call))
         try:
             value = await handler(args)
-        except Exception as error:
+        except Exception as exc:
             failure = ToolReturnPart(
-                tool_name=call.tool_name, content=str(error), tool_call_id=call.tool_call_id, outcome='retried'
+                tool_name=call.tool_name, content=str(exc), tool_call_id=call.tool_call_id, outcome='retried'
             )
             await self._finish(ctx, call, failure, speculative=speculative)
             raise
@@ -510,6 +530,7 @@ def speculative_capabilities(
     between prompts; without it the REPL ends with the run.
     """
     mode = _mount_mode(granted)
+    permissions = next((leaf for leaf in granted or () if _is_capability(leaf) and isinstance(leaf, Permissions)), None)
     return [
         WorkspaceCodeMode(
             tools=_sandboxed,
@@ -519,10 +540,11 @@ def speculative_capabilities(
             # read-only calls beyond that frontier, and the eager feed claims them.
             eager=True,
             mount_mode=mode,
+            permissions=permissions,
             os_access=OSAccess(),
             repl_store=repl_states,
         ),
         EagerTiming(),
-        SpeculativeExecution(counters, mode, speculate, repl_states),
+        SpeculativeExecution(counters, mode, speculate, repl_states, permissions),
         ShowSandboxCalls(),
     ]

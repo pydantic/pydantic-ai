@@ -47,7 +47,7 @@ from pydantic_clai2.plugins.sign_in import (
     status as sign_in_status,
     warn_if_signed_out,
 )
-from pydantic_clai2.runtime._session import WorkspacelessCapability
+from pydantic_clai2.runtime.session import WorkspacelessCapability
 from pydantic_clai2.ui.menus.field_menu import first_error
 from pydantic_clai2.ui.rendering import theme
 
@@ -183,7 +183,13 @@ class PostHogPlugin(Plugin[PostHogSettings]):
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
         if self.settings.auth == 'browser':
             return (WorkspacelessCapability[None](self.for_run),)
-        return (PostHog[None](client=client(self.settings), include_instructions=self.settings.include_instructions),)
+        return (
+            PostHog[None](
+                defer_loading=True,
+                client=client(self.settings),
+                include_instructions=self.settings.include_instructions,
+            ),
+        )
 
     def get_commands(self) -> Sequence[Command]:
         return (
@@ -200,7 +206,9 @@ class PostHogPlugin(Plugin[PostHogSettings]):
         method = browser(self.settings)
         if not await anyio.to_thread.run_sync(method.signed_in, abandon_on_cancel=True):
             return None
-        return PostHog[None](client=method.client(), include_instructions=self.settings.include_instructions)
+        return PostHog[None](
+            defer_loading=True, client=method.client(), include_instructions=self.settings.include_instructions
+        )
 
     def settings_menu(self) -> SettingsMenu:
         source = PostHogSource(self.host)

@@ -96,7 +96,7 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
 - The model is called again with the return value of running the `add` tool (12)
 - The model returns the final answer
 
-You can visualise this clearly, and even see the tool call, by adding three lines of code to instrument the example with [logfire](https://logfire.pydantic.dev/docs):
+To visualise this clearly and see the tool call, run `uvx logfire-cli wizard --task pydantic-ai` once from your project. It [sets up Logfire](../logfire.md#using-logfire) and has your coding agent add these three lines:
 
 ```python {title="mcp_streamable_http_client_logfire.py" test="skip"}
 import logfire
@@ -353,6 +353,8 @@ calculator = MCPToolset('http://localhost:3002/sse').prefixed('calc')   # `calc_
 agent = Agent('{{ openai:medium }}', toolsets=[weather, calculator])
 ```
 
+The [`MCP` capability](../capabilities/mcp.md#tool-names) does the same with `tool_prefix='weather'`, or with `tool_prefix=True` to use its explicit `id=` as the prefix.
+
 ## Server instructions
 
 MCP servers can provide instructions during initialization that give context about how to best interact with the server's tools. These are accessible via [`MCPToolset.instructions`][pydantic_ai.mcp.MCPToolset.instructions] after the connection is established, and can be added to the agent's instructions by setting `include_instructions=True`:
@@ -365,7 +367,7 @@ toolset = MCPToolset('http://localhost:8000/mcp', id='docs', include_instruction
 agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 ```
 
-On `MCPToolset` this is off by default because the server writes this text, and the model receives it with the same authority as the instructions you write yourself. Only enable it for servers you trust. The [`MCP`](../capabilities/mcp.md) capability turns it on for the local toolset it builds, so only point an `MCP` capability at servers you trust, or pass your own `local=MCPToolset(...)`.
+On `MCPToolset` this is off by default because the server writes this text, and the model receives it with the same authority as the instructions you write yourself. Only enable it for servers you trust. The [`MCP`](../capabilities/mcp.md) capability turns it on for the local toolset it builds, so for a server you don't trust, pass [`include_instructions=False`](../capabilities/mcp.md#server-instructions) to the capability.
 
 The instructions are read each time the toolset connects, which by default is once per agent run, and on a toolset with an [`id`][pydantic_ai.mcp.MCPToolset.id] they [append their changes](../agent.md#appending-instruction-changes). If the server sends different instructions on a later connection, as when it's redeployed between turns of a conversation, the new text is appended to the conversation rather than rewriting the instruction prefix that the provider has cached. The model receives them in a `<context id="toolset:<id>">` element, so it can tell which server they came from.
 

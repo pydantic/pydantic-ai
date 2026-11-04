@@ -1,12 +1,10 @@
 """The `search_conversation_history` toolset with dependency-free BM25 ranking.
 
 The ranking and rendering core is ported from VStorm's `pydantic-deepagents`
-(`pydantic_deep/features/history_archive/toolset.py`). BM25 tuning is dependency-free
-(`math` + `re`) and takes its parameters from the owning capability instead of module
-constants, so a caller can tune ranking without editing the port. The corpus comes
-from a `HistorySource` (one document per persisted message, across the runs selected
-by the configured scope); ranking is global within that scope, while context windows
-around a match stay within the match's run.
+(`pydantic_deep/features/history_archive/toolset.py`), with BM25 parameters taken from
+the owning capability. The corpus comes from a `HistorySource` (one document per
+persisted message, across the runs selected by the configured scope); ranking is global
+within that scope, while context windows around a match stay within the match's run.
 """
 
 from __future__ import annotations
@@ -24,6 +22,8 @@ from pydantic_core import ErrorDetails
 
 from pydantic_ai import RunContext
 from pydantic_ai.messages import (
+    CapabilityLoadDeltaPart,
+    CompactionPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
@@ -234,22 +234,26 @@ def _format_request_part(part: ModelRequestPart, *, terms: frozenset[str] | None
         # builds one by hand and passes it as `message_history` still puts an instance here, and
         # this reads the history before the model translates it.
         return f'Retry [{part.tool_name}]: {_clip(_retry_text(part.content), _EXCERPT_CHARS, terms)}'
+    if isinstance(part, CompactionPart):
+        # An application's own summary is conversation content; `SummarizingCompaction`'s are dropped upstream.
+        if not part.content:
+            return None
+        return f'Summary: {_clip(part.content, _EXCERPT_CHARS, terms)}'
     if isinstance(part, SpeechPart):
         # A realtime user turn: index the spoken transcript so speech is searchable, not the
         # raw audio. `transcript` is optional, so an audio-only part contributes no text.
         if not part.transcript:
             return None
         return f'Speech [{part.speaker}]: {_clip(part.transcript, _EXCERPT_CHARS, terms)}'
-    # Tool-list, instruction and effort bookkeeping rather than conversation, so there is no line to contribute.
-    # Redundant against the union as it stands today, but kept explicit so the fallthrough
-    # below stays a real branch at runtime rather than dead code.
-    if isinstance(part, (ToolAvailabilityDeltaPart, InstructionBaselinePart, ModelSettingsDeltaPart)):
+    # Tool-list, capability, instruction and effort bookkeeping rather than conversation. Listed explicitly so the
+    # fallthrough below stays a real runtime branch.
+    if isinstance(
+        part,
+        (ToolAvailabilityDeltaPart, CapabilityLoadDeltaPart, InstructionBaselinePart, ModelSettingsDeltaPart),
+    ):
         return None
-    # A part pydantic-ai added after this was written. Indexing it would mean guessing which
-    # of its fields read as conversation, and a search index is not worth failing a run over,
-    # so it contributes nothing. `assert_never` under `TYPE_CHECKING` keeps the chain
-    # exhaustive at type-check time -- a new upstream part fails `make typecheck` -- without
-    # crashing a user who upgrades pydantic-ai ahead of us.
+    # A part type newer than this code contributes nothing. `assert_never` under `TYPE_CHECKING`
+    # keeps the chain exhaustive for pyright without crashing at runtime on a newer pydantic-ai.
     if TYPE_CHECKING:
         assert_never(part)
     return None  # pragma: no cover - reachable only on a pydantic-ai release newer than this one

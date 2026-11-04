@@ -6,21 +6,23 @@ Run your agent's commands and file edits in an isolated [E2B](https://e2b.dev) c
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. E2BSandbox's get_workspace hook gives the run an E2B cloud sandbox as ctx.workspace, so each command and file operation goes over the E2B API, authenticated with E2B_API_KEY, and runs in the sandbox as the user account; output comes back to the tool. The first use creates the sandbox, its WorkspaceRef is saved in the message history and on the result, a later run reattaches with it, and destroy(ref) kills it. When sandbox_timeout runs out, 1 hour by default, E2B pauses the sandbox with its files, and the next run with the ref resumes it.](https://pydantic.dev/docs/ai/img/harness/e2b-sandbox.svg)
+
 ## Install
 
 uv:
 
 ```bash
-uv add "pydantic-ai-harness[e2b,anthropic]"
+uv add "pydantic-ai-harness[coder,e2b,anthropic]"
 ```
 
 pip:
 
 ```bash
-pip install "pydantic-ai-harness[e2b,anthropic]"
+pip install "pydantic-ai-harness[coder,e2b,anthropic]"
 ```
 
-The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `E2B_API_KEY` to your E2B API key, and `ANTHROPIC_API_KEY` for the examples.
+The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `E2B_API_KEY` to your E2B API key, and `ANTHROPIC_API_KEY` for the examples.
 
 ## Quick start
 
@@ -189,6 +191,8 @@ A failed run returns no result, so there is no ref to store. To terminate its sa
 ```python
 from typing import Any
 
+import anyio
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.run import AgentRunResult
@@ -201,7 +205,10 @@ hooks = Hooks()
 @hooks.on.run_error
 async def terminate_failed_run(ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[Any]:
     if ctx.workspace.ref is not None:
-        await E2BSandbox().destroy(ctx.workspace.ref)
+        # Shielded, so an `anyio` deadline around the run doesn't cut the kill short,
+        # and bounded, so a hung API call can't hang the run indefinitely.
+        with anyio.move_on_after(30, shield=True):
+            await E2BSandbox().destroy(ctx.workspace.ref)
     raise error
 
 
@@ -227,13 +234,13 @@ Install the `temporal` extra too:
 uv:
 
 ```bash
-uv add "pydantic-ai-harness[e2b,anthropic,temporal]"
+uv add "pydantic-ai-harness[coder,e2b,anthropic,temporal]"
 ```
 
 pip:
 
 ```bash
-pip install "pydantic-ai-harness[e2b,anthropic,temporal]"
+pip install "pydantic-ai-harness[coder,e2b,anthropic,temporal]"
 ```
 
 Run a Temporal dev server on `localhost:7233` first. The agent and workflow must be defined at module level for activity registration.

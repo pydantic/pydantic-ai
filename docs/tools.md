@@ -101,6 +101,7 @@ print(dice_result.all_messages())
         ],
         usage=RequestUsage(cost=Decimal('0.0000480'), input_tokens=54, output_tokens=2),
         model_name='{{ google:medium.name }}',
+        model_id='{{ google:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -129,6 +130,7 @@ print(dice_result.all_messages())
             cost=Decimal('0.00005625'), input_tokens=55, output_tokens=4
         ),
         model_name='{{ google:medium.name }}',
+        model_id='{{ google:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -155,6 +157,7 @@ print(dice_result.all_messages())
         ],
         usage=RequestUsage(cost=Decimal('0.000087'), input_tokens=56, output_tokens=12),
         model_name='{{ google:medium.name }}',
+        model_id='{{ google:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -267,10 +270,10 @@ Even better, Pydantic AI extracts the docstring from functions and (thanks to [g
 
 [Griffe supports](https://mkdocstrings.github.io/griffe/reference/docstrings/#docstrings) extracting parameter descriptions from `google`, `numpy`, and `sphinx` style docstrings. Pydantic AI will infer the format to use based on the docstring, but you can explicitly set it using [`docstring_format`][pydantic_ai.tools.DocstringFormat]. You can also enforce parameter requirements by setting `require_parameter_descriptions=True`. This will raise a [`UserError`][pydantic_ai.exceptions.UserError] if a parameter description is missing.
 
-Three parts of the docstring reach the model: the leading description, the parameter descriptions, and the
-first entry of the returns section. Other sections Griffe can parse, such as `Raises`, `Examples`, `Notes`,
-`Warnings` and `Yields`, are dropped, so anything the model needs to act on belongs in the
-leading description, a parameter description, or the first returns entry.
+Three parts of the docstring reach the model: the leading description, the parameter descriptions (including
+those under `Keyword Args` or `Other Parameters`), and the first entry of the returns section. Other sections
+Griffe can parse, such as `Raises`, `Examples`, `Notes`, `Warnings` and `Yields`, are dropped, so anything the
+model needs to act on belongs in the leading description, a parameter description, or the first returns entry.
 
 To demonstrate a tool's schema, here we use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] to print the schema a model would receive:
 

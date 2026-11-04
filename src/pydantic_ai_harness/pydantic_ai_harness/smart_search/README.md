@@ -1,12 +1,14 @@
 # Smart Search
 
-Plain-English code search: the agent describes the behavior it is looking for in plain English and gets back ranked
-source excerpts with file and line ranges, judged by any Pydantic AI model, with a decision model served over the
-System One API, or TypeSafe's Jev, as the recommended judge.
+Code search by behavior: the agent describes what it is looking for in plain English and gets back ranked source
+excerpts with file and line ranges. Any Pydantic AI model can judge relevance; a decision model served over the
+System One API, or TypeSafe's Jev, is the recommended judge.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/smart_search/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
+
+![The model calls smart_search with a plain-English query. SmartSearch lists the files in the workspace with rg --files, chunks them into snippets, shortlists up to 128 snippets with BM25, and sends each one to the judge model you chose. Snippets whose relevance reaches the threshold come back to the model as a SmartSearchResult with file, line range and a short excerpt, plus coverage figures and warnings.](https://pydantic.dev/docs/ai/img/harness/smart-search.svg)
 
 ## The problem
 
