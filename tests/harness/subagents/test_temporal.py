@@ -24,6 +24,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('temporalio not installed', allow_module_level=True)
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import SetToolMetadata
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.subagents import DynamicAgents, SubAgent, SubAgents
@@ -232,6 +233,7 @@ child_workflow_agent = Agent(
     deps_type=type(None),
     capabilities=[
         SubAgents[None](agents=[SubAgent(durable_worker)]),
+        SetToolMetadata(tools=['delegate_task'], temporal={'child_workflow': {}}),
         TemporalDurability[None](activity_config=ACTIVITY_CONFIG),
     ],
 )
@@ -253,7 +255,7 @@ def _activities(history: WorkflowHistory) -> list[str]:
 
 
 async def test_durable_delegate_runs_as_a_child_workflow(client: Client) -> None:
-    """A delegate with its own `TemporalDurability` runs in a child workflow, whose history holds its activities."""
+    """With `child_workflow` metadata on the delegate tool, a durable delegate's activities land in the child's history."""
     workflow_id = 'test_subagents_temporal_child_workflow'
     async with Worker(
         client,

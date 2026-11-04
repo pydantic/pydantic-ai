@@ -3,18 +3,16 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import AsyncIterable, Generator
+from collections.abc import Generator
 from pathlib import Path
-from typing import Any
 
 import pytest
 
-from pydantic_ai import Agent, AgentStreamEvent, RunContext
-from pydantic_ai.capabilities import Hooks
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import SetToolMetadata
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai_harness import HarnessDeprecationWarning
-from pydantic_ai_harness.subagents import DynamicAgents, SubAgent, SubAgents, SubAgentToolset
+from pydantic_ai_harness.subagents import DynamicAgents, SubAgent, SubAgents
 from tests.conftest import detach_dbos_logging, try_import
 from tests.harness.subagents._dynamic import POET_CALLS, POET_RESULT, creator
 
@@ -87,19 +85,25 @@ if imports_successful():
         FunctionModel(_delegator),
         name='dbos_delegator',
         deps_type=type(None),
-        capabilities=[SubAgents[None](agents=[SubAgent(dbos_worker)]), DBOSDurability[None]()],
+        capabilities=[
+            SubAgents[None](agents=[SubAgent(dbos_worker)]),
+            SetToolMetadata(tools=['delegate_task'], dbos={'child_workflow': {}}),
+            DBOSDurability[None](),
+        ],
     )
 
     @DBOS.workflow(name='subagents_child_workflow')
-    async def child_workflow_workflow() -> str:
-        return (await dbos_delegator.run('Delegate it')).output
+    async def child_workflow_workflow() -> tuple[str, int]:
+        result = await dbos_delegator.run('Delegate it')
+        return result.output, result.usage.requests
 
 
 async def test_durable_delegate_runs_as_a_child_workflow(dbos: DBOS) -> None:
-    """A delegate with its own `DBOSDurability` runs in a child workflow, whose history holds its steps."""
+    """With `child_workflow` metadata on the delegate tool, a durable delegate's steps land in the child's history."""
     workflow_id = str(uuid.uuid4())
     with SetWorkflowID(workflow_id):
-        assert await child_workflow_workflow() == 'from the worker'
+        # The delegate's request is forwarded to the parent's usage across the child workflow.
+        assert await child_workflow_workflow() == ('from the worker', 3)
     steps = await dbos.list_workflow_steps_async(workflow_id)
     child_name = 'dbos_delegator__function_toolset__sub_agents.call_tool__child_workflow'
     assert [step['function_name'] for step in steps] == [
@@ -112,39 +116,3 @@ async def test_durable_delegate_runs_as_a_child_workflow(dbos: DBOS) -> None:
     assert child_id is not None
     child_steps = await dbos.list_workflow_steps_async(child_id)
     assert [step['function_name'] for step in child_steps] == ['dbos_worker__model.request']
-
-
-async def _handle_events(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
-    pass  # pragma: no cover
-
-
-def _delegate_metadata(capability: SubAgents[None]) -> object:
-    toolset = capability.get_toolset()
-    assert isinstance(toolset, SubAgentToolset)
-    return toolset.tools['delegate_task'].metadata
-
-
-@pytest.mark.parametrize(
-    'kwargs',
-    [
-        pytest.param({'include_self': True}, id='include_self'),
-        pytest.param({'models': {'fast': FunctionModel(_worker)}}, id='models'),
-        pytest.param({'shared_capabilities': [Hooks()]}, id='shared_capabilities'),
-        pytest.param({'event_stream_handler': _handle_events}, id='event_stream_handler'),
-    ],
-)
-def test_delegation_relying_on_the_parent_run_stays_in_it(kwargs: dict[str, Any]) -> None:
-    assert _delegate_metadata(SubAgents[None](agents=[SubAgent(dbos_worker)], **kwargs)) is None
-
-
-def test_delegation_inheriting_tools_stays_in_the_parent_run() -> None:
-    with pytest.warns(HarnessDeprecationWarning, match='inherit_tools'):
-        capability = SubAgents[None](agents=[SubAgent(dbos_worker)], inherit_tools=True)
-    assert _delegate_metadata(capability) is None
-
-
-def test_child_workflow_needs_every_delegate_durable_without_a_call_budget() -> None:
-    plain = Agent(FunctionModel(_worker), name='plain_worker')
-    assert _delegate_metadata(SubAgents[None](agents=[SubAgent(dbos_worker)])) == {'dbos': {'child_workflow': {}}}
-    assert _delegate_metadata(SubAgents[None](agents=[SubAgent(dbos_worker), SubAgent(plain)])) is None
-    assert _delegate_metadata(SubAgents[None](agents=[SubAgent(dbos_worker, max_calls=1)])) is None
