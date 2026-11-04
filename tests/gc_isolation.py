@@ -12,9 +12,11 @@ down, it collects those objects. That walks only what the test created, so it's 
 leaks in its own teardown under the suite's `filterwarnings`: a leak the suite doesn't ignore, and that's garbage by then,
 fails the test that caused it.
 
-An object that outlives its test and is dropped later, such as one in a cache that a later test clears, stays frozen. It's
-collected once, after the last test, where no test can be blamed for it, and reported on stderr without failing anything.
-Left to pytest's own end-of-session collection, it would fail the session with no test to point at.
+An object in a reference cycle that outlives its test and is dropped later, such as one in a cache that a later test
+clears, stays frozen. It's collected once, after the last test, where no test can be blamed for it, and reported on stderr
+without failing anything. Left to pytest's own end-of-session collection, it would fail the session with no test to point
+at. Until then it keeps whatever it holds, because collecting it sooner would finalize it in a test. An object in no cycle
+is freed as it's dropped, as ever, freeze or not.
 
 The freeze has one visible side effect: `gc.get_referrers()` and `gc.get_objects()` don't see frozen objects. So it ends
 with the test loop, before session-end hooks. Hypothesis's terminal summary is what imports it in a session that didn't
