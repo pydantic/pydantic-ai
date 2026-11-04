@@ -11,7 +11,7 @@ import anyio
 from pydantic import ConfigDict, GetJsonSchemaHandler, TypeAdapter, model_serializer, model_validator, with_config
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import CoreSchema
-from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
+from pydantic_core.core_schema import IncExCall, SerializationInfo, SerializerFunctionWrapHandler
 from typing_extensions import TypedDict
 
 from pydantic_graph import BaseNode, End, EndMarker, ErrorMarker, GraphRun, GraphRunContext, GraphTaskRequest, JoinItem
@@ -25,7 +25,7 @@ from . import (
     usage as _usage,
 )
 from ._conversation_marks import mark_stored
-from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
+from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
 from ._instrumentation import current_otel_traceparent
 from ._run_context import (
     CustomEventT,
@@ -190,7 +190,11 @@ def _filter_serialized(data: Mapping[str, Any], info: SerializationInfo) -> dict
             else {key for key, spec in exclude.items() if not isinstance(spec, (set, dict))}
         )
         data = {key: value for key, value in data.items() if key not in dropped}
+    return _apply_nested_specs(data, include, exclude)
 
+
+def _apply_nested_specs(data: Mapping[str, Any], include: IncExCall, exclude: IncExCall) -> dict[str, Any]:
+    """Apply each key's nested `include`/`exclude` spec to the value of a key `data` still has."""
     filtered = dict(data)
     for spec, keep in ((include, True), (exclude, False)):
         if not isinstance(spec, Mapping):
@@ -754,7 +758,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def pending_messages(self) -> list[PendingMessage]:
         """Internal: live view of the queue mutated by `enqueue` and drained by the internal `PendingMessageDrainCapability`.
 
-        Exposed for inspection / debugging; use [`enqueue`][pydantic_ai.run.AgentRun.enqueue] to add messages.
+        Exposed for inspection / debugging; use [`enqueue`][pydantic_ai.run.AgentRun.enqueue] to add messages,
+        and [`dequeue`][pydantic_ai.run.AgentRun.dequeue] or [`set_enqueue_priority`][pydantic_ai.run.AgentRun.set_enqueue_priority]
+        to change them.
         """
         return self._graph_run.state.pending_messages
 
@@ -834,6 +840,43 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         self._graph_run.state.pending_messages.append(pending)
         return pending.enqueue_id
 
+    def dequeue(self, enqueue_id: str) -> bool:
+        """Remove a message queued with [`enqueue`][pydantic_ai.run.AgentRun.enqueue] before it's delivered.
+
+        Works like [`RunContext.dequeue`][pydantic_ai.tools.RunContext.dequeue], and is safe to call
+        from the same places as `enqueue`.
+
+        Args:
+            enqueue_id: The ID `enqueue` returned.
+
+        Returns:
+            `True` if the message was still queued and is now removed, or `False` if it was already
+            delivered, dequeued, or never queued in this run, including once the run has ended.
+        """
+        return self._queue.dequeue(enqueue_id)
+
+    def set_enqueue_priority(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
+        """Change when a message queued with [`enqueue`][pydantic_ai.run.AgentRun.enqueue] is delivered.
+
+        Works like [`RunContext.set_enqueue_priority`][pydantic_ai.tools.RunContext.set_enqueue_priority]: the message
+        keeps its place and its `enqueue_id`.
+
+        Args:
+            enqueue_id: The ID `enqueue` returned.
+            priority: The new priority, with the same meaning as in `enqueue`.
+
+        Returns:
+            `True` if the message was still queued, or `False` if it was already delivered, dequeued,
+            or never queued in this run, including once the run has ended.
+        """
+        return self._queue.set_enqueue_priority(enqueue_id, priority)
+
+    @property
+    def _queue(self) -> PendingMessageQueue:
+        queue = self._graph_run.state.pending_messages
+        assert isinstance(queue, PendingMessageQueue)  # `GraphAgentState.__post_init__` guarantees it
+        return queue
+
     def cancel(self) -> None:
         """Cancel the whole agent run.
 
@@ -869,6 +912,26 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         result = self._graph_run.output
         result_repr = '<run not finished>' if result is None else repr(result.output)
         return f'<{type(self).__name__} result={result_repr} usage={self.usage}>'
+
+
+def _from_legacy_shape(data: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    """The public shape of an `AgentRunResult` serialized with its private fields, `_state` among them.
+
+    Serialized before the public shape existed, when every private field was exposed directly,
+    `GraphAgentState`'s run-local scratch included; that scratch is dropped here. Public keys still
+    win, so a payload carrying both reads as the public one.
+    """
+    restored: dict[str, Any] = {
+        'new_message_index': data.get('_new_message_index', 0),
+        'output_tool_name': data.get('_output_tool_name'),
+        'traceparent': data.get('_traceparent_value'),
+    }
+    if 'message_history' in state:
+        restored['messages'] = state['message_history']
+    for key in _STATE_KEYS:
+        if key in state:
+            restored[key] = state[key]
+    return {**restored, **{key: item for key, item in data.items() if not key.startswith('_')}}
 
 
 @dataclasses.dataclass
@@ -929,21 +992,7 @@ class AgentRunResult(Generic[OutputDataT]):
         data = cast('dict[str, Any]', value)
 
         if isinstance(legacy_state := data.get('_state'), dict):
-            # Serialized before this shape existed, when every private field was exposed directly,
-            # `GraphAgentState`'s run-local scratch included; that scratch is dropped here. Public
-            # keys still win, so a payload carrying both reads as the public one.
-            state = cast('dict[str, Any]', legacy_state)
-            restored: dict[str, Any] = {
-                'new_message_index': data.get('_new_message_index', 0),
-                'output_tool_name': data.get('_output_tool_name'),
-                'traceparent': data.get('_traceparent_value'),
-            }
-            if 'message_history' in state:
-                restored['messages'] = state['message_history']
-            for key in _STATE_KEYS:
-                if key in state:
-                    restored[key] = state[key]
-            data = {**restored, **{key: item for key, item in data.items() if not key.startswith('_')}}
+            data = _from_legacy_shape(data, cast('dict[str, Any]', legacy_state))
 
         state_data: dict[str, Any] = {}
         if 'messages' in data:

@@ -31,6 +31,12 @@ previous label-as-switch design left a window in which a push got *neither* revi
 `Pydantic AI UI Security Review` audits the UI-adapter and CLAI 2 web UI trust boundaries.
 It never owns the merge-gate verdict.
 
+A PR whose head branch is listed in the `UI_SECURITY_REVIEW_SKIP_BRANCHES` repository
+variable skips this review. It gets neither the review nor the `ui-security-review`
+Environment approval, and the skipped check reports as success. Separate branch names with
+commas and no spaces. Remove a branch from the list once its PR merges or closes: an entry
+left in the list also exempts any later branch with that name, compared case-insensitively.
+
 `eligibility` skips a request made before `CI` has passed on the head. An approval is
 checked again when `CI` passes; a label or dispatch must be repeated. Nothing removes the
 `final-review` label: to retry a skipped request, remove and reapply it. A head that
