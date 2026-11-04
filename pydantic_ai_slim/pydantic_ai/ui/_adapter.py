@@ -878,6 +878,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     `UserError`, which reaches the client as a protocol error event, and
     [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request] answers `404` before running anything.
     Only used with a [`conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store].
+
+    A store keys conversations by ID alone, and the ID comes from the client, so in a multi-tenant app
+    conversation IDs must be unguessable or prefixed per scope. Otherwise, a tenant who creates an ID first
+    holds it and its owner gets that not-found. This only affects availability: no tenant reaches another's
+    messages. A [`delete`][pydantic_ai.conversation_store.ConversationStore.delete] that names the owner's
+    scope leaves the conversation as it is, so freeing the ID takes one from your app without a scope.
     """
 
     _saved_entries: list[ConversationEntry] | None = field(default=None, init=False, repr=False)
