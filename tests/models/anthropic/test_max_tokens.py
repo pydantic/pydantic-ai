@@ -56,6 +56,8 @@ MAX_TOKENS_CASES = {
         {'type': 'enabled', 'budget_tokens': 4096},
         15000,
     ),
+    # Anthropic rejects a `max_tokens` above the model's maximum output with a 400, so it's lowered to the maximum.
+    'explicit-above-maximum': MaxTokensCase('claude-haiku-4-5', {'max_tokens': 100_000}, None, 64_000, streamed=True),
 }
 
 
@@ -70,7 +72,7 @@ async def test_default_max_tokens(
 
     Anthropic requires `max_tokens` and counts thinking toward it, including the adaptive thinking current models do
     by default. The SDK refuses a non-streaming request above about 21,000 tokens, so `run()` streams it instead. An
-    explicit `max_tokens` is sent as is.
+    explicit `max_tokens` is sent as is, up to the model's maximum output.
     """
     agent = Agent(anthropic_model(case.model_name, capture=True))
     result = await agent.run('What is 17 * 23? Answer with just the number.', model_settings=case.model_settings)

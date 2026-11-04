@@ -12,7 +12,7 @@ from ..native_tools import (
     WebSearchTool,
 )
 from ..native_tools._tool_search import ToolSearchTool
-from ..settings import ThinkingEffort, ThinkingLevel
+from ..settings import ModelSettings, ThinkingEffort, ThinkingLevel
 from . import ModelProfile
 
 _ANTHROPIC_BASE_BUILTINS = frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
@@ -197,7 +197,8 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """The most output tokens the model can generate in one response, thinking included. Default: `None` (unknown).
 
     `AnthropicModel` sends it as `max_tokens` when the request doesn't set one, so responses are only cut off at the
-    model's limit, like on APIs where the output limit is optional.
+    model's limit, like on APIs where the output limit is optional, and lowers a `max_tokens` above it to it, as
+    Anthropic rejects that with a 400. `BedrockConverseModel` does the same for Claude.
     """
 
     anthropic_rejects_max_tokens_beyond_context_window: bool
@@ -338,6 +339,20 @@ def resolve_anthropic_effort(
     if effort == 'max' and not supports_max:
         return 'xhigh' if supports_xhigh else 'high'
     return effort
+
+
+def cap_max_tokens(model_settings: ModelSettings | None, max_output_tokens: int | None) -> ModelSettings | None:
+    """Lower a `max_tokens` above the model's `anthropic_max_output_tokens` to it, as Anthropic rejects it with a 400.
+
+    The model can't generate more than its maximum anyway, so nothing is lost and nothing is warned about. It lives
+    here rather than beside either model because `models/bedrock.py` cannot import from `models/anthropic/`.
+    """
+    if model_settings is None or max_output_tokens is None:
+        return model_settings
+    max_tokens = model_settings.get('max_tokens')
+    if max_tokens is None or max_tokens <= max_output_tokens:
+        return model_settings
+    return {**model_settings, 'max_tokens': max_output_tokens}
 
 
 def anthropic_model_profile(model_name: str) -> ModelProfile | None:

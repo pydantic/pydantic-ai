@@ -9245,6 +9245,20 @@ async def test_bedrock_non_flagged_model_keeps_sampling_settings(
     assert sent['additionalModelRequestFields'] == snapshot({'top_k': 5})
 
 
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_bedrock_claude_caps_max_tokens_at_the_model_maximum(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
+    """Bedrock rejects a `max_tokens` above Claude Haiku 4.5's 64,000-token maximum output, so it's lowered to it."""
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=BedrockModelSettings(max_tokens=100_000))
+
+    result = await agent.run('What is 2+2? Answer with the number only.')
+
+    assert result.output.strip() == snapshot('4')
+    assert single_request_body(vcr)['inferenceConfig'] == snapshot({'maxTokens': 64000})
+
+
 BEDROCK_OPENAI_CONVERSE_MODELS_WITHOUT_SAMPLING_SETTINGS = [
     'us.openai.gpt-5.6-sol',
     'us.openai.gpt-5.6-luna',
