@@ -2129,6 +2129,175 @@ class TestCodeMode:
                 "tool(data={'y': 1})",
                 id='inline-object-named-like-a-definition',
             ),
+            pytest.param(
+                {
+                    'type': 'object',
+                    'properties': {
+                        'x': {'anyOf': [{'$ref': '#/properties/p'}, {'$ref': '#/properties/q'}]},
+                        'p': {'type': 'object', 'properties': {'a': {'type': 'string'}}, 'required': ['a']},
+                        'q': {'type': 'object', 'properties': {'b': {'type': 'integer'}}, 'required': ['b']},
+                    },
+                    'required': ['x', 'p', 'q'],
+                },
+                "tool(x={'b': 1}, p={'a': 's'}, q={'b': 1})",
+                "tool(x={'c': 1}, p={'a': 's'}, q={'b': 1})",
+                id='union-of-two-paths',
+            ),
+            pytest.param(
+                {
+                    'type': 'object',
+                    '$defs': {'User': {'type': 'object', 'properties': {'a': {'type': 'string'}}, 'required': ['a']}},
+                    'definitions': {
+                        'User': {'type': 'object', 'properties': {'b': {'type': 'integer'}}, 'required': ['b']}
+                    },
+                    'properties': {'x': {'anyOf': [{'$ref': '#/$defs/User'}, {'$ref': '#/definitions/User'}]}},
+                    'required': ['x'],
+                },
+                "tool(x={'b': 1})",
+                "tool(x={'c': 1})",
+                id='union-of-two-pointers-with-one-last-segment',
+            ),
+            pytest.param(
+                {
+                    'type': 'object',
+                    'properties': {
+                        'x': {
+                            'oneOf': [
+                                {'type': 'object', 'properties': {'a': {'type': 'string'}}, 'required': ['a']},
+                                {'type': 'object', 'properties': {'b': {'type': 'integer'}}, 'required': ['b']},
+                            ]
+                        }
+                    },
+                    'required': ['x'],
+                },
+                "tool(x={'b': 1})",
+                "tool(x={'c': 1})",
+                id='union-of-two-inline-objects',
+            ),
+            pytest.param(
+                {
+                    'type': 'object',
+                    'properties': {
+                        'x': {
+                            'anyOf': [
+                                {
+                                    'type': 'array',
+                                    'items': {
+                                        'type': 'object',
+                                        'properties': {'a': {'type': 'string'}},
+                                        'required': ['a'],
+                                    },
+                                },
+                                {
+                                    'type': 'array',
+                                    'items': {
+                                        'type': 'object',
+                                        'properties': {'b': {'type': 'integer'}},
+                                        'required': ['b'],
+                                    },
+                                },
+                            ]
+                        }
+                    },
+                    'required': ['x'],
+                },
+                "tool(x=[{'b': 1}])",
+                "tool(x=[{'c': 1}])",
+                id='union-of-lists-of-two-inline-objects',
+            ),
+            pytest.param(
+                {
+                    '$ref': '#/$defs/Base',
+                    '$defs': {'Base': {'type': 'object', 'properties': {'a': {'type': 'string'}}, 'required': ['a']}},
+                    'type': 'object',
+                    'properties': {'extra': {'type': 'integer'}},
+                    'required': ['extra'],
+                },
+                'tool(extra=1)',
+                "tool(a='x')",
+                id='root-ref-beside-properties',
+            ),
+            pytest.param(
+                {
+                    '$ref': '#/$defs/A',
+                    '$defs': {
+                        'A': {'$ref': '#/$defs/B'},
+                        'B': {'type': 'object', 'properties': {'a': {'type': 'string'}}, 'required': ['a']},
+                    },
+                },
+                "tool(a='x')",
+                'tool(a=1)',
+                id='root-ref-to-a-ref',
+            ),
+            pytest.param(
+                {
+                    '$id': 'https://x.dev/t.json',
+                    'type': 'object',
+                    '$defs': {'User': {'type': 'object', 'properties': {'a': {'type': 'string'}}, 'required': ['a']}},
+                    'properties': {'u': {'$ref': 'https://x.dev/t.json#/$defs/User'}},
+                    'required': ['u'],
+                },
+                "tool(u={'a': 's'})",
+                "tool(u={'b': 1})",
+                id='absolute-ref-to-own-id',
+            ),
+            pytest.param(
+                {
+                    '$id': 'https://x.dev/t.json',
+                    'type': 'object',
+                    '$defs': {'User': {'type': 'object', 'properties': {'a': {'type': 'string'}}, 'required': ['a']}},
+                    'properties': {'u': {'$ref': 't.json#/$defs/User'}},
+                    'required': ['u'],
+                },
+                "tool(u={'a': 's'})",
+                "tool(u={'b': 1})",
+                id='relative-ref-to-own-id',
+            ),
+            pytest.param(
+                {
+                    '$id': 'urn:example:t',
+                    'type': 'object',
+                    '$defs': {'User': {'type': 'object', 'properties': {'a': {'type': 'string'}}, 'required': ['a']}},
+                    'properties': {'u': {'$ref': '#/$defs/User'}},
+                    'required': ['u'],
+                },
+                "tool(u={'a': 's'})",
+                "tool(u={'b': 1})",
+                id='fragment-ref-under-a-urn-id',
+            ),
+            pytest.param(
+                {
+                    'type': 'object',
+                    '$defs': {'a/b': {'type': 'integer'}},
+                    'properties': {'x': {'$ref': '#/$defs/a~1b'}},
+                    'required': ['x'],
+                },
+                'tool(x=1)',
+                "tool(x='s')",
+                id='pointer-escape-of-a-slash',
+            ),
+            pytest.param(
+                {
+                    'type': 'object',
+                    '$defs': {'a~b': {'type': 'integer'}},
+                    'properties': {'x': {'$ref': '#/$defs/a~0b'}},
+                    'required': ['x'],
+                },
+                'tool(x=1)',
+                "tool(x='s')",
+                id='pointer-escape-of-a-tilde',
+            ),
+            pytest.param(
+                {
+                    'type': 'object',
+                    'definitions': {'Foo<string>': {'type': 'integer'}},
+                    'properties': {'x': {'$ref': '#/definitions/Foo%3Cstring%3E'}},
+                    'required': ['x'],
+                },
+                'tool(x=1)',
+                "tool(x='s')",
+                id='percent-encoded-pointer',
+            ),
         ],
     )
     async def test_ref_is_checked_against_its_target(self, schema: dict[str, Any], right: str, wrong: str) -> None:
@@ -2137,6 +2306,28 @@ class TestCodeMode:
         assert output == {'output': 'ok\n'}
         with pytest.raises(ModelRetry, match='Type error in code'):
             await self._run_code_with_tools(f'await {wrong}', tool_def)
+
+    async def test_inline_discriminated_union_is_checked_and_defines_only_what_it_uses(self) -> None:
+        def variant(kind: str, field: str, field_type: str) -> dict[str, Any]:
+            properties = {'kind': {'const': kind}, field: {'type': field_type}}
+            return {'type': 'object', 'title': 'SearchFilter', 'properties': properties, 'required': ['kind', field]}
+
+        tool_def = ToolDefinition(
+            name='search',
+            parameters_json_schema={
+                'type': 'object',
+                'properties': {'filter': {'oneOf': [variant('a', 'v', 'string'), variant('b', 'n', 'integer')]}},
+                'required': ['filter'],
+            },
+            return_schema={'type': 'string'},
+        )
+        output, description = await self._run_code_with_tools(
+            "print(await search(filter={'kind': 'b', 'n': 1}))", tool_def
+        )
+        assert output == {'output': 'ok\n'}
+        assert 'filter: search_SearchFilter | search_SearchFilter_2' in description
+        with pytest.raises(ModelRetry, match='Type error in code'):
+            await self._run_code_with_tools("await search(filter={'kind': 'b', 'n': 'x'})", tool_def)
 
     @pytest.mark.parametrize(
         'ref',

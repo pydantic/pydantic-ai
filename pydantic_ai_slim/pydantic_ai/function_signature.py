@@ -26,6 +26,7 @@ from collections.abc import Iterable, Iterator
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal, TypeAlias, assert_never, cast
+from urllib.parse import unquote, urldefrag, urljoin
 
 # Set during rendering and consulted by TypeSignature.display_name. Not being empty means some names had to change,
 # so a type uses the name `get_conflicting_type_names` stored on it. The mapping (e.g. {'User': 'tool_a_User'}) is only
@@ -460,7 +461,12 @@ class FunctionSignature:
         if isinstance(expr, GenericTypeExpr):
             expr.args = [FunctionSignature._replace_types(arg, canonical) for arg in expr.args]
         elif isinstance(expr, UnionTypeExpr):
-            expr.members = [FunctionSignature._replace_types(member, canonical) for member in expr.members]
+            # Members that are now one type are one member. Only here can that be known, as types are unified by then.
+            members = [FunctionSignature._replace_types(member, canonical) for member in expr.members]
+            classes: dict[int, object] = {id(t): id(t) for member in members for t in _types_in(member)}
+            expr.members = list({_expr_key(member, classes): member for member in members}.values())
+            if len(expr.members) == 1:
+                return expr.members[0]
         return expr
 
     @staticmethod
@@ -591,49 +597,73 @@ def _process_schema_defs(
     """Add TypeSignatures for the object-type `$defs` of a schema document. A `$ref` builds any other target."""
     for def_name, def_schema_raw in root.get('$defs', {}).items():
         def_schema = _normalize_schema_node(def_schema_raw)
-        if _is_typed_dict_schema(def_schema) and id(def_schema) not in referenced_types:
+        if _is_typed_dict_schema(def_schema):
             _build_and_register_type(def_name, def_schema, root, referenced_types, tool_name, def_name)
+
+
+# Keywords whose value maps names to schemas, so a pointer ending on one has landed on the map and not on a schema.
+_MAPS_OF_SCHEMAS = frozenset({'$defs', 'definitions', 'dependentSchemas', 'patternProperties', 'properties'})
 
 
 def _is_typed_dict_schema(schema: dict[str, Any]) -> bool:
     return schema.get('type') == 'object' and 'properties' in schema
 
 
-def _resolve_ref(root: dict[str, Any], ref: str) -> dict[str, Any] | None:
-    """The schema a `$ref` points at, or `None` if its document has no answer.
+def _ref_pointer(root: dict[str, Any], ref: Any) -> list[str] | None:
+    """The JSON pointer tokens of a `$ref` into its own document, or `None` if it doesn't point into that document.
 
-    That covers a remote reference, an anchor, and a path that doesn't land on a schema.
+    `$ref` is a URI reference resolved against the document's `$id`, so a URI naming the document itself is local
+    (https://json-schema.org/draft/2020-12/json-schema-core#section-8.2.3.1). Anything else is another document or an
+    anchor, neither of which is followed. A fragment is percent-decoded, then split, then has `~1` and `~0` decoded in
+    that order (RFC 6901, sections 4 and 6).
     """
-    if ref != '#' and not ref.startswith('#/'):
+    if not isinstance(ref, str):
         return None
+    uri, fragment = urldefrag(ref)
+    if uri:
+        base = root.get('$id')
+        if not isinstance(base, str) or urldefrag(urljoin(base, uri)).url != urldefrag(base).url:
+            return None
+    pointer = unquote(fragment)
+    if pointer and not pointer.startswith('/'):
+        return None
+    return [token.replace('~1', '/').replace('~0', '~') for token in pointer.split('/')[1:]]
+
+
+def _follow_pointer(root: dict[str, Any], tokens: list[str]) -> dict[str, Any] | None:
+    """The schema at a JSON pointer, or `None` if it doesn't land on one."""
     node: Any = root
-    for token in ref.split('/')[1:]:
+    at_map_of_schemas = False
+    for token in tokens:
         if isinstance(node, dict):
             node = cast(dict[str, Any], node).get(token)
-        elif isinstance(node, list) and token.isdecimal() and int(token) < len(cast(list[Any], node)):
+        elif isinstance(node, list) and token.isascii() and token.isdigit() and int(token) < len(cast(list[Any], node)):
             node = cast(list[Any], node)[int(token)]
         else:
             return None
-    return cast(dict[str, Any], node) if isinstance(node, dict) else None
+        at_map_of_schemas = not at_map_of_schemas and token in _MAPS_OF_SCHEMAS
+    return cast(dict[str, Any], node) if isinstance(node, dict) and not at_map_of_schemas else None
 
 
 def _ref_to_type_expr(
-    ref: str,
+    ref: Any,
     root: dict[str, Any],
     referenced_types: dict[int, TypeSignature],
     tool_name: str,
     path: str,
 ) -> TypeExpr:
     """The TypeExpr of a `$ref`'s target, or `Any`, as JSON Schema allows anything if there is no target to check."""
-    target = _resolve_ref(root, ref)
-    if target is None:
+    tokens = _ref_pointer(root, ref)
+    target = None if tokens is None else _follow_pointer(root, tokens)
+    if tokens is None or target is None:
         return _ANY
     if id(target) in referenced_types:
         return referenced_types[id(target)]
     if _is_typed_dict_schema(target):
-        parent, _, last = ref.rpartition('/')
-        is_definition = parent.endswith(('/$defs', '/definitions'))
-        name = last if is_definition else _object_type_name(target, tool_name, '' if target is root else path)
+        # Named from the pointer, not the reference, so a name doesn't depend on which of the two comes first.
+        last_token = tokens[-1] if tokens else ''
+        is_definition = tokens[-2:-1] in (['$defs'], ['definitions'])
+        name = last_token if is_definition else _object_type_name(target, tool_name, last_token)
         return _build_and_register_type(name, target, root, referenced_types, tool_name, path)
     # Only object defs become TypedDicts. Pydantic emits enums, constrained aliases, list aliases
     # and unions as non-object defs, so resolve them inline: `Literal[...]`, `int`, `list[str]`.
@@ -652,7 +682,7 @@ def _ref_to_type_expr(
 def _object_type_name(schema: dict[str, Any], tool_name: str, path: str) -> str:
     """The `title` of an object schema if it can name a type (preserving real class names), or a path-based name."""
     title = schema.get('title')
-    return title if title and title.isidentifier() else _path_to_typename(tool_name, path)
+    return title if isinstance(title, str) and title.isidentifier() else _path_to_typename(tool_name, path)
 
 
 def _build_params_from_schema(
@@ -661,10 +691,13 @@ def _build_params_from_schema(
     tool_name: str,
 ) -> dict[str, FunctionParam]:
     """Convert a JSON schema to a dict of FunctionParam objects."""
-    # A recursive model's parameters schema is a root `$ref` to its own definition.
+    # A recursive model's parameters schema is a root `$ref` to its own definition, which can be a `$ref` in turn.
     schema = root
     followed = {id(root)}
-    while '$ref' in schema and (target := _resolve_ref(root, schema['$ref'])) and id(target) not in followed:
+    while 'properties' not in schema and (tokens := _ref_pointer(root, schema.get('$ref'))) is not None:
+        target = _follow_pointer(root, tokens)
+        if target is None or id(target) in followed:
+            break
         schema = target
         followed.add(id(schema))
     properties = schema.get('properties', {})
@@ -851,21 +884,11 @@ def _handle_union_schema(
         else:
             type_exprs.append(_schema_to_type_expr(s, root, referenced_types, tool_name, path))
 
-    # Deduplicate while preserving order (compare rendered strings)
-    seen: set[str] = set()
-    unique_exprs: list[TypeExpr] = []
-    for expr in type_exprs:
-        rendered = str(expr)
-        if rendered not in seen:
-            seen.add(rendered)
-            unique_exprs.append(expr)
-
+    # Repeated members are dropped, and a lone member unwrapped, when types are unified: only then can types be compared.
     if has_null:
-        unique_exprs.append(_NONE)
+        type_exprs.append(_NONE)
 
-    if len(unique_exprs) == 1:
-        return unique_exprs[0]
-    return UnionTypeExpr(members=unique_exprs)
+    return UnionTypeExpr(members=type_exprs)
 
 
 def _build_and_register_type(
@@ -956,7 +979,8 @@ def _expr_key(expr: TypeExpr, classes: dict[int, object]) -> object:
     if isinstance(expr, GenericTypeExpr):
         return (expr.base, *(_expr_key(arg, classes) for arg in expr.args))
     if isinstance(expr, UnionTypeExpr):
-        return ('|', *(_expr_key(member, classes) for member in expr.members))
+        keys = list(dict.fromkeys(_expr_key(member, classes) for member in expr.members))
+        return keys[0] if len(keys) == 1 else ('|', *keys)
     if isinstance(expr, SimpleTypeExpr | LiteralTypeExpr):
         return str(expr)
     assert_never(expr)
