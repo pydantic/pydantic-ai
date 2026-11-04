@@ -2333,6 +2333,17 @@ def test_model_json_schema_with_capabilities():
                             'title': 'Working Dir',
                         },
                         'read_only': {'title': 'Read Only', 'type': 'boolean'},
+                        'authority': {'enum': ['operator', 'user', 'none'], 'title': 'Authority', 'type': 'string'},
+                        'path_authority': {
+                            'anyOf': [
+                                {
+                                    'additionalProperties': {'enum': ['operator', 'user', 'none'], 'type': 'string'},
+                                    'type': 'object',
+                                },
+                                {'type': 'null'},
+                            ],
+                            'title': 'Path Authority',
+                        },
                         'env': {
                             'anyOf': [{'additionalProperties': {'type': 'string'}, 'type': 'object'}, {'type': 'null'}],
                             'title': 'Env',

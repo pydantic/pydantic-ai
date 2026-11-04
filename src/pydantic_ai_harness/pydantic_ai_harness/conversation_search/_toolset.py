@@ -410,6 +410,9 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
             run_id: Search only this run's history. Use it to resolve a run
                 another tool or a compaction receipt referenced.
         """
+        return await self._search(ctx, query, run_id)
+
+    async def _search(self, ctx: RunContext[AgentDepsT], query: str, run_id: str | None) -> str:
         conversation_id: str | None = None
         if self._scope == 'conversation':
             # Fail closed. Filtering on `conversation_id is None` would match every
@@ -447,6 +450,9 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
                 'on a shared store).'
             )
 
+        return self._render_matches(query, sections, total_messages)
+
+    def _render_matches(self, query: str, sections: list[_RunSection], total_messages: int) -> str:
         # Rank on the untruncated rendering so terms past the display cutoff stay
         # findable, then show excerpts clipped around the query terms. Documents are
         # index-aligned across the flattened sections; context windows stay within one section.

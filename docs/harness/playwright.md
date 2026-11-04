@@ -431,7 +431,9 @@ classifies it, so a name pointing at an internal address (`169.254.169.254.nip.i
 and similar wildcard DNS services) is refused rather than followed. That lookup runs
 for every kind, matching the literal check, so a spelling does not decide the
 verdict; answers are cached, which makes it a lookup per distinct host rather than
-per request. `resolved_kinds` sets which kinds are looked up.
+per request. `resolved_kinds` sets which kinds are looked up. A host that
+`allowed_domains` or `blocked_domains` already refuses by name is refused with
+that reason and not looked up.
 
 A lookup that does not answer within two seconds is a refusal, not an allow:
 whoever controls a name controls whether its lookup answers, so a stall would
@@ -491,6 +493,12 @@ that string as the reason, which the model can read through `network_requests`.
 An override that narrows what `refuse` allows should override `describe` too:
 `describe` is what the model is told about its reach, and it reads only the
 fields.
+
+The built-in policy does not look up a host its domain lists refuse, but an
+override of `refuse` may permit such a host, so a policy that overrides `refuse`
+has every host looked up as before. If your override refuses some hosts by name,
+also override `needs_resolution` to return `False` for them, so they are not
+looked up.
 
 Neither policy is a general security boundary. Microsoft's own playwright-mcp
 disclaims its origin filter the same way. A page can still signal outward through

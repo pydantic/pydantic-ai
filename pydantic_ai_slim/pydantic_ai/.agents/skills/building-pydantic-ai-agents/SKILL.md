@@ -260,8 +260,9 @@ After `RealtimeTurnCompleteEvent` (or a greeting's finalized `SpeechPart`), awai
 device-paced `stream_audio()` view to account for all audio emitted so far — played, discarded on a barge-in or a
 full buffer, or emitted before the view subscribed; it requires exactly one audio view.
 To align spoken words with playback (e.g. karaoke-style captions), set `output_speech_timestamps=True`: on a model
-that reports them (Azure AI Voice Live with an Azure voice, or ElevenLabs Agents), `SpeechPartDelta.timestamps` streams `SpeechTimestamp`s
-whose `start_ms` counts from the start of that part's audio, and `SpeechPart.timestamps` records them in history.
+that reports them (Azure AI Voice Live with an Azure voice, or ElevenLabs Agents, per word; xAI Grok Voice, per
+segment of a few words), `SpeechPartDelta.timestamps` streams `SpeechTimestamp`s whose `start_ms` counts from the
+start of that part's audio, and `SpeechPart.timestamps` records them in history.
 ElevenLabs Agents wraps an agent hosted on ElevenLabs, addressed as `elevenlabs-agents:<agent_id>`: the agent must
 permit the conversation overrides the session sends (instructions, voice, ...) in its Security tab, and its client
 tools must match the session's unless `elevenlabs_agents_tool_sync` is `'sync'` (which updates the agent) or `'off'`.
@@ -339,6 +340,11 @@ Key facts for building realtime agents:
   which the model takes as the user's words. It goes out on the provider's operator channel (a `system` message on
   OpenAI/Azure, a contextual update on ElevenLabs Agents, a note to GPT-Live's voice model, `<system>`-tagged
   user text elsewhere), is recorded as a `SystemPromptPart`, and with the default `respond=True` gets a reply.
+- **Instructions are re-resolved before each model turn**, as in a standard run, and every change is appended (a
+  `<context>` element on the same operator channel, recorded as an `InstructionDeltaPart`; on GPT-Live, appended to
+  the backend's instructions), whatever the block's `on_change`. Only instructions with an id can change: name an
+  instruction function (`@agent.instructions(name=...)`) whose text changes mid-call, or the session warns and keeps
+  the text it opened with.
 - **History handoff is the marquee integration**: `session.all_messages()` / `session.new_messages()`
   return real `ModelMessage`s; seed with `realtime(model, message_history=...).session()`, or with
   `conversation=result.conversation` to carry the running usage and `conversation_id` too. Transcripts

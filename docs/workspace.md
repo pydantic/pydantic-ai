@@ -280,6 +280,85 @@ This is a preflight check, not a security boundary against concurrent symlink ch
 isolated backend for untrusted commands. On a backend without commands or `SupportsRealpath`,
 `realpath` only normalizes text; see [Resolving symlinks](#resolving-symlinks).
 
+## Files you didn't write {#workspace-authority}
+
+Set `authority` when the agent works on files the operator doesn't control: `'user'` for the user's
+own files, such as their uploads, and `'none'` for files nobody on the application's side wrote, such
+as a cloned third-party repository:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+
+agent = Agent('{{ anthropic:medium }}', capabilities=[LocalWorkspace('./checkout', authority='none')])
+```
+
+Tools work as before: the agent reads, edits and runs commands in it. The setting is for capabilities
+that pass the workspace's own files to the model. The model treats the agent's instructions as the
+operator speaking, so a capability that would put text read from the workspace there asks
+[`ctx.workspace.authority_of(path)`][pydantic_ai.workspaces.Workspace.authority_of] for each file and sends its
+text with no more [authority][pydantic_ai.messages.Authority] than that: in the user's turn for `'user'`, as
+tool output for `'none'`. Authority doesn't limit what the agent can do; use
+[tool approval](deferred-tools.md#human-in-the-loop-tool-approval) or a sandbox for that.
+
+No built-in capability reads authority yet, so setting it doesn't yet change what reaches the model.
+It's the setting your own capabilities check, and built-in capabilities that load workspace files will
+check it as they adopt it.
+
+A capability checks authority when it reads a file, so a change applies from the next read. Text it
+already added to a conversation stays in that history, so start a new conversation after lowering a
+workspace's authority.
+
+For a single run, wrap its workspace in `AuthorityWorkspace(workspace, authority=...)` and pass it as
+`workspace=`, as with `ReadOnlyWorkspace`. A wrapper only lowers the authority: with several, the
+lowest wins.
+
+### Authority by path {#path-authority}
+
+One workspace can hold files with different authors: a vendored dependency in the operator's repository,
+or the operator's own instruction files next to a cloned third-party repository. `path_authority` gives
+directories and files their own level, overriding `authority` for the paths under them:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+
+agent = Agent(
+    '{{ anthropic:medium }}',
+    capabilities=[
+        LocalWorkspace(
+            './checkout',
+            authority='none',
+            path_authority={'~/.config/my-app': 'operator', 'docs/upload': 'user'},
+        )
+    ],
+)
+```
+
+[`authority_of(path)`][pydantic_ai.workspaces.Workspace.authority_of] gives a file's level:
+
+- The longest matching path wins, so a lower directory can sit inside a higher one and the other way around.
+- Relative paths resolve against the working directory. `LocalWorkspace` expands `~`; `AuthorityWorkspace`
+  takes workspace paths as they are, and refuses one starting with `~`.
+- A file outside the working directory is outside the workspace, at `'none'`, unless `path_authority` lists a
+  path containing it, like `~/.config/my-app` above.
+- Symlinks are followed, and a file gets the lower of the levels of where its path is written and where it
+  leads: a link from a `'none'` directory to an `'operator'` file is at `'none'`, and so is a link from an
+  `'operator'` directory to a `'none'` file. In a chain of links, the links on the path itself count, and
+  so does the final target, but not a link reached only through another link's target.
+- Paths also match ignoring case, keeping the lower level, so on a case-insensitive filesystem `Vendor/` can't
+  escape a lower `vendor/`.
+- Without `path_authority`, every file in the working directory is at `authority`.
+- A wrapper's `path_authority` never raises a level another wrapper set: with several, the lowest wins.
+
+`path_authority` is not access control. It sets the authority of the text capabilities put in the prompt
+from those files, not what the agent can read, write or run: the agent's tools reach every path as before.
+A file the agent reads with a tool, such as `read_file`, comes back as tool output whatever its level.
+
+A file's level reflects where its path leads when it's read, and symlinks can change. A capability asks
+when it reads a file and keeps the level with the text, rather than asking again each time it sends it,
+so a link changed later can't change the requests a conversation has already made.
+
 ## Choosing a run's workspace
 
 A run picks its workspace from the first of these that applies:
@@ -390,11 +469,11 @@ activities.
   `activity_config`; if you set that, keep a `start_to_close_timeout` in it, for example
   `activity_config={'start_to_close_timeout': timedelta(seconds=60), 'retry_policy': RetryPolicy(maximum_attempts=3)}`.
 - `workspace=` passes on only a reference, and the run rebuilds the workspace from the agent's own
-  capabilities. A `ReadOnlyWorkspace(...)` argument raises `UserError` if rebuilding would drop its
-  read-only policy, and so does a live backend that has no ref yet or a capability passed to the run
+  capabilities. A policy wrapper such as `ReadOnlyWorkspace(...)` or `AuthorityWorkspace(...)` raises
+  `UserError` if rebuilding would drop its policy, and so does a live backend that has no ref yet or a capability passed to the run
   that changes the workspace's type or policy. Other settings of a run-level workspace capability,
   such as a sandbox image, do not apply: every unit rebuilds the workspace from the agent's. A previous `result.workspace` without a ref starts a fresh workspace. Put policy on the agent's capability instead, such as
-  `LocalWorkspace(..., read_only=True)`.
+  `LocalWorkspace(..., read_only=True)` or `LocalWorkspace(..., authority='none')`.
 - `workspace.backend` is not available in workflow code, which includes DBOS function tools and
   Temporal tools with `metadata={'temporal': False}`. Reach the provider's own API from a tool that
   runs as an activity or task.

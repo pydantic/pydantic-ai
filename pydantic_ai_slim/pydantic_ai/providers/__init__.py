@@ -99,10 +99,17 @@ class Provider(ABC, Generic[InterfaceClient]):
 
     @property
     def canonical_system(self) -> str:
-        """The system whose keys and format verify the stateless signed or encrypted data this provider returns.
+        """The service behind this provider, whose replayed signed data and provider-native features it shares.
 
-        That data is encrypted reasoning, thinking and thought signatures, redacted thinking and OpenAI
-        compaction items. A model sends it back only to a provider whose `canonical_system` matches, or
+        Code that decides by service rather than by provider, such as which model IDs a provider-native
+        tool takes, reads this instead of `name`, so a renamed subclass keeps working. It doesn't group
+        providers by wire protocol: `AzureProvider`, and an `OpenAIProvider` subclass for another service,
+        each have their own.
+
+        For replay, it's the system whose keys and format verify the stateless signed or encrypted data
+        this provider returns. That data is encrypted reasoning, thinking and thought signatures,
+        redacted thinking and OpenAI compaction items.
+        A model sends it back only to a provider whose `canonical_system` matches, or
         lists it in [`compatible_systems`][pydantic_ai.providers.Provider.compatible_systems]; other
         providers get the fallback each model uses for foreign data, such as thinking rendered as text.
         Server-side state, such as response, item and container IDs, is judged by endpoint instead: see
