@@ -17,7 +17,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Harnesses | Build your own; shell, file tools, sandboxes and compaction ship | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Enterprise support | None documented for ADK; [Google Cloud support](https://cloud.google.com/support) for the cloud | [For the framework itself](../enterprise-support.md), no platform required |
-| Durable execution | Yes | [Eight integrations](../durable_execution/overview.md) |
+| Durable execution | Yes | [Nine integrations](../durable_execution/overview.md) |
 | Interfaces | CLI, web, A2A | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) |
 | Realtime voice | Yes | [Realtime](../realtime/overview.md) |
 | Evals | Yes | [Pydantic Evals](../evals.md) |
@@ -37,6 +37,8 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Browser use | Yes | [Web & research](https://pydantic.dev/docs/ai/harness/#web--research) |
 
 ## FAQ
+
+**Can I use Pydantic AI on Google Cloud?** Yes. Run agents on [Gemini and Model Garden models on Google Cloud](../models/google-cloud.md), including [Claude on Google Cloud](../models/google-cloud.md#claude-on-google-cloud), with [Google Cloud embeddings](../embeddings.md#google-cloud), [Gemini image generation](../image-generation.md#google) and voice agents on [Gemini Live](../realtime/gemini.md). The Harness adds [Google Workspace tools](../harness/google-workspace.md), and the [realtime deployment guide](../realtime/deployment.md#hosting) covers Cloud Run. [Can we run on our cloud?](../enterprise.md#cloud) covers AWS and Azure too.
 
 **Can I build a coding agent on Pydantic AI?** Yes. Give your agent the
 [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) capability, or assemble your own from the

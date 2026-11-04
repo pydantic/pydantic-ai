@@ -9,7 +9,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 - [Models and accounts](#models-and-accounts): [Models and their settings](#models-and-their-settings), [Codex authentication](#codex-authentication), [GitHub Copilot subscriptions](#github-copilot-subscriptions), [vllm connection](#vllm-connection), [openrouter connection](#openrouter-connection), [Saved API keys](#saved-api-keys), [Usage and cost](#usage-and-cost)
 - [The prompt](#the-prompt): [Prompt area](#prompt-area), [Pasting images](#pasting-images), [Input history](#input-history), [Word deletion](#word-deletion), [Undo and redo](#undo-and-redo), [Option keys on macOS](#option-keys-on-macos), [Interrupting a turn](#interrupting-a-turn), [Rewinding a conversation](#rewinding-a-conversation), [Shell commands with !](#shell-commands-with-)
 - [Output](#output): [How tool calls look](#how-tool-calls-look), [Streaming](#streaming), [Code highlighting](#code-highlighting), [Grep previews](#grep-previews), [Shell preview limit](#shell-preview-limit), [Tool details](#tool-details), [Status line](#status-line), [Themes](#themes), [Spinners](#spinners)
-- [The agent](#the-agent): [Your instructions: /system_prompt](#your-instructions-system_prompt), [Code mode and speculative execution](#code-mode-and-speculative-execution), [Questions from the model](#questions-from-the-model), [Compacting the conversation](#compacting-the-conversation), [Task delegation](#task-delegation), [Ask CLAI to customize itself](#ask-clai-to-customize-itself)
+- [The agent](#the-agent): [Your instructions: /system_prompt](#your-instructions-system_prompt), [Code mode and speculative execution](#code-mode-and-speculative-execution), [Questions from the model](#questions-from-the-model), [Compacting the conversation](#compacting-the-conversation), [Task delegation](#task-delegation), [Ask CLAI about itself](#ask-clai-about-itself)
 - [Sessions](#sessions): [Saved sessions and /resume](#saved-sessions-and-resume), [Background forks: /fork](#background-forks-fork), [Git worktrees](#git-worktrees), [Several sessions in the web UI](#several-sessions-in-the-web-ui)
 - [Plugins and integrations](#plugins-and-integrations): [Plugins](#plugins), [Built-in plugins at a glance](#built-in-plugins-at-a-glance), [MCP servers: /mcp](#mcp-servers-mcp), [Desktop notifications](#desktop-notifications), [Herdr integration](#herdr-integration), [Agent of Empires integration](#agent-of-empires-integration), [Telemetry and references](#telemetry-and-references)
 - [Using CLAI from code](#using-clai-from-code): [Your own agent](#your-own-agent), [Headless mode](#headless-mode), [The stock agent in your own code](#the-stock-agent-in-your-own-code), [Bring an agent](#bring-an-agent)
@@ -31,6 +31,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/login [NAME[@PROFILE]]` | Sign in: `openai-codex`, `github-copilot`, or one a plugin adds; `@PROFILE` adds another account |
 | `/accounts` | Add, rename, reorder, and sign out of accounts |
 | `/keys` | Manage saved API keys |
+| `/permissions [full\|auto\|read-only]` | Show or set what runs without asking |
 | `/set [KEY [VALUE]]` | Change a setting; no arguments opens the menu (alias `/settings`) |
 | `/config show\|get\|set\|reset` | Read or write saved settings; writes apply on restart |
 | `/system_prompt` | View the system prompt and edit your own instructions |
@@ -100,11 +101,14 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `run.tool_retries` | `3` | Default retries per tool call. Explicit tool retry limits take precedence. |
 | `run.code_mode` | `true` | Fold tools into a sandboxed run_code that runs each statement while the model writes. Off, every tool is called natively. |
 | `run.speculative_code_mode` | `false` | Also start read-only calls in run_code before the model reaches them. Turns on code mode for its runs. Ctrl+X Ctrl+S toggles it. |
+| `run.permissions` | `"full"` | What runs without asking: full runs everything; auto asks before commands that delete, push, install, or reach the network; read-only asks before every file write and command. /permissions sets it. |
 | `run.instructions` | `""` | Your own instructions, sent after CLAI's built-in, AGENTS.md, and plugin instructions. /system_prompt edits them. |
 | `accounts.pool` | `true` | A model without @PROFILE runs on every signed-in account of its provider, in /accounts order, as @* does. PROVIDER@default:MODEL runs the default account alone. |
 | `sessions.naming` | `true` | Name saved sessions in the background using a model. |
 | `sessions.naming_model` | `null` | Naming model override; null uses the current model. |
 | `updates.channel` | `stable` | Where /update looks: stable PyPI releases, or main for the newest CLAI commit on main. |
+| `repo_context.walk_up_roots` | `["~"]` | User-only JSON list of inclusive stops for instruction autoload when the plugin's `walk_up` is on; the nearest one containing the workspace applies, and with none the walk stops at the repository root. |
+| `repo_context.autoload_symlink_roots` | `[]` | User-only JSON list of authorized external instruction-symlink target directories, for autoload only. |
 | `worktrees.remove_commands` | `{}` | User-only repository-to-argv map for confirmed exit cleanup. See [Register a worktree removal command](#register-a-worktree-removal-command). |
 
 ### Environment variables at a glance
@@ -399,6 +403,8 @@ and the problem; a key CLAI does not know is reported once at startup and
 ignored, so a newer file still works with an older CLAI. Precedence, lowest
 first: defaults, your user settings, the project file, `CLAI_MODEL`, CLI flags.
 
+For instruction-loading settings, see [Repository instructions](#repository-instructions).
+
 `plugins` takes the module declarations used by `/plugins add NAME module[:Class] [JSON]`: an `id`, a `factory`
 (`module` or `module:attr`), an optional `path`, and optional `settings`. A
 relative `path` is relative to the folder that holds `.clai`, whichever
@@ -434,15 +440,53 @@ origin. CLAI prints the file it found when it starts.
 
 The built-in `repo_context` plugin (harness `RepoContext`), which is separate
 from the project file, reads instruction files automatically: one per directory,
-`AGENTS.md` else `CLAUDE.md`, from the launch directory and every directory above
+`AGENTS.md` else `CLAUDE.md`, from the launch directory and the directories above
 it, plus your global files (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md` or
 `$CODEX_HOME/AGENTS.md`, and `~/.pydantic-ai/AGENTS.md`), which also load when
-you use CLAI to run another agent. The walk-up goes all the way to `/`, so under
-a shared directory such as `/tmp` it also reads files other users can write;
-set the plugin's `walk_up` to `false` there. A subdirectory's file is added the first time
+you use CLAI to run another agent. Under your home the walk-up stops at `~`;
+elsewhere it stops at the repository root (see
+[Repository instructions](#repository-instructions)). A subdirectory's file is added the first time
 the agent reads or lists something in it. `/plugins disable repo_context` turns it off, for this and
 every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](../PLUGINS.md#the-built-in-plugins) for its settings.
+
+### Repository instructions
+
+`repo_context` reads the workspace's instruction file and those above it. Two
+user-only settings set where that walk stops, and which shared directories an
+instruction symlink may point into:
+
+```text
+/set repo_context.walk_up_roots '["~", "/srv/projects"]'
+/set repo_context.autoload_symlink_roots '["~/agent-context"]'
+```
+
+The walk reads ancestors up to the nearest listed root that contains the
+workspace, inclusive: with the list above, a workspace under `/srv/projects`
+stops there and one elsewhere under your home stops at `~`.
+`repo_context.walk_up_roots` defaults to `["~"]`, your home. When no listed root
+contains the workspace, as in a container's `/app`, the walk stops at the
+repository root, the nearest directory with a `.git`. Avoid listing a root other
+users can write to, such as `/tmp`. To scan only the workspace, turn the walk off:
+
+```text
+/plugins add repo_context pydantic_clai2.builtin_plugins.repo_context '{"walk_up": false}'
+``` `repo_context.autoload_symlink_roots` defaults to `[]`; set
+it to a JSON list of directories if your instruction files are symlinks into a
+shared directory.
+
+Both settings are user-only, not plugin JSON options; `.clai/settings.json`
+rejects their fields. Use absolute paths, `~`, or `~/...`, not relative paths,
+`~other-user`, or environment-variable interpolation. Single-quote each whole
+JSON list as above, which also keeps paths containing spaces in one argument,
+such as `/set repo_context.walk_up_roots '["~", "/srv/My Projects"]'`. Paths are
+resolved, following symlinks, when used and need not exist when saved. Changes
+apply on the next run, not during a running turn.
+
+Authorize a directory holding only trusted instructions, not `/` or all of home:
+repository symlinks can select any readable file beneath it. See
+[Repo Context](../../../docs/harness/repo-context.md#shared-instruction-symlinks)
+for symlink loading, scope, and backend requirements.
 
 Interactive commands: `/login`, `/set` (alias `/settings`), `/system_prompt`, `/theme`, `/model`, `/model add`, `/model settings`, `/model chains`, `/help`, `/clear` (alias `/new`), `/resume`, `/exit`, `/config`,
 `/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, and `/compact` from the built-in `compaction` plugin.
@@ -926,6 +970,15 @@ instead of falling back, so a missing login is not hidden. Older CLAI builds kee
 the rest of your settings, but cannot run a profile, `@*`, `@default`, or chain
 model, and run a model without an account on the default account only.
 
+### Long subscription retry waits
+
+With a `claude-code:` model, when Claude asks CLAI to wait more than a minute before
+retrying (usually because your subscription limit was reached), CLAI shows the error
+at once instead of waiting silently. The error says about how long Claude asked you
+to wait. Try again later, or pick another model or a chain with `/model`.
+
+For response-header details, see the [plugin contract](../PLUGINS.md#run-models-under-your-own-prefix-get_model_providers).
+
 ### vllm connection
 
 Open `/model add`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks. The connection is saved like Codex's, see [Codex authentication](#codex-authentication).
@@ -1226,6 +1279,9 @@ cannot restore are also disabled.
 A press that cancels a running turn, closes completions, or leaves history search
 does not count toward the shortcut. Wait for queued prompts to finish first.
 Typing another key or opening another menu resets the double-Esc sequence.
+
+In the web UI, a prompt's **Edit** and **Retry** buttons rewind to it the same way, between turns,
+and send the edited or unchanged prompt with its images at once.
 
 ### Shell commands with `!`
 
@@ -1721,11 +1777,11 @@ While the model writes:
 
 - **Eager execution** runs each complete statement as soon as it has streamed,
   so a slow `shell` build or test starts before the snippet is finished.
-- **Speculation**, only while its switch is on, starts `list_files`, `read_file`, and `grep`
-  calls whose arguments are all literals the
+- **Speculation**, only while its switch is on, starts `list_files`, `read_file`, `grep`,
+  `search_clai_docs`, and `read_clai_docs` calls whose arguments are all literals the
   moment their line has streamed. Only these
   read-only tools speculate, because an early call may belong to a branch the
-  snippet never takes. They must come from CLAI's own file tools: a
+  snippet never takes. They must come from CLAI's own file and docs tools: a
   plugin or MCP tool with the same name, or one that declares itself read-only,
   waits like any other call. Writes and shell commands never start speculatively.
 
@@ -1792,6 +1848,33 @@ The menu is the built-in `ask_user` plugin around the harness's
 `Answerer`; the terminal menu is one, and [PLUGINS.md](../PLUGINS.md#ask_user-questions-answered-from-the-terminal)
 shows how to put a different one, a web form for instance, in its place.
 `/plugins disable ask_user` removes the tool.
+
+### Permissions
+
+`/permissions` chooses what the agent may do without asking, for this session:
+
+| Mode | File writes | Shell commands |
+|---|---|---|
+| `full` (default) | run | run |
+| `auto` | run | run, except commands that delete (`rm -rf`), push (`git push`), rewrite history (`git reset --hard`, `git clean`), use `sudo`, reach the network (`curl`, `ssh`, ...), or install packages |
+| `read-only` | ask | ask |
+
+A held call waits for your answer: the inline picker in the terminal, or an approval card in the web UI,
+showing the command or the file change; the terminal prints the command (or a path too long for the
+picker) in full above it. **Approve** runs it once, **Approve for this session** also runs the
+same tool on the same command (or the same file) without asking for the rest of the conversation, and **Deny** tells
+the model the call did not run, with the reason you type, if any. The web UI shows the mode as a chip by the
+prompt box and changes it there too. A change applies from the next tool call, also during a turn, except
+that code mode's sandbox keeps the folder as the turn mounted it until the next prompt.
+
+The mode is the `run.permissions` setting: `/permissions MODE` saves it as the default for new sessions too,
+and Settings, General edits it. It is harness [`Permissions`](../../../docs/harness/permissions.md), which checks
+the coding tools' file writes and commands only; other tools, such as MCP servers', run as before. File tools
+only reach files inside the session's folder, so `auto` lets them write. In `read-only`, code mode's sandbox
+gets the folder read-only for the run. The command patterns are a convenience, not a sandbox. A session no one
+can be asked in, such as `clai2 -p`, denies held calls. Outside `full`, a delegation whose delegate would run without these checks is refused: a named
+sub-agent, or a delegation to `self` from an agent you supply (`clai2 --agent`), which gets `/permissions`
+per run rather than bound to the agent. The model is told to do the work itself instead.
 
 ### Compacting the conversation
 
@@ -2139,23 +2222,43 @@ read, so with one loaded the catalog is read from the project directory. If that
 plugin does run the agent in a sandbox, the skills' directories are paths on this
 machine that the sandbox may not reach.
 
-### Ask CLAI to customize itself
+### Ask CLAI about itself
 
-Ask, for example, "Create a plugin with a custom menu" or "Use my model provider".
-The default agent lists CLAI's customization guide as the deferred capability
-`clai_customization`, one line in the catalog of capabilities the model can load
-with `load_capability`. The guide is bundled with the installed package and read
-only when the model loads it, not included in every prompt. No network access or
-source checkout is needed to read it.
+Ask, for example, "How do saved API keys work?", "Create a plugin with a custom
+menu", or "Use my model provider". The default agent lists `clai_customization`
+as a deferred capability in its catalog, one line until the model calls
+`load_capability` to reveal two docs tools. The loaded capability gives the model
+a short instruction to use these docs for questions about CLAI, and to read the
+customization guide before advising on customizing CLAI.
 
-It covers plugin installation and reload, hooks, tools, settings, commands,
-rendering, custom TUI menus, and model/provider launchers. It distinguishes plugin
-APIs from UI changes that currently need a CLAI source change. This is guidance,
-not an automatic installer or a permission boundary: plugins execute trusted Python
-as your user. Review generated plugins before enabling them.
+- `search_clai_docs(query)` returns the best matching sections, each with its path
+  and a short snippet.
+- `read_clai_docs(path)` lists the docs when `path` is empty, returns a doc such as
+  `reference` or `harness/coder`, or one section such as
+  `reference#saved-api-keys`, with its subsections. A doc over 50,000 characters
+  comes back as an outline of section paths instead, so a long doc like this
+  reference is read a section at a time. A section over the limit returns its own
+  text (truncated if needed) and an outline of any subsections. Section paths are
+  the docs' own heading anchors.
 
-Custom agents are unchanged. To offer the same guide, add
-`customization_guide()` from `pydantic_clai2.customization` to their capabilities.
+The docs are this reference, the [README](../README.md), the
+[plugin contract](../PLUGINS.md), the customization guide, the
+[declarative plugins](declarative-plugins.md) design note, and the README of each
+Pydantic AI Harness capability CLAI uses, such as `harness/shell` and
+`harness/subagents`. They ship with the installed packages and are read only when a
+tool is called, never included in every prompt or loaded capability. No network
+access or source checkout is needed.
+
+The customization guide covers plugin installation and reload, hooks, tools,
+settings, commands, rendering, custom TUI menus, and model/provider launchers. It
+distinguishes plugin APIs from UI changes that currently need a CLAI source change.
+This is guidance, not an automatic installer or a permission boundary: plugins
+execute trusted Python as your user. Review generated plugins before enabling them.
+
+A custom agent can opt in by adding `ClaiDocs()` from `pydantic_clai2.clai_docs`
+to its capabilities. `customization_guide()` from
+`pydantic_clai2.customization`, which previously loaded the whole guide as
+instructions, now returns `ClaiDocs()` and uses the same deferred catalog entry.
 See [PLUGINS.md](../PLUGINS.md) for the plugin contract.
 
 ## Sessions
@@ -2172,11 +2275,11 @@ keep the original saved path; resuming does not change directories or migrate
 saved data.
 
 In the browser, <kbd>a</kbd> archives the selected session: it leaves the list and
-the web UI's sidebar, and nothing is deleted. <kbd>h</kbd> lists archived sessions too,
-marked `(archived)`, and searches them; <kbd>a</kbd> on one unarchives it. The current
-session and one running in another CLAI cannot be archived. Resuming an archived
-session, or a new turn in it, unarchives it; `--fork-session` leaves it archived
-and continues in the copy.
+the web UI's sidebar, except its **Archived** view, and nothing is deleted.
+<kbd>h</kbd> lists archived sessions too, marked `(archived)`, and searches them;
+<kbd>a</kbd> on one unarchives it. The current session and one running in another
+CLAI cannot be archived. Resuming an archived session, or a new turn in it,
+unarchives it; `--fork-session` leaves it archived and continues in the copy.
 
 CLAI saves accepted prompts before the first model request and saves the retained
 history after successful, failed, and cancelled turns. `/compact` commits its
@@ -2571,8 +2674,16 @@ looking at.
 CLAI never changes its own working directory to do this. There is no limit on how
 many sessions run at once.
 
-- **Status dots.** A dot beside a live session in the sidebar shows that it runs a
-  turn, that input waits behind its turn, or that it asks you a question.
+- **A stable sidebar.** Sessions are listed by project, or all together under
+  **Recent**, newest created first. Selecting, renaming, or a turn ending never
+  moves a row. Sessions whose folder is gone fold into **Removed worktrees**.
+- **Status marks.** Each row has one: a spinner and elapsed time while it runs a
+  turn here, a hollow ring while another CLAI runs it, **Needs input** while it asks
+  you a question, and a bold title while it has changes you have not seen.
+  **Attention** (Cmd/Ctrl+Alt+U) lists only those sessions.
+- **Archiving.** A session's menu archives it, or every session of its branch, and a
+  project's menu archives all its chats. The sidebar's **Archived** view lists them
+  with **Unarchive**.
 - **Esc** and the stop button interrupt the session you are looking at, and only it.
 - **Steering and the queue.** As at the terminal's prompt, Enter queues a message
   while a turn runs and Alt+Enter (Option+Enter), or the bolt button, steers the turn

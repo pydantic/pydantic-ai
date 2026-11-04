@@ -130,6 +130,21 @@ def openai_compatible_category(
     return http_status_category(status_code, message) if status_code is not None else None
 
 
+_ZAI_QUOTA_CODES = frozenset(
+    {'1113', '1308', '1309', '1310', '1311', '1313', '1314', '1315', '1316', '1317', '1318', '1319', '1320', '1321'}
+)
+"""Z.ai error codes for an exhausted balance or plan limit, see https://docs.z.ai/api-reference/api-code."""
+
+
+def zai_code_category(code: str | None) -> HTTPErrorCategory | None:
+    """The error category for a Z.ai error code, where it differs from the HTTP status's.
+
+    Z.ai sends an exhausted balance or plan limit with a 429, like its transient `1302` rate limit and `1305` overload,
+    so only the code tells them apart.
+    """
+    return ModelQuotaExceededError if code in _ZAI_QUOTA_CODES else None
+
+
 _GOOGLE_CONTEXT_WINDOW_MESSAGES = ('input token count', 'number of tokens allowed')
 """Gemini reports a context window overflow as `INVALID_ARGUMENT`, identifiable only by its message.
 

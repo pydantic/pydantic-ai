@@ -177,9 +177,15 @@ before writing cleanup.
   (pydantic/pydantic-ai#5399). `tests/harness/shell/test_shell.py` and
   `tests/harness/guardrails/test_input_guardrail.py` already carry sleeps; when you touch
   one, convert it.
-- Prove ownership directly: diff `asyncio.all_tasks()` for ordinary leak
-  checks; for a subprocess, assert the process group is gone after the timeout
-  path, not just that the tool returned a timeout string.
+- Prove ownership directly. Find each task the code under test owns by its
+  name, and assert it is done once its owner exits
+  (`test_discard_and_aclose_cancel_running_work`). When the owned tasks have
+  no name, run the code under test inside `with no_leaked_tasks():` from
+  `tests/conftest.py`. Never compare `asyncio.all_tasks()` snapshots
+  yourself: the cyclic GC can finalize another test's garbage mid-test, and
+  its finalizers queue tasks on the running loop. For a subprocess, assert the
+  process group is gone after the timeout path, not just that the tool
+  returned a timeout string.
 - Reach the real trigger. Level-cancellation behavior needs a real outer
   `anyio` cancel scope, not a bare `CancelledError` raise; Trio behavior needs
   a test parametrized with `anyio_backend='trio'`, not a mental model of it.

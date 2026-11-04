@@ -33,8 +33,7 @@ def _returns(messages: list[ModelMessage]) -> list[ToolReturnPart]:
 class _Recorder:
     """A `FunctionModel` that calls `big_tool`, then reads the spill back with whichever reader is offered."""
 
-    def __init__(self, *, read_back: bool = True) -> None:
-        self.read_back = read_back
+    def __init__(self) -> None:
         self.offered: list[dict[str, str | None]] = []
         self.marker: str | None = None
 
@@ -47,8 +46,6 @@ class _Recorder:
             self.marker = str(spilled[0].content)
             assert spilled[0].metadata is not None
             handle = spilled[0].metadata['overflow_handle']
-            if not self.read_back:
-                return ModelResponse(parts=[TextPart('done')])
             tools = self.offered[-1]
             if reader := next((name for name, kind in tools.items() if kind == READ_TOOL_RESULT_KIND.id), None):
                 return ModelResponse(parts=[ToolCallPart(reader, {'handle': handle})])
@@ -57,10 +54,8 @@ class _Recorder:
         return ModelResponse(parts=[ToolCallPart('big_tool', {})])
 
 
-async def _run(
-    workspace: Path, *capabilities: AbstractCapability[None], read_back: bool = True
-) -> tuple[_Recorder, str]:
-    recorder = _Recorder(read_back=read_back)
+async def _run(workspace: Path, *capabilities: AbstractCapability[None]) -> tuple[_Recorder, str]:
+    recorder = _Recorder()
     agent = Agent(
         FunctionModel(recorder.respond), deps_type=type(None), capabilities=[LocalWorkspace(workspace), *capabilities]
     )
@@ -89,11 +84,13 @@ class TestReaderStepsAside:
         assert 'Tool output too large' not in output
 
     async def test_prefixed_read_file_is_named(self, tmp_path: Path) -> None:
-        # A renamed `FileSystem` tool can be offered but not called yet (#10927), so this checks what is offered.
-        recorder, _ = await _run(tmp_path, _limits(), PrefixTools(FileSystem(), prefix='repo'), read_back=False)
+        recorder, output = await _run(tmp_path, _limits(), PrefixTools(FileSystem(), prefix='repo'))
         assert all(READ_TOOL_NAME not in tools and 'repo_read_file' in tools for tools in recorder.offered)
         assert recorder.marker is not None
         assert 'Read it with repo_read_file(path=' in recorder.marker
+        # The marker can be followed: the spill is read back through `repo_read_file`, and not spilled again.
+        assert 'line 100' in output
+        assert 'Tool output too large' not in output
 
     async def test_read_file_of_other_files_is_still_reduced(self, tmp_path: Path) -> None:
         (tmp_path / 'big.txt').write_text(_PAYLOAD)
