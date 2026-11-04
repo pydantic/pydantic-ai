@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import typing
+from collections.abc import Iterator
 from copy import deepcopy
 from enum import Enum
 from itertools import product
@@ -13,6 +14,7 @@ import pytest
 import typing_extensions
 from pydantic import BaseModel, RootModel, create_model
 
+from pydantic_ai import function_signature
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.function_signature import (
     FunctionParam,
@@ -939,12 +941,8 @@ def dump(*, blob: str | int | list[Any]) -> Any:
 """)
 
 
-def test_ref_to_ref_def_keeps_alias_name():
-    """A def that is itself a `$ref` is left unresolved.
-
-    Pydantic flattens an alias of an alias into a full copy, so this shape only reaches us
-    from hand-written schemas; following the indirection is out of scope here.
-    """
+def test_ref_to_ref_def_follows_through_to_its_target():
+    """Pydantic flattens an alias of an alias into a full copy, so this shape comes from hand-written schemas."""
     sig = FunctionSignature.from_schema(
         name='t',
         parameters_schema={
@@ -955,7 +953,7 @@ def test_ref_to_ref_def_keeps_alias_name():
         },
     )
     assert sig.render('...', name='t') == snapshot("""\
-def t(*, x: Indirect) -> Any:
+def t(*, x: int) -> Any:
     ...\
 """)
 
@@ -1419,8 +1417,8 @@ def tool(*, item: Container) -> Any:
     assert str(container.fields['inner'].type) == 'Inner'
 
 
-def test_schema_inline_object_reuses_existing_typename():
-    """Inline object property reuses a $defs type when path-based names collide."""
+def test_schema_inline_object_named_like_a_definition_stays_its_own_type():
+    """Inline object property and a $defs type with one name are two types, which names then tell apart."""
     sig = FunctionSignature.from_schema(
         name='tool',
         parameters_schema={
@@ -1444,8 +1442,16 @@ def test_schema_inline_object_reuses_existing_typename():
             },
         },
     )
-    # The $defs ToolData was registered first; the inline 'data' property reuses it
-    assert str(sig.params['data'].type) == 'ToolData'
+    assert _catalog(sig) == snapshot("""\
+class tool_ToolData(TypedDict):
+    y: int
+
+class tool_ToolData_2(TypedDict):
+    x: str
+
+def tool(*, data: tool_ToolData_2) -> Any:
+    ...\
+""")
 
 
 def test_schema_additional_properties_false():
@@ -2039,10 +2045,11 @@ def test_resolved_name_is_not_part_of_the_type():
     assert repr(resolved) == repr(plain)
 
 
-def test_ref_that_does_not_resolve_keeps_rendering():
-    """Such a `$ref` leaves a type no signature lists, which unifying must still handle."""
-    schema = {'type': 'object', 'properties': {'x': {'$ref': '#/definitions/U'}}, 'required': ['x']}
-    signature = FunctionSignature.from_schema(name='a', parameters_schema=schema)
+def test_type_a_hand_built_signature_does_not_list_keeps_rendering():
+    """`FunctionSignature` is a public dataclass, and rendering it has never needed `referenced_types` to be complete."""
+    signature = FunctionSignature(
+        name='a', params={'x': FunctionParam(name='x', type=TypeSignature(name='U'))}, return_type=SimpleTypeExpr('Any')
+    )
     assert _catalog(signature) == 'def a(*, x: U) -> Any:\n    ...'
 
 
@@ -2095,3 +2102,375 @@ def test_every_small_catalog_defines_each_name_once_and_every_name_it_uses():
         used = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)}
         assert len(defined) == len(set(defined)), catalog
         assert used <= {*defined, 'Any', 'TypedDict', 'int', 'list', 'str'}, catalog
+
+
+# =============================================================================
+# What a `$ref` means
+# =============================================================================
+
+# `tests/harness/code_mode/test_code_mode.py` holds Monty to the same cases.
+
+
+def _ref_catalog(properties: dict[str, Any], **document: Any) -> str:
+    schema = {'type': 'object', 'properties': properties, 'required': list(properties), **document}
+    return _catalog(FunctionSignature.from_schema(name='tool', parameters_schema=schema))
+
+
+_NAME_OBJECT = {'type': 'object', 'properties': {'name': {'type': 'string'}}, 'required': ['name']}
+_ID_OBJECT = {'type': 'object', 'properties': {'id': {'type': 'integer'}}, 'required': ['id']}
+
+
+def test_root_refs_that_lead_nowhere_give_no_parameters():
+    for schema in (
+        {'$ref': '#'},
+        {'$ref': '#/$defs/A', '$defs': {'A': {'$ref': '#/$defs/A'}}},
+        {'$ref': '#/$defs/Missing'},
+    ):
+        assert FunctionSignature.from_schema(name='tool', parameters_schema=schema).params == {}
+
+
+def test_definition_in_definitions_is_named_by_its_key():
+    assert 'class User(TypedDict):' in _ref_catalog(
+        {'user': {'$ref': '#/definitions/User'}}, definitions={'User': _NAME_OBJECT}
+    )
+
+
+def test_type_name_does_not_depend_on_whether_the_ref_comes_first():
+    before = _ref_catalog({'second': {'$ref': '#/properties/first'}, 'first': _NAME_OBJECT})
+    after = _ref_catalog({'first': _NAME_OBJECT, 'second': {'$ref': '#/properties/first'}})
+    assert 'class ToolFirst(TypedDict):' in before
+    assert 'class ToolFirst(TypedDict):' in after
+
+
+def test_ref_to_a_nested_path_is_named_by_its_last_segment():
+    """The limit of naming from the pointer: the same object seen inline first takes its full path, `ToolAB`."""
+    nested = {'type': 'object', 'properties': {'b': _NAME_OBJECT}, 'required': ['b']}
+    assert 'class ToolB(TypedDict):' in _ref_catalog({'x': {'$ref': '#/properties/a/properties/b'}, 'a': nested})
+    assert 'class ToolAB(TypedDict):' in _ref_catalog({'a': nested, 'x': {'$ref': '#/properties/a/properties/b'}})
+
+
+def test_ref_to_the_document_root_names_it_after_the_tool():
+    assert _ref_catalog({'value': {'type': 'string'}, 'next': {'$ref': '#'}}) == snapshot("""\
+class Tool(TypedDict):
+    value: str
+    next: Tool
+
+def tool(*, value: str, next: Tool) -> Any:
+    ...\
+""")
+
+
+def test_inline_object_whose_title_cannot_name_a_type_takes_a_name_from_its_path():
+    assert 'class ToolA(TypedDict):' in _ref_catalog({'a': {**_NAME_OBJECT, 'title': 'not a name'}})
+
+
+def test_two_identical_inline_objects_with_one_title_are_one_type():
+    catalog = _ref_catalog({'a': {**_NAME_OBJECT, 'title': 'Item'}, 'b': {**_NAME_OBJECT, 'title': 'Item'}})
+    assert catalog.count('class Item(TypedDict):') == 1
+
+
+@pytest.mark.parametrize(
+    'ref',
+    [
+        '#anchor',
+        'https://example.com/user.json#',
+        'other.json',
+        '#/$defs/Missing',
+        '#/$defs/bytes',
+        '#/properties/x/type',
+        '#/properties/list/items/name',
+        '#/properties/list/items/5',
+        '#/properties/list/items/first',
+        '#/properties/list/items/²',
+        '#/properties/list/items/01',
+        '#/properties/list/items/' + '1' * 5000,
+        '#/properties/list/items/-0',
+        '#/properties/list/items/\u0661',
+        'http://[oops/x#/$defs/User',
+        '#/properties',
+        '#/$defs',
+        '#/properties/x/$ref',
+        5,
+        {'$ref': '#'},
+    ],
+)
+def test_ref_without_a_target_is_any(ref: Any):
+    assert 'x: Any' in _ref_catalog(
+        {'x': {'$ref': ref, 'type': 'string'}, 'list': {'type': 'array', 'items': [{}, {}]}}
+    )
+
+
+def test_ref_to_a_boolean_schema_is_any():
+    assert 'x: Any' in _ref_catalog({'x': {'$ref': '#/$defs/Open'}}, **{'$defs': {'Open': True}})
+
+
+def test_self_referencing_alias_ends_in_any():
+    assert 'x: Any' in _ref_catalog(
+        {'x': {'$ref': '#/$defs/A'}}, **{'$defs': {'A': {'$ref': '#/$defs/B'}, 'B': {'$ref': '#/$defs/A'}}}
+    )
+
+
+def test_ref_with_a_different_base_or_an_anchor_under_an_id_is_any():
+    document = {'$id': 'https://x.dev/t.json', '$defs': {'User': _NAME_OBJECT}}
+    for ref in ('other.json#/$defs/User', 'https://y.dev/t.json#/$defs/User', 't.json#anchor'):
+        assert 'x: Any' in _ref_catalog({'x': {'$ref': ref}}, **document)
+    assert 'x: Any' in _ref_catalog({'x': {'$ref': 't.json#/$defs/User'}}, **{'$defs': {'User': _NAME_OBJECT}})
+    assert 'x: Any' in _ref_catalog(
+        {'x': {'$ref': 't.json#/$defs/User'}}, **{'$id': 5, '$defs': {'User': _NAME_OBJECT}}
+    )
+
+
+def test_ref_with_a_trailing_fragment_in_its_own_id():
+    document = {'$id': 'https://x.dev/t.json#', '$defs': {'User': _NAME_OBJECT}}
+    assert 'x: User' in _ref_catalog({'x': {'$ref': 't.json#/$defs/User'}}, **document)
+
+
+def test_property_named_ref_is_a_property():
+    signature = FunctionSignature.from_schema(
+        name='tool', parameters_schema={'type': 'object', 'properties': {'$ref': {'type': 'string'}}}
+    )
+    assert list(signature.params) == ['$ref']
+
+
+@pytest.mark.parametrize(
+    'member, rendered',
+    [
+        pytest.param({'type': 'integer'}, 'x: int', id='simple'),
+        pytest.param(_NAME_OBJECT, 'x: ToolX', id='object'),
+        pytest.param({'type': 'array', 'items': _NAME_OBJECT}, 'x: list[ToolXitem]', id='list of objects'),
+    ],
+)
+def test_repeated_union_member_is_one_member(member: dict[str, Any], rendered: str):
+    assert rendered in _ref_catalog({'x': {'anyOf': [deepcopy(member), deepcopy(member)]}})
+
+
+def test_two_identical_inline_union_members_and_null_keep_the_null():
+    assert 'x: ToolX | None' in _ref_catalog(
+        {'x': {'anyOf': [deepcopy(_NAME_OBJECT), deepcopy(_NAME_OBJECT), {'type': 'null'}]}}
+    )
+
+
+def test_definition_used_by_an_earlier_one_keeps_the_name_from_that_use():
+    catalog = _ref_catalog(
+        {'a': {'$ref': '#/$defs/A'}},
+        **{
+            '$defs': {
+                'A': {'type': 'object', 'properties': {'b': {'$ref': '#/$defs/B'}}, 'required': ['b']},
+                'B': {'type': 'object', 'properties': {'inner': _NAME_OBJECT}, 'required': ['inner']},
+            }
+        },
+    )
+    assert catalog == snapshot("""\
+class A(TypedDict):
+    b: B
+
+class B(TypedDict):
+    inner: ToolABInner
+
+class ToolABInner(TypedDict):
+    name: str
+
+def tool(*, a: A) -> Any:
+    ...\
+""")
+
+
+def test_entry_named_like_a_map_of_schemas_is_a_schema():
+    assert 'x: int' in _ref_catalog({'x': {'$ref': '#/properties/properties'}, 'properties': {'type': 'integer'}})
+    assert 'x: int' in _ref_catalog(
+        {'x': {'$ref': '#/$defs/definitions'}}, **{'$defs': {'definitions': {'type': 'integer'}}}
+    )
+
+
+def test_pointer_escapes_are_decoded_tilde_one_first():
+    """RFC 6901 section 4: `~01` is the two characters `~1`, not a slash."""
+    defs = {'a~1b': {'type': 'integer'}, 'a/b': {'type': 'string'}}
+    assert 'x: int' in _ref_catalog({'x': {'$ref': '#/$defs/a~01b'}}, **{'$defs': defs})
+    assert 'x: str' in _ref_catalog({'x': {'$ref': '#/$defs/a~1b'}}, **{'$defs': defs})
+
+
+def test_ref_with_the_full_urn_of_its_own_id():
+    document = {'$id': 'urn:example:t', '$defs': {'User': _NAME_OBJECT}}
+    assert 'x: User' in _ref_catalog({'x': {'$ref': 'urn:example:t#/$defs/User'}}, **document)
+    assert 'x: Any' in _ref_catalog({'x': {'$ref': 'urn:example:other#/$defs/User'}}, **document)
+
+
+def test_title_that_is_not_a_string_does_not_name_a_type():
+    assert 'class ToolX(TypedDict):' in _ref_catalog({'x': {**_NAME_OBJECT, 'title': 5}})
+
+
+def test_union_of_types_differing_only_by_a_repeated_member_is_one_member():
+    def outer(*members: dict[str, Any]) -> dict[str, Any]:
+        x = {'anyOf': [deepcopy(member) for member in members]}
+        return {'type': 'object', 'title': 'Outer', 'properties': {'x': x}, 'required': ['x']}
+
+    # Without a catalog, as rendering one signature alone unifies its types only once.
+    properties = {'y': {'anyOf': [outer(_NAME_OBJECT, _NAME_OBJECT), outer(_NAME_OBJECT)]}}
+    signature = FunctionSignature.from_schema(
+        name='tool', parameters_schema={'type': 'object', 'properties': properties, 'required': ['y']}
+    )
+    assert isinstance(signature.params['y'].type, TypeSignature)
+
+
+def test_union_of_types_differing_only_by_a_union_of_one_member_is_one_member():
+    def outer(x: dict[str, Any]) -> dict[str, Any]:
+        return {'type': 'object', 'title': 'Outer', 'properties': {'x': x}, 'required': ['x']}
+
+    members = [outer({'anyOf': [deepcopy(_NAME_OBJECT)]}), outer(deepcopy(_NAME_OBJECT))]
+    signature = FunctionSignature.from_schema(
+        name='tool',
+        parameters_schema={'type': 'object', 'properties': {'y': {'anyOf': members}}, 'required': ['y']},
+    )
+    assert isinstance(signature.params['y'].type, TypeSignature)
+
+
+def test_union_that_comes_to_one_member_is_that_member():
+    one = {'x': {'anyOf': [{'type': 'integer'}]}, 'y': {'anyOf': [deepcopy(_NAME_OBJECT), deepcopy(_NAME_OBJECT)]}}
+    params = FunctionSignature.from_schema(
+        name='tool', parameters_schema={'type': 'object', 'properties': one, 'required': list(one)}
+    ).params
+    assert isinstance(params['x'].type, SimpleTypeExpr)
+    assert isinstance(params['y'].type, TypeSignature)
+
+
+@pytest.mark.parametrize('entry', ['$ref', 'enum', 'type'])
+@pytest.mark.parametrize('keyword', ['$defs', 'definitions', 'dependentSchemas', 'patternProperties', 'properties'])
+def test_ref_to_a_map_of_schemas_is_any_whatever_its_entries_are_called(keyword: str, entry: str):
+    maps: dict[str, Any] = {'properties': {'x': {'$ref': f'#/{keyword}'}}}
+    maps.setdefault(keyword, {})[entry] = {'type': 'string'}
+    signature = FunctionSignature.from_schema(
+        name='tool', parameters_schema={'type': 'object', 'required': ['x'], **maps}
+    )
+    assert 'x: Any' in _catalog(signature)
+
+
+def test_ref_to_a_map_of_schemas_inside_a_definition_is_any():
+    assert 'x: Any' in _ref_catalog({'x': {'$ref': '#/$defs/A/properties'}}, **{'$defs': {'A': _NAME_OBJECT}})
+
+
+def test_id_that_is_not_a_uri_leaves_only_fragment_refs():
+    document = {'$id': 'http://[oops/a', '$defs': {'User': _NAME_OBJECT}}
+    assert 'x: Any' in _ref_catalog({'x': {'$ref': 'other#/$defs/User'}}, **document)
+    assert 'x: User' in _ref_catalog({'x': {'$ref': '#/$defs/User'}}, **document)
+
+
+def test_nullable_object_name_does_not_depend_on_which_property_comes_first():
+    nullable = {**_NAME_OBJECT, 'type': ['object', 'null']}
+    to_a = {'$ref': '#/properties/a'}
+    assert _ref_catalog({'a': nullable, 'b': to_a}).count('class ToolA(TypedDict):') == 1
+    assert _ref_catalog({'b': to_a, 'a': nullable}).count('class ToolA(TypedDict):') == 1
+    defs = {'$defs': {'User': nullable}}
+    to_user = {'$ref': '#/$defs/User'}
+    assert 'def tool(*, a: User | None, b: User | None) -> Any:' in _ref_catalog({'a': to_user, 'b': to_user}, **defs)
+    assert 'def tool(*, b: User | None, a: User | None) -> Any:' in _ref_catalog({'b': to_user, 'a': to_user}, **defs)
+
+
+def _refs_to_an_integer(count: int) -> dict[str, Any]:
+    return {'type': 'array', 'items': [{'$ref': '#/$defs/I'}] * count}
+
+
+def test_ref_past_the_expansion_limit_is_any():
+    limit = function_signature._MAX_REF_EXPANSION_NODES  # pyright: ignore[reportPrivateUsage]
+    catalog = _ref_catalog({'x': _refs_to_an_integer(limit + 1)}, **{'$defs': {'I': {'type': 'integer'}}})
+    assert f'x: tuple[{"int, " * limit}Any]' in catalog
+
+
+def test_ref_expansion_limit_is_for_each_from_schema_call(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(function_signature, '_MAX_REF_EXPANSION_NODES', 2)
+    document = {'$defs': {'I': {'type': 'integer'}}}
+    assert 'x: tuple[int, int]' in _ref_catalog({'x': _refs_to_an_integer(2)}, **document)
+    assert 'x: tuple[int, int]' in _ref_catalog({'x': _refs_to_an_integer(2)}, **document)
+
+
+def test_ref_expansion_limit_leaves_object_targets_alone(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(function_signature, '_MAX_REF_EXPANSION_NODES', 0)
+    refs = {'a': {'$ref': '#/$defs/User'}, 'b': {'$ref': '#/$defs/User'}}
+    assert 'def tool(*, a: User, b: User) -> Any:' in _ref_catalog(refs, **{'$defs': {'User': _NAME_OBJECT}})
+
+
+@pytest.mark.parametrize('limit, expanded', [(42, 2), (43, 3)])
+def test_ref_expansion_limit_counts_what_a_ref_expands_to(monkeypatch: pytest.MonkeyPatch, limit: int, expanded: int):
+    monkeypatch.setattr(function_signature, '_MAX_REF_EXPANSION_NODES', limit)
+    wide = {'type': 'array', 'items': [{'type': 'integer'}] * 20}  # 21 nodes each time.
+    refs = {'type': 'array', 'items': [{'$ref': '#/$defs/Wide'}] * 10}
+    catalog = _ref_catalog({'x': refs}, **{'$defs': {'Wide': wide}})
+    assert catalog.count(f'tuple[{"int, " * 19}int]') == expanded
+    assert catalog.count('Any]') + catalog.count('Any,') == 10 - expanded
+
+
+def test_ref_expansion_limit_counts_enum_values(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(function_signature, '_MAX_REF_EXPANSION_NODES', 22)
+    choice = {'enum': [f'v{i}' for i in range(10)]}  # 11 nodes each time.
+    refs = {'type': 'array', 'items': [{'$ref': '#/$defs/Choice'}] * 3}
+    assert _ref_catalog({'x': refs}, **{'$defs': {'Choice': choice}}).count('Literal[') == 2
+
+
+def test_ref_expansion_limit_leaves_nodes_outside_an_expansion_alone(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(function_signature, '_MAX_REF_EXPANSION_NODES', 2)
+    outside = {'type': 'array', 'items': [{'type': 'string'}] * 5}
+    assert 'y: int' in _ref_catalog({'x': outside, 'y': {'$ref': '#/$defs/I'}}, **{'$defs': {'I': {'type': 'integer'}}})
+
+
+def test_many_enum_fields_in_nested_models_stay_checked():
+    """The shape Pydantic emits: every field of every model is a `$ref` to one enum."""
+    status_fields = {f'f{j}': {'$ref': '#/$defs/Status'} for j in range(30)}
+    model = {'type': 'object', 'properties': status_fields, 'required': list(status_fields)}
+    defs: dict[str, Any] = {'Status': {'enum': ['on', 'off']}, **{f'M{i}': deepcopy(model) for i in range(40)}}
+    catalog = _ref_catalog({f'm{i}': {'$ref': f'#/$defs/M{i}'} for i in range(40)}, **{'$defs': defs})
+    assert catalog.count("Literal['on', 'off']") == 1200
+    assert ': Any' not in catalog
+
+
+class _ListThatCannotBeScanned(list[Any]):
+    def __iter__(self) -> Iterator[Any]:  # pragma: no cover
+        raise AssertionError('a `$ref` through a list looks up one index')
+
+
+def test_ref_through_a_list_looks_up_one_index():
+    catalog = _ref_catalog({'x': {'$ref': '#/long/1'}}, long=_ListThatCannotBeScanned([{}, {'type': 'integer'}]))
+    assert 'x: int' in catalog
+
+
+def test_ref_through_a_long_list_reads_one_spelling_of_an_index():
+    assert 'x: Any' in _ref_catalog({'x': {'$ref': '#/long/01'}}, long=[{'type': 'integer'}] * 11)
+    assert 'x: int' in _ref_catalog({'x': {'$ref': '#/long/10'}}, long=[{'type': 'integer'}] * 11)
+
+
+@pytest.mark.parametrize(
+    'def_schema',
+    [
+        pytest.param({'type': ['object', 'null'], 'properties': []}, id='properties is a list'),
+        pytest.param({'type': ['object', 'null'], 'properties': 5}, id='properties is a number'),
+        pytest.param({'type': ['object', 'null'], 'properties': {}, 'required': True}, id='required is a boolean'),
+        pytest.param({'type': ['object', 'null'], 'properties': {}, 'required': [['a']]}, id='required holds a list'),
+        pytest.param({'type': ['object', 'null'], 'properties': {'a': 5}}, id='property is a number'),
+    ],
+)
+def test_malformed_unused_definition_leaves_the_tool_rendered(def_schema: dict[str, Any]):
+    assert 'def tool(*, q: str) -> Any:' in _ref_catalog({'q': {'type': 'string'}}, **{'$defs': {'Unused': def_schema}})
+
+
+def test_definition_whose_properties_is_not_a_map_is_not_a_type():
+    not_a_type: dict[str, Any] = {'type': 'object', 'properties': []}
+    catalog = _ref_catalog({'x': {'$ref': '#/$defs/Bad'}}, **{'$defs': {'Bad': not_a_type}})
+    assert 'class Bad' not in catalog
+    assert 'x: dict[str, Any]' in catalog
+
+
+def test_enum_that_is_not_a_list_is_not_counted_when_a_union_wins():
+    union_beside_bad_enum = {'anyOf': [{'type': 'integer'}], 'enum': 5}
+    assert 'x: int' in _ref_catalog({'x': {'$ref': '#/$defs/I'}}, **{'$defs': {'I': union_beside_bad_enum}})
+
+
+@pytest.mark.parametrize(
+    'parameters_schema',
+    [
+        pytest.param({'$ref': '#/x', 'x': {'properties': []}}, id='properties is a list'),
+        pytest.param(
+            {'$ref': '#/x', 'x': {'properties': {'a': {'type': 'string'}}, 'required': True}},
+            id='required is a boolean',
+        ),
+    ],
+)
+def test_malformed_root_ref_target_does_not_raise(parameters_schema: dict[str, Any]):
+    assert 'def tool(' in _catalog(FunctionSignature.from_schema(name='tool', parameters_schema=parameters_schema))

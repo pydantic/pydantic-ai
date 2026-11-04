@@ -26,6 +26,9 @@ from collections.abc import Iterable, Iterator
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal, TypeAlias, assert_never, cast
+from urllib.parse import unquote, urldefrag, urljoin
+
+from ._utils import is_str_dict
 
 # Set during rendering and consulted by TypeSignature.display_name. Not being empty means some names had to change,
 # so a type uses the name `get_conflicting_type_names` stored on it. The mapping (e.g. {'User': 'tool_a_User'}) is only
@@ -355,42 +358,35 @@ class FunctionSignature:
         `name` is stored on the resulting signature and also used for generating
         fallback type names (e.g. `GetUserAddress`) when the schema has no `title`.
 
-        Parameter and return schemas are processed independently — each resolves
-        `$ref`s against its own `$defs`. Name collisions between parameter and return
-        types (e.g. both define a `User` `$def` with different structures) are handled
-        by `get_conflicting_type_names` at a later stage.
+        Parameter and return schemas are separate documents, and each resolves `$ref`s against
+        itself. Each schema object becomes its own `TypeSignature`, and identical ones are then
+        unified. Types left with one name and different structures (e.g. a parameter and a return
+        `User`) are told apart by `get_conflicting_type_names` at a later stage.
         """
-        # Process parameter schema with its own $defs
-        param_defs = parameters_schema.get('$defs', {})
-        param_referenced: dict[str, TypeSignature] = {}
-        _process_schema_defs(param_defs, param_referenced, name)
-        params = _build_params_from_schema(parameters_schema, param_defs, param_referenced, name)
+        reset_token = _ref_expansion_nodes.set(0)
+        try:
+            param_referenced: dict[int, TypeSignature] = {}
+            _process_schema_defs(parameters_schema, param_referenced, name)
+            params = _build_params_from_schema(parameters_schema, param_referenced, name)
 
-        # Process return schema independently (its own $defs)
-        resolved_return_type: TypeExpr = _ANY
-        return_referenced: dict[str, TypeSignature] = {}
-        if return_schema is not None:
-            return_defs = return_schema.get('$defs', {})
-            _process_schema_defs(return_defs, return_referenced, name)
-            resolved_return_type = _schema_to_type_expr(
-                return_schema, return_defs, return_referenced, name, path='Return'
+            resolved_return_type: TypeExpr = _ANY
+            return_referenced: dict[int, TypeSignature] = {}
+            if return_schema is not None:
+                _process_schema_defs(return_schema, return_referenced, name)
+                resolved_return_type = _schema_to_type_expr(
+                    return_schema, return_schema, return_referenced, name, 'Return'
+                )
+
+            signature = cls(
+                name=name,
+                params=params,
+                return_type=resolved_return_type,
+                referenced_types=[*param_referenced.values(), *return_referenced.values()],
             )
-
-        # Merge referenced types, deduplicating structurally identical types within this signature.
-        # Cross-signature collisions are handled later by get_conflicting_type_names.
-        all_referenced = list(param_referenced.values())
-        for ret_type in return_referenced.values():
-            existing = param_referenced.get(ret_type.name)
-            if existing is not None and existing.structurally_equal(ret_type):
-                continue  # already present from param schema
-            all_referenced.append(ret_type)
-
-        return cls(
-            name=name,
-            params=params,
-            return_type=resolved_return_type,
-            referenced_types=all_referenced,
-        )
+            FunctionSignature._unify_identical_types([signature])
+            return signature
+        finally:
+            _ref_expansion_nodes.reset(reset_token)
 
     @staticmethod
     def get_conflicting_type_names(signatures: list[FunctionSignature]) -> frozenset[str]:
@@ -437,7 +433,7 @@ class FunctionSignature:
     @staticmethod
     def _unify_identical_types(signatures: list[FunctionSignature]) -> None:
         """Make types with one name and one structure a single object everywhere, keeping the first seen."""
-        # A `$ref` that doesn't resolve leaves a type only an expression names, so start from those as well.
+        # A hand-built signature needn't list every type its expressions name, so start from those as well.
         exprs = [expr for sig in signatures for expr in (*(p.type for p in sig.params.values()), sig.return_type)]
         listed = (t for sig in signatures for t in sig.referenced_types)
         types = _with_nested_types([*listed, *(t for expr in exprs for t in _types_in(expr))])
@@ -447,7 +443,8 @@ class FunctionSignature:
         canonical = {id(t): first_of_class.setdefault(classes[id(t)], t) for t in types}
 
         for sig in signatures:
-            sig.referenced_types = [canonical[id(t)] for t in sig.referenced_types]
+            listed_once = {id(canonical[id(t)]): canonical[id(t)] for t in sig.referenced_types}
+            sig.referenced_types = list(listed_once.values())
             for param in sig.params.values():
                 param.type = FunctionSignature._replace_types(param.type, canonical)
             sig.return_type = FunctionSignature._replace_types(sig.return_type, canonical)
@@ -472,7 +469,11 @@ class FunctionSignature:
         if isinstance(expr, GenericTypeExpr):
             expr.args = [FunctionSignature._replace_types(arg, canonical) for arg in expr.args]
         elif isinstance(expr, UnionTypeExpr):
-            expr.members = [FunctionSignature._replace_types(member, canonical) for member in expr.members]
+            # Types that have just become one are one member. Each now stands for itself, so compare by identity.
+            members = [FunctionSignature._replace_types(member, canonical) for member in expr.members]
+            classes: dict[int, object] = {id(t): id(t) for member in members for t in _types_in(member)}
+            unique = list({_expr_key(member, classes): member for member in members}.values())
+            return unique[0] if len(unique) == 1 else UnionTypeExpr(members=unique)
         return expr
 
     @staticmethod
@@ -541,11 +542,16 @@ _JSON_TYPE_TO_PYTHON: dict[str, str] = {
 }
 
 
-# Names of the non-object defs currently being resolved inline. A non-object def has no
+# The non-object defs currently being resolved inline, by schema identity. A non-object def has no
 # TypedDict to point at, so a self-referential one (`type Json = str | list[Json]`) would
 # recurse forever; `_build_and_register_type` solves the same problem for object defs by
 # registering a placeholder before it walks the fields.
-_resolving_refs: ContextVar[frozenset[str]] = ContextVar('_resolving_refs', default=frozenset())
+_resolving_refs: ContextVar[frozenset[int]] = ContextVar('_resolving_refs', default=frozenset())
+
+# How many schema nodes and enum values one `from_schema` call visits inside `$ref` expansions, as a small schema can
+# otherwise expand exponentially.
+_MAX_REF_EXPANSION_NODES = 20_000
+_ref_expansion_nodes: ContextVar[int] = ContextVar('_ref_expansion_nodes', default=0)
 
 
 def _json_type_to_python(json_type: str) -> SimpleTypeExpr:
@@ -587,43 +593,161 @@ def _normalize_schema_node(node: dict[str, Any] | bool) -> dict[str, Any]:
     value; `False` permits none and is *not* equivalent to `{}`. Neither the "anything" nor
     the "nothing" case maps to a precise Python type here, so we deliberately collapse both to
     an empty schema, which the walker renders as `Any` — the practical fallback for the model.
-    Non-bool nodes are returned unchanged.
+    Anything else that isn't a dict isn't a schema, and gets the same. Dicts are returned unchanged.
 
     Called at every point where a nested node may be a raw schema, so no walker has to
     special-case the boolean form.
     """
-    return {} if isinstance(node, bool) else node
+    return node if isinstance(node, dict) else {}
 
 
 def _process_schema_defs(
-    defs: dict[str, dict[str, Any]],
-    referenced_types: dict[str, TypeSignature],
+    root: dict[str, Any],
+    referenced_types: dict[int, TypeSignature],
     tool_name: str,
 ) -> None:
-    """Process $defs from a JSON schema, adding TypeSignatures for object-type definitions."""
-    for def_name, def_schema_raw in defs.items():
+    """Add TypeSignatures for the object-type `$defs` of a schema document. A `$ref` builds any other target."""
+    for def_name, def_schema_raw in root.get('$defs', {}).items():
         def_schema = _normalize_schema_node(def_schema_raw)
-        if def_schema.get('type') == 'object' and 'properties' in def_schema:
-            if def_name not in referenced_types:
-                _build_and_register_type(def_name, def_schema, defs, referenced_types, tool_name, def_name)
+        if _is_typed_dict_schema(def_schema):
+            _build_and_register_type(def_name, def_schema, root, referenced_types, tool_name, def_name)
+
+
+# Keywords whose value maps names to schemas, so a pointer ending on one has landed on the map and not on a schema.
+_MAPS_OF_SCHEMAS = frozenset({'$defs', 'definitions', 'dependentSchemas', 'patternProperties', 'properties'})
+
+_LIST_INDEX = re.compile(r'0|[1-9][0-9]*')
+
+
+def _is_typed_dict_schema(schema: dict[str, Any]) -> bool:
+    """Whether a schema is an object with named fields, which can be nullable too."""
+    schema_type = schema.get('type')
+    is_object = schema_type == 'object' or (isinstance(schema_type, list) and 'object' in schema_type)
+    return is_object and isinstance(schema.get('properties'), dict)
+
+
+def _properties_of(schema: dict[str, Any]) -> dict[str, Any]:
+    properties = schema.get('properties')
+    return properties if is_str_dict(properties) else {}
+
+
+def _required_of(schema: dict[str, Any]) -> set[str]:
+    required = schema.get('required')
+    return (
+        {name for name in cast(list[Any], required) if isinstance(name, str)} if isinstance(required, list) else set()
+    )
+
+
+def _ref_pointer(root: dict[str, Any], ref: Any) -> list[str] | None:
+    """The JSON pointer tokens of a `$ref` into its own document, or `None` if it doesn't point into that document.
+
+    `$ref` is a URI reference resolved against the document's `$id`, so a URI naming the document itself is local
+    (https://json-schema.org/draft/2020-12/json-schema-core#section-8.2.3.1). Anything else is another document or an
+    anchor, neither of which is followed. A fragment is percent-decoded, then split, then has `~1` and `~0` decoded in
+    that order (RFC 6901, sections 4 and 6).
+    """
+    if not isinstance(ref, str):
+        return None
+    try:
+        uri, fragment = urldefrag(ref)
+        if uri:
+            base = root.get('$id')
+            if not isinstance(base, str) or urldefrag(urljoin(base, uri)).url != urldefrag(base).url:
+                return None
+    except ValueError:  # Not a URI, so it has no target.
+        return None
+    pointer = unquote(fragment)
+    if pointer and not pointer.startswith('/'):
+        return None
+    return [token.replace('~1', '/').replace('~0', '~') for token in pointer.split('/')[1:]]
+
+
+def _ref_target(root: dict[str, Any], ref: Any) -> tuple[list[str], dict[str, Any]] | None:
+    """The pointer tokens of a `$ref` and the schema they land on, or `None` if there isn't one. The single lookup."""
+    tokens = _ref_pointer(root, ref)
+    if tokens is None:
+        return None
+    node: Any = root
+    at_map_of_schemas = False
+    for token in tokens:
+        if is_str_dict(node):
+            node = node.get(token)
+        elif isinstance(node, list):
+            # RFC 6901 section 4 has one way to write an index: `01` isn't one. A length check before `int()`, which
+            # raises on thousands of digits.
+            items = cast(list[Any], node)
+            is_index = _LIST_INDEX.fullmatch(token) and len(token) <= len(str(len(items))) and int(token) < len(items)
+            node = items[int(token)] if is_index else None
+        else:
+            return None
+        at_map_of_schemas = not at_map_of_schemas and token in _MAPS_OF_SCHEMAS
+    return (tokens, node) if is_str_dict(node) and not at_map_of_schemas else None
+
+
+def _ref_to_type_expr(
+    ref: Any,
+    root: dict[str, Any],
+    referenced_types: dict[int, TypeSignature],
+    tool_name: str,
+    path: str,
+) -> TypeExpr:
+    """The TypeExpr of a `$ref`'s target, or `Any`, as JSON Schema allows anything if there is no target to check."""
+    found = _ref_target(root, ref)
+    if found is None:
+        return _ANY
+    tokens, target = found
+    if _is_typed_dict_schema(target):
+        if id(target) not in referenced_types:
+            # Named from the pointer, not the reference, so a name doesn't depend on which of the two comes first.
+            last_token = tokens[-1] if tokens else ''
+            is_definition = tokens[-2:-1] in (['$defs'], ['definitions'])
+            name = last_token if is_definition else _object_type_name(target, tool_name, last_token)
+            _build_and_register_type(name, target, root, referenced_types, tool_name, path)
+        target_type = referenced_types[id(target)]
+        return UnionTypeExpr(members=[target_type, _NONE]) if 'null' in target['type'] else target_type
+    # Only object defs become TypedDicts. Pydantic emits enums, constrained aliases, list aliases
+    # and unions as non-object defs, so resolve them inline: `Literal[...]`, `int`, `list[str]`.
+    resolving = _resolving_refs.get()
+    if id(target) in resolving or _ref_expansion_nodes.get() >= _MAX_REF_EXPANSION_NODES:
+        # A self-referential non-object def has no finite inline expression and no TypedDict
+        # to name, and `Any` never rejects a correct call, so it also stands in past the limit.
+        return _ANY
+    reset_token = _resolving_refs.set(resolving | {id(target)})
+    try:
+        return _schema_to_type_expr(target, root, referenced_types, tool_name, path)
+    finally:
+        _resolving_refs.reset(reset_token)
+
+
+def _object_type_name(schema: dict[str, Any], tool_name: str, path: str) -> str:
+    """The `title` of an object schema if it can name a type (preserving real class names), or a path-based name."""
+    title = schema.get('title')
+    return title if isinstance(title, str) and title.isidentifier() else _path_to_typename(tool_name, path)
 
 
 def _build_params_from_schema(
-    schema: dict[str, Any],
-    defs: dict[str, dict[str, Any]],
-    referenced_types: dict[str, TypeSignature],
+    root: dict[str, Any],
+    referenced_types: dict[int, TypeSignature],
     tool_name: str,
 ) -> dict[str, FunctionParam]:
     """Convert a JSON schema to a dict of FunctionParam objects."""
-    properties = schema.get('properties', {})
-    required = set(schema.get('required', []))
+    # A recursive model's parameters schema is a root `$ref` to its own definition, which can be a `$ref` in turn.
+    schema = root
+    followed = {id(root)}
+    while (
+        'properties' not in schema and (found := _ref_target(root, schema.get('$ref'))) and id(found[1]) not in followed
+    ):
+        schema = found[1]
+        followed.add(id(schema))
+    properties = _properties_of(schema)
+    required = _required_of(schema)
 
     required_params: dict[str, FunctionParam] = {}
     optional_params: dict[str, FunctionParam] = {}
 
     for prop_name, prop_schema_raw in properties.items():
         prop_schema = _normalize_schema_node(prop_schema_raw)
-        type_expr = _schema_to_type_expr(prop_schema, defs, referenced_types, tool_name, prop_name)
+        type_expr = _schema_to_type_expr(prop_schema, root, referenced_types, tool_name, prop_name)
         description = prop_schema.get('description', '') or None
 
         if 'default' in prop_schema:
@@ -664,53 +788,34 @@ def _schema_allows_null(schema: dict[str, Any]) -> bool:
 
 def _schema_to_type_expr(
     schema: dict[str, Any] | bool,
-    defs: dict[str, dict[str, Any]],
-    referenced_types: dict[str, TypeSignature],
+    root: dict[str, Any],
+    referenced_types: dict[int, TypeSignature],
     tool_name: str,
     path: str,
 ) -> TypeExpr:
     """Convert a JSON schema to a TypeExpr."""
     schema = _normalize_schema_node(schema)
 
-    # Handle $ref
+    if _resolving_refs.get():
+        # An enum is one node, but a `Literal` renders each of its values.
+        enum = schema.get('enum')
+        _ref_expansion_nodes.set(
+            _ref_expansion_nodes.get() + 1 + (len(cast(list[Any], enum)) if isinstance(enum, list) else 0)
+        )
+
     if '$ref' in schema:
-        ref = schema['$ref']
-        ref_name = ref.split('/')[-1]
-        # Ensure referenced def generates TypeSignature if needed
-        if ref_name in defs and ref_name not in referenced_types:
-            ref_schema = _normalize_schema_node(defs[ref_name])
-            if ref_schema.get('type') == 'object' and 'properties' in ref_schema:
-                _build_and_register_type(ref_name, ref_schema, defs, referenced_types, tool_name, path)
-            elif '$ref' not in ref_schema:
-                # Only object defs become TypedDicts. Pydantic emits enums, constrained
-                # aliases, list aliases and unions as non-object defs, which would render as
-                # a bare class name that is never defined, so resolve them inline instead:
-                # `Literal[...]`, `int`, `list[str]`, `int | None`.
-                resolving = _resolving_refs.get()
-                if ref_name in resolving:
-                    # A self-referential non-object def has no finite inline expression and no
-                    # TypedDict to name, so `Any` keeps the rendered signature self-contained.
-                    return _ANY
-                token = _resolving_refs.set(resolving | {ref_name})
-                try:
-                    return _schema_to_type_expr(ref_schema, defs, referenced_types, tool_name, path)
-                finally:
-                    _resolving_refs.reset(token)
-        # Return the TypeSignature object if available, otherwise the name
-        if ref_name in referenced_types:
-            return referenced_types[ref_name]
-        return TypeSignature(name=ref_name)
+        return _ref_to_type_expr(schema['$ref'], root, referenced_types, tool_name, path)
 
     # Handle anyOf/oneOf (union types)
     if 'anyOf' in schema:
-        return _handle_union_schema(schema['anyOf'], defs, referenced_types, tool_name, path)
+        return _handle_union_schema(schema['anyOf'], root, referenced_types, tool_name, path)
     if 'oneOf' in schema:
-        return _handle_union_schema(schema['oneOf'], defs, referenced_types, tool_name, path)
+        return _handle_union_schema(schema['oneOf'], root, referenced_types, tool_name, path)
 
     # Handle allOf
     if 'allOf' in schema:
         if len(schema['allOf']) == 1:
-            return _schema_to_type_expr(schema['allOf'][0], defs, referenced_types, tool_name, path)
+            return _schema_to_type_expr(schema['allOf'][0], root, referenced_types, tool_name, path)
         return _ANY
 
     # Handle const
@@ -723,14 +828,14 @@ def _schema_to_type_expr(
 
     # Handle by type
     schema_type = schema.get('type')
-    return _type_to_expr(schema_type, schema, defs, referenced_types, tool_name, path)
+    return _type_to_expr(schema_type, schema, root, referenced_types, tool_name, path)
 
 
 def _type_to_expr(
     schema_type: str | list[str] | None,
     schema: dict[str, Any],
-    defs: dict[str, dict[str, Any]],
-    referenced_types: dict[str, TypeSignature],
+    root: dict[str, Any],
+    referenced_types: dict[int, TypeSignature],
     tool_name: str,
     path: str,
 ) -> TypeExpr:
@@ -747,39 +852,36 @@ def _type_to_expr(
             if isinstance(items, list):
                 items_list = cast(list[dict[str, Any]], items)
                 item_exprs = [
-                    _schema_to_type_expr(item, defs, referenced_types, tool_name, f'{path}.{i}')
+                    _schema_to_type_expr(item, root, referenced_types, tool_name, f'{path}.{i}')
                     for i, item in enumerate(items_list)
                 ]
                 return GenericTypeExpr(base='tuple', args=item_exprs)
             item_expr = _schema_to_type_expr(
-                cast(dict[str, Any], items), defs, referenced_types, tool_name, f'{path}Item'
+                cast(dict[str, Any], items), root, referenced_types, tool_name, f'{path}Item'
             )
             return GenericTypeExpr(base='list', args=[item_expr])
         return GenericTypeExpr(base='list', args=[_ANY])
 
     # Object type
     if schema_type == 'object':
-        if 'properties' in schema:
-            # Use `title` from the schema if available and is a valid Python identifier
-            # (preserves real class names like `User`), otherwise fall back to a path-based name
-            title = schema.get('title')
-            td_name = title if title and title.isidentifier() else _path_to_typename(tool_name, path)
-            if td_name not in referenced_types:
-                _build_and_register_type(td_name, schema, defs, referenced_types, tool_name, path)
-            return referenced_types[td_name]
+        if _is_typed_dict_schema(schema):
+            if id(schema) in referenced_types:
+                return referenced_types[id(schema)]
+            name = _object_type_name(schema, tool_name, path)
+            return _build_and_register_type(name, schema, root, referenced_types, tool_name, path)
         if 'additionalProperties' in schema:
             additional = schema['additionalProperties']
             if additional is True:
                 return GenericTypeExpr(base='dict', args=[SimpleTypeExpr('str'), _ANY])
             if isinstance(additional, dict):
                 additional_schema = cast(dict[str, Any], additional)
-                value_expr = _schema_to_type_expr(additional_schema, defs, referenced_types, tool_name, f'{path}Value')
+                value_expr = _schema_to_type_expr(additional_schema, root, referenced_types, tool_name, f'{path}Value')
                 return GenericTypeExpr(base='dict', args=[SimpleTypeExpr('str'), value_expr])
         return GenericTypeExpr(base='dict', args=[SimpleTypeExpr('str'), _ANY])
 
     # Type list (e.g., ['string', 'null'])
     if isinstance(schema_type, list):
-        return _type_list_to_expr(schema_type, schema, defs, referenced_types, tool_name, path)
+        return _type_list_to_expr(schema_type, schema, root, referenced_types, tool_name, path)
 
     return _ANY
 
@@ -787,15 +889,15 @@ def _type_to_expr(
 def _type_list_to_expr(
     schema_type: list[str],
     schema: dict[str, Any],
-    defs: dict[str, dict[str, Any]],
-    referenced_types: dict[str, TypeSignature],
+    root: dict[str, Any],
+    referenced_types: dict[int, TypeSignature],
     tool_name: str,
     path: str,
 ) -> TypeExpr:
     """Handle type lists like ['string', 'null']."""
     # Check if this is object with properties + null
-    if 'object' in schema_type and 'properties' in schema:
-        base_expr = _type_to_expr('object', schema, defs, referenced_types, tool_name, path)
+    if _is_typed_dict_schema(schema):
+        base_expr = _type_to_expr('object', schema, root, referenced_types, tool_name, path)
         if 'null' in schema_type:
             return UnionTypeExpr(members=[base_expr, _NONE])
         return base_expr
@@ -812,8 +914,8 @@ def _type_list_to_expr(
 
 def _handle_union_schema(
     schemas: list[dict[str, Any] | bool],
-    defs: dict[str, dict[str, Any]],
-    referenced_types: dict[str, TypeSignature],
+    root: dict[str, Any],
+    referenced_types: dict[int, TypeSignature],
     tool_name: str,
     path: str,
 ) -> TypeExpr:
@@ -826,30 +928,20 @@ def _handle_union_schema(
         if s.get('type') == 'null':
             has_null = True
         else:
-            type_exprs.append(_schema_to_type_expr(s, defs, referenced_types, tool_name, path))
-
-    # Deduplicate while preserving order (compare rendered strings)
-    seen: set[str] = set()
-    unique_exprs: list[TypeExpr] = []
-    for expr in type_exprs:
-        rendered = str(expr)
-        if rendered not in seen:
-            seen.add(rendered)
-            unique_exprs.append(expr)
+            type_exprs.append(_schema_to_type_expr(s, root, referenced_types, tool_name, path))
 
     if has_null:
-        unique_exprs.append(_NONE)
+        type_exprs.append(_NONE)
 
-    if len(unique_exprs) == 1:
-        return unique_exprs[0]
-    return UnionTypeExpr(members=unique_exprs)
+    # `_unify_identical_types` takes out repeats, once the types in them are known.
+    return UnionTypeExpr(members=type_exprs)
 
 
 def _build_and_register_type(
     name: str,
     schema: dict[str, Any],
-    defs: dict[str, dict[str, Any]],
-    referenced_types: dict[str, TypeSignature],
+    root: dict[str, Any],
+    referenced_types: dict[int, TypeSignature],
     tool_name: str,
     path: str,
 ) -> TypeSignature:
@@ -861,8 +953,8 @@ def _build_and_register_type(
     Returns the completed TypeSignature.
     """
     placeholder = TypeSignature(name=name)
-    referenced_types[name] = placeholder
-    built = _build_type_signature(name, schema, defs, referenced_types, tool_name, path)
+    referenced_types[id(schema)] = placeholder
+    built = _build_type_signature(name, schema, root, referenced_types, tool_name, path)
     placeholder.fields = built.fields
     placeholder.description = built.description
     return placeholder
@@ -871,21 +963,21 @@ def _build_and_register_type(
 def _build_type_signature(
     name: str,
     schema: dict[str, Any],
-    defs: dict[str, dict[str, Any]],
-    referenced_types: dict[str, TypeSignature],
+    root: dict[str, Any],
+    referenced_types: dict[int, TypeSignature],
     tool_name: str,
     path: str,
 ) -> TypeSignature:
     """Build a TypeSignature from an object schema."""
-    properties = schema.get('properties', {})
-    required = set(schema.get('required', []))
+    properties = _properties_of(schema)
+    required = _required_of(schema)
 
     fields: dict[str, TypeFieldSignature] = {}
 
     for prop_name, prop_schema_raw in properties.items():
         prop_schema = _normalize_schema_node(prop_schema_raw)
         prop_path = f'{path}.{prop_name}' if path else prop_name
-        type_expr = _schema_to_type_expr(prop_schema, defs, referenced_types, tool_name, prop_path)
+        type_expr = _schema_to_type_expr(prop_schema, root, referenced_types, tool_name, prop_path)
         is_required = prop_name in required
         desc = prop_schema.get('description', '') or None
 
@@ -933,7 +1025,8 @@ def _expr_key(expr: TypeExpr, classes: dict[int, object]) -> object:
     if isinstance(expr, GenericTypeExpr):
         return (expr.base, *(_expr_key(arg, classes) for arg in expr.args))
     if isinstance(expr, UnionTypeExpr):
-        return ('|', *(_expr_key(member, classes) for member in expr.members))
+        keys = list(dict.fromkeys(_expr_key(member, classes) for member in expr.members))
+        return keys[0] if len(keys) == 1 else ('|', *keys)
     if isinstance(expr, SimpleTypeExpr | LiteralTypeExpr):
         return str(expr)
     assert_never(expr)
