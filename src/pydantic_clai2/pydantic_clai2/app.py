@@ -19,15 +19,15 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_clai2 import warm_imports
+from pydantic_clai2.clai_docs import ClaiDocs
 from pydantic_clai2.cli.self_update import WebHandoff
 from pydantic_clai2.commands import (
     Commands,
 )
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.builtins import DEFAULT_PLUGINS, STOCK_PLUGINS
-from pydantic_clai2.config.project_settings import ProjectSettings, load_project_settings
+from pydantic_clai2.config.project_settings import ProjectSettings, load_project_settings, with_current_approvals
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.customization import customization_guide
 from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins import (
     SessionEndReason,
@@ -58,7 +58,7 @@ OutputT = TypeVar('OutputT')
 
 def create_agent(model: str | None = None) -> Agent[None, str]:
     """Build the base CLAI agent. The coding tools come from the built-in `coder` plugin, not from here."""
-    return Agent(model, deps_type=type(None), capabilities=[customization_guide()])
+    return Agent(model, deps_type=type(None), capabilities=[ClaiDocs()])
 
 
 def create_stock_agent(model: Model | str | None = None) -> StockAgent[None, str]:
@@ -66,7 +66,7 @@ def create_stock_agent(model: Model | str | None = None) -> StockAgent[None, str
 
     It is named `clai2`, which its run spans carry and which Logfire Agent Control addresses it by.
     """
-    return StockAgent(model, deps_type=type(None), output_type=str, capabilities=[customization_guide()], name='clai2')
+    return StockAgent(model, deps_type=type(None), output_type=str, capabilities=[ClaiDocs()], name='clai2')
 
 
 @asynccontextmanager
@@ -89,9 +89,6 @@ async def open_stock_agent(
     `plugin_settings` maps a built-in's id to settings merged over its stock ones, such as
     `{'coder': {'sub_agents': False}}`. Unlike in the CLI, `coder`'s `task_control` is off: pass
     `{'coder': {'task_control': True}}` to give the model the task tools and background delegation.
-    `repo_context` still walks up from `workspace`, but leaves out this process user's global
-    instruction files (`~/.claude/CLAUDE.md` and the like), which belong to whoever runs the host,
-    not to the agent: pass `{'repo_context': {'global_files': True}}` to load them.
     Nothing saved for the `clai2` CLI applies: no saved or drop-in
     plugins, no project `.clai/settings.json`, no saved model settings or `chain:` fallback chains.
     Raises `UserError` when `plugin_settings` names another plugin, and `PluginSettingsError` when a
@@ -102,13 +99,8 @@ async def open_stock_agent(
     from pydantic_clai2.models.model_settings import default_model_settings
 
     stock = {plugin.id: plugin for plugin in STOCK_PLUGINS if plugin.id in ('coder', 'repo_context', 'compaction')}
-    # Task control is opt-in for an application's agent, unlike in the CLI. The process user's global
-    # instruction files are personal configuration a host's agent shouldn't inherit; the walk-up stays, since
-    # the workspace's ancestors are the tree the host chose to run in.
-    defaults: Mapping[str, Mapping[str, JsonValue]] = {
-        'coder': {'task_control': False},
-        'repo_context': {'global_files': False},
-    }
+    # Task control is opt-in for an application's agent, unlike in the CLI.
+    defaults: Mapping[str, Mapping[str, JsonValue]] = {'coder': {'task_control': False}}
     overrides = plugin_settings or {}
     if unknown := sorted(overrides.keys() - stock.keys()):
         raise UserError(
@@ -227,6 +219,7 @@ async def chat(
             project=project,
             transcript=transcript,
             load_plugins=load_plugins,
+            settings_for=settings_for,
         )
     fresh = False
     warming: Thread | None = None
@@ -345,6 +338,7 @@ async def chat(
                             transcript=transcript,
                             load_plugins=load_plugins,
                             workspace=Path(shell.session.workspace),
+                            settings_for=shell.context.settings_for,
                         )
                     )
                 except Exception as exc:  # noqa: BLE001 -- development edits must not discard the conversation.
@@ -392,7 +386,11 @@ def _opener(
     launched_in, launch_project = Path(shell.session.workspace), shell.context.project
 
     def build(directory: Path | None) -> SessionRuntime[DepsT, OutputT]:
-        project = launch_project if directory in (None, launched_in) else load_project_settings(directory)
+        project = (
+            with_current_approvals(launch_project, store=shell.context.store)
+            if directory in (None, launched_in)
+            else load_project_settings(directory, store=shell.context.store)
+        )
         return create_shell(
             agent(),
             deps=deps,
@@ -408,6 +406,7 @@ def _opener(
             workspace=directory or launched_in,
             process=shell.process,
             signals=False,
+            settings_for=settings,
         )
 
     return build

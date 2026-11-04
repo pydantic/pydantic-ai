@@ -67,15 +67,18 @@ with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.models.xai import XaiModel
+    from pydantic_ai.models.zai import ZaiModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.cohere import CohereProvider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
     from pydantic_ai.providers.mistral import MistralProvider
+    from pydantic_ai.providers.moonshotai import MoonshotAIProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.xai import XaiProvider
+    from pydantic_ai.providers.zai import ZaiProvider
     from pydantic_ai.retries import AsyncHTTPX2TenacityTransport, RetryConfig
 
     from .mock_xai import MockXai, get_grok_text_chunk
@@ -140,6 +143,26 @@ def _anthropic(handler: Handler) -> Model:
         http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
     )
     return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
+
+
+def _zai(handler: Handler) -> Model:
+    client = AsyncOpenAI(
+        api_key='test',
+        base_url='http://localhost/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    )
+    return ZaiModel('glm-5.2', provider=ZaiProvider(openai_client=client))
+
+
+def _moonshotai(handler: Handler) -> Model:
+    client = AsyncOpenAI(
+        api_key='test',
+        base_url='http://localhost/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    )
+    return OpenAIChatModel('kimi-k2.5', provider=MoonshotAIProvider(openai_client=client))
 
 
 def _anthropic_bedrock(handler: Handler) -> Model:
@@ -469,6 +492,85 @@ CASES = [
         has_cause=False,
     ),
     Case(
+        id='zai-insufficient-balance',
+        model=_zai,
+        handler=_json(
+            429,
+            {'error': {'code': '1113', 'message': 'Insufficient balance or no resource package. Please recharge.'}},
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 429, 'provider_error_code': '1113'},
+    ),
+    Case(
+        id='zai-plan-limit',
+        model=_zai,
+        handler=_json(
+            429,
+            {
+                'error': {
+                    'code': '1310',
+                    'message': 'Weekly/Monthly Limit Exhausted. Your limit will reset at 2026-11-02.',
+                }
+            },
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 429, 'provider_error_code': '1310'},
+    ),
+    Case(
+        id='zai-rate-limit',
+        model=_zai,
+        handler=_json(429, {'error': {'code': '1302', 'message': 'Rate limit reached for requests'}}),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'provider_error_code': '1302'},
+    ),
+    Case(
+        # Moonshot's body for an exhausted balance, from https://forum.moonshot.ai/t/429-insufficient-balance/244.
+        id='moonshotai-exceeded-current-quota',
+        model=_moonshotai,
+        handler=_json(
+            429,
+            {
+                'error': {
+                    'message': 'Your account org-xxx <ak-xxx> is suspended due to insufficient balance, please '
+                    'recharge your account or check your plan and billing details',
+                    'type': 'exceeded_current_quota_error',
+                }
+            },
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 429, 'provider_error_type': 'exceeded_current_quota_error'},
+    ),
+    Case(
+        id='moonshotai-rate-limit',
+        model=_moonshotai,
+        handler=_json(
+            429,
+            {
+                'error': {
+                    'message': 'Your account org-xxx <ak-xxx> request reached organization max RPM: 200',
+                    'type': 'rate_limit_reached_error',
+                }
+            },
+        ),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'provider_error_type': 'rate_limit_reached_error'},
+    ),
+    Case(
+        # The type means something only from Moonshot, like Z.ai's numeric codes.
+        id='openai-moonshot-quota-type-rate-limit',
+        model=_openai,
+        handler=_json(429, {'error': {'message': 'Too many requests', 'type': 'exceeded_current_quota_error'}}),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'provider_error_type': 'exceeded_current_quota_error'},
+    ),
+    Case(
+        id='openai-numeric-code-rate-limit',
+        model=_openai,
+        handler=_json(429, {'error': {'code': '1113', 'message': 'Too many requests'}}),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'provider_error_code': '1113'},
+    ),
+    Case(
         id='anthropic-overloaded',
         model=_anthropic,
         handler=_json(529, {'type': 'error', 'error': {'type': 'overloaded_error', 'message': 'Overloaded'}}),
@@ -633,6 +735,108 @@ CASES = [
         ),
         categories={ModelHTTPError, ModelRateLimitError},
         attrs={'status_code': 429, 'provider_error_code': 'RESOURCE_EXHAUSTED'},
+    ),
+    Case(
+        # Gemini's body when the daily quota is used up, from https://github.com/google-gemini/gemini-cli/issues/8437:
+        # it lists the per-minute quotas too, but the daily one won't reset until midnight Pacific time.
+        id='google-daily-quota',
+        model=_google,
+        handler=_json(
+            429,
+            {
+                'error': {
+                    'code': 429,
+                    'message': 'You exceeded your current quota, please check your plan and billing details. For more '
+                    'information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits.',
+                    'status': 'RESOURCE_EXHAUSTED',
+                    'details': [
+                        {
+                            '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+                            'violations': [
+                                {
+                                    'quotaMetric': 'generativelanguage.googleapis.com/'
+                                    'generate_content_free_tier_input_token_count',
+                                    'quotaId': 'GenerateContentInputTokensPerModelPerMinute-FreeTier',
+                                    'quotaDimensions': {'location': 'global', 'model': 'gemini-2.5-flash'},
+                                },
+                                {
+                                    'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests',
+                                    'quotaId': 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier',
+                                    'quotaDimensions': {'location': 'global', 'model': 'gemini-2.5-flash'},
+                                },
+                                {
+                                    'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests',
+                                    'quotaId': 'GenerateRequestsPerDayPerProjectPerModel-FreeTier',
+                                    'quotaDimensions': {'model': 'gemini-2.5-flash', 'location': 'global'},
+                                },
+                            ],
+                        },
+                        {
+                            '@type': 'type.googleapis.com/google.rpc.Help',
+                            'links': [
+                                {
+                                    'description': 'Learn more about Gemini API quotas',
+                                    'url': 'https://ai.google.dev/gemini-api/docs/rate-limits',
+                                }
+                            ],
+                        },
+                        {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '55s'},
+                    ],
+                }
+            },
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 429, 'provider_error_code': 'RESOURCE_EXHAUSTED'},
+    ),
+    Case(
+        # Only per-minute quotas exceeded: a rate limit, which waiting fixes.
+        id='google-per-minute-quota',
+        model=_google,
+        handler=_json(
+            429,
+            {
+                'error': {
+                    'code': 429,
+                    'message': 'You exceeded your current quota, please check your plan and billing details. For more '
+                    'information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits.',
+                    'status': 'RESOURCE_EXHAUSTED',
+                    'details': [
+                        {
+                            '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+                            'violations': [
+                                {
+                                    'quotaMetric': 'generativelanguage.googleapis.com/generate_content_paid_tier_requests',
+                                    'quotaId': 'GenerateRequestsPerMinutePerProjectPerModel',
+                                    'quotaDimensions': {'location': 'global', 'model': 'gemini-2.5-flash'},
+                                    'quotaValue': '1000',
+                                }
+                            ],
+                        },
+                        {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '12s'},
+                    ],
+                }
+            },
+        ),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'provider_error_code': 'RESOURCE_EXHAUSTED'},
+    ),
+    Case(
+        # From https://github.com/ChatGPTNextWeb/NextChat/issues/5255.
+        id='google-billing-not-enabled',
+        model=_google,
+        handler=_json(
+            400,
+            {
+                'error': {
+                    'code': 400,
+                    'message': 'Gemini API free tier is not available in your country. Please enable billing on your '
+                    'project in Google AI Studio.',
+                    'status': 'FAILED_PRECONDITION',
+                }
+            },
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 400, 'provider_error_code': 'FAILED_PRECONDITION'},
     ),
     Case(
         id='google-overloaded',
@@ -1565,6 +1769,14 @@ CASES = [
         handler=_gave_up(503),
         categories={ModelHTTPError, ModelUnavailableError},
         attrs={'status_code': 503, 'body': None},
+    ),
+    Case(
+        id='cohere-transport-gave-up-stream',
+        model=_cohere,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'body': None},
+        stream=True,
     ),
     Case(
         id='openai-transport-gave-up-unread-body',

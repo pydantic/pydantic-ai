@@ -1,12 +1,10 @@
 """The `search_conversation_history` toolset with dependency-free BM25 ranking.
 
 The ranking and rendering core is ported from VStorm's `pydantic-deepagents`
-(`pydantic_deep/features/history_archive/toolset.py`). BM25 tuning is dependency-free
-(`math` + `re`) and takes its parameters from the owning capability instead of module
-constants, so a caller can tune ranking without editing the port. The corpus comes
-from a `HistorySource` (one document per persisted message, across the runs selected
-by the configured scope); ranking is global within that scope, while context windows
-around a match stay within the match's run.
+(`pydantic_deep/features/history_archive/toolset.py`), with BM25 parameters taken from
+the owning capability. The corpus comes from a `HistorySource` (one document per
+persisted message, across the runs selected by the configured scope); ranking is global
+within that scope, while context windows around a match stay within the match's run.
 """
 
 from __future__ import annotations
@@ -247,19 +245,15 @@ def _format_request_part(part: ModelRequestPart, *, terms: frozenset[str] | None
         if not part.transcript:
             return None
         return f'Speech [{part.speaker}]: {_clip(part.transcript, _EXCERPT_CHARS, terms)}'
-    # Tool-list, capability, instruction and effort bookkeeping rather than conversation, so there is no line to
-    # contribute. Redundant against the union as it stands today, but kept explicit so the fallthrough below stays a
-    # real branch at runtime rather than dead code.
+    # Tool-list, capability, instruction and effort bookkeeping rather than conversation. Listed explicitly so the
+    # fallthrough below stays a real runtime branch.
     if isinstance(
         part,
         (ToolAvailabilityDeltaPart, CapabilityLoadDeltaPart, InstructionBaselinePart, ModelSettingsDeltaPart),
     ):
         return None
-    # A part pydantic-ai added after this was written. Indexing it would mean guessing which
-    # of its fields read as conversation, and a search index is not worth failing a run over,
-    # so it contributes nothing. `assert_never` under `TYPE_CHECKING` keeps the chain
-    # exhaustive at type-check time -- a new upstream part fails `make typecheck` -- without
-    # crashing a user who upgrades pydantic-ai ahead of us.
+    # A part type newer than this code contributes nothing. `assert_never` under `TYPE_CHECKING`
+    # keeps the chain exhaustive for pyright without crashing at runtime on a newer pydantic-ai.
     if TYPE_CHECKING:
         assert_never(part)
     return None  # pragma: no cover - reachable only on a pydantic-ai release newer than this one
@@ -416,6 +410,9 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
             run_id: Search only this run's history. Use it to resolve a run
                 another tool or a compaction receipt referenced.
         """
+        return await self._search(ctx, query, run_id)
+
+    async def _search(self, ctx: RunContext[AgentDepsT], query: str, run_id: str | None) -> str:
         conversation_id: str | None = None
         if self._scope == 'conversation':
             # Fail closed. Filtering on `conversation_id is None` would match every
@@ -453,6 +450,9 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
                 'on a shared store).'
             )
 
+        return self._render_matches(query, sections, total_messages)
+
+    def _render_matches(self, query: str, sections: list[_RunSection], total_messages: int) -> str:
         # Rank on the untruncated rendering so terms past the display cutoff stay
         # findable, then show excerpts clipped around the query terms. Documents are
         # index-aligned across the flattened sections; context windows stay within one section.

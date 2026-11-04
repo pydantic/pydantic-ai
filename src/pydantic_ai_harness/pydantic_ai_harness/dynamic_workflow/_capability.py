@@ -81,22 +81,20 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
     inherit_model: bool = False
     """Run every sub-agent with the parent run's resolved model instead of its constructed model.
 
-    Use this when the host can switch models per run, such as a `/model` command that passes a
-    run-level model override to the parent agent. Without it, that per-run choice silently leaves
-    catalog sub-agents on the model they were bound to when constructed; `inherit_model=True` makes
-    the workflow crew follow the parent run's resolved model. Keep `False` to pin sub-agents to
-    their own configured models.
+    Use this when the host switches models per run (for example a `/model` command passing a
+    run-level model override); without it, catalog sub-agents keep the model they were constructed
+    with. Keep `False` to pin sub-agents to their own configured models.
     """
 
     sub_agent_usage_limits: UsageLimits | None = None
-    """`UsageLimits` applied to every sub-agent run, replacing the parent run's limits or pydantic-ai's default.
+    """`UsageLimits` applied to every sub-agent run, replacing the parent run's limits or Pydantic AI's default.
 
     With `forward_usage=False`, a per-run `total_tokens_limit` of `T` plus `max_agent_calls` of
     `N` bounds the tree to roughly `N * T` tokens (each run can overshoot by its final response,
     since core checks token limits after a response arrives). With `forward_usage=True` the limit
     is checked against the shared counter -- a tree-wide cap, best-effort under concurrent fan-out.
     `None` runs sub-agents under the parent run's `usage_limits` with `forward_usage=True`, and
-    under pydantic-ai's default (`request_limit=50`, no token limit) with `forward_usage=False`.
+    under Pydantic AI's default (`request_limit=50`, no token limit) with `forward_usage=False`.
     """
 
     resource_limits: WorkflowResourceLimits | Literal['unlimited'] | None = None
@@ -129,7 +127,7 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
         return WorkflowAgent(agent=entry)
 
     def reveal(self, agent: AbstractAgent[AgentDepsT, object] | WorkflowAgent[AgentDepsT]) -> None:
-        """Reveal a sub-agent on the next model step (the supported runtime API for doing so).
+        """Reveal a sub-agent on the next model step.
 
         The sub-agent is announced to the model on the next step and becomes callable then; the
         `run_workflow` description stays frozen at the agents present when the run started. Reveal

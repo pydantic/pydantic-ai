@@ -24,9 +24,9 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AgentToolset
-from pydantic_ai.workspaces import Workspace
+from pydantic_ai.workspaces import SupportsCommands, SupportsRealpath, Workspace
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, HarnessDeprecationWarning, warn_argument_ignored
-from pydantic_ai_harness._workspace import in_working_dir, require_workspace, workspace_path
+from pydantic_ai_harness._workspace import in_working_dir, innermost_backend, require_workspace, workspace_path
 from pydantic_ai_harness.filesystem import DirectoryListedEvent, FileReadEvent
 from pydantic_ai_harness.filesystem._tool_kinds import step_aside_for_read_file
 from pydantic_ai_harness.repo_context._loader import (
@@ -77,23 +77,22 @@ _TRAVERSAL_DEPRECATION = (
 class RepoContext(AbstractCapability[AgentDepsT]):
     """Discover and load a repo's accumulated coding-assistant context engineering.
 
-    Three strategies, each independently toggleable:
-
     Everything is read through the run's workspace, anchored at its working
     directory; a run without a workspace fails at its start.
+
+    Three strategies, each independently toggleable:
 
     1. Instruction autoload (`autoload_instructions`, on by default): load the
        working directory's instruction file, one per directory: the first of
        `filenames` (`AGENTS.md`, then `CLAUDE.md`) that exists. `walk_up` adds the
        ancestors up to the repository root (`'repo_root'`) or the filesystem root
-       (`'all'`), and `global_files` adds user-global files ahead of them; files
-       are deduped by content, broadest first. These are read once at run start
+       (`'all'`); files are deduped by content, broadest first. These are read once at run start
        and injected as system instructions via `get_instructions`, so they stay in
        the cached prefix, stable within a run; a change between runs of a
        conversation is appended rather than rewritten.
 
     2. Asset inventory (`expose_inventory_tool`, off by default): a tool that
-       reports where the repo's CE assets live (`.claude`/`.agents`/`.codex`/
+       reports where the repo's coding-assistant assets live (`.claude`/`.agents`/`.codex`/
        `.grok` and their `skills/`, `agents/`, `settings.json`). It locates
        assets; it does not parse them. It steps aside for `FileSystem`'s
        `read_file` when the asset roots are inside the working directory, and
@@ -104,18 +103,13 @@ class RepoContext(AbstractCapability[AgentDepsT]):
        surface the instruction file of that directory and of every directory
        between it and the working directory, shallowest first. The
        working directory's own files are not repeated when Strategy 1 loaded
-       them. The note is enqueued in
-       the message tail, not added to system instructions, so it does not
-       invalidate the cached prefix. `nested_inject='contents'` (default)
-       inlines the file body; `'pointer'` enqueues a one-line pointer. With it
-       on, the instructions also gain one static sentence on how instruction
-       files relate: each applies to its subtree, the deeper one wins, and the
-       user's direct instructions win over all of them.
-
-    Cache note: injecting file contents into the system prompt costs prompt-cache
-    stability. Strategy 1 is safe because its files are stable within a run, and a
-    change between runs is appended rather than rewritten; the volatile Strategy 3
-    content rides in the message tail instead.
+       them. The note is enqueued in the message tail, not added to system
+       instructions, so it does not invalidate the cached prefix.
+       `nested_inject='contents'` (default) inlines the file body; `'pointer'`
+       enqueues a one-line pointer. With it on, the instructions also gain one
+       static sentence on how instruction files relate: each applies to its
+       subtree, the deeper one wins, and the user's direct instructions win over
+       all of them.
 
     ```python
     from pydantic_ai import Agent
@@ -148,6 +142,14 @@ class RepoContext(AbstractCapability[AgentDepsT]):
 
     autoload_instructions: bool = True
     """Strategy 1: load instruction files into the system prompt."""
+
+    autoload_symlink_roots: Sequence[str | Path] = field(default=(), kw_only=True)
+    """Authorize external autoload targets beneath these workspace paths, empty by default.
+
+    Roots and targets are resolved through the workspace. Requires a backend implementing
+    `SupportsRealpath` or command execution for workspace symlink resolution. External files
+    retain their scanned entry's label. Nested traversal and inventory are unaffected.
+    """
 
     expose_inventory_tool: bool = False
     """Strategy 2: expose the asset-inventory tool."""
@@ -186,13 +188,6 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     """Entry names that mark the repository root for `walk_up='repo_root'`.
 
     An entry of any kind counts, so a linked worktree's `.git` file marks its root like a `.git` directory.
-    """
-
-    global_files: Sequence[str | Path] = ()
-    """Workspace paths of user-global instruction files, such as `/home/user/.codex/AGENTS.md`.
-
-    They load before the walk-up, so they have the lowest precedence, and a missing one is skipped. A
-    relative path resolves against the working directory; `~` is not expanded.
     """
 
     nested_max_chars: int | None = 32_000
@@ -235,10 +230,6 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             raise UserError(f'`RepoContext.root_markers` takes a sequence of names, e.g. `({self.root_markers!r},)`.')
         if self.nested_max_chars is not None and self.nested_max_chars < 0:
             raise UserError('`RepoContext.nested_max_chars` must not be negative.')
-        if isinstance(self.global_files, str | Path):
-            raise UserError(f'`RepoContext.global_files` takes a sequence of paths, e.g. `({self.global_files!r},)`.')
-        for path in self.global_files:
-            workspace_path(Path(path))
         if self.home_dir is not None and self.walk_up == 'repo_root':
             raise UserError(
                 "`RepoContext` takes either `home_dir` or `walk_up='repo_root'` to stop the walk-up, not both."
@@ -281,9 +272,12 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             top = await find_root(workspace, working_dir, self.root_markers)
         elif self.walk_up == 'all':
             top = Path(working_dir.anchor)
-        global_files = [Path(await workspace.resolve(workspace_path(Path(path)))) for path in self.global_files]
         self._context_files = await discover_instruction_files(
-            workspace, working_dir, top, self.filenames, global_files=global_files
+            workspace,
+            working_dir,
+            top,
+            self.filenames,
+            autoload_symlink_roots=await self._autoload_symlink_roots(workspace),
         )
         # The walk-up loaded the working directory's instruction files (or an identical ancestor copy), so nested
         # traversal has nothing to add there. A file that appears there later in the run is still surfaced.
@@ -372,7 +366,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         raw_path = args.get(self.traversal_path_arg)
         if not isinstance(raw_path, str):
             return result
-        await self._enqueue_context(ctx, await self._resolve_directory(ctx.workspace, raw_path))
+        # The deprecated sniffer can name a directory outside the working directory on purpose, so only the
+        # directories between it and the working directory are confined.
+        await self._enqueue_context(ctx, await self._resolve_directory(ctx.workspace, raw_path), confine_target=False)
         return result
 
     @on_event(FileReadEvent, DirectoryListedEvent)
@@ -391,22 +387,37 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             return
         await self._enqueue_context(ctx, directory)
 
-    async def _enqueue_context(self, ctx: RunContext[AgentDepsT], directory: Path) -> None:
+    async def _enqueue_context(
+        self, ctx: RunContext[AgentDepsT], directory: Path, *, confine_target: bool = True
+    ) -> None:
         """Surface the instruction file of `directory` and of each directory between it and the working directory.
 
         Files are enqueued shallowest first, so the most specific file is the latest one the model reads.
         """
         working_dir = await self._working_dir(ctx.workspace)
+        real_working_dir: Path | None = None
         in_history = self._sync_surfaced_dirs(ctx.messages)
         for current in directories_up_to(directory, working_dir):
+            # Already surfaced, so it passed the check below then; skipping it first saves a `realpath`, which is a
+            # command round trip on shell-backed sandboxes.
+            if self._surfaced(str(current), in_history):
+                continue
+            # The tool authorized the file or directory it touched, not every directory in its lexical path: a
+            # symlinked directory there can take one of them, or the file's own parent, outside the project. So
+            # each must resolve inside the working directory too. The deprecated sniffer may name a directory
+            # outside the working directory on purpose; only that one is exempt.
+            if confine_target or current != directory or current.is_relative_to(working_dir):
+                if real_working_dir is None:
+                    real_working_dir = Path(await ctx.workspace.realpath(str(working_dir)))
+                if not Path(await ctx.workspace.realpath(str(current))).is_relative_to(real_working_dir):
+                    continue
             await self._enqueue_directory(ctx, current, in_history)
 
     async def _enqueue_directory(self, ctx: RunContext[AgentDepsT], directory: Path, in_history: set[str]) -> None:
         key = str(directory)
-        if self._surfaced(key, in_history):
-            return
         context_file = await find_dir_context_file(ctx.workspace, directory, self.filenames)
-        # Parallel traversals can probe the same directory concurrently; re-check after the await.
+        # `_enqueue_context` skipped it if it was already surfaced, but parallel traversals can probe the same
+        # directory concurrently, so check again after the await.
         if context_file is None or self._surfaced(key, in_history):
             return
         self._pending_dirs.add(key)
@@ -473,6 +484,16 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         if inline:
             return [render_context_file(context_file, label=label)]
         return [SystemPromptPart(_POINTER_NOTE), render_context_file_path(label)]
+
+    async def _autoload_symlink_roots(self, workspace: Workspace) -> list[Path]:
+        if not self.autoload_symlink_roots:
+            return []
+        if not isinstance(innermost_backend(workspace), (SupportsRealpath, SupportsCommands)):
+            raise UserError(
+                '`RepoContext.autoload_symlink_roots` requires a workspace backend implementing '
+                '`SupportsRealpath` or `SupportsCommands` to resolve symlinks safely.'
+            )
+        return [Path(await workspace.realpath(workspace_path(Path(root)))) for root in self.autoload_symlink_roots]
 
     async def _working_dir(self, workspace: Workspace) -> Path:
         if self._cached_working_dir is None:

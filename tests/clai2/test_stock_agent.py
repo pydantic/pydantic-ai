@@ -66,27 +66,6 @@ async def test_tools_and_instructions_come_from_the_workspace(
     assert f'Rules from the {root}.' in instructions[0]
 
 
-@pytest.mark.parametrize('global_files', [None, True])
-async def test_global_instruction_files_load_only_when_asked(tmp_path: Path, global_files: bool | None) -> None:
-    """The process user's own instruction files belong to whoever runs the host, so they stay out by default."""
-    (tmp_path / 'checkout').mkdir()
-    personal = Path.home() / '.pydantic-ai' / 'AGENTS.md'
-    personal.parent.mkdir(parents=True)
-    personal.write_text('Personal rules.')
-    instructions: list[str] = []
-
-    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-        instructions.append(info.instructions or '')
-        yield 'done'
-
-    settings = {'repo_context': {'global_files': global_files}} if global_files is not None else None
-    async with open_stock_agent(
-        workspace=str(tmp_path / 'checkout'), model=FunctionModel(stream_function=stream), plugin_settings=settings
-    ) as agent:
-        await agent.run('hi')
-    assert ('Personal rules.' in instructions[0]) is bool(global_files)
-
-
 async def test_skills_come_from_the_workspaces_repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Skills at the root of the repository `workspace` is in reach the model, wherever the process runs."""
     repository = tmp_path / 'repository'
@@ -140,7 +119,7 @@ async def test_plugin_settings_override_the_stock_coder(
 
 
 async def test_only_the_coding_loop_is_eager(tmp_path: Path) -> None:
-    """Everything else, starting with the customization guide, is one catalog line until the model loads it."""
+    """Everything else, starting with the CLAI docs capability, is one catalog line until the model loads it."""
     seen: list[AgentInfo] = []
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
@@ -150,7 +129,7 @@ async def test_only_the_coding_loop_is_eager(tmp_path: Path) -> None:
         else:
             yield 'done'
 
-    # The CLI adds the guide to this stock set, as `create_stock_agent` does.
+    # The CLI adds the docs capability to this stock set, as `create_stock_agent` does.
     async with open_stock_agent(
         workspace=tmp_path, model=FunctionModel(stream_function=stream), capabilities=[customization_guide()]
     ) as agent:
