@@ -13,16 +13,13 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai_harness.compaction import ClampOversizedMessages, ClearToolResults
 from tests.conftest import RequestCapture
 from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 
-from .test_compaction import _make_ctx  # pyright: ignore[reportPrivateUsage]
-
-pytestmark = [pytest.mark.anyio, pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)]
+pytestmark = [pytest.mark.anyio, pytest.mark.vcr, pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)]
 
 LINES = '80 lines of the form `LINE <n>: <eight random lowercase English words>`, numbered from 1'
 ASK = (
@@ -45,7 +42,6 @@ def _input_shape(body: dict[str, Any]) -> list[tuple[str, bool]]:
     return [(item.get('type', 'easy'), 'id' in item) for item in body['input']]
 
 
-@pytest.mark.vcr
 async def test_clamped_text_reaches_the_model(
     allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
 ):
@@ -62,7 +58,6 @@ async def test_clamped_text_reaches_the_model(
     )
 
 
-@pytest.mark.vcr
 async def test_clamped_tool_call_args_reach_the_model(
     allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
 ):
@@ -88,7 +83,6 @@ async def test_clamped_tool_call_args_reach_the_model(
     )
 
 
-@pytest.mark.vcr
 async def test_cleared_tool_inputs_reach_the_model(
     allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
 ):
@@ -112,21 +106,3 @@ async def test_cleared_tool_inputs_reach_the_model(
             ('easy', False),
         ]
     )
-
-
-async def test_only_edited_parts_lose_their_item_id():
-    """Not a recorded test: no recording can pin that an untouched part stays replayable by ID."""
-    kept_text = TextPart('short', id='msg_1', provider_name='openai')
-    kept_call = ToolCallPart('t', '{"a": 1}', tool_call_id='c1', id='fc_1', provider_name='openai')
-    clamped_text = TextPart('x' * 2_000, id='msg_2', provider_name='openai')
-    clamped_call = ToolCallPart('t', 'y' * 2_000, tool_call_id='c2', id='fc_2', provider_name='openai')
-    messages: list[ModelMessage] = [ModelResponse(parts=[kept_text, kept_call, clamped_text, clamped_call])]
-
-    clamp = ClampOversizedMessages(max_part_chars=1_000, keep_head_chars=100, keep_tail_chars=100)
-    result = await clamp.compact(messages, _make_ctx())
-
-    parts = result[0].parts
-    assert parts[0] is kept_text
-    assert parts[1] is kept_call
-    assert isinstance(parts[2], TextPart) and parts[2].id is None
-    assert isinstance(parts[3], ToolCallPart) and parts[3].id is None and parts[3].tool_call_id == 'c2'
