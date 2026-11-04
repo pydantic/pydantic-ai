@@ -202,8 +202,33 @@ class CapabilityOrdering:
     """These types must be present in the chain (no ordering implied)."""
 
 
+class _CapabilityAuthority:
+    """Declares `authority` for [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability].
+
+    A plain class rather than a dataclass, so `authority` isn't a dataclass field of every capability: a capability
+    sets it as a class attribute, or declares it as a field of its own, such as `LocalWorkspace(authority=...)`.
+    """
+
+    authority: Authority = 'operator'
+    """The most [authority][pydantic_ai.messages.Authority] what this capability enqueues can carry.
+
+    A [capability part](../capabilities/custom.md#capability-parts) it enqueues whose source has more authority
+    than this is stored with a [`CapabilitySource`][pydantic_ai.messages.CapabilitySource] naming this capability
+    and this authority instead, so it reaches the model with no more than that. It only ever lowers a part's
+    authority: `'user'` puts what the capability says in the user's turn, labelled as attached on the user's behalf,
+    and `'none'` frames it as data with a note naming the capability. Set it on a capability whose content you don't
+    fully control, such as one built from a plugin or another team's code: as a class attribute of a subclass, or as a
+    field of the capability's own. To lower one instance, use
+    [`with_authority`][pydantic_ai.capabilities.AbstractCapability.with_authority].
+
+    For a workspace capability, such as [`LocalWorkspace`][pydantic_ai.capabilities.LocalWorkspace], it's also the
+    default authority of the workspace's files. A file another capability reads through a workspace carries the
+    workspace's authority for that file, capped again by the reader's own `authority`.
+    """
+
+
 @dataclass(init=False)
-class AbstractCapability(ABC, Generic[AgentDepsT]):
+class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
     """Abstract base class for agent capabilities.
 
     A capability is a reusable, composable unit of agent behavior that can provide
@@ -225,6 +250,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     hook raises [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest].
 
     See the [capabilities documentation](../capabilities/overview.md) for built-in capabilities.
+
+    `authority` (default `'operator'`) is the most [authority][pydantic_ai.messages.Authority] what the capability
+    enqueues can carry: a [capability part](../capabilities/custom.md#capability-parts) whose source has more is
+    stored with a [`CapabilitySource`][pydantic_ai.messages.CapabilitySource] at this level instead. Set it as a class
+    attribute of a subclass or as a field of the capability's own, and lower one instance with
+    [`with_authority`][pydantic_ai.capabilities.AbstractCapability.with_authority]. For a workspace capability, such as
+    [`LocalWorkspace`][pydantic_ai.capabilities.LocalWorkspace], it's also the default authority of the workspace's
+    files.
 
     [`get_serialization_name`][pydantic_ai.capabilities.AbstractCapability.get_serialization_name]
     and [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] support
@@ -251,19 +284,6 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     A first-class extension point that derives this from a capability's overridden
     hooks (so third-party capabilities don't need to set a flag manually) is tracked
     in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477).
-    """
-
-    authority: ClassVar[Authority] = 'operator'
-    """The most [authority][pydantic_ai.messages.Authority] what this capability enqueues can carry.
-
-    A [capability part](../capabilities/custom.md#capability-parts) it enqueues whose source has more authority
-    than this is stored with a [`CapabilitySource`][pydantic_ai.messages.CapabilitySource] naming this capability
-    and this authority instead, so it reaches the model with no more than that. It only ever lowers a part's
-    authority: `'user'` puts what the capability says in the user's turn, labelled as attached on the user's behalf,
-    and `'none'` frames it as data with a note naming the capability. Set it in a subclass of a capability whose
-    content you don't fully control, such as one built from a plugin or another team's code. To lower one instance
-    rather than every instance of a class, use
-    [`with_authority`][pydantic_ai.capabilities.AbstractCapability.with_authority].
     """
 
     @property
@@ -545,7 +565,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def with_authority(self, authority: Authority) -> Self:
         """Return a copy of this capability whose enqueued parts carry no more than `authority`.
 
-        Lowers this one instance, where the [`authority`][pydantic_ai.capabilities.AbstractCapability.authority]
+        Lowers this one instance, where the [`authority`][pydantic_ai.capabilities.AbstractCapability]
         class attribute lowers every instance of a class: for example, one MCP server you don't control at `'none'`
         while the others keep `'operator'`. It only ever lowers: asking for more authority than the capability
         already has leaves it where it is.

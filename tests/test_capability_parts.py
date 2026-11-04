@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Generic, Literal, LiteralString, TypeVar, cast
@@ -17,7 +17,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai._capability_parts import effective_authority, render_capability_parts
 from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai._event_registry import set_replay_isolation_guard
-from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, Hooks
+from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, Hooks, LocalWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CAPABILITY_PART_TYPES,
@@ -1450,6 +1450,51 @@ class _FreshCombinedPerRunReporter(Reporter):
 def test_with_authority_reaches_a_combined_capability_returned_from_for_run() -> None:
     reporter = _FreshCombinedPerRunReporter([nudge()], id='outer').with_authority('none')
     assert _sources_by_capability([reporter]) == {'inner': CapabilitySource('inner', authority='none')}
+
+
+@dataclass
+class _LabelledReporter(AbstractCapability[Any]):
+    """A capability whose first field has no default, which a dataclass field `authority` on the base would break."""
+
+    label: str
+    parts: list[Any] = field(default_factory=list[Any])
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        ctx.enqueue(*self.parts)
+        return request_context
+
+
+@dataclass
+class _LabelledNoAuthorityReporter(_LabelledReporter):
+    authority = 'none'
+
+
+def test_authority_is_not_a_dataclass_field() -> None:
+    reporter = _LabelledReporter('first', [nudge()], id='labelled')
+    assert reporter.authority == 'operator'
+    assert 'authority' not in {f.name for f in fields(reporter)}
+    assert _LabelledNoAuthorityReporter('first').authority == 'none'
+    # `replace` keeps the class's authority, and `with_authority` still lowers an instance.
+    assert replace(_LabelledNoAuthorityReporter('first'), label='second').authority == 'none'
+    lowered = replace(reporter, label='second').with_authority('user')
+    assert lowered.authority == 'operator'
+    assert _sources_by_capability([lowered]) == {'labelled': CapabilitySource('labelled', authority='user')}
+
+
+def test_local_workspace_authority_is_the_capability_authority(tmp_path: Path) -> None:
+    """`LocalWorkspace(authority=...)` sets the files' default level and caps what the capability itself enqueues."""
+    workspace = LocalWorkspace(tmp_path, authority='user')
+    assert workspace.authority == 'user'
+    assert workspace._effective_authority == 'user'  # pyright: ignore[reportPrivateUsage]
+    assert replace(workspace, read_only=True).authority == 'user'
+    lowered = workspace.with_authority('none')
+    # Lowering what it enqueues leaves the files' level as it was.
+    assert lowered.authority == 'user'
+    assert lowered._effective_authority == 'none'  # pyright: ignore[reportPrivateUsage]
+    assert LocalWorkspace(tmp_path).authority == 'operator'
+    assert LocalWorkspace(tmp_path).with_authority('operator')._effective_authority == 'operator'  # pyright: ignore[reportPrivateUsage]
 
 
 @dataclass

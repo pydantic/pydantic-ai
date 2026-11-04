@@ -4862,7 +4862,7 @@ class ModelSource:
 class CapabilitySource:
     """A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] whose source was lowered to its capability's authority ceiling.
 
-    When a capability whose [`authority`][pydantic_ai.capabilities.AbstractCapability.authority] is below
+    When a capability whose [`authority`][pydantic_ai.capabilities.AbstractCapability] is below
     `'operator'` enqueues a part whose source has more authority than that, `ctx.enqueue` stores this source in its
     place, so the history says which capability wrote the content and with how much authority. A note about content
     with `'none'` authority names the capability as its author.
