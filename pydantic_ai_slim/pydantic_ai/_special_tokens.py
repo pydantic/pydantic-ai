@@ -9,9 +9,10 @@ On a profile with [`may_tokenize_special_tokens_in_content`][pydantic_ai.profile
 changes the outgoing copy, and the same text always gets the same joiners, so stored history stays as written and
 replaying it sends the same bytes.
 
-The model reads the joiner as part of the text and copies it into what it writes, which would silently corrupt a file
-it edits. So the inverse runs on each response, at the `Model` boundary: text and tool call arguments lose the joiner
-inside a token before anything else sees them, whether the response was streamed or not. Tools, output validation,
+The model reads the joiner as part of the text and copies it into what it writes, or writes another invisible character
+for it, which would silently corrupt a file it edits. So the inverse runs on each response, at the `Model` boundary:
+text and tool call arguments lose a zero-width character inside a token before anything else sees them, whether the
+response was streamed or not. Tools, output validation,
 users and stored history get the literal token. When that text is sent back, the break restores the bytes the model
 wrote.
 """
@@ -72,7 +73,9 @@ _LITERAL_TOKEN_TAILS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
 )
 """The fixed tokens, as their first character and the rest."""
 
-_NAMED_TOKEN_TAILS: Final = rf'\|[^\s<>|{ZERO_WIDTH_JOINER}]{{1,64}}\|>|｜[^\s<>｜{ZERO_WIDTH_JOINER}]{{1,64}}｜>'
+_NAMED_TOKEN_TAILS: Final = (
+    r'\|[^\s<>|\u200b-\u200d\u2060\ufeff]{1,64}\|>|｜[^\s<>｜\u200b-\u200d\u2060\ufeff]{1,64}｜>'
+)
 """What follows the `<` of a `<|im_start|>` or a `<｜User｜>`, whichever name a template gives it."""
 
 _TOKEN_SHAPES: Final[tuple[tuple[str, str], ...]] = (
@@ -88,18 +91,22 @@ def _joiner_inside_token(joiner: str) -> re.Pattern[str]:
     return re.compile('|'.join(f'(?<={first}){joiner}(?={tails})' for first, tails in _TOKEN_SHAPES))
 
 
-_JOINER_IN_TEXT: Final = _joiner_inside_token(ZERO_WIDTH_JOINER)
-_JOINER_IN_JSON: Final = _joiner_inside_token(rf'(?:{ZERO_WIDTH_JOINER}|\\u200[dD])')
-"""A model can write the joiner in a tool call's JSON arguments as an escape."""
+_ZERO_WIDTH_CHARACTER: Final = '[\u200b\u200c\u200d\u2060\ufeff]'
+"""What a model writes for the joiner when it copies it: some families reach for another invisible character instead."""
+_ZERO_WIDTH_ESCAPE: Final = r'\\u(?:200[bcdBCD]|2060|[fF][eE][fF][fF])'
+"""The same characters, as a model can write them in a tool call's JSON arguments."""
 
-_POSSIBLE_JOINER_IN_TEXT: Final = re.compile(rf'(?<=[<\[\]]){ZERO_WIDTH_JOINER}')
+_JOINER_IN_TEXT: Final = _joiner_inside_token(_ZERO_WIDTH_CHARACTER)
+_JOINER_IN_JSON: Final = _joiner_inside_token(f'(?:{_ZERO_WIDTH_CHARACTER}|{_ZERO_WIDTH_ESCAPE})')
+
+_POSSIBLE_JOINER_IN_TEXT: Final = re.compile(rf'(?<=[<\[\]]){_ZERO_WIDTH_CHARACTER}')
 _POSSIBLE_JOINER_IN_JSON: Final = re.compile(
-    rf'(?<=[<\[\]])(?:{ZERO_WIDTH_JOINER}|\\u200[dD]|\\(?:u(?:2(?:0(?:0)?)?)?)?$)'
+    rf'(?<=[<\[\]])(?:{_ZERO_WIDTH_CHARACTER}|{_ZERO_WIDTH_ESCAPE}|\\(?:u[0-9a-fA-F]{{0,3}})?$)'
 )
 """Where a joiner has started, also when a chunk ended partway through its escape."""
 
 _TOKEN_TAIL_PREFIX: Final = re.compile(
-    rf'\|[^\s<>|{ZERO_WIDTH_JOINER}]{{0,64}}\|?|｜[^\s<>｜{ZERO_WIDTH_JOINER}]{{0,64}}｜?|'
+    r'\|[^\s<>|\u200b-\u200d\u2060\ufeff]{0,64}\|?|｜[^\s<>｜\u200b-\u200d\u2060\ufeff]{0,64}｜?|'
     + '|'.join(
         re.escape(tail[:length])
         for _, tails in _LITERAL_TOKEN_TAILS
@@ -119,7 +126,10 @@ def break_special_tokens(text: str) -> str:
 
 
 def restore_special_tokens(text: str) -> str:
-    """The inverse of [`break_special_tokens`][pydantic_ai._special_tokens.break_special_tokens], for a model's text."""
+    """The inverse of [`break_special_tokens`][pydantic_ai._special_tokens.break_special_tokens], for a model's text.
+
+    Any zero-width character inside a token is removed, since that's what a model's copy of the joiner can turn into.
+    """
     return _JOINER_IN_TEXT.sub('', text)
 
 

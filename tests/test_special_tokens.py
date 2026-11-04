@@ -587,6 +587,15 @@ async def test_routes_without_the_flag_keep_what_the_model_wrote(allow_model_req
     assert (await Agent(model).run('Go')).output == BROKEN
 
 
+@pytest.mark.parametrize('character', ['\u200b', '\u200c', '\u200d', '\u2060', '\ufeff'])
+def test_restores_whichever_invisible_character_the_model_wrote(character: str):
+    """gpt-oss and Qwen copy the joiner as a different zero-width character in some runs."""
+    assert restore_special_tokens(f'<{character}|start|>') == '<|start|>'
+    escaped = json.dumps({'q': f'<{character}|start|>'})
+    part = restore_special_tokens_in_parts([ToolCallPart('t', escaped)])[0]
+    assert part.args == '{"q": "<|start|>"}'
+
+
 def test_a_joiner_outside_a_token_stays():
     text = f'caf{Z}e <{Z}b> [{Z}x] <{Z}|two words|>'
     assert restore_special_tokens(text) == text
