@@ -240,6 +240,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     registered durable operations.
     """
 
+    _durable_operations_need_id: ClassVar[bool] = True
+    """Whether binding this capability's durable operations requires an `id`.
+
+    Internal, in-tree only. An id-less instance of a class that sets this to `False` binds no durable
+    operations, so the class must reject its own id-less runs inside a durable workflow or flow.
+    """
+
     _safe_at_runtime: ClassVar[bool] = False
     """Whether this capability can be added per-run when a durability capability is bound.
 
