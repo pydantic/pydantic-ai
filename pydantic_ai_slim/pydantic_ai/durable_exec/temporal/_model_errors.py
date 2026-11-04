@@ -23,6 +23,7 @@ from pydantic import TypeAdapter
 from pydantic_core import to_jsonable_python
 from temporalio.exceptions import ActivityError, ApplicationError
 
+from ..._unsupported_settings import raised_for_fallback
 from ...exceptions import (
     ModelAPIError,
     ModelConnectionError,
@@ -49,10 +50,10 @@ _STREAMED_KEY = 'pydantic_ai_streamed_before_failing'
 _response_adapter: TypeAdapter[ModelResponse] = TypeAdapter(ModelResponse)
 
 _RETRY_MODEL_REQUEST_KEY = 'pydantic_ai_retry_model_request'
+"""Marks the `ApplicationError` detail that holds a `RetryModelRequest`'s model name."""
 
 _UNSUPPORTED_SETTING_KEY = 'pydantic_ai_unsupported_setting'
-"""Marks the `ApplicationError` detail that holds the message of an `UnsupportedSettingWarning` raised as an error."""
-"""Marks the `ApplicationError` detail that holds a `RetryModelRequest`'s model name."""
+"""Marks the `ApplicationError` detail that holds the message of an `UnsupportedSettingWarning` raised for `fallback_on`."""
 
 
 def _encode(error: ModelAPIError) -> dict[str, Any] | None:
@@ -135,7 +136,8 @@ def model_errors_as_application_errors(
 ) -> Generator[None]:
     """In a model activity, raise a model error as an `ApplicationError` the workflow can rebuild it from.
 
-    So is an `UnsupportedSettingWarning` a model raised for a `fallback_on` that names it, never retried.
+    So is an `UnsupportedSettingWarning` a model raised for a `fallback_on` that names it, never retried; one a
+    warnings filter raised fails the activity as before.
 
     The `ApplicationError`'s `type` is what a retry policy's `non_retryable_error_types` matches; see
     `_retry_policy_type`. An error that is an instance of one of the `non_retryable` classes is raised as a
@@ -165,6 +167,9 @@ def model_errors_as_application_errors(
             str(error), *details, type=_retry_policy_type(error), non_retryable=not retryable
         ) from error
     except UnsupportedSettingWarning as warning:
+        # One a warnings filter turned into an error fails the activity as it always did.
+        if not raised_for_fallback(warning):
+            raise
         # Raised instead of emitted for a `fallback_on` that names it, before anything is sent, so another attempt
         # at the same model would raise it again.
         raise ApplicationError(

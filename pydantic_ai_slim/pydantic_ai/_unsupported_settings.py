@@ -45,6 +45,15 @@ _RAISED: ContextVar[bool] = ContextVar('unsupported_setting_warnings_raised', de
 """Whether `warn_unsupported_settings` raises the `UnsupportedSettingWarning` instead of emitting it, set by `raise_warnings`."""
 
 
+_RAISED_FOR_FALLBACK = '_pydantic_ai_raised_for_fallback'
+"""The attribute that marks an `UnsupportedSettingWarning` `raise_warnings` had raised, rather than a warnings filter."""
+
+
+def raised_for_fallback(warning: UnsupportedSettingWarning) -> bool:
+    """Whether `warning` was raised by `raise_warnings`, for a `fallback_on` that names it, rather than by a filter."""
+    return getattr(warning, _RAISED_FOR_FALLBACK, False) is True
+
+
 @contextmanager
 def raise_warnings() -> Generator[None]:
     """Raise the `UnsupportedSettingWarning` a model would emit for a request inside this block, instead of emitting it.
@@ -105,5 +114,7 @@ def warn_unsupported_settings(
             continue
         message = f'The `{name}` setting is not supported by model {model_id!r} and will be ignored.{hint}'
         if _RAISED.get():
-            raise UnsupportedSettingWarning(message)
+            warning = UnsupportedSettingWarning(message)
+            setattr(warning, _RAISED_FOR_FALLBACK, True)
+            raise warning
         warnings.warn(message, UnsupportedSettingWarning, stacklevel=stacklevel)
