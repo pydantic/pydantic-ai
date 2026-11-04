@@ -569,7 +569,9 @@ _(This example is complete, it can be run "as is")_
     history again keeps only what it loaded as.
 
     [Durable execution](durable_execution/overview.md) decodes its own journal this way, so a run in
-    flight across an upgrade keeps the files its earlier steps recorded.
+    flight across an upgrade keeps the files its earlier steps recorded. The harness's step persistence
+    stores and saved conversations load their own snapshots this way too, so a run you continue or fork
+    keeps them as well.
 
     A URL whose media type Pydantic AI can't infer from the URL is serialized with `media_type: null`,
     which validates back into the URL part's default (no media type) and dumps `null` again, in a tool

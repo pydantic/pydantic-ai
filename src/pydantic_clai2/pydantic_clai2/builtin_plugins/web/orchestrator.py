@@ -45,6 +45,10 @@ from pydantic_clai2.builtin_plugins.workspaces import configured
 from pydantic_clai2.config.settings_store import state_dir
 from pydantic_clai2.plugins import TurnOutcome
 
+_SAVED_HISTORY_CONTEXT = {'pydantic_ai': {'rebuild_unrecorded_tool_files': True}}
+"""Saved web conversations load as they were saved, files their tools returned included, even from before
+tool results recorded their files."""
+
 if TYPE_CHECKING:
     from pydantic_clai2.builtin_plugins.web.service import WebService
     from pydantic_clai2.builtin_plugins.web.workspace_tools import WorkspaceTools
@@ -89,7 +93,7 @@ def read_saved(path: Path) -> Saved:
     """The conversation in `path`; empty when there is none or it cannot be read."""
     data, revision = _revision(path)
     try:
-        messages = [] if data is None else ModelMessagesTypeAdapter.validate_json(data)
+        messages = [] if data is None else ModelMessagesTypeAdapter.validate_json(data, context=_SAVED_HISTORY_CONTEXT)
     except ValidationError:
         messages = []
     return Saved(messages=messages, revision=revision)

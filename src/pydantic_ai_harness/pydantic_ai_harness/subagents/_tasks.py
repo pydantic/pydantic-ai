@@ -29,6 +29,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.output import OutputContext
+from pydantic_ai_harness._history import STORED_HISTORY_CONTEXT
 from pydantic_ai_harness._task_report import make_task_output, make_task_question
 from pydantic_ai_harness.step_persistence import StepPersistence, StepStore
 from pydantic_ai_harness.subagents._events import DelegationOutcome
@@ -163,7 +164,7 @@ _SAFE_ID = re.compile(r'[0-9a-f]{32}\Z')
 
 async def _read(path: anyio.Path) -> DelegationTask:
     """A saved task, checked to have the identity its file name gives it."""
-    record = _ADAPTER.validate_json(await path.read_bytes())
+    record = _ADAPTER.validate_json(await path.read_bytes(), context=STORED_HISTORY_CONTEXT)
     if not _SAFE_ID.fullmatch(record.id) or not _SAFE_ID.fullmatch(record.run_id) or path.name != f'{record.id}.json':
         raise ValueError(f'Invalid saved task identity in {path.name!r}')
     return record
