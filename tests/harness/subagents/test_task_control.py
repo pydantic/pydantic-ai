@@ -91,6 +91,11 @@ from .._recording_durability import RecordingDurability
 
 WAIT = 10
 
+
+class TemporalLikeDurability(RecordingDurability):
+    engine_spec = replace(RecordingDurability.engine_spec, tool_config_key='temporal')
+
+
 Step = Callable[[list[ModelMessage]], ModelResponse]
 AsyncStep = Callable[[list[ModelMessage]], Awaitable[ModelResponse]]
 
@@ -274,7 +279,9 @@ class TestSubAgentsTaskControl:
         [backgrounded] = recorder.of(TaskBackgroundedEvent)
         assert backgrounded.reason == 'requested'
 
-    async def test_a_slow_task_moves_to_the_background_after_auto_background_after(self) -> None:
+    # Temporal replays the timer, so it moves a durable task to the background too.
+    @pytest.mark.parametrize('durable', [False, True])
+    async def test_a_slow_task_moves_to_the_background_after_auto_background_after(self, durable: bool) -> None:
         gate = Gate()
         slow = Agent(scripted(call('pause'), text('slow result')), tools=[gate.pause])
         recorder = Recorder()
@@ -289,7 +296,12 @@ class TestSubAgentsTaskControl:
                 end_turn,
                 text('Done.'),
             ),
-            capabilities=[controlled(researcher(slow), auto_background_after=0.01), recorder],
+            name='durable',
+            capabilities=[
+                controlled(researcher(slow), auto_background_after=0.01),
+                recorder,
+                *([TemporalLikeDurability()] if durable else []),
+            ],
         )
         settings, exporter = traced(False)
         parent.instrument = settings
