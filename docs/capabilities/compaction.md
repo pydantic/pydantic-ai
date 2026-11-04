@@ -65,7 +65,7 @@ Requests from any of these merge while one is pending, as [above](#the-compactio
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeCompaction
 
-agent = Agent('{{ openai:medium }}', capabilities=[NativeCompaction()])
+agent = Agent('{{ anthropic:medium }}', capabilities=[NativeCompaction()])
 
 
 async def main():
