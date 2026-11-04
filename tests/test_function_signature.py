@@ -939,12 +939,8 @@ def dump(*, blob: str | int | list[Any]) -> Any:
 """)
 
 
-def test_ref_to_ref_def_keeps_alias_name():
-    """A def that is itself a `$ref` is left unresolved.
-
-    Pydantic flattens an alias of an alias into a full copy, so this shape only reaches us
-    from hand-written schemas; following the indirection is out of scope here.
-    """
+def test_ref_to_ref_def_follows_through_to_its_target():
+    """Pydantic flattens an alias of an alias into a full copy, so this shape comes from hand-written schemas."""
     sig = FunctionSignature.from_schema(
         name='t',
         parameters_schema={
@@ -955,7 +951,7 @@ def test_ref_to_ref_def_keeps_alias_name():
         },
     )
     assert sig.render('...', name='t') == snapshot("""\
-def t(*, x: Indirect) -> Any:
+def t(*, x: int) -> Any:
     ...\
 """)
 
@@ -1419,8 +1415,8 @@ def tool(*, item: Container) -> Any:
     assert str(container.fields['inner'].type) == 'Inner'
 
 
-def test_schema_inline_object_reuses_existing_typename():
-    """Inline object property reuses a $defs type when path-based names collide."""
+def test_schema_inline_object_named_like_a_definition_stays_its_own_type():
+    """Inline object property and a $defs type with one name are two types, which names then tell apart."""
     sig = FunctionSignature.from_schema(
         name='tool',
         parameters_schema={
@@ -1444,8 +1440,16 @@ def test_schema_inline_object_reuses_existing_typename():
             },
         },
     )
-    # The $defs ToolData was registered first; the inline 'data' property reuses it
-    assert str(sig.params['data'].type) == 'ToolData'
+    assert _catalog(sig) == snapshot("""\
+class tool_ToolData(TypedDict):
+    y: int
+
+class tool_ToolData_2(TypedDict):
+    x: str
+
+def tool(*, data: tool_ToolData_2) -> Any:
+    ...\
+""")
 
 
 def test_schema_additional_properties_false():
@@ -2039,10 +2043,11 @@ def test_resolved_name_is_not_part_of_the_type():
     assert repr(resolved) == repr(plain)
 
 
-def test_ref_that_does_not_resolve_keeps_rendering():
-    """Such a `$ref` leaves a type no signature lists, which unifying must still handle."""
-    schema = {'type': 'object', 'properties': {'x': {'$ref': '#/definitions/U'}}, 'required': ['x']}
-    signature = FunctionSignature.from_schema(name='a', parameters_schema=schema)
+def test_type_a_hand_built_signature_does_not_list_keeps_rendering():
+    """`FunctionSignature` is a public dataclass, and rendering it has never needed `referenced_types` to be complete."""
+    signature = FunctionSignature(
+        name='a', params={'x': FunctionParam(name='x', type=TypeSignature(name='U'))}, return_type=SimpleTypeExpr('Any')
+    )
     assert _catalog(signature) == 'def a(*, x: U) -> Any:\n    ...'
 
 
@@ -2095,3 +2100,166 @@ def test_every_small_catalog_defines_each_name_once_and_every_name_it_uses():
         used = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)}
         assert len(defined) == len(set(defined)), catalog
         assert used <= {*defined, 'Any', 'TypedDict', 'int', 'list', 'str'}, catalog
+
+
+# =============================================================================
+# What a `$ref` means
+# =============================================================================
+
+# `tests/harness/code_mode/test_code_mode.py` holds Monty to the same cases.
+
+
+def _ref_catalog(properties: dict[str, Any], **document: Any) -> str:
+    schema = {'type': 'object', 'properties': properties, 'required': list(properties), **document}
+    return _catalog(FunctionSignature.from_schema(name='tool', parameters_schema=schema))
+
+
+_NAME_OBJECT = {'type': 'object', 'properties': {'name': {'type': 'string'}}, 'required': ['name']}
+_ID_OBJECT = {'type': 'object', 'properties': {'id': {'type': 'integer'}}, 'required': ['id']}
+
+
+def test_recursive_model_as_the_only_argument_gives_its_fields_as_parameters():
+    class Node(BaseModel):
+        value: str
+        next: Node | None = None
+
+    signature = FunctionSignature.from_schema(name='tool', parameters_schema=Node.model_json_schema())
+    assert _catalog(signature) == snapshot("""\
+class Node(TypedDict):
+    value: str
+    next: NotRequired[Node | None]
+
+def tool(*, value: str, next: Node | None = None) -> Any:
+    ...\
+""")
+
+
+def test_root_refs_that_lead_nowhere_give_no_parameters():
+    for schema in (
+        {'$ref': '#'},
+        {'$ref': '#/$defs/A', '$defs': {'A': {'$ref': '#/$defs/A'}}},
+        {'$ref': '#/$defs/Missing'},
+    ):
+        assert FunctionSignature.from_schema(name='tool', parameters_schema=schema).params == {}
+
+
+def test_definitions_is_a_place_for_definitions_too():
+    assert _ref_catalog({'user': {'$ref': '#/definitions/User'}}, definitions={'User': _NAME_OBJECT}) == snapshot("""\
+class User(TypedDict):
+    name: str
+
+def tool(*, user: User) -> Any:
+    ...\
+""")
+
+
+def test_ref_to_a_path_is_one_type_with_what_it_points_at():
+    assert _ref_catalog({'first': _NAME_OBJECT, 'second': {'$ref': '#/properties/first'}}) == snapshot("""\
+class ToolFirst(TypedDict):
+    name: str
+
+def tool(*, first: ToolFirst, second: ToolFirst) -> Any:
+    ...\
+""")
+
+
+def test_ref_to_a_path_can_come_before_what_it_points_at():
+    assert _ref_catalog({'second': {'$ref': '#/properties/first'}, 'first': _NAME_OBJECT}) == snapshot("""\
+class ToolSecond(TypedDict):
+    name: str
+
+def tool(*, second: ToolSecond, first: ToolSecond) -> Any:
+    ...\
+""")
+
+
+def test_ref_to_a_path_through_a_list():
+    node = {'anyOf': [_NAME_OBJECT, {'type': 'null'}]}
+    assert _ref_catalog({'first': node, 'second': {'$ref': '#/properties/first/anyOf/0'}}) == snapshot("""\
+class ToolFirst(TypedDict):
+    name: str
+
+def tool(*, first: ToolFirst | None, second: ToolFirst) -> Any:
+    ...\
+""")
+
+
+def test_ref_to_the_document_root_names_it_after_the_tool():
+    assert _ref_catalog({'value': {'type': 'string'}, 'next': {'$ref': '#'}}) == snapshot("""\
+class Tool(TypedDict):
+    value: str
+    next: Tool
+
+def tool(*, value: str, next: Tool) -> Any:
+    ...\
+""")
+
+
+def test_two_pointers_with_one_last_segment_are_two_types():
+    catalog = _ref_catalog(
+        {'a': {'$ref': '#/$defs/User'}, 'b': {'$ref': '#/definitions/User'}},
+        **{'$defs': {'User': _NAME_OBJECT}, 'definitions': {'User': _ID_OBJECT}},
+    )
+    assert catalog == snapshot("""\
+class tool_User(TypedDict):
+    name: str
+
+class tool_User_2(TypedDict):
+    id: int
+
+def tool(*, a: tool_User, b: tool_User_2) -> Any:
+    ...\
+""")
+
+
+def test_two_inline_objects_with_one_title_are_two_types():
+    catalog = _ref_catalog({'a': {**_NAME_OBJECT, 'title': 'Item'}, 'b': {**_ID_OBJECT, 'title': 'Item'}})
+    assert catalog == snapshot("""\
+class tool_Item(TypedDict):
+    name: str
+
+class tool_Item_2(TypedDict):
+    id: int
+
+def tool(*, a: tool_Item, b: tool_Item_2) -> Any:
+    ...\
+""")
+
+
+def test_inline_object_whose_title_cannot_name_a_type_takes_a_name_from_its_path():
+    assert 'class ToolA(TypedDict):' in _ref_catalog({'a': {**_NAME_OBJECT, 'title': 'not a name'}})
+
+
+def test_two_identical_inline_objects_with_one_title_are_one_type():
+    catalog = _ref_catalog({'a': {**_NAME_OBJECT, 'title': 'Item'}, 'b': {**_NAME_OBJECT, 'title': 'Item'}})
+    assert catalog.count('class Item(TypedDict):') == 1
+
+
+@pytest.mark.parametrize(
+    'ref',
+    [
+        '#anchor',
+        'https://example.com/user.json#',
+        'other.json',
+        '#/$defs/Missing',
+        '#/$defs/bytes',
+        '#/properties/x/type',
+        '#/properties/list/items/name',
+        '#/properties/list/items/5',
+        '#/properties/list/items/٠x',
+    ],
+)
+def test_ref_without_a_target_is_any(ref: str):
+    assert 'x: Any' in _ref_catalog(
+        {'x': {'$ref': ref, 'type': 'string'}, 'list': {'type': 'array', 'items': [{}, {}]}}
+    )
+
+
+def test_ref_to_a_boolean_schema_is_any():
+    assert 'x: Any' in _ref_catalog({'x': {'$ref': '#/$defs/Open'}}, **{'$defs': {'Open': True}})
+
+
+def test_self_referencing_alias_ends_in_any():
+    assert 'x: Any' in _ref_catalog(
+        {'x': {'$ref': '#/$defs/A'}}, **{'$defs': {'A': {'$ref': '#/$defs/B'}, 'B': {'$ref': '#/$defs/A'}}}
+    )
