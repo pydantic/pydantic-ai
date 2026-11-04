@@ -18,6 +18,7 @@ from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     SystemPromptPart,
     TextContent,
@@ -207,6 +208,18 @@ def _request_scoped_texts(messages: list[ModelMessage]) -> list[str]:
         for part in msg.parts
         if isinstance(part, SystemPromptPart) and part.scope == 'request'
     ]
+
+
+def _is_kept_copy(part: ModelRequestPart) -> bool:
+    """Return whether *part* is a `keep_user_messages` copy, by the marker `SummarizingCompaction` puts on its text."""
+    return (
+        isinstance(part, UserPromptPart)
+        and not isinstance(part.content, str)
+        and any(
+            isinstance(item, TextContent) and item.metadata == 'pydantic-ai-harness.compaction.kept-user-message.v1'
+            for item in part.content
+        )
+    )
 
 
 # --- Reminder validation ---
@@ -1653,9 +1666,8 @@ class TestEndToEnd:
             part
             for message in result.all_messages()
             if isinstance(message, ModelRequest)
-            and message.metadata
-            and message.metadata.get('pydantic-ai-harness.compaction.kept-user-message.v1')
             for part in message.parts
+            if _is_kept_copy(part)
         ]
         kept_texts = [
             part.content
@@ -1710,9 +1722,8 @@ class TestEndToEnd:
             part
             for message in result.all_messages()
             if isinstance(message, ModelRequest)
-            and message.metadata
-            and message.metadata.get('pydantic-ai-harness.compaction.kept-user-message.v1')
             for part in message.parts
+            if _is_kept_copy(part)
         ]
         assert kept == [
             UserPromptPart(

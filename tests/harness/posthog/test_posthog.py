@@ -129,6 +129,11 @@ class TestPostHog:
         with pytest.raises(UserError, match='`client` owns the connection'):
             PostHog[str | None](client='https://example.com/mcp', auth=auth, features=features)
 
+    def test_client_accepts_empty_auth(self) -> None:
+        # The `auth` table documents `''` as unset, so it does not conflict with `client`.
+        toolset = PostHog[None](client='https://example.com/mcp', auth='').get_toolset()
+        assert _http_transport(toolset).url == 'https://example.com/mcp'
+
     @pytest.mark.parametrize(
         'capability',
         [

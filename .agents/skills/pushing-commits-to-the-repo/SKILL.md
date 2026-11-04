@@ -10,7 +10,7 @@ Pushing starts a loop; it does not end the task. **Work stops only when the curr
 merge bar below, every comment is triaged, and metadata is current.**
 Apply the [prose-only documentation exception](#prose-only-documentation) when that exception covers the whole PR.
 
-Lifecycle: implement → targeted verification → commit → pre-push gate → push → CI → required reviews → metadata.
+Lifecycle: implement → targeted verification → commit → pre-push gate → push → CI → required reviews → metadata → handback → watch until merge or close.
 Apply the exceptions below at each gate.
 
 ## Model tiers
@@ -32,7 +32,7 @@ Set the light model's effort from the PR's complexity.
 
 ## Merge bar
 
-A maintainer with merge rights (Douwe, Aditya or Mike) merges at this bar. Never merge the PR yourself.
+[Who merges](#who-merges) says who merges a PR that meets this bar.
 
 | Size label | Needs |
 |---|---|
@@ -50,16 +50,61 @@ Resolve every review thread.
 Douwebot posts as `github-actions[bot]` through the trusted [PR Bots publisher](../../../.github/workflows/bots.yml).
 Verify its successful run and `<!-- douwebot:review run=<id> head=<sha> -->` receipt.
 `CI Review` can use the same bot account but carries a separate gh-aw receipt; it cannot satisfy this bar.
-Associate inline comments with their parent review's commit because GitHub can move a comment's `commit_id` after a push.
+Associate inline comments with the `head=` in their parent review's receipt, or with the comment's `original_commit_id` when the parent has none, because GitHub can move both a review's and a comment's `commit_id` after a push.
 A clean, maintainer-authorized `douwebot:review-agent-config` approval satisfies the same requirement for protected paths.
 A human approval does not substitute for douwebot.
 
 `PR Review Gates` enforces M/L/XL against the recomputed size and exactly one matching label.
 Size S remains a manual judgment; review enforcement skips merge groups after admission.
 
+### Who merges
+
+Adding a PR to the merge queue counts as merging it.
+A maintainer with merge rights (Douwe, Aditya, Mike or David) merges at the merge bar.
+Merge a PR yourself only in these two cases.
+
+**A flake fix.** Once its head meets the merge bar, add it to the merge queue yourself.
+Enqueue it after the final metadata check.
+[Flake fixes](#flake-fixes) defines a flake fix.
+
+**A re-enqueue.** Re-enqueue a PR the merge queue removed when all of these hold:
+
+- A maintainer enqueued it, or you enqueued it as a flake fix.
+- The removal's `reason` is `failed_checks`.
+- No maintainer asked to hold the PR since that enqueue.
+- Since that enqueue, the PR changed only by merging `main` without conflicts, or by commits that meet the [Flake fixes](#flake-fixes) conditions other than the size label. Outside the flake-fixed test module and its cassettes and snapshots, `git diff main...<enqueued-head>` equals `git diff main...HEAD`, with `main` freshly fetched. If you cannot establish the head at enqueue, hand the PR to a maintainer.
+- You pushed every commit since that enqueue.
+- Its current head meets the merge bar again.
+
+In every other case, hand the PR to a maintainer.
+For a removed PR, comment that it is ready to re-enqueue once its current head meets the merge bar again.
+
+### Merge-queue removals
+
 A merge-queue removal posts no comment and leaves the PR open. Detect it as a new `removed_from_merge_queue` event in `gh api --paginate repos/pydantic/pydantic-ai/issues/<number>/timeline` while the PR is still open; a merge logs the same event.
-Diagnose the failed jobs of the PR's newest `merge_group` run (`head_branch` `gh-readonly-queue/main/pr-<number>-<sha>`) as step 2 of "After you push — the loop" requires. Never re-enqueue the PR; a maintainer does.
-After diagnosing, post a PR comment that names each failed job and its cause, with evidence: your fix commit, a known flake, or a failure already on `main`. When the current head meets the merge bar again, comment that the PR is ready to re-enqueue.
+Diagnose the failed jobs of the PR's newest `merge_group` run (`head_branch` `gh-readonly-queue/main/pr-<number>-<sha>`) as step 2 of "After you push — the loop" requires.
+After diagnosing, post a PR comment that names each failed job and its cause, with evidence: your fix commit, a known flake, or a failure already on `main`.
+[Who merges](#who-merges) says whether you re-enqueue it.
+
+### Flake fixes
+
+A flake fix removes the source of nondeterminism that makes a test fail intermittently, so it passes deterministically.
+The trivial-S exception does not apply: require a clean douwebot approval.
+All of these must hold:
+
+- The PR body links a CI run where the test failed.
+- The PR body names the root cause and a reproduction that fails without the fix and passes with it.
+  Force the failure, for example with a `pytest-randomly` seed, a forced ordering or a frozen clock.
+  Or run the test repeatedly, and report its failure count without the fix and zero failures in at least as many runs with it.
+- Every changed file is the failing test's module, or a cassette or snapshot of it.
+- The PR is labeled `size: S` or `size: M`.
+- The diff removes no test.
+- The diff adds no `skip`, `skipif`, `xfail`, `flaky` or rerun marker.
+- The diff deletes no assertion.
+- The diff loosens no assertion: no wider tolerance, longer timeout or weaker matcher. Replacing a short readiness wait with the module's `READINESS_WAIT_TIMEOUT`, as `agent_docs/concurrency.md` recommends, is not a longer timeout.
+- The diff adds no real wait or in-test retry. A `sleep` or a polling loop is a real wait; waiting on an `Event` is not.
+
+If any condition fails, hand the PR to a maintainer.
 
 ## When you open the PR
 
@@ -161,7 +206,6 @@ Apply the merge bar, including its trivial-S exception, to required hosted revie
 Leave automatic configured CI and hosted review workflows unchanged; they may run independently.
 Do not edit workflows or triggers to implement this exception.
 Once the merge bar is met and posted comments are triaged, hand the PR diff to the maintainer driving you, or another maintainer, to inspect and merge.
-Never merge the PR yourself.
 
 ## Mechanical text/data refreshes
 
@@ -323,7 +367,7 @@ drift arbitrarily far from anything a reviewer read, each hop defensible on its 
 | Missing coverage, test-harness repairs, or fixture/snapshot corrections to established intended behavior | inspect the full diff: test code/data only; cite the established expectation and run affected tests; a snapshot must not bless a newly observed regression |
 | Output of the repo's own tooling (`make format`, lint autofix) | run that tooling on the reviewed SHA in a scratch checkout; its tree equals HEAD's |
 | Comments or docstrings only, no `docs/**` page | no non-comment line appears in `git diff <reviewed>..HEAD` |
-| Target-branch merge with no conflict resolution | `git diff <old-base>...<reviewed-head>` equals `git diff <new-base>...HEAD` |
+| Target-branch merge with no conflict resolution | `git diff main...<reviewed-head>` equals `git diff main...HEAD`, with `main` freshly fetched |
 | Commit or revert to a tree that was already reviewed | `git rev-parse HEAD^{tree}` equals a recorded reviewed tree |
 | Lockfile-only dependency bump | only lock and manifest paths changed |
 
@@ -367,6 +411,9 @@ if the head changes, capture the new SHA and restart the loop.
    Its success certifies every job it contains, coverage included. Do not inspect individual jobs
    or their logs to reconfirm a success. Don't idle. If it fails, diagnose: fix if the failure is
    yours; if it's a known flake or pre-existing on main, say so with evidence.
+   When a flake fails your CI, fix it in this PR if this PR caused it, or if this PR is labeled `size: S` or `size: M` and the fix stays within the root `AGENTS.md` scope rule.
+   Otherwise, ask the person driving you whether to start a separate worktree and task to fix it.
+   Recommend yes.
 3. **Meet the merge bar on the captured SHA.**
    - **`CI Review`:** do not wait for it unless explicitly requested. On same-repository PRs, it runs
      when a user with write access approves the current head, when someone adds the `final-review`
@@ -477,7 +524,7 @@ if the head changes, capture the new SHA and restart the loop.
 
 ## When the loop completes — choose an additional review surface
 
-Skip this choice for prose-only documentation and mechanical text/data refreshes defined above.
+Skip this choice for prose-only documentation, mechanical text/data refreshes defined above, and [flake fixes](#flake-fixes).
 
 The required reviews are not on this menu. Step 3 applies the merge bar to both same-repository
 and fork PRs. `CI Review` starts on a write-access approval of the head, a `final-review` label,
@@ -519,8 +566,9 @@ maintainers run them, not something this repo can show you.
   pydanty on pickup, before it has reviewed anything; `douwebot` from an `always()` step that also
   runs when the job was cancelled. A failed `douwebot` run comments saying so and invites a
   re-apply. A completed douwebot review posts a formal `APPROVE` or `REQUEST_CHANGES` verdict;
-  inline findings arrive in separate `COMMENTED` reviews. An incomplete run or a moved head may
-  have no verdict. Read the run conclusion and the captured-head reviews, as step 3 requires.
+  its inline findings are attached to that verdict review. An incomplete run or a moved head may
+  have no verdict. A head that already has douwebot findings is not reviewed again: the run comments with a link
+  to the earlier review instead. Read the run conclusion and the captured-head reviews, as step 3 requires.
 - **Wait for a pydanty run.** It adds `pydanty:is-working` when it starts. Poll every 15 minutes for
   up to 2 hours 30 minutes. Never push to the branch and never touch a thread while
   `pydanty:is-working` is set. `pydanty:review-branch` reports either a review, `pydanty:reviewed`
@@ -580,3 +628,16 @@ Any author-selected additional review must also have settled.
    After metadata corrections, wait for the corresponding edited-event checks and triage feedback.
    Require workflow-defined accepted terminal outcomes; earlier checks on the same HEAD do not cover the edit.
    Hand the PR back after these gates settle.
+
+## After handback — watch until merge or close
+
+Keep watching the PR after you hand it back, until it merges or closes.
+Poll the PR's state, timeline, comments and reviews every 30 minutes.
+The merge queue can remove the PR after handback, and new reviews can still land.
+Handle a merge-queue removal as [Merge-queue removals](#merge-queue-removals) requires, then keep watching.
+Triage each new comment or review through step 4 of [After you push — the loop](#after-you-push--the-loop).
+A push changes the head, so restart that loop on the new head.
+
+This section exempts a non-interactive run that exits when it hands back.
+A pydanty run and a hosted review workflow are examples.
+If an interactive session ends before the PR merges or closes, its last report states that nothing watches the PR.

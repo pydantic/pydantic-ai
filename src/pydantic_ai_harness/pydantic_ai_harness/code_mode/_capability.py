@@ -88,9 +88,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
       when the agent needs environment variables, the clock, or filesystem behavior you
       control.
 
-    `mount` exposes selected host directories. The built-in `OSAccess` has an
-    isolated filesystem and environment but uses the host clock by default; custom
-    OS handlers can expose other host resources.
+    The built-in `OSAccess` has an isolated filesystem and environment but uses the
+    host clock by default; custom OS handlers can expose other host resources.
 
     ```python
     from pydantic_monty import MountDir

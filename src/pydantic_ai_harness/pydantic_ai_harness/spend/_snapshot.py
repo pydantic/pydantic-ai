@@ -53,7 +53,7 @@ def to_nanos(usd: Decimal) -> int:
     keeps that under a part in ten thousand.
 
     The local context is pinned so an application that lowered `Decimal`
-    precision for its own arithmetic cannot silently truncate money here.
+    precision for its own arithmetic cannot truncate money here.
     """
     with money_precision():
         return int((usd * _NANOS_PER_USD).to_integral_value(rounding=ROUND_HALF_UP))
