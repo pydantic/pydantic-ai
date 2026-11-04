@@ -486,9 +486,7 @@ _GEMMA_4_OPENAI_CHAT_ROUTES = [
 
 
 def _gemma_4_route_model(provider: str, model_name: str) -> Model:
-    """Build the real production model for a route with a mocked transport, no provider keys needed."""
-    import httpx2
-
+    """Build the real production model for a route; the cassette supplies the response."""
     from pydantic_ai.models.ollama import OllamaModel
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.ollama import OllamaProvider
@@ -497,39 +495,19 @@ def _gemma_4_route_model(provider: str, model_name: str) -> Model:
     from pydantic_ai.providers.vercel import VercelProvider
     from pydantic_ai.providers.vllm import VLLMProvider
 
-    def handler(request: httpx2.Request) -> httpx2.Response:
-        return httpx2.Response(
-            200,
-            json={
-                'id': 'chatcmpl-gemma-4',
-                'object': 'chat.completion',
-                'created': 0,
-                'model': 'gemma-4-31b-it',
-                'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': '42'}, 'finish_reason': 'stop'}],
-                'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2},
-            },
-        )
-
-    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     if provider == 'ollama':
-        return OllamaModel(
-            model_name, provider=OllamaProvider(base_url='http://ollama.test:11434/v1', http_client=http_client)
-        )
+        return OllamaModel(model_name, provider=OllamaProvider(base_url='http://ollama.test:11434/v1'))
     if provider == 'vercel':
-        return OpenAIChatModel(model_name, provider=VercelProvider(api_key='test', http_client=http_client))
+        return OpenAIChatModel(model_name, provider=VercelProvider(api_key='test'))
     if provider == 'sambanova':
-        return OpenAIChatModel(model_name, provider=SambaNovaProvider(api_key='test', http_client=http_client))
+        return OpenAIChatModel(model_name, provider=SambaNovaProvider(api_key='test'))
     if provider == 'openai-compatible':
         return OpenAIChatModel(
             model_name,
-            provider=OpenAICompatibleProvider(
-                model_name, base_url='https://gateway.test/v1', api_key='test', http_client=http_client
-            ),
+            provider=OpenAICompatibleProvider(model_name, base_url='https://gateway.test/v1', api_key='test'),
         )
     assert provider == 'vllm'
-    return OpenAIChatModel(
-        model_name, provider=VLLMProvider(base_url='http://vllm.test:8000/v1', api_key='test', http_client=http_client)
-    )
+    return OpenAIChatModel(model_name, provider=VLLMProvider(base_url='http://vllm.test:8000/v1', api_key='test'))
 
 
 @pytest.mark.parametrize('provider,model_name', _GEMMA_4_OPENAI_CHAT_ROUTES)
