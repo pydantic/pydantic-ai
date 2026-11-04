@@ -141,7 +141,10 @@ async def command_deadline(
     output: Callable[[], tuple[str, str]] = lambda: ('', ''),
     grace: float = 2.0,
 ) -> AsyncGenerator[None, None]:
-    """Bound only the command phase, after sandbox acquisition; stop on timeout or cancellation, within `grace` seconds."""
+    """Bound only the command phase, after sandbox acquisition.
+
+    On timeout or cancellation, stop the command within `grace` seconds.
+    """
     with anyio.move_on_after(timeout) as scope:
         try:
             yield
