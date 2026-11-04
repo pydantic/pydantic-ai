@@ -388,8 +388,12 @@ async def record_verdict(evaluation: Awaitable[tuple[GuardrailResult, int]]) -> 
         return RecordedVerdict(raised=raised)
     replacement_type = None
     if verdict.action == 'replace' and not isinstance(verdict.replacement, _JSON_TYPES):
-        replacement_type = type(verdict.replacement).__qualname__
+        replacement_type = _type_name(type(verdict.replacement))
     return RecordedVerdict(verdict, position, replacement_type=replacement_type)
+
+
+def _type_name(cls: type) -> str:
+    return f'{cls.__module__}.{cls.__qualname__}'
 
 
 def replay_verdict(recorded: RecordedVerdict, original: object) -> tuple[GuardrailResult, int]:
@@ -399,7 +403,7 @@ def replay_verdict(recorded: RecordedVerdict, original: object) -> tuple[Guardra
     verdict = recorded.verdict
     assert verdict is not None
     original_type = type(original)
-    if recorded.replacement_type == original_type.__qualname__ and not isinstance(verdict.replacement, original_type):
+    if recorded.replacement_type == _type_name(original_type) and not isinstance(verdict.replacement, original_type):
         verdict = GuardrailResult.replace(TypeAdapter(original_type).validate_python(verdict.replacement))
     return verdict, recorded.position
 
