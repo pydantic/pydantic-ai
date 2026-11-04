@@ -66,7 +66,7 @@ class NativeCompaction(AbstractCapability[Any]):
 
     async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
         try:
-            profile = request.model.profile
+            profile = request.conversation_request.model.profile
         except NotImplementedError:
             # A `FallbackModel` has no profile of its own: which of its models would compact isn't known.
             return None

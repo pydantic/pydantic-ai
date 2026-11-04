@@ -7392,13 +7392,15 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
     async def compact_history(self, ctx: RunContext[AgentDepsT], request: CompactionRequest) -> CompactionResult | None:
         if not self.stateless:
             return None
-        if not isinstance(unwrap_model(request.model), OpenAIResponsesModel):
+        if not isinstance(unwrap_model(request.conversation_request.model), OpenAIResponsesModel):
             # Another model serves this attempt, like a `ModelFallback` candidate: not OpenAI's to compact.
             return None
         # Unlike `NativeCompaction`, whatever the profile's `supports_compaction_on_demand` says: you chose an
         # OpenAI capability, for a Responses API that may not be OpenAI's own, as with LiteLLM.
         return await compact_with_model(
-            request, request.model.profile.get('compaction_instructions'), focus_as_system_prompt=False
+            request,
+            request.conversation_request.model.profile.get('compaction_instructions'),
+            focus_as_system_prompt=False,
         )
 
     @classmethod

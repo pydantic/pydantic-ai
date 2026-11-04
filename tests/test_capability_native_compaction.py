@@ -315,7 +315,7 @@ async def test_native_compaction_compacts_for_the_fallback_candidate_not_the_ste
         async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
             step_model = ctx.model
             assert isinstance(step_model, CompactingModel)
-            step_models.append(f'{step_model.model_name} for {request.model.model_name}')
+            step_models.append(f'{step_model.model_name} for {request.conversation_request.model.model_name}')
             return None
 
     agent = Agent(primary, capabilities=[RequestOnce(), StepModel(), NativeCompaction(), ModelFallback(fallback)])
