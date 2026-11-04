@@ -1128,6 +1128,23 @@ class TestInternals:
         meta = _with_handles('not-a-mapping', 'h/1.0', 42)
         assert meta == {'original_metadata': 'not-a-mapping', 'overflow_handle': 'h/1.0', 'overflow_bytes': 42}
 
+    def test_with_handles_sequence(self) -> None:
+        """A list or tuple stays the sequence itself with one spill-bookkeeping dict appended."""
+        meta = _with_handles([{'a': 1}, 'b'], 'h/1.0', 42)
+        assert meta == [
+            {'a': 1},
+            'b',
+            {
+                'original_metadata': [{'a': 1}, 'b'],
+                'overflow_handle': 'h/1.0',
+                'overflow_bytes': 42,
+            },
+        ]
+        assert _with_handles(('a',), None, 0, 'h/2.0') == [
+            'a',
+            {'original_metadata': ('a',), 'overflow_content_handle': 'h/2.0'},
+        ]
+
     def test_with_handles_none(self):
         meta = _with_handles(None, 'h/1.0', 42)
         assert meta == {'overflow_handle': 'h/1.0', 'overflow_bytes': 42}

@@ -1848,6 +1848,70 @@ async def test_tool_local_multiple_events() -> None:
     )
 
 
+async def test_tool_output_limits_spill_preserves_list_metadata_events(tmp_path: Path) -> None:
+    """A spill rewrites `ToolReturn.metadata`, but list metadata stays a sequence.
+
+    The UI events in it must still reach the frontend.
+    """
+    pytest.importorskip('pydantic_ai_harness')
+    from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Spill, ToolOutputLimits
+
+    async def big_custom_events() -> ToolReturn:
+        """Return a large output with custom UI events in metadata."""
+        return ToolReturn(
+            return_value='Spilled line\n' * 100,
+            metadata=[
+                CustomEvent(
+                    type=EventType.CUSTOM,
+                    name='custom_event1',
+                    value={'key1': 'value1'},
+                ),
+                CustomEvent(
+                    type=EventType.CUSTOM,
+                    name='custom_event2',
+                    value={'key2': 'value2'},
+                ),
+            ],
+        )
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            # First call - make a tool call
+            yield {0: DeltaToolCall(name='big_custom_events')}
+            yield {0: DeltaToolCall(json_args='{}')}
+        else:
+            # Second call - return text result
+            yield 'success big_custom_events called'
+
+    agent = Agent(
+        model=FunctionModel(stream_function=stream_function),
+        tools=[big_custom_events],
+        capabilities=[
+            ToolOutputLimits(
+                bands=[Band(over=100, action=Spill())],
+                store=LocalFileStore(base_dir=tmp_path),
+            )
+        ],
+    )
+
+    events = await run_and_collect_events(agent, create_input(UserMessage(id='msg_1', content='Go')))
+
+    assert {
+        'type': 'CUSTOM',
+        'timestamp': IsInt(),
+        'name': 'custom_event1',
+        'value': {'key1': 'value1'},
+    } in events
+    assert {
+        'type': 'CUSTOM',
+        'timestamp': IsInt(),
+        'name': 'custom_event2',
+        'value': {'key2': 'value2'},
+    } in events
+
+
 async def test_tool_local_parts() -> None:
     """Test local tool call with streaming/parts."""
 

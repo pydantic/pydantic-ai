@@ -2980,6 +2980,44 @@ async def test_run_stream_tool_metadata_single_chunk():
     )
 
 
+async def test_tool_output_limits_spill_preserves_list_metadata_chunks(tmp_path):
+    """A spill rewrites `ToolReturn.metadata`, but list metadata stays a sequence so its chunks are still yielded."""
+    pytest.importorskip('pydantic_ai_harness')
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='send_events', json_args='{}', tool_call_id='call_1')}
+        else:
+            yield 'Done'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    async def send_events() -> ToolReturn:
+        return ToolReturn(
+            return_value='Spilled line\n' * 100,
+            metadata=[
+                DataChunk(type='data-event1', data={'key1': 'value1'}),
+                DataChunk(type='data-event2', data={'key2': 'value2'}),
+            ],
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Send events')])],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert {'type': 'data-event1', 'data': {'key1': 'value1'}} in events
+    assert {'type': 'data-event2', 'data': {'key2': 'value2'}} in events
+
+
 async def test_run_stream_tool_metadata_multiple_chunks():
     """Test that multiple data-carrying chunks in ToolReturnPart.metadata are yielded to the stream."""
 

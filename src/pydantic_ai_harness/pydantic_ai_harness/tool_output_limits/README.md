@@ -41,10 +41,12 @@ a `warnings.warn`, since it cannot be safely truncated.
 
 Spill keys (`overflow_handle`, `overflow_bytes`, `overflow_content_handle`) live in
 `ToolReturn.metadata` alongside whatever the tool put there. A pre-existing mapping is copied
-in with stringified keys; a pre-existing non-mapping value (a string, a dataclass, anything
-that is not a `Mapping`) is kept under `original_metadata` rather than dropped. Either way the
-caller's own metadata survives a spill and is readable from `metadata` on the resulting
-`ToolReturnPart` after `Agent.run`.
+in with stringified keys; a pre-existing list or tuple stays the sequence itself with one
+spill-bookkeeping dict appended, so UI adapters keep reading its events or chunks from it; any
+other pre-existing non-mapping value (a string, a dataclass, anything that is not a `Mapping`)
+is kept under `original_metadata` rather than dropped. Either way the caller's own metadata
+survives a spill and is readable from `metadata` on the resulting `ToolReturnPart` after
+`Agent.run`.
 
 ## Bands: combine the modes
 

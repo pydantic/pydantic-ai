@@ -721,18 +721,27 @@ def _with_handles(
     value_handle: str | None,
     value_bytes: int,
     content_handle: str | None = None,
-) -> dict[str, object]:
-    """Stash spill handle(s) in `ToolReturn.metadata` (app-only, costs no model tokens)."""
+) -> dict[str, object] | list[object]:
+    """Stash spill handle(s) in `ToolReturn.metadata` (app-only, costs no model tokens).
+
+    A list or tuple stays the sequence itself -- the AG-UI and Vercel AI adapters read UI
+    events and data chunks from a sequence in `metadata` -- with one spill-bookkeeping dict
+    appended; other non-mapping values are kept under `original_metadata`.
+    """
+    handles: dict[str, object] = {}
+    if value_handle is not None:
+        handles['overflow_handle'] = value_handle
+        handles['overflow_bytes'] = value_bytes
+    if content_handle is not None:
+        handles['overflow_content_handle'] = content_handle
+    if isinstance(existing, (list, tuple)):
+        return [*existing, {'original_metadata': existing, **handles}]
     base: dict[str, object] = {}
     if is_mapping(existing):
         base.update({str(key): existing[key] for key in existing})
     elif existing is not None:
         base['original_metadata'] = existing
-    if value_handle is not None:
-        base['overflow_handle'] = value_handle
-        base['overflow_bytes'] = value_bytes
-    if content_handle is not None:
-        base['overflow_content_handle'] = content_handle
+    base.update(handles)
     return base
 
 
