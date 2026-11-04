@@ -318,6 +318,10 @@ used to raise, so existing `except UnexpectedModelBehavior` blocks keep catching
 once the model has returned it, like one with no output or one cut off at the token limit, is judged in the
 [agent loop](../agent.md) instead, and raises a plain `UnexpectedModelBehavior` or is re-prompted.
 
+Some adapters still raise a plain [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] for the same kind of
+response, like OpenRouter's `null` `choices`, or a body that isn't JSON on most providers, so to handle all of them,
+catch `ModelAPIError`.
+
 Other errors are raised as a plain `ModelAPIError` or [`ModelHTTPError`](#handling-http-errors), as they always were.
 Categories are assigned from the provider's error code or type where it sends one, and from the error message
 only where the provider offers nothing else. Every `ModelAPIError` also exposes the provider's

@@ -1995,7 +1995,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             raise ModelInvalidResponseError(
                 self.model_name,
                 f'Invalid response from {self.system} chat completions endpoint: {e}',
-                # The SDK builds the completion without validating it, so it holds what the provider sent.
+                # The completion as the SDK built it, without validating it, after the `created` and `finish_reason`
+                # fill-ins above.
                 body=response.model_dump(warnings=False),
             ) from e
 

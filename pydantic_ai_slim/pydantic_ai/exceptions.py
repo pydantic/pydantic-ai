@@ -912,10 +912,13 @@ class ModelRequestTimeout(ModelAPIError):
 class _ModelResponseError(ModelAPIError, UnexpectedModelBehavior):
     """A response the model layer couldn't use, which is a model error and, until v3, an `UnexpectedModelBehavior`."""
 
-    # TODO(v3): drop the `UnexpectedModelBehavior` base, which only keeps existing `except` clauses working.
+    # TODO(v3): drop the `UnexpectedModelBehavior` base, which only keeps existing `except` clauses working, and raise
+    # these from the sites that raise a plain `ModelAPIError` for the same kind of response (`check_json_response`,
+    # `map_decode_errors`, OpenRouter's `null` `choices`). Until then, the base would make those non-retryable on
+    # Temporal and change which `except` clause catches them.
 
     body: object | None
-    """The response the provider sent, if available."""
+    """The response the provider sent, if available, as the SDK built it (which may fill in fields it left out)."""
 
     def __init__(self, model_name: str, message: str, *, body: object | None = None):
         super().__init__(model_name, message, body=body)
@@ -936,6 +939,9 @@ class ModelEmptyResponseError(_ModelResponseError):
     [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] fall back on it by default. These responses used to
     raise a plain [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], which this class still
     subclasses so `except UnexpectedModelBehavior` keeps catching it.
+
+    Some adapters still raise a plain `ModelAPIError` for the same kind of response, so to handle all of them, catch
+    `ModelAPIError`.
     """
 
 
@@ -952,6 +958,9 @@ class ModelInvalidResponseError(_ModelResponseError):
     [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] fall back on it by default. These responses used to
     raise a plain [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], which this class still
     subclasses so `except UnexpectedModelBehavior` keeps catching it.
+
+    Some adapters still raise a plain `ModelAPIError` for the same kind of response, so to handle all of them, catch
+    `ModelAPIError`.
     """
 
 
