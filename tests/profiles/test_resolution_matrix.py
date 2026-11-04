@@ -895,6 +895,7 @@ def test_gateway_zai_glm_5_3_inline_defs():
             'openai_supports_strict_tool_definition': False,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
+            'openai_chat_supports_max_completion_tokens': False,
         }
     )
 
@@ -922,6 +923,7 @@ def test_gateway_zai_glm_other_versions_unchanged():
             'openai_supports_strict_tool_definition': False,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
+            'openai_chat_supports_max_completion_tokens': False,
         }
     )
     assert _normalize(FireworksProvider.model_profile('accounts/fireworks/models/glm-4p6')) == snapshot(
