@@ -14,6 +14,7 @@ from collections.abc import AsyncIterator, Generator, Sequence
 from contextlib import contextmanager
 from typing import Any
 
+import anyio
 import pytest
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
@@ -38,6 +39,7 @@ from pydantic_ai.exceptions import (
     ModelQuotaExceededError,
     ModelRateLimitError,
     ModelRequestRejectedError,
+    ModelRequestTimeout,
     ModelServerError,
     ModelTimeoutError,
     ModelUnavailableError,
@@ -487,6 +489,27 @@ async def test_retries_share_the_request_deadline():
     timeouts = [(s or {}).get('request_timeout') for s in settings]
     assert timeouts[0] == 60
     assert timeouts[1] is not None and 0 < timeouts[1] < 60
+
+
+async def test_a_retry_that_runs_out_of_time_reports_what_was_left():
+    """The `ModelRequestTimeout` of a retry names the rest of the deadline it was sent with, as the docs say."""
+    calls: list[str] = []
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('primary')
+        if len(calls) > 1:
+            await anyio.sleep_forever()
+        raise ModelConnectionError('primary', 'reset')
+
+    agent = Agent(
+        FunctionModel(respond, model_name='primary'),
+        model_settings={'request_timeout': 0.2},
+        capabilities=[RetryOnModelErrors(initial_delay=0)],
+    )
+    with _recorded_sleeps(), pytest.raises(ModelRequestTimeout) as exc_info:
+        await agent.run('x')
+    assert len(calls) == 2
+    assert 0 < exc_info.value.timeout < 0.2
 
 
 async def test_does_not_wait_past_the_request_deadline():

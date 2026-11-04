@@ -111,7 +111,7 @@ Before each retry, the agent waits as long as the error's [`retry_after`][pydant
 
 A request is not retried, and the error is raised at once, when the wait would be longer than `max_delay`, as a provider asking for minutes rather than seconds usually means a quota resets later, or when the wait would end after the request's or the run's [deadline](../timeouts.md#bounding-a-whole-run). Either way, a `ModelFallback` can then move on to another model while the run still has time.
 
-A [`request_timeout`](../timeouts.md#model-request-deadlines) covers a request to a model with all its retries and the waits between them: each retry gets what's left of the deadline the first attempt started with, and a wait that would end after it isn't made. A model `ModelFallback` moves on to gets a fresh deadline, as without `RetryOnModelErrors`.
+A [`request_timeout`](../timeouts.md#model-request-deadlines) covers a request to a model with all its retries and the waits between them: each retry gets what's left of the deadline the first attempt started with, and a wait that would end after it isn't made. A retry that runs out of time raises a [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] whose `timeout` is what was left for that attempt, not the `request_timeout` you set. A model `ModelFallback` moves on to gets a fresh deadline, as without `RetryOnModelErrors`.
 
 ## How attempts work
 
