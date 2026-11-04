@@ -29,6 +29,8 @@ If you're using a web framework not based on Starlette (e.g. Django or Flask) or
 
 Besides the request, [`UIAdapter.dispatch_request()`][pydantic_ai.ui.UIAdapter.dispatch_request] takes the agent, the same optional arguments as [`Agent.run_stream_events()`](../agent.md#running-agents), an optional `on_complete` callback for successful runs, and an optional `on_cancel` callback that receives [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] for [first-party cancelled](../agent.md#cancelling-a-run) runs (a client disconnect is an external cancellation and does not trigger it). Both callbacks can optionally yield additional protocol-specific events.
 
+`on_complete` runs once the agent run has finished and the response is already streaming, so an exception it raises, such as a failure to save the conversation, doesn't reach your request handler. It goes to the event stream's [`on_error()`][pydantic_ai.ui.UIEventStream.on_error] like any other error during streaming, which sends the client the protocol's error event. It's also recorded, as its exception type only, on the OpenTelemetry span that's current when it's raised, which is your HTTP request's span if your server is instrumented. To log the exception or raise it yourself, override `on_error` in a subclass of the adapter's event stream, and return that subclass from your adapter's [`build_event_stream()`][pydantic_ai.ui.UIAdapter.build_event_stream].
+
 !!! note
     These examples use the `VercelAIAdapter`, but the same patterns apply to all `UIAdapter` subclasses.
 
