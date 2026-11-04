@@ -23,6 +23,7 @@ from pydantic_ai import Agent, RunContext, UserError, capture_run_messages
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, LocalWorkspace, WrapperCapability
 from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.messages import (
+    Authority,
     FunctionToolResultEvent,
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -820,6 +821,191 @@ def test_authority_is_the_lowest_through_the_wrappers() -> None:
     # An outer wrapper can't raise what an inner one capped.
     assert AuthorityWorkspace(AuthorityWorkspace(plain, authority='none'), authority='operator').authority == 'none'
     assert users.durable_policy() == ('user', {})
+
+
+@pytest.fixture
+def authority_root(tmp_path: Path) -> Path:
+    root = tmp_path / 'repo'
+    (root / 'vendor' / 'ours').mkdir(parents=True)
+    (root / 'trusted').mkdir()
+    return root
+
+
+def _authority_workspace(
+    root: Path, authority: Authority = 'operator', path_authority: dict[str, Authority] | None = None
+) -> Workspace:
+    return AuthorityWorkspace(
+        Workspace(LocalWorkspaceBackend(root)), authority=authority, path_authority=path_authority
+    )
+
+
+async def test_without_path_authority_files_in_the_working_directory_have_the_workspace_authority(
+    authority_root: Path,
+) -> None:
+    root = authority_root
+    plain = Workspace(LocalWorkspaceBackend(root))
+    assert await plain.authority_of('AGENTS.md') == 'operator'
+    assert await plain.authority_of(str(root / 'vendor' / 'AGENTS.md')) == 'operator'
+    assert await plain.authority_of(str(root)) == 'operator'
+
+    users = AuthorityWorkspace(plain, authority='user')
+    assert await users.authority_of('AGENTS.md') == 'user'
+    assert await users.authority_of('vendor/ours/AGENTS.md') == 'user'
+
+
+async def test_a_path_outside_the_working_directory_is_outside_the_workspace(authority_root: Path) -> None:
+    root = authority_root
+    plain = Workspace(LocalWorkspaceBackend(root))
+    assert await plain.authority_of(str(root.parent / 'elsewhere.md')) == 'none'
+    assert await plain.authority_of('../elsewhere.md') == 'none'
+    # A sibling whose name starts with the working directory's isn't inside it.
+    assert await plain.authority_of(f'{root}-other/AGENTS.md') == 'none'
+
+
+async def test_the_longest_matching_path_wins(authority_root: Path) -> None:
+    root = authority_root
+    ws = _authority_workspace(root, path_authority={'vendor': 'none', 'vendor/ours': 'user'})
+
+    assert await ws.authority_of('AGENTS.md') == 'operator'
+    assert await ws.authority_of('vendor') == 'none'
+    assert await ws.authority_of('vendor/lib/AGENTS.md') == 'none'
+    assert await ws.authority_of('vendor/ours') == 'user'
+    assert await ws.authority_of('vendor/ours/AGENTS.md') == 'user'
+    # `vendor-other` shares a prefix with `vendor` as text, not as a path.
+    assert await ws.authority_of('vendor-other/AGENTS.md') == 'operator'
+
+
+async def test_a_lower_path_inside_a_higher_one(authority_root: Path) -> None:
+    root = authority_root
+    ws = _authority_workspace(root, path_authority={'vendor': 'none'})
+
+    assert await ws.authority_of('trusted/AGENTS.md') == 'operator'
+    assert await ws.authority_of('vendor/AGENTS.md') == 'none'
+
+
+async def test_a_higher_path_inside_a_lower_one(authority_root: Path) -> None:
+    root = authority_root
+    ws = _authority_workspace(root, 'none', {'trusted': 'operator', 'vendor/ours': 'user'})
+
+    assert await ws.authority_of('AGENTS.md') == 'none'
+    assert await ws.authority_of('vendor/AGENTS.md') == 'none'
+    assert await ws.authority_of('trusted/AGENTS.md') == 'operator'
+    assert await ws.authority_of('vendor/ours/AGENTS.md') == 'user'
+    assert ws.authority == 'none'
+
+
+async def test_path_authority_outside_the_working_directory_brings_that_path_in(authority_root: Path) -> None:
+    root = authority_root
+    config = root.parent / 'config'
+    ws = _authority_workspace(root, 'none', {str(config): 'operator'})
+
+    assert await ws.authority_of(str(config / 'AGENTS.md')) == 'operator'
+    assert await ws.authority_of(str(root / 'AGENTS.md')) == 'none'
+    assert await ws.authority_of(str(root.parent / 'other' / 'AGENTS.md')) == 'none'
+
+
+async def test_a_link_from_a_lower_path_into_a_higher_one_keeps_the_lower_level(authority_root: Path) -> None:
+    root = authority_root
+    (root / 'trusted' / 'AGENTS.md').write_text('trusted')
+    (root / 'vendor' / 'AGENTS.md').symlink_to(root / 'trusted' / 'AGENTS.md')
+    (root / 'vendor' / 'dir').symlink_to(root / 'trusted')
+    ws = _authority_workspace(root, path_authority={'vendor': 'none'})
+
+    assert await ws.authority_of('trusted/AGENTS.md') == 'operator'
+    # The link itself, and a directory link part-way along the path.
+    assert await ws.authority_of('vendor/AGENTS.md') == 'none'
+    assert await ws.authority_of('vendor/dir/AGENTS.md') == 'none'
+
+
+async def test_a_link_from_a_higher_path_into_a_lower_one_takes_the_lower_level(authority_root: Path) -> None:
+    root = authority_root
+    (root / 'vendor' / 'AGENTS.md').write_text('vendored')
+    (root / 'trusted' / 'AGENTS.md').symlink_to(root / 'vendor' / 'AGENTS.md')
+    (root / 'trusted' / 'outside.md').symlink_to(root.parent / 'outside.md')
+    ws = _authority_workspace(root, path_authority={'vendor': 'none'})
+
+    assert await ws.authority_of('trusted/AGENTS.md') == 'none'
+    # A link out of the workspace leads outside it.
+    assert await ws.authority_of('trusted/outside.md') == 'none'
+
+
+async def test_a_link_above_the_workspace_is_not_the_workspace_s(authority_root: Path) -> None:
+    root = authority_root
+    # Like `/tmp` linking to `/private/tmp` on macOS: the link is the machine's, not the workspace's.
+    alias = root.parent / 'alias'
+    alias.symlink_to(root)
+    ws = _authority_workspace(root, 'user', {'vendor': 'none'})
+
+    assert await ws.authority_of(str(alias / 'AGENTS.md')) == 'user'
+    assert await ws.authority_of(str(alias / 'vendor' / 'AGENTS.md')) == 'none'
+
+
+async def test_path_authority_keys_resolve_through_links(authority_root: Path) -> None:
+    root = authority_root
+    (root / 'third_party').symlink_to(root / 'vendor')
+    # Two keys naming one directory: the lower level wins, whichever comes first.
+    ws = _authority_workspace(root, path_authority={'third_party': 'none', 'vendor': 'user'})
+    reversed_ws = _authority_workspace(root, path_authority={'vendor': 'user', 'third_party': 'none'})
+
+    assert await ws.authority_of('vendor/AGENTS.md') == 'none'
+    assert await reversed_ws.authority_of('vendor/AGENTS.md') == 'none'
+
+
+async def test_another_spelling_of_a_lower_path_is_lowered_too(authority_root: Path) -> None:
+    root = authority_root
+    # On a case-insensitive filesystem `Vendor/` is `vendor/`; on this one it's a sibling, which only gets lowered.
+    ws = _authority_workspace(root, path_authority={'vendor': 'none', 'Trusted': 'operator'})
+
+    assert await ws.authority_of('Vendor/AGENTS.md') == 'none'
+    assert await ws.authority_of('VENDOR/ours/AGENTS.md') == 'none'
+    # Folding never raises: `trusted/` matching `Trusted` ignoring case stays at the default.
+    lowered = _authority_workspace(root, 'none', {'Trusted': 'operator'})
+    assert await lowered.authority_of('trusted/AGENTS.md') == 'none'
+    assert await lowered.authority_of('Trusted/AGENTS.md') == 'operator'
+    # Keys differing only in case keep the lower level.
+    assert (
+        await _authority_workspace(root, path_authority={'Vendor': 'none', 'vendor': 'operator'}).authority_of(
+            'vendor/AGENTS.md'
+        )
+        == 'none'
+    )
+
+
+def test_a_home_relative_path_is_refused(authority_root: Path) -> None:
+    root = authority_root
+    with pytest.raises(UserError, match=r"`~` is not expanded: got '~/.config/app'"):
+        _authority_workspace(root, 'none', {'~/.config/app': 'operator'})
+
+
+async def test_wrappers_only_lower_the_level(authority_root: Path) -> None:
+    root = authority_root
+    inner = _authority_workspace(root, path_authority={'vendor': 'none', 'trusted': 'user'})
+
+    capped = AuthorityWorkspace(inner, authority='user')
+    assert await capped.authority_of('AGENTS.md') == 'user'
+    assert await capped.authority_of('vendor/AGENTS.md') == 'none'
+    assert await capped.authority_of('trusted/AGENTS.md') == 'user'
+
+    # An outer wrapper's path can't raise what an inner wrapper set.
+    raising = AuthorityWorkspace(
+        _authority_workspace(root, 'none'), authority='operator', path_authority={'trusted': 'operator'}
+    )
+    assert await raising.authority_of('trusted/AGENTS.md') == 'none'
+    assert raising.authority == 'none'
+
+    # Wrappers that don't set authority pass it through.
+    assert await ReadOnlyWorkspace(inner).authority_of('vendor/AGENTS.md') == 'none'
+    assert await Workspace(ReadOnlyWorkspace(capped)).authority_of('AGENTS.md') == 'user'
+
+
+def test_path_authority_is_part_of_the_durable_policy(authority_root: Path) -> None:
+    root = authority_root
+    assert _authority_workspace(root, 'user').durable_policy() == ('user', {})
+    assert _authority_workspace(root, 'user', {'vendor': 'none'}).durable_policy() == ('user', {'vendor': 'none'})
+    assert (
+        _authority_workspace(root, 'user', {'vendor': 'none'}).durable_policy()
+        != _authority_workspace(root, 'user').durable_policy()
+    )
 
 
 async def test_bare_run_context_workspace_explains_how_to_attach_one() -> None:

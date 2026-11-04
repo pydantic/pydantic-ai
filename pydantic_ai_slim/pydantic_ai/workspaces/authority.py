@@ -6,7 +6,7 @@ from collections.abc import Mapping
 
 from ..exceptions import UserError
 from ..messages import Authority
-from .workspace import AuthorityLayer, Workspace, WrapperWorkspace
+from .workspace import Workspace, WrapperWorkspace, _AuthorityLayer  # pyright: ignore[reportPrivateUsage]
 
 __all__ = ('AuthorityWorkspace',)
 
@@ -42,7 +42,7 @@ class AuthorityWorkspace(WrapperWorkspace):
                 'Pass an absolute path, or use `LocalWorkspace(path_authority=...)`, which expands `~` on this machine.'
             )
 
-    def _authority_layers(self) -> list[AuthorityLayer]:
+    def _authority_layers(self) -> list[_AuthorityLayer]:
         return [*super()._authority_layers(), (self._authority, self._path_authority)]
 
     def durable_policy(self) -> tuple[object, ...]:

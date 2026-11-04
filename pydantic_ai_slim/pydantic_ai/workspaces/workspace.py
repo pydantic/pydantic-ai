@@ -69,11 +69,11 @@ _SHELL_CHECK_PARENTS = (
 
 _AUTHORITY_RANK: dict[Authority, int] = {'none': 0, 'user': 1, 'operator': 2}
 
-AuthorityLayer: TypeAlias = tuple[Authority, Mapping[str, Authority]]
+_AuthorityLayer: TypeAlias = tuple[Authority, Mapping[str, Authority]]
 """One wrapper's authority: its level for the workspace's files, and the levels it gives paths, keyed by path."""
 
 
-def lowest_authority(levels: Iterable[Authority]) -> Authority:
+def _lowest_authority(levels: Iterable[Authority]) -> Authority:
     """The lowest of `levels`; `'operator'`, the highest, when there are none."""
     lowest: Authority = 'operator'
     for level in levels:
@@ -82,11 +82,11 @@ def lowest_authority(levels: Iterable[Authority]) -> Authority:
     return lowest
 
 
-def merge_path_authority(paths: Iterable[tuple[str, Authority]]) -> dict[str, Authority]:
+def _merge_path_authority(paths: Iterable[tuple[str, Authority]]) -> dict[str, Authority]:
     """Map each path to its level, keeping the lowest for a path given more than once."""
     merged: dict[str, Authority] = {}
     for path, level in paths:
-        merged[path] = lowest_authority((level, merged.get(path, level)))
+        merged[path] = _lowest_authority((level, merged.get(path, level)))
     return merged
 
 
@@ -99,7 +99,7 @@ def _longest_match(location: str, path_authority: Mapping[str, Authority], defau
     return path_authority[max(matches, key=len)] if matches else default
 
 
-def _layer_authority(location: str, layer: AuthorityLayer) -> Authority:
+def _layer_authority(location: str, layer: _AuthorityLayer) -> Authority:
     """The level one wrapper gives a location: its longest matching path's, else its own.
 
     Paths also match case-folded, keeping the lower level, so on a case-insensitive filesystem (macOS by
@@ -107,8 +107,8 @@ def _layer_authority(location: str, layer: AuthorityLayer) -> Authority:
     a level, never raise one.
     """
     level, path_authority = layer
-    folded = merge_path_authority((path.casefold(), path_level) for path, path_level in path_authority.items())
-    return lowest_authority(
+    folded = _merge_path_authority((path.casefold(), path_level) for path, path_level in path_authority.items())
+    return _lowest_authority(
         (_longest_match(location, path_authority, level), _longest_match(location.casefold(), folded, level))
     )
 
@@ -444,9 +444,9 @@ class Workspace(WorkspaceBackend):
         other levels for some paths: ask [`authority_of`][pydantic_ai.workspaces.Workspace.authority_of] for a
         given file's.
         """
-        return lowest_authority(level for level, _ in self._authority_layers())
+        return _lowest_authority(level for level, _ in self._authority_layers())
 
-    def _authority_layers(self) -> list[AuthorityLayer]:
+    def _authority_layers(self) -> list[_AuthorityLayer]:
         """The authority each wrapper sets, innermost first."""
         backend = self._backend
         return backend._authority_layers() if isinstance(backend, Workspace) else []
@@ -470,14 +470,14 @@ class Workspace(WorkspaceBackend):
         rather than asking again when the text is sent.
         """
         root = await self.working_dir()
-        layers: list[AuthorityLayer] = []
+        layers: list[_AuthorityLayer] = []
         for level, path_authority in self._authority_layers():
             # Keys resolve against the working directory and through symlinks, as the paths they're compared to do.
             real_keys: list[tuple[str, Authority]] = [
                 (await self.realpath(await self.resolve(key, base=root)), key_level)
                 for key, key_level in path_authority.items()
             ]
-            layers.append((level, merge_path_authority(real_keys)))
+            layers.append((level, _merge_path_authority(real_keys)))
         zones = [root, *(key for _, path_authority in layers for key in path_authority)]
 
         written = await self.resolve(path)
@@ -494,7 +494,7 @@ class Workspace(WorkspaceBackend):
                 parent = await self.realpath(location)
                 if parent != location and any(_is_within(location, zone) for zone in zones):
                     locations.append(location)
-        return lowest_authority(_layer_authority(location, layer) for location in locations for layer in layers)
+        return _lowest_authority(_layer_authority(location, layer) for location in locations for layer in layers)
 
     def durable_policy(self) -> tuple[object, ...]:
         """Configuration a durable unit must rebuild with this wrapper.
