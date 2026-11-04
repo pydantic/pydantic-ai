@@ -25,18 +25,12 @@ from collections import Counter
 from collections.abc import Iterable, Iterator
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Literal, TypeAlias, assert_never, cast
+from typing import Any, ClassVar, Literal, TypeAlias, assert_never, cast
 
 # Set during rendering to map original type names to prefixed names for
 # dedup conflict resolution (e.g. {'User': 'tool_a_User'}).
 # Populated by FunctionSignature.render(), consulted by TypeSignature.display_name.
 _type_name_overrides: ContextVar[dict[str, str]] = ContextVar('_type_name_overrides', default={})
-
-# Names the rendered text relies on, so a type definition can't take them.
-_RENDERED_TEXT_NAMES = frozenset(
-    {'asyncio', 'Any', 'Literal', 'NotRequired', 'TypedDict', 'bool', 'dict', 'float', 'int', 'list', 'str', 'tuple'}
-)
-
 
 # =============================================================================
 # Type expression tree
@@ -208,7 +202,8 @@ class TypeSignature:
     def structurally_equal(self, other: TypeSignature) -> bool:
         """Compare two TypeSignatures structurally, all the way down, ignoring descriptions.
 
-        The two types' own names don't count, but the names of the types nested inside them do.
+        The two types' own names don't count, but the names of the types nested inside them do,
+        including a type nested inside itself.
         """
         classes = _structure_classes(_with_nested_types([self, other]))
         return _fields_key(self, classes) == _fields_key(other, classes)
@@ -240,6 +235,24 @@ class FunctionSignature:
     needed to render a function signature. Name and description can be overridden
     at render time (e.g. from a `ToolDefinition`).
     """
+
+    # Names the rendered text relies on, so a type definition can't take them.
+    _RENDERED_TEXT_NAMES: ClassVar[frozenset[str]] = frozenset(
+        {
+            'asyncio',
+            'Any',
+            'Literal',
+            'NotRequired',
+            'TypedDict',
+            'bool',
+            'dict',
+            'float',
+            'int',
+            'list',
+            'str',
+            'tuple',
+        }
+    )
 
     name: str
     description: str | None = None
@@ -402,7 +415,7 @@ class FunctionSignature:
         FunctionSignature._unify_identical_types(signatures)
         types = FunctionSignature.collect_unique_referenced_types(signatures)
         owners = _type_owners(signatures)
-        reserved = _RENDERED_TEXT_NAMES | {sig.name for sig in signatures}
+        reserved = FunctionSignature._RENDERED_TEXT_NAMES | {sig.name for sig in signatures}
         counts = Counter(t.name for t in types)
         conflicting = {name for name, count in counts.items() if count > 1 or name in reserved}
 
