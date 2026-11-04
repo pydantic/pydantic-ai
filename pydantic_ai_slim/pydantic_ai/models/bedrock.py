@@ -1180,7 +1180,7 @@ class BedrockConverseModel(Model[BaseClient]):
             self._drop_unsupported_sampling_settings(filtered)
             return filtered or None
         thinking = _effective_thinking_type(model_settings, model_request_parameters, profile) is not None
-        return drop_conflicting_sampling_settings(model_settings, profile, self.model_name, thinking=thinking) or None
+        return drop_conflicting_sampling_settings(model_settings, profile, thinking=thinking) or None
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
         """Drop the sampling settings a flagged model rejects, warning like `AnthropicModel` does.

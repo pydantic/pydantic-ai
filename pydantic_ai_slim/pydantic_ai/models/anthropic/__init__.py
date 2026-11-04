@@ -1498,7 +1498,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 drop_conflicting_sampling_settings(
                     prepared_settings,
                     profile,
-                    self.model_name,
                     thinking=_request_thinking_type(profile, prepared_settings, model_request_parameters) is not None,
                 )
                 or None

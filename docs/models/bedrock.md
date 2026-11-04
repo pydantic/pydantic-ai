@@ -122,7 +122,7 @@ Bedrock reserves `maxTokens` against your tokens-per-minute quota when a request
 
 ### Sampling settings on Claude
 
-As on [Anthropic](anthropic.md), a Claude request that thinks drops `temperature` other than `1`, `top_p` below `0.95` and `top_k`, and Claude Haiku 4.5, Sonnet 4.5 and 4.6, and Opus 4.5 and 4.6 drop `top_p` when it's set together with `temperature`, each with a warning, since Bedrock rejects them.
+As on [Anthropic](anthropic.md), a Claude request that thinks drops `temperature` other than `1`, `top_p` below `0.95` and `top_k`, and Claude Haiku 4.5, Sonnet 4.5 and 4.6, and Opus 4.5 and 4.6 drop `top_p` when it's set together with `temperature`, silently, since Bedrock rejects them.
 
 ### Thinking and structured output
 
