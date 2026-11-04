@@ -2379,8 +2379,7 @@ class BaseToolReturnPart(_RecordsContentFiles, Generic[ContentT_co]):
       [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler
       returning [`ToolDenied`][pydantic_ai.tools.ToolDenied].
     - `'interrupted'`: The tool call did not produce a result because the run was interrupted (e.g. a
-      cancelled stream or a crash mid-execution), synthesized during message-history repair, or because
-      a final result was already processed, so the call was skipped.
+      cancelled stream or a crash mid-execution); synthesized during message-history repair.
     - `'retried'`: The call has to be made again — its arguments failed validation, the tool raised
       [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], or a
       [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler answered

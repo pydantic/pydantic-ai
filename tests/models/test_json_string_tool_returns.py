@@ -312,8 +312,10 @@ async def test_a_skipped_calls_stub_is_not_wrapped():
     [request] = model.prepare_messages(result.all_messages())[-1:]
     assert isinstance(request, ModelRequest)
     [stub] = [part for part in request.parts if isinstance(part, ToolReturnPart) and part.tool_name == 'lookup']
-    assert stub.outcome == 'interrupted'
     assert stub.content == 'Tool not executed - a final result was already processed.'
+    # The stub itself is what it is on every other model: only this profile's outgoing copy treats it differently.
+    assert stub.outcome == 'success'
+    assert stub.typed_content == stub.content
 
 
 def test_a_note_in_place_of_an_unreadable_file_goes_out_as_written():

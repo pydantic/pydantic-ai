@@ -20,6 +20,7 @@ from pydantic_graph.basenode import NodeRunEndT
 
 from . import _output, exceptions, messages as _messages, result
 from ._deferred_capabilities import LoadCapabilityCallPart
+from ._framing import SKIPPED_TOOL_CALL_CONTENT
 from .exceptions import ToolFailedError, ToolRetryError
 from .tools import DeferredToolRequests, DeferredToolResult, ToolApproved, ToolDefinitionKind, ToolDenied
 
@@ -89,7 +90,6 @@ _OUTPUT_SKIPPED_FINAL_ALREADY_PROCESSED = 'Output tool not used - a final result
 _OUTPUT_NOT_FINAL_RESULT = 'Output tool processed, but its value will not be the final result of the agent run.'
 _OUTPUT_EXECUTION_FAILED = 'Output tool not used - output function execution failed.'
 _OUTPUT_VALIDATION_FAILED = 'Output tool not used - output failed validation.'
-_TOOL_SKIPPED_FINAL_ALREADY_PROCESSED = 'Tool not executed - a final result was already processed.'
 
 
 def cancelled_sub_agent_return(
@@ -663,9 +663,8 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         """
         part = _messages.ToolReturnPart(
             tool_name=call.tool_name,
-            content=_TOOL_SKIPPED_FINAL_ALREADY_PROCESSED,
+            content=SKIPPED_TOOL_CALL_CONTENT,
             tool_call_id=call.tool_call_id,
-            outcome='interrupted',
         )
         self.output_parts.append(part)
         yield _messages.FunctionToolCallEvent(call)

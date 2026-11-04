@@ -66,6 +66,7 @@ from .._framework_frame import framework_frame_body, is_framework_frame
 from .._framing import (
     CONVERSATION_SUMMARY_TAG,
     FRAME_SEAL,
+    SKIPPED_TOOL_CALL_CONTENT,
     SYSTEM_TAG,
     LookalikeSource,
     frame,
@@ -4468,8 +4469,9 @@ def _tool_returns_as_json_strings(
 
     See [`needs_json_string_tool_returns`][pydantic_ai.profiles.ModelProfile.needs_json_string_tool_returns]. Parts are
     replaced one for one, and only in the outgoing copy. An output tool's return is the framework's status text
-    ("Final result processed." and the like), not a tool's output, so it's left as is. Returns the original list
-    when nothing changed.
+    ("Final result processed." and the like), and so is the stub for a call skipped because a final result was
+    already processed. Neither is a tool's output, so they're left as is. Returns the original list when nothing
+    changed.
     """
     if not profile.get('needs_json_string_tool_returns', False):
         return messages
@@ -4495,6 +4497,7 @@ def _as_json_string_tool_return(part: ModelRequestPart, output_tool_names: froze
         or part.outcome != 'success'
         or not isinstance(part.content, str)
         or part.tool_name in output_tool_names
+        or part.content == SKIPPED_TOOL_CALL_CONTENT
     ):
         return part
     return replace(part, content=json.dumps({'tool_output': part.content}, ensure_ascii=False))
