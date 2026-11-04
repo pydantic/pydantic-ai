@@ -27,7 +27,6 @@ from pydantic_ai.native_tools import (
     SUPPORTED_NATIVE_TOOLS,
     ImageAspectRatio,
     ImageGenerationModelName,
-    ImageGenerationProviderSettings,
     ImageGenerationTool,
     ImageSize,
 )
@@ -216,12 +215,6 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
 
     # Keep these fields in sync with ImageGenerationTool in native_tools.py.
 
-    provider_settings: ImageGenerationProviderSettings | None
-    """Provider-specific image generation settings, indexed by the model system.
-
-    These take precedence over the equivalent fields on this capability.
-    """
-
     action: Literal['generate', 'edit', 'auto'] | None
     """Whether to generate a new image or edit an existing image.
 
@@ -349,7 +342,6 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         | Callable[[RunContext[AgentDepsT]], Awaitable[Model | KnownModelName | str] | Model | KnownModelName | str]
         | None = None,
         fallback_image_model: ImageGenerationModel | str | None = None,
-        provider_settings: ImageGenerationProviderSettings | None = None,
         action: Literal['generate', 'edit', 'auto'] | None = None,
         background: Literal['transparent', 'opaque', 'auto'] | None = None,
         input_fidelity: Literal['high', 'low'] | None = None,
@@ -382,7 +374,6 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         )
         self.fallback_subagent_model = fallback_model if fallback_model is not None else fallback_subagent_model
         self.fallback_image_model = fallback_image_model
-        self.provider_settings = provider_settings
         self.action = action
         self.background = background
         self.input_fidelity = input_fidelity
@@ -624,7 +615,6 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         local: Literal[False] | None = None,
         fallback_subagent_model: KnownModelName | str | None = None,
         fallback_image_model: str | None = None,
-        provider_settings: ImageGenerationProviderSettings | None = None,
         action: Literal['generate', 'edit', 'auto'] | None = None,
         background: Literal['transparent', 'opaque', 'auto'] | None = None,
         input_fidelity: Literal['high', 'low'] | None = None,
@@ -665,7 +655,6 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
             fallback_subagent_model=fallback_subagent_model,
             fallback_model=fallback_model,
             fallback_image_model=fallback_image_model,
-            provider_settings=provider_settings,
             action=action,
             background=background,
             input_fidelity=input_fidelity,
@@ -703,7 +692,6 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
                 ('moderation', self.moderation),
                 ('output_compression', self.output_compression),
                 ('output_format', self.output_format),
-                ('provider_settings', self.provider_settings),
                 ('quality', self.quality),
                 ('size', self.size),
             )
@@ -762,8 +750,6 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
             kwargs['action'] = self.action
         if self.image_model is not None:
             kwargs['model'] = self.image_model
-        if self.provider_settings is not None:
-            kwargs['provider_settings'] = self.provider_settings
         return kwargs
 
     def _default_native(self) -> ImageGenerationTool:

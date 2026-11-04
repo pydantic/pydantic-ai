@@ -25,21 +25,19 @@ _NativeToolT = TypeVar('_NativeToolT', bound=AbstractNativeTool)
 def _apply_native_overrides(tool: _NativeToolT, overrides: dict[str, Any]) -> _NativeToolT:
     """Return `tool` with capability-level overrides applied.
 
-    A top-level override also replaces the same option in the tool's `provider_settings`, where it would otherwise win,
-    and `provider_settings` merge per model system so overriding one option keeps the tool's others.
+    An override also replaces the same option in the tool's `provider_settings`, where it would otherwise win.
     """
     if not overrides:
         return tool
-    base: dict[str, Any] | None = getattr(tool, 'provider_settings', None)
-    override_settings: dict[str, Any] | None = overrides.get('provider_settings')
-    if base or override_settings:
-        merged = {
-            system: {option: value for option, value in settings.items() if option not in overrides}
-            for system, settings in (base or {}).items()
+    settings: dict[str, dict[str, Any]] | None = getattr(tool, 'provider_settings', None)
+    if settings:
+        overrides = {
+            **overrides,
+            'provider_settings': {
+                system: {option: value for option, value in options.items() if option not in overrides}
+                for system, options in settings.items()
+            },
         }
-        for system, settings in (override_settings or {}).items():
-            merged[system] = {**merged.get(system, {}), **settings}
-        overrides = {**overrides, 'provider_settings': merged}
     with suppress_provider_field_warnings():
         return replace(tool, **overrides)
 

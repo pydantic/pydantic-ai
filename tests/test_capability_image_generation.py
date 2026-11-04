@@ -161,7 +161,7 @@ class TestImageGenerationCapability:
             'defer_loading',
             'description',
         }
-        assert init_params == builtin_fields | {'dimensions'}
+        assert init_params == (builtin_fields - {'provider_settings'}) | {'dimensions'}
 
         # The spec-only constructor deliberately narrows runtime-only values, but must keep the
         # same parameter names so YAML/JSON configuration cannot drift from the Python API.
@@ -1499,12 +1499,6 @@ class TestImageGenerationCapability:
         )
         assert tool.provider_settings is None
 
-    def test_image_generation_provider_settings_are_forwarded(self):
-        tool = ImageGeneration(provider_settings={'openai': {'partial_images': 2}}).get_native_tools()[0]
-
-        assert isinstance(tool, ImageGenerationTool)
-        assert tool.provider_settings == {'openai': {'partial_images': 2}}
-
     async def test_image_generation_overrides_replace_native_settings(self):
         """A capability field beats the same nested option, keeps the others, for an instance and for a factory."""
         native = ImageGenerationTool(provider_settings={'openai': {'quality': 'high', 'moderation': 'low'}})
@@ -1521,17 +1515,6 @@ class TestImageGenerationCapability:
         assert inspect.isawaitable(pending)
         resolved = await pending
         assert (resolved.quality, resolved.provider_settings) == ('low', {'openai': {'moderation': 'low'}})
-
-    def test_image_generation_override_settings_merge_per_system(self):
-        native = ImageGenerationTool(provider_settings={'openai': {'moderation': 'low'}})
-        cap = ImageGeneration[None](
-            native=native, fallback_subagent_model='test', provider_settings={'openai': {'quality': 'low'}}
-        )
-
-        resolved = cap._resolved_native()  # pyright: ignore[reportPrivateUsage]
-
-        assert isinstance(resolved, ImageGenerationTool)
-        assert resolved.provider_settings == {'openai': {'moderation': 'low', 'quality': 'low'}}
 
     def test_image_generation_overrides_do_not_repeat_legacy_warning(self):
         with pytest.warns(PydanticAIDeprecationWarning, match=r'field `quality` is deprecated'):

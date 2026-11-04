@@ -485,10 +485,11 @@ _COUNT_TOKENS_SERVER_TOOLS_UNVERIFIED_CLIENTS = (
 # Anthropic's explicit strict-schema limits were verified live on the Messages API and on both Bedrock clients. Vertex
 # and Foundry weren't reachable with our credentials, so they keep sending such requests for the API to judge.
 _STRICT_SCHEMA_LIMITS_UNVERIFIED_CLIENTS = (AsyncAnthropicFoundry, AsyncAnthropicVertex)
-# Citations route the `20260209` web tools to direct calls on the direct API, where uncited sandbox results were
+# Citations route the `20260209` and `20260318` web tools to direct calls on the direct API, where uncited sandbox results were
 # reproduced and the direct calls recorded. Foundry and Claude Platform on AWS (`AsyncAnthropicAWS`, an
 # `AsyncAnthropic` subclass) also send those versions but aren't verified to accept `allowed_callers` with citations,
-# so `anthropic_calls_cited_web_tools_directly` stays off for them. The other clients don't send those versions.
+# so `anthropic_calls_cited_web_tools_directly` stays off for them. The other clients only send those versions when
+# `provider_settings` asks for `20260318`, which stays off for them too.
 _CITED_WEB_TOOLS_DIRECT_UNVERIFIED_CLIENTS = (
     AsyncAnthropicAWS,
     AsyncAnthropicBedrock,
@@ -676,7 +677,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     By default, if previous messages contain a container_id (from a prior response),
     it will be reused automatically on requests that have code execution: `CodeExecutionTool`,
     or `WebSearchTool` or `WebFetchTool` where code execution may call them: on Anthropic's
-    `20260209` versions by default, unless citations route them to direct calls, which only happens
+    `20260209` and `20260318` versions by default, unless citations route them to direct calls, which only happens
     on the Anthropic API, and on any version when `anthropic_web_tools_allowed_callers` names a code
     execution caller. The Anthropic API rejects a container on any other request, so
     Pydantic AI doesn't send it there. Tools passed in `extra_body['tools']` aren't read, so a
@@ -708,7 +709,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool], sent as their `allowed_callers`.
 
     By default the field is omitted and Anthropic picks the caller from the tool version. The
-    `web_search_20260209` and `web_fetch_20260209` versions let the model call the tools from code
+    `20260209` and `20260318` versions of web search and web fetch let the model call the tools from code
     execution, which gives it a server-side code execution sandbox to filter results in ("dynamic
     filtering") even when [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] is not
     enabled. Results the model reads from code execution come back without citations, so when a request

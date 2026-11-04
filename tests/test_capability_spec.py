@@ -1909,24 +1909,34 @@ def test_model_json_schema_with_capabilities():
                     'additionalProperties': False,
                     'properties': {
                         'engine': {
-                            'enum': ['auto', 'native', 'exa', 'firecrawl', 'parallel', 'perplexity'],
+                            'anyOf': [
+                                {
+                                    'enum': ['auto', 'native', 'exa', 'firecrawl', 'parallel', 'perplexity'],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                            ],
                             'title': 'Engine',
-                            'type': 'string',
                         },
                         'mode': {
-                            'enum': [
-                                'instant',
-                                'fast',
-                                'auto',
-                                'deep-lite',
-                                'deep',
-                                'deep-reasoning',
-                                'turbo',
-                                'basic',
-                                'advanced',
+                            'anyOf': [
+                                {
+                                    'enum': [
+                                        'instant',
+                                        'fast',
+                                        'auto',
+                                        'deep-lite',
+                                        'deep',
+                                        'deep-reasoning',
+                                        'turbo',
+                                        'basic',
+                                        'advanced',
+                                    ],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
                             ],
                             'title': 'Mode',
-                            'type': 'string',
                         },
                         'max_results': {'title': 'Max Results', 'type': 'integer'},
                         'max_total_results': {'title': 'Max Total Results', 'type': 'integer'},
@@ -2609,9 +2619,6 @@ def test_model_json_schema_with_capabilities():
                         'fallback_model': {
                             'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
                             'title': 'Fallback Model',
-                        },
-                        'provider_settings': {
-                            'anyOf': [{'$ref': '#/$defs/ImageGenerationProviderSettings'}, {'type': 'null'}]
                         },
                         'fallback_image_model': {
                             'anyOf': [{'type': 'string'}, {'type': 'null'}],

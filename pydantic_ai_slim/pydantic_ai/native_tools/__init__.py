@@ -3,10 +3,10 @@ from __future__ import annotations as _annotations
 import warnings
 from abc import ABC
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import datetime
 from functools import cache
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, ClassVar, Literal, Union
 
 import pydantic
 from pydantic_core import core_schema
@@ -68,18 +68,29 @@ def _validate_without_provider_field_warnings(value: Any, handler: core_schema.V
         return handler(value)
 
 
-def _warn_deprecated_provider_fields(tool_name: str, system: str, fields: Sequence[str]) -> None:
-    if not fields or provider_field_warnings_suppressed():
+def warn_moved_provider_fields(tool: AbstractNativeTool, *, stacklevel: int = 4) -> None:
+    """Warn about fields set on `tool` that moved to `provider_settings`.
+
+    The default `stacklevel` points at whoever constructs the tool, through `__init__` and `__post_init__`.
+    """
+    moved = tool.moved_provider_fields
+    if moved is None or provider_field_warnings_suppressed():
         return
 
-    formatted_fields = ', '.join(f'`{name}`' for name in fields)
-    label = 'field' if len(fields) == 1 else 'fields'
-    verb = 'is' if len(fields) == 1 else 'are'
+    system, names = moved
+    defaults = {field.name: field.default for field in fields(tool)}
+    set_names = [name for name in names if getattr(tool, name) != defaults[name]]
+    if not set_names:
+        return
+
+    formatted_fields = ', '.join(f'`{name}`' for name in set_names)
+    label = 'field' if len(set_names) == 1 else 'fields'
+    verb = 'is' if len(set_names) == 1 else 'are'
     warnings.warn(
-        f'`{tool_name}` {label} {formatted_fields} {verb} deprecated and will be removed in v3; '
+        f'`{type(tool).__name__}` {label} {formatted_fields} {verb} deprecated and will be removed in v3; '
         f'use `provider_settings={{"{system}": {{...}}}}` instead.',
         PydanticAIDeprecationWarning,
-        stacklevel=4,
+        stacklevel=stacklevel,
     )
 
 
@@ -134,6 +145,9 @@ class AbstractNativeTool(ABC):
 
     kind: str = 'unknown_native_tool'
     """Native tool identifier, this should be available on all native tools as a discriminator."""
+
+    moved_provider_fields: ClassVar[tuple[str, tuple[str, ...]] | None] = None
+    """The `provider_settings` key and the deprecated fields that moved there, if any."""
 
     optional: bool = False
     """Whether this instance is a best-effort upgrade rather than a hard requirement.
@@ -214,18 +228,29 @@ class AnthropicWebSearchToolSettings(TypedDict, total=False):
     """Anthropic-specific settings for [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]."""
 
     response_inclusion: Literal['full', 'excluded']
-    """Whether results consumed by completed code execution calls remain in the response."""
+    """Whether results consumed by completed code execution calls remain in the response.
+
+    This has no effect when the model calls the tool directly, which is the default on models without dynamic
+    filtering and on requests whose citations route the tool to direct calls: direct results are returned in full.
+    """
 
 
 @pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
 class OpenRouterWebSearchToolSettings(TypedDict, total=False):
     """OpenRouter-specific settings for [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]."""
 
-    engine: Literal['auto', 'native', 'exa', 'firecrawl', 'parallel', 'perplexity']
-    """The search engine OpenRouter should use."""
+    engine: Literal['auto', 'native', 'exa', 'firecrawl', 'parallel', 'perplexity'] | str
+    """The search engine OpenRouter should use.
 
-    mode: Literal['instant', 'fast', 'auto', 'deep-lite', 'deep', 'deep-reasoning', 'turbo', 'basic', 'advanced']
-    """The engine-specific search mode."""
+    Other strings are forwarded as they are, so an engine OpenRouter adds later works without a new release.
+    """
+
+    mode: Literal['instant', 'fast', 'auto', 'deep-lite', 'deep', 'deep-reasoning', 'turbo', 'basic', 'advanced'] | str
+    """The search mode, which depends on the engine.
+
+    Exa and Parallel each accept their own set of values, and other engines ignore this option. OpenRouter decides
+    whether a value fits the engine, so it isn't checked here.
+    """
 
     max_results: int
     """The maximum results returned by each search call."""
@@ -239,7 +264,7 @@ class OpenRouterWebSearchToolSettings(TypedDict, total=False):
 
 @pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
 class WebSearchProviderSettings(TypedDict, total=False):
-    """Provider-specific web search settings, indexed by the model system."""
+    """Provider-specific web search settings, keyed by the model class that reads them."""
 
     anthropic: AnthropicWebSearchToolSettings
     openrouter: OpenRouterWebSearchToolSettings
@@ -269,7 +294,7 @@ class WebSearchTool(AbstractNativeTool):
     """
 
     provider_settings: WebSearchProviderSettings | None = None
-    """Provider-specific web search settings, indexed by the model system."""
+    """Provider-specific web search settings, keyed by the model class that reads them."""
 
     search_context_size: Literal['low', 'medium', 'high'] = 'medium'
     """The `search_context_size` parameter controls how much context is retrieved from the web to help the tool formulate a response.
@@ -522,12 +547,16 @@ class AnthropicWebFetchToolSettings(TypedDict, total=False):
     """Whether Anthropic may return cached web content."""
 
     response_inclusion: Literal['full', 'excluded']
-    """Whether results consumed by completed code execution calls remain in the response."""
+    """Whether results consumed by completed code execution calls remain in the response.
+
+    This has no effect when the model calls the tool directly, which is the default on models without dynamic
+    filtering and on requests whose citations route the tool to direct calls: direct results are returned in full.
+    """
 
 
 @pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
 class WebFetchProviderSettings(TypedDict, total=False):
-    """Provider-specific web fetch settings, indexed by the model system."""
+    """Provider-specific web fetch settings, keyed by the model class that reads them."""
 
     anthropic: AnthropicWebFetchToolSettings
 
@@ -549,7 +578,7 @@ class WebFetchTool(AbstractNativeTool):
     """
 
     provider_settings: WebFetchProviderSettings | None = None
-    """Provider-specific web fetch settings, indexed by the model system."""
+    """Provider-specific web fetch settings, keyed by the model class that reads them."""
 
     max_uses: int | None = None
     """If provided, the tool will stop fetching URLs after the given number of uses.
@@ -644,7 +673,7 @@ class OpenAIImageGenerationToolSettings(TypedDict, total=False):
 
 @pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
 class ImageGenerationProviderSettings(TypedDict, total=False):
-    """Provider-specific image generation settings, indexed by the model system."""
+    """Provider-specific image generation settings, keyed by the model class that reads them."""
 
     openai: OpenAIImageGenerationToolSettings
 
@@ -660,7 +689,7 @@ class ImageGenerationTool(AbstractNativeTool):
     """
 
     provider_settings: ImageGenerationProviderSettings | None = None
-    """Provider-specific image generation settings, indexed by the model system."""
+    """Provider-specific image generation settings, keyed by the model class that reads them."""
 
     action: Literal['generate', 'edit', 'auto'] = 'auto'
     """Whether to generate a new image or edit an existing image.
@@ -775,25 +804,17 @@ class ImageGenerationTool(AbstractNativeTool):
     * OpenAI Responses (maps '1:1', '2:3', and '3:2' to supported sizes)
     """
 
+    moved_provider_fields: ClassVar[tuple[str, tuple[str, ...]] | None] = (
+        'openai',
+        ('action', 'background', 'input_fidelity', 'moderation', 'model', 'partial_images', 'quality'),
+    )
+
     kind: str = 'image_generation'
     """The kind of tool."""
 
     def __post_init__(self) -> None:
         _validate_provider_settings(ImageGenerationProviderSettings, self.provider_settings)
-        deprecated_fields = [
-            name
-            for name, is_set in (
-                ('action', self.action != 'auto'),
-                ('background', self.background != 'auto'),
-                ('input_fidelity', self.input_fidelity is not None),
-                ('moderation', self.moderation != 'auto'),
-                ('model', self.model is not None),
-                ('partial_images', self.partial_images != 0),
-                ('quality', self.quality != 'auto'),
-            )
-            if is_set
-        ]
-        _warn_deprecated_provider_fields('ImageGenerationTool', 'openai', deprecated_fields)
+        warn_moved_provider_fields(self)
 
 
 @dataclass(kw_only=True)
@@ -902,7 +923,7 @@ class XaiFileSearchToolSettings(TypedDict, total=False):
 
 @pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
 class FileSearchProviderSettings(TypedDict, total=False):
-    """Provider-specific file search settings, indexed by the model system."""
+    """Provider-specific file search settings, keyed by the model class that reads them."""
 
     xai: XaiFileSearchToolSettings
 
@@ -922,7 +943,7 @@ class FileSearchTool(AbstractNativeTool):
     """
 
     provider_settings: FileSearchProviderSettings | None = None
-    """Provider-specific file search settings, indexed by the model system."""
+    """Provider-specific file search settings, keyed by the model class that reads them."""
 
     file_store_ids: Sequence[str]
     """The file store IDs to search through.
@@ -960,20 +981,14 @@ class FileSearchTool(AbstractNativeTool):
     * xAI (defaults to `hybrid` server-side)
     """
 
+    moved_provider_fields: ClassVar[tuple[str, tuple[str, ...]] | None] = ('xai', ('instructions', 'retrieval_mode'))
+
     kind: str = 'file_search'
     """The kind of tool."""
 
     def __post_init__(self) -> None:
         _validate_provider_settings(FileSearchProviderSettings, self.provider_settings)
-        deprecated_fields = [
-            name
-            for name, is_set in (
-                ('instructions', self.instructions is not None),
-                ('retrieval_mode', self.retrieval_mode is not None),
-            )
-            if is_set
-        ]
-        _warn_deprecated_provider_fields('FileSearchTool', 'xai', deprecated_fields)
+        warn_moved_provider_fields(self)
 
 
 @pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
@@ -994,7 +1009,7 @@ class OpenRouterAdvisorToolSettings(TypedDict, total=False):
 
 @pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
 class AdvisorProviderSettings(TypedDict, total=False):
-    """Provider-specific advisor settings, indexed by the model system."""
+    """Provider-specific advisor settings, keyed by the model class that reads them."""
 
     anthropic: AnthropicAdvisorToolSettings
     openrouter: OpenRouterAdvisorToolSettings
@@ -1014,7 +1029,7 @@ class AdvisorTool(AbstractNativeTool):
     """
 
     provider_settings: AdvisorProviderSettings | None = None
-    """Provider-specific advisor settings, indexed by the model system."""
+    """Provider-specific advisor settings, keyed by the model class that reads them."""
 
     model: AdvisorModelName
     """The advisor model to consult, i.e. the `model` field of the provider's advisor tool definition.
@@ -1068,11 +1083,13 @@ class AdvisorTool(AbstractNativeTool):
     OpenRouter's advisor tool has no equivalent knob and ignores `caching`.
     """
 
+    moved_provider_fields: ClassVar[tuple[str, tuple[str, ...]] | None] = ('anthropic', ('caching',))
+
     kind: str = 'advisor'
     """The kind of tool."""
 
     def __post_init__(self) -> None:
-        _warn_deprecated_provider_fields('AdvisorTool', 'anthropic', ['caching'] if self.caching is not None else [])
+        warn_moved_provider_fields(self)
         _validate_provider_settings(AdvisorProviderSettings, self.provider_settings)
         if self.max_tokens is not None and self.max_tokens < 1024:
             raise ValueError('AdvisorTool.max_tokens must be at least 1024')

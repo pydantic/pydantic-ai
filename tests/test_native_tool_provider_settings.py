@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+import json
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
+import httpx2
 import pytest
 from pydantic import TypeAdapter, ValidationError
 from typing_extensions import get_type_hints
 
+from pydantic_ai import Agent
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import ImageGeneration, NativeTool
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.native_tools import (
     AbstractNativeTool,
     AdvisorProviderSettings,
@@ -31,35 +34,100 @@ from pydantic_ai.native_tools import (
 from .conftest import try_import
 
 with try_import() as imports_successful:
-    from google.protobuf.json_format import MessageToDict
-
-    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-    from pydantic_ai.models.openai import (
-        OpenAIChatModelSettings,
-        _map_openai_image_generation_tool,  # pyright: ignore[reportPrivateUsage]
-    )
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.models.openrouter import OpenRouterModel
-    from pydantic_ai.models.xai import _get_native_tools  # pyright: ignore[reportPrivateUsage]
     from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
-pytestmark = pytest.mark.skipif(not imports_successful(), reason='anthropic, openai or xai not installed')
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='anthropic or openai not installed'),
+    pytest.mark.usefixtures('allow_model_requests'),
+]
+
+ANTHROPIC_RESPONSE: dict[str, Any] = {
+    'id': 'msg',
+    'type': 'message',
+    'role': 'assistant',
+    'model': 'claude-sonnet-4-6',
+    'content': [{'type': 'text', 'text': 'ok'}],
+    'stop_reason': 'end_turn',
+    'stop_sequence': None,
+    'usage': {'input_tokens': 1, 'output_tokens': 1},
+}
+# Anthropic's `20260318` web tools are always streamed.
+ANTHROPIC_STREAM_EVENTS: list[dict[str, Any]] = [
+    {'type': 'message_start', 'message': {**ANTHROPIC_RESPONSE, 'content': [], 'stop_reason': None}},
+    {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}},
+    {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': 'ok'}},
+    {'type': 'content_block_stop', 'index': 0},
+    {
+        'type': 'message_delta',
+        'delta': {'stop_reason': 'end_turn', 'stop_sequence': None},
+        'usage': {'output_tokens': 1},
+    },
+    {'type': 'message_stop'},
+]
+ANTHROPIC_STREAM = ''.join(
+    f'event: {event["type"]}\ndata: {json.dumps(event)}\n\n' for event in ANTHROPIC_STREAM_EVENTS
+)
+OPENROUTER_RESPONSE: dict[str, Any] = {
+    'id': 'chat',
+    'object': 'chat.completion',
+    'created': 1,
+    'model': 'openai/gpt-5',
+    'provider': 'OpenAI',
+    'choices': [{'index': 0, 'finish_reason': 'stop', 'message': {'role': 'assistant', 'content': 'ok'}}],
+}
+
+
+OPENAI_RESPONSE: dict[str, Any] = {
+    'id': 'response',
+    'object': 'response',
+    'created_at': 1,
+    'model': 'gpt-5.2',
+    'output': [
+        {
+            'id': 'message',
+            'type': 'message',
+            'role': 'assistant',
+            'status': 'completed',
+            'content': [{'type': 'output_text', 'text': 'ok', 'annotations': []}],
+        }
+    ],
+    'parallel_tool_calls': True,
+    'tool_choice': 'auto',
+    'tools': [],
+}
+
+
+def _client(response: dict[str, Any], bodies: list[dict[str, Any]]) -> httpx2.AsyncClient:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        bodies.append(body)
+        if body.get('stream'):
+            return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=ANTHROPIC_STREAM)
+        return httpx2.Response(200, json=response)
+
+    return httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+
+
+def _run(model: Model, tool: AbstractNativeTool, bodies: list[dict[str, Any]]) -> dict[str, Any]:
+    Agent(model, capabilities=[NativeTool(tool)]).run_sync('hi')
+    return bodies[-1]['tools'][0]
 
 
 def _anthropic_tool(tool: AbstractNativeTool) -> dict[str, Any]:
-    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='test'))
-    tools, *_ = model._add_native_tools(  # pyright: ignore[reportPrivateUsage]
-        [], ModelRequestParameters(native_tools=[tool]), AnthropicModelSettings()
-    )
-    return cast(dict[str, Any], tools[0])
+    bodies: list[dict[str, Any]] = []
+    provider = AnthropicProvider(api_key='test', http_client=_client(ANTHROPIC_RESPONSE, bodies))
+    return _run(AnthropicModel('claude-sonnet-4-6', provider=provider), tool, bodies)
 
 
 def _openrouter_tool(tool: AbstractNativeTool) -> dict[str, Any]:
-    model = OpenRouterModel('openai/gpt-5', provider=OpenRouterProvider(api_key='test'))
-    tools, _ = model._get_tool_choice(  # pyright: ignore[reportPrivateUsage]
-        OpenAIChatModelSettings(), ModelRequestParameters(native_tools=[tool])
-    )
-    return cast(dict[str, Any], tools[0])['parameters']
+    bodies: list[dict[str, Any]] = []
+    provider = OpenRouterProvider(api_key='test', http_client=_client(OPENROUTER_RESPONSE, bodies))
+    return _run(OpenRouterModel('openai/gpt-5', provider=provider), tool, bodies)['parameters']
 
 
 def _anthropic_advisor(tool: AbstractNativeTool) -> dict[str, Any]:
@@ -67,13 +135,24 @@ def _anthropic_advisor(tool: AbstractNativeTool) -> dict[str, Any]:
 
 
 def _openai_image(tool: AbstractNativeTool) -> dict[str, Any]:
-    assert isinstance(tool, ImageGenerationTool)
-    return dict(_map_openai_image_generation_tool(tool))
+    bodies: list[dict[str, Any]] = []
+    provider = OpenAIProvider(api_key='test', http_client=_client(OPENAI_RESPONSE, bodies))
+    return _run(OpenAIResponsesModel('gpt-5.2', provider=provider), tool, bodies)
 
 
 def _xai_file_search(tool: AbstractNativeTool) -> dict[str, Any]:
-    tools = _get_native_tools(ModelRequestParameters(native_tools=[tool]))
-    search = MessageToDict(tools[0], preserving_proto_field_name=True)['collections_search']
+    pytest.importorskip('xai_sdk')
+    from pydantic_ai.models.xai import XaiModel
+    from pydantic_ai.providers.xai import XaiProvider
+
+    from .models.mock_xai import MockXai, create_response, create_usage, get_mock_chat_create_kwargs
+
+    client = MockXai.create_mock(
+        [create_response(content='ok', usage=create_usage(prompt_tokens=1, completion_tokens=1))]
+    )
+    model = XaiModel('grok-4-fast-non-reasoning', provider=XaiProvider(xai_client=client))
+    Agent(model, capabilities=[NativeTool(tool)]).run_sync('hi')
+    search = get_mock_chat_create_kwargs(client)[0]['tools'][0]['collections_search']
     modes = [key.removesuffix('_retrieval') for key in search if key.endswith('_retrieval')]
     return {'instructions': search.get('instructions'), 'retrieval_mode': modes[0] if modes else None}
 
@@ -189,6 +268,23 @@ def test_moved_field_in_a_spec_warns(spec: dict[str, Any]) -> None:
     assert capability.tool.quality == 'high'
 
 
+def test_moved_field_on_a_tool_passed_to_a_spec_warns_once() -> None:
+    with pytest.warns(PydanticAIDeprecationWarning, match='`quality` is deprecated') as recorded:
+        NativeTool.from_spec(tool=ImageGenerationTool(quality='high'))
+
+    assert len(recorded) == 1
+
+
+def test_warning_points_at_the_caller() -> None:
+    with pytest.warns(PydanticAIDeprecationWarning) as direct:
+        ImageGenerationTool(quality='high')
+    with pytest.warns(PydanticAIDeprecationWarning) as from_spec:
+        NativeTool.from_spec(kind='image_generation', quality='high')
+
+    assert direct[0].filename == __file__
+    assert from_spec[0].filename == __file__
+
+
 def test_external_web_access_stays_top_level_without_a_warning() -> None:
     """Every model has to honour `False` or fail, so this field deliberately isn't provider-specific."""
     with warnings.catch_warnings():
@@ -230,7 +326,8 @@ def test_another_systems_option_is_rejected() -> None:
 @pytest.mark.parametrize(
     'settings',
     [
-        pytest.param({'openrouter': {'engine': 'nonsense'}}, id='bad-literal'),
+        pytest.param({'anthropic': {'response_inclusion': 'nonsense'}}, id='bad-literal'),
+        pytest.param({'openrouter': {'engine': 1}}, id='wrong-type'),
         pytest.param({'openrouter': {'max_results': '3'}}, id='wrong-type-not-coerced'),
         pytest.param({'openrouter': {'engine': None}}, id='none-is-not-unset'),
     ],
@@ -238,6 +335,13 @@ def test_another_systems_option_is_rejected() -> None:
 def test_invalid_values_are_rejected(settings: dict[str, Any]) -> None:
     with pytest.raises(ValidationError):
         WebSearchTool(provider_settings=settings)  # pyright: ignore[reportArgumentType]
+
+
+@pytest.mark.parametrize('option', ['engine', 'mode'])
+def test_value_openrouter_adds_later_is_forwarded(option: str) -> None:
+    tool = WebSearchTool(provider_settings={'openrouter': {option: 'added-later'}})  # pyright: ignore[reportArgumentType]
+
+    assert _openrouter_tool(tool)[option] == 'added-later'
 
 
 @pytest.mark.parametrize('case', CASES, ids=lambda c: f'{c.system}-{c.option}')
