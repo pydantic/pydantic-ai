@@ -78,11 +78,6 @@ Call `yield from run_durable(ctx, lambda: agent.run(...))` wherever the agent be
 the agent's activities and runs them. Register orchestrators and use clients with the SDK as usual.
 Clients can run in other processes and don't need the agent.
 
-Registration adds `pydantic-ai` to the worker's `grpc.primary_user_agent` channel option,
-preserving any existing user-agent tokens and other channel options without modifying the
-caller's options object. This applies when the SDK creates the channel; a channel supplied
-directly to the worker is unchanged.
-
 The orchestrator returns JSON-compatible output. For a Pydantic output model, return
 `result.output.model_dump(mode='json')`.
 
