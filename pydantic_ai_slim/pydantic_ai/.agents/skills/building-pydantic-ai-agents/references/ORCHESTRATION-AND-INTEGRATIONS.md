@@ -90,7 +90,7 @@ For runs long enough to approach Temporal's history limit, pass `TemporalDurabil
 
 To delegate to a nested durable agent under Temporal, run the delegating async function tool as a child workflow with `metadata={'temporal': {'child_workflow': ChildWorkflowConfig(...)}}` (or the same metadata through `SetToolMetadata`). The nested agent's model requests and tool calls then become activities in the child's own history instead of the parent's. List the nested agent in `__pydantic_ai_agents__` too, and register the worker through `PydanticAIPlugin` or `AgentPlugin`: `TemporalDurability.temporal_activities` raises when a tool uses a child workflow, because it would leave the child workflow definition unregistered. The metadata must be in place when the worker is configured; tools added with `@agent.tool` count. An exception in the tool body fails the child workflow, like a failed activity. Child workflows aren't supported for sync, dynamic, or MCP tools.
 
-Under DBOS, use `metadata={'dbos': {'child_workflow': ChildWorkflowConfig(...)}}` (from `pydantic_ai.durable_exec.dbos`, or through `SetToolMetadata`) on an async tool in a `FunctionToolset` with a unique `id`. The child's inputs (tool arguments, serialized run context, `deps`) must be serializable.
+Under DBOS, use `metadata={'dbos': {'child_workflow': ChildWorkflowConfig(...)}}` (from `pydantic_ai.durable_exec.dbos`, or through `SetToolMetadata`) on an async tool in a `FunctionToolset` with a unique `id`, set before the agent is constructed (not with a later `@agent.tool`). The child's inputs (tool arguments, serialized run context, `deps`) must be serializable.
 
 `TemporalAgent`, `DBOSAgent`, and `PrefectAgent` are deprecated wrapper agents.
 

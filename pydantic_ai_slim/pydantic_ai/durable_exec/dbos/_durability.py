@@ -196,11 +196,11 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
 
         # --- MCP toolset wrapping ---
         self._register_toolsets(agent)
+        self._child_workflow_metadata_capability = False
+        agent.root_capability.apply(self._detect_child_workflow_metadata)
         self._child_workflow_toolsets = {}
         for toolset in agent.toolsets:
             toolset.apply(self._register_child_workflow)
-        self._child_workflow_metadata_capability = False
-        agent.root_capability.apply(self._detect_child_workflow_metadata)
 
         if self._register_legacy_workflows:
             # A wrapper-era workflow recorded only model and MCP steps: `DBOSAgent` delivered model
@@ -297,8 +297,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         """The wrapper that dispatches `ts`'s `child_workflow` tools; toolsets without them stay unwrapped, as before."""
         if not isinstance(ts, FunctionToolset):
             return None
-        marked = any(_selects_child_workflow(tool.metadata) for tool in ts.tools.values())
-        if not marked and not self._child_workflow_metadata_capability:
+        if not self._child_workflow_metadata_capability and not _has_child_workflow_tool(ts):
             return None
         child = self._child_workflow_toolsets.get(ts._explicit_id or '')  # pyright: ignore[reportPrivateUsage]
         if child is not None and child.wrapped is ts:
@@ -323,7 +322,9 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             not isinstance(toolset, FunctionToolset)
             or toolset_id is None
             or toolset_id in self._child_workflow_toolsets
+            or not (self._child_workflow_metadata_capability or _has_child_workflow_tool(toolset))
         ):
+            # DBOS hashes registered workflows into the application version, so only opted-in toolsets register one.
             return
         operation_name = DBOSOperationNamer(self.name).operation_name(
             ToolsetCallToolId('function', toolset_id=toolset_id)
@@ -461,6 +462,10 @@ def _selects_child_workflow(metadata: Mapping[str, Any] | None) -> bool:
     return isinstance(config, dict) and 'child_workflow' in config
 
 
+def _has_child_workflow_tool(toolset: FunctionToolset[Any]) -> bool:
+    return any(_selects_child_workflow(tool.metadata) for tool in toolset.tools.values())
+
+
 def _child_workflow_config(tool: ToolsetTool[Any] | None, name: str) -> ChildWorkflowConfig | Literal[False]:
     if tool is None or not _selects_child_workflow(tool.tool_def.metadata):
         return False
@@ -486,5 +491,6 @@ async def _reject_unregistered_child_workflow(
 ) -> Any:
     raise UserError(
         f'Tool {name!r} selects a DBOS child workflow, but its toolset has no registered child workflow. '
-        'Give the `FunctionToolset` a unique `id` and pass it to the agent when it is constructed.'
+        'Give the `FunctionToolset` a unique `id`, and select the child workflow before the agent is constructed, '
+        "in the tool's metadata or with a `SetToolMetadata` capability."
     )

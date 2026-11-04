@@ -6344,16 +6344,11 @@ def _lead_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[TextPart(str(returns[-1].content))])
 
 
-child_workflow_lead = Agent(FunctionModel(_lead_model), name='child_wf_lead', capabilities=[DBOSDurability()])
-
-
-@child_workflow_lead.tool_plain
 async def lookup() -> str:
     child_workflow_calls.append('lookup')
     return 'ok'
 
 
-@child_workflow_lead.tool_plain(metadata={'dbos': {'child_workflow': {'workflow_timeout_sec': 60}}})
 async def research(topic: str) -> str:
     child_workflow_deadlines.append(inherited_run_deadline())
     output = (await child_workflow_researcher.run(f'Research {topic}.')).output
@@ -6361,6 +6356,14 @@ async def research(topic: str) -> str:
         child_workflow_calls.append('research')
         raise _ProcessCrash
     return output
+
+
+child_workflow_lead = Agent(
+    FunctionModel(_lead_model),
+    name='child_wf_lead',
+    tools=[lookup, Tool(research, metadata={'dbos': {'child_workflow': {'workflow_timeout_sec': 60}}})],
+    capabilities=[DBOSDurability()],
+)
 
 
 @DBOS.workflow()
@@ -6483,14 +6486,21 @@ async def test_dbos_child_workflow_metadata_errors(
         await run_agent()
 
 
-@pytest.mark.parametrize('via_capability', [False, True])
-async def test_dbos_child_workflow_requires_a_registered_toolset(dbos: DBOS, via_capability: bool) -> None:
+@pytest.mark.parametrize('selected_by', ['run_toolsets', 'capability', 'decorator'])
+async def test_dbos_child_workflow_requires_a_registered_toolset(dbos: DBOS, selected_by: str) -> None:
     """A tool selecting a child workflow in a toolset that has none registered fails instead of running inline."""
 
     async def tool() -> None: ...  # pragma: no cover
 
     child_workflow: dict[str, Any] = {'dbos': {'child_workflow': {}}}
-    if via_capability:
+    unregistered = FunctionToolset(id='unregistered')
+    run_toolsets: list[AbstractToolset[Any]] | None = None
+    if selected_by == 'run_toolsets':
+        unregistered.add_function(tool, metadata=child_workflow)
+        agent = Agent(TestModel(), name='child_wf_unregistered', capabilities=[DBOSDurability()])
+        run_toolsets = [unregistered]
+    elif selected_by == 'capability':
+        # No `id`, so no child workflow can be registered for it.
         unregistered = FunctionToolset()
         unregistered.add_function(tool)
         agent = Agent(
@@ -6499,12 +6509,10 @@ async def test_dbos_child_workflow_requires_a_registered_toolset(dbos: DBOS, via
             toolsets=[unregistered],
             capabilities=[SetToolMetadata(**child_workflow), DBOSDurability()],
         )
-        run_toolsets = None
     else:
-        unregistered = FunctionToolset(id='runtime')
-        unregistered.add_function(tool, metadata=child_workflow)
+        # Selected only after the agent was constructed, when its child workflows were registered.
         agent = Agent(TestModel(), name='child_wf_unregistered', capabilities=[DBOSDurability()])
-        run_toolsets = [unregistered]
+        agent.tool_plain(metadata=child_workflow)(tool)
 
     @DBOS.workflow()
     async def run_agent() -> None:
@@ -6513,16 +6521,19 @@ async def test_dbos_child_workflow_requires_a_registered_toolset(dbos: DBOS, via
     with workflow_raises(
         UserError,
         "Tool 'tool' selects a DBOS child workflow, but its toolset has no registered child workflow. "
-        'Give the `FunctionToolset` a unique `id` and pass it to the agent when it is constructed.',
+        'Give the `FunctionToolset` a unique `id`, and select the child workflow before the agent is constructed, '
+        "in the tool's metadata or with a `SetToolMetadata` capability.",
     ):
         await run_agent()
 
 
 def test_dbos_toolsets_without_child_workflow_tools_stay_unwrapped() -> None:
+    """Agents that select no child workflow register none, and their toolsets aren't wrapped."""
     plain = FunctionToolset(id='plain')
     agent = Agent(TestModel(), name='child_wf_plain', toolsets=[plain], capabilities=[DBOSDurability()])
     durability = DBOSDurability.from_agent(agent)
     assert durability is not None
+    assert durability._child_workflow_toolsets == {}  # pyright: ignore[reportPrivateUsage]
     assert durability.get_wrapper_toolset(plain) is None
     assert durability.get_wrapper_toolset(ExternalToolset(tool_defs=[])) is None
 
