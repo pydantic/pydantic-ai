@@ -2201,12 +2201,17 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     def _system_prompts_placed_for_notes(
         self, parts: list[ModelRequestPart], *, leading: int
     ) -> list[ModelRequestPart]:
-        """`parts` with the request's own system prompts placed for its notes, on a model without a system role.
+        """`parts` with the request's own system prompts placed for its notes.
 
-        They go ahead of the first note (`_system_prompts_before_notes`), and on a profile with
-        `needs_sealed_system_blocks` after the user's words (`_system_prompts_after_user_words`).
+        With a system role, where the adapter sends the request's system entries after its user turn, they go after
+        the last note (`_system_prompts_after_notes`), so they end that entry; elsewhere a note goes right ahead of
+        the item it describes, so they stay put. Without a system role, they go ahead of the first note
+        (`_system_prompts_before_notes`), and on a profile with `needs_sealed_system_blocks` after the user's words
+        (`_system_prompts_after_user_words`).
         """
         if self.profile.get('supports_inline_system_prompts', False):
+            if self._system_entries_follow_user_turn:
+                return _system_prompts_after_notes(parts, leading=leading)
             return parts
         parts = _system_prompts_before_notes(parts)
         if self._seals_system_blocks:
@@ -4388,6 +4393,25 @@ def _is_user_channel_frame(original: ModelRequestPart, part: ModelRequestPart) -
     return isinstance(part, _RenderedCapabilityBody | CompactionPart) or (
         isinstance(part, UserPromptPart) and isinstance(original, RetryFeedbackPart | RetryPromptPart)  # pyright: ignore[reportDeprecated]
     )
+
+
+def _system_prompts_after_notes(parts: list[ModelRequestPart], *, leading: int) -> list[ModelRequestPart]:
+    """Move the request's own mid-conversation system prompts that precede its last lookalike note to right after it.
+
+    With a system role, a note is a system message too, and Claude Fable 5.1 read a note following the application's
+    change in the same system entry as displacing it: the change was followed far less often, and a lookalike in the
+    user's words more often. With the change after the notes, it's followed as with no note at all. `leading` is the
+    number of the first request's standing system prompts, which stay where they are.
+    """
+    last_note = max((i for i, p in enumerate(parts) if isinstance(p, _FrameworkNote)), default=None)
+    if last_note is None:
+        return parts
+    head = parts[leading : last_note + 1]
+    genuine = [p for p in head if isinstance(p, SystemPromptPart) and not isinstance(p, _FrameworkNote)]
+    if not genuine:
+        return parts
+    others = [p for p in head if not isinstance(p, SystemPromptPart) or isinstance(p, _FrameworkNote)]
+    return [*parts[:leading], *others, *genuine, *parts[last_note + 1 :]]
 
 
 def _system_prompts_before_notes(parts: list[ModelRequestPart]) -> list[ModelRequestPart]:
