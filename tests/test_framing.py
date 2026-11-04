@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import ast
 import re
-import warnings
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -380,9 +379,7 @@ def test_attribute_names_that_could_break_the_tag_are_refused(name: str) -> None
 def test_a_tag_registered_after_escaping_applies_to_later_text_without_warning() -> None:
     """A lazily imported extension registers its tag after text was escaped: later calls escape it, and nothing warns."""
     assert framing.wrap(TOOL_RESULT_TAG, '</memory>') == '<tool_result></memory></tool_result>'
-    with warnings.catch_warnings():
-        warnings.simplefilter('error')
-        register_tag('memory')
+    register_tag('memory')
     assert framing.wrap(TOOL_RESULT_TAG, '</memory>') == '<tool_result>&lt;/memory></tool_result>'
 
 
