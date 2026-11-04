@@ -951,6 +951,42 @@ async def test_path_authority_keys_resolve_through_links(authority_root: Path) -
     assert await reversed_ws.authority_of('vendor/AGENTS.md') == 'none'
 
 
+async def test_a_key_that_is_a_link_keeps_its_level_at_the_link(authority_root: Path) -> None:
+    root = authority_root
+    (root / 'trusted' / 'AGENTS.md').write_text('trusted')
+    (root / 'third_party').symlink_to(root / 'trusted')
+    ws = _authority_workspace(root, path_authority={'third_party': 'none', 'trusted/AGENTS.md': 'operator'})
+
+    assert await ws.authority_of('third_party/AGENTS.md') == 'none'
+    assert await ws.authority_of('trusted/AGENTS.md') == 'operator'
+
+
+async def test_a_raising_key_planted_as_a_link_does_not_raise_its_target(authority_root: Path) -> None:
+    # A cloned repository controls whether a path it contains is a link, so it could aim a raising key at its own files.
+    root = authority_root
+    (root / 'evil').mkdir()
+    (root / 'evil' / 'AGENTS.md').write_text('planted')
+    (root / 'rules').symlink_to(root / 'evil')
+    ws = _authority_workspace(root, 'none', {'rules': 'operator'})
+
+    assert await ws.authority_of('evil/AGENTS.md') == 'none'
+    assert await ws.authority_of('rules/AGENTS.md') == 'none'
+
+
+async def test_a_raising_key_that_is_a_link_outside_the_workspace_covers_its_target(authority_root: Path) -> None:
+    # The user's `~/.claude` linking into their dotfiles: nothing in the workspace controls that link.
+    root = authority_root
+    dotfiles = root.parent / 'dotfiles'
+    dotfiles.mkdir()
+    config = root.parent / 'config'
+    config.symlink_to(dotfiles)
+    ws = _authority_workspace(root, 'none', {str(config): 'operator'})
+
+    assert await ws.authority_of(str(config / 'AGENTS.md')) == 'operator'
+    assert await ws.authority_of(str(dotfiles / 'AGENTS.md')) == 'operator'
+    assert await ws.authority_of('AGENTS.md') == 'none'
+
+
 async def test_another_spelling_of_a_lower_path_is_lowered_too(authority_root: Path) -> None:
     root = authority_root
     # On a case-insensitive filesystem `Vendor/` is `vendor/`; on this one it's a sibling, which only gets lowered.

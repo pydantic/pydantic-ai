@@ -451,6 +451,27 @@ class Workspace(WorkspaceBackend):
         backend = self._backend
         return backend._authority_layers() if isinstance(backend, Workspace) else []
 
+    async def _resolve_path_authority(
+        self, path_authority: Mapping[str, Authority], level: Authority, root: str
+    ) -> dict[str, Authority]:
+        """A wrapper's keys, each at the location it's written and at the real path it leads to.
+
+        A key that's a link also covers its target, but no higher than the link's location would be without that key:
+        a link inside a lower path mustn't raise whatever it points at. A link outside the workspace has no such cap.
+        """
+        written = _merge_path_authority(
+            [(await self.resolve(key, base=root), key_level) for key, key_level in path_authority.items()]
+        )
+        resolved = list(written.items())
+        for key, key_level in written.items():
+            real_key = await self.realpath(key)
+            if real_key != key:
+                others = {other: other_level for other, other_level in written.items() if other != key}
+                in_workspace = any(_is_within(key, zone) for zone in (root, *others))
+                cap = _layer_authority(key, (level, others)) if in_workspace else key_level
+                resolved.append((real_key, _lowest_authority((key_level, cap))))
+        return _merge_path_authority(resolved)
+
     async def authority_of(self, path: str) -> Authority:
         """The [authority][pydantic_ai.messages.Authority] of the file at `path`, so a capability knows how to send its text.
 
@@ -472,12 +493,7 @@ class Workspace(WorkspaceBackend):
         root = await self.working_dir()
         layers: list[_AuthorityLayer] = []
         for level, path_authority in self._authority_layers():
-            # Keys resolve against the working directory and through symlinks, as the paths they're compared to do.
-            real_keys: list[tuple[str, Authority]] = [
-                (await self.realpath(await self.resolve(key, base=root)), key_level)
-                for key, key_level in path_authority.items()
-            ]
-            layers.append((level, _merge_path_authority(real_keys)))
+            layers.append((level, await self._resolve_path_authority(path_authority, level, root)))
         zones = [root, *(key for _, path_authority in layers for key in path_authority)]
 
         written = await self.resolve(path)
