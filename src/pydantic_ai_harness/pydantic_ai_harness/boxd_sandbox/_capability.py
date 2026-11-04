@@ -100,6 +100,38 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
             raise UserError('`snapshot` keeps the size it was saved at, so it cannot be combined with `vcpu`.')
         check_env(self.env)
 
+    @classmethod
+    def from_spec(
+        cls,
+        *,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
+        org: str | None = None,
+        snapshot: str | None = None,
+        vcpu: Literal[1, 2, 4, 8] | None = None,
+        auto_suspend_timeout: int | None = None,
+        working_dir: str | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> BoxdSandbox[Any]:
+        """Build from an agent spec, naming the fields a spec can express.
+
+        Core reads this signature to generate the spec's JSON schema. Inherited, core falls back to the
+        variadic base `from_spec`, because `client`'s `AsyncBoxd` hint is a `TYPE_CHECKING` import, and
+        publishes only the bare `'BoxdSandbox'`.
+        """
+        return cls(
+            id=id,
+            description=description,
+            defer_loading=defer_loading,
+            org=org,
+            snapshot=snapshot,
+            vcpu=vcpu,
+            auto_suspend_timeout=auto_suspend_timeout,
+            working_dir=working_dir,
+            env=env,
+        )
+
     def backend(self, ref: WorkspaceRef) -> BoxdSandboxBackend:
         """Construct a lazy backend for an existing machine."""
         return BoxdSandboxBackend(client=self.client, ref=ref, working_dir=self.working_dir, env=self.env)
