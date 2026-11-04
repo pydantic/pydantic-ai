@@ -903,6 +903,8 @@ def test_otel_role_and_parts() -> None:
     settings = InstrumentationSettings()
     assert _otel_message_role(nudge(), version=6) == 'system'
     assert _otel_message_role(report(), version=6) == 'user'
+    # The role the model saw: a downgraded instruction part goes out on the user channel.
+    assert _otel_message_role(_lowered_budget(3), version=6) == 'user'
     assert nudge().otel_message_parts(settings) == [{'type': 'text', 'content': 'Be brief.'}]
     page = FetchedPagePart(content=['Page text'], source=OperatorSource(), url='https://example.com')
     assert page.otel_message_parts(settings) == [{'type': 'text', 'content': 'Page text'}]
@@ -1599,6 +1601,37 @@ def test_a_dynamic_capability_keeps_the_authority_of_what_its_factory_returns() 
     """A factory's capability lowered with `with_authority` stays lowered through its own fresh `for_run` instance."""
     dynamic = DynamicCapability[Any](lambda ctx: _FreshPerRunReporter([nudge()], id='fresh').with_authority('none'))
     assert _sources_by_capability([dynamic]) == {'fresh': CapabilitySource('fresh', authority='none')}
+
+
+@dataclass
+class _LoginCapability(AbstractCapability[Any]):
+    """A capability whose own `authority` means something else, here the login authority of an identity provider."""
+
+    authority: str = 'https://login.example.com/common'  # pyright: ignore[reportIncompatibleVariableOverride]
+    parts: list[Any] = field(default_factory=list[Any])
+
+    async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return replace(self)
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        ctx.enqueue(*self.parts)
+        return request_context
+
+
+def test_a_capability_with_an_unrelated_authority_field_still_runs() -> None:
+    agent = Agent(
+        FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('Done.')])), capabilities=[_LoginCapability()]
+    )
+    assert agent.run_sync('Run the tests.').output == 'Done.'
+
+
+def test_an_unrelated_authority_field_gives_a_capability_part_no_authority() -> None:
+    """A value that isn't an authority, such as a typo, never leaves what the capability says in the application's voice."""
+    assert _sources_by_capability([_LoginCapability(parts=[nudge()], id='login')]) == {
+        'login': CapabilitySource('login', authority='none')
+    }
 
 
 @dataclass

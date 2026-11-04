@@ -24,6 +24,7 @@ from pydantic_ai import (
     ModelResponse,
     ModelResponseStreamEvent,
     ModelRetry,
+    ModelSource,
     NativeToolCallPart,
     NativeToolReturnPart,
     PartDeltaEvent,
@@ -2911,6 +2912,24 @@ async def test_wrapped_model_receives_unprepared_request():
 @dataclass(kw_only=True)
 class _ReminderPart(InstructionCapabilityPart, namespace='test_instrumented', name='reminder'):
     pass
+
+
+def test_a_downgraded_instruction_part_takes_the_role_the_model_saw_it_in():
+    """A trace mustn't show text with no authority as if the application had said it."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                _ReminderPart(content='From the application.', source=OperatorSource()),
+                _ReminderPart(content='From a judge.', source=ModelSource('trajectory judge')),
+            ]
+        )
+    ]
+    assert InstrumentationSettings(include_content=True, version=6).messages_to_otel_messages(messages) == snapshot(
+        [
+            {'role': 'system', 'parts': [{'type': 'text', 'content': 'From the application.'}]},
+            {'role': 'user', 'parts': [{'type': 'text', 'content': 'From a judge.'}]},
+        ]
+    )
 
 
 def _reminder_agent(profile: ModelProfile, settings: InstrumentationSettings | None = None) -> Agent[None, str]:

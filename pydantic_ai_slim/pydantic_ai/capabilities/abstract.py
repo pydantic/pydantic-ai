@@ -6,7 +6,7 @@ from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Sequ
 from dataclasses import KW_ONLY, dataclass, field
 from datetime import datetime
 from itertools import chain
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, Self, TypeAlias
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, Self, TypeAlias, get_args
 
 from pydantic import ValidationError
 from typing_extensions import deprecated
@@ -200,6 +200,9 @@ class CapabilityOrdering:
 
     requires: Sequence[type[AbstractCapability[Any]]] = ()
     """These types must be present in the chain (no ordering implied)."""
+
+
+_AUTHORITIES: Final[tuple[object, ...]] = get_args(Authority)
 
 
 class _CapabilityAuthority:
@@ -574,9 +577,15 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
 
     @property
     def _effective_authority(self) -> Authority:
-        """The class's `authority`, lowered by `with_authority` on this instance."""
+        """The class's `authority`, lowered by `with_authority` on this instance.
+
+        A capability may have an `authority` of its own that means something else, such as a login URL. That says
+        nothing about what it can say, so it carries no authority, rather than failing a capability that never
+        enqueues a capability part.
+        """
+        authority: Authority = self.authority if self.authority in _AUTHORITIES else 'none'
         ceiling = self._authority_ceiling
-        return self.authority if ceiling is None else _lower_authority(self.authority, ceiling)
+        return authority if ceiling is None else _lower_authority(authority, ceiling)
 
     def _keep_authority(self, resolved: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Carry this instance's authority to what its `for_run` or `for_agent` returned.

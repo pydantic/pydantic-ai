@@ -31,6 +31,7 @@ from pydantic_ai._instrumentation import (
 )
 
 from .. import _otel_messages
+from .._capability_parts import effective_authority
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
 from ..messages import (
@@ -596,7 +597,7 @@ def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.R
             | ModelSettingsDeltaPart,
         )
         or (version >= 6 and isinstance(part, RetryFeedbackPart) and _retry_feedback_speaks_for_the_harness(part))
-        or (isinstance(part, CapabilityPart) and part.rendering.voice == 'instruction')
+        or (isinstance(part, CapabilityPart) and effective_authority(part) == 'operator')
     ):
         return 'system'
     # TODO(v3): remove `RetryPromptPart`, still reachable here because `pydantic_ai.all_messages`
