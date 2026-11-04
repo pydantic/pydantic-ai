@@ -152,11 +152,15 @@ class UsersE2B(AbstractCapability[User]):
     def get_workspace(self, ctx: RunContext[User], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         if ref is not None and ref.provider != 'e2b':
             return None
+        if not ctx.deps.e2b_api_key:  # E2B would fall back to `E2B_API_KEY`
+            raise ValueError('This user has no E2B API key.')
         return E2BSandboxBackend(client=E2B(api_key=ctx.deps.e2b_api_key), ref=ref)
 
 
 agent = Agent('anthropic:claude-opus-5-5', deps_type=User, capabilities=[UsersE2B(), Coder()])
 ```
+
+E2B's client falls back to `E2B_API_KEY` when its key is empty or `None`. If that variable is set where your app runs, a user with no key would run on that account, so check for a key before building the client, as above.
 
 ## Prepare a sandbox before the run
 
