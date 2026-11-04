@@ -195,8 +195,8 @@ class GoogleModelProfile(ModelProfile, total=False):
     """Whether the model accepts `presence_penalty` and `frequency_penalty`. Default: `True`.
 
     The Gemini API rejects them for every model, so `GoogleModel` turns this off when its client talks to the Gemini
-    API. On Google Cloud (Vertex AI), Gemini 2.x, 3 Flash, 3.1 Flash-Lite, 3.1 Pro and 3.5 Flash accept them; newer
-    models and the Gemini 3 image models reject them with a 400.
+    API. On Google Cloud (Vertex AI), Gemini 3.5 Flash-Lite, Gemini 3.6 Flash and newer, and the Gemini 3 image models
+    reject them with a 400.
     """
 
     google_supports_batch_api: bool
@@ -239,26 +239,18 @@ _REALTIME_MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]
 """Live model name prefixes mapped to the thinking levels they accept."""
 
 
-_GOOGLE_CLOUD_PENALTY_MODELS = (
-    'gemini-2.',
-    'gemini-3-flash',
-    'gemini-3.1-flash-lite',
-    'gemini-3.1-pro',
-    'gemini-3.5-flash',
-)
-"""The model families Google Cloud accepts `presence_penalty` and `frequency_penalty` for (verified live 2026-11-04).
+_GOOGLE_CLOUD_PENALTY_REJECTING_MODELS = ('gemini-3.5-flash-lite', 'gemini-3.6', 'gemini-3.7', 'gemini-3.8', 'gemini-4')
+"""The models Google Cloud rejects `presence_penalty` and `frequency_penalty` for (verified live 2026-11-04).
 
-Gemini 3.5 Flash-Lite, Gemini 3.6 Flash and newer, and the Gemini 3 image models answer `Penalty is not enabled for
-this model`. The Gemini API answers that for every model.
+They answer `Penalty is not enabled for this model`, as do the Gemini 3 image models. The Gemini API answers that for
+every model. Other models, including ones this doesn't recognize, like a tuned model's endpoint, keep sending them.
 """
 
 
 def _google_cloud_supports_penalties(model_name: str) -> bool:
-    if model_name.startswith('gemini-3.5-flash-lite') or (
-        'image' in model_name and not model_name.startswith('gemini-2.')
-    ):
+    if model_name.startswith(_GOOGLE_CLOUD_PENALTY_REJECTING_MODELS):
         return False
-    return model_name.startswith(_GOOGLE_CLOUD_PENALTY_MODELS)
+    return not ('image' in model_name and model_name.startswith('gemini-3'))
 
 
 def google_model_profile(model_name: str) -> ModelProfile | None:

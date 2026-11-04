@@ -73,7 +73,6 @@ from ...profiles.anthropic import (
     AnthropicCodeExecutionToolVersion,
     AnthropicEffort,
     AnthropicModelProfile,
-    drop_conflicting_sampling_settings,
     resolve_anthropic_effort,
 )
 from ...providers import Provider, infer_provider
@@ -108,6 +107,7 @@ from .. import (
     download_item,
     get_user_agent,
 )
+from .._anthropic_sampling import drop_conflicting_sampling_settings
 from .._anthropic_schema_limits import default_output_mode_within_limits, limit_exceeded_error, model_exceeded_limit
 from .._decode_errors import check_json_response, map_decode_errors
 from .._prompt_cache import (
@@ -1497,9 +1497,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             prepared_settings = (
                 drop_conflicting_sampling_settings(
                     prepared_settings,
+                    profile,
                     self.model_name,
                     thinking=_request_thinking_type(profile, prepared_settings, model_request_parameters) is not None,
-                    disallows_temperature_with_top_p=profile.get('anthropic_disallows_temperature_with_top_p', False),
                 )
                 or None
             )

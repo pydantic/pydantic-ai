@@ -467,7 +467,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI Chat Completions
-    * Google (Google Cloud only, for Gemini 2.x, 3 Flash, 3.1 Flash-Lite, 3.1 Pro and 3.5 Flash)
+    * Google (Google Cloud only, and not for Gemini 3.5 Flash-Lite, 3.6 Flash and newer, or Gemini 3 image models)
     * Groq
     * Cohere
     * Mistral
@@ -488,7 +488,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI Chat Completions
-    * Google (Google Cloud only, for Gemini 2.x, 3 Flash, 3.1 Flash-Lite, 3.1 Pro and 3.5 Flash)
+    * Google (Google Cloud only, and not for Gemini 3.5 Flash-Lite, 3.6 Flash and newer, or Gemini 3 image models)
     * Groq
     * Cohere
     * Mistral

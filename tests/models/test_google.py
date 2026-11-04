@@ -1078,6 +1078,8 @@ async def test_google_cloud_sends_penalties(allow_model_requests: None, vertex_p
         ('gemini-3.5-flash-lite', False),
         ('gemini-3.8-flash', False),
         ('gemini-4-argon', False),
+        # An unrecognized name, like a tuned model's endpoint, keeps sending them.
+        ('projects/p/locations/l/endpoints/123', True),
     ],
 )
 def test_google_cloud_penalty_support_by_model(model_name: str, supports_penalties: bool):

@@ -49,6 +49,8 @@ agent = Agent(model)
 !!! note "Claude Opus 4.7 / 4.8 / 5 / 5.5 migration"
     Anthropic's [Claude Opus migration guide](https://platform.claude.com/docs/en/about-claude/models/migration-guide) recommends removing `temperature`, `top_p`, and `top_k` from Opus 4.7, 4.8, 5, and 5.5 requests. Pydantic AI drops those keys automatically for `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`, `claude-opus-5-5`, `claude-sonnet-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-fable-5` and `claude-mythos-5`, including `extra_body` overrides.
 
+    The other Claude models take `temperature`, `top_p` and `top_k`, with two limits Pydantic AI also applies, with a warning, instead of sending a request Anthropic rejects: while the model thinks, `temperature` other than `1`, `top_p` below `0.95` and `top_k` are dropped, and Claude Haiku 4.5, Sonnet 4.5 and 4.6, and Opus 4.5 and 4.6 drop `top_p` when it's set together with `temperature`.
+
     The same guide also recommends re-evaluating `max_tokens` and any token-count assumptions when migrating from Opus 4.6, since Opus 4.7 introduced updated tokenization (carried into 4.8). If you rely on `count_tokens()` or `count_tokens_before_request`, verify your thresholds against the new model.
 
 ## `provider` argument

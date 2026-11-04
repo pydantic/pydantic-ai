@@ -106,6 +106,7 @@ from pydantic_ai.models import (
     check_allow_model_requests,
     download_item,
 )
+from pydantic_ai.models._anthropic_sampling import drop_conflicting_sampling_settings
 from pydantic_ai.models._anthropic_schema_limits import (
     SCHEMA_TOO_COMPLEX_HINT,
     default_output_mode_within_limits,
@@ -134,7 +135,6 @@ from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.profiles.anthropic import (
     ANTHROPIC_SAMPLING_PARAMS,
     ANTHROPIC_THINKING_BUDGET_MAP,
-    drop_conflicting_sampling_settings,
     resolve_anthropic_effort,
 )
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
@@ -1179,18 +1179,8 @@ class BedrockConverseModel(Model[BaseClient]):
             filtered: ModelSettings = {**model_settings}
             self._drop_unsupported_sampling_settings(filtered)
             return filtered or None
-        if profile.get('bedrock_thinking_variant') != 'anthropic':
-            return model_settings
         thinking = _effective_thinking_type(model_settings, model_request_parameters, profile) is not None
-        return (
-            drop_conflicting_sampling_settings(
-                model_settings,
-                self.model_name,
-                thinking=thinking,
-                disallows_temperature_with_top_p=self.profile.get('anthropic_disallows_temperature_with_top_p', False),
-            )
-            or None
-        )
+        return drop_conflicting_sampling_settings(model_settings, profile, self.model_name, thinking=thinking) or None
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
         """Drop the sampling settings a flagged model rejects, warning like `AnthropicModel` does.
