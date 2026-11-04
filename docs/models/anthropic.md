@@ -382,8 +382,6 @@ When you use `anthropic_cache_instructions` with both static and dynamic [instru
 This means your stable, static instructions are cached efficiently, while dynamic instructions (which may change between requests) remain outside the cache boundary, so a change doesn't invalidate the cached static instructions. It does invalidate the cached conversation after them, so for instructions that change mid-conversation, use [`on_change='append'`](../agent.md#appending-instruction-changes), which appends each change to the history instead; [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
 
 ```python {test="skip"}
-from datetime import date
-
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
@@ -399,7 +397,7 @@ agent = Agent(
 
 @agent.instructions
 def dynamic_context(ctx: RunContext[str]) -> str:  # (3)!
-    return f"Customer name: {ctx.deps}. Today's date: {date.today()}."
+    return f'Customer name: {ctx.deps}.'
 
 
 result = agent.run_sync('What is your return policy?', deps='Alice')
@@ -408,7 +406,7 @@ print(result.output)
 
 1. Static instructions are cached across requests.
 2. Enables smart cache placement at the static/dynamic boundary.
-3. Dynamic instructions change per-request and are not cached.
+3. Dynamic instructions are evaluated for each request and sit after the cache point, so a different customer doesn't invalidate the cached static instructions.
 
 ### Fine-Grained Control with CachePoint
 
