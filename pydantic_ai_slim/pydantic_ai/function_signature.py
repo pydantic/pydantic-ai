@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal, TypeAlias, assert_never, cast
 from urllib.parse import unquote, urldefrag, urljoin
 
+from ._utils import is_str_dict
+
 # Set during rendering and consulted by TypeSignature.display_name. Not being empty means some names had to change,
 # so a type uses the name `get_conflicting_type_names` stored on it. The mapping (e.g. {'User': 'tool_a_User'}) is only
 # the fallback for a set of names that call didn't resolve.
@@ -361,25 +363,30 @@ class FunctionSignature:
         unified. Types left with one name and different structures (e.g. a parameter and a return
         `User`) are told apart by `get_conflicting_type_names` at a later stage.
         """
-        _ref_expansion_nodes.set(0)
-        param_referenced: dict[int, TypeSignature] = {}
-        _process_schema_defs(parameters_schema, param_referenced, name)
-        params = _build_params_from_schema(parameters_schema, param_referenced, name)
+        reset_token = _ref_expansion_nodes.set(0)
+        try:
+            param_referenced: dict[int, TypeSignature] = {}
+            _process_schema_defs(parameters_schema, param_referenced, name)
+            params = _build_params_from_schema(parameters_schema, param_referenced, name)
 
-        resolved_return_type: TypeExpr = _ANY
-        return_referenced: dict[int, TypeSignature] = {}
-        if return_schema is not None:
-            _process_schema_defs(return_schema, return_referenced, name)
-            resolved_return_type = _schema_to_type_expr(return_schema, return_schema, return_referenced, name, 'Return')
+            resolved_return_type: TypeExpr = _ANY
+            return_referenced: dict[int, TypeSignature] = {}
+            if return_schema is not None:
+                _process_schema_defs(return_schema, return_referenced, name)
+                resolved_return_type = _schema_to_type_expr(
+                    return_schema, return_schema, return_referenced, name, 'Return'
+                )
 
-        signature = cls(
-            name=name,
-            params=params,
-            return_type=resolved_return_type,
-            referenced_types=[*param_referenced.values(), *return_referenced.values()],
-        )
-        FunctionSignature._unify_identical_types([signature])
-        return signature
+            signature = cls(
+                name=name,
+                params=params,
+                return_type=resolved_return_type,
+                referenced_types=[*param_referenced.values(), *return_referenced.values()],
+            )
+            FunctionSignature._unify_identical_types([signature])
+            return signature
+        finally:
+            _ref_expansion_nodes.reset(reset_token)
 
     @staticmethod
     def get_conflicting_type_names(signatures: list[FunctionSignature]) -> frozenset[str]:
@@ -462,8 +469,11 @@ class FunctionSignature:
         if isinstance(expr, GenericTypeExpr):
             expr.args = [FunctionSignature._replace_types(arg, canonical) for arg in expr.args]
         elif isinstance(expr, UnionTypeExpr):
-            # Types that have just become one are one member.
-            return _union_of([FunctionSignature._replace_types(member, canonical) for member in expr.members])
+            # Types that have just become one are one member. Each now stands for itself, so compare by identity.
+            members = [FunctionSignature._replace_types(member, canonical) for member in expr.members]
+            classes: dict[int, object] = {id(t): id(t) for member in members for t in _types_in(member)}
+            unique = list({_expr_key(member, classes): member for member in members}.values())
+            return unique[0] if len(unique) == 1 else UnionTypeExpr(members=unique)
         return expr
 
     @staticmethod
@@ -618,7 +628,7 @@ def _is_typed_dict_schema(schema: dict[str, Any]) -> bool:
 
 def _properties_of(schema: dict[str, Any]) -> dict[str, Any]:
     properties = schema.get('properties')
-    return cast(dict[str, Any], properties) if isinstance(properties, dict) else {}
+    return properties if is_str_dict(properties) else {}
 
 
 def _required_of(schema: dict[str, Any]) -> set[str]:
@@ -660,8 +670,8 @@ def _ref_target(root: dict[str, Any], ref: Any) -> tuple[list[str], dict[str, An
     node: Any = root
     at_map_of_schemas = False
     for token in tokens:
-        if isinstance(node, dict):
-            node = cast(dict[str, Any], node).get(token)
+        if is_str_dict(node):
+            node = node.get(token)
         elif isinstance(node, list):
             # RFC 6901 section 4 has one way to write an index: `01` isn't one. A length check before `int()`, which
             # raises on thousands of digits.
@@ -671,7 +681,7 @@ def _ref_target(root: dict[str, Any], ref: Any) -> tuple[list[str], dict[str, An
         else:
             return None
         at_map_of_schemas = not at_map_of_schemas and token in _MAPS_OF_SCHEMAS
-    return (tokens, cast(dict[str, Any], node)) if isinstance(node, dict) and not at_map_of_schemas else None
+    return (tokens, node) if is_str_dict(node) and not at_map_of_schemas else None
 
 
 def _ref_to_type_expr(
@@ -688,7 +698,10 @@ def _ref_to_type_expr(
     tokens, target = found
     if _is_typed_dict_schema(target):
         if id(target) not in referenced_types:
-            name = _ref_target_name(target, tokens, tool_name)
+            # Named from the pointer, not the reference, so a name doesn't depend on which of the two comes first.
+            last_token = tokens[-1] if tokens else ''
+            is_definition = tokens[-2:-1] in (['$defs'], ['definitions'])
+            name = last_token if is_definition else _object_type_name(target, tool_name, last_token)
             _build_and_register_type(name, target, root, referenced_types, tool_name, path)
         target_type = referenced_types[id(target)]
         return UnionTypeExpr(members=[target_type, _NONE]) if 'null' in target['type'] else target_type
@@ -704,13 +717,6 @@ def _ref_to_type_expr(
         return _schema_to_type_expr(target, root, referenced_types, tool_name, path)
     finally:
         _resolving_refs.reset(reset_token)
-
-
-def _ref_target_name(target: dict[str, Any], tokens: list[str], tool_name: str) -> str:
-    """Named from the pointer, not the reference, so a name doesn't depend on which of the two comes first."""
-    last_token = tokens[-1] if tokens else ''
-    is_definition = tokens[-2:-1] in (['$defs'], ['definitions'])
-    return last_token if is_definition else _object_type_name(target, tool_name, last_token)
 
 
 def _object_type_name(schema: dict[str, Any], tool_name: str, path: str) -> str:
@@ -1010,14 +1016,6 @@ def _with_nested_types(types: Iterable[TypeSignature]) -> list[TypeSignature]:
             for f in type_sig.fields.values():
                 pending.extend(_types_in(f.type))
     return list(found.values())
-
-
-def _union_of(members: list[TypeExpr]) -> TypeExpr:
-    """A union without repeats, or its one member if that's all that's left. A type only repeats as the same object."""
-    # Each type stands for itself, so `_expr_key` compares types by identity here.
-    classes: dict[int, object] = {id(t): id(t) for member in members for t in _types_in(member)}
-    unique = list({_expr_key(member, classes): member for member in members}.values())
-    return unique[0] if len(unique) == 1 else UnionTypeExpr(members=unique)
 
 
 def _expr_key(expr: TypeExpr, classes: dict[int, object]) -> object:
