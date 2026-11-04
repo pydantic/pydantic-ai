@@ -210,7 +210,10 @@ seed, but not on a [reconnect](lifecycle.md#reconnecting), which replays the his
 doesn't connect, and the error goes through `on_run_error`. [WebRTC signaling](deployment.md#browser-webrtc-server-sideband)
 resolves the same configuration a session connects with, so the hooks also run, outside any run, when
 [`answer_webrtc_offer()`][pydantic_ai.agent.AgentRealtime.answer_webrtc_offer] seeds the call with the history
-they leave. What they leave is what the session records: it's the
+they leave, and again when the sideband session opens. Keep them deterministic: on
+[GPT-Live](openai.md), which takes its history when the offer starts the call, a sideband whose seed differs from the
+offer's raises [`UserError`][pydantic_ai.exceptions.UserError], so a processor that summarizes with a model or depends
+on the time can't be used there. What they leave is what the session records: it's the
 start of [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages], and the instructions of the
 capabilities it [loaded](#deferred-capability-loading) are resolved from it. A session can't rewrite the provider's
 conversation before each response, so the messages it records after connecting aren't processed.

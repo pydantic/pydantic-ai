@@ -2321,7 +2321,9 @@ def _check_seeded_history(expected: list[dict[str, Any]], session: SessionResour
         'An OpenAI GPT-Live session takes its history when it starts, which on a WebRTC call is when '
         '`answer_webrtc_offer()` starts it, so the sideband must be opened with the same `message_history`. '
         'Bind the history once with `agent.realtime(model, message_history=...)` and use that for both the '
-        'offer and the session, or pass the same history to `answer_webrtc_offer()` and `connect_webrtc()`.'
+        'offer and the session, or pass the same history to `answer_webrtc_offer()` and `connect_webrtc()`. '
+        'A `before_realtime_connect` hook, such as `ProcessHistory`, runs for both, so it must change the history '
+        'the same way each time.'
     )
 
 
