@@ -207,12 +207,7 @@ async def test_created_agent_survives_replay(client: Client) -> None:
     assert len(POET_CALLS) == 1
 
     history = await client.get_workflow_handle(workflow_id).fetch_history()
-    activities = [
-        event.activity_task_scheduled_event_attributes.activity_type.name
-        for event in history.events
-        if event.HasField('activity_task_scheduled_event_attributes')
-    ]
-    assert 'agent__dynamic_delegating_agent__capability__sub_agents__delegate' in activities
+    assert 'agent__dynamic_delegating_agent__capability__sub_agents__delegate' in _activities(history)
     replay = await Replayer(
         workflows=[DynamicWorkflow],
         plugins=[PydanticAIPlugin()],

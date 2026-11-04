@@ -1,4 +1,4 @@
-"""`SubAgents(dynamic_agents=...)` under `DBOSDurability`: recovery rebuilds the roster and reuses the delegation."""
+"""`SubAgents` under `DBOSDurability`: dynamic agents survive recovery, and a delegate tool runs as a child workflow."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import SetToolMetadata
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.subagents import DynamicAgents, SubAgent, SubAgents
@@ -116,3 +117,23 @@ async def test_durable_delegate_runs_as_a_child_workflow(dbos: DBOS) -> None:
     assert child_id is not None
     child_steps = await dbos.list_workflow_steps_async(child_id)
     assert [step['function_name'] for step in child_steps] == ['dbos_worker__model.request']
+
+
+async def test_child_workflow_rejects_options_that_need_the_parent_run(dbos: DBOS) -> None:
+    agent = Agent(
+        FunctionModel(_delegator),
+        name='dbos_budgeted_delegator',
+        deps_type=type(None),
+        capabilities=[
+            SubAgents[None](agents=[SubAgent(dbos_worker, max_calls=1)]),
+            SetToolMetadata(tools=['delegate_task'], dbos={'child_workflow': {}}),
+            DBOSDurability[None](),
+        ],
+    )
+
+    @DBOS.workflow(name='subagents_budgeted_child_workflow')
+    async def workflow() -> str:
+        return (await agent.run('Delegate it')).output
+
+    with SetWorkflowID(str(uuid.uuid4())), pytest.raises(UserError, match='does not support'):
+        await workflow()

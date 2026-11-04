@@ -632,6 +632,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             working_directory: Start the child in this directory using the configured workspace resolver.
                 On resume, omit it to keep the saved directory, or supply the same resolved directory.
         """
+        self._check_child_workflow(ctx)
         owner = DelegationTasks.current()
         if owner is not None:
             agent_name = owner.aliases.get(agent_name, agent_name)
@@ -690,6 +691,23 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if (recorded := await self._delegate_recorded(ctx, agent_name, task, key)) is not None:
             return recorded
         return await self._run_delegation(ctx, agent_name, sub_agent, task=task, key=key, workspace=workspace)
+
+    def _check_child_workflow(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Reject options that need the parent run when the delegate tool runs as a child workflow."""
+        if not (isinstance(ctx, DurableRunContext) and ctx.in_durable_context):
+            return
+        if (
+            self._include_self
+            or self._inherit_tools
+            or self._models
+            or self._shared_capabilities
+            or self._event_stream_handler is not None
+            or any(sub.max_calls is not None for sub in self._agents.values())
+        ):
+            raise UserError(
+                'A `SubAgents` delegate tool running as a child workflow does not support `include_self`, '
+                "`inherit_tools`, `models`, `shared_capabilities`, `event_stream_handler`, or a delegate's `max_calls`."
+            )
 
     async def _delegate_recorded(
         self, ctx: RunContext[AgentDepsT], agent_name: str, task: str, key: str | None
