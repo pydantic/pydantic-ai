@@ -363,6 +363,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'WarnNearLimits': Anonymous('a passive observer; several thresholds compose'),
     'WarnOnCacheBusts': Anonymous('a passive observer; several thresholds compose'),
     'TrajectoryJudge': Anonymous('each judge independently evaluates and steers the run'),
+    '_DurableTrajectoryJudge': Anonymous('a `TrajectoryJudge` given an `id`, which it requires'),
     'DetectLoops': Anonymous('only hooks; several detectors with their own thresholds and actions compose'),
     'RenderWorkflows': Rejected('Only one durability capability can be attached to an agent.'),
     'AWSLambdaDurability': Rejected(
