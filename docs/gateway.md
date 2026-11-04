@@ -424,7 +424,7 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 
 ## Routing facts {#routing-facts}
 
-When an agent sends a model request through the Gateway, Pydantic AI adds facts about the agent to the request as headers. Smart routing rules, which you set up in your organization's Gateway settings in Logfire, can match on them. The conversation ID also lets the Gateway keep the requests of one conversation on the same provider (session affinity), so that provider's prompt cache keeps serving the conversation.
+When an agent sends a model request through the Gateway, Pydantic AI adds facts about the agent to the request as headers. The Gateway's Smart routing rules can match on them. The conversation ID also lets the Gateway keep the requests of one conversation on the same provider (session affinity), so that provider's prompt cache keeps serving the conversation.
 
 The [`GatewayRoutingFacts`][pydantic_ai.capabilities.GatewayRoutingFacts] capability sends the headers. Every agent has it by default, and it changes only the requests to a model behind the Gateway: a `gateway/` model string, or a model on a [`gateway_provider`][pydantic_ai.providers.gateway.gateway_provider]. Requests to other models are sent unchanged.
 
@@ -438,7 +438,7 @@ The [`GatewayRoutingFacts`][pydantic_ai.capabilities.GatewayRoutingFacts] capabi
 
 A header you set yourself in the [`extra_headers`][pydantic_ai.settings.ModelSettings.extra_headers] model setting is sent as you set it, and the other headers you set are sent with the routing facts. With [`ModelFallback`](capabilities/model-fallback.md), only the attempts at a model behind the Gateway carry the headers. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] sends one set of settings to every model it tries, so it carries them only when all of its models are behind the Gateway and set the same `extra_headers` of their own. Requests made without an agent, such as through the [direct API](direct.md), and [realtime](realtime/overview.md) sessions don't carry the headers.
 
-The step, request kind and retry headers change from one request to the next. So with [Responses WebSockets](models/openai.md#responses-websockets) on a Gateway model, each request after the first has headers that differ from the socket's handshake and is sent over HTTP. To keep using the socket, opt out of the routing facts as shown below.
+The step, request kind and retry headers change from one request to the next. So if you enable [Responses WebSockets](models/openai.md#responses-websockets) on a Gateway model with the `openai_responses_supports_websocket` profile flag, each request after the first has headers that differ from the socket's handshake and is sent over HTTP. To keep using the socket, opt out of the routing facts as shown below.
 
 ### Opting out
 

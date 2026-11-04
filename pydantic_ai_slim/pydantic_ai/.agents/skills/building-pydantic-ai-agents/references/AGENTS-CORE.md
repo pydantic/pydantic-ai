@@ -248,7 +248,7 @@ Through the [Pydantic AI Gateway](https://pydantic.dev/docs/ai/overview/gateway/
 - `gateway/anthropic:claude-fable-5-1`
 - `gateway/openai:gpt-6-sol`
 
-Every agent has the auto-injected `GatewayRoutingFacts` capability. It adds `x-pydantic-agent-*` headers (agent name, run step, request kind, retry) and `x-routing-conversation-id` to each request that goes through the Gateway, for the Gateway's Smart routing rules and session affinity. A header set in `extra_headers` wins. Pass `capabilities=[GatewayRoutingFacts(enabled=False)]` to the agent or to one run to opt out. Opt out too when the agent uses Responses WebSockets through the Gateway: the per-request headers differ from the handshake's, so later requests fall back to HTTP. See [Routing facts](https://pydantic.dev/docs/ai/overview/gateway/#routing-facts).
+Every agent has the auto-injected `GatewayRoutingFacts` capability. It adds `x-pydantic-agent-*` headers (agent name, run step, request kind, retry) and `x-routing-conversation-id` to each request that goes through the Gateway, for the Gateway's Smart routing rules and session affinity. A header set in `extra_headers` wins. Pass `capabilities=[GatewayRoutingFacts(enabled=False)]` to the agent or to one run to opt out. Opt out too after enabling Responses WebSockets on a Gateway model with the `openai_responses_supports_websocket` profile flag: the per-request headers differ from the handshake's, so later requests fall back to HTTP. See [Routing facts](https://pydantic.dev/docs/ai/overview/gateway/#routing-facts).
 
 Use a model instance instead of a string when the user needs provider-specific constructor arguments.
 
