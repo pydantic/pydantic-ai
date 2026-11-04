@@ -1,5 +1,6 @@
 """xAI model implementation using [xAI SDK](https://github.com/xai-org/xai-sdk-python)."""
 
+import hashlib
 import json
 from collections import defaultdict
 from collections.abc import AsyncGenerator, AsyncIterator, Generator, Iterable, Iterator, Mapping, Sequence
@@ -407,6 +408,10 @@ class XaiModel(Model[AsyncClient]):
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self._provider = provider
+        # xAI file IDs for documents already uploaded by this instance, keyed by
+        # 'bytes:<sha256>' or 'url:<url>', so re-sending the same document reuses
+        # the uploaded file instead of uploading again.
+        self._uploaded_document_ids: dict[str, str] = {}
 
         super().__init__(settings=settings, profile=profile)
 
@@ -767,9 +772,14 @@ class XaiModel(Model[AsyncClient]):
                 elif item.is_audio:
                     raise NotImplementedError('BinaryContent with audio is not supported in xAI user prompts')
                 elif item.is_document:
-                    # Upload document to xAI files API and reference it
+                    # Upload document to xAI files API and reference it, reusing a
+                    # file ID uploaded earlier by this instance for the same bytes.
                     filename = item.identifier or f'document.{item.format}'
-                    file_id = await self._upload_file_to_xai(item.data, filename)
+                    cache_key = f'bytes:{hashlib.sha256(item.data).hexdigest()}'
+                    file_id = self._uploaded_document_ids.get(cache_key)
+                    if file_id is None:
+                        file_id = await self._upload_file_to_xai(item.data, filename)
+                        self._uploaded_document_ids[cache_key] = file_id
                     content_items.append(file(file_id))
                 elif item.is_video:
                     raise NotImplementedError('BinaryContent with video is not supported in xAI user prompts')
@@ -778,14 +788,17 @@ class XaiModel(Model[AsyncClient]):
             elif isinstance(item, AudioUrl):
                 raise NotImplementedError('AudioUrl is not supported in xAI user prompts')
             elif isinstance(item, DocumentUrl):
-                # Download and upload to xAI files API
-                downloaded = await download_item(item, data_format='bytes')
-                filename = item.identifier or 'document'
-                # Add extension if data_type is available from download
-                if 'data_type' in downloaded and downloaded['data_type']:
-                    filename = f'{filename}.{downloaded["data_type"]}'
-
-                file_id = await self._upload_file_to_xai(downloaded['data'], filename)
+                cache_key = f'url:{item.url}'
+                file_id = self._uploaded_document_ids.get(cache_key)
+                if file_id is None:
+                    # Download and upload to xAI files API
+                    downloaded = await download_item(item, data_format='bytes')
+                    filename = item.identifier or 'document'
+                    # Add extension if data_type is available from download
+                    if 'data_type' in downloaded and downloaded['data_type']:
+                        filename = f'{filename}.{downloaded["data_type"]}'
+                    file_id = await self._upload_file_to_xai(downloaded['data'], filename)
+                    self._uploaded_document_ids[cache_key] = file_id
                 content_items.append(file(file_id))
             elif isinstance(item, VideoUrl):
                 raise NotImplementedError('VideoUrl is not supported in xAI user prompts')

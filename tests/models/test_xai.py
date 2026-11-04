@@ -17,9 +17,10 @@ Across these tests, we verify:
 from __future__ import annotations as _annotations
 
 import json
+from dataclasses import dataclass, field
 from datetime import UTC
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 from pydantic import BaseModel
@@ -103,6 +104,7 @@ from .mock_xai import (
 with try_import() as imports_successful:
     import grpc
     import xai_sdk.chat as chat_types
+    from xai_sdk import AsyncClient
     from xai_sdk.chat import required_tool
     from xai_sdk.proto import chat_pb2, sample_pb2, usage_pb2
 
@@ -6670,6 +6672,96 @@ def test_xai_finish_reason_proto_map_covers_all_enum_members():
     """Every proto finish reason except REASON_INVALID ("not finished yet") must be mapped."""
     unmapped = set(sample_pb2.FinishReason.values()) - set(xai_module._FINISH_REASON_PROTO_MAP)  # pyright: ignore[reportPrivateUsage]
     assert unmapped == {sample_pb2.FinishReason.REASON_INVALID}
+
+
+@dataclass
+class CountingMockXai(MockXai):
+    """A MockXai that records document uploads so tests can assert upload reuse."""
+
+    upload_calls: list[tuple[bytes, str]] = field(default_factory=list)
+
+    async def files_upload(self, data: bytes, filename: str) -> Any:
+        self.upload_calls.append((data, filename))
+        return await super().files_upload(data, filename)
+
+
+async def test_binary_content_document_uploaded_once_per_instance(allow_model_requests: None):
+    """The same BinaryContent document is uploaded only once per model instance."""
+    response = create_response(content='ok')
+    counting_client = CountingMockXai(responses=[response, response])
+    mock_client = cast(AsyncClient, counting_client)
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+    document_content = BinaryContent(data=b'%PDF-1.4\nTest document content', media_type='application/pdf')
+
+    result = await agent.run(['What is in this document?', document_content])
+    assert result.output == 'ok'
+    assert counting_client.upload_calls == [(document_content.data, document_content.identifier)]
+
+    result = await agent.run('Summarize it again.', message_history=result.new_messages())
+    assert result.output == 'ok'
+    assert counting_client.upload_calls == [(document_content.data, document_content.identifier)]
+
+
+async def test_document_url_uploaded_once_per_instance(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):
+    """A DocumentUrl replayed across requests is downloaded and uploaded only once per model instance."""
+    response = create_response(content='ok')
+    counting_client = CountingMockXai(responses=[response, response])
+    mock_client = cast(AsyncClient, counting_client)
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+    download_calls: list[str] = []
+
+    async def mock_download_item(item: Any, data_format: str = 'bytes', type_format: str = 'mime') -> dict[str, Any]:
+        download_calls.append(item.url)
+        return {'data': b'%PDF-1.4\ndownloaded content', 'data_type': 'pdf'}
+
+    monkeypatch.setattr('pydantic_ai.models.xai.download_item', mock_download_item)
+    document_url = DocumentUrl(url='https://example.com/report.pdf')
+
+    result = await agent.run(['What is in this document?', document_url])
+    assert result.output == 'ok'
+    assert counting_client.upload_calls == [(b'%PDF-1.4\ndownloaded content', f'{document_url.identifier}.pdf')]
+
+    result = await agent.run('Summarize it again.', message_history=result.new_messages())
+    assert result.output == 'ok'
+    assert counting_client.upload_calls == [(b'%PDF-1.4\ndownloaded content', f'{document_url.identifier}.pdf')]
+    assert download_calls == ['https://example.com/report.pdf']
+
+
+async def test_uploaded_file_passthrough_never_uploads(allow_model_requests: None):
+    """A user-supplied UploadedFile is passed through without uploading."""
+    response = create_response(content='ok')
+    counting_client = CountingMockXai(responses=[response])
+    mock_client = cast(AsyncClient, counting_client)
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run(['What is in this document?', UploadedFile(file_id='file-abc123', provider_name='xai')])
+    assert result.output == 'ok'
+    assert counting_client.upload_calls == []
+
+
+async def test_distinct_documents_upload_separately(allow_model_requests: None):
+    """Distinct BinaryContent documents are uploaded separately."""
+    response = create_response(content='ok')
+    counting_client = CountingMockXai(responses=[response, response])
+    mock_client = cast(AsyncClient, counting_client)
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+    document_a = BinaryContent(data=b'%PDF-1.4\nDocument A', media_type='application/pdf')
+    document_b = BinaryContent(data=b'%PDF-1.4\nDocument B', media_type='application/pdf')
+
+    result = await agent.run(['What is in this document?', document_a])
+    assert result.output == 'ok'
+    assert counting_client.upload_calls == [(document_a.data, document_a.identifier)]
+
+    result = await agent.run(['And the other one?', document_b], message_history=result.new_messages())
+    assert result.output == 'ok'
+    assert counting_client.upload_calls == [
+        (document_a.data, document_a.identifier),
+        (document_b.data, document_b.identifier),
+    ]
 
 
 # End of tests
