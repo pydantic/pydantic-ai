@@ -212,7 +212,8 @@ orchestrator = Agent(
 - One `SubAgents` per agent may set `task_control` (or `dynamic_agents`). `task_control`, and `dynamic_agents`
   within a bound `DelegationTasks` owner, raise `UserError` under a durability capability; don't use either
   with the deprecated wrapper agents (`TemporalAgent`, ...).
-  Under durability, `dynamic_agents` runs each delegation other than to `self` in a durable unit of its own.
+  On Temporal and DBOS, `dynamic_agents` runs each delegation other than to `self` in a durable unit of its
+  own; other durable engines raise `UserError`.
 
 ## DelegationReports
 

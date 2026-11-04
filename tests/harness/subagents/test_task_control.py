@@ -10,7 +10,7 @@ import inspect
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any
 
@@ -2508,8 +2508,25 @@ class TestTaskControlBoundaries:
         agent = Agent(TestModel(), name='durable', capabilities=[dynamic, RecordingDurability()])
         owner = DelegationTasks()
         async with owner.opened():
-            with owner.bind(), pytest.raises(UserError, match='not supported under durable execution'):
+            with owner.bind(), pytest.raises(UserError, match='outside a `DelegationTasks` owner'):
                 await agent.run('Go.')
+
+    async def test_dynamic_agents_refuse_an_engine_that_records_their_tools(self) -> None:
+        class WrappingDurability(RecordingDurability):
+            engine_spec = replace(
+                RecordingDurability.engine_spec, wrapped_toolset_kinds=frozenset({'function'}), tool_config_key='x'
+            )
+
+        dynamic = SubAgents(agents=[researcher()], dynamic_agents=DynamicAgents())
+        agent = Agent(TestModel(), name='durable', capabilities=[dynamic, WrappingDurability()])
+        with pytest.raises(UserError, match='on an engine that runs its tools in workflow code'):
+            await agent.run('Go.')
+
+    async def test_only_dynamic_agents_declare_a_durable_operation(self) -> None:
+        # A durable operation needs an `id`, so declaring one on every `SubAgents` would refuse `id=None`.
+        plain = SubAgents(agents=[researcher()], id=None)
+        agent = Agent(TestModel(call_tools=[]), name='durable', capabilities=[plain, RecordingDurability()])
+        assert (await agent.run('Go.')).output
 
     async def test_dynamic_agents_record_each_delegation_under_durable_execution(self) -> None:
         def crash(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

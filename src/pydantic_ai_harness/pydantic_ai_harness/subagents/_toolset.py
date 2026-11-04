@@ -274,6 +274,10 @@ class SubAgent(Generic[AgentDepsT]):
         return self.name or self.agent.name
 
 
+IN_WORKFLOW = {'temporal': False}
+"""Tool metadata that keeps a tool in workflow code under Temporal, which otherwise runs it in an activity."""
+
+
 @dataclass
 class RecordedDelegation:
     """A delegation's result as a durable engine records it, with a `ModelRetry` carried as data."""
@@ -477,7 +481,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             name=tool_name,
             retries=tool_retries,
             prepare=self._prepare_delegate,
-            metadata={'temporal': False} if in_workflow else None,
+            metadata=IN_WORKFLOW if in_workflow else None,
         )
         if task_control is not None:
             self.add_function(self.list_tasks, prepare=self._prepare_control)
@@ -489,7 +493,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 self.create_agent,
                 name=CREATE_AGENT_TOOL_NAME,
                 prepare=self._prepare_control,
-                metadata={'temporal': False},
+                metadata=IN_WORKFLOW,
             )
 
     def _prepare_control(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition | None:
