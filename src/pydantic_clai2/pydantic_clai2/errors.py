@@ -28,9 +28,8 @@ def error_message(error: BaseException) -> str:
     seen: set[int] = set()
     while current is not None and id(current) not in seen:
         seen.add(id(current))
-        if isinstance(current, ModelRateLimitError):
-            if (message := retry_after_message(error=current)) is not None:
-                return message
+        if isinstance(current, ModelRateLimitError) and (message := retry_after_message(error=current)) is not None:
+            return message
         if isinstance(current, CredentialsRefreshError):
             return (
                 # The error does not say which account failed, so point to every way back in.

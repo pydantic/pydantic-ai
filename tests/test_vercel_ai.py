@@ -164,6 +164,7 @@ with try_import() as starlette_import_successful:
     from pydantic_ai.ui.vercel_ai.response_types import (
         BaseChunk,
         DataChunk,
+        ErrorChunk,
         FileChunk,
         SourceDocumentChunk,
         SourceUrlChunk,
@@ -13963,6 +13964,66 @@ async def test_server_message_history_tool_approval(approved: bool):
         if approved
         else snapshot(['user-prompt: delete a.txt', 'call del-1', 'return del-1: The tool call was denied.'])
     )
+
+
+def _responded(*calls: tuple[str, str]) -> UIMessage:
+    """An assistant message approving `delete_file` calls, as `useChat` sends it after the user approved them."""
+    return UIMessage(
+        id='client-made-up',
+        role='assistant',
+        parts=[
+            DynamicToolApprovalRespondedPart(
+                tool_name='delete_file',
+                tool_call_id=tool_call_id,
+                input={'path': path},
+                approval=ToolApprovalResponded(id=f'approval-{tool_call_id}', approved=True),
+            )
+            for tool_call_id, path in calls
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    'case',
+    [
+        pytest.param('already_answered', id='approval-for-a-call-already-answered'),
+        pytest.param('not_made', id='call-the-model-did-not-make'),
+        pytest.param('beside_pending', id='call-the-model-did-not-make-beside-a-pending-one'),
+    ],
+)
+async def test_server_message_history_rejects_an_approval_for_a_call_not_pending(case: str):
+    """An approval only answers a tool call the stored history is waiting on; any other fails the request and runs nothing."""
+    agent, requests, deleted = server_history_agent()
+    delete = UIMessage(id='u1', role='user', parts=[TextUIPart(text='delete a.txt')])
+    stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[delete]), None, sdk_version=6)
+    if case == 'already_answered':
+        stored = await _server_history_turn(
+            agent, SubmitMessage(id='chat', messages=[delete, _responded(('del-1', 'a.txt'))]), stored, sdk_version=6
+        )
+        assert deleted == ['a.txt']
+        deleted.clear()
+        responded = _responded(('del-1', 'a.txt'))
+    elif case == 'not_made':
+        responded = _responded(('del-2', 'b.txt'))
+    else:
+        responded = _responded(('del-1', 'a.txt'), ('del-2', 'b.txt'))
+    model_requests = len(requests)
+
+    adapter = VercelAIAdapter(
+        agent, SubmitMessage(id='chat', messages=[delete, responded]), sdk_version=6, manage_message_history='server'
+    )
+    events = [event async for event in adapter.run_stream(message_history=stored)]
+
+    assert deleted == []
+    assert len(requests) == model_requests
+    errors = [event.error_text for event in events if isinstance(event, ErrorChunk)]
+    tool_call_id = "'del-1'" if case == 'already_answered' else "'del-2'"
+    assert errors == [
+        f'The request answers 1 tool call(s) that `message_history` is not waiting on: {tool_call_id}. With '
+        "`manage_message_history='server'`, an approval, denial or deferred tool result can only answer a tool call "
+        'that is still pending at the end of the stored history. If the conversation changed since the client loaded '
+        'it, reload it from the server.'
+    ]
 
 
 @pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')

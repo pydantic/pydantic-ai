@@ -356,6 +356,28 @@ def test_serialization_honors_a_redaction_inside_metadata() -> None:
     assert adapter.dump_python(result)['metadata'] == {'api_key': 'secret', 'tenant': 'acme'}
 
 
+def test_serialization_honors_a_one_level_spec_written_as_a_mapping() -> None:
+    """Pydantic takes `{'api_key': True}` as the same one-level spec as `{'api_key'}`."""
+    result = Agent(TestModel(custom_output_text='filtered')).run_sync(
+        'Filter this', metadata={'api_key': 'secret', 'tenant': 'acme'}
+    )
+    adapter = TypeAdapter(AgentRunResult[str])
+
+    assert adapter.dump_python(result, exclude={'metadata': {'api_key': True}})['metadata'] == {'tenant': 'acme'}
+    assert b'secret' not in adapter.dump_json(result, exclude={'metadata': {'api_key': True}})
+    assert adapter.dump_python(result, include={'metadata': {'tenant': True}}) == {'metadata': {'tenant': 'acme'}}
+    assert (
+        len(adapter.dump_python(result, exclude={'messages': {0: True}})['messages']) == len(result.all_messages()) - 1
+    )
+
+    # An empty mapping names no keys, and `True` names the whole key, so either way the value stays whole.
+    assert adapter.dump_python(result, include={'metadata': {}})['metadata'] == {'api_key': 'secret', 'tenant': 'acme'}
+    assert adapter.dump_python(result, include={'metadata': True})['metadata'] == {
+        'api_key': 'secret',
+        'tenant': 'acme',
+    }
+
+
 def test_a_filtered_out_output_is_left_out_rather_than_failing_the_dump() -> None:
     """The wrap handler drops `output` when the caller filters it, and the serializer follows."""
     adapter = TypeAdapter(AgentRunResult[Any])

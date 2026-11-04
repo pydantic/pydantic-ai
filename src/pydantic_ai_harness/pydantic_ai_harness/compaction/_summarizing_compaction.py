@@ -40,7 +40,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.output import TextOutput
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai_harness._message_text import tool_return_text, user_prompt_texts, with_text
+from pydantic_ai_harness._message_text import tool_return_text, user_prompt_text, with_text
 from pydantic_ai_harness._provenance import harness_origin
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
@@ -153,11 +153,11 @@ _HARNESS_DATA_INSTRUCTION = (
 _BRIDGE_PREFIX = 'This summary was produced by a different model than the one continuing the task.'
 
 _KEPT_USER_MESSAGE_METADATA = 'pydantic-ai-harness.compaction.kept-user-message.v1'
-"""Marks a user turn retained by `keep_user_messages`, on its request's `metadata` and on its text items.
+"""Marks the text items of a user turn retained by `keep_user_messages`, as their `TextContent.metadata`.
 
-Continuing a history merges adjacent requests and keeps only the framework's own metadata namespace,
-so the request-level marker is lost there; the copy's `TextContent` items carry the same marker as
-their `metadata`, the way pins do, so a retained copy is still recognized inside a merged request.
+The marker rides on the items, the way pins do, so a retained copy is still recognized after continuing a history
+merges its request into another. Earlier versions also marked the request's `metadata`. That marker is no longer
+read: request metadata isn't trusted as a provenance marker, so a turn marked only there is summarized like any other.
 """
 
 
@@ -251,23 +251,20 @@ def format_transcript(
     element carrying its `cause`, so the summarizer sees the correction a rejected call or output got
     rather than taking it for one that happened. A `RetryFeedbackPart` renders as the model was shown it.
     Tool returns and retry feedback are truncated to `tool_return_max_chars` characters with the
-    shared truncation marker; `None` renders them whole. `load_capability` calls and returns are left
-    out: which capabilities are loaded is carried by those exchanges, which a compaction records again
-    after the summary, never by the summary.
+    shared truncation marker; `None` renders them whole. Load records (`load_capability` calls and
+    returns, and the deltas a load leaves) are left out: which capabilities are loaded is carried by those
+    records, which a compaction records again after the summary, never by the summary.
     """
     elements: list[str] = []
     for msg in messages:
         if isinstance(msg, ModelRequest):
-            kept = _is_kept_user_message(msg)
             for part in msg.parts:
                 if is_load_part(part):
                     continue
                 elif isinstance(part, UserPromptPart) and (origin := harness_data_origin(part)) is not None:
                     elements.append(_harness_data_element(origin, user_prompt_text(part), tool_return_max_chars))
-                elif kept or (isinstance(part, UserPromptPart) and _is_kept_user_part(part)):
-                    # The rest of a kept turn is carried forward as-is, so it isn't summarized too. Harness data an
-                    # earlier version kept is summarized instead, and `_kept_user_messages` drops it. A kept copy
-                    # merged into a later request is recognized by the marker on its text.
+                elif _is_kept_user_part(part):
+                    # A kept turn is carried forward as-is, so it isn't summarized too, wherever its request went.
                     continue
                 elif isinstance(part, UserPromptPart):
                     elements.append(_message_element('user', user_prompt_text(part)))
@@ -394,11 +391,6 @@ def _harness_data_element(origin: str, content: str, max_chars: int | None) -> s
     if max_chars is not None:
         body = _truncate_with_marker(body, max_chars)
     return f'<harness_data origin="{html.escape(origin)}">\n{body}\n</harness_data>'
-
-
-def user_prompt_text(part: UserPromptPart) -> str:
-    """Extract text content from a user prompt part."""
-    return ' '.join(user_prompt_texts(part))
 
 
 def _extract_system_prompts(messages: list[ModelMessage]) -> list[SystemPromptPart]:
@@ -533,8 +525,8 @@ def _without_bridge_prefix(summary: str) -> str:
 def _adds_nothing_to_summarize(message: ModelMessage, kept: Sequence[ModelMessage]) -> bool:
     """Whether summarizing *message* would add nothing the compacted history does not already hold.
 
-    That is a message kept verbatim alongside the summary, a `load_capability` exchange (left out of the
-    transcript, and recorded again when still needed), or a request made up only of system prompts (prompts
+    That is a message kept verbatim alongside the summary, a load record (left out of the transcript, and
+    recorded again when still needed), or a request made up only of system prompts (prompts
     copied into the new summary request, or a summary from an earlier release), pins (reinjected), receipts
     (replaced), and earlier summaries.
     """
@@ -550,11 +542,6 @@ def _adds_nothing_to_summarize(message: ModelMessage, kept: Sequence[ModelMessag
         or is_load_part(part)
         for part in message.parts
     )
-
-
-def _is_kept_user_message(message: ModelRequest) -> bool:
-    """Return whether *message* is an earlier `keep_user_messages` retention copy, as it was stored."""
-    return message.metadata is not None and message.metadata.get(_KEPT_USER_MESSAGE_METADATA) is True
 
 
 def _is_kept_user_part(part: ModelRequestPart) -> bool:
@@ -579,8 +566,8 @@ def _mark_kept(part: UserPromptPart) -> UserPromptPart:
     A plain string becomes a single `TextContent`, which the model reads the same way. A `TextContent`
     without metadata gets the marker as its metadata; one whose metadata is a dict gets the marker as an
     extra key, so the caller's keys stay. One whose metadata is any other value has no model-invisible
-    place for a marker, so a part with no other text keeps only the request-level marker, which the
-    history cleanup that merges requests drops: a known limit until core provenance lands.
+    place for a marker, so a part with no other text isn't recognized as a copy, and a later compaction
+    summarizes and keeps it again: a known limit until core provenance lands.
     """
     items = [part.content] if isinstance(part.content, str) else part.content
     marked: list[UserContent] = []
@@ -787,8 +774,8 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     preserve_loaded_capabilities: bool = field(default=True, kw_only=True)
     """When `True`, a deferred capability loaded in the summarized messages stays loaded.
 
-    Core counts a capability as loaded while its `load_capability` exchange is after the latest
-    compaction, so summarizing the exchange would unload it. Each such load is recorded again after
+    Core counts a capability as loaded while the record of its load is after the latest compaction,
+    so summarizing the record would unload it. Each such load is recorded again after
     the summary instead, and the capability's tools and current instructions are sent again. When
     `False`, those capabilities are unloaded, and a note after the summary names them so the model
     can load the ones it still needs.
@@ -942,14 +929,6 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         for msg in to_summarize:
             if not isinstance(msg, ModelRequest):
                 continue
-            if _is_kept_user_message(msg):
-                # A turn kept by an earlier compaction may hold harness data from before it was told apart.
-                genuine = [part for part in msg.parts if not is_harness_data(part)]
-                if len(genuine) == len(msg.parts):
-                    out.append(msg)
-                elif genuine:
-                    out.append(replace(msg, parts=genuine))
-                continue
             user_parts = [
                 part
                 for part in msg.parts
@@ -960,19 +939,22 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             ]
             if not user_parts:
                 continue
-            kept: list[ModelRequestPart] = []
-            for part in user_parts:
-                if _is_kept_user_part(part):
-                    # Already a retained copy, merged into a later request: keep it as it is.
-                    kept.append(part)
-                elif isinstance(part.content, str):
-                    kept.append(_mark_kept(replace(part, content=self._truncate(part.content))))
-                else:
-                    bounded, _ = self._bound_sequence(part.content)
-                    kept.append(_mark_kept(replace(part, content=bounded)))
-            metadata = {**(msg.metadata or {}), _KEPT_USER_MESSAGE_METADATA: True}
-            out.append(replace(msg, parts=kept, metadata=metadata))
+            if len(user_parts) == len(msg.parts) and all(_is_kept_user_part(part) for part in user_parts):
+                # An earlier retained copy, as it was stored: kept as the same message, which tells the `keep_tokens`
+                # early exit there's nothing new to summarize.
+                out.append(msg)
+            else:
+                out.append(replace(msg, parts=[self._kept_user_part(part) for part in user_parts]))
         return out
+
+    def _kept_user_part(self, part: UserPromptPart) -> ModelRequestPart:
+        """*part* as a marked, size-bounded retained copy; an earlier copy, merged into a later request, as it is."""
+        if _is_kept_user_part(part):
+            return part
+        if isinstance(part.content, str):
+            return _mark_kept(replace(part, content=self._truncate(part.content)))
+        bounded, _ = self._bound_sequence(part.content)
+        return _mark_kept(replace(part, content=bounded))
 
     def _truncate(self, text: str, max_chars: int | None = None) -> str:
         limit = self.keep_user_messages_max_chars if max_chars is None else max_chars

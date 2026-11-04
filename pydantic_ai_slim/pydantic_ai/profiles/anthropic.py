@@ -284,6 +284,16 @@ class AnthropicModelProfile(ModelProfile, total=False):
     your client's `base_url` points at a proxy whose count endpoint rejects server tools.
     """
 
+    anthropic_calls_cited_web_tools_directly: bool
+    """Whether a request that asks for citations sends the `20260209` web tools it cites with
+    `allowed_callers=['direct']`, so their results are cited. Default: `False`.
+
+    See [Web Tool Callers](../models/anthropic.md#web-tool-callers) for the requests that keep the default callers.
+    When the provider's profile doesn't set it, `AnthropicModel` turns it on for the `AsyncAnthropic` client and leaves
+    it off for every other client. Of those, Claude Platform on AWS (`AsyncAnthropicAWS`) and Microsoft Foundry also
+    send those versions, but haven't been verified to accept `allowed_callers` with citations.
+    """
+
 
 ANTHROPIC_THINKING_BUDGET_MAP: dict[ThinkingLevel, int] = {
     True: 10000,

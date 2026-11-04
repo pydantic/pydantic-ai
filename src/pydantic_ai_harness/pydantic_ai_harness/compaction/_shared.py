@@ -48,7 +48,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai_harness._message_text import tool_return_text, user_prompt_texts
+from pydantic_ai_harness._message_text import CHARS_PER_TOKEN, tool_return_text, user_prompt_texts
 from pydantic_ai_harness._provenance import harness_origin
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW, resolve_context_window
 from pydantic_ai_harness.compaction._pinning import is_pinned
@@ -69,9 +69,6 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # Token estimation
 # ---------------------------------------------------------------------------
-
-CHARS_PER_TOKEN = 4
-"""Rough approximation: ~4 characters per token on average."""
 
 _COMPACTION_RECLAIM: ContextVar[tuple[str | None, int, int] | None] = ContextVar(
     'pydantic_ai_harness.compaction.reclaim', default=None

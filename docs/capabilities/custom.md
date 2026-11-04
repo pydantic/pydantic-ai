@@ -236,29 +236,32 @@ result = agent.run_sync('hello')
 
 ```python {title="custom_capability_config.py"}
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date
 from typing import Any
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.messages import InstructionPart
 
 
 @dataclass
-class KnowsCurrentTime(AbstractCapability[Any]):
-    """Tells the agent what time it is."""
+class KnowsCurrentDate(AbstractCapability[Any]):
+    """Tells the agent what day it is."""
 
     def get_instructions(self):
-        def _get_time(ctx: RunContext[Any]) -> str:
-            return f'The current date and time is {datetime.now().isoformat()}.'
+        def _get_date(ctx: RunContext[Any]) -> InstructionPart:
+            return InstructionPart(f"Today's date is {date.today()}.", name='date', on_change='append')  # (1)!
 
-        return _get_time
+        return _get_date
 
 
-agent = Agent('{{ openai:medium }}', capabilities=[KnowsCurrentTime()])
-result = agent.run_sync('What time is it?')
+agent = Agent('{{ openai:medium }}', capabilities=[KnowsCurrentDate(id='current_date')])
+result = agent.run_sync("What is today's date?")
 print(result.output)
-#> The current time is 3:45 PM.
+#> Today is January 2, 2032.
 ```
+
+1. The date changes between runs of a conversation. With `on_change='append'`, a new date is added to the history instead of rewriting the instructions, so the provider can keep reusing the conversation it cached; see [Instructions that change during a conversation](#instructions-that-change-during-a-conversation). The capability needs an `id` for this. Text that changes on every request, such as the current time down to the second, belongs in the user prompt or a tool instead.
 
 Instructions can also use [template strings](../agent-spec.md#template-strings) ([`TemplateStr('Hello {{name}}')`][pydantic_ai.template.TemplateStr]) for Handlebars-style templates rendered against the agent's [dependencies](../dependencies.md). In Python code, a callable with [`RunContext`][pydantic_ai.tools.RunContext] is generally preferred for IDE autocomplete.
 

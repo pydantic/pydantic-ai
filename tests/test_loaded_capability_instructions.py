@@ -16,6 +16,7 @@ from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, Proc
 from pydantic_ai.messages import (
     AgentInstructionSource,
     CapabilityInstructionSource,
+    CapabilityLoadDeltaPart,
     CompactionPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
@@ -73,6 +74,7 @@ def counter_capability() -> Capability[Counter]:
 
 LOAD = ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'counter'}, tool_call_id='load')])
 BUMP = ModelResponse(parts=[ToolCallPart('bump', {}, tool_call_id='bump')])
+LOAD_IN_CODE = ModelResponse(parts=[ToolCallPart('load_in_code', {}, tool_call_id='code_load')])
 
 
 @dataclass
@@ -119,6 +121,16 @@ def scripted_agent(
         return 'bumped'
 
     return agent
+
+
+def load_records(messages: list[ModelMessage]) -> list[CapabilityLoadDeltaPart]:
+    return [
+        part
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, CapabilityLoadDeltaPart)
+    ]
 
 
 def deltas(messages: list[ModelMessage]) -> list[InstructionDeltaPart]:
@@ -359,6 +371,55 @@ async def test_new_instruction_window_keeps_loaded_changes():
 
     second = await scripted_agent(received=received, instructions='Be briefer.').run(
         'Again.', deps=Counter(1), message_history=first.all_messages()
+    )
+    assert received.instructions[-1] != received.instructions[0]
+    assert deltas(second.new_messages()) == []
+    assert received.statements[-1] == loaded_change
+
+
+def code_load_agent(
+    *script: ModelResponse,
+    received: Received,
+    instructions: str = 'Be brief.',
+) -> Agent[Counter, str]:
+    """Like `scripted_agent`, but `load_in_code` loads the capability in code, not through a call/return pair."""
+    agent = scripted_agent(*script, received=received, instructions=instructions)
+
+    @agent.tool
+    def load_in_code(ctx: RunContext[Counter]) -> str:
+        """Load the counting capability."""
+        ctx.load_capability('counter')
+        return 'loaded'
+
+    return agent
+
+
+async def test_code_loaded_capability_survives_new_instruction_window():
+    """A code-loaded block also survives a new instruction window, and a repeat code load is a no-op."""
+    received = Received()
+    first = await code_load_agent(LOAD_IN_CODE, received=received).run('Count.', deps=Counter())
+    loaded_change = received.statements[-1]
+    assert loaded_change == [f'<context id="capability:counter">\n{RULES}\n\nThe count is 0.\n</context>']
+
+    second = await code_load_agent(LOAD_IN_CODE, received=received).run(
+        'Again.', deps=Counter(), message_history=first.all_messages(), instructions='Be briefer.'
+    )
+    assert received.instructions[-1] != received.instructions[0]
+    assert len(load_records(first.new_messages())) == 1
+    assert load_records(second.new_messages()) == []
+    assert deltas(second.new_messages()) == []
+    assert received.statements[-1] == loaded_change
+
+
+async def test_code_loaded_capability_survives_changed_static_instructions():
+    """Changing the agent's static instructions opens the same window, and a code-loaded block survives it."""
+    received = Received()
+    first = await code_load_agent(LOAD_IN_CODE, received=received).run('Count.', deps=Counter())
+    loaded_change = received.statements[-1]
+    assert loaded_change == [f'<context id="capability:counter">\n{RULES}\n\nThe count is 0.\n</context>']
+
+    second = await code_load_agent(received=received, instructions='Be briefer.').run(
+        'Again.', deps=Counter(), message_history=first.all_messages()
     )
     assert received.instructions[-1] != received.instructions[0]
     assert deltas(second.new_messages()) == []

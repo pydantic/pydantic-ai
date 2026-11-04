@@ -2471,38 +2471,31 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         # the run is reasoning. A turn another model or provider produced, or one served with thinking off,
         # can lack it: a `FallbackModel` step, a resumed run, or a foreign native tool search that
         # `prepare_messages` splits into a synthesized `search_tools` turn. `'field'` mode sets the configured
-        # field empty on every such turn once the history holds a `ThinkingPart`, or, for a profile that sets
-        # `openai_chat_thinking_requires_field_on_tool_calls`, once the request itself thinks, as it can before
-        # any step has thought; `'auto'` mode is handled after mapping, below.
+        # field empty on every such turn from the first response that holds a `ThinkingPart` on, or, for a
+        # profile that sets `openai_chat_thinking_requires_field_on_tool_calls`, on every such turn once the
+        # request itself thinks, as it can before any step has thought; `'auto'` mode is handled after mapping,
+        # below. A turn before the first `ThinkingPart` was already sent without the field, so a later response
+        # that thinks doesn't add it there: the turn goes out the same way in every request, keeping the
+        # cached prefix.
         send_back_thinking = profile.get('openai_chat_send_back_thinking_parts', 'auto')
-        thinking_active = any(
-            isinstance(part, ThinkingPart)
-            for message in messages
-            if isinstance(message, ModelResponse)
-            for part in message.parts
-        )
-        backfill_field = (
-            profile.get('openai_chat_thinking_field', None)
-            if send_back_thinking == 'field'
-            and (
-                thinking_active
-                or (
-                    profile.get('openai_chat_thinking_requires_field_on_tool_calls', False)
-                    and self._request_thinks(model_settings, model_request_parameters)
-                )
-            )
-            else None
+        backfill_field = profile.get('openai_chat_thinking_field', None) if send_back_thinking == 'field' else None
+        backfill = bool(
+            backfill_field
+            and profile.get('openai_chat_thinking_requires_field_on_tool_calls', False)
+            and self._request_thinks(model_settings, model_request_parameters)
         )
         for message in messages:
             if isinstance(message, ModelRequest):
                 async for item in self._map_user_message(message):
                     openai_messages.append(item)
             elif isinstance(message, ModelResponse):
+                backfill = backfill or any(isinstance(part, ThinkingPart) for part in message.parts)
                 if (carried_thinking := self._map_carried_thinking(message)) is not None:
                     openai_messages.append(carried_thinking)
                 if (mapped := self._map_model_response(message)) is not None:
                     if (
-                        backfill_field
+                        backfill
+                        and backfill_field
                         and mapped['role'] == 'assistant'
                         and mapped.get('tool_calls')
                         and backfill_field not in mapped

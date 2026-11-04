@@ -37,6 +37,8 @@ judge model. All are
 Runs `json-repair` on raw tool-call argument strings in `before_tool_validate`, for every tool on the
 agent. Needs the `repair-tool-arguments` extra, which installs `json-repair`
 (`uv add "pydantic-ai-harness[repair-tool-arguments]"`; `[coder]` includes it); no options.
+A repair is written back to the `ToolCallPart` in history (original args in
+`provider_details['original_args']`), so later requests replay the repaired arguments.
 
 ```python
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
