@@ -203,6 +203,45 @@ async def test_output_over_the_limit_raises_with_its_beginning(
     assert (caught.value.stdout, caught.value.stderr, caught.value.limit) == ('0123', 'abcd', 8)
 
 
+async def test_output_a_background_process_adds_after_the_exit_is_capped(
+    fake_agentcore: FakeAgentCore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr('pydantic_ai_harness.agentcore_sandbox._backend._MAX_OUTPUT_BYTES', 8)
+    monkeypatch.setattr('pydantic_ai_harness.agentcore_sandbox._backend._READ_CHUNK_BYTES', 4)
+    monkeypatch.setattr('pydantic_ai_harness.agentcore_sandbox._backend._OUTPUT_PREVIEW_BYTES', 4)
+    backend = AgentCoreSandboxBackend()
+    await backend.working_dir()
+    go, written = fake_agentcore.home / 'go', fake_agentcore.home / 'written'
+    os.mkfifo(go)
+    os.mkfifo(written)
+    # The next `executeCode` is `finished`: it measures 6 bytes, then the background process adds 10 more.
+    hold = fake_agentcore.hold('executeCode')
+
+    async def grow_then_release() -> None:
+        try:
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                await anyio.to_thread.run_sync(hold.reached.wait, abandon_on_cancel=True)
+                await anyio.to_thread.run_sync(go.write_text, 'go\n', abandon_on_cancel=True)
+                await anyio.to_thread.run_sync(written.read_text, abandon_on_cancel=True)
+        finally:
+            hold.release.set()
+
+    async with anyio.create_task_group() as group:
+        group.start_soon(grow_then_release)
+        with pytest.raises(WorkspaceOutputLimitError) as caught:
+            await backend.run(
+                [
+                    'sh',
+                    '-c',
+                    'printf 012345; (read _ <"$1"; printf abcdefghij; echo >"$2") &',
+                    'sh',
+                    str(go),
+                    str(written),
+                ]
+            )
+        assert (caught.value.stdout, caught.value.stderr, caught.value.limit) == ('0123', '', 8)
+
+
 async def test_files_and_output_travel_in_chunks(
     fake_agentcore: FakeAgentCore, monkeypatch: pytest.MonkeyPatch
 ) -> None:

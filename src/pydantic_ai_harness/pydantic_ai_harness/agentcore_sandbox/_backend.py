@@ -647,15 +647,19 @@ class AgentCoreSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesy
                 exit_code=int(exit_code), stdout=_decode(finished['out']), stderr=_decode(finished['err'])
             )
         out, err = f'{directory}/out', f'{directory}/err'
-        if finished['size'] > _MAX_OUTPUT_BYTES:
-            raise WorkspaceOutputLimitError(
-                'AgentCore command output exceeded the 4 MiB limit; redirect it to a file and read part of it instead',
-                limit=_MAX_OUTPUT_BYTES,
-                stdout=(await self._read(out, _OUTPUT_PREVIEW_BYTES)).decode(errors='replace'),
-                stderr=(await self._read(err, _OUTPUT_PREVIEW_BYTES)).decode(errors='replace'),
-            )
-        return CommandResult(
-            exit_code=int(exit_code),
-            stdout=(await self._read(out)).decode(errors='replace'),
-            stderr=(await self._read(err)).decode(errors='replace'),
+        if finished['size'] <= _MAX_OUTPUT_BYTES:
+            # A process the command left in the background can still be writing, so the reads stop at the limit too.
+            stdout = await self._read(out, _MAX_OUTPUT_BYTES + 1)
+            stderr = await self._read(err, _MAX_OUTPUT_BYTES + 1 - len(stdout))
+            if len(stdout) + len(stderr) <= _MAX_OUTPUT_BYTES:
+                return CommandResult(
+                    exit_code=int(exit_code),
+                    stdout=stdout.decode(errors='replace'),
+                    stderr=stderr.decode(errors='replace'),
+                )
+        raise WorkspaceOutputLimitError(
+            'AgentCore command output exceeded the 4 MiB limit; redirect it to a file and read part of it instead',
+            limit=_MAX_OUTPUT_BYTES,
+            stdout=(await self._read(out, _OUTPUT_PREVIEW_BYTES)).decode(errors='replace'),
+            stderr=(await self._read(err, _OUTPUT_PREVIEW_BYTES)).decode(errors='replace'),
         )
