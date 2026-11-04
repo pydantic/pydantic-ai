@@ -17,13 +17,13 @@ checkpointing, a resumed run would repeat every model request and tool call.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![A Lambda handler decorated with durable_execution and durable_agent_handler runs an agent named support that has the AWSLambdaDurability capability. In the first invocation, each model request and tool call runs as a durable step, and Lambda records its result in the checkpoint log under a step name such as support__model.request; the invocation times out during the second model request. The resumed invocation runs the handler again from the top: the two completed steps return their recorded results without calling the model or the tool again, and only the unfinished model request runs, is recorded, and finishes the run.](../img/harness/aws-lambda.svg)
+
 ## Installation
 
 ```bash
 pip/uv-add "pydantic-ai-harness[aws-lambda]"
 ```
-
-The AWS Durable Execution SDK requires Python 3.11 or newer.
 
 The quick start below uses a Bedrock provider model, which needs the Bedrock SDK from
 `pydantic-ai-slim[bedrock]`:
@@ -64,9 +64,8 @@ async def handler(event: dict[str, Any], context: DurableContext) -> str:
     return result.output
 ```
 
-Attach the capability at construction rather than per run. Per-run attachment does work (the
-capability binds and wraps toolsets either way), but attaching once keeps the wrapping and the
-deployed step shape stable across invocations, and it matches the other durability integrations.
+Attach the capability at construction rather than per run, so the toolset wrapping and the
+deployed step shape stay the same across invocations.
 
 Deploy with a durable configuration and invoke a published version, since in-flight executions are
 pinned to the version that started them:
@@ -115,7 +114,7 @@ steps are reached, so concurrent runs that reach their steps in a different orde
 served each other's recorded results. A synchronous handler must call `run_durable` separately for
 each async section, and concurrent calls are rejected.
 
-Three consequences are worth knowing:
+Rules for the handler:
 
 - `@durable_execution` must be the outermost decorator because its wrapper is what Lambda invokes.
   Reversing the order raises a `UserError` when the handler is defined.
@@ -135,6 +134,11 @@ state between the agent run and the handler. An external side effect from cleanu
 to a store, releasing a shared lock, or emitting a metric, can also land during a later invocation.
 Loop-bound resources are isolated: the next invocation gets a fresh loop, so the abandoned cleanup
 cannot touch resources such as that invocation's provider HTTP client.
+
+At the end of the grace period the abandoned cleanup is cancelled again, and the retired loop stops
+a few iterations later (on Python 3.11, after jobs already submitted to its default executor
+finish). A cleanup still running by then is left unfinished. A cleanup that cancels every task on
+its loop is not cancelled again; the loop stops at the deadline either way.
 
 Loop reuse has one more consequence: do not detach background work from a tool with
 `asyncio.create_task()` or by leaving executor work unawaited. Detached work is not checkpointed and
@@ -196,7 +200,7 @@ checkpoint came from. The default model keeps the plain, suffix-less name.
   or MCP server, flipping a `metadata={'aws_lambda': False}` opt-out, or adding an
   `event_stream_handler` (which switches the model step to `model.request_stream` and adds handler
   steps). The mismatch is not detected: a step is served another step's recorded result, which
-  usually fails to decode but can silently return the wrong data. Deploy under a new published
+  usually fails to decode but can return the wrong data. Deploy under a new published
   version and let in-flight executions drain on the old one.
 - **Step results must survive the SDK serializer.** Results are checkpointed through the Lambda
   SDK's serializer. Tool results are encoded by Pydantic first, so structured returns such as
@@ -254,9 +258,10 @@ request is already applied inside the durable step. Attach it alongside other ca
 
 ## Further reading
 
+- [Durable execution in Pydantic AI agents with AWS Lambda Durability](https://pydantic.dev/articles/harness-aws-lambda) (Pydantic)
 - [AWS Lambda durable functions](https://docs.aws.amazon.com/lambda/latest/dg/durable-functions.html)
 - [AWS Durable Execution SDK for Python](https://github.com/aws/aws-durable-execution-sdk-python)
-- [Pydantic AI durable execution](https://pydantic.dev/docs/ai/durable_execution/overview/)
+- [Pydantic AI durable execution](../durable_execution/overview.md)
 - [AWS Lambda Durability source code](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda/)
 
 ## API reference

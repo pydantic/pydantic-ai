@@ -10,9 +10,11 @@ description: "Let a local Pydantic AI agent run Python and call its tools from a
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/ipython_code_mode/)
 
 !!! warning "Not a sandbox: do not serve it from a webserver"
-    Model-written code runs as a full Python process with the permissions of the user running the agent: it can read and write files, reach the network, read environment variables and credentials, and start processes. Do not run `IPythonCodeMode` in a webserver, or anywhere it handles untrusted input such as user prompts, documents, or web pages, unless the whole agent runs inside a sandbox (a container or VM with only the access it needs). For production and web-facing agents, use the Monty-based [Code Mode](code-mode.md), which is strongly recommended there.
+    Model-written code runs as a full Python process with the permissions of the user running the agent: it can read and write files, reach the network, read environment variables and credentials, and start processes. Do not run `IPythonCodeMode` in a webserver, or anywhere it handles untrusted input such as user prompts, documents, or web pages, unless the whole agent runs inside a sandbox (a container or VM with only the access it needs). For production and web-facing agents, use the Monty-based [Code Mode](code-mode.md).
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
+
+![The model calls run_code with Python. The code runs in a separate IPython kernel process with full CPython and any installed package, such as pandas. Each call it makes to an agent tool, here get_sales, goes back to the agent over the Jupyter stdin channel and runs one at a time; the value of the last expression goes back to the model. Variables stay in the kernel for the next run_code call, each call has a 60 second timeout, and the kernel is not a sandbox: the code has the user's files, network and environment variables.](../img/harness/ipython-code-mode.svg)
 
 ## Code Mode or IPython Code Mode
 

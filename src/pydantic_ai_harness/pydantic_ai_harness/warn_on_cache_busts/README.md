@@ -33,8 +33,12 @@ read-back re-stabilizes the cache. A prefix that moves on every request, so the
 provider keeps writing a cache nothing reads back, therefore warns once, not on
 every request.
 
-The verdict is cross-provider for free -- pyai normalizes every provider into the
-`cache_read_tokens` / `cache_write_tokens` fields on `RequestUsage`.
+Providers report cache reads and writes in `RequestUsage.cache_read_tokens` and
+`cache_write_tokens`, so the monitor works the same on every provider that reports them.
+
+![WarnOnCacheBusts runs in the after_model_request hook and only observes. For each response it compares cache_read_tokens with the cacheable prefix the conversation has established. Requests 2 to 4 read back the whole prefix; request 5 reads back 4K of an established 40K, so it emits a CacheBustWarning with reason unexpected. Collapses explained by an expired cache, compaction or unreported usage do not warn.](https://pydantic.dev/docs/ai/img/harness/warn-on-cache-busts.svg)
+
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
 ## Retention and classification
 
@@ -108,10 +112,6 @@ A continuation that comes back after the retention window has elapsed is classif
 been idle for 24 hours, longer than any provider documents keeping a cache, or when
 more than 4,096 conversations on the same instance have been active more recently.
 
-While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
-
-It is the opt-in observe arm of the broader prompt-cache-prefix-stability work.
-
 ## Caching not enabled
 
 Models such as Anthropic's (including on the Bedrock and Vertex AI SDK clients), Bedrock's Claude and Nova, and OpenRouter's Anthropic routes only cache what the request asks them to. OpenAI's models and OpenRouter's Gemini routes, which cache implicitly, are never reported. When a request of at least 4,096 input tokens goes to such a model with no caching configured (neither the unified `cache` setting nor a provider-specific one), no `CachePoint` in its history, and no cache usage reported, the monitor emits a `CacheNotEnabledWarning` pointing to `cache=True` and the `Caching()` capability, once per conversation and model. Setting `cache=False` says caching was left off on purpose, so it doesn't warn. Silence or escalate it with the `warnings` filters, like `CacheBustWarning`.
@@ -133,9 +133,7 @@ await agent.run('...', message_history=result.all_messages())
 The `CacheBustWarning` is silent when caching is off or unreported
 (`cache_read_tokens` stays 0), so it never fires spuriously in runs that don't
 use caching (see [Caching not enabled](#caching-not-enabled) for the warning
-that does). That is the
-honest scope of a runtime signal -- the deterministic, always-on structural catch
-belongs at the wire level in tests, not here.
+that does).
 
 ## Options
 
@@ -225,9 +223,6 @@ it reaches Logfire.
   rewrite; only provider-native compaction, recognized by its `CompactionPart`, is
   classified `compacted`. Silence the warning around the runs where compaction is
   expected, as shown above.
-- **A mid-run model switch does not warn.** Marks are per `(provider_name,
-  provider_url, model_name)`, so a `FallbackModel` failover starts a fresh mark
-  rather than collapsing the previous model's.
 - **Marks are in-process memory.** They are held on the capability instance, so a
   conversation continued through a different instance, a different process, or a
   different worker starts from a clean mark; nothing is persisted or shared.

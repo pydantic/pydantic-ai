@@ -467,7 +467,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
             self._segment_stream = _utils.PeekableAsyncStream(self._get_event_iterator())
             events: AsyncIterator[ModelResponseStreamEvent] = self._segment_stream
             # The `request_timeout` deadline covers opening each segment, the waits between segments, and reading
-            # each segment's events.
+            # each segment's events; the `first_event_timeout` one, all of that until the first event.
             if self._request_deadline is not None:
                 events = self._request_deadline.iterate(events)
             self._event_iterator = self._iterator_with_cancel_guard(events)
@@ -497,7 +497,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
             try:
                 # A run that returns pending responses checks on a resumed one straight away, as the segment loop does.
                 if (delay := self.model.continuation_delay(seed)) and not self.return_pending:
-                    # The `request_timeout` deadline covers this wait, as it does the waits between later segments.
+                    # The deadlines cover this wait, as they do the waits between later segments.
                     with enforce_request_deadline(self._request_deadline):
                         await self.sleep_func(delay)
             except BaseException:
@@ -511,7 +511,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
             with self.segment_context():
                 sub = await stack.enter_async_context(
                     request_stream_until_first_event(
-                        # The `request_timeout` deadline covers opening the segment and waiting for its first event.
+                        # The deadlines cover opening the segment and waiting for its first event.
                         self.model,
                         self._request_deadline,
                         messages,
@@ -527,7 +527,9 @@ class _ContinuationStreamedResponse(StreamedResponse):
             raise
         self._primed_segment = (stack, sub)
         # The segment is in flight from here, so a `cancel()` before iteration starts reaches its server-side
-        # job, and `get()` sees what it has produced.
+        # job, and `get()` sees what it has produced, on top of the response it continues, as the segment loop
+        # has it.
+        self._merged_response = seed
         self._current_sub = sub
         first_events = sub._event_iterator
         if (
@@ -552,6 +554,9 @@ class _ContinuationStreamedResponse(StreamedResponse):
         """
         if (primed := self._primed_segment) is not None:
             self._primed_segment = None
+            # Keep what the segment produced, as the segment loop does when a segment ends: the provider billed it,
+            # and the response the run commits for the stream is built from it.
+            self._merged_response = self._snapshot()
             self._current_sub = None
             # Shielded like the stitched close below: teardown can run inside a cancelled graph scope, where the
             # segment's `request_stream(...)` exit would otherwise be cancelled before it closes the connection.

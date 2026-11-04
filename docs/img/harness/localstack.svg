@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="622" viewBox="0 0 880 622" role="img" aria-labelledby="t d">
+<title id="t">LocalStack: AWS CLI commands against an emulated AWS</title>
+<desc id="d">The model gets LocalStack instructions and two tools, aws_cli and localstack_health. An aws_cli command, given without the leading aws, is first checked against allowed_services or denied_services; a command that names a blocked service or passes --endpoint-url, --profile, --region or --no-sign-request is rejected. Otherwise the AWS CLI runs without a shell, with the endpoint, region and test credentials injected, against LocalStack at localhost.localstack.cloud:4566, and labelled stdout, stderr and exit code come back, keeping the tail when long. With manage_container=True the capability starts a LocalStack Docker container for the run, waits for its health check, and stops it when the run ends.</desc>
+<defs><marker id="ai" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#092224"/></marker><marker id="am" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#55726A"/></marker><marker id="al" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#B417B7"/></marker><marker id="al2" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E520E9"/></marker><marker id="ap" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#7B57E8"/></marker><marker id="aa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0E9C86"/></marker><marker id="ac" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E5533D"/></marker><marker id="af" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8FA8A3"/></marker><marker id="ao" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#97998B"/></marker></defs>
+<rect x="0.5" y="0.5" width="879" height="621" rx="16" fill="#FFFFFF" stroke="#E6EAEA"/>
+<text x="32" y="50" font-size="21" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">LocalStack: AWS CLI commands against an emulated AWS</text>
+<text x="32" y="78" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">LocalStack gives the agent the AWS CLI wired to a LocalStack instance on your machine, so it can create and test</text>
+<text x="32" y="98" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">buckets, tables and queues without a real AWS account or real credentials.</text>
+<rect x="32" y="140" width="816" height="262" rx="14" fill="none" stroke="#8FA8A3" stroke-width="1.3" stroke-dasharray="4 4"/>
+<rect x="46" y="132" width="122.2" height="16" rx="4" fill="#FFFFFF"/>
+<text letter-spacing="1.3" x="53" y="144" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">YOUR MACHINE</text>
+<rect x="54" y="184" width="84" height="36" rx="18" fill="#092224"/>
+<text x="96" y="207" font-size="13.5" fill="#FBFFEA" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<line x1="140" y1="202" x2="162" y2="202" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="166" y="162" width="170" height="80" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="178" y="180" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">LocalStack tools</text>
+<rect x="178" y="188" width="65" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="210.5" y="204" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">aws_cli</text>
+<rect x="178" y="214" width="132.1" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="244" y="230" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">localstack_health</text>
+<text x="96" y="238" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">plus instructions</text>
+<text x="96" y="254" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">naming the endpoint</text>
+<line x1="338" y1="202" x2="366" y2="202" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="370" y="162" width="196" height="80" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="468" y="179.7" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">aws_cli check</text>
+<text x="468" y="198.7" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">allowed_services or</text>
+<text x="468" y="215.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">denied_services decide which</text>
+<text x="468" y="231.9" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">services may run</text>
+<line x1="468" y1="244" x2="468" y2="264" stroke="#E5533D" stroke-width="1.6" marker-end="url(#ac)"/>
+<rect x="370" y="266" width="196" height="62" rx="10" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.4"/>
+<text x="468" y="282.8" font-size="12.5" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Rejected</text>
+<text x="468" y="301.7" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">--endpoint-url, --profile,</text>
+<text x="468" y="318.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">--region, --no-sign-request</text>
+<line x1="568" y1="202" x2="594" y2="202" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="598" y="162" width="234" height="80" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="715" y="188" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">aws CLI, no shell</text>
+<text x="715" y="207" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">endpoint, region and test / test keys</text>
+<text x="715" y="223.6" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">injected; throwaway AWS config files</text>
+<line x1="715" y1="244" x2="715" y2="264" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="598" y="272" width="234" height="112" rx="14" fill="none" stroke="#0E9C86" stroke-width="1.3" stroke-dasharray="4 4"/>
+<rect x="612" y="264" width="109.1" height="16" rx="4" fill="#FFFFFF"/>
+<text letter-spacing="1.3" x="619" y="276" font-size="11" fill="#0E9C86" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">LOCALSTACK</text>
+<text x="612" y="298" font-size="11" fill="#092224" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">localhost.localstack.cloud:4566</text>
+<rect x="612" y="310" width="31.4" height="24" rx="6" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.2"/>
+<text x="627.7" y="326" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">s3</text>
+<rect x="651.4" y="310" width="71.7" height="24" rx="6" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.2"/>
+<text x="687.3" y="326" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">dynamodb</text>
+<rect x="731.1" y="310" width="38.1" height="24" rx="6" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.2"/>
+<text x="750.2" y="326" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">sqs</text>
+<text x="612" y="362" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">and a health endpoint</text>
+<path d="M 596 366 L 260 366 Q 250 366 250 356 L 250 246" stroke="#55726A" stroke-width="1.6" fill="none" stroke-dasharray="5 4" marker-end="url(#am)"/>
+<text x="268" y="344" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">[stdout] / [stderr], [exit code: N],</text>
+<text x="268" y="359" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">the tail kept past max_output_chars</text>
+<text letter-spacing="1.3" x="32" y="436" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">OPTIONAL: LET THE CAPABILITY RUN THE CONTAINER</text>
+<rect x="32" y="450" width="178" height="58" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="121" y="464.8" font-size="12.5" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">manage_container=True</text>
+<text x="121" y="483.7" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">starts a fresh container per</text>
+<text x="121" y="500.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">run</text>
+<line x1="213" y1="479" x2="233.7" y2="479" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="236.7" y="450" width="190" height="58" rx="10" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.4"/>
+<text x="331.7" y="464.8" font-size="12.5" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">docker run</text>
+<text x="331.7" y="483.7" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">localstack/localstack, port</text>
+<text x="331.7" y="500.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">4566 on 127.0.0.1</text>
+<line x1="429.7" y1="479" x2="450.3" y2="479" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="453.3" y="450" width="178" height="58" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="542.3" y="464.8" font-size="12.5" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">health check</text>
+<text x="542.3" y="483.7" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">wait until LocalStack is</text>
+<text x="542.3" y="500.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">ready</text>
+<line x1="634.3" y1="479" x2="655" y2="479" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="658" y="450" width="190" height="58" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="753" y="464.8" font-size="12.5" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">run ends</text>
+<text x="753" y="483.7" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">the container is stopped, even</text>
+<text x="753" y="500.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">if the run raises</text>
+<text x="32" y="534" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Inside async with agent:, the runs share one container. The aws_cli check gates the commands the agent issues, not what it can reach: it is</text>
+<text x="32" y="551.8" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">not a security boundary.</text>
+<rect x="32" y="574.5" width="14" height="14" rx="7" fill="#092224" stroke="#092224" stroke-width="1.2"/>
+<text x="52" y="585.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<rect x="107.4" y="574.5" width="14" height="14" rx="4" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="127.4" y="585.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">added by LocalStack</text>
+<rect x="263.4" y="574.5" width="14" height="14" rx="4" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="283.4" y="585.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">a local process</text>
+<rect x="391" y="574.5" width="14" height="14" rx="4" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.2"/>
+<text x="411" y="585.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">LocalStack</text>
+<rect x="494.5" y="574.5" width="14" height="14" rx="4" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.2"/>
+<text x="514.5" y="585.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">rejected</text>
+</svg>

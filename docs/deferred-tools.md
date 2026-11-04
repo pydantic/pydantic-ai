@@ -96,6 +96,8 @@ The sections below describe the two kinds of deferred tools the handler can reso
 
 If a tool function always requires approval, you can pass the `requires_approval=True` argument to the [`@agent.tool`][pydantic_ai.agent.Agent.tool] decorator, [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain] decorator, [`Tool`][pydantic_ai.tools.Tool] class, [`FunctionToolset.tool`][pydantic_ai.toolsets.FunctionToolset.tool] decorator, or [`FunctionToolset.add_function()`][pydantic_ai.toolsets.FunctionToolset.add_function] method. Inside the function, you can then assume that the tool call has been approved.
 
+To require approval for every tool in a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], pass `requires_approval=True` to its constructor. It applies to `Tool` instances too; only a function added with `requires_approval=False` opts out.
+
 In a [realtime session](realtime/tools.md#deferred-and-approval-required-tools), approval must be resolved inline, typically by a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler (a capability hook can resolve it too); a call nothing resolves is refused every time.
 
 If approval depends on the tool call's arguments or the agent [run context][pydantic_ai.tools.RunContext], such as [dependencies](dependencies.md) or message history, raise [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] from the tool function. The [`RunContext.tool_call_approved`][pydantic_ai.tools.RunContext.tool_call_approved] property will be `True` if the tool call has already been approved.
@@ -226,6 +228,7 @@ print(result.all_messages())
         ],
         usage=RequestUsage(cost=Decimal('0.000336'), input_tokens=63, output_tokens=21),
         model_name='{{ openai:medium.name }}',
+        model_id='{{ openai:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -277,6 +280,7 @@ print(result.all_messages())
         ],
         usage=RequestUsage(cost=Decimal('0.000482'), input_tokens=86, output_tokens=31),
         model_name='{{ openai:medium.name }}',
+        model_id='{{ openai:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -302,6 +306,7 @@ print(result.all_messages())
         ],
         usage=RequestUsage(cost=Decimal('0.001076'), input_tokens=93, output_tokens=89),
         model_name='{{ openai:medium.name }}',
+        model_id='{{ openai:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -443,6 +448,7 @@ async def main():
                 cost=Decimal('0.000256'), input_tokens=63, output_tokens=13
             ),
             model_name='{{ openai:medium.name }}',
+            model_id='{{ openai:medium }}',
             timestamp=datetime.datetime(...),
             run_id='...',
             conversation_id='...',
@@ -470,6 +476,7 @@ async def main():
                 cost=Decimal('0.000408'), input_tokens=64, output_tokens=28
             ),
             model_name='{{ openai:medium.name }}',
+            model_id='{{ openai:medium }}',
             timestamp=datetime.datetime(...),
             run_id='...',
             conversation_id='...',

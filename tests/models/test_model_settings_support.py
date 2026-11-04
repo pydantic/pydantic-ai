@@ -21,9 +21,9 @@ that records only path, body and headers on a live transport, while `timeout` is
 
 `citations`, `tool_choice`, and `thinking` are excluded and stay hand-maintained, for different reasons:
 
-- `citations` changes only requests that contain an inline document or Web Fetch tool, while this harness
-  deliberately uses one plain text request for every model. The provider-specific tests assert the request shapes
-  for Anthropic, Bedrock, and xAI.
+- `citations` changes only requests that contain an inline document, a Web Fetch tool or, on Anthropic, a web search
+  tool, while this harness deliberately uses one plain text request for every model. The provider-specific tests
+  assert the request shapes for Anthropic, Bedrock, and xAI.
 
 - `tool_choice` reaches every adapter through `resolve_tool_choice`, and the adapters that cannot
   express a named subset honor it by *filtering the tool list* instead (Cohere, Mistral). A payload
@@ -166,6 +166,9 @@ WARNED_SETTINGS = frozenset(
 HAND_MAINTAINED = frozenset({'citations', 'tool_choice', 'thinking', 'cache'})
 """Fields a payload diff cannot adjudicate; see the module docstring."""
 
+FRAMEWORK_ENFORCED = frozenset({'request_timeout', 'first_event_timeout'})
+"""Fields Pydantic AI enforces itself for every model, so no model sends them or declares that it ignores them."""
+
 ATTEMPT_COUNTED = frozenset({'max_retries'})
 """Fields that change how many times a request is sent rather than what it carries; see `RETRY_CASES`."""
 
@@ -176,6 +179,7 @@ PROBE_VALUES: dict[str, tuple[object, ...]] = {
     'top_k': (4242,),
     'timeout': (987.654,),
     'request_timeout': (876.543,),
+    'first_event_timeout': (765.432,),
     'parallel_tool_calls': (False, True),
     'seed': (424242,),
     'presence_penalty': (0.345678,),
@@ -839,7 +843,7 @@ async def test_supported_by_lists_match_the_wire(case: Case, allow_model_request
     undocumented = {
         name
         for name in [*PROBE_VALUES, *ATTEMPT_COUNTED]
-        if name != 'request_timeout' and not set(SUPPORTED_BY_LISTS[name]) & set(case.names)
+        if name not in FRAMEWORK_ENFORCED and not set(SUPPORTED_BY_LISTS[name]) & set(case.names)
     }
     unsupported = baseline_result.observed.unsupported
     assert unsupported == undocumented - case.holds_without_sending, (

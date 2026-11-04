@@ -47,6 +47,7 @@ from pydantic_ai import (
     ToolDefinition,
     capture_run_messages,
 )
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability, Capability, Instrumentation, ToolSearch, Toolset
 from pydantic_ai.exceptions import ApprovalRequired as _ApprovalRequired, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
@@ -88,7 +89,12 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_ai_harness import CodeMode, HarnessDeprecationWarning, ToolOutputLimits
 from pydantic_ai_harness._code_tools import sanitize_tool_name
 from pydantic_ai_harness._monty_exec import MontyExecutor
-from pydantic_ai_harness.code_mode import CodeModeResourceLimits, CodeModeReturnSchemaWarning, CodeModeToolset
+from pydantic_ai_harness.code_mode import (
+    FOLD_INTO_CODE_MODE,
+    CodeModeResourceLimits,
+    CodeModeReturnSchemaWarning,
+    CodeModeToolset,
+)
 from pydantic_ai_harness.code_mode._capability import (
     _extract_discovered_names,  # pyright: ignore[reportPrivateUsage]
 )
@@ -1992,6 +1998,30 @@ class TestCodeMode:
         # ...but the code-execution tool stays native and is not folded into run_code.
         assert 'run_workflow' not in description
         assert 'run_workflow' in tools
+
+    async def test_code_execution_tool_folded_when_its_metadata_asks(self) -> None:
+        """`FOLD_INTO_CODE_MODE` folds a code-execution tool anyway, keeping its `code_arg_name`."""
+        td_shell = ToolDefinition(
+            name='shell',
+            description='Run a shell command.',
+            parameters_json_schema={
+                'type': 'object',
+                'properties': {'command': {'type': 'string'}},
+                'required': ['command'],
+            },
+            return_schema={'type': 'string'},
+            metadata={'code_arg_name': 'command', 'code_arg_language': 'shell', FOLD_INTO_CODE_MODE: True},
+        )
+        static = _StaticToolset([td_shell])
+        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(static)
+        assert isinstance(wrapper, CodeModeToolset)
+
+        tools = await wrapper.get_tools(build_run_context(None))
+
+        description = tools['run_code'].tool_def.description
+        assert description is not None
+        assert 'async def shell' in description
+        assert 'shell' not in tools
 
     async def test_unless_native_tool_not_sandboxed(self) -> None:
         """Tools annotated with `unless_native` stay native so `Model.prepare_request` can filter them."""
@@ -5365,3 +5395,42 @@ class TestCodeModeOSAccessInTemporal:
         mount = MountDir(virtual_path='/work', host_path=str(tmp_path))
         code = "from pathlib import Path\nPath('/work/data.txt').read_text()"
         assert await self._run(code, handler, mount) == 'hello-from-host'
+
+
+def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
+    """Runtime-only fields (`os_access`, `repl_store`, a sandbox factory) must not erase the whole schema entry."""
+    definitions = AgentSpec.model_json_schema_with_capabilities([CodeMode])['$defs']
+    assert sorted(definitions['spec_params_CodeMode']['properties']) == snapshot(
+        [
+            'defer_loading',
+            'description',
+            'dynamic_catalog',
+            'eager',
+            'id',
+            'max_retries',
+            'max_tool_calls',
+            'monty_sandbox',
+            'resource_limits',
+            'speculate',
+            'tools',
+        ]
+    )
+
+
+def test_from_spec_forwards_the_spec_fields() -> None:
+    code_mode = CodeMode[None].from_spec(
+        tools=['add'], max_tool_calls=5, resource_limits={'max_duration_secs': 2.0}, speculate='declared', id='code'
+    )
+    assert (
+        code_mode.tools,
+        code_mode.max_tool_calls,
+        code_mode.resource_limits,
+        code_mode.speculate,
+        code_mode.id,
+    ) == (
+        ['add'],
+        5,
+        {'max_duration_secs': 2.0},
+        'declared',
+        'code',
+    )
