@@ -705,7 +705,7 @@ def detach_dbos_logging() -> None:
 def without_admin_server(config: DBOSConfig) -> DBOSConfig:
     """Turn off the admin server that DBOS 2.x starts on port 3001 unless `run_admin_server` is `False`.
 
-    DBOS 3.0 removed the admin server and the key, so on 3.x this returns `config` unchanged.
+    DBOS 3.x has neither the admin server nor the key, so there this returns `config` unchanged.
     Drop it once the `dbos` extra requires 3.0.
     """
     if Version(version('dbos')) >= Version('3'):
