@@ -222,18 +222,8 @@ def keep_capability_loads(
 
 
 def _load_reveals(messages: Sequence[ModelMessage]) -> set[str]:
-    """The tools a `load_capability` exchange in the post-compaction window of *messages* revealed."""
-    window = post_compaction_window(messages)
-    loads = {
-        part.tool_call_id for message in window for part in message.parts if isinstance(part, LoadCapabilityReturnPart)
-    }
-    return {
-        name
-        for message in window
-        for part in message.parts
-        if isinstance(part, ToolAvailabilityDeltaPart) and part.tool_call_id in loads
-        for name in part.tools_added
-    }
+    """The tools a capability load in the post-compaction window of *messages* revealed, a load from code's included."""
+    return {name for load in _loads(messages).values() for name in load.tools or ()}
 
 
 def keep_tool_discoveries(

@@ -16,7 +16,7 @@ from functools import partial
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, Tool, ToolReturn
+from pydantic_ai import Agent, RunContext, Tool, ToolReturn
 from pydantic_ai.capabilities import AbstractCapability, Capability, ToolSearch, Toolset
 from pydantic_ai.messages import (
     CompactionPart,
@@ -40,7 +40,6 @@ from pydantic_ai_harness.compaction import (
     SummarizingCompaction,
     compact_now,
 )
-from pydantic_ai_harness.compaction._capability_loads import keep_tool_discoveries
 from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 
 SUMMARY = 'Athens was sunny.'
@@ -268,18 +267,32 @@ class TestToolDiscoveriesAcrossCompaction:
         )
         assert _reveals(compacted) == []
 
-    async def test_a_tool_a_capability_load_revealed_is_left_to_the_load(self) -> None:
+    @pytest.mark.parametrize(
+        'load',
+        [
+            pytest.param(ToolCallPart('load_capability', {'id': 'weather'}), id='model'),
+            pytest.param(ToolCallPart('open_weather', {}), id='from-code'),
+        ],
+    )
+    async def test_a_tool_a_capability_load_revealed_is_left_to_the_load(self, load: ToolCallPart) -> None:
         def weather() -> Capability[None]:
             return Capability(id='weather', description='Weather.', tools=[Tool(get_forecast)], defer_loading=True)
 
+        def open_weather(ctx: RunContext[None]) -> str:
+            """Load the weather capability from code."""
+            ctx.load_capability('weather')
+            return 'Opened.'
+
         def load_then_answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             if len(messages) == 1:
-                return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'weather'})])
+                return ModelResponse(parts=[load])
             return ModelResponse(parts=[TextPart('Loaded.')])
 
-        first = await Agent(FunctionModel(load_then_answer), deps_type=type(None), capabilities=[weather()]).run(
-            'Weather in Athens?'
-        )
+        first = await Agent(
+            FunctionModel(load_then_answer), deps_type=type(None), capabilities=[weather()], tools=[open_weather]
+        ).run('Weather in Athens?')
+        # Either way the load revealed the capability's tool, a load from code right after its `CapabilityLoadDeltaPart`.
+        assert [part.tools_added for part in _reveals(first.all_messages())] == [['get_forecast']]
         next_prompt = ModelRequest(parts=[UserPromptPart('And in Oslo?')])
         compacted = await compact_now(
             SummarizingCompaction[None](max_messages=1, keep_messages=1, preserve_loaded_capabilities=False),
@@ -298,4 +311,7 @@ class TestToolDiscoveriesAcrossCompaction:
         )
         assert ToolAvailabilityDeltaPart(tools_added=['get_forecast']) in _reveals(compacted)
 
-        assert keep_tool_discoveries(original, compacted, kept_from=len(compacted) - 1) == compacted
+        compacted_again = await compact_now(
+            SummarizingCompaction[None](max_messages=1, keep_messages=1), compacted, model=FunctionModel(_summarize)
+        )
+        assert _reveals(compacted_again) == _reveals(compacted)
