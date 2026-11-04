@@ -1375,11 +1375,20 @@ def _retire_task_incidents(client: GitHubClient, issues: list[Issue], *, dry_run
             if dry_run:
                 print(f'DRY RUN: would retire task incident #{issue.number}: {reason}')
                 continue
-            comment = (
-                f'Retired: {reason} This incident blocked only runs on that PR head, so it no longer blocks anything. '
-                'It did not record a recovery of the failed run.'
-            )
-            client.request('POST', f'issues/{issue.number}/comments', {'body': comment})
+            # A run that commented but could not close left its comment; post it once. Incident reuse adds
+            # no comments, so the first page holds it.
+            listed = client.request('GET', f'issues/{issue.number}/comments?per_page=100')
+            if not isinstance(listed, list):
+                raise ValueError('GitHub returned an invalid comment list')
+            if not any(
+                str((_mapping(entry) or {}).get('body')).startswith('Retired: ')  # pyright: ignore[reportUnknownArgumentType]
+                for entry in listed  # pyright: ignore[reportUnknownVariableType]
+            ):
+                comment = (
+                    f'Retired: {reason} This incident blocked only runs on that PR head, so it no longer blocks '
+                    'anything. It did not record a recovery of the failed run.'
+                )
+                client.request('POST', f'issues/{issue.number}/comments', {'body': comment})
             client.close_issue(issue.number)
         except (OSError, ValueError) as exc:
             print(f'Could not retire task incident #{issue.number}: {exc}')

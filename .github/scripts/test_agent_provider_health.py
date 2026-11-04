@@ -174,6 +174,9 @@ class FakeGitHub(health.GitHubClient):
         if method == 'POST' and path.endswith('/comments'):
             self.comments.append((int(path.split('/')[1]), str((_mapping(payload) or {}).get('body'))))
             return {}
+        if method == 'GET' and path.startswith('issues/') and '/comments' in path:
+            number = int(path.split('/')[1])
+            return [{'body': body} for commented, body in self.comments if commented == number]
         if method == 'GET':
             return [
                 {
@@ -2749,14 +2752,17 @@ def test_scheduled_recovery_retires_task_incidents_whose_pr_closed_or_moved(
         ]
 
 
-def test_a_failed_retirement_write_leaves_scheduled_recovery_running(
+def test_a_failed_retirement_write_is_retried_without_stopping_recovery(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A failed comment or close leaves that incident open without stopping the rest of the hourly run."""
+    """A failed comment or close leaves that incident to the next hourly run, which comments only once."""
 
     class _FailingWrites(FakeGitHub):
+        failures = {('POST', 'issues/1/comments'), ('PATCH', 'issues/2')}
+
         def request(self, method: str, path: str, payload: object | None = None) -> object:
-            if (method, path) in (('POST', 'issues/1/comments'), ('PATCH', 'issues/2')):
+            if (method, path) in self.failures:
+                self.failures.remove((method, path))
                 raise health.urllib.error.HTTPError(path, 502, 'Bad Gateway', Message(), None)
             return super().request(method, path, payload)
 
@@ -2783,6 +2789,12 @@ def test_a_failed_retirement_write_leaves_scheduled_recovery_running(
     assert 'Could not retire task incident #1' in out
     assert 'Could not retire task incident #2' in out
     assert client.closed == [3, 9]
+
+    client.issues = [issue for issue in client.issues if issue.number not in client.closed]
+    assert _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=None)) == 0
+
+    assert client.closed == [3, 9, 1, 2]
+    assert [number for number, _ in client.comments] == [2, 3, 1]
 
 
 def test_open_incidents_read_normalized_issue_creation_time() -> None:
