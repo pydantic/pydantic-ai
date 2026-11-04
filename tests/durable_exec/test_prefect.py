@@ -2265,14 +2265,51 @@ def test_cacheable_value_hashes_non_utf8_bytes_by_value():
 
     class Uploads(BaseModel):
         lock: Any
-        first: bytes
-        second: bytes
+        first: bytes | list[bytes]
+        second: bytes | list[bytes]
 
     # A lock can't be hashed, so this model is expanded field by field and its bytes need projecting too.
     lock = threading.Lock()
     assert digest_of(Uploads(lock=lock, first=data, second=data)) == digest_of(
         Uploads(lock=lock, first=data, second=bytes(bytearray(data)))
     )
+    assert digest_of(Uploads(lock=lock, first=[data], second=[data])) == digest_of(
+        Uploads(lock=lock, first=[data], second=[bytes(bytearray(data))])
+    )
+
+
+@pytest.mark.parametrize('content', ['hello', b'hello'])
+@pytest.mark.parametrize('nested', [False, True])
+def test_cacheable_value_preserves_dataclasses_in_expanded_models(content: str | bytes, nested: bool):
+    """Pin the shared projection's pre-upgrade hash without relying on Prefect's result store."""
+
+    @dataclass
+    class Settings:
+        content: str | bytes
+
+    class Deps(BaseModel):
+        settings: Any
+        lock: Any
+
+    settings = Settings(content)
+    value = {'items': ([settings],)} if nested else settings
+    projected = _cacheable_value(Deps(settings=value, lock=threading.Lock()))
+    # Before binary normalization, expansion retained serializable dataclasses as objects.
+    assert hash_objects(projected) == hash_objects({'settings': value, 'lock': '<non-serializable>'})
+
+
+def test_cacheable_value_preserves_message_timestamps_in_expanded_models():
+    """Messages exposed by model expansion retain the same timestamp-sensitive hash as before."""
+
+    class Deps(BaseModel):
+        message: ModelRequest
+        lock: Any
+
+    def digest_of(timestamp: datetime) -> str | None:
+        message = ModelRequest(parts=[UserPromptPart('hello', timestamp=timestamp)])
+        return hash_objects(_cacheable_value(Deps(message=message, lock=threading.Lock())))
+
+    assert digest_of(datetime(2026, 1, 1, tzinfo=UTC)) != digest_of(datetime(2026, 1, 2, tzinfo=UTC))
 
 
 async def test_cache_policy_hashes_tools_by_value_not_object_identity():

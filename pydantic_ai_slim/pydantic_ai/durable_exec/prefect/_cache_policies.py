@@ -63,8 +63,9 @@ def _cacheable_value(value: Any) -> Any:
             return {name: exclude_non_serializable(getattr(value, name)) for name in type(value).model_fields}
         return _NON_SERIALIZABLE
 
-    # Expanding a model can expose bytes the first projection didn't reach.
-    return _strip_cache_excluded_fields(exclude_non_serializable(projected))
+    # Expanding a model can expose bytes the first projection didn't reach. Keep any dataclasses
+    # exposed alongside them intact, including their type and per-run fields, as the fallback did.
+    return _hash_binary_values(exclude_non_serializable(projected))
 
 
 def _replace_run_context(
@@ -197,7 +198,14 @@ def _strip_cache_excluded_fields(
         return [_strip_cache_excluded_fields(item) for item in obj]
     elif _is_tuple(obj):
         return tuple(_strip_cache_excluded_fields(item) for item in obj)
-    elif isinstance(obj, bytes | bytearray):
+    return _hash_binary_values(obj)
+
+
+def _hash_binary_values(obj: Any) -> Any:
+    """Normalize binary values in plain containers without expanding models or dataclasses."""
+    if _is_container(obj):
+        return _map_container(obj, _hash_binary_values)
+    if isinstance(obj, bytes | bytearray):
         try:
             obj.decode()
         except UnicodeDecodeError:
