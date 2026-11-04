@@ -937,12 +937,8 @@ def dump(*, blob: str | int | list[Any]) -> Any:
 """)
 
 
-def test_ref_to_ref_def_keeps_alias_name():
-    """A def that is itself a `$ref` is left unresolved.
-
-    Pydantic flattens an alias of an alias into a full copy, so this shape only reaches us
-    from hand-written schemas; following the indirection is out of scope here.
-    """
+def test_ref_to_ref_def_follows_the_alias():
+    """A def that is itself a `$ref` resolves to what it points at, as no definition is named after the alias."""
     sig = FunctionSignature.from_schema(
         name='t',
         parameters_schema={
@@ -953,7 +949,7 @@ def test_ref_to_ref_def_keeps_alias_name():
         },
     )
     assert sig.render('...', name='t') == snapshot("""\
-def t(*, x: Indirect) -> Any:
+def t(*, x: int) -> Any:
     ...\
 """)
 
@@ -1417,8 +1413,8 @@ def tool(*, item: Container) -> Any:
     assert str(container.fields['inner'].type) == 'Inner'
 
 
-def test_schema_inline_object_reuses_existing_typename():
-    """Inline object property reuses a $defs type when path-based names collide."""
+def test_schema_inline_object_with_a_defs_name_is_its_own_type():
+    """An inline object whose generated name matches a $defs type keeps its own shape."""
     sig = FunctionSignature.from_schema(
         name='tool',
         parameters_schema={
@@ -1442,8 +1438,11 @@ def test_schema_inline_object_reuses_existing_typename():
             },
         },
     )
-    # The $defs ToolData was registered first; the inline 'data' property reuses it
-    assert str(sig.params['data'].type) == 'ToolData'
+    data_type = sig.params['data'].type
+    assert isinstance(data_type, TypeSignature)
+    assert data_type.name == 'ToolData'
+    assert set(data_type.fields) == {'x'}
+    assert {frozenset(t.fields) for t in sig.referenced_types} == {frozenset({'x'}), frozenset({'y'})}
 
 
 def test_schema_additional_properties_false():

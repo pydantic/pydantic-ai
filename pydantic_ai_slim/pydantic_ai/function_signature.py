@@ -20,15 +20,33 @@ __all__ = (
     'UnionTypeExpr',
 )
 
+import keyword
 import re
+import unicodedata
+from collections.abc import Callable, Iterable, Iterator
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Literal, TypeAlias, cast
+from typing import Any, Literal, TypeAlias, assert_never, cast
+from urllib.parse import unquote
 
-# Set during rendering to map original type names to prefixed names for
-# dedup conflict resolution (e.g. {'User': 'tool_a_User'}).
-# Populated by FunctionSignature.render(), consulted by TypeSignature.display_name.
-_type_name_overrides: ContextVar[dict[str, str]] = ContextVar('_type_name_overrides', default={})
+# Set during rendering, consulted by TypeSignature.display_name. `None` when no type name had to change.
+_type_name_overrides: ContextVar[dict[str, str] | None] = ContextVar('_type_name_overrides', default=None)
+
+
+def _overrides_for(conflicting_type_names: frozenset[str], owner_name: str | None) -> dict[str, str] | None:
+    if not conflicting_type_names:
+        return None
+    return {n: f'{owner_name}_{n}' for n in conflicting_type_names} if owner_name else {}
+
+
+def _reads_back_exactly(name: str) -> bool:
+    """Whether Python source can use `name` as exactly this name: not a keyword, and not changed by normalization."""
+    return (
+        name.isidentifier()
+        and not keyword.iskeyword(name)
+        and name != '__debug__'
+        and unicodedata.normalize('NFKC', name) == name
+    )
 
 
 # =============================================================================
@@ -102,6 +120,13 @@ _DOC_INDENT = '    '
 _DESCRIPTION_ESCAPES = str.maketrans({'\\': '\\\\', '\0': '\\x00', '"': '\\"'})
 
 
+def _render_comment(text: str | None, *, indent: str) -> list[str]:
+    """Render a description as comment lines, for the places a docstring can't go."""
+    if not text:
+        return []
+    return [f'{indent}# {line}'.rstrip() for line in text.strip().replace('\0', '\\x00').splitlines()]
+
+
 def _render_description(text: str, indent: str = '') -> list[str]:
     """Render a description as a list of indented docstring lines."""
     text = text.strip().translate(_DESCRIPTION_ESCAPES)
@@ -127,10 +152,7 @@ class TypeFieldSignature:
 
     def __str__(self) -> str:
         """Render this field as a line in a TypedDict class body."""
-        type_str = str(self.type)
-        if not self.required:
-            type_str = f'NotRequired[{type_str}]'
-        lines: list[str] = [f'    {self.name}: {type_str}']
+        lines: list[str] = [f'    {self.name}: {_annotation(self)}']
         if self.description:
             lines.extend(_render_description(self.description, indent='    '))
         return '\n'.join(lines)
@@ -147,10 +169,17 @@ class TypeSignature:
     fields: dict[str, TypeFieldSignature] = field(default_factory=dict[str, TypeFieldSignature])
     kind: Literal['type'] = 'type'
 
+    def __post_init__(self) -> None:
+        # Set by `FunctionSignature.get_conflicting_type_names`. Not a field, as it isn't part of what the type is.
+        self._resolved_name: str | None = None
+
     @property
     def display_name(self) -> str:
-        """The type name, with tool-name prefix applied if rendering context is set."""
-        return _type_name_overrides.get().get(self.name, self.name)
+        """The name this type renders under: its own unless the rendering context says some names had to change."""
+        overrides = _type_name_overrides.get()
+        if overrides is None:
+            return self.name
+        return self._resolved_name or overrides.get(self.name, self.name)
 
     def __str__(self) -> str:
         """Return the type name (for use in type expressions like `def foo(x: User)`)."""
@@ -168,17 +197,22 @@ class TypeSignature:
                 (from `get_conflicting_type_names`). Only effective when `owner_name`
                 is also provided.
         """
-        if owner_name and conflicting_type_names:
-            overrides = {n: f'{owner_name}_{n}' for n in conflicting_type_names}
-            token = _type_name_overrides.set(overrides)
-            try:
-                return self._render_definition()
-            finally:
-                _type_name_overrides.reset(token)
-        return self._render_definition()
+        token = _type_name_overrides.set(_overrides_for(conflicting_type_names, owner_name))
+        try:
+            return self._render_definition()
+        finally:
+            _type_name_overrides.reset(token)
 
     def _render_definition(self) -> str:
-        """Render the full TypedDict class definition (internal, assumes overrides are set)."""
+        """Render the full TypedDict definition (internal, assumes render names are set)."""
+        # Beyond names Python can't read back, a double underscore prefix is mangled inside a class, and a field
+        # named like something its class's annotations use makes a type checker read those as the field.
+        used = {name for f in self.fields.values() for name in _names_in(f)}
+        if any(
+            not _reads_back_exactly(name) or (name.startswith('__') and not name.endswith('__')) or name in used
+            for name in self.fields
+        ):
+            return self._render_functional_definition()
         lines = [f'class {self.display_name}(TypedDict):']
         if self.description:
             lines.extend(_render_description(self.description, indent='    '))
@@ -190,17 +224,24 @@ class TypeSignature:
                 lines.append(str(f))
         return '\n'.join(lines)
 
+    def _render_functional_definition(self) -> str:
+        """Render the `Name = TypedDict('Name', {...})` form, with descriptions as comments."""
+        name = self.display_name
+        lines = [*_render_comment(self.description, indent=''), f'{name} = TypedDict({name!r}, {{']
+        for f in self.fields.values():
+            lines.extend(_render_comment(f.description, indent=_DOC_INDENT))
+            lines.append(f'{_DOC_INDENT}{f.name!r}: {_annotation(f)},')
+        lines.append('})')
+        return '\n'.join(lines)
+
     def structurally_equal(self, other: TypeSignature) -> bool:
-        """Compare two TypeSignatures structurally, ignoring descriptions."""
-        if set(self.fields.keys()) != set(other.fields.keys()):
-            return False
-        for name, f in self.fields.items():
-            other_f = other.fields[name]
-            if f.required != other_f.required:
-                return False
-            if str(f.type) != str(other_f.type):
-                return False
-        return True
+        """Compare two TypeSignatures structurally, all the way down.
+
+        The two types' own names and every description are ignored. The names of types nested inside them
+        count, as a field typed `User` is not the same as one typed `Person`. Recursive types are safe.
+        """
+        classes = _structure_classes(_with_nested_types([self, other]))
+        return _fields_key(self, classes) == _fields_key(other, classes)
 
 
 @dataclass(kw_only=True)
@@ -246,6 +287,53 @@ class FunctionSignature:
 
     kind: Literal['function'] = 'function'
 
+    def __post_init__(self) -> None:
+        # The type describing `**kwargs`, when a parameter's name can't be written in a parameter list. It follows from
+        # `params` at construction, so `dataclasses.replace` rebuilds it, and it isn't a field. The parameter stays
+        # `Any` rather than `Unpack[...]`: a type checker tests a `**{...}` literal's value type against every field,
+        # so `Unpack` rejects a correct call whenever the fields have different types.
+        self._kwargs_type: TypeSignature | None = None
+        if not all(_reads_back_exactly(param.name) for param in self.params.values()):
+            self._kwargs_type = TypeSignature(
+                name=f'{_to_pascal_case(self.name)}Args',
+                fields={
+                    param.name: TypeFieldSignature(name=param.name, type=param.type, required=param.default is None)
+                    for param in self.params.values()
+                },
+            )
+
+    def _listed_types(self) -> list[TypeSignature]:
+        return self.referenced_types if self._kwargs_type is None else [*self.referenced_types, self._kwargs_type]
+
+    def _reachable_types(self) -> list[TypeSignature]:
+        """Every type this signature uses, whether or not it is listed, listed ones first."""
+        exprs = [*(param.type for param in self.params.values()), self.return_type]
+        return _with_nested_types([*self._listed_types(), *(t for expr in exprs for t in _types_in(expr))])
+
+    @staticmethod
+    def _unify_identical_types(signatures: list[FunctionSignature]) -> None:
+        """Make types with one name and one structure a single object everywhere, keeping the first seen.
+
+        Each signature ends up listing all the types it uses, so it remains self-contained.
+        """
+        reachable = {id(signature): signature._reachable_types() for signature in signatures}
+        types = _with_nested_types(t for signature_types in reachable.values() for t in signature_types)
+        classes = _structure_classes(types)
+        first_of_class: dict[object, TypeSignature] = {}
+        canonical = {id(t): first_of_class.setdefault(classes[id(t)], t) for t in types}
+        for signature in signatures:
+            kwargs_type = signature._kwargs_type
+            listed = (canonical[id(t)] for t in reachable[id(signature)] if t is not kwargs_type)
+            signature.referenced_types = list({id(t): t for t in listed}.values())
+            for param in signature.params.values():
+                param.type = _replace_types(param.type, canonical)
+            signature.return_type = _replace_types(signature.return_type, canonical)
+            if kwargs_type is not None:
+                signature._kwargs_type = canonical[id(kwargs_type)]
+        for type_sig in types:
+            for f in type_sig.fields.values():
+                f.type = _replace_types(f.type, canonical)
+
     def render(
         self,
         body: str,
@@ -257,24 +345,37 @@ class FunctionSignature:
     ) -> str:
         """Render the signature with a specific body.
 
-        Sets `_type_name_overrides` so that dedup-prefixed types resolve
-        correctly during rendering.
-
         Args:
             body: The function body (e.g. `'...'` or `'return await tool()'`).
-            name: The function name (also used for dedup prefix resolution). Falls back to `self.name`.
+            name: The function name. Falls back to `self.name`.
             description: Optional docstring to include. Falls back to `self.description`.
             is_async: Override async rendering. If `None`, uses `self.is_async`.
-            conflicting_type_names: Set of type names that need tool-name prefixes (from `get_conflicting_type_names`).
+            conflicting_type_names: Set of type names that need tool-name prefixes, for types
+                `get_conflicting_type_names` has not named.
         """
         render_name = name or self.name
         description = description if description is not None else self.description
-        overrides = {n: f'{render_name}_{n}' for n in conflicting_type_names}
-        token = _type_name_overrides.set(overrides)
+        token = _type_name_overrides.set(_overrides_for(conflicting_type_names, render_name))
         try:
             return self._render(body, name=render_name, description=description, is_async=is_async)
         finally:
             _type_name_overrides.reset(token)
+
+    def _render_args_lines(self) -> list[str]:
+        lines: list[str] = []
+        for param in self.params.values():
+            # Without a parameter list to show them in, defaults go here.
+            default = (
+                f'Defaults to `{param.default}`.' if self._kwargs_type is not None and param.default is not None else ''
+            )
+            description_lines = f'{(param.description or "").strip()} {default}'.strip().splitlines()
+            if not description_lines:
+                continue
+            first_line, *continuation = description_lines
+            lines.append(f'{_DOC_INDENT}{param.name}: {first_line}')
+            # Continuation lines nest one level past the parameter name
+            lines.extend(f'{_DOC_INDENT * 2}{line}' for line in continuation)
+        return lines
 
     def _render(
         self,
@@ -289,23 +390,22 @@ class FunctionSignature:
         params_str = ', '.join(str(p) for p in self.params.values())
 
         return_str = str(self.return_type)
-        if params_str:
+        if self._kwargs_type is not None:
+            parts = [f'{prefix} {name}(**kwargs: Any) -> {return_str}:']
+        elif params_str:
             # Force keyword-only params so LLMs always use named arguments
             parts = [f'{prefix} {name}(*, {params_str}) -> {return_str}:']
         else:
             parts = [f'{prefix} {name}() -> {return_str}:']
 
         description_sections = [description] if description else []
+        if self._kwargs_type is not None:
+            description_sections.append(
+                f'Some argument names are not valid Python keywords, so pass arguments as `{name}(**{{...}})`. '
+                f'`{self._kwargs_type}` describes them.'
+            )
 
-        args_lines: list[str] = []
-        for param in self.params.values():
-            description_lines = (param.description or '').strip().splitlines()
-            if not description_lines:
-                continue
-            first_line, *continuation = description_lines
-            args_lines.append(f'{_DOC_INDENT}{param.name}: {first_line}')
-            # Continuation lines nest one level past the parameter name
-            args_lines.extend(f'{_DOC_INDENT * 2}{line}' for line in continuation)
+        args_lines = self._render_args_lines()
         if args_lines:
             description_sections.append('\n'.join(['Args:', *args_lines]))
         description = '\n\n'.join(description_sections)
@@ -330,78 +430,57 @@ class FunctionSignature:
         `name` is stored on the resulting signature and also used for generating
         fallback type names (e.g. `GetUserAddress`) when the schema has no `title`.
 
-        Parameter and return schemas are processed independently — each resolves
-        `$ref`s against its own `$defs`. Name collisions between parameter and return
-        types (e.g. both define a `User` `$def` with different structures) are handled
-        by `get_conflicting_type_names` at a later stage.
+        Parameter and return schemas are separate documents, and each resolves `$ref`s
+        against itself. Each schema object becomes its own `TypeSignature`, whatever its
+        name, and identical ones are then unified. Types left with one name and different
+        structures (e.g. a parameter and a return `User`) are told apart by
+        `get_conflicting_type_names` at a later stage.
         """
-        # Process parameter schema with its own $defs
-        param_defs = parameters_schema.get('$defs', {})
-        param_referenced: dict[str, TypeSignature] = {}
-        _process_schema_defs(param_defs, param_referenced, name)
-        params = _build_params_from_schema(parameters_schema, param_defs, param_referenced, name)
+        param_referenced: dict[int, TypeSignature] = {}
+        _process_schema_defs(parameters_schema, param_referenced, name)
+        params = _build_params_from_schema(parameters_schema, param_referenced, name)
 
-        # Process return schema independently (its own $defs)
         resolved_return_type: TypeExpr = _ANY
-        return_referenced: dict[str, TypeSignature] = {}
+        return_referenced: dict[int, TypeSignature] = {}
         if return_schema is not None:
-            return_defs = return_schema.get('$defs', {})
-            _process_schema_defs(return_defs, return_referenced, name)
-            resolved_return_type = _schema_to_type_expr(
-                return_schema, return_defs, return_referenced, name, path='Return'
-            )
+            _process_schema_defs(return_schema, return_referenced, name)
+            resolved_return_type = _schema_to_type_expr(return_schema, return_schema, return_referenced, name, 'Return')
 
-        # Merge referenced types, deduplicating structurally identical types within this signature.
-        # Cross-signature collisions are handled later by get_conflicting_type_names.
-        all_referenced = list(param_referenced.values())
-        for ret_type in return_referenced.values():
-            existing = param_referenced.get(ret_type.name)
-            if existing is not None and existing.structurally_equal(ret_type):
-                continue  # already present from param schema
-            all_referenced.append(ret_type)
-
-        return cls(
+        signature = cls(
             name=name,
             params=params,
             return_type=resolved_return_type,
-            referenced_types=all_referenced,
+            referenced_types=[*param_referenced.values(), *return_referenced.values()],
         )
+        FunctionSignature._unify_identical_types([signature])
+        return signature
 
     @staticmethod
     def get_conflicting_type_names(signatures: list[FunctionSignature]) -> frozenset[str]:
-        """Identify TypedDict name conflicts across multiple tool signatures.
+        """Resolve one name for every type across multiple tool signatures.
 
-        Each signature keeps all its referenced types (so it remains self-contained),
-        but identical types (same name and structure) are unified to the same object
-        instance.
+        Types with the same name and the same structure all the way down are unified to one object,
+        and each signature keeps all the types it uses, so it remains self-contained.
 
-        Returns the set of type names that have conflicts (same name, different
-        structure) and need tool-name prefixes at render time. Pass this set to
-        `FunctionSignature.render(conflicting_type_names=...)`.
+        A type keeps its own name when that is the only type with that name and Python can use it there.
+        Otherwise it takes the name of the first tool using it as a prefix (e.g. `get_user_Address`).
 
-        Use `collect_unique_referenced_types()` when rendering to emit each
-        definition once.
+        The names are stored on the types, so render straight after this call: resolving a signature
+        again, as part of another set of signatures, gives its types the names of that set.
+
+        Returns the names that had to change.
         """
-        seen: dict[str, TypeSignature] = {}
-        prefixed: set[str] = set()
-
-        for sig in signatures:
-            deduped: list[TypeSignature] = []
-            for type_sig in sig.referenced_types:
-                name = type_sig.name
-                if name not in seen:
-                    seen[name] = type_sig
-                    deduped.append(type_sig)
-                elif seen[name].structurally_equal(type_sig):
-                    canonical = seen[name]
-                    _replace_type_refs(sig, type_sig, canonical)
-                    deduped.append(canonical)
-                else:
-                    prefixed.add(name)
-                    deduped.append(type_sig)
-            sig.referenced_types = deduped
-
-        return frozenset(prefixed)
+        FunctionSignature._unify_identical_types(signatures)
+        owners: dict[int, str] = {}
+        for signature in signatures:
+            for type_sig in signature._listed_types():
+                owners.setdefault(id(type_sig), signature.name)
+        types = FunctionSignature.collect_unique_referenced_types(signatures)
+        names = _assign_type_names(types, signatures, owners)
+        for type_sig in types:
+            # The only place that sets this attribute: resolving names is this method's job.
+            type_sig._resolved_name = names[id(type_sig)]  # pyright: ignore[reportPrivateUsage]
+        return frozenset(t.name for t in types if names[id(t)] != t.name)
 
     @staticmethod
     def collect_unique_referenced_types(signatures: list[FunctionSignature]) -> list[TypeSignature]:
@@ -409,7 +488,7 @@ class FunctionSignature:
         seen_ids: set[int] = set()
         result: list[TypeSignature] = []
         for sig in signatures:
-            for type_sig in sig.referenced_types:
+            for type_sig in sig._listed_types():
                 if id(type_sig) not in seen_ids:
                     seen_ids.add(id(type_sig))
                     result.append(type_sig)
@@ -422,16 +501,16 @@ class FunctionSignature:
     ) -> list[str]:
         """Render unique TypedDict definitions for a set of function signatures.
 
-        For types whose names conflict across signatures (as identified by
-        `get_conflicting_type_names`), each definition is rendered with a
-        tool-name prefix (e.g. `get_user_Address`).
+        Each definition takes the name `get_conflicting_type_names` resolved for it. The signatures
+        can be a subset of the ones it was given, which keeps the names of the whole set.
 
         Args:
             signatures: The function signatures (after `get_conflicting_type_names`).
-            conflicting_type_names: The set returned by `get_conflicting_type_names`.
+            conflicting_type_names: Set of type names that need tool-name prefixes, for types
+                `get_conflicting_type_names` has not named.
 
         Returns:
-            A list of rendered TypedDict class definitions as strings.
+            A list of rendered TypedDict definitions as strings.
         """
         unique_types = FunctionSignature.collect_unique_referenced_types(signatures)
         if not unique_types:
@@ -439,7 +518,7 @@ class FunctionSignature:
 
         owner_for: dict[int, str] = {}
         for sig in signatures:
-            for tsig in sig.referenced_types:
+            for tsig in sig._listed_types():
                 if tsig.name in conflicting_type_names and id(tsig) not in owner_for:
                     owner_for[id(tsig)] = sig.name
 
@@ -460,6 +539,8 @@ _NONE = SimpleTypeExpr('None')
 # =============================================================================
 
 
+_JSON_POINTER_INDEX_RE = re.compile(r'0|[1-9][0-9]{0,8}')
+
 _JSON_SIMPLE_TYPE_TO_PYTHON: dict[str, SimpleTypeName] = {
     'string': 'str',
     'integer': 'int',
@@ -475,11 +556,12 @@ _JSON_TYPE_TO_PYTHON: dict[str, str] = {
 }
 
 
-# Names of the non-object defs currently being resolved inline. A non-object def has no
-# TypedDict to point at, so a self-referential one (`type Json = str | list[Json]`) would
-# recurse forever; `_build_and_register_type` solves the same problem for object defs by
-# registering a placeholder before it walks the fields.
-_resolving_refs: ContextVar[frozenset[str]] = ContextVar('_resolving_refs', default=frozenset())
+# The non-object schemas currently being resolved inline, by identity. A non-object schema has
+# no TypedDict to point at, so a self-referential one (`type Json = str | list[Json]`) would
+# recurse forever; `_build_and_register_type` solves the same problem for object schemas by
+# registering a placeholder before it walks the fields, and clears this set, as recursion
+# through a placeholder ends.
+_resolving_refs: ContextVar[frozenset[int]] = ContextVar('_resolving_refs', default=frozenset())
 
 
 def _json_type_to_python(json_type: str) -> SimpleTypeExpr:
@@ -530,25 +612,102 @@ def _normalize_schema_node(node: dict[str, Any] | bool) -> dict[str, Any]:
 
 
 def _process_schema_defs(
-    defs: dict[str, dict[str, Any]],
-    referenced_types: dict[str, TypeSignature],
+    root: dict[str, Any],
+    referenced_types: dict[int, TypeSignature],
     tool_name: str,
 ) -> None:
-    """Process $defs from a JSON schema, adding TypeSignatures for object-type definitions."""
-    for def_name, def_schema_raw in defs.items():
+    """Add TypeSignatures for the object-type `$defs` of a schema document. A `$ref` builds any other target."""
+    for def_name, def_schema_raw in root.get('$defs', {}).items():
         def_schema = _normalize_schema_node(def_schema_raw)
-        if def_schema.get('type') == 'object' and 'properties' in def_schema:
-            if def_name not in referenced_types:
-                _build_and_register_type(def_name, def_schema, defs, referenced_types, tool_name, def_name)
+        if _is_typed_dict_schema(def_schema) and id(def_schema) not in referenced_types:
+            _build_and_register_type(def_name, def_schema, root, referenced_types, tool_name, def_name)
+
+
+def _is_typed_dict_schema(schema: dict[str, Any]) -> bool:
+    return schema.get('type') == 'object' and 'properties' in schema
+
+
+def _json_pointer_child(node: Any, token: str) -> Any:
+    """The value a JSON pointer token names inside `node`, or `None` if there is none."""
+    if isinstance(node, dict):
+        return cast(dict[str, Any], node).get(token)
+    if isinstance(node, list) and _JSON_POINTER_INDEX_RE.fullmatch(token) and int(token) < len(cast(list[Any], node)):
+        return cast(list[Any], node)[int(token)]
+    return None
+
+
+def _resolve_json_pointer(root: dict[str, Any], ref: Any) -> tuple[dict[str, Any], str | None] | None:
+    """Find the schema a `$ref` points at within its document.
+
+    Returns the schema and, if it is a definition, its name. Returns `None` for anything this document
+    can't answer: a remote reference, an anchor, or a pointer that does not land on a schema.
+    """
+    if not isinstance(ref, str) or not ref.startswith('#'):
+        return None
+    pointer = unquote(ref[1:])
+    if pointer and not pointer.startswith('/'):
+        return None
+    tokens = [t.replace('~1', '/').replace('~0', '~') for t in pointer.split('/')[1:]]
+    node: Any = root
+    for token in tokens:
+        node = _json_pointer_child(node, token)
+    if isinstance(node, bool):
+        return {}, None
+    if not isinstance(node, dict):
+        return None
+    def_name = tokens[-1] if len(tokens) >= 2 and tokens[-2] in ('$defs', 'definitions') else None
+    return cast(dict[str, Any], node), def_name
+
+
+def _ref_to_type_expr(
+    ref: Any,
+    root: dict[str, Any],
+    referenced_types: dict[int, TypeSignature],
+    tool_name: str,
+    path: str,
+) -> TypeExpr:
+    """Convert a `$ref` to the same TypeExpr its target gets, or `Any` if there is no target in this document."""
+    resolved = _resolve_json_pointer(root, ref)
+    if resolved is None:
+        return _ANY
+    target, def_name = resolved
+    if id(target) in referenced_types:
+        return referenced_types[id(target)]
+    if _is_typed_dict_schema(target):
+        name = def_name or _object_type_name(target, tool_name, '' if target is root else path)
+        return _build_and_register_type(name, target, root, referenced_types, tool_name, path)
+    # Only object defs become TypedDicts. Pydantic emits enums, constrained aliases, list aliases
+    # and unions as non-object defs, so resolve them inline: `Literal[...]`, `int`, `list[str]`.
+    resolving = _resolving_refs.get()
+    if id(target) in resolving:
+        # A self-referential non-object def has no finite inline expression and no TypedDict
+        # to name, so `Any` keeps the rendered signature self-contained.
+        return _ANY
+    token = _resolving_refs.set(resolving | {id(target)})
+    try:
+        return _schema_to_type_expr(target, root, referenced_types, tool_name, path)
+    finally:
+        _resolving_refs.reset(token)
+
+
+def _object_type_name(schema: dict[str, Any], tool_name: str, path: str) -> str:
+    """The `title` of an object schema when it can name a type (preserving real class names), or a path-based name."""
+    title = schema.get('title')
+    return title if isinstance(title, str) and title.isidentifier() else _path_to_typename(tool_name, path)
 
 
 def _build_params_from_schema(
-    schema: dict[str, Any],
-    defs: dict[str, dict[str, Any]],
-    referenced_types: dict[str, TypeSignature],
+    root: dict[str, Any],
+    referenced_types: dict[int, TypeSignature],
     tool_name: str,
 ) -> dict[str, FunctionParam]:
     """Convert a JSON schema to a dict of FunctionParam objects."""
+    schema = root
+    followed = {id(root)}
+    # A recursive model's parameters schema is a root `$ref` to its own definition.
+    while (resolved := _resolve_json_pointer(root, schema.get('$ref'))) and id(resolved[0]) not in followed:
+        schema = resolved[0]
+        followed.add(id(schema))
     properties = schema.get('properties', {})
     required = set(schema.get('required', []))
 
@@ -557,7 +716,7 @@ def _build_params_from_schema(
 
     for prop_name, prop_schema_raw in properties.items():
         prop_schema = _normalize_schema_node(prop_schema_raw)
-        type_expr = _schema_to_type_expr(prop_schema, defs, referenced_types, tool_name, prop_name)
+        type_expr = _schema_to_type_expr(prop_schema, root, referenced_types, tool_name, prop_name)
         description = prop_schema.get('description', '') or None
 
         if 'default' in prop_schema:
@@ -598,8 +757,8 @@ def _schema_allows_null(schema: dict[str, Any]) -> bool:
 
 def _schema_to_type_expr(
     schema: dict[str, Any] | bool,
-    defs: dict[str, dict[str, Any]],
-    referenced_types: dict[str, TypeSignature],
+    root: dict[str, Any],
+    referenced_types: dict[int, TypeSignature],
     tool_name: str,
     path: str,
 ) -> TypeExpr:
@@ -608,43 +767,18 @@ def _schema_to_type_expr(
 
     # Handle $ref
     if '$ref' in schema:
-        ref = schema['$ref']
-        ref_name = ref.split('/')[-1]
-        # Ensure referenced def generates TypeSignature if needed
-        if ref_name in defs and ref_name not in referenced_types:
-            ref_schema = _normalize_schema_node(defs[ref_name])
-            if ref_schema.get('type') == 'object' and 'properties' in ref_schema:
-                _build_and_register_type(ref_name, ref_schema, defs, referenced_types, tool_name, path)
-            elif '$ref' not in ref_schema:
-                # Only object defs become TypedDicts. Pydantic emits enums, constrained
-                # aliases, list aliases and unions as non-object defs, which would render as
-                # a bare class name that is never defined, so resolve them inline instead:
-                # `Literal[...]`, `int`, `list[str]`, `int | None`.
-                resolving = _resolving_refs.get()
-                if ref_name in resolving:
-                    # A self-referential non-object def has no finite inline expression and no
-                    # TypedDict to name, so `Any` keeps the rendered signature self-contained.
-                    return _ANY
-                token = _resolving_refs.set(resolving | {ref_name})
-                try:
-                    return _schema_to_type_expr(ref_schema, defs, referenced_types, tool_name, path)
-                finally:
-                    _resolving_refs.reset(token)
-        # Return the TypeSignature object if available, otherwise the name
-        if ref_name in referenced_types:
-            return referenced_types[ref_name]
-        return TypeSignature(name=ref_name)
+        return _ref_to_type_expr(schema['$ref'], root, referenced_types, tool_name, path)
 
     # Handle anyOf/oneOf (union types)
     if 'anyOf' in schema:
-        return _handle_union_schema(schema['anyOf'], defs, referenced_types, tool_name, path)
+        return _handle_union_schema(schema['anyOf'], root, referenced_types, tool_name, path)
     if 'oneOf' in schema:
-        return _handle_union_schema(schema['oneOf'], defs, referenced_types, tool_name, path)
+        return _handle_union_schema(schema['oneOf'], root, referenced_types, tool_name, path)
 
     # Handle allOf
     if 'allOf' in schema:
         if len(schema['allOf']) == 1:
-            return _schema_to_type_expr(schema['allOf'][0], defs, referenced_types, tool_name, path)
+            return _schema_to_type_expr(schema['allOf'][0], root, referenced_types, tool_name, path)
         return _ANY
 
     # Handle const
@@ -653,18 +787,19 @@ def _schema_to_type_expr(
 
     # Handle enum
     if 'enum' in schema:
-        return LiteralTypeExpr(schema['enum'])
+        # `Literal[]` is not valid Python.
+        return LiteralTypeExpr(schema['enum']) if schema['enum'] else _ANY
 
     # Handle by type
     schema_type = schema.get('type')
-    return _type_to_expr(schema_type, schema, defs, referenced_types, tool_name, path)
+    return _type_to_expr(schema_type, schema, root, referenced_types, tool_name, path)
 
 
 def _type_to_expr(
     schema_type: str | list[str] | None,
     schema: dict[str, Any],
-    defs: dict[str, dict[str, Any]],
-    referenced_types: dict[str, TypeSignature],
+    root: dict[str, Any],
+    referenced_types: dict[int, TypeSignature],
     tool_name: str,
     path: str,
 ) -> TypeExpr:
@@ -681,12 +816,12 @@ def _type_to_expr(
             if isinstance(items, list):
                 items_list = cast(list[dict[str, Any]], items)
                 item_exprs = [
-                    _schema_to_type_expr(item, defs, referenced_types, tool_name, f'{path}.{i}')
+                    _schema_to_type_expr(item, root, referenced_types, tool_name, f'{path}.{i}')
                     for i, item in enumerate(items_list)
                 ]
                 return GenericTypeExpr(base='tuple', args=item_exprs)
             item_expr = _schema_to_type_expr(
-                cast(dict[str, Any], items), defs, referenced_types, tool_name, f'{path}Item'
+                cast(dict[str, Any], items), root, referenced_types, tool_name, f'{path}Item'
             )
             return GenericTypeExpr(base='list', args=[item_expr])
         return GenericTypeExpr(base='list', args=[_ANY])
@@ -694,26 +829,23 @@ def _type_to_expr(
     # Object type
     if schema_type == 'object':
         if 'properties' in schema:
-            # Use `title` from the schema if available and is a valid Python identifier
-            # (preserves real class names like `User`), otherwise fall back to a path-based name
-            title = schema.get('title')
-            td_name = title if title and title.isidentifier() else _path_to_typename(tool_name, path)
-            if td_name not in referenced_types:
-                _build_and_register_type(td_name, schema, defs, referenced_types, tool_name, path)
-            return referenced_types[td_name]
+            if id(schema) in referenced_types:
+                return referenced_types[id(schema)]
+            td_name = _object_type_name(schema, tool_name, path)
+            return _build_and_register_type(td_name, schema, root, referenced_types, tool_name, path)
         if 'additionalProperties' in schema:
             additional = schema['additionalProperties']
             if additional is True:
                 return GenericTypeExpr(base='dict', args=[SimpleTypeExpr('str'), _ANY])
             if isinstance(additional, dict):
                 additional_schema = cast(dict[str, Any], additional)
-                value_expr = _schema_to_type_expr(additional_schema, defs, referenced_types, tool_name, f'{path}Value')
+                value_expr = _schema_to_type_expr(additional_schema, root, referenced_types, tool_name, f'{path}Value')
                 return GenericTypeExpr(base='dict', args=[SimpleTypeExpr('str'), value_expr])
         return GenericTypeExpr(base='dict', args=[SimpleTypeExpr('str'), _ANY])
 
     # Type list (e.g., ['string', 'null'])
     if isinstance(schema_type, list):
-        return _type_list_to_expr(schema_type, schema, defs, referenced_types, tool_name, path)
+        return _type_list_to_expr(schema_type, schema, root, referenced_types, tool_name, path)
 
     return _ANY
 
@@ -721,15 +853,15 @@ def _type_to_expr(
 def _type_list_to_expr(
     schema_type: list[str],
     schema: dict[str, Any],
-    defs: dict[str, dict[str, Any]],
-    referenced_types: dict[str, TypeSignature],
+    root: dict[str, Any],
+    referenced_types: dict[int, TypeSignature],
     tool_name: str,
     path: str,
 ) -> TypeExpr:
     """Handle type lists like ['string', 'null']."""
     # Check if this is object with properties + null
     if 'object' in schema_type and 'properties' in schema:
-        base_expr = _type_to_expr('object', schema, defs, referenced_types, tool_name, path)
+        base_expr = _type_to_expr('object', schema, root, referenced_types, tool_name, path)
         if 'null' in schema_type:
             return UnionTypeExpr(members=[base_expr, _NONE])
         return base_expr
@@ -746,8 +878,8 @@ def _type_list_to_expr(
 
 def _handle_union_schema(
     schemas: list[dict[str, Any] | bool],
-    defs: dict[str, dict[str, Any]],
-    referenced_types: dict[str, TypeSignature],
+    root: dict[str, Any],
+    referenced_types: dict[int, TypeSignature],
     tool_name: str,
     path: str,
 ) -> TypeExpr:
@@ -760,20 +892,15 @@ def _handle_union_schema(
         if s.get('type') == 'null':
             has_null = True
         else:
-            type_exprs.append(_schema_to_type_expr(s, defs, referenced_types, tool_name, path))
+            type_exprs.append(_schema_to_type_expr(s, root, referenced_types, tool_name, path))
 
-    # Deduplicate while preserving order (compare rendered strings)
-    seen: set[str] = set()
-    unique_exprs: list[TypeExpr] = []
-    for expr in type_exprs:
-        rendered = str(expr)
-        if rendered not in seen:
-            seen.add(rendered)
-            unique_exprs.append(expr)
+    unique_exprs = _unique_exprs(type_exprs)
 
     if has_null:
         unique_exprs.append(_NONE)
 
+    if not unique_exprs:
+        return _ANY
     if len(unique_exprs) == 1:
         return unique_exprs[0]
     return UnionTypeExpr(members=unique_exprs)
@@ -782,8 +909,8 @@ def _handle_union_schema(
 def _build_and_register_type(
     name: str,
     schema: dict[str, Any],
-    defs: dict[str, dict[str, Any]],
-    referenced_types: dict[str, TypeSignature],
+    root: dict[str, Any],
+    referenced_types: dict[int, TypeSignature],
     tool_name: str,
     path: str,
 ) -> TypeSignature:
@@ -795,8 +922,12 @@ def _build_and_register_type(
     Returns the completed TypeSignature.
     """
     placeholder = TypeSignature(name=name)
-    referenced_types[name] = placeholder
-    built = _build_type_signature(name, schema, defs, referenced_types, tool_name, path)
+    referenced_types[id(schema)] = placeholder
+    token = _resolving_refs.set(frozenset())
+    try:
+        built = _build_type_signature(name, schema, root, referenced_types, tool_name, path)
+    finally:
+        _resolving_refs.reset(token)
     placeholder.fields = built.fields
     placeholder.description = built.description
     return placeholder
@@ -805,8 +936,8 @@ def _build_and_register_type(
 def _build_type_signature(
     name: str,
     schema: dict[str, Any],
-    defs: dict[str, dict[str, Any]],
-    referenced_types: dict[str, TypeSignature],
+    root: dict[str, Any],
+    referenced_types: dict[int, TypeSignature],
     tool_name: str,
     path: str,
 ) -> TypeSignature:
@@ -819,7 +950,7 @@ def _build_type_signature(
     for prop_name, prop_schema_raw in properties.items():
         prop_schema = _normalize_schema_node(prop_schema_raw)
         prop_path = f'{path}.{prop_name}' if path else prop_name
-        type_expr = _schema_to_type_expr(prop_schema, defs, referenced_types, tool_name, prop_path)
+        type_expr = _schema_to_type_expr(prop_schema, root, referenced_types, tool_name, prop_path)
         is_required = prop_name in required
         desc = prop_schema.get('description', '') or None
 
@@ -835,34 +966,159 @@ def _build_type_signature(
 
 
 # =============================================================================
-# Deduplication helpers
+# Resolving one catalog: which types exist, and what each is called
 # =============================================================================
 
 
-def _replace_type_refs(sig: FunctionSignature, old_ref: TypeSignature, canonical: TypeSignature) -> None:
-    """Replace all references to old_ref with canonical in a signature's TypeExpr trees."""
+# =============================================================================
+# Resolving one set of signatures
+# =============================================================================
 
-    def _replace_in_expr(expr: TypeExpr) -> TypeExpr:
-        if expr is old_ref:
-            return canonical
-        if isinstance(expr, GenericTypeExpr):
-            new_args = [_replace_in_expr(a) for a in expr.args]
-            if any(new is not orig for new, orig in zip(new_args, expr.args)):
-                expr.args = new_args
-        elif isinstance(expr, UnionTypeExpr):
-            new_members = [_replace_in_expr(m) for m in expr.members]
-            if any(new is not orig for new, orig in zip(new_members, expr.members)):
-                expr.members = new_members
-        return expr
 
-    # Replace in params
-    for param in sig.params.values():
-        param.type = _replace_in_expr(param.type)
+def _annotation(type_field: TypeFieldSignature) -> str:
+    return str(type_field.type) if type_field.required else f'NotRequired[{type_field.type}]'
 
-    # Replace in return type
-    sig.return_type = _replace_in_expr(sig.return_type)
 
-    # Replace in field types of referenced types
-    for type_sig in sig.referenced_types:
-        for f in type_sig.fields.values():
-            f.type = _replace_in_expr(f.type)
+def _expr_nodes(expr: TypeExpr) -> Iterator[TypeExpr]:
+    """An expression and every expression inside it, without looking inside the types it names."""
+    yield expr
+    children = (
+        expr.args if isinstance(expr, GenericTypeExpr) else expr.members if isinstance(expr, UnionTypeExpr) else []
+    )
+    for child in children:
+        yield from _expr_nodes(child)
+
+
+def _types_in(expr: TypeExpr) -> Iterator[TypeSignature]:
+    return (node for node in _expr_nodes(expr) if isinstance(node, TypeSignature))
+
+
+def _names_in(type_field: TypeFieldSignature) -> Iterator[str]:
+    """The names a field's annotation uses, leaving out what is only text, like the values of a `Literal`."""
+    if not type_field.required:
+        yield 'NotRequired'
+    for node in _expr_nodes(type_field.type):
+        if isinstance(node, GenericTypeExpr):
+            yield node.base
+        elif isinstance(node, LiteralTypeExpr):
+            yield 'Literal'
+        elif isinstance(node, SimpleTypeExpr | TypeSignature):
+            yield str(node)
+        elif not isinstance(node, UnionTypeExpr):
+            assert_never(node)
+
+
+def _with_nested_types(types: Iterable[TypeSignature]) -> list[TypeSignature]:
+    """The given types and every type nested inside them, each once, in the order found."""
+    pending = list(types)
+    found: dict[int, TypeSignature] = {}
+    for type_sig in pending:
+        if id(type_sig) not in found:
+            found[id(type_sig)] = type_sig
+            for f in type_sig.fields.values():
+                pending.extend(_types_in(f.type))
+    return list(found.values())
+
+
+def _expr_key(expr: TypeExpr, type_key: Callable[[TypeSignature], object] = id) -> object:
+    """A key for an expression, with its types standing as `type_key` says, whatever they render as."""
+    if isinstance(expr, TypeSignature):
+        return TypeSignature, type_key(expr)
+    if isinstance(expr, GenericTypeExpr):
+        return (expr.base, *(_expr_key(arg, type_key) for arg in expr.args))
+    if isinstance(expr, UnionTypeExpr):
+        return ('|', *(_expr_key(member, type_key) for member in expr.members))
+    if isinstance(expr, SimpleTypeExpr | LiteralTypeExpr):
+        return str(expr)
+    assert_never(expr)
+
+
+def _unique_exprs(exprs: list[TypeExpr]) -> list[TypeExpr]:
+    unique: dict[object, TypeExpr] = {}
+    for expr in exprs:
+        unique.setdefault(_expr_key(expr), expr)
+    return list(unique.values())
+
+
+def _fields_key(type_sig: TypeSignature, classes: dict[int, object]) -> object:
+    return frozenset(
+        (name, f.required, _expr_key(f.type, lambda nested: classes[id(nested)])) for name, f in type_sig.fields.items()
+    )
+
+
+def _structure_classes(types: list[TypeSignature]) -> dict[int, object]:
+    """Number the types so that two get one number exactly when they are the same all the way down.
+
+    Starts by grouping types by name, then splits any group whose members' fields differ, counting a nested
+    type by its group, until no group splits. Types in a cycle are only ever split by a real difference.
+    """
+    classes: dict[int, object] = {id(t): t.name for t in types}
+    count = len(set(classes.values()))
+    while True:
+        numbers: dict[object, int] = {}
+        classes = {id(t): numbers.setdefault((classes[id(t)], _fields_key(t, classes)), len(numbers)) for t in types}
+        if len(numbers) == count:
+            return classes
+        count = len(numbers)
+
+
+def _replace_types(expr: TypeExpr, canonical: dict[int, TypeSignature]) -> TypeExpr:
+    """Point an expression at canonical types, collapsing union members this makes identical."""
+    if isinstance(expr, TypeSignature):
+        return canonical[id(expr)]
+    if isinstance(expr, GenericTypeExpr):
+        expr.args = [_replace_types(arg, canonical) for arg in expr.args]
+    elif isinstance(expr, UnionTypeExpr):
+        expr.members = _unique_exprs([_replace_types(member, canonical) for member in expr.members])
+    return expr
+
+
+def _safe_identifier(name: str) -> str:
+    """Rewrite a name into one Python reads back exactly, keeping what it can."""
+    normalized = unicodedata.normalize('NFKC', name)
+    cleaned = ''.join(ch if f'a{ch}'.isidentifier() else '_' for ch in normalized)
+    return cleaned if cleaned.isidentifier() else f'_{cleaned}'
+
+
+def _assign_type_names(
+    types: list[TypeSignature], signatures: list[FunctionSignature], owners: dict[int, str]
+) -> dict[int, str]:
+    """Give every type a name no other definition, tool or helper has.
+
+    A type that can keep its name does, before any name is generated, so a generated name can't take a real one.
+    """
+    # Names the rendered text itself relies on, so a definition can't take them.
+    rendered_text_names = {
+        'asyncio',
+        'Any',
+        'Literal',
+        'NotRequired',
+        'TypedDict',
+        'bool',
+        'dict',
+        'float',
+        'int',
+        'list',
+        'str',
+        'tuple',
+    }
+    reserved = rendered_text_names | {n for s in signatures for n in (s.name, _safe_identifier(s.name))}
+    name_counts: dict[str, int] = {}
+    for type_sig in types:
+        name_counts[type_sig.name] = name_counts.get(type_sig.name, 0) + 1
+
+    names: dict[int, str] = {}
+    used = set(reserved)
+    for type_sig in types:
+        if name_counts[type_sig.name] == 1 and type_sig.name not in reserved and _reads_back_exactly(type_sig.name):
+            names[id(type_sig)] = type_sig.name
+            used.add(type_sig.name)
+    for type_sig in types:
+        if id(type_sig) not in names:
+            base = _safe_identifier(f'{owners[id(type_sig)]}_{type_sig.name}')
+            candidate, suffix = base, 2
+            while candidate in used:
+                candidate, suffix = f'{base}_{suffix}', suffix + 1
+            used.add(candidate)
+            names[id(type_sig)] = candidate
+    return names
