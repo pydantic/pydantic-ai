@@ -920,7 +920,7 @@ class TestNestedTraversal:
         # The read itself is allowed, since the file resolves inside the repo; `bounce` resolves outside it.
         assert 'readme' in str(result.all_messages())
         assert _repo_notes(result.all_messages()) == snapshot(
-            ['<context-file path="pkg/AGENTS.md">\nPKG BODY\n</context-file>']
+            ['<context_file path="pkg/AGENTS.md">PKG BODY</context_file>']
         )
 
     @pytest.mark.parametrize(
