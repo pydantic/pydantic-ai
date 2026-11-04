@@ -61,7 +61,7 @@ class Review(BaseModel):
 
 
 class ReviewComment(BaseModel):
-    """The parent review identifies the head; `commit_id` can move on later pushes."""
+    """The parent review's marker identifies the head, else `original_commit_id`; `commit_id` can move on later pushes."""
 
     pull_request_review_id: int
     user: ReviewUser
