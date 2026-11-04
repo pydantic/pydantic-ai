@@ -18,6 +18,7 @@ from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceBackend
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.coder._capability import MAX_FILE_TOOL_RETRIES
+from pydantic_ai_harness.coder._instructions import Agency
 from pydantic_ai_harness.subagents import TaskControl
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 
@@ -202,20 +203,43 @@ class TestCoder:
         await Agent(model, capabilities=[coder]).run('Inspect instructions', workspace=LocalWorkspaceBackend(tmp_path))
         assert model.last_model_request_parameters is not None
         parts = model.last_model_request_parameters.instruction_parts or []
-        guidance = next(part.content for part in parts if 'Zen of Python' in part.content)
+        guidance = next(part.content for part in parts if 'software engineering agent' in part.content)
         default = guidance.removesuffix('\n' + extra_instructions) if extra_instructions else guidance
-        assert len(default.split()) < 500
-        assert all(principle in default for principle in ('DRY', 'YAGNI', 'Zen of Python'))
-        assert 'SOLID' not in default
-        assert "Match the surrounding code's style,\nstructure, and imports" in default
-        assert 'delete any scratch files you created' in default
-        assert 'in full with `read_file` rather than batched `cat` in the shell' in default
-        assert 'batch independent searches into one\nshell call' in default
-        assert 'once the relevant tests pass, broaden or\nrepeat testing only when new changes' in default
-        assert 'measure the result against that target before finishing' in default
-        assert 'first\nassume your model of the problem is wrong' in default
+        assert len(default.split()) < 150
+        assert "Match the surrounding code's style, structure, and imports." in default
+        assert 'Work until done. Ask only for credentials, approvals, or real ambiguity.' in default
+        assert 'Read files with `read_file`, not batched `cat`.' in default
+        assert 'Measure results against any numeric target the task states.' in default
+        assert 'assume you misread' in default
+        assert 'Check behavior with heredocs for one-offs, not new files.' in default
+        assert 'delete your scratch files' not in default
         if extra_instructions:
             assert guidance.endswith('\n' + extra_instructions)
+
+    @pytest.mark.parametrize(
+        ('agency', 'ask', 'targets', 'cleanup'),
+        [
+            ('low', 'Propose a plan and wait for approval before editing.', False, False),
+            ('medium', 'Work until done; ask when a choice really matters.', False, False),
+            ('high', 'Ask only for credentials, approvals, or real ambiguity.', True, False),
+            ('max', 'Work fully autonomously; nobody will answer questions.', True, True),
+        ],
+    )
+    async def test_agency_sets_how_far_the_agent_goes_alone(
+        self, tmp_path: Path, agency: Agency, ask: str, targets: bool, cleanup: bool
+    ) -> None:
+        model = TestModel(call_tools=[])
+        coder = Coder(agency=agency, repo_context=False, sub_agents=False)
+        await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
+        assert model.last_model_request_parameters is not None
+        text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
+        assert ask in text
+        assert ('Measure results against any numeric target the task states.' in text) is targets
+        assert ('Leave only the requested change; delete your scratch files.' in text) is cleanup
+
+    def test_unknown_agency_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match=r"`agency` must be one of 'low', 'medium', 'high', 'max', not 'full'"):
+            Coder(agency='full')  # pyright: ignore[reportArgumentType]
 
     async def test_file_tool_mistakes_do_not_end_the_run(self, tmp_path: Path) -> None:
         """Consecutive denied writes come back as retries until `MAX_FILE_TOOL_RETRIES` is spent."""
@@ -264,18 +288,14 @@ class TestCoder:
     async def test_instructions_follow_the_composition(
         self, tmp_path: Path, repo_context: bool, sub_agents: bool
     ) -> None:
-        """The repo-file note comes with `RepoContext`, which loads them; the delegation rule with `delegate_task`."""
+        """The delegation rule comes with `delegate_task`, whether or not `RepoContext` is bound."""
         model = TestModel(call_tools=[])
         coder = Coder(repo_context=repo_context, sub_agents=sub_agents)
         await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert model.last_model_request_parameters is not None
         text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
         tools = {tool.name for tool in model.last_model_request_parameters.function_tools}
-        assert ('instruction files (AGENTS.md, CLAUDE.md) in the project directory are' in text) is repo_context
-        rule = (
-            'spawn sub-agents with `delegate_task` unless the user or applicable AGENTS.md\ninstructions explicitly ask'
-        )
-        assert (rule in text) is sub_agents
+        assert ("Don't spawn sub-agents unless the user asks." in text) is sub_agents
         assert ('delegate_task' in tools) is sub_agents
 
     @pytest.mark.parametrize(

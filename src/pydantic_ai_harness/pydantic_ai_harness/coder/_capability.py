@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability, ValidatedToolArgs
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavior
@@ -14,7 +14,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai_harness._warn import warn_argument_ignored
 from pydantic_ai_harness._workspace import RequireWorkspace
-from pydantic_ai_harness.coder._instructions import coder_instructions, project_instructions
+from pydantic_ai_harness.coder._instructions import Agency, coder_instructions, project_instructions
 from pydantic_ai_harness.compaction import ClearToolResults
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
@@ -142,6 +142,12 @@ class Coder(CombinedCapability[AgentDepsT]):
     Args:
         workspace: Deprecated and ignored; attach a workspace capability instead.
         instructions: Appended to the default instructions.
+        agency: How far the agent works on its own. `'low'` proposes a plan and waits
+            for approval before editing. `'medium'` works until done but asks when a
+            choice really matters. `'high'` asks only for credentials, approvals, or
+            real ambiguity, and measures results against any numeric target the task
+            states. `'max'` never asks, chooses sensible defaults, and also deletes its
+            scratch files, for runs nobody can answer.
         unrestricted_filesystem: Let the file tools reach the whole workspace
             filesystem rather than only the working directory.
         repo_context: Include `RepoContext`. Pass `False` when the agent binds its
@@ -171,6 +177,7 @@ class Coder(CombinedCapability[AgentDepsT]):
         workspace: str | Path | None = None,
         *,
         instructions: str | None = None,
+        agency: Agency = 'high',
         unrestricted_filesystem: bool = False,
         repo_context: bool = True,
         sub_agents: bool = True,
@@ -179,6 +186,8 @@ class Coder(CombinedCapability[AgentDepsT]):
         caching: bool = True,
         strict: bool | None = False,
     ) -> None:
+        if agency not in get_args(Agency):
+            raise ValueError(f'`agency` must be one of {", ".join(map(repr, get_args(Agency)))}, not {agency!r}.')
         if task_control is not None and not sub_agents:
             raise ValueError('`task_control` requires `sub_agents=True`.')
         if workspace is not None:
@@ -200,10 +209,7 @@ class Coder(CombinedCapability[AgentDepsT]):
             Capability[AgentDepsT](
                 id='coder_instructions',
                 instructions=[
-                    coder_instructions(
-                        repo_context=repo_context,
-                        delegate_tool=delegation.tool_name if delegation is not None else None,
-                    )
+                    coder_instructions(agency=agency, delegation=delegation is not None)
                     + ('\n' + instructions if instructions else ''),
                     # Naming the directory creates a lazily created sandbox, so it comes only with
                     # `RepoContext`, which reads the workspace at run start anyway.

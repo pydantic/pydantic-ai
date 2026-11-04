@@ -181,9 +181,8 @@ everything the agent has -- the same model, workspace, instructions, and capabil
 gate, guardrail, or audit hook bound next to `Coder`, so those see the commands a delegate runs too. A
 delegate can delegate in turn, up to three levels counting the top-level run (`SubAgents.max_depth`).
 
-`Coder`'s instructions tell the agent to use `delegate_task` only when the user or applicable `AGENTS.md`
-instructions explicitly ask for sub-agents, delegation, or parallel agent work, the rule Codex gives its models for
-`spawn_agent`. A delegate explores the project again from a fresh context, so delegation the user did not ask for
+`Coder`'s instructions tell the agent not to spawn sub-agents unless the user asks, the rule Codex gives its
+models for `spawn_agent`. A delegate explores the project again from a fresh context, so delegation the user did not ask for
 multiplies tool calls and cost. To have the agent delegate, ask for it in the prompt, in `AGENTS.md`, or in `instructions=`.
 
 Only what is bound to the `Agent` carries over to a delegate; capabilities, toolsets, instructions, and model
@@ -215,20 +214,26 @@ is no completion notification or automatic wake-up after a final response. The S
 supervisor, cleanup, and the `CommandStartedEvent`, `CommandOutputEvent`, and `CommandFinishedEvent` progress
 events a UI can subscribe to.
 
-The default instructions tell the agent to finish required work before giving a final response: do other
-useful work, then poll status and output until completion or a genuine blocker.
-Servers may remain running after startup and readiness are verified. Commands get only the environment
+The default instructions tell the agent to finish long-running work before replying, polling until it is done or
+blocked, and to stop servers it no longer needs. Commands get only the environment
 the workspace passes (see [The command environment](#the-command-environment)); host files remain
 accessible to commands in a local workspace.
 
 ## Instructions
 
-The default instructions keep engineering guidance brief: autonomous investigation and completion,
-focused changes and verification, pragmatic DRY, YAGNI, and the Zen of Python, and matching the
-surrounding code's style, structure, and imports rather than adding new abstractions.
-They also ask the agent to leave only the requested change in the project: check behavior with inline
-shell scripts rather than new files, add tests only where the project already has them, and delete
-scratch files before finishing.
+The default instructions are short: match the surrounding code's style, structure, and imports; read
+files with `read_file`; check deliverables against the task's stated requirements and edge cases; check
+behavior with heredocs rather than new files; and finish long-running work before replying.
+
+`agency` sets how far the agent works on its own:
+
+| `agency` | The agent |
+|---|---|
+| `'low'` | Proposes a plan and waits for approval before editing. |
+| `'medium'` | Works until done, asking when a choice really matters. |
+| `'high'` (default) | Asks only for credentials, approvals, or real ambiguity, and measures results against any numeric target the task states. |
+| `'max'` | Never asks: chooses sensible defaults, measures against numeric targets, and deletes its scratch files. Use it for runs nobody can answer, such as CI jobs. |
+
 Tool descriptions supply tool usage; `RepoContext` supplies repository instructions and structure.
 The instructions also name the workspace's working directory as the project, where shell commands start and the file tools work.
 `Coder(instructions='...')` appends project-specific guidance rather than replacing defaults.

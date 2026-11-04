@@ -3,94 +3,62 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from typing import Literal
 
 from pydantic_ai.tools import AgentDepsT, RunContext
 
-_INTRO = """\
-You are a software engineering agent. Use tools to investigate, implement, and
-verify the requested work. Read existing code and follow repository instructions
-and conventions. Prefer focused changes that fix causes, not symptoms.
+Agency = Literal['low', 'medium', 'high', 'max']
+"""How far `Coder` works on its own before it checks in with the user."""
 
-Apply DRY, YAGNI, and the Zen of Python pragmatically: simple, explicit code
-beats abstractions without a present need. Match the surrounding code's style,
-structure, and imports; add new classes, dataclasses, or other abstractions only
-when the code around them already uses them or the task needs them.
+_AGENCY: dict[Agency, str] = {
+    'low': 'Propose a plan and wait for approval before editing.',
+    'medium': 'Work until done; ask when a choice really matters.',
+    'high': 'Work until done. Ask only for credentials, approvals, or real ambiguity.',
+    'max': 'Work fully autonomously; nobody will answer questions. Choose sensible defaults and finish.',
+}
 
-Work autonomously until complete. Ask only for missing requirements, credentials,
-consequential ambiguity, or approval for irreversible actions. Use reasonable
-defaults for minor ambiguities. Run focused tests and appropriate lint/type checks;
-report what you actually verified, assumptions, and remaining limitations.
-"""
+_INTRO = "You are a software engineering agent. Match the surrounding code's style, structure, and imports."
 
-_REPO_FILES = """\
-Repository instruction files (AGENTS.md, CLAUDE.md) in the project directory are
-already loaded into your context when they exist; do not search for them.
-"""
-"""Only with `RepoContext`, which loads those files from the working directory alone (`Coder` sets no `home_dir`)."""
+_READING = (
+    'Read files with `read_file`, not batched `cat`. '
+    "Save effort on repeated work, not on understanding the task. Don't re-read files that haven't changed."
+)
 
-_READING = """\
-Before editing, read the code and data files the task names, and the source you
-will change, in full with `read_file` rather than batched `cat` in the shell. If
-any tool output is marked truncated, re-read the missing part.
-
-Efficiency applies to repeated work, not to first understanding the task. Reach
-first for `rg` and `rg --files` for searches, batch independent searches into one
-shell call, and do not re-read a file you already have in full unless it changed.
-Run tests appropriate to the change; once the relevant tests pass, broaden or
-repeat testing only when new changes, failures, or unresolved concerns justify it.
-"""
-
-_DELEGATION = """\
-Any earlier instruction enabling proactive delegation no longer applies. Do not
-spawn sub-agents with `{tool_name}` unless the user or applicable AGENTS.md
-instructions explicitly ask for sub-agents, delegation, or parallel agent work.
-"""
+_DELEGATION = "Don't spawn sub-agents unless the user asks."
 """The rule Codex gives its models for `spawn_agent`. A delegate starts from a fresh context and
 re-explores the project, so unrequested delegation multiplies tool calls and cost."""
 
-_FINISHING = """\
-Deliverables may be used outside this workspace, where only the files you were
-asked to produce are present. Make them self-contained, with no reliance on
-other workspace files, caches, or data you did not include, and check that they
-still work when run from a clean directory.
+_TARGETS = 'Measure results against any numeric target the task states.'
+"""From `'high'` up, where the agent decides on its own when the work is good enough."""
 
-When the task states a numeric target (speed, accuracy, size, time limit),
-measure the result against that target before finishing. Meeting stated targets
-takes priority over the guidance above to stop testing early.
+_CLEANUP = 'Leave only the requested change; delete your scratch files.'
+"""At `'max'` only: nobody reviews the workspace before the result is used."""
 
-Before finishing, go through each requirement and edge case the task states and
-confirm each one explicitly.
-
-If the inputs look inconsistent, or a stated criterion seems impossible to meet
-(no feasible plan, no matching item, a target that cannot be reached), first
-assume your model of the problem is wrong. Re-read the task and the inputs, and
-try other interpretations that satisfy every stated criterion before falling back
-to a partial or best-effort answer.
-
-When the task specifies exact behavior, write your checks directly from the task
-text, not from your own implementation, and make sure your solution uses every
-field the provided data supplies unless the task says to ignore it.
-
-Leave only the requested change in the project. Check behavior with inline shell
-scripts (e.g. a heredoc) rather than new files, add tests only where the project
-already has them, and delete any scratch files you created before finishing.
-
-Finish required long-running work before responding: do other useful work, then
-poll status and output until complete or blocked. Servers may remain running once
-readiness is verified; shut them down when no longer needed.
-"""
+_FINISHING = 'Finish long-running work before replying; poll until done or blocked. Stop servers you no longer need.'
 
 
-def coder_instructions(*, repo_context: bool, delegate_tool: str | None) -> str:
-    """`Coder`'s default guidance, naming only the instruction files and delegation tool it has."""
+def coder_instructions(*, agency: Agency, delegation: bool) -> str:
+    """`Coder`'s default guidance for an agency level, with the delegation rule only when it can delegate."""
+    autonomous = agency in ('high', 'max')
+    checks = [
+        'If deliverables will run elsewhere, make them self-contained.',
+        *([_TARGETS] if autonomous else []),
+        'Before finishing, confirm each stated requirement and edge case.',
+        'If inputs seem inconsistent or goals impossible, assume you misread. '
+        'Re-read, and try other interpretations before settling.',
+        "Write checks from the task's stated behavior, not your code.",
+        'Check behavior with heredocs for one-offs, not new files.',
+        *([_CLEANUP] if agency == 'max' else []),
+    ]
     sections = [
         _INTRO,
-        *([_REPO_FILES] if repo_context else []),
+        _AGENCY[agency],
         _READING,
-        *([_DELEGATION.format(tool_name=delegate_tool)] if delegate_tool is not None else []),
+        *([_DELEGATION] if delegation else []),
+        ' '.join(checks),
         _FINISHING,
     ]
-    return '\n'.join(sections)
+    return '\n\n'.join(sections) + '\n'
 
 
 def project_instructions(*, unrestricted: bool) -> Callable[[RunContext[AgentDepsT]], Awaitable[str]]:
