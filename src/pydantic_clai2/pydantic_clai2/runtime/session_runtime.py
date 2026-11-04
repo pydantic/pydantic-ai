@@ -77,6 +77,7 @@ from pydantic_clai2.runtime.git_actions import git_commands
 from pydantic_clai2.runtime.imported_sessions import IMPORT_SOURCES
 from pydantic_clai2.runtime.permissions import permissions_command, session_permissions
 from pydantic_clai2.runtime.process import ClaiProcess
+from pydantic_clai2.runtime.project_instructions import ProjectInstructions
 from pydantic_clai2.runtime.session import (
     Session,
     StockAgent,
@@ -219,6 +220,7 @@ def create_shell(
         shell.show_model()
 
     context = CommandContext(settings=settings, store=store, apply_setting=apply_setting, project=project)
+    session.project_instructions = lambda: ProjectInstructions[DepsT].pending(context.project)
     models.pool_accounts = lambda: context.settings.pool_accounts
 
     def fast(args: list[str]) -> str:
@@ -320,6 +322,14 @@ def create_shell(
     )
     commands.register(set_)
     commands.register(replace(set_, name='settings', description='Alias of /set'))
+    commands.register(
+        Command(
+            name='project',
+            description='Review what .clai/settings.json sets: /project [approve NAME...|all | revoke NAME...|all]',
+            handler=context.project_command,
+            complete=context.project_completions,
+        )
+    )
     commands.register(
         Command(
             name='theme',

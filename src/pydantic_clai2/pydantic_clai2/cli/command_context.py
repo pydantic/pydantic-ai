@@ -1,9 +1,9 @@
 """Conversation-local settings and actions behind `/set`."""
 
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
@@ -11,8 +11,8 @@ from pydantic import JsonValue, TypeAdapter, ValidationError
 from pydantic_ai.settings import ModelSettings
 from pydantic_clai2.commands import Command, set_completions
 from pydantic_clai2.config import SETTING_FIELDS, STRING_SETTINGS, Settings
-from pydantic_clai2.config.project_settings import ProjectSettings
-from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.config.project_settings import SAFE_PROJECT_KEYS, ProjectSettings
+from pydantic_clai2.config.settings_store import SettingsStore, setting_json
 from pydantic_clai2.ui import telemetry
 
 if TYPE_CHECKING:
@@ -66,6 +66,77 @@ class CommandContext:
             self.store.add_model(name=settings.model)
         for key in SETTING_FIELDS:
             self.apply_setting(key, settings)
+
+    def project_command(self, args: list[str]) -> str:
+        """`/project` lists what the project file sets; `approve` and `revoke` decide its other keys for this repository.
+
+        Only a person at the prompt approves: the agent never runs `/commands`, so a file it or a repository
+        writes cannot approve itself. An approval keeps the value approved, so a changed value waits again.
+        """
+        project, root = self.project, self.project.root
+        if root is None:
+            raise ValueError('No project file: CLAI looks for .clai/settings.json from here up to the repository root.')
+        match args:
+            case [] | ['list']:
+                return _project_listing(project)
+            case ['approve', *names] if names:
+                keys = _project_keys(names, project.pending, verb='approve')
+                with self.edits:
+                    self.store.approve_project_settings(root, {key: project.pending[key] for key in keys})
+                    self._use_project(
+                        replace(
+                            project,
+                            overrides={**project.overrides, **{key: project.pending[key] for key in keys}},
+                            pending={key: value for key, value in project.pending.items() if key not in keys},
+                        ),
+                        keys,
+                    )
+                return f'Approved {_file_names(keys)} for {root}. Applied.'
+            case ['revoke', *names] if names:
+                approved = {key: value for key, value in project.overrides.items() if key not in SAFE_PROJECT_KEYS}
+                keys = _project_keys(names, approved, verb='revoke')
+                with self.edits:
+                    self.store.revoke_project_settings(root, keys)
+                    self._use_project(
+                        replace(
+                            project,
+                            overrides={key: value for key, value in project.overrides.items() if key not in keys},
+                            pending={**project.pending, **{key: approved[key] for key in keys}},
+                        ),
+                        keys,
+                    )
+                return f'Revoked {_file_names(keys)} for {root}. Your own settings apply again.'
+            case _:
+                raise ValueError(PROJECT_USAGE)
+
+    def project_completions(self, args: list[str]) -> Iterable[str]:
+        """`approve` and `revoke`, then `all` and the names each one takes."""
+        if len(args) <= 1:
+            return ('approve', 'revoke')
+        if args[0] == 'approve':
+            return ('all', *(SETTING_FIELDS[key] for key in self.project.pending))
+        return ('all', *(SETTING_FIELDS[key] for key in self.project.overrides if key not in SAFE_PROJECT_KEYS))
+
+    def _use_project(self, project: ProjectSettings, keys: Iterable[str]) -> None:
+        """Adopt `project` for this session, applying `keys`: its value when it sets one, else your saved one or the default.
+
+        Other live sessions are not told: each keeps the project file it started with until it starts again.
+        """
+        self.project = project
+        saved = self.store.overrides()
+        for key in keys:
+            field = SETTING_FIELDS[key]
+            updated = self.settings.model_dump(exclude_unset=True)
+            if key in project.overrides:
+                updated[field] = project.overrides[key]
+            elif key in saved:
+                updated[field] = saved[key]
+            else:
+                updated.pop(field, None)
+            self.settings = Settings.model_validate(updated)
+            if key == 'model' and self.settings.model:
+                self.store.add_model(name=self.settings.model)
+            self.apply_setting(key, self.settings)
 
     def setting(self, key: str) -> JsonValue:
         """The effective value of `key`, such as `run.code_mode`, as JSON; `KeyError` for an unknown key."""
@@ -181,6 +252,41 @@ class CommandContext:
         if self.from_project(key):
             when += ' The project file sets it again at next start.'
         return when
+
+
+PROJECT_USAGE = 'Usage: /project [approve NAME...|all | revoke NAME...|all]'
+_FILE_NAMES = {name: key for key, name in SETTING_FIELDS.items()}
+
+
+def _file_names(keys: Iterable[str]) -> str:
+    """Keys as the project file spells them."""
+    return ', '.join(SETTING_FIELDS[key] for key in keys)
+
+
+def _project_keys(names: list[str], candidates: dict[str, JsonValue], *, verb: str) -> list[str]:
+    """The `/set` keys `names` choose among `candidates`: `all`, or each by its file name or `/set` key."""
+    if names == ['all']:
+        if not candidates:
+            raise ValueError(f'Nothing to {verb}.')
+        return list(candidates)
+    keys = [_FILE_NAMES.get(name, name) for name in names]
+    if missing := [name for name, key in zip(names, keys) if key not in candidates]:
+        state = 'waiting for approval' if verb == 'approve' else 'approved'
+        raise ValueError(f'Not {state} here: {", ".join(missing)}. /project lists them.')
+    return list(dict.fromkeys(keys))
+
+
+def _project_listing(project: ProjectSettings) -> str:
+    """What `/project` shows: the file, then each key it sets and whether it applies, with the value as JSON."""
+    lines = [f'Project settings: {project.path}']
+    for key, value in project.overrides.items():
+        state = 'applied' if key in SAFE_PROJECT_KEYS else 'approved'
+        lines.append(f'  {SETTING_FIELDS[key]} ({state}): {setting_json(value)}')
+    for key, value in project.pending.items():
+        lines.append(f'  {SETTING_FIELDS[key]} (waiting for approval): {setting_json(value)}')
+    if project.pending:
+        lines.append('/project approve NAME... (or all) applies them here and in later sessions in this repository.')
+    return '\n'.join(lines)
 
 
 def _shown(key: str, settings: Settings) -> bool | int | float | str:

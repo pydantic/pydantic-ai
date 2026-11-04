@@ -384,7 +384,11 @@ def _opener(
     launched_in, launch_project = Path(shell.session.workspace), shell.context.project
 
     def build(directory: Path | None) -> SessionRuntime[DepsT, OutputT]:
-        project = launch_project if directory in (None, launched_in) else load_project_settings(directory)
+        project = (
+            launch_project
+            if directory in (None, launched_in)
+            else load_project_settings(directory, store=shell.context.store)
+        )
         return create_shell(
             agent(),
             deps=deps,

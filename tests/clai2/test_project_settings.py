@@ -83,15 +83,18 @@ def test_load_layers_between_store_and_flags(tmp_path: Path) -> None:
     path = write(tmp_path, {'thinking': False, 'request_limit': 7, 'colour': 'mauve', 'zeta': 1})
     project = load_project_settings(tmp_path / 'deeper')
     assert project.path == path
-    assert project.overrides == {'display.thinking': False, 'run.request_limit': 7}
+    assert project.overrides == {'display.thinking': False}
+    assert project.pending == {'run.request_limit': 7}, 'applied once approved'
     assert project.unknown == ('colour', 'zeta')
     assert project.plugins == ()
 
     store = SettingsStore(tmp_path / 'config.db')
     store.set('run.request_limit', 3)
     store.set('display.splash', False)
+    layered = resolve_settings(store.overrides() | project.overrides)
+    assert (layered.request_limit, layered.thinking, layered.splash) == (3, False, False)
     layered = resolve_settings(store.overrides() | project.overrides | {'run.request_limit': 9})
-    assert (layered.request_limit, layered.thinking, layered.splash) == (9, False, False)
+    assert layered.request_limit == 9
 
 
 def test_load_without_a_file_is_empty(tmp_path: Path) -> None:

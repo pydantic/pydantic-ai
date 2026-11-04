@@ -128,12 +128,14 @@ def run(*, splash: Splash | None = None) -> None:
             print(handler(store, args.arguments))
             return
         if args.update:
-            settings = _settings_for(store, model=None, request_limit=None)(load_project_settings(Path.cwd()))
+            settings = _settings_for(store, model=None, request_limit=None)(
+                load_project_settings(Path.cwd(), store=store)
+            )
             raise SystemExit(asyncio.run(_update(settings.update_channel)))
         agent = import_agent(args.agent) if args.agent is not None else None
         if args.worktree is not None:
             worktree = _enter_worktree(name=args.worktree, headless=args.prompt is not None or args.web)
-        project = load_project_settings(Path.cwd())
+        project = load_project_settings(Path.cwd(), store=store)
         _continue_session(args, store)
         model = args.model or os.getenv('CLAI_MODEL')
         settings_for = _settings_for(

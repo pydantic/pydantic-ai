@@ -403,6 +403,30 @@ and the problem; a key CLAI does not know is reported once at startup and
 ignored, so a newer file still works with an older CLAI. Precedence, lowest
 first: defaults, your user settings, the project file, `CLAI_MODEL`, CLI flags.
 
+Display settings (the `display.*` keys: `thinking`, `task_models`, `theme`, `spinner`,
+`splash`, `tool_calls`, `tool_output`, `shell_lines`, `grep_lines`, `tool_arg_chars`,
+`smooth_seconds`) apply as soon as CLAI finds the file. Every other key asks you
+first, as project plugins do: `model`, `request_limit`, `tool_retries`, `code_mode`,
+`speculative_code_mode`, `permissions`, `instructions`, `pool_accounts`,
+`session_namer`, `session_namer_model`, and `update_channel`. Until you approve
+one, CLAI uses your own setting for it and names it under the banner at startup.
+`/project` lists what the file sets, with each value and whether it applies;
+`/project approve NAME...` (or `all`) applies those keys now and in every later
+session in that repository, and `/project revoke NAME...` (or `all`) returns to
+your own settings. An approval is kept in your user settings, for the folder
+that holds `.clai` and for the value you approved: once the file changes that
+value, as after a pull, it waits for your approval again. Only you approve, at
+the prompt: there is no `clai2` command-line equivalent, so nothing the agent
+runs in its shell can approve one. A headless `clai2 -p` run or `clai2 --web`
+launch uses the approvals you saved and prints the keys it leaves out (on stderr
+for `-p`).
+
+The project's `instructions` are still sent while they wait, but as the
+repository's text rather than as your own: on the user channel, marked as
+coming from `.clai/settings.json` and not approved, never in the system prompt
+where your own `run.instructions` go. Once approved, they take the place of
+your own instructions, as before.
+
 For instruction-loading settings, see [Repository instructions](#repository-instructions).
 
 `plugins` takes the module declarations used by `/plugins add NAME module[:Class] [JSON]`: an `id`, a `factory`
