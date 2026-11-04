@@ -228,6 +228,8 @@ class _ToXml:
             self._element_names[path] = value.__class__.__name__
             for model_fields in (value.__class__.model_fields, value.__class__.model_computed_fields):
                 for field, info in model_fields.items():
+                    if isinstance(info, FieldInfo) and info.exclude:
+                        continue
                     new_path = f'{path}.{field}' if path else field
                     if self.include_field_info and (isinstance(info, ComputedFieldInfo) or not info.exclude):
                         field_repr = f'{value.__class__.__name__}.{field}'
