@@ -1317,7 +1317,7 @@ class OutputTokenLimitExceeded(UnexpectedModelBehavior):
     The limit is the [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens] model setting, or the model's
     own limit, and the response's [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] is `'length'`.
     The agent raises it when the response has no output it can use, as re-prompting the model with the same limit
-    would run into it again. Text output that was cut off is the run's output instead.
+    would run into it again. Plain text output that was cut off is the run's output instead.
 
     Naming it in [`ModelFallback`][pydantic_ai.capabilities.ModelFallback]'s or
     [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]'s `fallback_on`, as `ModelFallback` does by default,
