@@ -23,6 +23,7 @@ from ._output import (
     OutputValidator,
     OutputValidatorFunc,
     TextOutputSchema,
+    is_incomplete_json,
     run_image_process_hooks,
     run_output_with_hooks,
     truncated_output_message,
@@ -377,7 +378,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             )
         except ValidationError as e:
             # Say that the token limit cut the output off, as `CallToolsNode` does, rather than only that it's invalid.
-            if cut_off and not allow_partial:
+            if cut_off and not allow_partial and is_incomplete_json(e):
                 raise exceptions.UnexpectedModelBehavior(truncated_output_message(self._max_tokens_getter())) from e
             raise
 

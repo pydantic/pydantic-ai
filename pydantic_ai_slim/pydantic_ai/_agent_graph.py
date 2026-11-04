@@ -4388,22 +4388,21 @@ def _raise_if_cut_off_output(
     output_schema: _output.OutputSchema[Any],
     max_tokens: int | None,
 ) -> None:
-    """Raise instead of retrying when the token limit cut off structured text output that then failed validation.
+    """Raise instead of retrying when the token limit cut off structured text output into incomplete JSON.
 
     Re-prompting the model with the same limit would only run into it again. Only `NativeOutput` and `PromptedOutput`
-    text is parsed against a schema: a `TextOutput` function or output validator raising `ValidationError` on plain
-    text keeps its retry.
+    text is parsed as JSON: a `TextOutput` function raising `ValidationError` on plain text keeps its retry, and so
+    does JSON that parsed but that the schema or an output validator rejected.
     """
     if (
         response.finish_reason == 'length'
         and isinstance(output_schema.text_processor, _output.BaseObjectOutputProcessor)
         and isinstance(error.tool_retry, _messages.RetryFeedbackPart)
         and error.tool_retry.retry.cause == 'validation_error'
+        and _output.is_incomplete_json(error.__cause__)
     ):
         # Chained to the `ValidationError`, as in `run_stream()`.
-        raise exceptions.UnexpectedModelBehavior(_output.truncated_output_message(max_tokens)) from (
-            error.__cause__ or error
-        )
+        raise exceptions.UnexpectedModelBehavior(_output.truncated_output_message(max_tokens)) from error.__cause__
 
 
 def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:

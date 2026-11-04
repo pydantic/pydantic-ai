@@ -4853,7 +4853,7 @@ class _City(BaseModel):
 
 @pytest.mark.parametrize('output_type', [NativeOutput(_City), PromptedOutput(_City)], ids=['native', 'prompted'])
 def test_truncated_structured_output_raises_without_retry(output_type: NativeOutput[_City] | PromptedOutput[_City]):
-    """Text output the token limit cut off fails validation again on a retry with the same limit, so it isn't retried."""
+    """JSON the token limit cut off would be cut off again on a retry with the same limit, so it isn't retried."""
     calls = 0
 
     def truncated(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -4865,7 +4865,7 @@ def test_truncated_structured_output_raises_without_retry(output_type: NativeOut
 
     with pytest.raises(
         UnexpectedModelBehavior,
-        match=r'Model token limit \(10\) exceeded while generating structured output, resulting in output that failed validation\.',
+        match=r'Model token limit \(10\) exceeded while generating structured output, resulting in incomplete JSON\.',
     ):
         agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
     assert calls == 1
@@ -4897,6 +4897,27 @@ def test_output_validator_retry_with_finish_reason_length_is_retried():
     def check(output: _City) -> _City:
         if output.population < 3:
             raise ModelRetry('Population is too small.')
+        return output
+
+    assert agent.run_sync('Hello').output == _City(name='Paris', population=3)
+
+
+@pytest.mark.parametrize('rejected_by', ['schema', 'output_validator'])
+def test_json_that_parses_but_is_rejected_with_finish_reason_length_is_retried(rejected_by: str):
+    """Only JSON cut off before it's complete is blamed on the token limit: JSON that parses but is rejected is retried."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart('{"name": "Paris", "population": 3}')])
+        first = '{"name": "Paris"}' if rejected_by == 'schema' else '{"name": "Paris", "population": 2}'
+        return ModelResponse(parts=[TextPart(first)], finish_reason='length')
+
+    agent = Agent(FunctionModel(respond), output_type=NativeOutput(_City))
+
+    @agent.output_validator
+    def check(output: _City) -> _City:
+        if output.population < 3:
+            _City.model_validate({'name': output.name})  # raises `ValidationError`: `population` is missing
         return output
 
     assert agent.run_sync('Hello').output == _City(name='Paris', population=3)

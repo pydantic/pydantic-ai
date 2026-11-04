@@ -748,7 +748,7 @@ print(result.output)
     invalid-arguments failure, and only once its retry budget is exhausted does it surface as
     [`IncompleteToolCall`][pydantic_ai.exceptions.IncompleteToolCall] (a subclass of
     `UnexpectedModelBehavior`). The exception is [`NativeOutput`][pydantic_ai.output.NativeOutput] or
-    [`PromptedOutput`][pydantic_ai.output.PromptedOutput] text cut off at `'length'` that fails validation,
+    [`PromptedOutput`][pydantic_ai.output.PromptedOutput] text cut off at `'length'` into JSON that doesn't parse,
     which raises `UnexpectedModelBehavior` right away.
 
     All of these are raised from the agent loop, after `model.request()` has already returned

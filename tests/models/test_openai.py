@@ -5236,7 +5236,7 @@ async def test_openai_native_output_cut_off_by_max_tokens(
 
     with pytest.raises(
         UnexpectedModelBehavior,
-        match=r'Model token limit \(20\) exceeded while generating structured output, resulting in output that failed validation\.',
+        match=r'Model token limit \(20\) exceeded while generating structured output, resulting in incomplete JSON\.',
     ) as exc_info:
         if stream:
             async with agent.run_stream(prompt) as result:
