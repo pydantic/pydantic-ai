@@ -496,7 +496,9 @@ ROUTE_CASES: list[tuple[str, str, str, bool]] = [
 
 @pytest.mark.parametrize(('module', 'provider', 'model_name', 'expected'), ROUTE_CASES)
 def test_route_table(module: str, provider: str, model_name: str, expected: bool):
-    provider_class: type[Provider[Any]] = getattr(pytest.importorskip(f'pydantic_ai.providers.{module}'), provider)
+    provider_class: type[Provider[Any]] = getattr(
+        pytest.importorskip(f'pydantic_ai.providers.{module}', exc_type=ImportError), provider
+    )
     profile = provider_class.model_profile(model_name) or {}
     assert profile.get(FLAG, False) is expected
 
