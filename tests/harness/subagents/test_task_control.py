@@ -2626,6 +2626,7 @@ class TestTaskControlBoundaries:
             result = await parent.run('Go.')
         # Replay may settle the task at another point, so its report waits for the run to go idle.
         assert result.output == 'Done.'
+        assert len(task_texts(result.all_messages())) == 1
         assert task_texts(result.all_messages()[-2:-1])
 
     async def test_a_durable_task_keeps_its_outcome(self) -> None:
