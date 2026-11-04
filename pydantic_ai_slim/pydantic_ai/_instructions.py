@@ -492,6 +492,8 @@ class LoadedInstructionValues:
                 if isinstance(block, InstructionPart) and (capability_id := _loaded_block_capability_id(block.id)):
                     self.values.pop(capability_id, None)
                     self._changed.discard(capability_id)
+                    # The load no longer owns the block, so a later load of the capability counts again.
+                    self._loads.forget(capability_id)
         for capability_id in self._loads.loads(part):
             # Moved to the end, so the values stay in load order.
             self.values.pop(capability_id, None)

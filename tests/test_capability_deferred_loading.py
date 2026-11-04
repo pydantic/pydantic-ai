@@ -2862,6 +2862,66 @@ async def test_load_capability_repeated_load_of_loaded_capability_is_a_no_op() -
     assert loaded_instructions(result.all_messages(), 'deferred') == 'Deferred instructions.'
 
 
+async def test_load_capability_reload_after_loading_another_does_not_restate_instructions() -> None:
+    """#11275: a no-op reload of an already-loaded capability must not count as a fresh
+    load — loading one capability, then another, then the first again states the first
+    capability's instructions exactly once, not once per load return."""
+    first = Capability[object](
+        id='first',
+        description='First.',
+        instructions='First instructions.',
+        defer_loading=True,
+    )
+    second = Capability[object](
+        id='second',
+        description='Second.',
+        instructions='Second instructions.',
+        defer_loading=True,
+    )
+    script = iter(['first', 'second', 'first'])
+    calls = 0
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if (capability_id := next(script, None)) is None:
+            return make_text_response('done')
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                    args={'id': capability_id},
+                    tool_call_id=f'load-{calls}',
+                )
+            ]
+        )
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[first, second])
+    result = await agent.run('load first, then second, then first again')
+
+    assert result.output == 'done'
+    messages = result.all_messages()
+
+    def instruction_delta_count(capability_id: str) -> int:
+        return sum(
+            1
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, InstructionDeltaPart) and str(part.id) == f'capability:{capability_id}'
+        )
+
+    assert instruction_delta_count('first') == 1
+    assert instruction_delta_count('second') == 1
+    assert loaded_instructions(messages, 'first') == 'First instructions.'
+    # The reload itself is still the success-shaped no-op, not a retry.
+    load_returns = [part for part in iter_message_parts(messages, ModelRequest, LoadCapabilityReturnPart)]
+    assert load_returns[-1].content == {
+        'message': LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id='first')
+    }
+    assert parse_loaded_capabilities(messages) == {'first', 'second'}
+
+
 async def test_load_capability_unknown_id_lists_valid_ids() -> None:
     """#11275: an unknown id fails with the valid loadable capability ids listed, so the
     model can correct itself instead of guessing — and only loadable ids are listed."""
