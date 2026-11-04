@@ -11,7 +11,6 @@ from __future__ import annotations
 import functools
 import inspect
 import warnings
-import weakref
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, assert_never
@@ -324,7 +323,7 @@ _CARRIED_ERRORS: dict[str, type[Exception]] = {
 }
 
 
-@dataclass(eq=False)
+@dataclass
 class RaisedGuardError:
     """A control-flow exception a guard raised inside a durable operation, carried out as data.
 
@@ -335,6 +334,12 @@ class RaisedGuardError:
     kind: str
     args: list[Any] = field(default_factory=list[Any])
     metadata: dict[str, Any] | None = None
+    live: Annotated[object, Field(exclude=True)] = field(default=None, repr=False, compare=False)
+    """The exception itself, kept in-process only: it is neither serialized nor pickled."""
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Drop the live exception, so an unpickled record rebuilds it from its fields."""
+        return {**self.__dict__, 'live': None}
 
     @classmethod
     def carry(cls, error: Exception) -> RaisedGuardError | None:
@@ -347,19 +352,16 @@ class RaisedGuardError:
             raised = cls(type(error).__name__, list(error.args))
         else:
             return None
-        _LIVE_ERRORS[raised] = error
+        raised.live = error
         return raised
 
     def error(self) -> Exception:
         """The exception the guard raised: the original in-process, a rebuilt one after a durable boundary."""
-        if (live := _LIVE_ERRORS.get(self)) is not None:
-            return live
+        if isinstance(self.live, Exception):
+            return self.live
         if self.kind == 'ApprovalRequired':
             return ApprovalRequired(metadata=self.metadata)
         return _CARRIED_ERRORS[self.kind](*self.args)
-
-
-_LIVE_ERRORS: weakref.WeakKeyDictionary[RaisedGuardError, Exception] = weakref.WeakKeyDictionary()
 
 
 @dataclass
