@@ -825,6 +825,7 @@ class SessionPlugins(Generic[DepsT]):
         _check_not_included(entry)
         _requested('enable', name)
         declaration = entry.declaration.model_copy(update={'enabled': True})
+        self._process.approve(name, declaration)
         self._process.store.save_plugin(declaration, requires=self._requirements(entry))
         await self._load_enabled(entry)
 
