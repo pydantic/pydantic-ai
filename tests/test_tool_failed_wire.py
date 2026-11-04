@@ -428,7 +428,7 @@ async def test_openai_chat_failed_tool_return_keeps_files_out_of_error() -> None
             'tool_call_id': 'call_1',
             'content': '[{"error":"Disk full"},"See file report."]',
         },
-        # The file moved onto the user channel is the conversation's first frame, so the seal is announced with it.
+        # The file moved onto the user channel is the conversation's first frame, so the announcement goes with it.
         {'role': 'system', 'content': lookalike_note_announcement(system_role=True)},
         {
             'role': 'user',

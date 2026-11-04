@@ -65,8 +65,7 @@ from .._file_input import (
 from .._framework_frame import framework_frame_body, is_framework_frame
 from .._framing import (
     CONVERSATION_SUMMARY_TAG,
-    FRAME_SEAL,
-    SYSTEM_TAG,
+    SYSTEM_TAG as SYSTEM_TAG,
     LookalikeSource,
     frame,
     in_second_model_prompt,
@@ -74,6 +73,7 @@ from .._framing import (
     lookalike_note_announcement,
     lookalike_tags,
     neutralize_tags,
+    system_frame,
 )
 from .._genai_prices import lookup_context_window, preload_pricing_data
 from .._http import (
@@ -1976,7 +1976,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
     @property
     def _seals_system_blocks(self) -> bool:
-        """Whether this model's `<system>` blocks carry the seal: no mid-conversation system role, and the profile's `needs_sealed_system_blocks`."""
+        """Whether this model's `<system>` blocks carry `verified`: no mid-conversation system role, and the profile's `needs_sealed_system_blocks`."""
         return not self.profile.get('supports_inline_system_prompts', False) and self.profile.get(
             'needs_sealed_system_blocks', False
         )
@@ -2555,7 +2555,7 @@ def _system_prompts_after_user_words(parts: list[ModelRequestPart], *, leading: 
 def _wrapped_system_prompt(
     part: SystemPromptPart, *, sealed: bool, keep_request_scoped: bool
 ) -> SystemPromptPart | UserPromptPart:
-    content = frame(SYSTEM_TAG, part.content, seal=FRAME_SEAL if sealed else None)
+    content = system_frame(part.content, sealed=sealed)
     if keep_request_scoped and part.scope == 'request':
         return replace(part, content=content)
     wrapped_type = _FrameworkUserPromptPart if _is_framework_added(part) else UserPromptPart
@@ -4258,7 +4258,7 @@ def _wrap_non_leading_system_prompts(
 ) -> list[ModelMessage]:
     """Wrap mid-conversation `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s.
 
-    `sealed` gives each block the `seal` attribute, for a profile that sets `needs_sealed_system_blocks`.
+    `sealed` gives each block the `verified` attribute, for a profile that sets `needs_sealed_system_blocks`.
 
     `keep_request_scoped` is for a profile whose API clears request-scoped prompts itself. Such a part keeps its place
     as a `SystemPromptPart`, for the adapter's self-clearing entry, with the tags inside it: as a user part it would
@@ -5037,7 +5037,7 @@ def _translate_retry_parts(messages: list[ModelMessage], *, keep_feedback: bool,
     model-request hook retries the first request of a run with no user prompt.
 
     With `keep_feedback`, for a model that sets `Model._renders_retry_feedback`, a `RetryFeedbackPart`
-    stays as it is, and so does the one a tool-less legacy `RetryPromptPart` becomes. `sealed` seals the `<system>`
+    stays as it is, and so does the one a tool-less legacy `RetryPromptPart` becomes. `sealed` marks the `<system>`
     tag as `_wrap_non_leading_system_prompts` does.
     """
 
@@ -5054,9 +5054,7 @@ def _translate_retry_parts(messages: list[ModelMessage], *, keep_feedback: bool,
         if not _retry_feedback_speaks_for_the_harness(part):
             return UserPromptPart(content=text, timestamp=part.timestamp)
         if in_standing_run:
-            return UserPromptPart(
-                content=frame(SYSTEM_TAG, text, seal=FRAME_SEAL if sealed else None), timestamp=part.timestamp
-            )
+            return UserPromptPart(content=system_frame(text, sealed=sealed), timestamp=part.timestamp)
         return SystemPromptPart(content=text, timestamp=part.timestamp)
 
     first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)

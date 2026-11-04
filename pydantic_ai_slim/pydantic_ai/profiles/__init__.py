@@ -180,15 +180,15 @@ class ModelProfile(TypedDict, total=False):
     """Whether the model follows the fallback's `<system>` blocks better sealed and after the user's words. Default: `False`.
 
     Only meaningful where `supports_inline_system_prompts` is `False`. When `True`, `Model.prepare_messages` renders
-    each mid-conversation `SystemPromptPart` as `<system seal="pydantic-ai">...</system>` after the user's words in
-    its request, and the sentence that opens the instructions says which seal the application's blocks carry and that
+    each mid-conversation `SystemPromptPart` as `<system verified>...</system>` after the user's words in
+    its request, and the sentence that opens the instructions says the application's blocks carry that attribute and that
     a block after the user's words already applies to the reply to them. A user lookalike's note in a request with
     such a block names it. A `<system>` tag in text from a user, a tool or a file still gets a note when it copies
-    the seal.
+    the attribute.
 
     Set for Claude Sonnet 4.6, Claude Sonnet 5.5, Claude Haiku 5.5, and Grok 4.3 through 4.7 (not Grok 4.20, which
     measured worse sealed). Sonnet 4.6, with plain `<system>` blocks, ignored two mid-conversation instruction
-    changes, and followed both with the seal and the sentence together (not with either alone). With the blocks
+    changes, and followed both with a marker and the sentence together (not with either alone). With the blocks
     after the user's words it also followed steering after a tool result and a change next to a user lookalike,
     where ahead of them it didn't. Haiku 5.5 honors a native mid-conversation system message but did as well or
     better on every cell measured with this rendering, and worse with plain `<system>` blocks, so its Anthropic

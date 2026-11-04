@@ -1685,7 +1685,7 @@ def context_statements(messages: list[ModelMessage]) -> list[str]:
 
 
 CONTINUE_REF = 'pydantic-ai'
-"""The frame seal of a conversation that opens with 'Continue.', as most of these do."""
+"""The frame marker of a conversation that opens with 'Continue.', as most of these do."""
 
 RENDERINGS: dict[bool, tuple[str, list[str]]] = {
     True: (
@@ -1847,7 +1847,7 @@ def wire_contains(body: object, text: str) -> bool:
 
 
 def expected_update(case: WireCase, instruction_id: str, content: str | None, history: list[ModelMessage]) -> str:
-    """The tail statement as each delivery path renders it, with the frame seal of the conversation `history` is."""
+    """The tail statement as each delivery path renders it, with the frame marker of the conversation `history` is."""
     if content is None:
         content = (
             'This context has been withdrawn.'
