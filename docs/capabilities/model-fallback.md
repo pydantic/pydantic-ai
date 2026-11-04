@@ -46,16 +46,9 @@ Handlers may be sync or async. A handler whose first parameter is annotated as [
 Here the first model's answer is blank and rejected by a response handler, the second model fails, and the third answers. The answering response lists both attempts it moved on from, and the rejected response's tokens count in the run's usage:
 
 ```python {title="model_fallback_mixed_policy.py"}
-from pydantic_ai import (
-    Agent,
-    ModelAPIError,
-    ModelMessage,
-    ModelResponse,
-    OutputTokenLimitExceeded,
-    TextPart,
-)
+from pydantic_ai import Agent, ModelAPIError, ModelMessage, ModelResponse, TextPart
 from pydantic_ai.capabilities import ModelFallback
-from pydantic_ai.exceptions import ContentFilterError
+from pydantic_ai.exceptions import ContentFilterError, OutputTokenLimitExceeded
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 
