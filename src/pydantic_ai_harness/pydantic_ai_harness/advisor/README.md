@@ -133,7 +133,7 @@ During streaming, the executor stream pauses while an advisor consultation runs 
 
 Native advice is compatible with durable execution because it remains part of the executor model request. Local execution cannot yet preserve the same semantics across every durable backend. Temporal and Prefect can checkpoint the returned advice, but changes to the activity-local or task-local `RunUsage` do not merge back into the outer run. DBOS checkpoints each local consultation, so workflow replay reuses the recorded advice.
 
-Use `mode='native'` with a supported provider in durable runs. Local execution, including an `auto` fallback, is unsupported there. `Advisor` cannot detect durable runs, because Pydantic AI does not yet expose a public durable-context contract, so it does not reject local execution in them.
+Under Temporal and Prefect, use `mode='native'` with a supported provider. Local execution there, including an `auto` fallback, is unsupported. `Advisor` cannot detect durable runs, because Pydantic AI does not yet expose a public durable-context contract, so it does not reject local execution in them.
 
 ## Pydantic AI references
 
