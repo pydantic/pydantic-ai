@@ -197,6 +197,7 @@ applied automatically — don't set them.
 
 Your PR is in a cluster when it shares a theme with at least two other open PRs.
 Merged PRs do not count. A PR in a cluster keeps its label and prefix after the other PRs merge.
+Never delete a `cluster:` label, even after its work stream ends. Deleting it strips the label from every merged PR and erases the record.
 Bug fixes count when they share the theme, such as caching bugs or privilege-escalation bugs.
 Unrelated bug fixes do not form a cluster.
 
