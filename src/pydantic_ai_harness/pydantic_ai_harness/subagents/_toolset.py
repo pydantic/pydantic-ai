@@ -274,6 +274,20 @@ class SubAgent(Generic[AgentDepsT]):
         return self.name or self.agent.name
 
 
+@dataclass
+class RecordedDelegation:
+    """A delegation's result as a durable engine records it, with a `ModelRetry` carried as data."""
+
+    output: str
+    retry: bool = False
+
+
+RecordDelegation = Callable[
+    [RunContext[Any], str, str, str | None, DynamicAgentSpec | None], Awaitable[RecordedDelegation]
+]
+"""Runs one delegation in a durable unit of its own: context, agent name, task, model key, created agent's spec."""
+
+
 @dataclass(frozen=True, kw_only=True)
 class _Ended:
     """How one delegation settled, before the parent hears about it."""
@@ -409,8 +423,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         id: str | None = None,
         task_control: TaskControl | None = None,
         dynamic_agents: DynamicAgents[AgentDepsT] | None = None,
-        created: dict[str, dict[str, SubAgent[AgentDepsT]]] | None = None,
+        created: dict[str, dict[str, tuple[DynamicAgentSpec, SubAgent[AgentDepsT]]]] | None = None,
         workspace_resolver: WorkspaceResolver[AgentDepsT] | None = None,
+        record_delegation: RecordDelegation | None = None,
     ) -> None:
         super().__init__(id=id)
         if dynamic_agents is not None and created is None:
@@ -428,7 +443,10 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         self._dynamic_agents = dynamic_agents
         # Agents created with `create_agent`, keyed by run_id then name. Shared with the capability, which
         # clears each run's entry in wrap_run.
-        self._created: dict[str, dict[str, SubAgent[AgentDepsT]]] = created if created is not None else {}
+        self._created: dict[str, dict[str, tuple[DynamicAgentSpec, SubAgent[AgentDepsT]]]] = (
+            created if created is not None else {}
+        )
+        self._record_delegation = record_delegation
         # Names a `create_agent` call holds while listeners see it, keyed by run_id: parallel calls see them taken.
         self._creating: dict[str, set[str]] = {}
         self._agents: dict[str, SubAgent[AgentDepsT]] = dict(agents)
@@ -451,14 +469,15 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         # the same durable agent, so under Temporal it runs in the workflow, where the child's model
         # requests and tools become activities; an activity cannot run it on the parent run's model
         # (`ctx.model` is unavailable there). Any other delegate would make its model requests in
-        # workflow code, so it stays an activity.
-        self_only = include_self and not self._agents
+        # workflow code, so it stays an activity. With `dynamic_agents`, the roster and the tools that read it
+        # stay in the workflow, and a delegation to any other agent gets an activity of its own instead.
+        in_workflow = (include_self and not self._agents) or dynamic_agents is not None
         self.add_function(
             self.delegate_task,
             name=tool_name,
             retries=tool_retries,
             prepare=self._prepare_delegate,
-            metadata={'temporal': False} if self_only else None,
+            metadata={'temporal': False} if in_workflow else None,
         )
         if task_control is not None:
             self.add_function(self.list_tasks, prepare=self._prepare_control)
@@ -466,7 +485,12 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             self.add_function(self.answer_task, prepare=self._prepare_control)
             self.add_function(self.cancel_task, prepare=self._prepare_control)
         if dynamic_agents is not None:
-            self.add_function(self.create_agent, name=CREATE_AGENT_TOOL_NAME, prepare=self._prepare_control)
+            self.add_function(
+                self.create_agent,
+                name=CREATE_AGENT_TOOL_NAME,
+                prepare=self._prepare_control,
+                metadata={'temporal': False},
+            )
 
     def _prepare_control(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition | None:
         """Offer a task-control or `create_agent` tool only where the delegate tool is offered."""
@@ -661,7 +685,37 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 resumable=sub_agent.resumable,
                 working_directory=directory,
             )
+        if self._records(ctx, agent_name):
+            return await self._delegate_recorded(ctx, agent_name, task, key)
         return await self._run_delegation(ctx, agent_name, sub_agent, task=task, key=key, workspace=workspace)
+
+    def _records(self, ctx: RunContext[AgentDepsT], agent_name: str) -> bool:
+        """Whether a delegation gets a durable unit of its own: under durability with `dynamic_agents`, unless to `self`."""
+        return (
+            self._record_delegation is not None
+            and ctx.in_durable_context
+            and not (self._include_self and agent_name == SELF_AGENT_NAME)
+        )
+
+    async def _delegate_recorded(self, ctx: RunContext[AgentDepsT], agent_name: str, task: str, key: str | None) -> str:
+        record = self._record_delegation
+        assert record is not None, 'Only called when `_records` holds.'
+        created = self._created.get(ctx.run_id or '', {}).get(agent_name)
+        recorded = await record(ctx, agent_name, task, key, created[0] if created else None)
+        if recorded.retry:
+            raise ModelRetry(recorded.output)
+        return recorded.output
+
+    async def run_recorded(
+        self, ctx: RunContext[AgentDepsT], agent_name: str, task: str, key: str | None, spec: DynamicAgentSpec | None
+    ) -> RecordedDelegation:
+        """Run a delegation inside the durable unit that records it, rebuilding a created agent from its spec."""
+        sub_agent = self._agents[agent_name] if spec is None else self._build_created(spec)
+        try:
+            output = await self._run_delegation(ctx, agent_name, sub_agent, task=task, key=key, workspace=ctx.workspace)
+        except ModelRetry as exc:
+            return RecordedDelegation(exc.message, retry=True)
+        return RecordedDelegation(output)
 
     async def _delegation_workspace(
         self,
@@ -888,7 +942,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
     def _created_agents(self, ctx: RunContext[AgentDepsT]) -> dict[str, SubAgent[AgentDepsT]]:
         """The sub-agents this run created with `create_agent`."""
         # Read only when agents can be created: a durable activity's context may not carry `run_id`.
-        return self._created.get(ctx.run_id or '', {}) if self._dynamic_agents is not None else {}
+        if self._dynamic_agents is None:
+            return {}
+        return {name: sub_agent for name, (_, sub_agent) in self._created.get(ctx.run_id or '', {}).items()}
 
     def _telemetry(self, ctx: RunContext[AgentDepsT]) -> TaskTelemetry:
         return TaskTelemetry.of(ctx, model_named=frozenset(self._created_agents(ctx)))
@@ -1068,16 +1124,21 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             spec = DynamicAgentSpec(
                 name=name, description=event.description, instructions=event.instructions, model=model
             )
-            agent = (dynamic.factory or default_factory)(spec)
-            # Without a model, it runs on the delegating run's: `()` allows no menu key either.
-            created[name] = SubAgent(
-                agent, name=name, description=event.description, models=() if model is None else [model]
-            )
+            created[name] = (spec, self._build_created(spec))
         finally:
             creating.discard(name)
             if not creating:
                 del self._creating[run_key]
         return f'Created sub-agent {name!r}. Delegate tasks to it with `{self._tool_name}`.'
+
+    def _build_created(self, spec: DynamicAgentSpec) -> SubAgent[AgentDepsT]:
+        dynamic = self._dynamic_agents
+        assert dynamic is not None, 'Agents are only created with `dynamic_agents` set.'
+        # Without a model, it runs on the delegating run's: `()` allows no menu key either.
+        models = () if spec.model is None else [spec.model]
+        return SubAgent(
+            (dynamic.factory or default_factory)(spec), name=spec.name, description=spec.description, models=models
+        )
 
     async def _run_delegation(
         self,
