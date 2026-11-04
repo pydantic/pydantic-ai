@@ -72,6 +72,8 @@ from ..capabilities.abstract import AbstractCapability
 from ..durable_exec._operation_backend import in_durable_unit
 from ..exceptions import (
     ModelConnectionError,
+    ModelEmptyResponseError,
+    ModelInvalidResponseError,
     ModelRequestRejectedError,
     SuspendedResponseExpired,
     UnsupportedSettingWarning,
@@ -1949,6 +1951,14 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """
         return _map_provider_details(response.choices[0])
 
+    def _first_choice(self, response: chat.ChatCompletion) -> chat_completion.Choice:
+        """The completion's first choice, or a `ModelEmptyResponseError` if it has none."""
+        if not response.choices:
+            raise ModelEmptyResponseError(
+                self.model_name, f'Empty response from {self.system} chat completions endpoint: no choices'
+            )
+        return response.choices[0]
+
     def _process_response(  # noqa: C901
         self, response: chat.ChatCompletion | str, *, include_raw_annotations: bool = False
     ) -> ModelResponse:
@@ -1958,8 +1968,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         # * if the endpoint returns plain text, the return type is a string
         # Thus we validate it fully here.
         if not isinstance(response, chat.ChatCompletion):
-            raise UnexpectedModelBehavior(
-                f'Invalid response from {self.system} chat completions endpoint, expected JSON data'
+            raise ModelInvalidResponseError(
+                self.model_name,
+                f'Invalid response from {self.system} chat completions endpoint, expected JSON data',
+                body=response,
             )
 
         timestamp = _now_utc()
@@ -1981,9 +1993,15 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         try:
             response = self._validate_completion(response)
         except ValidationError as e:
-            raise UnexpectedModelBehavior(f'Invalid response from {self.system} chat completions endpoint: {e}') from e
+            raise ModelInvalidResponseError(
+                self.model_name,
+                f'Invalid response from {self.system} chat completions endpoint: {e}',
+                # The completion as the SDK built it, without validating it, after the `created` and `finish_reason`
+                # fill-ins above.
+                body=response.model_dump(warnings=False),
+            ) from e
 
-        choice = response.choices[0]
+        choice = self._first_choice(response)
         finish_reason = self._map_finish_reason(choice.finish_reason)
         if missing_finish_reason:
             # Restore the missing value after validation, so it's not reported as the provider's.
@@ -2114,9 +2132,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
-            raise UnexpectedModelBehavior(  # pragma: no cover
-                'Streamed response ended without content or tool calls'
-            )
+            raise ModelEmptyResponseError(self.model_name, 'Streamed response ended without content or tool calls')
 
         # When using Azure OpenAI and a content filter is enabled, the first chunk will contain a `''` model name,
         # so we set it from a later chunk in `OpenAIChatStreamedResponse`.
@@ -4242,7 +4258,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             # Covered by the Codex forced-stream path, which drains empty streams through here.
-            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
+            raise ModelEmptyResponseError(self.model_name, 'Streamed response ended without content or tool calls')
         if isinstance(first_chunk, responses.ResponseErrorEvent):
             # Raise while the stream is being opened, so `FallbackModel` can still fall back on it.
             raise _response_error(self.model_name, first_chunk.code, first_chunk.message, in_stream=True)

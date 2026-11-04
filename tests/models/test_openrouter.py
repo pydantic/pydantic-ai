@@ -20,6 +20,7 @@ from pydantic_ai import (
     ModelAPIError,
     ModelConnectionError,
     ModelHTTPError,
+    ModelInvalidResponseError,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -600,12 +601,13 @@ async def test_openrouter_validate_non_json_response(openrouter_api_key: str) ->
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
 
-    with pytest.raises(UnexpectedModelBehavior) as exc_info:
+    with pytest.raises(ModelInvalidResponseError) as exc_info:
         model._process_response('This is not JSON!')  # type: ignore[reportPrivateUsage]
 
     assert str(exc_info.value) == snapshot(
         'Invalid response from openrouter chat completions endpoint, expected JSON data'
     )
+    assert exc_info.value.body == 'This is not JSON!'
 
 
 async def test_openrouter_validate_error_response(openrouter_api_key: str) -> None:

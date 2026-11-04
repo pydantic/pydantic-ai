@@ -93,8 +93,8 @@ class MCPSamplingModel(Model):
                 model_name=result.model,
             )
         else:
-            raise exceptions.UnexpectedModelBehavior(
-                f'Unexpected result from MCP sampling, expected "assistant" role, got {result.role}.'
+            raise exceptions.ModelInvalidResponseError(
+                self.model_name, f'Unexpected result from MCP sampling, expected "assistant" role, got {result.role}.'
             )
 
     @asynccontextmanager

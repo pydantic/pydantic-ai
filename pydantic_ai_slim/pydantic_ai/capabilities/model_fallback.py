@@ -36,6 +36,8 @@ _SpecFallbackError = Literal[
     'ModelAuthenticationError',
     'ModelNotFoundError',
     'ModelRequestTimeout',
+    'ModelEmptyResponseError',
+    'ModelInvalidResponseError',
     'ContentFilterError',
 ]
 """The exceptions an agent spec can name in `ModelFallback`'s `fallback_on`: every public `ModelAPIError` class, and

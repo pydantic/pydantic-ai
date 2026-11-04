@@ -10,13 +10,13 @@ from typing import Any, Literal, assert_never, cast, overload
 from pydantic import BaseModel, ValidationError
 from pydantic_core import from_json
 
-from .. import ModelHTTPError, UnexpectedModelBehavior, _model_errors, _utils, usage
+from .. import ModelHTTPError, _model_errors, _utils, usage
 from .._gateway_cost import gateway_reported_cost
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id, number_to_datetime
-from ..exceptions import ModelAPIError, UserError
+from ..exceptions import ModelAPIError, ModelEmptyResponseError, UserError
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -535,9 +535,7 @@ class GroqModel(Model[AsyncGroq]):
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
-            raise UnexpectedModelBehavior(  # pragma: no cover
-                'Streamed response ended without content or tool calls'
-            )
+            raise ModelEmptyResponseError(self.model_name, 'Streamed response ended without content or tool calls')
 
         return GroqStreamedResponse(
             model_request_parameters=model_request_parameters,

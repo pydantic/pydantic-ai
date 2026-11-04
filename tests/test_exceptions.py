@@ -25,7 +25,9 @@ from pydantic_ai.exceptions import (
     ModelAuthenticationError,
     ModelConnectionError,
     ModelContextWindowExceededError,
+    ModelEmptyResponseError,
     ModelHTTPError,
+    ModelInvalidResponseError,
     ModelNotFoundError,
     ModelOverloadedError,
     ModelQuotaExceededError,
@@ -80,6 +82,8 @@ def test_tool_failed_pydantic_schema_accepts_instance() -> None:
         lambda: ModelRateLimitError('model', 'test message'),
         lambda: ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='model'),
         lambda: ModelRequestTimeout('model', 30),
+        lambda: ModelEmptyResponseError('model', 'test message'),
+        lambda: ModelInvalidResponseError('model', 'test message', body={'choices': None}),
         lambda: IncompleteToolCall('test'),
         lambda: ToolRetryError(ToolReturnPart(tool_name='test', content='test', outcome='retried')),
     ],
@@ -97,6 +101,8 @@ def test_tool_failed_pydantic_schema_accepts_instance() -> None:
         'ModelRateLimitError',
         'ModelHTTPError-ModelRateLimitError',
         'ModelRequestTimeout',
+        'ModelEmptyResponseError',
+        'ModelInvalidResponseError',
         'IncompleteToolCall',
         'ToolRetryError',
     ],
@@ -250,6 +256,14 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         ),
         (lambda: IncompleteToolCall('incomplete'), {'message': 'incomplete', 'body': None}),
         (
+            lambda: ModelEmptyResponseError('gpt-4', 'Streamed response ended without content or tool calls'),
+            {'model_name': 'gpt-4', 'message': 'Streamed response ended without content or tool calls', 'body': None},
+        ),
+        (
+            lambda: ModelInvalidResponseError('gpt-4', 'Invalid response', body={'choices': None}),
+            {'model_name': 'gpt-4', 'message': 'Invalid response', 'body': {'choices': None}},
+        ),
+        (
             lambda: InlinedSchemaTooLargeError("The JSON schema of tool 'x'", 'Leave it out.'),
             {'subject': "The JSON schema of tool 'x'", 'remedy': 'Leave it out.'},
         ),
@@ -281,6 +295,8 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         'ModelHTTPError-with-model-suggestion-and-hint',
         'ModelHTTPError-ModelNotFoundError-with-model-suggestion',
         'IncompleteToolCall',
+        'ModelEmptyResponseError',
+        'ModelInvalidResponseError',
         'InlinedSchemaTooLargeError',
     ],
 )
@@ -941,3 +957,16 @@ def test_model_error_categories_pickle_round_trip(category: type[ModelAPIError])
 def test_model_overloaded_error_is_unavailable():
     assert issubclass(ModelOverloadedError, ModelUnavailableError)
     assert not issubclass(ModelUnavailableError, ModelOverloadedError)
+
+
+@pytest.mark.parametrize('error_type', [ModelEmptyResponseError, ModelInvalidResponseError])
+def test_model_response_errors_are_model_api_errors_and_unexpected_model_behavior(
+    error_type: type[ModelEmptyResponseError | ModelInvalidResponseError],
+):
+    """A response the model layer couldn't use is a model error, and still an `UnexpectedModelBehavior` too."""
+    error = error_type('gpt-4', 'Unusable response', body='<html>Bad gateway</html>')
+    assert isinstance(error, ModelAPIError)
+    assert isinstance(error, UnexpectedModelBehavior)
+    assert (error.model_name, error.message, error.body) == ('gpt-4', 'Unusable response', '<html>Bad gateway</html>')
+    assert str(error) == 'Unusable response'
+    assert str(error_type('gpt-4', 'Unusable response')) == 'Unusable response'

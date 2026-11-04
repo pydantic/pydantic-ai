@@ -15,7 +15,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ModelInvalidResponseError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     AgentInstructionSource,
     FilePart,
@@ -113,7 +113,7 @@ def test_user_text():
     agent = Agent(model=MCPSamplingModel(fake_session(create_message)))
 
     expected_match = 'Unexpected result from MCP sampling, expected "assistant" role, got user.'
-    with pytest.raises(UnexpectedModelBehavior, match=expected_match):
+    with pytest.raises(ModelInvalidResponseError, match=expected_match):
         agent.run_sync('Hello')
 
 

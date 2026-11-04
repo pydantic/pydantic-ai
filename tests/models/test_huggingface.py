@@ -21,6 +21,7 @@ from pydantic_ai import (
     ImageUrl,
     ModelAPIError,
     ModelConnectionError,
+    ModelEmptyResponseError,
     ModelMessage,
     ModelOverloadedError,
     ModelRequest,
@@ -1366,3 +1367,12 @@ async def test_non_json_response_body_raises_model_api_error(allow_model_request
 
     assert exc_info.value.__cause__ is error
     assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+async def test_empty_stream_raises_model_empty_response_error(allow_model_requests: None):
+    mock_client = MockHuggingFace.create_stream_mock([[]])
+    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+
+    with pytest.raises(ModelEmptyResponseError, match='Streamed response ended without content or tool calls'):
+        async with Agent(model).run_stream('hello'):
+            pass

@@ -3449,6 +3449,7 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_toolset.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model_errors.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py::<module>"
       ]
     },
@@ -3538,6 +3539,17 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model_errors.py::_encode"
+      ]
+    },
+    "_ModelResponseError": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model_errors.py::<module>"
       ]
     }
   },

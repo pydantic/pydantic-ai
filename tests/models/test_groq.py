@@ -23,6 +23,7 @@ from pydantic_ai import (
     ImageUrl,
     ModelAPIError,
     ModelConnectionError,
+    ModelEmptyResponseError,
     ModelHTTPError,
     ModelOverloadedError,
     ModelRequest,
@@ -139,9 +140,7 @@ class MockGroq:
         if stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
             if isinstance(self.stream[0], Sequence):
-                response = MockAsyncStream(  # pragma: no cover
-                    iter(cast(list[MockChatCompletionChunk], self.stream[self.index]))
-                )
+                response = MockAsyncStream(iter(cast(list[MockChatCompletionChunk], self.stream[self.index])))
             else:
                 response = MockAsyncStream(iter(cast(list[MockChatCompletionChunk], self.stream)))
         else:
@@ -6173,3 +6172,12 @@ async def test_text_plain_response_body_raises_model_api_error(allow_model_reque
 
     assert type(exc_info.value) is ModelAPIError
     assert exc_info.value.message == snapshot("Expected a JSON response, got: 'upstream connect error'")
+
+
+async def test_empty_stream_raises_model_empty_response_error(allow_model_requests: None):
+    mock_client = MockGroq.create_mock_stream([[]])
+    model = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
+
+    with pytest.raises(ModelEmptyResponseError, match='Streamed response ended without content or tool calls'):
+        async with Agent(model).run_stream('hello'):
+            pass

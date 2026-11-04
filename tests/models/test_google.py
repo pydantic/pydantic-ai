@@ -76,6 +76,7 @@ from pydantic_ai.exceptions import (
     ContentFilterError,
     ModelAPIError,
     ModelConnectionError,
+    ModelEmptyResponseError,
     ModelHTTPError,
     ModelRetry,
     UnexpectedModelBehavior,
@@ -4532,6 +4533,18 @@ async def test_google_stream_usage_is_live_mid_stream(allow_model_requests: None
     # fails if a re-recording ever collapses to one frame, rather than passing vacuously.
     assert len(usage_seen) > 1
     assert usage_seen == snapshot([(18, 66), (18, 114), (18, 115)])
+
+
+async def test_google_empty_stream_raises_model_empty_response_error(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    """Mocked because the API doesn't send an empty stream on demand."""
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=_aiter_chunks([]))
+
+    with pytest.raises(ModelEmptyResponseError, match='Streamed response ended without content or tool calls'):
+        async with Agent(model).run_stream('Hello'):
+            pass
 
 
 async def test_google_stream_usage_retains_dropped_field_mid_stream(

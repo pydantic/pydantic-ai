@@ -33,8 +33,10 @@ from ...exceptions import (
     ModelServerError,
     ModelUnavailableError,
     RetryModelRequest,
+    UnexpectedModelBehavior,
     UserError,
     _CategorizedHTTPError,  # pyright: ignore[reportPrivateUsage]
+    _ModelResponseError,  # pyright: ignore[reportPrivateUsage]
 )
 from ...messages import ModelResponse
 from .._utils import mark_streamed_before_failing, streamed_before_failing
@@ -182,9 +184,18 @@ def _retry_policy_type(error: ModelAPIError) -> str:
     error, including a subclass of a category defined outside `pydantic_ai.exceptions` (like an adapter-specific
     error), reports its own class name, which is what Temporal would have used for the raw exception. The workflow
     still rebuilds the error as its own class.
+
+    A response the model layer couldn't use, like a
+    [`ModelEmptyResponseError`][pydantic_ai.exceptions.ModelEmptyResponseError] or
+    [`ModelInvalidResponseError`][pydantic_ai.exceptions.ModelInvalidResponseError], is also an
+    `UnexpectedModelBehavior`, and reports that name, which `with_non_retryable_errors` adds to every retry policy.
+    So Temporal doesn't retry it as often as the policy allows (by default, without limit), and the workflow rebuilds
+    it for the agent's `ModelFallback` or retry capability to handle, as they run in the workflow.
     """
     if type(error).__module__ != ModelAPIError.__module__:
         return type(error).__name__
+    if isinstance(error, _ModelResponseError):
+        return UnexpectedModelBehavior.__name__
     if isinstance(error, ModelHTTPError):
         return 'ModelHTTPError'
     if isinstance(error, _ERROR_CATEGORIES):
