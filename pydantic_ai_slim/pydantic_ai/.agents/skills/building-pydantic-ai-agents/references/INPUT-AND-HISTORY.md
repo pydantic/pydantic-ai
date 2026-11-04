@@ -196,3 +196,5 @@ A `priority` controls delivery:
 - `'when_idle'`: delivered only when the agent would otherwise terminate, after any `'asap'` messages — a follow-up task that shouldn't interrupt in-flight work.
 
 Both priorities drain however you drive the run — `agent.run()`, explicit `AgentRun.next()`, and a bare `async for node in agent_run:` loop all deliver enqueued messages. See [message history docs](https://pydantic.dev/docs/ai/core-concepts/message-history/#injecting-messages-mid-run) for details.
+
+To change a message still in the queue (a chat UI's "send now" and "remove" buttons on a message typed while the agent works), use `dequeue(enqueue_id)` and `set_enqueue_priority(enqueue_id, priority)` on `RunContext`, `AgentRun` or `RealtimeSession` rather than editing `AgentRun.pending_messages`. See [Dequeuing a message or changing its priority](https://pydantic.dev/docs/ai/core-concepts/message-history/#dequeuing-a-message-or-changing-its-priority) for what they return and when they raise.

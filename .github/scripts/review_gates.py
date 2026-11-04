@@ -50,7 +50,7 @@ class ReviewPullRequest(BaseModel):
 
 
 class Review(BaseModel):
-    """A submitted review, including its immutable reviewed commit."""
+    """A submitted review; GitHub can move its `commit_id` after a push, but not its body's marker."""
 
     id: int
     user: ReviewUser
@@ -61,7 +61,7 @@ class Review(BaseModel):
 
 
 class ReviewComment(BaseModel):
-    """The parent review identifies the head; `commit_id` can move on later pushes."""
+    """The parent review's marker identifies the head, else `original_commit_id`; `commit_id` can move on later pushes."""
 
     pull_request_review_id: int
     user: ReviewUser
@@ -144,8 +144,8 @@ def douwebot_approval(
 ) -> Verdict:
     """Verify provenance and associate findings with their immutable review head.
 
-    GitHub can move a comment's `commit_id` after a push. Use its parent's reviewed
-    commit, or `original_commit_id` when the parent is unavailable.
+    GitHub can move a review's and a comment's `commit_id` after a push. Use the parent's
+    marker head, or `original_commit_id` when the parent is unavailable or unmarked.
     """
     verdict = Verdict()
     own_reviews: list[Review] = []
@@ -172,7 +172,8 @@ def douwebot_approval(
         if comment.user.login != 'github-actions[bot]' or comment.user.type != 'Bot':
             continue
         parent = by_id.get(comment.pull_request_review_id)
-        reviewed_head = parent.commit_id if parent else comment.original_commit_id
+        marker = DOUWEBOT_MARKER.search(parent.body) if parent else None
+        reviewed_head = marker[2] if marker else comment.original_commit_id
         if reviewed_head != pull.head.sha:
             continue
         if comment.pull_request_review_id in marked_ids:

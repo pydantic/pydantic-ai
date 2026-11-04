@@ -160,8 +160,14 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
             messages = await tier.compact(messages, ctx)
             # Before the next stop decision, so escalation measures the history it would return.
             messages = reinject_pinned(original, messages)
-            reclaimed = heuristic_baseline - estimate_token_count(messages, self.tokenizer)
-            estimate = max(baseline - reclaimed, 0)
+            after = estimate_token_count(messages, self.tokenizer)
+            reclaimed = heuristic_baseline - after
+            # The two counts are on different bases, and the anchor's can be the smaller one: content a
+            # provider's tokenizer merges costs it far fewer tokens than the heuristic charges it. Crediting
+            # that text's removal against the smaller baseline subtracts more than the anchor ever counted;
+            # flooring the result at 0 would then report the history the tier just rewrote as fitting while
+            # it still holds `after` tokens. Keep the surviving text's own count as the floor instead.
+            estimate = max(baseline - reclaimed, after)
         return messages
 
     async def compact(

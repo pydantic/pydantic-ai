@@ -545,19 +545,41 @@ _(This example is complete, it can be run "as is")_
     `dump_python` → `validate_python` round-trip preserves them exactly. This is the boundary you
     use to persist and reload history.
 
-    A [multi-modal item][pydantic_ai.messages.MultiModalContent] in a tool return is reconstructed
+    A [multi-modal item][pydantic_ai.messages.MultiModalContent] your tool returned is reconstructed
     as its own type wherever it sits — on its own, in a list, or nested at any depth inside a
-    mapping, including one whose own keys happen to look like ours. A URL-based item is
-    reconstructed only when its mapping carries `media_type`, which a dump with the default arguments
-    always writes; without it the item stays the plain mapping your tool returned. A URL whose media type
-    Pydantic AI can't infer from the URL is serialized with `media_type: null`, which validates
-    back into the URL part's default (no media type) and dumps `null` again, in a tool return as
-    anywhere else. A
-    [`BinaryContent`][pydantic_ai.messages.BinaryContent] or
-    [`UploadedFile`][pydantic_ai.messages.UploadedFile] item is recognized by the fields its own type
-    requires. A mapping that merely reuses one of our `kind` values stays a plain mapping, and
-    dumping it back never raises. Spelling one of our items out in full does reconstruct it, and the
-    keys that type doesn't declare are dropped along the way, so keep `kind` off any dictionary you
+    mapping. A tool return records the URL-based and [`UploadedFile`][pydantic_ai.messages.UploadedFile]
+    items it holds when it is serialized, under `content_file_digests` next to `content`, and only those
+    are reconstructed. Keep that key when you transform stored history. A mapping your tool
+    returned stays that mapping, even one that spells out one of our items in full, so a round trip
+    hands back exactly what your tool returned.
+
+    The record identifies each item by its saved form. To change a file item in stored history, such as
+    to refresh a presigned URL, load the history, edit the item and save it again: an item edited in the
+    stored JSON directly no longer matches its record, and loads as a mapping.
+
+    History saved by an earlier version has no such record. In it, a mapping shaped like a URL-based
+    item is reconstructed only as an HTTP(S) URL with `force_download` reset, and only when it carries
+    `media_type`. A mapping shaped like an uploaded file or a non-HTTP URL stays a mapping, and so do
+    the uploaded files and non-HTTP URLs your tools returned before the upgrade. If that history's
+    tool results came only from your own code, not from data a third party wrote, such as a record an
+    MCP server or an external API returned, load it with
+    `ModelMessagesTypeAdapter.validate_json(data, context={'pydantic_ai': {'rebuild_unrecorded_tool_files': True}})`
+    (or `validate_python`) and its files load as they did before. This rebuilds every file-shaped
+    mapping in those tool results as a file, whatever produced it. Save the history again afterwards,
+    and it carries the record and no longer needs the context. Load other history without it; saving that
+    history again keeps only what it loaded as.
+
+    [Durable execution](durable_execution/overview.md) decodes its own journal this way, so a run in
+    flight across an upgrade keeps the files its earlier steps recorded. The harness's step persistence
+    stores and saved conversations load their own snapshots this way too, so a run you continue or fork
+    keeps them as well.
+
+    A URL whose media type Pydantic AI can't infer from the URL is serialized with `media_type: null`,
+    which validates back into the URL part's default (no media type) and dumps `null` again, in a tool
+    return as anywhere else. A [`BinaryContent`][pydantic_ai.messages.BinaryContent] item is recognized
+    by the fields its type requires. A mapping that merely reuses one of our `kind` values stays a plain
+    mapping, and dumping it back never raises. Spelling a `BinaryContent` out in full does reconstruct
+    it, and the keys it doesn't declare are dropped along the way, so keep `kind` off any dictionary you
     want handed back verbatim.
 
     A tool return keyed by something other than a string is the one place that reconstruction
@@ -1057,6 +1079,63 @@ calling its handler skips `before_model_request`, so it also skips that request-
       system-prompt callback that re-enqueues on each reinjection), the run will
       loop indefinitely. Set [`UsageLimits`][pydantic_ai.usage.UsageLimits] on the
       run as a safety net.
+
+### Dequeuing a message or changing its priority
+
+Until it's delivered, a queued message can be changed by its `enqueue_id`.
+[`AgentRun.dequeue`][pydantic_ai.run.AgentRun.dequeue] removes it, and
+[`AgentRun.set_enqueue_priority`][pydantic_ai.run.AgentRun.set_enqueue_priority] gives it a new `priority`, keeping its
+place in the queue and its `enqueue_id`. That's what a chat UI needs for a message the user typed
+while the agent was working: a "send now" button promotes it from `'when_idle'` to `'asap'`, and a
+remove button dequeues it.
+
+```python {title="dequeue_or_send_now.py"}
+from pydantic_ai import Agent
+from pydantic_graph import End
+
+agent = Agent('{{ anthropic:large }}')
+
+
+async def main():
+    async with agent.iter('Refactor the billing module') as agent_run:
+        # Messages the user typed while the agent was working.
+        follow_up = agent_run.enqueue('Then update the changelog.', priority='when_idle')
+        typo = agent_run.enqueue('Also rename `foo`', priority='when_idle')
+        assert follow_up is not None and typo is not None
+
+        clicked = False
+        node = agent_run.next_node
+        while not isinstance(node, End):
+            if Agent.is_call_tools_node(node) and not clicked:
+                # The user pressed "send now" on one message and "remove" on the other.
+                # `False` would mean the message was no longer queued, e.g. already delivered.
+                sent_now = agent_run.set_enqueue_priority(follow_up, 'asap')
+                removed = agent_run.dequeue(typo)
+                print(sent_now, removed)
+                #> True True
+                clicked = True
+            node = await agent_run.next(node)
+```
+
+Both return `False` once the message is no longer queued: it was delivered, it was already dequeued,
+or the run has ended. That's not an error, as a click can race with the delivery: the check and the
+change happen under the same lock as delivery, so exactly one of them wins. `False` doesn't say which
+of these happened. To tell the user a message was sent, watch for the
+[`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] carrying its `enqueue_id`. A
+dequeued message gets no such event; one whose priority changed is announced under its original
+`enqueue_id` when it's delivered.
+
+A message enqueued at `'when_idle'` and promoted goes into the next model request as its own
+[`ModelRequest`][pydantic_ai.messages.ModelRequest], after any `'asap'` messages queued before it.
+Content a tool enqueued at `'asap'` and then demoted to `'when_idle'` is delivered like other
+`'when_idle'` content, not next to that tool's result. Tools and capability hooks can do the same with
+[`RunContext.dequeue`][pydantic_ai.tools.RunContext.dequeue] and
+[`RunContext.set_enqueue_priority`][pydantic_ai.tools.RunContext.set_enqueue_priority], and code driving a realtime
+session with [`RealtimeSession.dequeue`][pydantic_ai.realtime.RealtimeSession.dequeue] and
+[`RealtimeSession.set_enqueue_priority`][pydantic_ai.realtime.RealtimeSession.set_enqueue_priority]. Inside a
+[durable execution](durable_execution/overview.md) unit, both raise
+[`UserError`][pydantic_ai.exceptions.UserError], like `enqueue`, since the change would be lost on
+replay.
 
 ## Processing Message History
 
