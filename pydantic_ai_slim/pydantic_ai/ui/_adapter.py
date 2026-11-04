@@ -712,14 +712,14 @@ def pending_tool_calls(message_history: Sequence[ModelMessage]) -> list[ToolCall
 
 
 def warn_dropped_tool_results(dropped: int, *, stacklevel: int) -> None:
-    """Warn that `manage_message_history='server'` dropped client tool results for calls that aren't pending.
+    """Warn that a server-held history dropped client tool results for calls that aren't waiting on one.
 
     `stacklevel` counts from the caller, as `warnings.warn` does.
     """
     warnings.warn(
-        f'{dropped} client-submitted tool result(s) were dropped because they answer no tool call that '
-        f"`message_history` is waiting on. With `manage_message_history='server'`, the client can only "
-        f'return results for the tool calls at the end of the stored history.',
+        f'{dropped} client-submitted tool result(s) were dropped because they answer no tool call the stored '
+        f'conversation is waiting on a result for. The client can only return results for the tool calls at the '
+        f'end of the stored conversation, and not for a call that is waiting on an approval.',
         UserWarning,
         stacklevel=stacklevel,
     )
@@ -880,8 +880,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
     A store keys conversations by ID alone, and the ID comes from the client, so in a multi-tenant app
     conversation IDs must be unguessable or prefixed per scope. Otherwise, a tenant who creates an ID first
-    holds it and its owner gets that not-found. This only affects availability: no tenant reaches another's
-    messages. A [`delete`][pydantic_ai.conversation_store.ConversationStore.delete] that names the owner's
+    holds it and its owner gets that not-found. A client can also tell from that not-found that an ID it
+    holds exists under another scope, but no tenant reaches another's messages. A [`delete`][pydantic_ai.conversation_store.ConversationStore.delete] that names the owner's
     scope leaves the conversation as it is, so freeing the ID takes one from your app without a scope.
     """
 
