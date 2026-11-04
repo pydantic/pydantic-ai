@@ -252,50 +252,10 @@ class GoogleEmbeddingModel(EmbeddingModel):
         inputs, settings = self.prepare_embed(inputs, settings)
         settings = cast(GoogleEmbeddingSettings, settings)
 
-        google_task = settings.get('google_task')
-        google_task_type = settings.get('google_task_type')
-
         if self._model_name == _TASK_PREFIX_MODEL:
-            if google_task_type is not None:
-                warnings.warn(
-                    f'`google_task_type` is not supported by `{_TASK_PREFIX_MODEL}` and is ignored; '
-                    'this model conditions on a task via the `google_task` text prefix instead.',
-                    UserWarning,
-                    stacklevel=2,
-                )
-            task = google_task if google_task is not None else 'search result'
-            # `'raw'` opts out of conditioning (verbatim passthrough). Named `'raw'`, not `'none'`:
-            # the prefix is applied client-side (no provider API value to mirror, unlike VoyageAI's
-            # `'none'` which maps to a null `input_type`), and `'raw'` avoids the `google_task=None`
-            # footgun where `None` would silently fall back to the `'search result'` default.
-            if task == 'raw':
-                texts = inputs
-            elif input_type == 'document' and task not in _SYMMETRIC_TASKS:
-                title = settings.get('google_title') or 'none'
-                texts = [f'title: {title} | text: {text}' for text in inputs]
-            else:
-                texts = [f'task: {task} | query: {text}' for text in inputs]
-            config = EmbedContentConfig(
-                task_type=None,
-                output_dimensionality=settings.get('dimensions'),
-                title=None,
-            )
+            texts, config = self._task_prefix_request(inputs, input_type, settings)
         else:
-            if google_task is not None:
-                warnings.warn(
-                    f'`google_task` is only supported by `{_TASK_PREFIX_MODEL}` and is ignored; '
-                    f'`{self._model_name}` conditions on a task via the `google_task_type` setting instead.',
-                    UserWarning,
-                    stacklevel=2,
-                )
-            if google_task_type is None:
-                google_task_type = 'RETRIEVAL_DOCUMENT' if input_type == 'document' else 'RETRIEVAL_QUERY'
-            texts = inputs
-            config = EmbedContentConfig(
-                task_type=google_task_type,
-                output_dimensionality=settings.get('dimensions'),
-                title=settings.get('google_title'),
-            )
+            texts, config = self._task_type_request(inputs, input_type, settings)
 
         contents: ContentListUnion = [Content(parts=[Part(text=text)]) for text in texts]
 
@@ -316,6 +276,58 @@ class GoogleEmbeddingModel(EmbeddingModel):
             model_name=self._model_name,
             provider_name=self.system,
         )
+
+    def _task_prefix_request(
+        self, inputs: Sequence[str], input_type: EmbedInputType, settings: GoogleEmbeddingSettings
+    ) -> tuple[Sequence[str], EmbedContentConfig]:
+        """The texts and config for `_TASK_PREFIX_MODEL`, which conditions on a task through a prefix on each text."""
+        google_task = settings.get('google_task')
+        if settings.get('google_task_type') is not None:
+            warnings.warn(
+                f'`google_task_type` is not supported by `{_TASK_PREFIX_MODEL}` and is ignored; '
+                'this model conditions on a task via the `google_task` text prefix instead.',
+                UserWarning,
+                stacklevel=3,
+            )
+        task = google_task if google_task is not None else 'search result'
+        # `'raw'` opts out of conditioning (verbatim passthrough). Named `'raw'`, not `'none'`:
+        # the prefix is applied client-side (no provider API value to mirror, unlike VoyageAI's
+        # `'none'` which maps to a null `input_type`), and `'raw'` avoids the `google_task=None`
+        # footgun where `None` would silently fall back to the `'search result'` default.
+        if task == 'raw':
+            texts = inputs
+        elif input_type == 'document' and task not in _SYMMETRIC_TASKS:
+            title = settings.get('google_title') or 'none'
+            texts = [f'title: {title} | text: {text}' for text in inputs]
+        else:
+            texts = [f'task: {task} | query: {text}' for text in inputs]
+        config = EmbedContentConfig(
+            task_type=None,
+            output_dimensionality=settings.get('dimensions'),
+            title=None,
+        )
+        return texts, config
+
+    def _task_type_request(
+        self, inputs: Sequence[str], input_type: EmbedInputType, settings: GoogleEmbeddingSettings
+    ) -> tuple[Sequence[str], EmbedContentConfig]:
+        """The texts and config for a model that conditions on a task through the `task_type` setting."""
+        google_task_type = settings.get('google_task_type')
+        if settings.get('google_task') is not None:
+            warnings.warn(
+                f'`google_task` is only supported by `{_TASK_PREFIX_MODEL}` and is ignored; '
+                f'`{self._model_name}` conditions on a task via the `google_task_type` setting instead.',
+                UserWarning,
+                stacklevel=3,
+            )
+        if google_task_type is None:
+            google_task_type = 'RETRIEVAL_DOCUMENT' if input_type == 'document' else 'RETRIEVAL_QUERY'
+        config = EmbedContentConfig(
+            task_type=google_task_type,
+            output_dimensionality=settings.get('dimensions'),
+            title=settings.get('google_title'),
+        )
+        return inputs, config
 
     async def max_input_tokens(self) -> int | None:
         return _MAX_INPUT_TOKENS.get(self._model_name)
