@@ -16,8 +16,6 @@ It works in the run's workspace, on this machine or in a sandbox. It is a regula
 
 ![Coder is a bundle of other capabilities. FileSystem gives the model read_file, write_file, edit_file, list_files and grep; Shell gives it shell; SubAgents gives it delegate_task, which hands a sub-task to a fresh run of the same agent; RepoContext loads AGENTS.md and CLAUDE.md into the instructions. Plumbing the model never calls clears old tool results, caps tool output at 64,000 characters, repairs malformed tool arguments and turns on prompt caching. All of it works in the run's workspace: a LocalWorkspace on this machine or a cloud sandbox.](../img/harness/coder.svg)
 
-![Coder is a bundle of other capabilities. FileSystem gives the model read_file, write_file, edit_file, list_files and grep; Shell gives it shell; SubAgents gives it delegate_task, which hands a sub-task to a fresh run of the same agent; RepoContext loads AGENTS.md and CLAUDE.md into the instructions. Plumbing the model never calls clears old tool results, caps tool output at 64,000 characters, repairs malformed tool arguments and turns on prompt caching. All of it works in the run's workspace: a LocalWorkspace on this machine or a cloud sandbox.](../img/harness/coder.svg)
-
 ## Usage
 
 Install the Coder extra. It includes `json-repair`, which `RepairToolArguments` needs, and ripgrep (`rg`), which backs the `list_files` and `grep` tools. Without the extra, importing `Coder` raises an `ImportError` naming it:
