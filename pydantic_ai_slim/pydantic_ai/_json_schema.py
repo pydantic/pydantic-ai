@@ -21,6 +21,11 @@ def _is_type_value(value: Any) -> bool:
     )
 
 
+def _is_integer(value: Any) -> bool:
+    # Since draft 6, a number with a zero fractional part is an integer, as JSON text like `2.0` parses to a float.
+    return (isinstance(value, int) and not isinstance(value, bool)) or (isinstance(value, float) and value.is_integer())
+
+
 def _is_sequence(value: Any) -> bool:
     # A tuple serializes as a JSON array, and every reader treats these as sequences.
     return isinstance(value, list | tuple)
@@ -49,7 +54,7 @@ _VALUE_KEYWORDS: dict[str, tuple[Callable[[Any], bool], str]] = {
     'type': (_is_type_value, 'must be a string or a list of strings'),
     'required': (_is_sequence, 'must be a list'),
     'enum': (_is_sequence, 'must be a list'),
-    'minItems': (lambda value: isinstance(value, int) and not isinstance(value, bool), 'must be an integer'),
+    'minItems': (_is_integer, 'must be an integer'),
 }
 """Keywords whose value the transformers interpret."""
 
@@ -91,11 +96,12 @@ def _check_subschema(value: Any, path: str, *, allow_list: bool) -> None:
 
 def _check_schema_container(key: str, container: type[dict[str, Any]] | type[list[Any]], value: Any, path: str) -> None:
     """Check a keyword whose value is an object or a list of schemas."""
-    if not isinstance(value, container):
+    # A tuple of schemas worked before this check existed: the walker iterates it like a list.
+    if not (isinstance(value, container) or (container is list and isinstance(value, tuple))):
         kind = 'an object' if container is dict else 'a list'
         _invalid_schema(path, f'`{key}` must be {kind} of schemas', value)
     members: Iterable[tuple[str | int, Any]] = (
-        cast(dict[str, Any], value).items() if isinstance(value, dict) else enumerate(cast(list[Any], value))
+        cast(dict[str, Any], value).items() if isinstance(value, dict) else enumerate(cast(Sequence[Any], value))
     )
     for name, member in members:
         _check_schema_shape(member, f'{path}.{name}')

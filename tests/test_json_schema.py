@@ -2,6 +2,7 @@
 
 from __future__ import annotations as _annotations
 
+import json
 import re
 from copy import deepcopy
 from typing import Any
@@ -233,6 +234,10 @@ _MALFORMED_SCHEMAS: dict[str, tuple[Any, str]] = {
         {'type': 'array', 'items': {'type': 'string'}, 'minItems': True},
         'Invalid JSON Schema at `minItems`: `minItems` must be an integer, got True',
     ),
+    'minItems-is-a-fraction': (
+        {'type': 'array', 'items': {'type': 'string'}, 'minItems': 1.5},
+        'Invalid JSON Schema at `minItems`: `minItems` must be an integer, got 1.5',
+    ),
     'defs-entry-union-member-is-a-string': (
         {'type': 'object', '$defs': {'X': {'anyOf': [{'type': 'string'}, 'nope']}}},
         "Invalid JSON Schema at `$defs.X.anyOf.1`: a schema must be an object or a boolean, got 'nope'",
@@ -318,6 +323,10 @@ _VALID_SCHEMAS: dict[str, Any] = {
     'type-is-a-tuple': {'type': ('string', 'null')},
     'required-is-a-tuple': {'type': 'object', 'properties': {'a': {'type': 'string'}}, 'required': ('a',)},
     'enum-is-a-tuple': {'enum': ('a', 'b')},
+    'anyOf-is-a-tuple': {'anyOf': ({'type': 'string'}, {'type': 'null'})},
+    'prefixItems-is-a-tuple': {'type': 'array', 'prefixItems': ({'type': 'string'},)},
+    # Since draft 6, a number with a zero fractional part is an integer.
+    'minItems-is-an-integral-float': {'type': 'array', 'items': {'type': 'string'}, 'minItems': 2.0},
     # `None` is treated as an absent key, as tooling that dumps with `exclude_none=False` produces.
     'none-subschemas': {'additionalProperties': None, 'items': None, 'propertyNames': None, 'contains': None},
     'boolean-property': {'type': 'object', 'properties': {'x': True, 'y': False}},
@@ -338,7 +347,8 @@ def test_schema_shape_accepts_valid_schemas(case: str):
     """Shapes JSON Schema allows and the walker already handles must not be rejected by the check."""
     schema = _VALID_SCHEMAS[case]
 
-    assert _PassthroughTransformer(deepcopy(schema)).walk() == schema
+    # Compared as JSON, since the walker rebuilds a tuple of schemas as a list.
+    assert json.loads(json.dumps(_PassthroughTransformer(deepcopy(schema)).walk())) == json.loads(json.dumps(schema))
 
 
 def test_schema_shape_accepts_a_boolean_defs_entry():
