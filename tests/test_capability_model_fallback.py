@@ -65,6 +65,7 @@ from pydantic_ai.exceptions import (
     RetryModelRequest,
     RunCancelled,
     RunTimedOut,
+    UnsupportedSettingWarning,
     UsageLimitExceeded,
     UserError,
 )
@@ -2558,13 +2559,13 @@ async def test_spec_fallback_on_names_only_fall_back_on_those_errors(fallback_on
 
 
 def test_spec_fallback_on_names_every_public_model_api_error():
-    """Every public `ModelAPIError` class, and `ContentFilterError`, can be named in a spec, and nothing else can."""
+    """Every public `ModelAPIError` class, `ContentFilterError` and `UnsupportedSettingWarning` can be named in a spec."""
     public_errors = {
         name
         for name in exceptions.__all__
         if isinstance(cls := getattr(exceptions, name), type) and issubclass(cls, ModelAPIError)
     }
-    assert set(get_args(_SpecFallbackError)) == public_errors | {'ContentFilterError'}
+    assert set(get_args(_SpecFallbackError)) == public_errors | {'ContentFilterError', 'UnsupportedSettingWarning'}
 
 
 @pytest.mark.parametrize(
@@ -2572,8 +2573,8 @@ def test_spec_fallback_on_names_every_public_model_api_error():
     [
         pytest.param(
             {'ModelFallback': {'models': ['working'], 'fallback_on': ['ModelRateLimitError', 'UserError']}},
-            '`ModelFallback` `fallback_on` in an agent spec takes names of `ModelAPIError` classes and '
-            "`ContentFilterError`, got ['UserError']. Valid names: ModelAPIError, ModelHTTPError, ",
+            '`ModelFallback` `fallback_on` in an agent spec takes names of `ModelAPIError` classes, `ContentFilterError` '
+            "and `UnsupportedSettingWarning`, got ['UserError']. Valid names: ModelAPIError, ModelHTTPError, ",
             id='not-a-model-api-error',
         ),
         pytest.param(
@@ -2823,3 +2824,141 @@ def test_an_empty_fallback_on_suggests_the_owners_default(make: Callable[[], obj
     with pytest.raises(UserError) as exc_info:
         make()
     assert str(exc_info.value) == message
+
+
+# --- Settings a model would ignore ---
+
+
+class _IgnoresStopSequences(FunctionModel):
+    """A model that ignores `stop_sequences`, so a request setting them warns with `UnsupportedSettingWarning`."""
+
+    unsupported_settings = frozenset({'stop_sequences'})
+
+
+def _ignoring_stop(name: str, calls: list[str]) -> FunctionModel:
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append(name)  # pragma: no cover
+        return ModelResponse(parts=[TextPart(f'{name} answered')])  # pragma: no cover
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        calls.append(name)  # pragma: no cover
+        yield f'{name} answered'  # pragma: no cover
+
+    return _IgnoresStopSequences(respond, stream_function=stream, model_name=name)
+
+
+def _answering_streams(name: str, calls: list[str]) -> FunctionModel:
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append(name)
+        return ModelResponse(parts=[TextPart(f'{name} answered')])
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        calls.append(name)
+        yield f'{name} answered'
+
+    return FunctionModel(respond, stream_function=stream, model_name=name)
+
+
+_SKIPS_IGNORING = (ModelAPIError, UnsupportedSettingWarning)
+
+
+def _skipping_agent(owner: str, primary: Model, backup: Model, fallback_on: Any = _SKIPS_IGNORING) -> Agent[Any, str]:
+    if owner == 'ModelFallback':
+        return Agent(primary, capabilities=[ModelFallback(backup, fallback_on=fallback_on)])
+    return Agent(FallbackModel(primary, backup, fallback_on=fallback_on))
+
+
+_OWNERS = pytest.mark.parametrize('owner', ['ModelFallback', 'FallbackModel'])
+
+_STOP = ModelSettings(stop_sequences=['STOP'])
+
+_IGNORED_STOP = "The `stop_sequences` setting is not supported by model 'function:primary' and will be ignored."
+
+
+@_OWNERS
+async def test_unsupported_setting_warning_moves_on_from_a_model_that_would_ignore_a_setting(owner: str):
+    """Named in `fallback_on`, the warning is raised as the attempt's error instead, before anything is sent."""
+    calls: list[str] = []
+    agent = _skipping_agent(owner, _ignoring_stop('primary', calls), _answering_streams('backup', calls))
+
+    result = await agent.run('x', model_settings=_STOP)
+
+    assert result.output == 'backup answered'
+    assert calls == ['backup']
+    assert [(a.model_name, a.outcome, a.error) for a in result.response.failed_attempts or []] == [
+        ('primary', 'error', f'UnsupportedSettingWarning: {_IGNORED_STOP}')
+    ]
+
+
+@_OWNERS
+async def test_unsupported_setting_warning_moves_on_from_a_streamed_request(owner: str):
+    calls: list[str] = []
+    agent = _skipping_agent(owner, _ignoring_stop('primary', calls), _answering_streams('backup', calls))
+
+    async with agent.run_stream('x', model_settings=_STOP) as result:
+        assert await result.get_output() == 'backup answered'
+
+    assert calls == ['backup']
+
+
+@_OWNERS
+async def test_a_model_that_honors_the_settings_is_not_moved_on_from(owner: str):
+    calls: list[str] = []
+    agent = _skipping_agent(owner, _answering_streams('primary', calls), _ignoring_stop('backup', calls))
+
+    assert (await agent.run('x', model_settings=_STOP)).output == 'primary answered'
+    assert calls == ['primary']
+
+
+@_OWNERS
+async def test_every_model_ignoring_a_setting_raises_the_group(owner: str):
+    calls: list[str] = []
+    agent = _skipping_agent(owner, _ignoring_stop('primary', calls), _ignoring_stop('backup', calls))
+
+    with pytest.raises(FallbackExceptionGroup) as exc_info:
+        await agent.run('x', model_settings=_STOP)
+
+    assert calls == []
+    assert [type(error) for error in exc_info.value.exceptions] == [UnsupportedSettingWarning] * 2
+    assert [(a.model_name, a.outcome) for a in exc_info.value.attempts] == [('primary', 'error'), ('backup', 'error')]
+
+
+@_OWNERS
+@pytest.mark.parametrize('fallback_on', [(ModelAPIError,), (Exception,)], ids=['default', 'supertype'])
+async def test_a_model_that_would_ignore_a_setting_still_answers_unless_named(owner: str, fallback_on: Any):
+    """Without `UnsupportedSettingWarning` itself in `fallback_on`, the model answers and warns, as before."""
+    calls: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('primary')
+        return ModelResponse(parts=[TextPart('primary answered')])
+
+    agent = _skipping_agent(
+        owner,
+        _IgnoresStopSequences(respond, model_name='primary'),
+        _answering_streams('backup', calls),
+        fallback_on=fallback_on,
+    )
+
+    with pytest.warns(UnsupportedSettingWarning, match=re.escape(_IGNORED_STOP)):
+        result = await agent.run('x', model_settings=_STOP)
+
+    assert result.output == 'primary answered'
+    assert calls == ['primary']
+
+
+async def test_spec_fallback_on_names_unsupported_setting_warning():
+    calls: list[str] = []
+    models = {'primary': _ignoring_stop('primary', calls), 'backup': _answering_streams('backup', calls)}
+    agent = Agent.from_spec(
+        {
+            'model': 'primary',
+            'capabilities': [
+                {'ModelFallback': {'models': ['backup'], 'fallback_on': ['ModelAPIError', 'UnsupportedSettingWarning']}}
+            ],
+        },
+        capabilities=[ResolveModelId(lambda ctx, model_id: models.get(model_id))],
+    )
+
+    assert (await agent.run('x', model_settings=_STOP)).output == 'backup answered'
+    assert calls == ['backup']

@@ -152,6 +152,45 @@ A few things to know about falling back on refusals:
 - **A [streamed](#streaming) refusal isn't fallen back from.** It's only known once it has been streamed, so it's accepted, without a warning, and an empty one then raises `ContentFilterError`. To fall back there, catch it and run again with another model passed as `model=`.
 - **Some refusals are caused by the prompt.** Anthropic's `reasoning_extraction` refusals come from prompts or tool schemas that ask the model to put its reasoning in its output, which Anthropic says to change instead (see [Refusals on repeated prompts](../models/anthropic.md#refusals-on-repeated-prompts)). Falling back to another provider still works for them.
 
+## Falling back when a model would ignore a setting {#unsupported-settings}
+
+A model that doesn't support a setting the request relies on, such as `stop_sequences` or `parallel_tool_calls=False`, ignores it and emits an [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning] (tuning knobs like `temperature` are ignored silently). Settings chosen for one model then go to a fallback model that sends the request without them. To move on from such a model instead, name the warning in `fallback_on`:
+
+```python {title="model_fallback_on_unsupported_setting.py"}
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, UnsupportedSettingWarning
+from pydantic_ai.capabilities import ModelFallback
+from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+class NoStopSequences(FunctionModel):
+    # Stands in for a model that doesn't support `stop_sequences`.
+    unsupported_settings = frozenset({'stop_sequences'})
+
+
+def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('Paris')])
+
+
+agent = Agent(
+    NoStopSequences(answer, model_name='primary'),
+    capabilities=[
+        ModelFallback(
+            FunctionModel(answer, model_name='backup'),
+            fallback_on=(ModelAPIError, UnsupportedSettingWarning),
+        )
+    ],
+)
+result = agent.run_sync('What is the capital of France?', model_settings={'stop_sequences': ['\n']})
+print(result.response.model_name)
+#> backup
+for attempt in result.response.failed_attempts or []:
+    print(attempt.model_name, attempt.outcome)
+    #> primary error
+```
+
+The model raises the warning as the attempt's error instead of emitting it, before anything is sent, so it's recorded in [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts] as an `error` and costs nothing. When every model would ignore a setting, the run ends with a [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] of the warnings. Only `UnsupportedSettingWarning` itself, or a subclass, turns this on: a supertype like `Exception` doesn't. [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] takes it the same way. Under [durable execution](#durable-execution), the warning is raised inside the model's durable unit and doesn't reach `ModelFallback` as `UnsupportedSettingWarning`, so use a `FallbackModel` there, which runs its whole chain inside one unit.
+
 ## In agent specs {#agent-specs}
 
 `ModelFallback` can be declared in an [agent spec](../agent-spec.md), with its models as a list of model names:
@@ -164,7 +203,7 @@ capabilities:
 
 As in Python, the spec's `model:` is attempted first, and a spec without one uses the first of `ModelFallback`'s models for the first attempt.
 
-To choose when to fall back, give the models and `fallback_on` as keyword arguments. In a spec, `fallback_on` takes the names of [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] and its subclasses in [`pydantic_ai.exceptions`][pydantic_ai.exceptions], such as [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError] and [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError], and [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. Exception and response handlers can only be passed in Python:
+To choose when to fall back, give the models and `fallback_on` as keyword arguments. In a spec, `fallback_on` takes the names of [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] and its subclasses in [`pydantic_ai.exceptions`][pydantic_ai.exceptions], such as [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError] and [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError], [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] and [`UnsupportedSettingWarning`](#unsupported-settings). Exception and response handlers can only be passed in Python:
 
 ```yaml {title="fallback_on_agent.yaml" test="skip"}
 model: {{ openai:medium }}

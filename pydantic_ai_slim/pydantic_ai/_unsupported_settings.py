@@ -41,6 +41,25 @@ over it; for the others, that the model ignores them.
 """
 
 
+_RAISED: ContextVar[bool] = ContextVar('unsupported_setting_warnings_raised', default=False)
+"""Whether `warn_unsupported_settings` raises the `UnsupportedSettingWarning` instead of emitting it, set by `raise_warnings`."""
+
+
+@contextmanager
+def raise_warnings() -> Generator[None]:
+    """Raise the `UnsupportedSettingWarning` a model would emit for a request inside this block, instead of emitting it.
+
+    For a fallback whose `fallback_on` names `UnsupportedSettingWarning`: the raised warning is the attempt's error, so
+    the fallback moves on to the next model, as the warnings filter `'error'` would make it, but only for its own
+    attempts. A suppressed warning (see `suppress_warnings`) isn't raised either.
+    """
+    token = _RAISED.set(True)
+    try:
+        yield
+    finally:
+        _RAISED.reset(token)
+
+
 @contextmanager
 def suppress_warnings(
     settings: Iterable[ModelSettingName] = (*GUARANTEE_SETTINGS, 'thinking'),
@@ -84,8 +103,7 @@ def warn_unsupported_settings(
         # For these, only `False` is a guarantee, and only one about how function tools are called.
         if name in _TOOL_CALL_GUARANTEES and (settings.get(name) is not False or not has_function_tools):
             continue
-        warnings.warn(
-            f'The `{name}` setting is not supported by model {model_id!r} and will be ignored.{hint}',
-            UnsupportedSettingWarning,
-            stacklevel=stacklevel,
-        )
+        message = f'The `{name}` setting is not supported by model {model_id!r} and will be ignored.{hint}'
+        if _RAISED.get():
+            raise UnsupportedSettingWarning(message)
+        warnings.warn(message, UnsupportedSettingWarning, stacklevel=stacklevel)

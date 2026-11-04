@@ -119,6 +119,10 @@ class FallbackModel(Model):
                 agent only raises the error after a response is accepted, so in `fallback_on` it stands for that
                 response.
 
+                Naming [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning] moves on
+                from a model that would ignore a setting the request relies on, like `stop_sequences`: the model
+                raises the warning as the attempt's error instead of emitting it, before anything is sent.
+
                 Response handlers only apply to non-streamed requests. A streamed request accepts
                 the response as is and emits a `UserWarning`. A request is streamed whenever
                 something consumes the run's events, including `run()` with an
@@ -261,7 +265,7 @@ class FallbackModel(Model):
                 with suppress_unsupported_setting_warnings():
                     _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                 prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
-                with enforce_request_deadline(deadline):
+                with enforce_request_deadline(deadline), self._predicates.judging_settings():
                     response = await pinned.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
                 if not await chain.falls_back(exc):
@@ -322,7 +326,7 @@ class FallbackModel(Model):
                 # Each inner model has its own profile, so re-run `prepare_messages` per model.
                 prepared_messages = model.prepare_messages(messages, model_request_parameters)
                 deadline = start_request_deadline(model, model_settings, stream=False)
-                with enforce_request_deadline(deadline):
+                with enforce_request_deadline(deadline), self._predicates.judging_settings():
                     response = await model.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
                 if await chain.falls_back(exc):
@@ -389,11 +393,17 @@ class FallbackModel(Model):
                     with suppress_unsupported_setting_warnings():
                         _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
-                    streamed_response = await stack.enter_async_context(
-                        request_stream_until_first_event(
-                            pinned, deadline, prepared_messages, model_settings, model_request_parameters, run_context
+                    with self._predicates.judging_settings():
+                        streamed_response = await stack.enter_async_context(
+                            request_stream_until_first_event(
+                                pinned,
+                                deadline,
+                                prepared_messages,
+                                model_settings,
+                                model_request_parameters,
+                                run_context,
+                            )
                         )
-                    )
                 except Exception as exc:
                     if not await chain.falls_back(exc):
                         self._set_span_attributes(pinned, prepared_parameters)
@@ -429,16 +439,17 @@ class FallbackModel(Model):
                             _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                         prepared_messages = model.prepare_messages(messages, model_request_parameters)
                         deadline = start_request_deadline(model, model_settings, stream=True)
-                        streamed_response = await stack.enter_async_context(
-                            request_stream_until_first_event(
-                                model,
-                                deadline,
-                                prepared_messages,
-                                model_settings,
-                                model_request_parameters,
-                                run_context,
+                        with self._predicates.judging_settings():
+                            streamed_response = await stack.enter_async_context(
+                                request_stream_until_first_event(
+                                    model,
+                                    deadline,
+                                    prepared_messages,
+                                    model_settings,
+                                    model_request_parameters,
+                                    run_context,
+                                )
                             )
-                        )
                     except Exception as exc:
                         if await chain.falls_back(exc):
                             self._record_failed_attempt(chain, model, exc, start)

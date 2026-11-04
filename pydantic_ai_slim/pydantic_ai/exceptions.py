@@ -1348,6 +1348,9 @@ class UnsupportedSettingWarning(UserWarning):
 
     It's emitted wherever the setting comes from: the run, the agent, a capability or the model's own `settings`. The
     `stop_sequences` of an MCP server's sampling request don't warn, since the server chose them, not you.
+    Named in the `fallback_on` of [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] or
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], it's raised instead, as the attempt's error, so the
+    request moves on to the next model rather than being sent without the setting.
     To turn it into an error, use a warnings filter:
 
     ```python {test="skip"}
