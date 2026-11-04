@@ -66,33 +66,9 @@ with try_import() as imports_successful:
     )
 
     from pydantic_ai.models.openai import OpenAIChatModel
-    from pydantic_ai.providers.azure import AzureProvider
-    from pydantic_ai.providers.cerebras import CerebrasProvider
-    from pydantic_ai.providers.crusoe import CrusoeProvider
-    from pydantic_ai.providers.deepseek import DeepSeekProvider
-    from pydantic_ai.providers.fireworks import FireworksProvider
-    from pydantic_ai.providers.heroku import HerokuProvider
-    from pydantic_ai.providers.litellm import LiteLLMProvider
-    from pydantic_ai.providers.moonshotai import MoonshotAIProvider
-    from pydantic_ai.providers.nebius import NebiusProvider
-    from pydantic_ai.providers.ollama import OllamaProvider
-    from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
-    from pydantic_ai.providers.openrouter import OpenRouterProvider
-    from pydantic_ai.providers.ovhcloud import OVHcloudProvider
-    from pydantic_ai.providers.sambanova import SambaNovaProvider
-    from pydantic_ai.providers.together import TogetherProvider
-    from pydantic_ai.providers.vercel import VercelProvider
-    from pydantic_ai.providers.vllm import VLLMProvider
-    from pydantic_ai.providers.zai import ZaiProvider
 
     from .models.mock_openai import MockOpenAI, completion_message, get_mock_chat_completion_kwargs
-
-with try_import() as groq_imports_successful:
-    from pydantic_ai.providers.groq import GroqProvider
-
-with try_import() as huggingface_imports_successful:
-    from pydantic_ai.providers.huggingface import HuggingFaceProvider
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='openai not installed')]
 
@@ -457,80 +433,72 @@ async def test_function_model_conversation_keeps_its_prefix():
     assert '<\\u200d|im_start|>' in last
 
 
-def _route_cases() -> list[Any]:
-    cases: list[Any] = [
-        (OpenAIProvider, 'gpt-6-luna', False),
-        (OpenAIProvider, 'o3-mini', False),
-        (OpenAIProvider, 'ft:gpt-4o:acme', False),
-        (OpenAIProvider, 'gpt-oss-120b', True),
-        (OpenAIProvider, 'Qwen/Qwen3.8-27B', True),
-        (OpenAICompatibleProvider, 'qwen/qwen3.8-27b', True),
-        (OpenAICompatibleProvider, 'anthropic/claude-haiku-5-5', False),
-        (OpenAICompatibleProvider, 'plain-local-model', True),
-        (LiteLLMProvider, 'deepseek/deepseek-v4-pro', True),
-        (LiteLLMProvider, 'openai/gpt-6-luna', False),
-        (OpenRouterProvider, 'qwen/qwen3.8-27b', True),
-        (OpenRouterProvider, 'deepseek/deepseek-v4.1-flash', True),
-        (OpenRouterProvider, 'openai/gpt-oss-120b', True),
-        (OpenRouterProvider, 'meta-llama/llama-3.3-70b-instruct', True),
-        (OpenRouterProvider, 'z-ai/glm-5.3', True),
-        (OpenRouterProvider, 'moonshotai/kimi-k3', True),
-        (OpenRouterProvider, 'minimax/minimax-m3', True),
-        (OpenRouterProvider, 'google/gemma-4-31b', True),
-        (OpenRouterProvider, 'anthropic/claude-opus-5.5', False),
-        (OpenRouterProvider, '~anthropic/claude-opus-latest', False),
-        (OpenRouterProvider, 'openai/gpt-6-luna', False),
-        (OpenRouterProvider, 'google/gemini-4-argon', False),
-        (OpenRouterProvider, 'x-ai/grok-4.7', False),
-        (OpenRouterProvider, 'amazon/nova-lite-v1', False),
-        (OpenRouterProvider, 'perplexity/sonar', False),
-        (VercelProvider, 'alibaba/qwen3.8-27b', True),
-        (VercelProvider, 'bare-model', True),
-        (VercelProvider, 'anthropic/claude-opus-5-5', False),
-        (AzureProvider, 'deepseek-v4-pro', True),
-        (AzureProvider, 'grok-4.7', False),
-        (AzureProvider, 'gpt-6-luna', False),
-        (AzureProvider, 'my-deployment', False),
-        (HerokuProvider, 'qwen3-27b', True),
-        (HerokuProvider, 'claude-opus-5-5', False),
-        (VLLMProvider, 'Qwen/Qwen3.8-27B', True),
-        (VLLMProvider, 'my-finetune', True),
-        (OllamaProvider, 'gemma4:31b', True),
-        # Open weights whose name a routing service would take for the lab's own API.
-        (OllamaProvider, 'command-r', True),
-        (VLLMProvider, 'CohereLabs/command-a', True),
-        (CerebrasProvider, 'gpt-oss-120b', True),
-        (TogetherProvider, 'meta-llama/llama-3.3-70b', True),
-        (NebiusProvider, 'qwen/qwen3.8-27b', True),
-        (NebiusProvider, 'bare-model', True),
-        (SambaNovaProvider, 'deepseek-v4', True),
-        (CrusoeProvider, 'qwen/qwen3.8-27b', True),
-        (OVHcloudProvider, 'qwen3.8-27b', True),
-        (ZaiProvider, 'glm-4.7', True),
-        # Routes that keep it off.
-        (FireworksProvider, 'accounts/fireworks/models/deepseek-v4', False),
-        (MoonshotAIProvider, 'kimi-k3', False),
-        (DeepSeekProvider, 'deepseek-v4-pro', False),
-    ]
-    if groq_imports_successful():
-        cases.append((GroqProvider, 'qwen/qwen3.8-27b', True))
-    if huggingface_imports_successful():
-        cases += [
-            (HuggingFaceProvider, 'qwen/qwen3.8-27b', True),
-            (HuggingFaceProvider, 'zai-org/glm-5.3', True),
-            (HuggingFaceProvider, 'unknown/model', True),
-            (HuggingFaceProvider, 'bare-model', True),
-        ]
-    return cases
+ROUTE_CASES: list[tuple[str, str, str, bool]] = [
+    ('openai', 'OpenAIProvider', 'gpt-6-luna', False),
+    ('openai', 'OpenAIProvider', 'o3-mini', False),
+    ('openai', 'OpenAIProvider', 'ft:gpt-4o:acme', False),
+    ('openai', 'OpenAIProvider', 'gpt-oss-120b', True),
+    ('openai', 'OpenAIProvider', 'Qwen/Qwen3.8-27B', True),
+    ('openai_compatible', 'OpenAICompatibleProvider', 'qwen/qwen3.8-27b', True),
+    ('openai_compatible', 'OpenAICompatibleProvider', 'anthropic/claude-haiku-5-5', False),
+    ('openai_compatible', 'OpenAICompatibleProvider', 'plain-local-model', True),
+    ('litellm', 'LiteLLMProvider', 'deepseek/deepseek-v4-pro', True),
+    ('litellm', 'LiteLLMProvider', 'openai/gpt-6-luna', False),
+    ('openrouter', 'OpenRouterProvider', 'qwen/qwen3.8-27b', True),
+    ('openrouter', 'OpenRouterProvider', 'deepseek/deepseek-v4.1-flash', True),
+    ('openrouter', 'OpenRouterProvider', 'openai/gpt-oss-120b', True),
+    ('openrouter', 'OpenRouterProvider', 'meta-llama/llama-3.3-70b-instruct', True),
+    ('openrouter', 'OpenRouterProvider', 'z-ai/glm-5.3', True),
+    ('openrouter', 'OpenRouterProvider', 'moonshotai/kimi-k3', True),
+    ('openrouter', 'OpenRouterProvider', 'minimax/minimax-m3', True),
+    ('openrouter', 'OpenRouterProvider', 'google/gemma-4-31b', True),
+    ('openrouter', 'OpenRouterProvider', 'anthropic/claude-opus-5.5', False),
+    ('openrouter', 'OpenRouterProvider', '~anthropic/claude-opus-latest', False),
+    ('openrouter', 'OpenRouterProvider', 'openai/gpt-6-luna', False),
+    ('openrouter', 'OpenRouterProvider', 'google/gemini-4-argon', False),
+    ('openrouter', 'OpenRouterProvider', 'x-ai/grok-4.7', False),
+    ('openrouter', 'OpenRouterProvider', 'amazon/nova-lite-v1', False),
+    ('openrouter', 'OpenRouterProvider', 'perplexity/sonar', False),
+    ('vercel', 'VercelProvider', 'alibaba/qwen3.8-27b', True),
+    ('vercel', 'VercelProvider', 'bare-model', True),
+    ('vercel', 'VercelProvider', 'anthropic/claude-opus-5-5', False),
+    ('azure', 'AzureProvider', 'deepseek-v4-pro', True),
+    ('azure', 'AzureProvider', 'grok-4.7', False),
+    ('azure', 'AzureProvider', 'gpt-6-luna', False),
+    ('azure', 'AzureProvider', 'my-deployment', False),
+    ('heroku', 'HerokuProvider', 'qwen3-27b', True),
+    ('heroku', 'HerokuProvider', 'claude-opus-5-5', False),
+    ('vllm', 'VLLMProvider', 'Qwen/Qwen3.8-27B', True),
+    ('vllm', 'VLLMProvider', 'my-finetune', True),
+    ('ollama', 'OllamaProvider', 'gemma4:31b', True),
+    # Open weights whose name a routing service would take for the lab's own API.
+    ('ollama', 'OllamaProvider', 'command-r', True),
+    ('vllm', 'VLLMProvider', 'CohereLabs/command-a', True),
+    ('cerebras', 'CerebrasProvider', 'gpt-oss-120b', True),
+    ('together', 'TogetherProvider', 'meta-llama/llama-3.3-70b', True),
+    ('nebius', 'NebiusProvider', 'qwen/qwen3.8-27b', True),
+    ('nebius', 'NebiusProvider', 'bare-model', True),
+    ('sambanova', 'SambaNovaProvider', 'deepseek-v4', True),
+    ('crusoe', 'CrusoeProvider', 'qwen/qwen3.8-27b', True),
+    ('ovhcloud', 'OVHcloudProvider', 'qwen3.8-27b', True),
+    ('zai', 'ZaiProvider', 'glm-4.7', True),
+    # Routes that keep it off.
+    ('fireworks', 'FireworksProvider', 'accounts/fireworks/models/deepseek-v4', False),
+    ('moonshotai', 'MoonshotAIProvider', 'kimi-k3', False),
+    ('deepseek', 'DeepSeekProvider', 'deepseek-v4-pro', False),
+    ('groq', 'GroqProvider', 'qwen/qwen3.8-27b', True),
+    ('huggingface', 'HuggingFaceProvider', 'qwen/qwen3.8-27b', True),
+    ('huggingface', 'HuggingFaceProvider', 'zai-org/glm-5.3', True),
+    ('huggingface', 'HuggingFaceProvider', 'unknown/model', True),
+    ('huggingface', 'HuggingFaceProvider', 'bare-model', True),
+]
 
 
-@pytest.mark.parametrize(('provider', 'model_name', 'expected'), _route_cases())
-def test_route_table(provider: type[Provider[Any]], model_name: str, expected: bool):
-    profile = provider.model_profile(model_name) or {}
+@pytest.mark.parametrize(('module', 'provider', 'model_name', 'expected'), ROUTE_CASES)
+def test_route_table(module: str, provider: str, model_name: str, expected: bool):
+    provider_class: type[Provider[Any]] = getattr(pytest.importorskip(f'pydantic_ai.providers.{module}'), provider)
+    profile = provider_class.model_profile(model_name) or {}
     assert profile.get(FLAG, False) is expected
-
-
-# --- The inverse, on what the model writes ---
 
 
 def _model_writes(*responses: chat.ChatCompletion, **kwargs: Any) -> OpenAIChatModel:
