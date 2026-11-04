@@ -929,7 +929,8 @@ class _ModelResponseError(ModelAPIError, UnexpectedModelBehavior):
 
     def __str__(self) -> str:
         # Like every other `ModelAPIError`, not `UnexpectedModelBehavior`, which appends the body: a response body can
-        # hold the whole completion, which doesn't belong in logs or a Temporal workflow's history.
+        # hold the whole completion, which doesn't belong in logs or error messages. It stays on `body`, so, like an
+        # HTTP error's body, it still crosses a Temporal activity boundary in the `ApplicationError`'s details.
         return self.message
 
 
