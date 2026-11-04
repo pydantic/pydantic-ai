@@ -146,7 +146,11 @@ async def right(ctx: RunContext[None]) -> str:
     return content
 
 
+plain_calls: list[str] = []
+
+
 async def plain(ctx: RunContext[None]) -> str:
+    plain_calls.append('plain')
     return await ctx.workspace.read_text('left.txt')
 
 
@@ -155,8 +159,13 @@ parallel_agent = Agent(
     TestModel(call_tools=['left', 'right', 'plain']),
     name='dbos_parallel',
     output_type=ToolOutput(bool),
-    tools=[Tool(left, metadata={'dbos': child_workflow}), right, plain],
-    capabilities=[provider.capability(), SetToolMetadata(tools=['right'], dbos=child_workflow), DBOSDurability()],
+    tools=[Tool(left, metadata={'dbos': child_workflow}), right, Tool(plain, metadata={'dbos': child_workflow})],
+    capabilities=[
+        provider.capability(),
+        SetToolMetadata(tools=['right'], dbos=child_workflow),
+        SetToolMetadata(tools=['plain'], dbos={}),
+        DBOSDurability(),
+    ],
 )
 
 
@@ -171,10 +180,13 @@ async def parallel_workflow() -> list[Any]:
 async def test_dbos_child_workflow_tools_run_in_parallel_with_a_workspace(dbos: DBOS) -> None:
     global right_done, crash_left
     right_done, crash_left = anyio.Event(), True
+    plain_calls.clear()
     provider.reset()
     workflow_id = f'parallel-{uuid.uuid4()}'
     with SetWorkflowID(workflow_id), pytest.raises(_ProcessCrash):
         await parallel_workflow()
+    # `SetToolMetadata` overrides `plain`'s own metadata, so it runs in the parent workflow, after the others.
+    assert plain_calls == []
 
     # Recovery replays each tool's own recorded workspace results, not what the environment holds now.
     provider.environments['env-1']['/remote/left.txt'] = b'changed'
@@ -183,7 +195,6 @@ async def test_dbos_child_workflow_tools_run_in_parallel_with_a_workspace(dbos: 
         if workflow.workflow_id != workflow_id and workflow.status == 'PENDING':
             await DBOS.resume_workflow_async(workflow.workflow_id)
     handle = await DBOS.resume_workflow_async(workflow_id)
-    # `plain` isn't a child workflow, so it runs alone after the others, and for the first time on recovery.
     assert await handle.get_result() == snapshot(['left', 'right', 'changed', 'Final result processed.'])
     assert provider.log == snapshot(['create:env-1', 'attach:env-1', 'attach:env-1', 'attach:env-1'])
     # Each child workflow is named by the parent step that started it.

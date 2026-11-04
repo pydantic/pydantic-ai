@@ -3067,24 +3067,15 @@
     },
     "SetToolMetadata.metadata": {
       "engines": [
+        "dbos",
         "durable_exec"
       ],
       "kinds": [
         "attribute_read"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::capability_selects_child_workflow"
-      ]
-    },
-    "SetToolMetadata.tools": {
-      "engines": [
-        "dbos"
-      ],
-      "kinds": [
-        "attribute_read"
-      ],
-      "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability._runs_in_child_workflow"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::capability_selects_child_workflow",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability._detect_child_workflow_metadata"
       ]
     }
   },
