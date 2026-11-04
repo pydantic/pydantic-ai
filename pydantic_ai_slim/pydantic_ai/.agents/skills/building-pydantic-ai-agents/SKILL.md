@@ -339,6 +339,11 @@ Key facts for building realtime agents:
   which the model takes as the user's words. It goes out on the provider's operator channel (a `system` message on
   OpenAI/Azure, a contextual update on ElevenLabs Agents, a note to GPT-Live's voice model, `<system>`-tagged
   user text elsewhere), is recorded as a `SystemPromptPart`, and with the default `respond=True` gets a reply.
+- **Instructions are re-resolved before each model turn**, as in a standard run, and every change is appended (a
+  `<context>` element on the same operator channel, recorded as an `InstructionDeltaPart`; on GPT-Live, appended to
+  the backend's instructions), whatever the block's `on_change`. Only instructions with an id can change: name an
+  instruction function (`@agent.instructions(name=...)`) whose text changes mid-call, or the session warns and keeps
+  the text it opened with.
 - **History handoff is the marquee integration**: `session.all_messages()` / `session.new_messages()`
   return real `ModelMessage`s; seed with `realtime(model, message_history=...).session()`, or with
   `conversation=result.conversation` to carry the running usage and `conversation_id` too. Transcripts

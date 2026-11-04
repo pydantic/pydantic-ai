@@ -13,9 +13,9 @@ load exactly the same way as in a regular run; nothing realtime-specific is requ
 
 | Capability stage | Session behavior |
 | --- | --- |
-| `for_agent`, `for_run`, `get_instructions` | Runs during setup; dynamic instructions are evaluated once at connect. |
+| `for_agent`, `for_run`, `get_instructions` | Runs during setup; instructions are resolved at connect and [again before each model turn](#instructions-that-change). |
 | `get_toolset`, `get_wrapper_toolset`, `prepare_tools` | Contributes, wraps, and prepares local tools before connecting. |
-| `get_native_tools` | Contributes native tools before connecting; a dynamic native-tool function is resolved once against the connect-time context, like dynamic instructions. |
+| `get_native_tools` | Contributes native tools before connecting; a dynamic native-tool function is resolved once against the connect-time context. |
 | Tool validation/execution hooks | Runs around each local function-tool call. |
 | `handle_deferred_tool_calls` | Resolves deferred requests inline; see [deferred and approval-required tools](tools.md#deferred-and-approval-required-tools). |
 | Graph node, model-request, `get_wrapper_model`, and output-processing hooks | Do not run; no agent graph, model request, or output-processing stage exists. |
@@ -79,6 +79,72 @@ a realtime model. Pass [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeMo
     the hook keeps the context copy captured before the session exists. It is also `None` in
     `before_run` and instruction functions. Use tool hooks or `on_event` when a capability needs the
     live session.
+
+## Instructions that change
+
+As a standard run resolves the agent's [instructions](../agent.md#instructions) before each request, a session
+resolves them again after each model response, and before a tool's result asks for the next one, so a change a tool
+makes reaches the model before it answers. That covers instruction functions, capability and toolset instructions,
+the instructions passed to `realtime()`, and dynamic system prompts registered with
+[`on_change='append'`](../agent.md#appending-system-prompt-changes). A text turn sent meanwhile waits for them.
+
+A session can't rewrite the instructions it opened with, so every change is appended, as an
+[appending instruction](../agent.md#appending-instruction-changes) change is in a standard run, whatever the
+block's `on_change`: the session sends the block's new text as a `<context>` element naming it, on the channel a
+[system prompt sent with `respond=False`](turns.md#system-prompts) uses. For a change to name its block, every
+instruction that can change and has an id of its own (a named instruction function, or one contributed by a
+capability or toolset with an `id`) is sent inside a `<context>` element from the start. An unnamed instruction
+function can't be named by a change, so if one changes, the session warns once and the model keeps the text the
+session opened with: give it a `name`.
+
+```python {title="realtime_instruction_changes.py"}
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, RunContext
+
+
+@dataclass
+class Call:
+    verified: bool = False
+
+
+agent = Agent(deps_type=Call, instructions='You are a support agent for Acme Telecom.')
+
+
+@agent.instructions(name='caller')
+def caller_status(ctx: RunContext[Call]) -> str:
+    if ctx.deps.verified:
+        return 'The caller is verified: you may discuss their account.'
+    return 'The caller is not verified yet: ask for their PIN before discussing their account.'
+
+
+@agent.tool
+async def verify_pin(ctx: RunContext[Call], pin: str) -> str:
+    """Check the caller's PIN."""
+    ctx.deps.verified = pin == '1234'
+    return 'Verified.' if ctx.deps.verified else 'Wrong PIN.'
+
+
+async def main():
+    async with agent.realtime('{{ openai:realtime }}', deps=Call()).session() as session:
+        await session.send('My PIN is 1234. What plan am I on?')
+        await session.wait_for_reply()
+```
+
+History records each change as the [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart] a standard
+run records, so a standard run [continuing the conversation](history.md#handing-off-to-a-text-agent) sends its own
+current instructions rather than the session's changes. A reconnect that replays the conversation replays each
+change where it was sent.
+
+Each provider takes the change on its operator channel (see [system prompts](turns.md#system-prompts)), with these
+differences:
+
+- On [GPT-Live](openai.md#how-delegation-works), where the agent's instructions are the backend's, the change is
+  appended to the backend's instructions, which only apply to the work it's delegated from then on.
+- On [Gemini Live](gemini.md), text sent with a tool's result is invisible to the reply that result asks for, so a
+  change a tool makes reaches the model from the turn after.
+- On [ElevenLabs Agents](elevenlabs.md#elevenlabs-agents), the change is a contextual update, which the agent
+  takes as background information rather than as a change to its prompt.
 
 ## Seeded history is not processed
 
