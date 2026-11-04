@@ -18,7 +18,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai._capability_parts import effective_authority, render_capability_parts
 from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai._event_registry import set_replay_isolation_guard
-from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, Hooks, LocalWorkspace
+from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, DynamicCapability, Hooks, LocalWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CAPABILITY_PART_TYPES,
@@ -1501,6 +1501,23 @@ def test_local_workspace_authority_is_the_capability_authority(tmp_path: Path) -
     assert lowered._effective_authority == 'none'  # pyright: ignore[reportPrivateUsage]
     assert LocalWorkspace(tmp_path).authority == 'operator'
     assert LocalWorkspace(tmp_path).with_authority('operator')._effective_authority == 'operator'  # pyright: ignore[reportPrivateUsage]
+
+
+@dataclass
+class _NoAuthorityDynamic(DynamicCapability[Any]):
+    authority = 'none'
+
+
+def test_a_dynamic_capability_keeps_its_class_authority() -> None:
+    """Its `for_run` returns a capability of another class, which must not raise the authority back."""
+    dynamic = _NoAuthorityDynamic(lambda ctx: Reporter([nudge()], id='made'))
+    assert _sources_by_capability([dynamic]) == {'made': CapabilitySource('made', authority='none')}
+
+
+def test_a_dynamic_capability_keeps_the_authority_of_what_its_factory_returns() -> None:
+    """A factory's capability lowered with `with_authority` stays lowered through its own fresh `for_run` instance."""
+    dynamic = DynamicCapability[Any](lambda ctx: _FreshPerRunReporter([nudge()], id='fresh').with_authority('none'))
+    assert _sources_by_capability([dynamic]) == {'fresh': CapabilitySource('fresh', authority='none')}
 
 
 @dataclass

@@ -579,16 +579,14 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         return self.authority if ceiling is None else _lower_authority(self.authority, ceiling)
 
     def _keep_authority(self, resolved: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        """Carry this instance's lowered authority to what its `for_run` or `for_agent` returned.
+        """Carry this instance's authority to what its `for_run` or `for_agent` returned.
 
-        An override that builds a fresh instance, such as through `dataclasses.replace`, would otherwise drop it and
-        raise the capability's authority back.
+        Both the class's `authority` and a `with_authority` lowering: an override that builds a fresh instance, such as
+        through `dataclasses.replace`, or one of another class, would otherwise drop it and raise the authority back.
         """
-        ceiling = self._authority_ceiling
-        if (
-            ceiling is None
-            or resolved is self
-            or resolved._effective_authority == _lower_authority(resolved._effective_authority, ceiling)
+        ceiling = self._effective_authority
+        if resolved is self or resolved._effective_authority == _lower_authority(
+            resolved._effective_authority, ceiling
         ):
             return resolved
         return resolved.with_authority(ceiling)
