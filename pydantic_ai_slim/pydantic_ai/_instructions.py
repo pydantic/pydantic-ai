@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import warnings
 from collections import Counter
-from collections.abc import Collection, Iterator, Sequence
+from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import Generic, TypeGuard
 
@@ -88,12 +88,6 @@ class SourcedInstruction(Generic[AgentDepsT]):
     """
     dynamic: bool = False
     on_change: InstructionChangePolicy = 'rewrite'
-    framework_default: bool = False
-    """Whether `on_change` is the framework's choice for a block it owns rather than its author's.
-
-    Such a block uses `'rewrite'` without a warning where appending isn't supported, such as in a
-    realtime session.
-    """
 
     __repr__ = dataclasses_no_defaults_repr
 
@@ -113,32 +107,10 @@ def append_on_change_by_default(
             sourced,
             id=sourced.id or InstructionId(CapabilityInstructionSource(key), name=sourced.name),
             on_change='append',
-            framework_default=True,
         )
         if sourced.dynamic and sourced.on_change == 'rewrite'
         else sourced
         for sourced in instructions
-    ]
-
-
-def explicitly_appended_blocks(
-    instructions: Sequence[SourcedInstruction[AgentDepsT]],
-    parts: Sequence[InstructionPart],
-    *,
-    framework_toolset_sources: Collection[InstructionSource] = (),
-) -> list[str]:
-    """The blocks among `parts` an author, rather than the framework, asked `on_change='append'` for, by id or name.
-
-    `parts` are what `instructions` (and any toolsets) resolved to. `framework_toolset_sources` are the
-    toolsets whose blocks append by the framework's choice, such as an `MCPToolset`'s server instructions.
-    """
-    framework_ids = {sourced.id for sourced in instructions if sourced.framework_default}
-    return [
-        str(part.id) if part.id is not None else part.name or 'unnamed'
-        for part in parts
-        if part.on_change == 'append'
-        and part.id not in framework_ids
-        and (part.id is None or part.id.source not in framework_toolset_sources)
     ]
 
 
@@ -232,40 +204,60 @@ async def resolve_sourced_instructions(
     cache treatment applies only to its own text, while callable instructions are resolved lazily
     against the current `RunContext`.
     """
-    parts: list[InstructionPart] = []
-    group: list[InstructionPart] = []
-    pending_parts: list[InstructionPart] = []
-    group_key: InstructionId | None = None
-
-    def flush_group() -> None:
-        if content := InstructionPart.join(group):
-            parts.append(InstructionPart(content=content, id=group[0].id))
-        group.clear()
-        parts.extend(pending_parts)
-        pending_parts.clear()
-
+    context = _ResolveInstructionsContext()
     for sourced in instructions:
         instruction = sourced.instruction
         if isinstance(instruction, InstructionPart):
-            if not (content := instruction.content.strip()) and instruction.on_change != 'append':
-                continue
-            flush_group()
-            group_key = None
-            parts.append(replace(instruction, content=content, id=sourced.id))
+            _add_instruction_part(context, instruction, sourced.id)
         elif isinstance(instruction, str):
-            if not (content := instruction.strip()):
-                continue
-            if group and (sourced.id is None or group_key != sourced.id):
-                flush_group()
-            group_key = sourced.id
-            group.append(InstructionPart(content=content, id=sourced.id))
+            _add_instruction_text(context, instruction, sourced.id)
         elif (part := await resolve_instruction_function(sourced, instruction, run_context)) is not None:
-            if group:
-                pending_parts.append(part)
+            if context.group:
+                context.pending_parts.append(part)
             else:
-                parts.append(part)
-    flush_group()
-    return parts
+                context.parts.append(part)
+    _flush_instruction_group(context)
+    return context.parts
+
+
+@dataclass
+class _ResolveInstructionsContext:
+    """The parts `resolve_sourced_instructions` has resolved so far, and the run of literal strings it is joining."""
+
+    parts: list[InstructionPart] = field(default_factory=list[InstructionPart])
+    group: list[InstructionPart] = field(default_factory=list[InstructionPart])
+    pending_parts: list[InstructionPart] = field(default_factory=list[InstructionPart])
+    """Function results resolved while `group` is open, which follow it."""
+    group_key: InstructionId | None = None
+
+
+def _add_instruction_part(
+    context: _ResolveInstructionsContext, instruction: InstructionPart, instruction_id: InstructionId | None
+) -> None:
+    if not (content := instruction.content.strip()) and instruction.on_change != 'append':
+        return
+    _flush_instruction_group(context)
+    context.group_key = None
+    context.parts.append(replace(instruction, content=content, id=instruction_id))
+
+
+def _add_instruction_text(
+    context: _ResolveInstructionsContext, text: str, instruction_id: InstructionId | None
+) -> None:
+    if not (content := text.strip()):
+        return
+    if context.group and (instruction_id is None or context.group_key != instruction_id):
+        _flush_instruction_group(context)
+    context.group_key = instruction_id
+    context.group.append(InstructionPart(content=content, id=instruction_id))
+
+
+def _flush_instruction_group(context: _ResolveInstructionsContext) -> None:
+    if content := InstructionPart.join(context.group):
+        context.parts.append(InstructionPart(content=content, id=context.group[0].id))
+    context.group.clear()
+    context.parts.extend(context.pending_parts)
+    context.pending_parts.clear()
 
 
 def normalize_instructions(
@@ -674,48 +666,68 @@ def update_instruction_history(
             _record_baseline(targets, [])
         return None
     loaded = LoadedInstructionValues.of(messages).values
-    # A block a loaded capability holds that the prefix now carries, because the capability is eager, changes owner
-    # at a new window's baseline, so its changes from then on are the prefix's.
-    takes_over = any(
-        part.on_change == 'append' and _loaded_block_capability_id(part.id) in loaded for part in normalized
-    )
-    if baseline is not None and (recorded is None or takes_over or not continues_window(baseline, normalized)):
-        baseline = None
-        if not any(part.on_change == 'append' for part in normalized):
+    if baseline is not None and recorded is not None and _stays_in_window(baseline, normalized, loaded):
+        _record_window_changes(targets, recorded, normalized)
+    elif any(part.on_change == 'append' for part in normalized):
+        baseline = _open_window(targets, normalized, loaded)
+    else:
+        if baseline is not None:
             # Nothing appends any more, so only end the window its blocks' old changes belong to.
             _record_baseline(targets, [])
-            return normalized
-    if baseline is None:
-        if not any(part.on_change == 'append' for part in normalized):
-            return normalized
-        baseline = _record_baseline(targets, normalized)
-        # A block that was a loaded capability's is now the prefix's. The capability's statements in history come
-        # after the prefix, so the block is stated once more after them, where it supersedes them.
-        takeovers = [
-            InstructionDeltaPart(id=part.id, content=part.content or None)
-            for part in baseline.instructions
-            if isinstance(part, InstructionPart) and _loaded_block_capability_id(part.id) in loaded
-        ]
-        if takeovers:
-            for target in targets:
-                target.parts = [*target.parts, *takeovers]
-    else:
-        assert recorded is not None
-        current = {part.id: part.content or None for part in normalized if part.on_change == 'append' and part.id}
-        changes = [
-            _instruction_change(instruction_id, recorded.get(instruction_id), current.get(instruction_id))
-            for instruction_id in dict.fromkeys([*recorded, *current])
-            if recorded.get(instruction_id) != current.get(instruction_id)
-        ]
-        if changes:
-            for target in targets:
-                target.parts = [*target.parts, *changes]
+        return normalized
 
     # Parts keep only their content: each model renders the append-mode ones in `Model.prepare_request`.
     prefix = window_prefix(baseline, normalized)
     for target in targets:
         target.instructions = InstructionPart.join(prefix)
     return prefix
+
+
+def _stays_in_window(
+    baseline: InstructionBaselinePart, normalized: Sequence[InstructionPart], loaded: Mapping[str, str | None]
+) -> bool:
+    """Whether the request can be sent with `baseline`'s prefix, as `continues_window` decides.
+
+    A block a loaded capability holds that the prefix now carries, because the capability is eager, changes owner
+    at a new window's baseline, so its changes from then on are the prefix's.
+    """
+    takes_over = any(
+        part.on_change == 'append' and _loaded_block_capability_id(part.id) in loaded for part in normalized
+    )
+    return not takes_over and continues_window(baseline, normalized)
+
+
+def _open_window(
+    targets: Sequence[ModelRequest], normalized: list[InstructionPart], loaded: Mapping[str, str | None]
+) -> InstructionBaselinePart:
+    """Open a window with the current values at this request."""
+    baseline = _record_baseline(targets, normalized)
+    # A block that was a loaded capability's is now the prefix's. The capability's statements in history come
+    # after the prefix, so the block is stated once more after them, where it supersedes them.
+    takeovers = [
+        InstructionDeltaPart(id=part.id, content=part.content or None)
+        for part in baseline.instructions
+        if isinstance(part, InstructionPart) and _loaded_block_capability_id(part.id) in loaded
+    ]
+    if takeovers:
+        for target in targets:
+            target.parts = [*target.parts, *takeovers]
+    return baseline
+
+
+def _record_window_changes(
+    targets: Sequence[ModelRequest], recorded: Mapping[InstructionId, str | None], normalized: list[InstructionPart]
+) -> None:
+    """Record each append-mode block whose value differs from `recorded`, the one its window last sent."""
+    current = {part.id: part.content or None for part in normalized if part.on_change == 'append' and part.id}
+    changes = [
+        _instruction_change(instruction_id, recorded.get(instruction_id), current.get(instruction_id))
+        for instruction_id in dict.fromkeys([*recorded, *current])
+        if recorded.get(instruction_id) != current.get(instruction_id)
+    ]
+    if changes:
+        for target in targets:
+            target.parts = [*target.parts, *changes]
 
 
 def recorded_prefix(baseline: InstructionBaselinePart, instructions: str) -> list[InstructionPart] | None:
@@ -726,31 +738,37 @@ def recorded_prefix(baseline: InstructionBaselinePart, instructions: str) -> lis
     exactly the ones the request was sent. `None` if the text isn't made of the baseline's blocks.
     """
     blocks = [block for block in baseline.instructions if not isinstance(block, InstructionPart) or block.content]
+    return _split_recorded_prefix(blocks, instructions, 0, 0)
 
-    def split(start: int, index: int) -> list[InstructionPart] | None:
-        if index == len(blocks):
-            return [] if start == len(instructions) else None
-        block = blocks[index]
-        last = index == len(blocks) - 1
+
+def _split_recorded_prefix(
+    blocks: Sequence[InstructionPart | InstructionDigest], instructions: str, start: int, index: int
+) -> list[InstructionPart] | None:
+    """Split `instructions[start:]` into `blocks[index:]`, as `recorded_prefix` describes."""
+    if index == len(blocks):
+        return [] if start == len(instructions) else None
+    block = blocks[index]
+    last = index == len(blocks) - 1
+    for end in _recorded_block_ends(block, instructions, start):
+        # Blocks are joined with a blank line, and the last one ends the text.
+        if end != len(instructions) if last else not instructions.startswith('\n\n', end):
+            continue
         if isinstance(block, InstructionPart):
-            ends = [start + len(block.content)] if instructions.startswith(block.content, start) else []
+            part = block
+        elif _instruction_text_hash(instructions[start:end]) == block.content_hash:
+            part = InstructionPart(content=instructions[start:end], id=block.id, dynamic=block.dynamic)
         else:
-            ends = range(start, len(instructions) + 1)
-        for end in ends:
-            # Blocks are joined with a blank line, and the last one ends the text.
-            if end != len(instructions) if last else not instructions.startswith('\n\n', end):
-                continue
-            if isinstance(block, InstructionPart):
-                part = block
-            elif _instruction_text_hash(instructions[start:end]) == block.content_hash:
-                part = InstructionPart(content=instructions[start:end], id=block.id, dynamic=block.dynamic)
-            else:
-                continue
-            if (rest := split(end if last else end + 2, index + 1)) is not None:
-                return [part, *rest]
-        return None
+            continue
+        if (rest := _split_recorded_prefix(blocks, instructions, end if last else end + 2, index + 1)) is not None:
+            return [part, *rest]
+    return None
 
-    return split(0, 0)
+
+def _recorded_block_ends(block: InstructionPart | InstructionDigest, instructions: str, start: int) -> Sequence[int]:
+    """Where `block` can end if it starts at `start`: right after its content, or anywhere for a digest."""
+    if isinstance(block, InstructionPart):
+        return [start + len(block.content)] if instructions.startswith(block.content, start) else []
+    return range(start, len(instructions) + 1)
 
 
 def _record_baseline(targets: Sequence[ModelRequest], instructions: list[InstructionPart]) -> InstructionBaselinePart:
@@ -771,3 +789,96 @@ def _instruction_change(
     """Record a block's change, with the hash of the text it replaces so a model can send it as a diff."""
     base_hash = _instruction_text_hash(previous) if previous is not None and content is not None else None
     return InstructionDeltaPart(id=instruction_id, content=content, base_hash=base_hash)
+
+
+# Realtime sessions. A session can't rewrite the instructions it was opened with, so every change is delivered as an
+# append: its window opens at connect with the prefix below, and each later change is recorded on a request of the
+# session's own. All of a session's instruction state is derived here, from that prefix and the session's history.
+
+
+def session_instruction_parts(
+    parts: Sequence[InstructionPart], loaded: Sequence[InstructionPart] = ()
+) -> list[InstructionPart]:
+    """The instruction parts a realtime session is opened with, every block that can change appending its changes.
+
+    A dynamic block with an id of its own becomes an append-mode block, sent tagged as the append-mode prefix of a
+    standard run is, so a later change can name it. A block that can't be addressed, because it has no id or shares
+    it, is sent as it is, and an author's `on_change='append'` on one is dropped, as in a standard run. Empty parts
+    are left out.
+
+    `loaded` are the parts of the deferred capabilities a seeded history loaded, which a standard run states after
+    their load returns: each capability's are joined into its block, `capability:<id>`, after the rest.
+    """
+    parts = [part for part in parts if part.content.strip()]
+    counts = Counter(part.id for part in parts)
+    session_parts = InstructionPart.sorted(
+        [
+            replace(part, content=part.content.strip(), on_change='append')
+            if part.id is not None and counts[part.id] == 1 and (part.dynamic or part.on_change == 'append')
+            else replace(part, on_change='rewrite')
+            for part in parts
+        ]
+    )
+    session_parts.extend(
+        InstructionPart(content=content, id=loaded_instruction_id(capability_id), dynamic=True, on_change='append')
+        for capability_id, content in _loaded_texts(loaded).items()
+        if content
+    )
+    return session_parts
+
+
+@dataclass
+class SessionInstructionUpdate:
+    """What changed in a realtime session's instructions since the model last received them."""
+
+    parts: list[ModelRequestPart]
+    """The parts to record on the request that delivers the changes: the session's instruction window, if this is its
+    first change, then an [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart] per changed block."""
+
+    unaddressable_changed: bool
+    """Whether a block that can't be addressed changed too, which no change can say it replaces."""
+
+
+def session_instruction_update(
+    prefix: Sequence[InstructionPart],
+    session_messages: Sequence[ModelMessage],
+    current: Sequence[InstructionPart],
+) -> SessionInstructionUpdate:
+    """The changes to deliver to a realtime session whose instructions now resolve to `current`.
+
+    `prefix` is what [`session_instruction_parts`][pydantic_ai._instructions.session_instruction_parts] resolved at
+    connect, and `session_messages` the messages the session recorded since, whose changes are folded onto it. The
+    session's first change opens its window with an
+    [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart] recording `prefix`, so a standard run
+    continuing the conversation knows which changes are superseded by its own prefix. A loaded capability's block is
+    left out of it, as a standard run delivers those through history rather than its prefix.
+    """
+    values: dict[InstructionId, str | None] = {
+        part.id: part.content for part in prefix if part.on_change == 'append' and part.id is not None
+    }
+    parts = [part for message in session_messages for part in message.parts]
+    for part in parts:
+        if isinstance(part, InstructionDeltaPart) and part.id is not None:
+            values[part.id] = part.content
+    now: dict[InstructionId, str | None] = {
+        part.id: part.content for part in current if part.on_change == 'append' and part.id is not None
+    }
+    changes: list[ModelRequestPart] = [
+        _instruction_change(instruction_id, values.get(instruction_id), now.get(instruction_id))
+        for instruction_id in dict.fromkeys([*values, *now])
+        if values.get(instruction_id) != now.get(instruction_id)
+    ]
+    if changes and not any(isinstance(part, InstructionBaselinePart) for part in parts):
+        baseline = InstructionBaselinePart(
+            instructions=[
+                replace(part) if part.on_change == 'append' else InstructionDigest.of(part)
+                for part in prefix
+                if not is_loaded_block(part.id)
+            ]
+        )
+        changes.insert(0, baseline)
+    rewritten = [part.content for part in prefix if part.on_change != 'append']
+    return SessionInstructionUpdate(
+        parts=changes,
+        unaddressable_changed=rewritten != [part.content for part in current if part.on_change != 'append'],
+    )

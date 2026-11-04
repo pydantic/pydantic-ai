@@ -1627,7 +1627,6 @@ class TestSafeDownload:
 
     async def test_allowed_domains_blocks(self, mock_dns: AsyncMock) -> None:
         """Test that non-allowed domain is rejected."""
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
         with pytest.raises(ValueError, match='not in the allowed domains'):
             await safe_download('https://evil.com/page', allowed_domains=['example.com'])
 
@@ -1665,14 +1664,12 @@ class TestSafeDownload:
 
     async def test_blocked_domains_blocks(self, mock_dns: AsyncMock) -> None:
         """Test that blocked domain is rejected."""
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
         with pytest.raises(ValueError, match='is blocked'):
             await safe_download('https://evil.com/page', blocked_domains=['evil.com'])
 
     @pytest.mark.parametrize('url', ['https://evil.com./page', 'https://EVIL.com/page', 'https://Evil.Com./page'])
     async def test_blocked_domains_normalizes_host(self, url: str, mock_dns: AsyncMock) -> None:
         """A trailing FQDN dot or uppercasing must not bypass the blocked-domains list."""
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
         with pytest.raises(ValueError, match='is blocked'):
             await safe_download(url, blocked_domains=['evil.com'])
 
@@ -1683,7 +1680,6 @@ class TestSafeDownload:
         The host side was already normalized, so an entry spelled this way silently never
         matched and the blocklist quietly did nothing.
         """
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
         with pytest.raises(ValueError, match='is blocked'):
             await safe_download('https://evil.com/page', blocked_domains=[entry])
 
@@ -1712,7 +1708,6 @@ class TestSafeDownload:
         raw string would let the model past a correctly configured blocklist while the
         request still arrived at the blocked host.
         """
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
         with pytest.raises(ValueError, match='is blocked'):
             await safe_download(url, blocked_domains=['evil.com'])
 
@@ -1730,7 +1725,6 @@ class TestSafeDownload:
 
     async def test_domain_key_falls_back_on_unencodable_host(self, mock_dns: AsyncMock) -> None:
         """A label the IDNA codec rejects is compared as-is rather than raising."""
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
         host = 'a' * 64 + '.example'
         with pytest.raises(ValueError, match='is blocked'):
             await safe_download(f'https://{host}/page', blocked_domains=[host])
@@ -1748,11 +1742,8 @@ class TestSafeDownload:
         await safe_download('https://example.com/page', blocked_domains=['evil.com'])
 
     async def test_redirect_to_blocked_domain_rejected(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
-        """Test that redirects to blocked domains are caught."""
-        mock_dns.side_effect = [
-            [(2, 1, 6, '', ('93.184.215.14', 0))],
-            [(2, 1, 6, '', ('140.82.114.4', 0))],
-        ]
+        """Test that redirects to blocked domains are caught before the target is resolved."""
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
         redirect_response = AsyncMock()
         redirect_response.is_redirect = True
         redirect_response.headers = {'location': 'https://evil.com/payload'}
@@ -1762,15 +1753,13 @@ class TestSafeDownload:
 
         with pytest.raises(ValueError, match='is blocked'):
             await safe_download('https://example.com/page', blocked_domains=['evil.com'])
+        mock_dns.assert_awaited_once()
 
     async def test_redirect_to_non_allowed_domain_rejected(
         self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
     ) -> None:
-        """Test that redirects to non-allowed domains are caught."""
-        mock_dns.side_effect = [
-            [(2, 1, 6, '', ('93.184.215.14', 0))],
-            [(2, 1, 6, '', ('140.82.114.4', 0))],
-        ]
+        """Test that redirects to non-allowed domains are caught before the target is resolved."""
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
         redirect_response = AsyncMock()
         redirect_response.is_redirect = True
         redirect_response.headers = {'location': 'https://other.com/page'}
@@ -1780,6 +1769,28 @@ class TestSafeDownload:
 
         with pytest.raises(ValueError, match='not in the allowed domains'):
             await safe_download('https://example.com/page', allowed_domains=['example.com'])
+        mock_dns.assert_awaited_once()
+
+    @pytest.mark.parametrize(
+        ('allowed_domains', 'blocked_domains', 'error'),
+        [
+            (['example.com'], None, 'not in the allowed domains'),
+            (None, ['evil.com'], 'is blocked'),
+        ],
+    )
+    async def test_rejected_domain_is_not_resolved(
+        self, allowed_domains: list[str] | None, blocked_domains: list[str] | None, error: str, mock_dns: AsyncMock
+    ) -> None:
+        """A hostname the domain lists reject is rejected for that reason, without resolving it.
+
+        The host would resolve to a private address, so resolving first would report that instead.
+        """
+        mock_dns.return_value = [(2, 1, 6, '', ('10.0.0.1', 0))]
+        with pytest.raises(ValueError, match=error):
+            await safe_download(
+                'https://evil.com/page', allowed_domains=allowed_domains, blocked_domains=blocked_domains
+            )
+        mock_dns.assert_not_awaited()
 
 
 class TestSensitiveHeaderStrippingOnRedirects:
