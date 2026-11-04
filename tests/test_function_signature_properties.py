@@ -12,12 +12,19 @@ from __future__ import annotations as _annotations
 import os
 from copy import deepcopy
 
+import pytest
 from hypothesis import HealthCheck, given, settings
 
 from pydantic_ai.function_signature import FunctionSignature
 
 from .function_signature_invariants import Tool, catalog_violations, stability_violations
 from .function_signature_strategies import exhaustive_documents, tool_sets
+
+# The same false positive `tests/test_history_properties.py` explains: Hypothesis notes this when another thread on
+# the xdist worker touches `random` during a draw. No strategy in `tests/function_signature_strategies.py` uses it.
+pytestmark = pytest.mark.filterwarnings(
+    'ignore:Do not use the `random` module inside strategies:hypothesis.errors.HypothesisDeprecationWarning'
+)
 
 _EXAMPLES = os.environ.get('FUNCTION_SIGNATURE_PROPERTY_EXAMPLES')
 
