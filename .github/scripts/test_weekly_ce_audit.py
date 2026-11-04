@@ -389,6 +389,11 @@ def test_workflow_retains_separate_pr_sink_and_protected_review():
     assert 'create-issue' not in outputs
     assert outputs['steps'][0]['env']['AGENT_RESULT'] == '${{ needs.agent.result }}'
     assert outputs['steps'][0]['run'] == 'test "$AGENT_RESULT" = success'
+    download, check = outputs['steps'][1:]
+    assert download['with']['name'] == 'weekly-ce-audit'
+    assert 'check-publication' in check['run']
+    assert check['env']['GH_AW_AGENT_OUTPUT'] == '${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}'
+    assert download['if'] == check['if'] == "contains(needs.agent.outputs.output_types, 'create_pull_request')"
     preflight = config['pre-agent-steps'][0]['run']
     pagination_lines = [line for line in preflight.splitlines() if 'gh api --paginate --slurp' in line]
     assert pagination_lines and all('--jq' not in line for line in pagination_lines)
@@ -550,7 +555,13 @@ def test_compiled_publication_gate_and_health_dependencies():
         if step.get('name') == 'Require successful coverage and edit validation before publication'
     )
     handler = next(i for i, step in enumerate(steps) if step.get('name') == 'Process Safe Outputs')
-    assert gate < handler
+    checkout = next(i for i, step in enumerate(steps) if str(step.get('name', '')).startswith('Checkout repository'))
+    binding = next(
+        i
+        for i, step in enumerate(steps)
+        if step.get('name') == 'Require the independently reviewed proposal for publication'
+    )
+    assert checkout < gate < binding < handler
     publication: dict[str, dict[str, object]] = json.loads(steps[handler]['env']['GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG'])
     assert 'title_prefix' not in publication['create_pull_request']
     exclusions = sequence(publication['create_pull_request']['excluded_files'], 'Missing compiled exclusions')
@@ -688,42 +699,61 @@ def test_main_prepares_review_bundle(
     )
 
 
-def test_publication_rejects_noop_with_reviewed_proposal(
-    reviewed_candidate: tuple[Path, str, str, dict[str, object]], monkeypatch: pytest.MonkeyPatch
-):
-    """Reject contradictory outcomes even when the candidate has valid independent review."""
-    root, source, _, proposal = reviewed_candidate
+def validate_and_check_publication(
+    root: Path, source: str, monkeypatch: pytest.MonkeyPatch, items: list[dict[str, object]]
+) -> dict[str, object]:
+    """Run the agent-job validator, then the publication job's check against the ingested items."""
     directory = root / '.ce-audit'
     frozen_issues = root / 'host-issues'
-    frozen_issues.mkdir()
-    output = directory / 'agent-output.json'
-    items: list[dict[str, object]] = [{'type': 'create_pull_request', **proposal}]
-    output.write_text(json.dumps({'items': items}))
+    frozen_issues.mkdir(exist_ok=True)
+    session = str(directory / 'review/agent-session.jsonl')
+    arguments = ['--root', str(root), '--source', source, '--directory', str(directory)]
     monkeypatch.setattr(
         sys,
         'argv',
-        [
-            'audit',
-            'validate',
-            '--root',
-            str(root),
-            '--source',
-            source,
-            '--directory',
-            str(directory),
-            '--agent-output',
-            str(output),
-            '--agent-session',
-            str(directory / 'review/agent-session.jsonl'),
-            '--issue-evidence',
-            str(frozen_issues),
-        ],
+        ['audit', 'validate', *arguments, '--agent-session', session, '--issue-evidence', str(frozen_issues)],
     )
     main()
-    items.append({'type': 'noop', 'message': 'No change'})
+    approval: dict[str, object] = json.loads((directory / 'publication.json').read_text())
+    output = root / 'agent_output.json'
     output.write_text(json.dumps({'items': items}))
+    monkeypatch.setattr(sys, 'argv', ['audit', 'check-publication', *arguments, '--agent-output', str(output)])
+    main()
+    return approval
+
+
+def test_publication_requires_the_approved_proposal(
+    reviewed_candidate: tuple[Path, str, str, dict[str, object]], monkeypatch: pytest.MonkeyPatch
+):
+    """Publish only the ingested PR the agent-job validator approved, and never alongside a noop."""
+    root, source, _, proposal = reviewed_candidate
+    reviewed = {key: proposal[key] for key in ('title', 'body', 'branch')}
+    item: dict[str, object] = {'type': 'create_pull_request', **reviewed}
+    approval = validate_and_check_publication(root, source, monkeypatch, [item])
+    assert approval == {'proposal': reviewed}
+    assert '## Publication approval\nApproved.' in (root / '.ce-audit/summary.md').read_text()
+    validate_and_check_publication(root, source, monkeypatch, [{'type': 'noop', 'message': 'No change'}])
+    with pytest.raises(ValueError, match='differs from the independently reviewed proposal'):
+        validate_and_check_publication(root, source, monkeypatch, [{**item, 'body': 'Unreviewed body'}])
     with pytest.raises(ValueError, match='A noop cannot publish a pull request'):
-        main()
+        validate_and_check_publication(root, source, monkeypatch, [item, {'type': 'noop', 'message': 'No change'}])
+
+
+def test_rejected_review_withholds_approval_without_failing_a_noop(
+    reviewed_candidate: tuple[Path, str, str, dict[str, object]], monkeypatch: pytest.MonkeyPatch
+):
+    """A proposal withdrawn after a failed review leaves the noop run green and blocks its publication."""
+    root, source, _, proposal = reviewed_candidate
+    directory = root / '.ce-audit'
+    record_task_review(directory, 'incomplete')
+    (directory / 'publication.json').write_text(json.dumps({'proposal': proposal}))
+    approval = validate_and_check_publication(root, source, monkeypatch, [{'type': 'noop', 'message': 'No change'}])
+    assert approval['proposal'] is None
+    assert 'non-current independent pre-push review' in str(approval['reason'])
+    assert 'Withheld: Missing, incomplete, stale, or non-current' in (directory / 'summary.md').read_text()
+    item: dict[str, object] = {'type': 'create_pull_request', **proposal}
+    with pytest.raises(ValueError, match='differs from the independently reviewed proposal'):
+        validate_and_check_publication(root, source, monkeypatch, [item])
 
 
 def test_independent_review_binds_candidate_and_metadata(reviewed_candidate: tuple[Path, str, str, dict[str, object]]):
