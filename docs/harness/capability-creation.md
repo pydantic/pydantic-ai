@@ -105,11 +105,12 @@ Inside a Temporal or DBOS workflow, a run refuses capabilities passed with `agen
 
 `CapabilityCreation` imports model-written Python into the agent's own process, on this
 machine. A run therefore refuses to start unless its
-[workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/) is a writable `LocalWorkspace`: next to a
-sandbox the model's code would run outside the sandbox, and a read-only workspace promises the
-model that it changes nothing.
+[workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/) is a writable `LocalWorkspace` with
+`'operator'` authority: next to a sandbox the model's code would run outside the sandbox, a read-only
+workspace promises the model that it changes nothing, and a workspace with `'user'` or `'none'` authority
+holds files the operator does not control.
 
-`CapabilityCreation` executes arbitrary Python in-process at import, construction, and run time. That is the same trust boundary an agent that already runs shell commands and edits files operates under. Do not point it at a directory whose contents you would not run yourself, and treat authored capabilities as code the agent is executing on your host.
+`CapabilityCreation` executes arbitrary Python in-process at import, construction, and run time. That is the same trust boundary an agent that already runs shell commands and edits files operates under. `directory` must hold only operator-written code (or code authored through this capability); do not point it at a directory whose contents you would not run yourself, such as a cloned third-party repository or user uploads, and treat authored capabilities as code the agent is executing on your host.
 
 Authored code first runs when the model calls `author_capability`, not on the next run: validation executes the module body, the constructor, and the static getters in the current run, with the agent process's environment and permissions, even when validation then rejects the code. If that code blocks, cancelling the run stops waiting for it, but its worker thread runs until the code returns and then finishes the write, so code that passes validation is still saved and loaded by the next `load_active()`; disable it if you did not want it. Other authoring, listing, and disabling calls are not held up by it. `store.load_active()` runs authored code in its calling thread, so an authored module that blocks also blocks that call. Loads of the same source from different threads run one at a time, so it also holds up every other load of that source, such as a `load_active()` call in another thread.
 

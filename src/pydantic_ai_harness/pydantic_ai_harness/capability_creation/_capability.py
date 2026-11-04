@@ -63,9 +63,11 @@ class CapabilityCreation(AbstractCapability[AgentDepsT]):
 
     Authoring imports model-written Python into the agent's own process, on this
     machine. So a run refuses to start unless its workspace is this machine
-    (`LocalWorkspace`) and writable: next to a sandbox, the model's code would
-    escape the sandbox, and a read-only workspace promises the model changes
-    nothing.
+    (`LocalWorkspace`), writable, and has `'operator'` authority: next to a
+    sandbox, the model's code would escape the sandbox; a read-only workspace
+    promises the model changes nothing; and a workspace below `'operator'`
+    authority holds files the operator did not write, which must not run as the
+    operator's.
 
     Each store read and write runs as a durable operation, so under durable
     execution a recovered run reuses the recorded result instead of writing
@@ -76,6 +78,7 @@ class CapabilityCreation(AbstractCapability[AgentDepsT]):
     """Directory holding the authored `<name>.py` files and the `manifest.json` index.
 
     A path on the machine running the agent, relative to the process's current directory, not a workspace path.
+    Must hold only operator-written code (or code authored through this capability).
     """
 
     guidance: str | None = None
@@ -97,13 +100,19 @@ class CapabilityCreation(AbstractCapability[AgentDepsT]):
         return CapabilityStore(self.directory)
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
-        """Refuse the run unless its workspace is this machine and writable."""
+        """Refuse the run unless its workspace is this machine, writable, and has `'operator'` authority."""
         workspace = ctx.workspace
-        if workspace.ref is None or workspace.ref.provider != 'local' or workspace.read_only:
+        if (
+            workspace.ref is None
+            or workspace.ref.provider != 'local'
+            or workspace.read_only
+            or workspace.authority != 'operator'
+        ):
             raise UserError(
                 '`CapabilityCreation` imports model-written Python into the agent process, so it only runs when '
-                "the run's workspace is this machine and writable. Attach a writable `LocalWorkspace('.')`, not "
-                'a sandbox or a read-only workspace.'
+                "the run's workspace is this machine, writable, and has `'operator'` authority. Attach a writable "
+                "`LocalWorkspace('.', authority='operator')`, not a sandbox, a read-only workspace, or a workspace "
+                "with `'user'` or `'none'` authority."
             )
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:

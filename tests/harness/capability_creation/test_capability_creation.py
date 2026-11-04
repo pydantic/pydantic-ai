@@ -16,10 +16,11 @@ import pytest
 from pydantic_ai import Agent, DeferredToolRequests, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import ModelRequest, ToolReturnPart
+from pydantic_ai.messages import Authority, ModelRequest, ToolReturnPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
+    AuthorityWorkspace,
     LocalWorkspaceBackend,
     ReadOnlyWorkspace,
     Workspace,
@@ -1237,6 +1238,21 @@ class TestEndToEnd:
         agent = Agent(TestModel(), capabilities=[CapabilityCreation(directory=tmp_path)])
         with pytest.raises(UserError, match='imports model-written Python into the agent process'):
             await agent.run('go', workspace=backends[workspace])
+
+    @pytest.mark.parametrize('authority', ['user', 'none'])
+    async def test_refuses_a_workspace_below_operator_authority(
+        self, tmp_path: Path, authority: Authority
+    ) -> None:
+        workspace = AuthorityWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)), authority=authority)
+        agent = Agent(TestModel(), capabilities=[CapabilityCreation(directory=tmp_path)])
+        with pytest.raises(UserError, match="has `'operator'` authority"):
+            await agent.run('go', workspace=workspace)
+
+    async def test_allows_a_workspace_with_operator_authority(self, tmp_path: Path) -> None:
+        workspace = AuthorityWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)), authority='operator')
+        agent = Agent(TestModel(), capabilities=[CapabilityCreation(directory=tmp_path)])
+        result = await agent.run('go', workspace=workspace)
+        assert result.output is not None
 
 
 class _Sandbox(LocalWorkspaceBackend):
