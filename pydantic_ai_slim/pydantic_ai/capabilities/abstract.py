@@ -1230,8 +1230,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         that model once more. It runs after the
         [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] hooks, with
         [`request.conversation_request.model`][pydantic_ai.capabilities.CompactionModelRequest.model] set to the
-        model about to serve the attempt. Capabilities are asked in order and the first result is used, so capability order is the fallback
-        chain: a capability that can't compact for this model, or this request, returns `None`.
+        model about to serve the attempt. Capabilities are asked in order and the first result is used, so
+        capability order is the fallback chain: a capability that can't compact for this model, or this request,
+        returns `None`.
 
         The returned [`CompactionResult.messages`][pydantic_ai.capabilities.CompactionResult.messages] are sent in
         place of [`request.messages`][pydantic_ai.capabilities.CompactionRequest.messages], and replace the run's
