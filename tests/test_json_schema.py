@@ -161,7 +161,9 @@ def test_inlining_past_the_value_limit_is_refused_before_the_request(monkeypatch
     tool = Tool.from_schema(look_up, name='look_up', description=None, json_schema=schema)
     agent = Agent(FunctionModel(model_function, profile=meta_model_profile('llama-3.3-70b')), tools=[tool])
 
-    with pytest.raises(UserError, match=f'expand to more than {_VALUE_LIMIT:,} JSON values'):
+    with pytest.raises(
+        UserError, match=f"^The JSON schema of tool 'look_up' is too large: .* more than {_VALUE_LIMIT:,} JSON values"
+    ):
         agent.run_sync('look it up')
 
 

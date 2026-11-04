@@ -43,13 +43,15 @@ class MessagesBuilder:
             if isinstance(last_message, ModelRequest):
                 last_message.parts = self._extended(last_message.parts, part)
             else:
-                self.messages.append(ModelRequest(parts=[part]))
+                self._own_parts = request_parts = [part]
+                self.messages.append(ModelRequest(parts=request_parts))
         else:
             part = cast(ModelResponsePart, part)
             if isinstance(last_message, ModelResponse):
                 last_message.parts = self._extended(last_message.parts, part)
             else:
-                self.messages.append(ModelResponse(parts=[part]))
+                self._own_parts = response_parts = [part]
+                self.messages.append(ModelResponse(parts=response_parts))
 
     def _extended(self, parts: Sequence[_PartT], part: _PartT) -> list[_PartT]:
         """`parts` with `part` appended: in place on the list made here last time, else on a copy, made once.

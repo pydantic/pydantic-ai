@@ -21,6 +21,16 @@ definition is inlined to. A `$ref` in it counts as the definition it refers to.
 """
 
 
+class InlinedSchemaTooLargeError(UserError):
+    """A schema whose `$ref`s expand past `MAX_INLINED_SCHEMA_VALUES` once inlined, with `subject` naming it."""
+
+    def __init__(self, subject: str):
+        super().__init__(
+            f'{subject} is too large: its `$ref`s expand to more than {MAX_INLINED_SCHEMA_VALUES:,} JSON values. '
+            'Refer to large definitions from fewer places.'
+        )
+
+
 @dataclass(init=False)
 class JsonSchemaTransformer(ABC):
     """Walks a JSON schema, applying transformations to it at each level.
@@ -168,10 +178,7 @@ class JsonSchemaTransformer(ABC):
             elif isinstance(value, list):
                 stack.extend(member for member in value if id(member) not in visited)
         if self._inlined_values > MAX_INLINED_SCHEMA_VALUES:
-            raise UserError(
-                f'JSON schema is too large: its `$ref`s expand to more than {MAX_INLINED_SCHEMA_VALUES:,} JSON values. '
-                'Refer to large definitions from fewer places.'
-            )
+            raise InlinedSchemaTooLargeError('JSON schema')
 
     def _handle_object(self, schema: JsonSchema) -> JsonSchema:
         if properties := schema.get('properties'):

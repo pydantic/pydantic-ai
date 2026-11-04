@@ -1809,12 +1809,12 @@ def test_messages_builder_extends_its_own_parts_in_place():
     """
     builder = MessagesBuilder()
     builder.add(TextPart('a'))
-    builder.add(TextPart('b'))
     parts = builder.messages[0].parts
+    builder.add(TextPart('b'))
     builder.add(TextPart('c'))
     builder.add(UserPromptPart('d'))
-    builder.add(UserPromptPart('e'))
     request_parts = builder.messages[1].parts
+    builder.add(UserPromptPart('e'))
     builder.add(UserPromptPart('f'))
 
     assert builder.messages[0].parts is parts

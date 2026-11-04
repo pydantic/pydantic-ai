@@ -25,7 +25,7 @@ from typing_inspection.introspection import get_literal_values
 
 from .. import _deferred_capabilities, _utils
 from .._deprecated_callable import deprecated_callable_property
-from .._json_schema import JsonSchemaTransformer
+from .._json_schema import InlinedSchemaTooLargeError, JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
@@ -1290,7 +1290,10 @@ def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: Tool
     If the tool definition has `strict` set to None, the strictness will be inferred from the transformer.
     """
     schema_transformer = transformer(tool_def.parameters_json_schema, strict=tool_def.strict)
-    parameters_json_schema = schema_transformer.walk()
+    try:
+        parameters_json_schema = schema_transformer.walk()
+    except InlinedSchemaTooLargeError:
+        raise InlinedSchemaTooLargeError(f'The JSON schema of tool {tool_def.name!r}') from None
     return replace(
         tool_def,
         parameters_json_schema=parameters_json_schema,
