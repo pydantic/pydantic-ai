@@ -15,7 +15,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Harnesses | Coding agent, composed from its tools | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Enterprise support | With [OpenHands Enterprise](https://docs.openhands.dev/enterprise) | [For the framework itself](../enterprise-support.md), no platform required |
-| Durable execution | Conversation persistence only | [Eight integrations](../durable_execution/overview.md) |
+| Durable execution | Conversation persistence only | [Nine integrations](../durable_execution/overview.md) |
 | Interfaces | Agent server (REST, WebSocket, TypeScript client), CLI, ACP client | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) |
 | Realtime voice | No | [Realtime](../realtime/overview.md) |
 | Evals | Coding benchmarks, in a separate repository | [Pydantic Evals](../evals.md) |
