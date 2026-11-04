@@ -50,7 +50,7 @@ Resolve every review thread.
 Douwebot posts as `github-actions[bot]` through the trusted [PR Bots publisher](../../../.github/workflows/bots.yml).
 Verify its successful run and `<!-- douwebot:review run=<id> head=<sha> -->` receipt.
 `CI Review` can use the same bot account but carries a separate gh-aw receipt; it cannot satisfy this bar.
-Associate inline comments with their parent review's commit because GitHub can move a comment's `commit_id` after a push.
+Associate inline comments with the `head=` in their parent review's receipt, or with the comment's `original_commit_id` when the parent has none, because GitHub can move both a review's and a comment's `commit_id` after a push.
 A clean, maintainer-authorized `douwebot:review-agent-config` approval satisfies the same requirement for protected paths.
 A human approval does not substitute for douwebot.
 
