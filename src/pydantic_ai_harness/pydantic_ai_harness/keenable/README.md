@@ -53,7 +53,7 @@ agent = Agent(
 |---|---|---|
 | `num_results` | `5` | How many results `web_search` returns, from 1 to 50. |
 | `max_snippet_chars` | `500` | Excerpt budget per search result. |
-| `max_page_chars` | `10_000` | Page budget for `get_page`; longer pages are truncated and marked, with the marker counted against the budget. |
+| `max_page_chars` | `10_000` | Page budget for `get_page`; longer pages are truncated and marked, with the marker counted against the budget. A budget too small to hold the marker cuts the page without one. |
 | `guidance` | `None` | Replaces the default research instructions, keeping the untrusted-content rule; `''` contributes none. |
 | `client` | `None` | A `KeenableClient` to use instead of the default HTTP client. |
 
@@ -66,7 +66,8 @@ one.
 ## Authentication
 
 Keenable is keyless by default, so nothing is required. An API key raises rate
-limits:
+limits; keyed calls draw on your Keenable credits, and searches run in
+Keenable's default `pro` mode:
 
 ```bash
 export KEENABLE_API_KEY='keen_...'
@@ -108,9 +109,8 @@ wait, rephrase, or try another URL rather than abort the run. A `get_page` call
 that comes back with no readable content is a `ModelRetry` too. `get_page`
 reads Keenable's indexed copy of a page, and Keenable documents that fetching a
 URL it has not indexed fails; the model sees that failure as a `ModelRetry` as
-well. A `401`, `402`,
-or `403` propagates as `httpx.HTTPStatusError`: a rejected key or an exhausted
-account is configuration the model cannot fix.
+well. A `401`, `402`, or `403` propagates as `httpx.HTTPStatusError`: a
+rejected key or an exhausted account is configuration the model cannot fix.
 
 ## Multiple instances
 

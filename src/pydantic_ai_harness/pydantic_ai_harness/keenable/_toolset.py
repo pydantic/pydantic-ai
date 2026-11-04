@@ -159,42 +159,6 @@ def validated_budget(name: str, value: object, *, limit: int | None = None) -> i
     return value
 
 
-def _recoverable(
-    fn: Callable[Concatenate[_SelfT, _P], Awaitable[_R]],
-) -> Callable[Concatenate[_SelfT, _P], Awaitable[_R]]:
-    """Convert transient Keenable API failures into `ModelRetry`.
-
-    Pydantic AI only feeds `ModelRetry` back to the model as a retry prompt;
-    any other exception propagates and aborts the run. Rate limits, transient
-    5xx, rejected parameters, a 404 on a dead URL, and a 2xx whose body is not
-    JSON (a proxy or gateway answering in HTML) are things a model can recover
-    from (wait, rephrase, pick another URL), so they become retries. A
-    401/402/403 means a bad key or an exhausted account, configuration the
-    model cannot fix, so it propagates.
-    """
-    auth_statuses = frozenset({401, 402, 403})
-
-    @functools.wraps(fn)
-    async def wrapper(self: _SelfT, *args: _P.args, **kwargs: _P.kwargs) -> _R:
-        try:
-            return await fn(self, *args, **kwargs)
-        except httpx.HTTPStatusError as error:
-            if error.response.status_code in auth_statuses:
-                raise
-            response = error.response
-            raise ModelRetry(
-                f'Keenable request failed with HTTP {response.status_code} {response.reason_phrase}.'
-            ) from error
-        except httpx.HTTPError as error:
-            raise ModelRetry(f'Keenable request failed: {error}') from error
-        except (json.JSONDecodeError, UnicodeDecodeError) as error:
-            # `Response.json()` decodes the bytes before parsing them, so a body
-            # in a broken encoding fails as a decode error, not a JSON one.
-            raise ModelRetry(f'Keenable returned a malformed response: {error}') from error
-
-    return wrapper
-
-
 @dataclass(frozen=True)
 class KeenableSearchOperations:
     """The durable operations a `KeenableSearch` capability runs its toolset's Keenable requests through."""
@@ -216,8 +180,9 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
 
     `web_search` asks Keenable for `num_results` results and trims each excerpt
     to `max_snippet_chars`, and `get_page` truncates at `max_page_chars` with a
-    marker so the model knows the page continued. All three bounds are
-    validated here as well as by `KeenableSearch`.
+    marker so the model knows the page continued; a budget too small to hold
+    the marker cuts the page without one. All three bounds are validated here
+    as well as by `KeenableSearch`.
 
     `KeenableSearch` passes `operations` so that each tool's Keenable request
     runs as one of its durable operations, whose result durable execution
@@ -255,6 +220,42 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
     def _one_line(text: object) -> str:
         """Collapse whitespace, so third-party text can't start a line that looks like another result."""
         return ' '.join(str(text).split())
+
+    @staticmethod
+    def _recoverable(
+        fn: Callable[Concatenate[_SelfT, _P], Awaitable[_R]],
+    ) -> Callable[Concatenate[_SelfT, _P], Awaitable[_R]]:
+        """Convert transient Keenable API failures into `ModelRetry`.
+
+        Pydantic AI only feeds `ModelRetry` back to the model as a retry prompt;
+        any other exception propagates and aborts the run. Rate limits, transient
+        5xx, rejected parameters, a 404 on a dead URL, and a 2xx whose body is not
+        JSON (a proxy or gateway answering in HTML) are things a model can recover
+        from (wait, rephrase, pick another URL), so they become retries. A
+        401/402/403 means a bad key or an exhausted account, configuration the
+        model cannot fix, so it propagates.
+        """
+        auth_statuses = frozenset({401, 402, 403})
+
+        @functools.wraps(fn)
+        async def wrapper(self: _SelfT, *args: _P.args, **kwargs: _P.kwargs) -> _R:
+            try:
+                return await fn(self, *args, **kwargs)
+            except httpx.HTTPStatusError as error:
+                if error.response.status_code in auth_statuses:
+                    raise
+                response = error.response
+                raise ModelRetry(
+                    f'Keenable request failed with HTTP {response.status_code} {response.reason_phrase}.'
+                ) from error
+            except httpx.HTTPError as error:
+                raise ModelRetry(f'Keenable request failed: {error}') from error
+            except (json.JSONDecodeError, UnicodeDecodeError) as error:
+                # `Response.json()` decodes the bytes before parsing them, so a body
+                # in a broken encoding fails as a decode error, not a JSON one.
+                raise ModelRetry(f'Keenable returned a malformed response: {error}') from error
+
+        return wrapper
 
     @_recoverable
     async def web_search(self, query: str) -> ToolReturn[str]:
