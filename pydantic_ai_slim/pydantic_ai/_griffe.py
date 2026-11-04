@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import re
 from collections.abc import Callable
+from inspect import Signature, signature
 from typing import TYPE_CHECKING, Any, Literal
 
 from griffe import (
@@ -29,7 +30,9 @@ def doc_descriptions(
     The function parses the docstring using the specified format (or infers it if 'auto')
     and extracts both the main description and parameter descriptions. Recognized admonition
     sections (e.g. `Warning:` and `Note:`) are included in the main description in source order,
-    while other sections (e.g. `Raises` and `Examples`) keep their current handling. If a returns section
+    while other sections (e.g. `Raises` and `Examples`) keep their current handling. For a function
+    with a Python return annotation, a Google-style returns section keeps its whole text as the
+    return description instead of splitting a type off at the first colon. If a returns section
     is present in the docstring, the main description will be formatted as XML.
 
     Returns:
@@ -85,6 +88,11 @@ def doc_descriptions(
         return_statement = return_.value[0]
         return_desc = return_statement.description
         return_type = return_statement.annotation
+        if docstring_style == 'google' and return_type and signature(func).return_annotation is not Signature.empty:
+            # The Python return annotation is authoritative: keep the whole docstring text as the return
+            # description instead of griffe splitting a type off at the first colon.
+            return_desc = f'{return_type}: {return_desc}'
+            return_type = None
         type_tag = f'<type>{return_type}</type>\n' if return_type else ''
         return_xml = f'<returns>\n{type_tag}<description>{return_desc}</description>\n</returns>'
 

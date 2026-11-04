@@ -2524,7 +2524,7 @@ class TestFileSystemCapability:
         assert exc_info.value.message == READ_ONLY_FAILURE
         assert list(tmp_path.iterdir()) == []
 
-    def test_search_files_description_has_string_return_type(self) -> None:
+    def test_search_files_description_returns_text_when_return_annotated(self) -> None:
         toolset = FileSystem().get_toolset()
         assert isinstance(toolset, FileSystemToolset)
         description = toolset.tools['search_files'].description
@@ -2532,8 +2532,7 @@ class TestFileSystemCapability:
         assert description == (
             '<summary>Search file contents using a regular expression.</summary>\n'
             '<returns>\n'
-            '<type>str</type>\n'
-            '<description>Matching lines formatted as file:line_number:text, with paths relative to the working directory.</description>\n'
+            '<description>str: Matching lines formatted as file:line_number:text, with paths relative to the working directory.</description>\n'
             '</returns>'
         )
 

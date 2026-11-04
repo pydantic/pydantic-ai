@@ -391,8 +391,7 @@ def test_google_style_with_returns():
             'description': """\
 <summary>A function that does something.</summary>
 <returns>
-<type>str</type>
-<description>The result as a string.</description>
+<description>str: The result as a string.</description>
 </returns>\
 """,
             'parameters_json_schema': {
@@ -546,8 +545,7 @@ def test_only_returns_type():
             'name': 'only_returns_type',
             'description': """\
 <returns>
-<type>str</type>
-<description>The result as a string.</description>
+<description>str: The result as a string.</description>
 </returns>\
 """,
             'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
@@ -5941,3 +5939,56 @@ def test_raises_and_examples_sections_still_dropped(allow_model_requests):
     assert descriptions['fetch_ad_rows'] == 'Fetch ad rows for an account.'
 
 
+def test_returns_with_colon_whole_text_when_return_annotated(allow_model_requests):
+    """With a Python return annotation, a `Returns:` section keeps its whole text instead of splitting at the first colon."""
+    test_model = TestModel()
+    agent = Agent(test_model)
+
+    @agent.tool_plain
+    def fetch_ad_rows(account_id: str) -> list[dict[str, str]]:
+        """Fetch ad rows for an account.
+
+        Args:
+            account_id: The ad account id.
+
+        Returns:
+            The rows. Example: [{"id": 1}]
+        """
+        return []
+
+    agent.run_sync('Fetch my ad rows')
+    descriptions = {t.name: t.description for t in test_model.last_model_request_parameters.function_tools}
+    assert descriptions['fetch_ad_rows'] == (
+        '<summary>Fetch ad rows for an account.</summary>\n'
+        '<returns>\n'
+        '<description>The rows. Example: [{"id": 1}]</description>\n'
+        '</returns>'
+    )
+
+
+def test_returns_with_colon_still_split_when_not_annotated(allow_model_requests):
+    """Without a Python return annotation, a `Returns:` type prefix keeps its current handling."""
+    test_model = TestModel()
+    agent = Agent(test_model)
+
+    @agent.tool_plain
+    def fetch_ad_rows(account_id: str):
+        """Fetch ad rows for an account.
+
+        Args:
+            account_id: The ad account id.
+
+        Returns:
+            str: The rows.
+        """
+        return None
+
+    agent.run_sync('Fetch my ad rows')
+    descriptions = {t.name: t.description for t in test_model.last_model_request_parameters.function_tools}
+    assert descriptions['fetch_ad_rows'] == (
+        '<summary>Fetch ad rows for an account.</summary>\n'
+        '<returns>\n'
+        '<type>str</type>\n'
+        '<description>The rows.</description>\n'
+        '</returns>'
+    )
