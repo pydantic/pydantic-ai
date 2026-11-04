@@ -223,17 +223,11 @@ class _YouClient:
         )
 
 
-_CLI_COUNTS: list[Path] = []
-"""The files the CLI stand-ins count their runs in, one line per run."""
-
-
-def _counting_cli(name: str, output: str) -> str:
-    """A `name` stand-in that prints `output` and counts its runs, whatever environment it runs in."""
+def _counting_aws_cli() -> str:
+    """An `aws` stand-in that counts its runs in the file named by `HARNESS_AWS_CLI_COUNT`."""
     directory = Path(tempfile.mkdtemp(prefix='harness_durable_tool_io_'))
-    script = directory / name
-    count = directory / 'count'
-    _CLI_COUNTS.append(count)
-    script.write_text(f'#!/bin/sh\necho {name} >> {count}\n{output}\n')
+    script = directory / 'aws'
+    script.write_text('#!/bin/sh\necho run >> "$HARNESS_AWS_CLI_COUNT"\necho ok\n')
     script.chmod(script.stat().st_mode | stat.S_IXUSR)
     return str(script)
 
@@ -303,7 +297,7 @@ _AGENTS: dict[str, Agent[None, str]] = {
     ),
     'localstack': _agent(
         'localstack_agent',
-        LocalStack[None](aws_cli_path=_counting_cli('aws', 'echo ok'), include_instructions=False),
+        LocalStack[None](aws_cli_path=_counting_aws_cli(), include_instructions=False),
         ('aws_cli', {'command': 's3 ls'}),
     ),
     'capability_creation': _agent(
@@ -362,11 +356,11 @@ _WORKFLOWS = {key: _workflow(agent) for key, agent in _AGENTS.items()}
 
 
 @pytest.fixture
-def count_requests(monkeypatch: pytest.MonkeyPatch) -> Callable[[], Counter[str]]:
-    """Count every request the scenarios' fakes, the CLI stand-ins, and the stores make."""
+def count_requests(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[[], Counter[str]]:
+    """Count every request the scenarios' fakes, the `aws` stand-in, and the stores make."""
     _requests.clear()
-    for count in _CLI_COUNTS:
-        count.unlink(missing_ok=True)
+    aws_count = tmp_path / 'aws_cli_count'
+    monkeypatch.setenv('HARNESS_AWS_CLI_COUNT', str(aws_count))
 
     for method in ('write', 'list_all', 'disable'):
         original = getattr(CapabilityStore, method)
@@ -408,9 +402,8 @@ def count_requests(monkeypatch: pytest.MonkeyPatch) -> Callable[[], Counter[str]
 
     def snapshot() -> Counter[str]:
         counts = Counter(_requests)
-        for count in _CLI_COUNTS:
-            if count.exists():
-                counts.update(count.read_text().splitlines())
+        if aws_count.exists():
+            counts['aws_cli'] = len(aws_count.read_text().splitlines())
         return counts
 
     return snapshot
