@@ -6630,6 +6630,43 @@ def test_google_provider_respects_custom_http_client_timeout(gemini_api_key: str
     assert http_options.timeout == custom_timeout * 1000
 
 
+@pytest.mark.parametrize(
+    'content',
+    [
+        pytest.param({'$ref': '#/defs/panel', 'title': 'x'}, id='top-level'),
+        pytest.param({'layout': [{'$ref': '#/defs/panel'}]}, id='nested'),
+        pytest.param([{'$ref': '#/defs/panel'}], id='list'),
+    ],
+)
+async def test_google_tool_return_with_ref_key_is_sent_as_json_text(google_provider: GoogleProvider, content: Any):
+    """Gemini reads `$ref` in a function response as a part reference and rejects the request, so send it as text."""
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_layout', content=content, tool_call_id='call_1')])
+    ]
+
+    _, contents = await m._map_messages(  # pyright: ignore[reportPrivateUsage]
+        m.prepare_messages(messages, ModelRequestParameters()), ModelRequestParameters()
+    )
+
+    function_response = contents[0]['parts'][0]['function_response']  # pyright: ignore[reportTypedDictNotRequiredAccess,reportOptionalSubscript]
+    assert function_response['response'] == {'output': json.dumps(content, separators=(',', ':'))}  # pyright: ignore[reportTypedDictNotRequiredAccess]
+
+
+async def test_google_tool_return_without_ref_key_is_sent_as_object(google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_layout', content={'ref': 'x'}, tool_call_id='call_1')])
+    ]
+
+    _, contents = await m._map_messages(  # pyright: ignore[reportPrivateUsage]
+        m.prepare_messages(messages, ModelRequestParameters()), ModelRequestParameters()
+    )
+
+    function_response = contents[0]['parts'][0]['function_response']  # pyright: ignore[reportTypedDictNotRequiredAccess,reportOptionalSubscript]
+    assert function_response['response'] == {'ref': 'x'}  # pyright: ignore[reportTypedDictNotRequiredAccess]
+
+
 async def test_google_splits_tool_return_from_user_prompt(google_provider: GoogleProvider):
     """Test that ToolReturnPart and UserPromptPart are split into separate content objects.
 

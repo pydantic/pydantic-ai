@@ -1561,6 +1561,11 @@ class GoogleModel(Model[Client]):
             response = {'error': part.model_response_str(wrap_if_error=False)}
         else:
             response = part.model_response_object(wrap_if_error=False)
+            if _utils.contains_ref(response):
+                # Gemini reads a `$ref` key anywhere in `response` as a reference to a named part of the function
+                # response, and rejects the request when none matches. A return value that carries `$ref` as data,
+                # like a JSON Schema or an OpenAPI document, is sent as its JSON text instead.
+                response = {'output': part.model_response_str(wrap_if_error=False)}
             if fallback_refs:
                 response = {'output': [response, *fallback_refs]}
 
