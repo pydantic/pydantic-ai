@@ -194,11 +194,13 @@ def _cut_off_where_speech_is_unreported(sim: Simulation, violation: InvariantVio
 def _reply_taken_by_earlier_response(sim: Simulation, violation: InvariantViolation) -> bool:
     """A response already under way when an input arrived ended the wait for the input's own reply.
 
-    The violation names the input, or the response whose exchange the wait was owed: then the input is one of that
-    response's tool results, and the response under way is another one (on GPT-Live, a delegation the model started).
+    The violation names the input, or, on GPT-Live, the response whose exchange the wait was owed: then the input is
+    one of that response's tool results, and the response under way is a delegation the model started on its own.
     """
     truth = sim.truth
     if (named := truth.responses.get(violation.context.get('response', ''))) is not None:
+        if sim.provider != 'gpt-live':
+            return False
         inputs = [input_ for input_ in truth.inputs if input_.key in named.tool_calls]
     else:
         inputs = [input_] if (input_ := truth.input(violation.context.get('input', ''))) is not None else []
@@ -224,13 +226,13 @@ RESERVATION_TAKEN_BY_OTHER_RESPONSE = Finding(
         "hadn't read yet, is taken for that input's reply, so `wait_for_reply()` returns when it ends: on a Gemini "
         'native-audio model (which finishes its reply rather than cutting it off for the input), on Vertex '
         "`gemini-live-2.5-flash` (which cuts it off, but doesn't report speech that could have), on ElevenLabs "
-        'Agents, and on GPT-Live when a delegation the model started on its own, under way unread as a delegated tool '
-        "round's results went out, settles before the round's answer (fixed where the provider says: the OpenAI "
+        'Agents, and on GPT-Live when a delegation the model started on its own settles first: under way unread as a '
+        "delegated tool round's results went out, it ends the round's wait (fixed where the provider says: the OpenAI "
         'protocol asks again for a request server VAD overtook, '
         'Gemini 3.x hands an input that cut a reply off to the next, GPT-Live answers text in the reply under way, '
-        'and ElevenLabs Agents names the typed turns a reply answers; and on GPT-Live for a delegation the model '
-        'starts on its own while a delegated tool round is owed its answer, which the reply that called the tools '
-        'now goes on past)'
+        'and ElevenLabs Agents names the typed turns a reply answers; and, otherwise, on GPT-Live for a delegation the '
+        'model starts on its own while a delegated tool round is owed its answer, which the reply that called the '
+        'tools now goes on past)'
     ),
     tracked_by='a provider signal that tells which reply answers an input sent as another started',
     evidence='simulated',
