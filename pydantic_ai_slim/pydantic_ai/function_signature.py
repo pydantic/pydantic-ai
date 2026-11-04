@@ -873,28 +873,28 @@ def _replace_type_refs(sig: FunctionSignature, old_ref: TypeSignature, canonical
     """Replace all references to old_ref with canonical in a signature's TypeExpr trees."""
     # Replace in params
     for param in sig.params.values():
-        param.type = _replace_type_ref(param.type, old_ref, canonical)
+        param.type = _replace_in_expr(param.type, old_ref, canonical)
 
     # Replace in return type
-    sig.return_type = _replace_type_ref(sig.return_type, old_ref, canonical)
+    sig.return_type = _replace_in_expr(sig.return_type, old_ref, canonical)
 
     # Replace in field types of referenced types
     for type_sig in sig.referenced_types:
         for f in type_sig.fields.values():
-            f.type = _replace_type_ref(f.type, old_ref, canonical)
+            f.type = _replace_in_expr(f.type, old_ref, canonical)
 
 
-def _replace_type_ref(expr: TypeExpr, old_ref: TypeSignature, canonical: TypeSignature) -> TypeExpr:
+def _replace_in_expr(expr: TypeExpr, old_ref: TypeSignature, canonical: TypeSignature) -> TypeExpr:
     """`expr` with every reference to old_ref in its tree replaced with canonical, in place where it is nested."""
     if expr is old_ref:
         return canonical
     match expr:
         case GenericTypeExpr():
-            new_args = [_replace_type_ref(a, old_ref, canonical) for a in expr.args]
+            new_args = [_replace_in_expr(a, old_ref, canonical) for a in expr.args]
             if any(new is not orig for new, orig in zip(new_args, expr.args)):
                 expr.args = new_args
         case UnionTypeExpr():
-            new_members = [_replace_type_ref(m, old_ref, canonical) for m in expr.members]
+            new_members = [_replace_in_expr(m, old_ref, canonical) for m in expr.members]
             if any(new is not orig for new, orig in zip(new_members, expr.members)):
                 expr.members = new_members
         case _:

@@ -311,7 +311,10 @@ def build_schema_types(
 
 
 def _spec_param_type_hints(target: Callable[..., object]) -> tuple[dict[str, Any], dict[str, Any]]:
-    """The type hints of `target`'s spec parameters, with optional ones as `NotRequired`, and those of its required ones."""
+    """The type hints of `target`'s spec parameters, with optional ones as `NotRequired`.
+
+    The second dict holds the type hints of its required parameters only.
+    """
     type_hints = get_function_type_hints(target)
     type_hints.pop('return', None)
 
