@@ -1782,7 +1782,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         tool results in each request in the order of the calls they answer, so the request bytes
         (and the provider's prompt cache) don't depend on the order a history happened to store
         them in. When the profile sets `tool_call_id_length`, tool call IDs that don't fit it are
-        replaced with stable hashes that do.
+        replaced with stable hashes that do. When it sets `needs_json_string_tool_returns`, a successful
+        tool return of a string goes out as a `{"tool_output": ...}` JSON string field.
 
         Subclasses normally don't need to override this; the framework calls it on the
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
@@ -1839,8 +1840,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             # Without a system role, a retry that would join the standing prompt is a `<system>` block like the rest.
             sealed=self._seals_system_blocks,
         )
-        messages = _replace_unsupported_tool_return_files(messages, self.profile)
+        # Ahead of the file replacement, so a note the framework puts in place of an unreadable file isn't wrapped.
         messages = _tool_returns_as_json_strings(messages, self.profile)
+        messages = _replace_unsupported_tool_return_files(messages, self.profile)
         authored, messages = _tool_results_first(authored, messages)
         # The passes above replace or reorder parts one for one, so `authored` still lines up with `messages`.
         tool_call_id_length = self.profile.get('tool_call_id_length')

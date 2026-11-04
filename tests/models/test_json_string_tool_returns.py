@@ -16,6 +16,7 @@ import pytest
 
 from pydantic_ai import (
     Agent,
+    BinaryContent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -336,6 +337,7 @@ def test_only_successful_string_returns_are_wrapped():
                 ToolCallPart('a', {}, tool_call_id='1'),
                 ToolCallPart('b', {}, tool_call_id='2'),
                 ToolCallPart('c', {}, tool_call_id='3'),
+                ToolCallPart('d', {}, tool_call_id='4'),
             ]
         ),
         ModelRequest(
@@ -343,6 +345,8 @@ def test_only_successful_string_returns_are_wrapped():
                 ToolReturnPart('a', 'plain', tool_call_id='1'),
                 ToolReturnPart('b', {'status': 'ok'}, tool_call_id='2'),
                 ToolReturnPart('c', 'Not allowed.', tool_call_id='3', outcome='denied'),
+                # The model can't read audio, so the framework's note goes out in place of the file, unwrapped.
+                ToolReturnPart('d', BinaryContent(b'RIFF', media_type='audio/wav'), tool_call_id='4'),
             ]
         ),
     ]
@@ -350,11 +354,9 @@ def test_only_successful_string_returns_are_wrapped():
     [request] = model.prepare_messages(messages)[-1:]
 
     assert isinstance(request, ModelRequest)
-    assert [part.content for part in request.parts if isinstance(part, ToolReturnPart)] == [
-        '{"tool_output": "plain"}',
-        {'status': 'ok'},
-        'Not allowed.',
-    ]
+    contents = [part.content for part in request.parts if isinstance(part, ToolReturnPart)]
+    assert contents[:3] == ['{"tool_output": "plain"}', {'status': 'ok'}, 'Not allowed.']
+    assert isinstance(contents[3], str) and not contents[3].startswith('{"tool_output"')
 
 
 def _completion(message: ChatCompletionMessage) -> ChatCompletion:
