@@ -2947,6 +2947,17 @@ async def test_a_model_that_would_ignore_a_setting_still_answers_unless_named(ow
     assert calls == ['primary']
 
 
+@_OWNERS
+def test_a_subclass_of_unsupported_setting_warning_in_fallback_on_is_refused(owner: str):
+    """A model raises `UnsupportedSettingWarning` itself, so a subclass in `fallback_on` could never match."""
+
+    class CustomWarning(UnsupportedSettingWarning):
+        pass
+
+    with pytest.raises(UserError, match='not its subclass `CustomWarning`'):
+        _skipping_agent(owner, TestModel(), TestModel(), fallback_on=(CustomWarning,))
+
+
 async def test_spec_fallback_on_names_unsupported_setting_warning():
     calls: list[str] = []
     models = {'primary': _ignoring_stop('primary', calls), 'backup': _answering_streams('backup', calls)}

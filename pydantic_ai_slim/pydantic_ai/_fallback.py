@@ -184,9 +184,13 @@ class FallbackPredicates:
         # Only the class itself and its subclasses: `UnexpectedModelBehavior` or `Exception` doesn't name refusals.
         if issubclass(exception_type, ContentFilterError):
             self.content_filter = True
-        # Only the class itself: a model raises `UnsupportedSettingWarning`, which a subclass's handler wouldn't match.
         if exception_type is UnsupportedSettingWarning:
             self.unsupported_setting = True
+        elif issubclass(exception_type, UnsupportedSettingWarning):
+            # A model raises `UnsupportedSettingWarning` itself, which a subclass's handler would never match.
+            raise UserError(
+                f'`fallback_on` takes `UnsupportedSettingWarning` itself, not its subclass `{exception_type.__name__}`.'
+            )
 
     def judging_settings(self) -> AbstractContextManager[None]:
         """Around an attempt, have the model raise the `UnsupportedSettingWarning` it would emit, if `fallback_on` names it."""
