@@ -4,6 +4,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Sequence
+from dataclasses import replace
 
 import anyio
 import pytest
@@ -34,7 +35,7 @@ from pydantic_ai.realtime.codec import (
     merge_realtime_profile,
 )
 from pydantic_ai.settings import ToolOrOutput
-from pydantic_ai.tools import RunContext
+from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 
 from .test_session import (
@@ -139,6 +140,38 @@ async def test_loading_a_capability_reveals_its_tools() -> None:
     assert isinstance(load_request, ModelRequest)
     assert isinstance(load_request.parts[0], LoadCapabilityReturnPart)
     assert load_request.parts[1] == ToolAvailabilityDeltaPart(tools_added=['get_forecast'], tool_call_id='load')
+
+
+async def test_a_loaded_capabilitys_prepare_tools_shapes_the_update() -> None:
+    """The update carries the tools as the loaded capability's own `prepare_tools` hook prepares them, as a run's next request does."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    async def get_forecast(city: str) -> str:  # pragma: no cover
+        """Look up the weather forecast for a city."""
+        return f'Sunny in {city}.'
+
+    class Weather(AbstractCapability[None]):
+        id = 'weather'
+        defer_loading = True
+
+        def get_description(self) -> str:
+            return 'Weather forecasts.'
+
+        def get_toolset(self) -> FunctionToolset[None]:
+            return toolset
+
+        async def prepare_tools(self, ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+            return [replace(tool_def, description='Prepared description.') for tool_def in tool_defs]
+
+    connection = _ScriptedConnection()
+    agent: Agent[None, str] = Agent(deps_type=type(None), capabilities=[Weather()])
+    async with agent.realtime(FakeRealtimeModel(connection, profile=_UPDATES)).session() as session:
+        await _converse(session, connection, [_call('load_capability', '{"id": "weather"}', call_id='load'), _ANSWER])
+
+    update = connection.sent[0]
+    assert isinstance(update, UpdateTools)
+    assert [(tool.name, tool.description) for tool in update.tools][1:] == [('get_forecast', 'Prepared description.')]
 
 
 async def test_a_standard_run_continues_a_session_that_revealed_tools() -> None:

@@ -718,6 +718,9 @@ class RealtimeSession:
         self._tool_manager = tool_manager
         self._tool_run_step = 0
         self._tool_manager_lock = Lock()
+        # Held from taking up a call's reveal until its result is sent, so updates go out in the order they're taken
+        # up, each with every tool the ones before it gave the model.
+        self._reveal_lock = Lock()
         self._instrumentation = instrumentation
         self._profile = profile if profile is not None else model.profile if model is not None else _FULL_PROFILE
         self._responses_are_requests = self._profile.get('responses_are_requests', True)
@@ -2771,15 +2774,22 @@ class RealtimeSession:
         failed = result_part.outcome in ERROR_OUTCOMES
         # The result asks for the next response, so what the tool changed in the instructions goes out ahead of it.
         await self._refresh_instructions()
+        if not tools_added and not isinstance(result_part, ToolSearchReturnPart):
+            await self._send_tool_result(call_part, output, wire_content, failed=failed)
+            return result_part, user_content, []
         # So do the tools it revealed, in the same send as the result, so the model never hears of a tool it can't call
-        # yet. Taken up with no wait before the send queues: reveals then go out in the order they were taken up, each
-        # with every tool the ones before it gave the model.
-        recorded, update = self._reveal_tools(result_part, tools_added, tool_manager)
-        await self._send_tool_result(call_part, output, wire_content, failed=failed, update=update)
+        # yet.
+        async with self._reveal_lock:
+            recorded, update = await self._reveal_tools(call_part, result_part, tools_added, tool_manager)
+            await self._send_tool_result(call_part, output, wire_content, failed=failed, update=update)
         return result_part, user_content, recorded
 
-    def _reveal_tools(
-        self, result_part: ToolReturnPart, tools_added: list[str], tool_manager: ToolManager[Any]
+    async def _reveal_tools(
+        self,
+        call_part: ToolCallPart,
+        result_part: ToolReturnPart,
+        tools_added: list[str],
+        tool_manager: ToolManager[Any],
     ) -> tuple[list[str], UpdateTools | None]:
         """Take up the tools a settled call reveals: the names its result records, and the update giving them to the model.
 
@@ -2794,7 +2804,10 @@ class RealtimeSession:
         if isinstance(result_part, ToolSearchReturnPart):
             revealed.extend(match['name'] for match in result_part.discovered_tools)
         self._revealed_tool_names.update(revealed)
-        if not (added := self._unadvertised_tools(revealed, tool_manager)):
+        advertised = {tool.name for tool in self._advertised_tools}
+        if not (names := {name for name in revealed if name not in advertised}):
+            return recorded, None
+        if not (added := await self._unadvertised_tools(call_part, names, tool_manager)):
             return recorded, None
         if not self._profile.get('supports_tool_updates', False):
             if not self._warned_undelivered_reveal:
@@ -2813,14 +2826,28 @@ class RealtimeSession:
         tools, _ = resolve_advertised_tools(self._advertised_tools, (self._model_settings or {}).get('tool_choice'))
         return recorded, UpdateTools(tools=tools)
 
-    def _unadvertised_tools(self, revealed: Sequence[str], tool_manager: ToolManager[Any]) -> list[ToolDefinition]:
-        """The deferred tools among `revealed` that the model hasn't been given, as they'd have gone out when the session opened."""
-        advertised = {tool.name for tool in self._advertised_tools}
-        if not (names := {name for name in revealed if name not in advertised}):
-            return []
+    async def _unadvertised_tools(
+        self, call_part: ToolCallPart, names: set[str], tool_manager: ToolManager[Any]
+    ) -> list[ToolDefinition]:
+        """The deferred tools among `names`, as they'd have gone out when the session opened, had they been revealed then.
+
+        Prepared with what the call revealed already in force, as the graph prepares the next request's tools: a
+        capability `load_capability` just loaded is active, so its `prepare_tools` hook has its say over its own tools.
+        """
+        ctx = tool_manager.ctx
+        assert ctx is not None, 'A session tool runs with the run context its manager was prepared with.'
+        loaded = call_part.capability_id if isinstance(call_part, LoadCapabilityCallPart) else None
+        async with self._tool_manager_lock:
+            prepared = await tool_manager.for_run_step(
+                replace(
+                    ctx,
+                    loaded_capability_ids=ctx.loaded_capability_ids | ({loaded} if loaded else set()),
+                    discovered_tool_names=ctx.discovered_tool_names | names,
+                )
+            )
         parameters = resolve_realtime_request_tools(
             ModelRequestParameters(
-                function_tools=tool_manager.tool_defs,
+                function_tools=prepared.tool_defs,
                 native_tools=self._model_request_parameters.native_tools if self._model_request_parameters else [],
                 revealed_tool_names=names,
             ),
