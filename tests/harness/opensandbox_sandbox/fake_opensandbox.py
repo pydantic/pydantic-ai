@@ -344,11 +344,14 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
         if info['type'] == 'directory':
             # execd answers a download of a directory with a 500.
             return _error(500, 'INTERNAL_ERROR', f'cannot read a directory: {path}')
-        with open(path, 'rb') as file:
-            file.seek(
-                int(range_start[6:].split('-')[0]) if (range_start := request.headers.get('range', 'bytes=0-')) else 0
-            )
-            data = file.read()
+        offset = int(range_start[6:].split('-')[0]) if (range_start := request.headers.get('range', 'bytes=0-')) else 0
+        try:
+            with open(path, 'rb') as file:
+                file.seek(offset)
+                data = file.read()
+        except OSError as error:
+            # execd answers a file the shell cannot open with a 500 carrying the errno text.
+            return _error(500, 'INTERNAL_ERROR', f'open {path}: {(error.strerror or str(error)).lower()}')
         return httpx.Response(200, content=data, headers={'accept-ranges': 'bytes'})
 
     async def _files_upload(self, request: httpx.Request) -> httpx.Response:
@@ -372,8 +375,12 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
             metadata = json.loads(metadata_part[1])
             path, mode = str(metadata['path']), int(str(metadata.get('mode', 755)), 8)
             os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, 'wb') as file:
-                file.write(file_part[1])
+            try:
+                with open(path, 'wb') as file:
+                    file.write(file_part[1])
+            except OSError as error:
+                # execd answers a file the shell cannot open with a 500 carrying the errno text.
+                return _error(500, 'INTERNAL_ERROR', f'open {path}: {(error.strerror or str(error)).lower()}')
             os.chmod(path, mode)
         return _json(200)
 

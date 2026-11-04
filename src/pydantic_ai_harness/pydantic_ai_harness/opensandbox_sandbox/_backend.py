@@ -167,6 +167,10 @@ def _api_errors(context: str) -> Generator[None]:
     try:
         yield
     except SandboxApiException as error:
+        # execd reports a file the shell refused through the errno text in a 500's message; the
+        # workspace contract wants the shell's own exception for it.
+        if 'permission denied' in str(error).lower():
+            raise PermissionError(f'{context}: {error}') from error
         if error.status_code in (401, 403):
             # The code alone keeps any credential out of the error.
             raise WorkspaceUnavailableError(
