@@ -117,14 +117,18 @@ def test_no_stream():
 REQUESTS = """
 import asyncio
 import random
+from contextlib import suppress
 
 import httpx
 import httpx2
 from openai.types.chat import ChatCompletionMessage
 
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.models import override_allow_model_requests
+from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from tests.models.mock_openai import MockOpenAI, completion_message
@@ -148,6 +152,17 @@ def test_sdk_mock():
     agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=client)))
     with override_allow_model_requests(True):
         agent.run_sync({text!r})
+
+
+async def send_with_beta():
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(lambda request: httpx2.Response(400))) as client:
+        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='secret', http_client=client))
+        with override_allow_model_requests(True), suppress(ModelHTTPError):
+            await Agent(model).run('hi', model_settings=dict(anthropic_betas=[{text!r}]))
+
+
+def test_anthropic_beta():
+    asyncio.run(send_with_beta())
 """
 
 
@@ -170,7 +185,7 @@ def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunCaptur
 
 
 def test_capture_records_each_stream_per_test(run: RunCapture, tmp_path: Path):
-    run(tmp_path).assert_outcomes(passed=8)
+    run(tmp_path).assert_outcomes(passed=9)
 
     assert json.loads((tmp_path / SOURCE_FILE).read_text()) == {'pydantic_ai': pydantic_ai.__file__}
     lines = (tmp_path / 'main.jsonl').read_text().splitlines()
@@ -240,10 +255,16 @@ def test_capture_records_each_request_per_test(run: RunCapture, tmp_path: Path):
 
     `random` is seeded per test, so the value `test_json_over_httpx` draws is the same in every capture.
     """
-    run(tmp_path).assert_outcomes(passed=8)
+    run(tmp_path).assert_outcomes(passed=9)
 
     lines = (tmp_path / 'main.jsonl').read_text().splitlines()
-    records = [record for line in lines if (record := json.loads(line))['kind'] == 'request']
+    # `test_anthropic_beta`'s request is checked by `test_compare_flags_a_changed_request_header`.
+    records = [
+        record
+        for line in lines
+        if (record := json.loads(line))['kind'] == 'request'
+        and record['node'] != 'test_requests.py::test_anthropic_beta'
+    ]
     assert [
         (record['node'], record['target'], record.get('body'), record.get('kwargs', {}).get('messages'))
         for record in records
@@ -341,7 +362,7 @@ def test_sdk_mocks_exist():
 def test_capture_refuses_to_append_to_an_earlier_capture(
     run: RunCapture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    run(tmp_path).assert_outcomes(passed=8)
+    run(tmp_path).assert_outcomes(passed=9)
 
     result = run(tmp_path)
     assert result.ret == pytest.ExitCode.USAGE_ERROR
@@ -349,15 +370,15 @@ def test_capture_refuses_to_append_to_an_earlier_capture(
 
     # `pytest-xdist` workers write alongside the controller, which made the check.
     monkeypatch.setenv('PYTEST_XDIST_WORKER', 'gw0')
-    run(tmp_path).assert_outcomes(passed=8)
+    run(tmp_path).assert_outcomes(passed=9)
     assert sorted(path.name for path in tmp_path.glob('*.jsonl')) == ['gw0.jsonl', 'main.jsonl']
 
 
 def test_compare_flags_a_changed_event_or_request(run: RunCapture, tmp_path: Path, capsys: pytest.CaptureFixture[str]):
     base, same, changed = tmp_path / 'base', tmp_path / 'same', tmp_path / 'changed'
-    run(base).assert_outcomes(passed=8)
-    run(same).assert_outcomes(passed=8)
-    run(changed, '-k', 'not fails', text='goodbye').assert_outcomes(passed=7, deselected=1)
+    run(base).assert_outcomes(passed=9)
+    run(same).assert_outcomes(passed=9)
+    run(changed, '-k', 'not fails', text='goodbye').assert_outcomes(passed=8, deselected=1)
     capsys.readouterr()
 
     assert compare(base, tmp_path / 'missing') == 2
@@ -365,7 +386,7 @@ def test_compare_flags_a_changed_event_or_request(run: RunCapture, tmp_path: Pat
     assert compare(base, same) == 2
     assert capsys.readouterr().err.startswith('Both captures imported `pydantic_ai` from the same file')
     nothing = tmp_path / 'nothing'
-    run(nothing, '-k', 'no_stream').assert_outcomes(passed=1, deselected=7)
+    run(nothing, '-k', 'no_stream').assert_outcomes(passed=1, deselected=8)
     (nothing / SOURCE_FILE).write_text(json.dumps({'pydantic_ai': f'{nothing}/pydantic_ai/__init__.py'}))
     assert compare(base, nothing) == 2
     assert capsys.readouterr().err.startswith('Nothing recorded in')
@@ -377,15 +398,16 @@ def test_compare_flags_a_changed_event_or_request(run: RunCapture, tmp_path: Pat
     assert compare(base, same) == 0
     assert compare(base, changed) == 1
     assert capsys.readouterr().out == snapshot("""\
-nodes: base 7, head 7
-records: base 7, head 7
+nodes: base 8, head 8
+records: base 8, head 8
 stream events: head 11
-requests: head 3
+requests: head 4
 nodes per stream module, head:
   pydantic_ai.models.function: 3
   test_streams: 1
 nodes per request target, head:
   POST http://127.0.0.1:PORT/v1/upload: 2
+  POST https://api.anthropic.com/v1/messages?beta=true: 1
   tests.models.mock_openai.MockOpenAI.chat_completions_create: 1
 nodes that recorded no request, head: 5
   test_streams.py::test_fails_mid_stream
@@ -394,28 +416,47 @@ nodes that recorded no request, head: 5
   test_streams.py::test_subclass_defined_after_the_capture_started
   test_streams.py::test_text
 only in base: 0, only in head: 0, differing: 0
-nodes: base 7, head 6
-records: base 7, head 6
+nodes: base 8, head 7
+records: base 8, head 7
 stream events: head 9
-requests: head 3
+requests: head 4
 nodes per stream module, head:
   pydantic_ai.models.function: 2
   test_streams: 1
 nodes per request target, head:
   POST http://127.0.0.1:PORT/v1/upload: 2
+  POST https://api.anthropic.com/v1/messages?beta=true: 1
   tests.models.mock_openai.MockOpenAI.chat_completions_create: 1
 nodes that recorded no request, head: 4
   test_streams.py::test_fallback_peeks_the_first_event
   test_streams.py::test_no_stream
   test_streams.py::test_subclass_defined_after_the_capture_started
   test_streams.py::test_text
-only in base: 1, only in head: 0, differing: 4
+only in base: 1, only in head: 0, differing: 5
   only in base: test_streams.py::test_fails_mid_stream
+  differing: test_requests.py::test_anthropic_beta
   differing: test_requests.py::test_json_over_httpx
   differing: test_requests.py::test_sdk_mock
   differing: test_streams.py::test_fallback_peeks_the_first_event
   differing: test_streams.py::test_text
 """)
+
+
+def test_compare_flags_a_changed_request_header(run: RunCapture, tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    """Request headers are recorded without credentials, so a changed `anthropic-beta` header is flagged."""
+    base, head = tmp_path / 'base', tmp_path / 'head'
+    run(base, '-k', 'anthropic_beta', text='files-api-2025-04-14').assert_outcomes(passed=1, deselected=8)
+    run(head, '-k', 'anthropic_beta', text='code-execution-2025-08-25').assert_outcomes(passed=1, deselected=8)
+    (record,) = [json.loads(line) for line in (base / 'main.jsonl').read_text().splitlines()]
+    assert record['headers']['anthropic-beta'] == snapshot('files-api-2025-04-14')
+    assert {'x-api-key', 'authorization'}.isdisjoint(record['headers'])
+    (head / SOURCE_FILE).write_text(json.dumps({'pydantic_ai': f'{head}/pydantic_ai/__init__.py'}))
+    capsys.readouterr()
+
+    assert compare(base, head) == 1
+    assert capsys.readouterr().out.splitlines()[-2:] == snapshot(
+        ['only in base: 0, only in head: 0, differing: 1', '  differing: test_requests.py::test_anthropic_beta']
+    )
 
 
 def test_compare_names_the_nodes_that_recorded_no_request(
@@ -424,7 +465,7 @@ def test_compare_names_the_nodes_that_recorded_no_request(
     """A selected node that recorded no request is listed, whether it recorded a stream or nothing, without failing."""
     base, head = tmp_path / 'base', tmp_path / 'head'
     for capture_dir in (base, head):
-        run(capture_dir, '-k', 'test_text or no_stream or json').assert_outcomes(passed=3, deselected=5)
+        run(capture_dir, '-k', 'test_text or no_stream or json').assert_outcomes(passed=3, deselected=6)
     (head / SOURCE_FILE).write_text(json.dumps({'pydantic_ai': f'{head}/pydantic_ai/__init__.py'}))
     capsys.readouterr()
 
@@ -454,6 +495,7 @@ def test_normalized_replaces_values_that_change_between_runs():
             'duration': timedelta(seconds=1.5),
             'url': 'http://127.0.0.1:8123/v1',
             'multipart': '--0123456789abcdef0123456789abcdef--',
+            'content-type': 'multipart/form-data; boundary=0123456789abcdef0123456789abcdef',
         }
     ) == snapshot(
         {
@@ -468,5 +510,6 @@ def test_normalized_replaces_values_that_change_between_runs():
             'duration': 'DURATION',
             'url': 'http://127.0.0.1:PORT/v1',
             'multipart': '--BOUNDARY--',
+            'content-type': 'multipart/form-data; boundary=BOUNDARY',
         }
     )

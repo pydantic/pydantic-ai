@@ -21,14 +21,17 @@ When a capture starts, it runs an agent over a streamed canary response and stop
 recorded, so a consumer that stops iterating through `__aiter__` fails loudly instead of recording nothing.
 
 Each request is one JSON line of kind `request`. A request an `httpx` or `httpx2` `AsyncClient` sends is recorded from
-`send`, with its method and URL as the target and its body, parsed when it's JSON; headers aren't recorded. A test that
-hands a model one of the SDK client mocks `SDK_MOCKS` lists sends no HTTP request, so each call the model makes on a
-listed method is recorded instead, with the method as the target and the arguments as passed, SDK sentinels for an
-omitted argument included. When a capture starts, it runs an agent over a Groq model on `httpx` and over an
-Anthropic model on `httpx2`, and stops the run if either request wasn't recorded, so an SDK that moves to an HTTP client
-the capture doesn't wrap fails loudly, as Anthropic's did moving from `httpx` to `httpx2`. Once collection has imported
-the tests, a listed mock method that's gone stops the run too. Other transports, like botocore for Bedrock, and client
-methods a test patches by hand, like the `generate_content` Google's tests patch on a model's client, escape it.
+`send`, with its method and URL as the target, its headers and its body, parsed when it's JSON. Two kinds of header are
+left out: credentials (`authorization`, `proxy-authorization`, `x-api-key`, `api-key`, `x-goog-api-key`, `cookie`), so a
+capture never writes a key to disk, and trace context (`traceparent`, `tracestate`, `baggage`), whose ids are random per
+run. A test that hands a model one of the SDK client mocks `SDK_MOCKS` lists sends no HTTP request, so each call the
+model makes on a listed method is recorded instead, with the method as the target and the arguments as passed, SDK
+sentinels for an omitted argument included. When a capture starts, it runs an agent over a Groq model on `httpx` and
+over an Anthropic model on `httpx2`, and stops the run if either request wasn't recorded, so an SDK that moves to an
+HTTP client the capture doesn't wrap fails loudly, as Anthropic's did moving from `httpx` to `httpx2`. Once collection
+has imported the tests, a listed mock method that's gone stops the run too. Other transports, like botocore for Bedrock,
+and client methods a test patches by hand, like the `generate_content` Google's tests patch on a model's client, escape
+it.
 
 Each test starts with `random` seeded from its node id, so a test that draws from it draws the same values on both
 sides. Lines, and the id of each test node run, are written per `pytest-xdist` worker when each test ends. Generated
@@ -82,6 +85,20 @@ from pydantic_ai.providers.groq import GroqProvider
 CAPTURE_OPTION = '--refactor-capture'
 SOURCE_FILE = 'source.json'
 NODES_SUFFIX = '.nodes'
+# Request headers left out of a capture; the module docstring says why.
+UNRECORDED_HEADERS = frozenset(
+    {
+        'authorization',
+        'proxy-authorization',
+        'x-api-key',
+        'api-key',
+        'x-goog-api-key',
+        'cookie',
+        'traceparent',
+        'tracestate',
+        'baggage',
+    }
+)
 GENERATED_VALUES = [
     (re.compile(r' at 0x[0-9a-f]+'), ' at 0x?'),
     (re.compile(r'pyd_ai_[0-9a-f]{32}'), 'pyd_ai_ID'),
@@ -89,7 +106,7 @@ GENERATED_VALUES = [
     (re.compile(r'"history_digest":"[0-9a-f]{64}"'), '"history_digest":"DIGEST"'),
     (re.compile(r'"duration":"P[0-9DTHMS.]+"'), '"duration":"DURATION"'),
     (re.compile(r'(127\.0\.0\.1|localhost):\d+'), r'\1:PORT'),
-    (re.compile(r'--[0-9a-f]{32}'), '--BOUNDARY'),
+    (re.compile(r'(--|boundary=)[0-9a-f]{32}'), r'\1BOUNDARY'),
 ]
 ISO_DATETIME = re.compile(r'"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)"')
 # Test doubles that stand in for an SDK client, by module and class, with the methods a model sends a request through.
@@ -110,7 +127,9 @@ SDK_MOCKS: list[tuple[str, str, tuple[str, ...]]] = [
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
-    parser.addoption(CAPTURE_OPTION, metavar='DIR', help='new directory to record the streams each test iterates into')
+    parser.addoption(
+        CAPTURE_OPTION, metavar='DIR', help='new directory to record the streams and requests of each test into'
+    )
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -329,6 +348,9 @@ class RefactorCapture:
                     'kind': 'request',
                     'node': self.node,
                     'target': normalized(f'{request.method} {request.url}'),
+                    'headers': normalized(
+                        {name: value for name, value in request.headers.items() if name not in UNRECORDED_HEADERS}
+                    ),
                     'body': normalized(body),
                 }
             )
