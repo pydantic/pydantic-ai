@@ -1031,7 +1031,13 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     @property
     def _restores_special_tokens(self) -> bool:
         """Whether this model's responses lose the joiner that `prepare_messages` put inside each special token."""
-        return self._answers_requests_itself and self.profile.get('may_tokenize_special_tokens_in_content', False)
+        if not self._answers_requests_itself:
+            return False
+        try:
+            return self.profile.get('may_tokenize_special_tokens_in_content', False)
+        except NotImplementedError:
+            # A router with no profile of its own, like `FallbackModel`: the models it answers through restore for themselves.
+            return False
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)

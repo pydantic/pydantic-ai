@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from functools import cached_property
 from typing import Any, cast
 
 import pytest
@@ -748,6 +749,19 @@ async def test_instrumented_wrapper_delegates():
     # A `FallbackModel` has no profile of its own to read, so a wrapper mustn't ask for one.
     wrapping_fallback = InstrumentedModel(FallbackModel(FunctionModel(respond, profile={FLAG: True})))
     assert (await Agent(wrapping_fallback).run('Go')).output == '<|end|>'
+
+
+async def test_a_router_without_a_profile_of_its_own():
+    class Router(FunctionModel):
+        @cached_property
+        def profile(self) -> ModelProfile:
+            raise NotImplementedError
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(f'<{Z}|end|>')])
+
+    response = await Router(respond).request([], None, ModelRequestParameters())
+    assert response.parts == [TextPart(f'<{Z}|end|>')]
 
 
 async def test_a_direct_model_request_restores():
