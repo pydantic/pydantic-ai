@@ -1331,7 +1331,7 @@ def test_browser_marks_sessions_to_import() -> None:
     for counts in ('0 msgs', 'to import'):
         importing[0] = counts == 'to import'
         narrow = re.sub(r'\x1b\[[0-9;]*m', '', '\n'.join(browser.frame(width=22, height=20)))
-        card = narrow.splitlines()[4]
+        card = next(line for line in narrow.splitlines() if line.startswith('> '))
         assert ' Fr' in card and card.endswith(f' {counts}'), narrow
     assert browser.handle_key('d') is None
     assert browser.confirm is None and browser.notice.startswith('Not imported yet.')
