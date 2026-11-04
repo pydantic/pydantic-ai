@@ -63,13 +63,6 @@ async def test_no_client_leaves_it_to_modal(fake_modal: FakeModal) -> None:
     assert fake_modal.clients == [None, None]
 
 
-def test_client_is_refused_with_a_ready_sandbox(fake_modal: FakeModal) -> None:
-    ready: Any = fake_modal.sandboxes
-    client: Any = object()
-    with pytest.raises(ValueError, match='either `sandbox` or `client`'):
-        ModalSandboxBackend(sandbox=ready, client=client)
-
-
 async def test_a_capability_can_use_each_users_client_from_deps(fake_modal: FakeModal) -> None:
     @dataclass
     class EachUsersClient(AbstractCapability[Any]):

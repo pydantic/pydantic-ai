@@ -189,7 +189,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
     env: Mapping[str, str] | None = field(default=None, repr=False)
     """Environment variables every command in the sandbox gets; a command's own `env` is layered on top."""
 
-    client: modal.Client | None = field(default=None, repr=False)
+    client: modal.Client | None = None
     """The `modal.Client` to create, attach and destroy with, such as one from `modal.Client.from_credentials`;
     Modal's client from the environment or config when `None`. A spec cannot set it.
 

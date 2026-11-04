@@ -78,7 +78,9 @@ MAX_SANDBOX_TIMEOUT = 86_400
 # continue in it for as long as Modal allows.
 DEFAULT_SANDBOX_TIMEOUT = MAX_SANDBOX_TIMEOUT
 
-_CREDENTIAL_HINT = 'Set MODAL_TOKEN_ID / MODAL_TOKEN_SECRET, run `modal token new`, or pass `client`.'
+_CREDENTIAL_HINT = (
+    'Set MODAL_TOKEN_ID / MODAL_TOKEN_SECRET, run `modal token new`, or pass a configured `modal.Client` as `client=`.'
+)
 
 # Bound the workspace-create RPCs so a wedged control plane cannot hang acquisition.
 _CREATE_TIMEOUT = 600
@@ -217,6 +219,8 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
 
     Args:
         sandbox: A live `modal.Sandbox` you already have. Whoever created it owns terminating it.
+        client: A `modal.Client` to create or attach with, such as one from `modal.Client.from_credentials`;
+            Modal's client from the environment or config when `None`.
         ref: Identity of an existing sandbox to attach to on first use.
         image: Registry tag, or a `modal.Image`, a newly created sandbox runs. `None` (the default)
             is Debian slim with Python 3.12, `git`, and `ripgrep`.
@@ -230,15 +234,13 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             applied to every command, including in an attached sandbox. `None` (the default) is
             `/root` on the default image, otherwise the image's own working directory.
         env: Environment variables every command gets; a command's own `env` is layered on top.
-        client: The `modal.Client` to create or attach with, such as one from
-            `modal.Client.from_credentials`; Modal's client from the environment or config when
-            `None`. Not for `sandbox`, which already has its own.
     """
 
     def __init__(
         self,
         *,
         sandbox: modal.Sandbox | None = None,
+        client: modal.Client | None = None,
         ref: WorkspaceRef | None = None,
         image: str | modal.Image | None = None,
         app_name: str = DEFAULT_APP_NAME,
@@ -247,14 +249,11 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         idle_timeout: int | None = None,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
-        client: modal.Client | None = None,
     ) -> None:
         if ref is not None:
             check_provider(ref, 'modal')
         if sandbox is not None and ref is not None:
             raise ValueError('pass either `sandbox` or `ref`, not both')
-        if sandbox is not None and client is not None:
-            raise ValueError('pass either `sandbox` or `client`, not both')
         if type(sandbox_timeout) is not int or not MIN_SANDBOX_TIMEOUT <= sandbox_timeout <= MAX_SANDBOX_TIMEOUT:
             raise ValueError(
                 f'sandbox_timeout must be an integer between {MIN_SANDBOX_TIMEOUT} and {MAX_SANDBOX_TIMEOUT} seconds'
