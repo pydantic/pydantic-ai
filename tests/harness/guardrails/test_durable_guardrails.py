@@ -17,10 +17,10 @@ except ImportError:  # pragma: lax no cover
 
 from pydantic import BaseModel
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.durable_exec import JSON_CODEC
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ApprovalRequired, UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.guardrails import (
@@ -31,6 +31,7 @@ from pydantic_ai_harness.guardrails import (
     ToolGuardrail,
     ToolResultInfo,
 )
+from pydantic_ai_harness.guardrails._exceptions import InputBlocked, ToolBlocked
 from tests.conftest import detach_dbos_logging
 from tests.harness._recording_durability import RecordingDurability
 
@@ -219,3 +220,56 @@ async def test_a_replacement_keeps_its_type_through_a_json_journal() -> None:
         if isinstance(part, ToolReturnPart) and part.tool_name == 'lookup'
     )
     assert tool_return.content == Record(name='b', ssn=None)
+
+
+def _call_lookup(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) > 1:
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'name': 'a', 'ssn': '123'})])
+    return ModelResponse(parts=[ToolCallPart('lookup', {'key': 'a'}, tool_call_id='call-1')])
+
+
+def _json_agent(*capabilities: AbstractCapability[None], output_type: type[object] = str) -> Agent[None, object]:
+    agent = Agent(
+        FunctionModel(_call_lookup),
+        name='json_guardrails',
+        deps_type=type(None),
+        output_type=[output_type, DeferredToolRequests],
+        capabilities=[*capabilities, RecordingDurability()],
+    )
+    agent.tool_plain(lookup)
+    return agent
+
+
+async def test_a_raised_guard_error_reaches_the_run_through_a_json_journal() -> None:
+    def refuse(prompt: str) -> bool:
+        raise InputBlocked('no')
+
+    def refuse_call(call: ToolCallInfo) -> bool:
+        raise ToolBlocked(call.name, 'not today')
+
+    with pytest.raises(InputBlocked, match='no'):
+        await _json_agent(InputGuardrail(guard=refuse, id='input')).run('go')
+    with pytest.raises(ToolBlocked) as blocked:
+        await _json_agent(ToolGuardrail(guard=refuse_call, id='tool')).run('go')
+    assert (blocked.value.tool_name, blocked.value.reason) == ('lookup', 'not today')
+
+
+async def test_approval_metadata_from_a_guard_survives_a_json_journal() -> None:
+    def ask(call: ToolCallInfo) -> bool:
+        raise ApprovalRequired(metadata={'reason': 'refund'})
+
+    result = await _json_agent(ToolGuardrail(guard=ask, id='tool')).run('go')
+
+    assert isinstance(result.output, DeferredToolRequests)
+    assert result.output.metadata == {'call-1': {'reason': 'refund'}}
+
+
+async def test_a_deliberate_plain_data_replacement_is_not_rebuilt() -> None:
+    agent = _json_agent(
+        OutputGuardrail(guard=lambda output: GuardrailResult.replace({'redacted': True}), id='output'),
+        output_type=Record,
+    )
+
+    result = await agent.run('go')
+
+    assert result.output == {'redacted': True}

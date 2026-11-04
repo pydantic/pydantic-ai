@@ -11,19 +11,20 @@ from __future__ import annotations
 import functools
 import inspect
 import warnings
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+import weakref
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, assert_never
 
 from pydantic import Field, GetCoreSchemaHandler, TypeAdapter
 from pydantic_core import core_schema
 from typing_extensions import TypeIs
 
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ApprovalRequired, ModelRetry, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._callable import takes_context
-from pydantic_ai_harness._durable import in_durable_context
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
+from pydantic_ai_harness.guardrails._exceptions import GuardrailError, InputBlocked, OutputBlocked, ToolBlocked
 
 
 class _Unset:
@@ -141,8 +142,7 @@ class GuardrailResult:
         the call surfaces in
         [`DeferredToolRequests`][pydantic_ai.DeferredToolRequests] and the
         application decides. To attach approval metadata, raise
-        `ApprovalRequired(metadata=...)` from the guard directly (not under
-        Temporal, where a raised exception fails the guard's activity).
+        `ApprovalRequired(metadata=...)` from the guard directly.
         """
         return cls(action='approve')
 
@@ -318,13 +318,88 @@ async def evaluate_all(
 
 
 _JSON_TYPES = (str, int, float, bool, type(None), dict, list)
+_CARRIED_ERRORS: dict[str, type[Exception]] = {
+    cls.__name__: cls
+    for cls in (GuardrailError, InputBlocked, OutputBlocked, ToolBlocked, ApprovalRequired, ModelRetry)
+}
 
 
-def rebuild_replacement(ctx: RunContext[AgentDepsT], replacement: object, original: object) -> object:
-    """Rebuild a replacement a JSON-transport durable engine returned as plain data, as the type of `original`."""
-    if type(replacement) in (dict, list) and not isinstance(original, _JSON_TYPES) and in_durable_context(ctx):
-        return TypeAdapter(type(original)).validate_python(replacement)
-    return replacement
+@dataclass(eq=False)
+class RaisedGuardError:
+    """A control-flow exception a guard raised inside a durable operation, carried out as data.
+
+    A durable engine would otherwise fail, and may retry, the operation instead of passing the
+    exception to the run. Only the exact types in `_CARRIED_ERRORS` are carried.
+    """
+
+    kind: str
+    args: list[Any] = field(default_factory=list[Any])
+    metadata: dict[str, Any] | None = None
+
+    @classmethod
+    def carry(cls, error: Exception) -> RaisedGuardError | None:
+        """Describe `error` as data, or return `None` for a type that is not carried."""
+        if type(error) is ToolBlocked:
+            raised = cls('ToolBlocked', [error.tool_name, error.reason])
+        elif type(error) is ApprovalRequired:
+            raised = cls('ApprovalRequired', metadata=error.metadata)
+        elif _CARRIED_ERRORS.get(type(error).__name__) is type(error):
+            raised = cls(type(error).__name__, list(error.args))
+        else:
+            return None
+        _LIVE_ERRORS[raised] = error
+        return raised
+
+    def error(self) -> Exception:
+        """The exception the guard raised: the original in-process, a rebuilt one after a durable boundary."""
+        if (live := _LIVE_ERRORS.get(self)) is not None:
+            return live
+        if self.kind == 'ApprovalRequired':
+            return ApprovalRequired(metadata=self.metadata)
+        return _CARRIED_ERRORS[self.kind](*self.args)
+
+
+_LIVE_ERRORS: weakref.WeakKeyDictionary[RaisedGuardError, Exception] = weakref.WeakKeyDictionary()
+
+
+@dataclass
+class RecordedVerdict:
+    """What a guard chain's durable operation records: its verdict, or the exception it raised.
+
+    `replacement_type` names a replacement's type when it is not plain JSON data, so a replacement
+    a JSON transport flattened is rebuilt as the value it replaces, and only then.
+    """
+
+    verdict: GuardrailResult | None = None
+    position: int = 0
+    replacement_type: str | None = None
+    raised: RaisedGuardError | None = None
+
+
+async def record_verdict(evaluation: Awaitable[tuple[GuardrailResult, int]]) -> RecordedVerdict:
+    """Await a guard chain inside its durable operation, returning a carried exception as data."""
+    try:
+        verdict, position = await evaluation
+    except Exception as error:
+        if (raised := RaisedGuardError.carry(error)) is None:
+            raise
+        return RecordedVerdict(raised=raised)
+    replacement_type = None
+    if verdict.action == 'replace' and not isinstance(verdict.replacement, _JSON_TYPES):
+        replacement_type = type(verdict.replacement).__qualname__
+    return RecordedVerdict(verdict, position, replacement_type=replacement_type)
+
+
+def replay_verdict(recorded: RecordedVerdict, original: object) -> tuple[GuardrailResult, int]:
+    """Raise the exception a guard chain raised, or return its verdict with a flattened replacement rebuilt."""
+    if recorded.raised is not None:
+        raise recorded.raised.error()
+    verdict = recorded.verdict
+    assert verdict is not None
+    original_type = type(original)
+    if recorded.replacement_type == original_type.__qualname__ and not isinstance(verdict.replacement, original_type):
+        verdict = GuardrailResult.replace(TypeAdapter(original_type).validate_python(verdict.replacement))
+    return verdict, recorded.position
 
 
 def direction_attributes(direction: str, action: str, tool_name: str | None) -> dict[str, str]:

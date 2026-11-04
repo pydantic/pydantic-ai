@@ -326,7 +326,7 @@ def strict_guard(prompt: str) -> bool:
     return True
 ```
 
-Any exception raised by the guard propagates as-is -- use `InputBlocked` / `OutputBlocked` / `ToolBlocked` from this module, or your own exception types. `ToolBlocked` carries the `tool_name` and an optional `reason`. Under Temporal a raised exception does not reach the run; see [Durable execution](#durable-execution).
+Any exception raised by the guard propagates as-is -- use `InputBlocked` / `OutputBlocked` / `ToolBlocked` from this module, or your own exception types. `ToolBlocked` carries the `tool_name` and an optional `reason`. Under Temporal an exception type of your own fails the guard's activity instead; see [Durable execution](#durable-execution).
 
 ## Tool calls
 
@@ -522,7 +522,7 @@ A `ToolGuardrail` is a control over tools this run executes. For the ones it doe
 
 ## Durable execution
 
-Inside a durable workflow or flow (Temporal, DBOS, Prefect) each guard chain is a durable operation, checkpointed as `<agent>__capability__<id>.guard` (and `.result_guard` for a `ToolGuardrail` result guard). A replay reuses the recorded verdict instead of calling the guard again, so a classifier is paid for once and cannot decide differently on recovery. The guarded value and the verdict cross the engine's serializer, so keep them serializable. On an engine that transports JSON, such as Temporal, a structured output or tool result (including a `ToolReturn`) reaches the guard as plain JSON data, so serialize it with `pydantic_core.to_json(value)` rather than a model method; a structured replacement is rebuilt as the type of the value it replaces. Under Temporal the guard's `RunContext` also carries only its serialized fields, without `messages` or `prompt`, and an exception the guard raises (`InputBlocked`, `ToolBlocked`, `ApprovalRequired`, ...) fails the activity, which is retried under its retry policy (unbounded by default) instead of reaching the run: return a verdict such as `GuardrailResult.block()` or `GuardrailResult.approve()` instead.
+Inside a durable workflow or flow (Temporal, DBOS, Prefect) each guard chain is a durable operation, checkpointed as `<agent>__capability__<id>.guard` (and `.result_guard` for a `ToolGuardrail` result guard). A replay reuses the recorded verdict instead of calling the guard again, so a classifier is paid for once and cannot decide differently on recovery. The guarded value and the verdict cross the engine's serializer, so keep them serializable. On an engine that transports JSON, such as Temporal, a structured output or tool result (including a `ToolReturn`) reaches the guard as plain JSON data, so serialize it with `pydantic_core.to_json(value)` rather than a model method; a replacement of the same type as the value it replaces is rebuilt as that type. Under Temporal the guard's `RunContext` also carries only its serialized fields, without `messages` or `prompt`. `InputBlocked`, `OutputBlocked`, `ToolBlocked`, `ApprovalRequired` and `ModelRetry` raised by a guard reach the run on every engine, but under Temporal an exception of any other type fails the activity, which is retried under its retry policy (unbounded by default).
 
 A durable operation is addressed by the capability's `id`, so a guardrail on a durable-capable agent needs an explicit one, distinct per guardrail: `InputGuardrail(guard=no_secrets, id='input-guard')`. Without one, Pydantic AI refuses to bind the agent and names the fix. Outside durable execution nothing changes and `id` stays optional.
 

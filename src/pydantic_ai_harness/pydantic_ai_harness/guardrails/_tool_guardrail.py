@@ -46,9 +46,10 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.guardrails._shared import (
     GuardOutcome,
-    GuardrailResult,
-    evaluate,
-    rebuild_replacement,
+    RecordedVerdict,
+    evaluate_all,
+    record_verdict,
+    replay_verdict,
     trace_approval,
     trace_block,
     trace_redaction,
@@ -374,7 +375,7 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
         """Evaluate `guard` against the validated arguments and act on its verdict."""
         if self.guard is None or not self._guards(call.tool_name):
             return args
-        verdict = await self._evaluate_arguments(ctx, call, args)
+        verdict, _ = replay_verdict(await self._evaluate_arguments(ctx, call, args), args)
         match verdict.action:
             case 'allow':
                 return args
@@ -419,7 +420,7 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
     @durable_operation('guard')
     async def _evaluate_arguments(
         self, ctx: RunContext[AgentDepsT], call: ToolCallPart, args: dict[str, Any]
-    ) -> GuardrailResult:
+    ) -> RecordedVerdict:
         """Run `guard`, as the durable operation `(id, 'guard')` inside a workflow or flow."""
         assert self.guard is not None
         # A read-only view over a copy. The dict passed here is the one the tool is about to
@@ -430,18 +431,18 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
         # small and copyable; `replace` stays the one way to change a call, and the one that
         # gets a span.
         info = ToolCallInfo(name=call.tool_name, args=MappingProxyType(deepcopy(args)), tool_call_id=call.tool_call_id)
-        return await evaluate(self.guard, ctx, info)
+        return await record_verdict(evaluate_all((self.guard,), ctx, info))
 
     @durable_operation('result_guard')
     async def _evaluate_result(
         self, ctx: RunContext[AgentDepsT], call: ToolCallPart, args: dict[str, Any], result: object
-    ) -> GuardrailResult:
+    ) -> RecordedVerdict:
         """Run `result_guard`, as the durable operation `(id, 'result_guard')` inside a workflow or flow."""
         assert self.result_guard is not None
         info = ToolResultInfo(
             name=call.tool_name, args=MappingProxyType(deepcopy(args)), tool_call_id=call.tool_call_id, result=result
         )
-        return await evaluate(self.result_guard, ctx, info)
+        return await record_verdict(evaluate_all((self.result_guard,), ctx, info))
 
     async def wrap_tool_execute(
         self,
@@ -563,7 +564,7 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
         `block`, the substituted value for `replace`. `retry` and `approve` raise. A failed tool
         and a successful one go through here alike, so both get the same verdicts.
         """
-        verdict = await self._evaluate_result(ctx, call, args, result)
+        verdict, _ = replay_verdict(await self._evaluate_result(ctx, call, args, result), result)
         match verdict.action:
             case 'allow':
                 return _UNCHANGED
@@ -572,9 +573,10 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
                 trace_block(ctx, direction=_RESULT_DIRECTION, message=message, tool_name=call.tool_name)
                 return message
             case 'replace':
-                replacement = rebuild_replacement(ctx, verdict.replacement, result)
-                trace_redaction(ctx, direction=_RESULT_DIRECTION, replacement=replacement, tool_name=call.tool_name)
-                return replacement
+                trace_redaction(
+                    ctx, direction=_RESULT_DIRECTION, replacement=verdict.replacement, tool_name=call.tool_name
+                )
+                return verdict.replacement
             case 'retry':
                 # Even for a tool that already failed, `retry` still means retry: collapsing it into
                 # a replacement message would hand the model a failed result where it was asked to
