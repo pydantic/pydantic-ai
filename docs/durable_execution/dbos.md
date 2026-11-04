@@ -250,7 +250,7 @@ When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs 
 
 ### Child workflows
 
-An async function tool can run as a DBOS [child workflow](https://docs.dbos.dev/python/tutorials/workflow-tutorial#child-workflows) instead of in the parent workflow's code. This is useful when the tool runs a nested agent with its own `DBOSDurability`: the nested model requests and tool calls are recorded as steps in the child's history instead of the parent's, and recovery resumes the child from its own checkpoints.
+An async function tool can run as a DBOS [child workflow](https://docs.dbos.dev/python/tutorials/workflow-tutorial) instead of in the parent workflow's code. This is useful when the tool runs a nested agent with its own `DBOSDurability`: the nested model requests and tool calls are recorded as steps in the child's history instead of the parent's, and recovery resumes the child from its own checkpoints.
 
 Set the tool's `'dbos'` metadata to `{'child_workflow': ChildWorkflowConfig(...)}`, directly or with [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata]:
 
@@ -286,7 +286,9 @@ async def lead_workflow(prompt: str) -> str:
     return result.output
 ```
 
-Each `research` call starts a `lead__function_toolset__delegation.call_tool__child_workflow` workflow; the agent's own tools use the toolset `id` `<agent>`. The tool arguments, the serialized run context, and `deps` are the child's workflow inputs, so they must be serializable, and context fields that aren't serialized, like `ctx.messages`, raise a `UserError` in the tool. Child workflows are only supported for async tools in a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] with a unique `id`.
+Each `research` call starts a `lead__function_toolset__delegation.call_tool__child_workflow` workflow; the agent's own tools use the toolset `id` `<agent>`. The tool arguments, the serialized run context, and `deps` are the child's workflow inputs, so they must be serializable. Context fields that aren't serialized, like `ctx.messages`, as well as `ctx.emit()` and `ctx.enqueue()`, raise a `UserError` in the tool. An exception raised by the tool body fails the child workflow and reaches the parent's tool call.
+
+Child workflows are only supported for async tools in a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] with a unique `id` that's passed to the agent when it's constructed, as DBOS must register the workflow before it can recover it. Each such toolset registers its child workflow then, so upgrading to a release that adds this changes the [application version](https://docs.dbos.dev/python/tutorials/upgrading-workflows) DBOS computes: let in-flight workflows finish or pin `application_version` before upgrading.
 
 ### Parallel Tool Execution
 

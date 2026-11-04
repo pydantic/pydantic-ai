@@ -12,6 +12,7 @@ from weakref import WeakKeyDictionary
 from dbos import DBOS, SetWorkflowTimeout
 from dbos._error import DBOSWorkflowCancelledError, DBOSWorkflowConflictIDError
 
+from pydantic_ai._cancel import provide_run_deadline
 from pydantic_ai._utils import now_utc
 from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -285,19 +286,29 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
 
         def swap(ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
             nonlocal swapped
-            child = self._child_workflow_toolsets.get(ts._explicit_id or '')  # pyright: ignore[reportPrivateUsage]
-            # Toolsets without `child_workflow` tools stay unwrapped, as function toolsets always were.
-            if child is None or child.wrapped is not ts:
-                return ts
-            if not self._child_workflow_metadata_capability and not any(
-                _selects_child_workflow(tool.metadata) for tool in cast(FunctionToolset[AgentDepsT], ts).tools.values()
-            ):
-                return ts
-            swapped = True
-            return child
+            child = self._child_workflow_toolset(ts)
+            swapped = swapped or child is not None
+            return child or ts
 
         replaced = (wrapped or toolset).visit_and_replace(swap)
         return replaced if swapped else wrapped
+
+    def _child_workflow_toolset(self, ts: AbstractToolset[AgentDepsT]) -> DurableFunctionToolset[AgentDepsT] | None:
+        """The wrapper that runs `ts`'s `child_workflow` tools; toolsets without them stay unwrapped, as before."""
+        if not isinstance(ts, FunctionToolset):
+            return None
+        marked = any(_selects_child_workflow(tool.metadata) for tool in ts.tools.values())
+        if not marked and not self._child_workflow_metadata_capability:
+            return None
+        child = self._child_workflow_toolsets.get(ts._explicit_id or '')  # pyright: ignore[reportPrivateUsage]
+        if child is not None and child.wrapped is ts:
+            return child
+        if marked and self.in_durable_context:
+            raise UserError(
+                'A tool selects a DBOS child workflow, but its toolset has no registered child workflow. '
+                'Give the `FunctionToolset` a unique `id` and pass it to the agent when it is constructed.'
+            )
+        return None
 
     def _detect_child_workflow_metadata(self, capability: AbstractCapability[AgentDepsT]) -> None:
         # `SetToolMetadata` can select tools in any toolset, so it enables child workflows for all of them.
@@ -318,13 +329,9 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         )
 
         @DBOS.workflow(name=f'{operation_name}__child_workflow')
-        async def call_tool_workflow(
-            tool_name: str, tool_args: dict[str, Any], serialized_ctx: dict[str, Any], deps: Any
-        ) -> CallToolResult:
-            ctx = DurableRunContext.restore(serialized_ctx, deps=deps, agent=self._agent, engine_spec=self.engine_spec)
-            tool = (await toolset.get_tools(ctx))[tool_name]
-            with self._tool_run_context_scope(ctx) as durable_ctx:
-                return await wrap_tool_call_result(toolset.call_tool(tool_name, tool_args, durable_ctx, tool))
+        async def call_tool_workflow(*args: Any) -> CallToolResult:
+            # DBOS hashes registered workflow source into the application version, so the body lives elsewhere.
+            return await self._call_tool_in_child_workflow(toolset, *args)
 
         async def call_tool_operation(
             name: str,
@@ -349,6 +356,23 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             lifecycle='enter-always',
             durable_registrations=[call_tool_workflow],
         )
+
+    async def _call_tool_in_child_workflow(
+        self,
+        toolset: FunctionToolset[AgentDepsT],
+        tool_name: str,
+        tool_args: dict[str, Any],
+        serialized_ctx: dict[str, Any],
+        deps: Any,
+    ) -> CallToolResult:
+        ctx = DurableRunContext.restore(serialized_ctx, deps=deps, agent=self._agent, engine_spec=self.engine_spec)
+        tool = (await toolset.get_tools(ctx))[tool_name]
+        # A recovered child doesn't run inside the parent's run, so nested runs inherit its deadline from `ctx`.
+        with (
+            provide_run_deadline(ctx.deadline) if ctx.deadline is not None else nullcontext(),
+            self._tool_run_context_scope(ctx) as durable_ctx,
+        ):
+            return await wrap_tool_call_result(toolset.call_tool(tool_name, tool_args, durable_ctx, tool))
 
     def _toolset_base_config(self, kind: ToolsetKind) -> StepConfig:
         return self._mcp_step_config

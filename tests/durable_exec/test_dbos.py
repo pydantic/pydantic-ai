@@ -54,6 +54,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai._cancel import inherited_run_deadline
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
@@ -6321,6 +6322,7 @@ async def test_dbos_deadline_survives_recovery(dbos: DBOS) -> None:
 
 
 child_workflow_calls: list[str] = []
+child_workflow_deadlines: list[datetime | None] = []
 
 
 def _researcher_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -6353,6 +6355,7 @@ async def lookup() -> str:
 
 @child_workflow_lead.tool_plain(metadata={'dbos': {'child_workflow': {'workflow_timeout_sec': 60}}})
 async def research(topic: str) -> str:
+    child_workflow_deadlines.append(inherited_run_deadline())
     output = (await child_workflow_researcher.run(f'Research {topic}.')).output
     if child_workflow_calls.count('research') == 0:
         child_workflow_calls.append('research')
@@ -6362,12 +6365,13 @@ async def research(topic: str) -> str:
 
 @DBOS.workflow()
 async def child_workflow_lead_workflow() -> str:
-    return (await child_workflow_lead.run('Explain tides.')).output
+    return (await child_workflow_lead.run('Explain tides.', timeout=3600)).output
 
 
 async def test_dbos_child_workflow_tool_survives_recovery(dbos: DBOS) -> None:
     """A tool with `child_workflow` metadata runs in its own child workflow, which recovery resumes from its steps."""
     child_workflow_calls.clear()
+    child_workflow_deadlines.clear()
     workflow_id = f'child-wf-{uuid.uuid4()}'
     with SetWorkflowID(workflow_id), pytest.raises(_ProcessCrash):
         await child_workflow_lead_workflow()
@@ -6377,7 +6381,7 @@ async def test_dbos_child_workflow_tool_survives_recovery(dbos: DBOS) -> None:
     child_name = 'child_wf_lead__function_toolset__<agent>.call_tool__child_workflow'
     assert sorted((w.workflow_id.removeprefix(workflow_id), w.name, w.status) for w in workflows) == [
         ('', 'child_workflow_lead_workflow', 'PENDING'),
-        ('-3', child_name, 'PENDING'),
+        ('-4', child_name, 'PENDING'),
     ]
     [child] = [w for w in workflows if w.workflow_id != workflow_id]
     await DBOS.resume_workflow_async(child.workflow_id)
@@ -6385,8 +6389,10 @@ async def test_dbos_child_workflow_tool_survives_recovery(dbos: DBOS) -> None:
     assert await handle.get_result() == 'Tides follow the moon.'
 
     # The researcher's model request replays from the child's history; the unmarked tool runs in the parent's
-    # workflow code, so it runs again.
+    # workflow code, so it runs again. The recovered child keeps the parent run's deadline.
     assert Counter(child_workflow_calls) == {'lookup': 2, 'researcher model': 1, 'research': 1}
+    [deadline, recovered_deadline] = child_workflow_deadlines
+    assert deadline is not None and recovered_deadline == deadline
     assert child.workflow_timeout_ms == 60_000
     steps = {
         w.workflow_id.removeprefix(workflow_id): [
@@ -6396,13 +6402,14 @@ async def test_dbos_child_workflow_tool_survives_recovery(dbos: DBOS) -> None:
     }
     assert steps == {
         '': [
+            'child_wf_lead.run_start_time',
             'child_wf_lead__model.request',
             'child_wf_lead__model.request',
             child_name,
             'DBOS.getResult',
             'child_wf_lead__model.request',
         ],
-        '-3': ['child_wf_researcher__model.request'],
+        '-4': ['child_wf_researcher__model.request'],
     }
 
 
@@ -6469,6 +6476,33 @@ async def test_dbos_child_workflow_metadata_errors(
 
     with workflow_raises(UserError, error):
         await run_agent()
+
+
+async def test_dbos_child_workflow_requires_a_registered_toolset(dbos: DBOS) -> None:
+    async def tool() -> None: ...  # pragma: no cover
+
+    runtime_toolset = FunctionToolset(id='runtime')
+    runtime_toolset.add_function(tool, metadata={'dbos': {'child_workflow': {}}})
+    agent = Agent(TestModel(), name='child_wf_unregistered', capabilities=[DBOSDurability()])
+
+    @DBOS.workflow()
+    async def run_agent() -> None:
+        await agent.run('Go.', toolsets=[runtime_toolset])
+
+    with workflow_raises(
+        UserError,
+        'A tool selects a DBOS child workflow, but its toolset has no registered child workflow. '
+        'Give the `FunctionToolset` a unique `id` and pass it to the agent when it is constructed.',
+    ):
+        await run_agent()
+
+
+def test_dbos_toolsets_without_child_workflow_tools_stay_unwrapped() -> None:
+    plain = FunctionToolset(id='plain')
+    agent = Agent(TestModel(), name='child_wf_plain', toolsets=[plain], capabilities=[DBOSDurability()])
+    durability = DBOSDurability.from_agent(agent)
+    assert durability is not None
+    assert durability.get_wrapper_toolset(plain) is None
 
 
 step_one_selections: list[tuple[int, str | None, str | None, datetime | None]] = []
