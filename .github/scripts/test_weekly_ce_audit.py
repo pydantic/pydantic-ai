@@ -715,7 +715,7 @@ def validate_and_check_publication(
     )
     main()
     approval: dict[str, object] = json.loads((directory / 'publication.json').read_text())
-    output = root / 'agent_output.json'
+    output = directory / 'agent_output.json'
     output.write_text(json.dumps({'items': items}))
     monkeypatch.setattr(sys, 'argv', ['audit', 'check-publication', *arguments, '--agent-output', str(output)])
     main()

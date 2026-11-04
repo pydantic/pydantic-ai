@@ -112,9 +112,12 @@ WORKFLOW_SOURCES = sorted((Path(__file__).parents[1] / 'workflows').glob('pydant
 
 
 @pytest.mark.parametrize('source', WORKFLOW_SOURCES, ids=lambda source: source.stem)
-async def test_shell_exposure_follows_the_workflow_source(source: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_shell_exposure_follows_the_workflow_source(
+    source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The engine receives no compiled tool allowlist, so a source's `bash: []` must withhold the shell."""
     frontmatter = guard.parse_frontmatter(source)
+    (tmp_path / 'attention-candidates.json').write_text('{"candidates": []}')
     monkeypatch.setenv('GITHUB_WORKFLOW', frontmatter['name'])
     offered: list[set[str]] = []
 
