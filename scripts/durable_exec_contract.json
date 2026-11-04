@@ -3452,6 +3452,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py::<module>"
       ]
     },
+    "UnsupportedSettingWarning": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model_errors.py::<module>"
+      ]
+    },
     "UserError": {
       "engines": [
         "absurd",
