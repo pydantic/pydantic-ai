@@ -84,6 +84,7 @@ class FakeCreateCall:
     secure: bool
     allow_internet_access: bool
     lifecycle: dict[str, str] | None
+    api_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -686,9 +687,10 @@ class FakeAsyncSandboxFactory:
         secure: bool = True,
         allow_internet_access: bool = True,
         lifecycle: dict[str, str] | None = None,
+        api_key: str | None = None,
     ) -> FakeSandbox:
         self._control.create_calls.append(
-            FakeCreateCall(template, timeout, envs, secure, allow_internet_access, lifecycle)
+            FakeCreateCall(template, timeout, envs, secure, allow_internet_access, lifecycle, api_key)
         )
         if self._control.create_hangs:
             await anyio.sleep_forever()
@@ -701,14 +703,16 @@ class FakeAsyncSandboxFactory:
             await self._control.create_response_held.wait()
         return sandbox
 
-    async def kill(self, id: str) -> bool:
+    async def kill(self, id: str, api_key: str | None = None) -> bool:
+        self._control.api_keys.append(api_key)
         if self._control.kill_error is not None:
             raise self._control.kill_error
         existing = next((sandbox for sandbox in self._control.sandboxes if sandbox.sandbox_id == id), None)
         return await existing.kill() if existing is not None else False
 
-    async def connect(self, id: str, timeout: int | None = None) -> FakeSandbox:
+    async def connect(self, id: str, timeout: int | None = None, api_key: str | None = None) -> FakeSandbox:
         self._control.connect_calls.append((id, timeout))
+        self._control.api_keys.append(api_key)
         await anyio.lowlevel.checkpoint()
         if self._control.connect_error is not None:
             raise self._control.connect_error
@@ -728,6 +732,8 @@ class FakeE2B:
     responder: Responder = _echo_responder
     sandboxes: list[FakeSandbox] = field(default_factory=list[FakeSandbox])
     create_calls: list[FakeCreateCall] = field(default_factory=list[FakeCreateCall])
+    api_keys: list[str | None] = field(default_factory=list[str | None])
+    """The key each `connect` and `kill` was given, in order."""
     connect_calls: list[tuple[str, int | None]] = field(default_factory=list[tuple[str, 'int | None']])
     create_error: Exception | None = None
     create_hangs: bool = False

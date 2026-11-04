@@ -6,6 +6,7 @@ import asyncio
 import gc
 import re
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ import pytest
 from e2b.exceptions import AuthenticationException, SandboxException
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -23,6 +25,7 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     ReadOnlyWorkspace,
     Workspace,
+    WorkspaceBackend,
     WorkspaceError,
     WorkspaceReadOnlyError,
     WorkspaceRef,
@@ -73,11 +76,59 @@ async def test_destroy_is_idempotent_and_maps_rejected_credentials(fake_e2b: Fak
     with pytest.raises(WorkspaceUnavailableError) as exc:
         await provider.destroy(ref)
     assert str(exc.value) == (
-        'Credentials rejected. E2B rejected the credentials. Set a valid E2B_API_KEY in the environment.'
+        'Credentials rejected. E2B rejected the credentials. Set a valid E2B_API_KEY in the environment, or pass `api_key`.'
     )
     fake_e2b.kill_error = AuthenticationException('API key is required, please visit the API Keys tab')
     with pytest.raises(WorkspaceUnavailableError, match=r'^No E2B API key found\. Set E2B_API_KEY'):
         await provider.destroy(ref)
+
+
+async def test_api_key_reaches_create_attach_and_destroy(fake_e2b: FakeE2B) -> None:
+    capability = E2BSandbox(api_key='key-of-a')
+    assert 'key-of-a' not in repr(capability)
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    new = capability.get_workspace(ctx, ref=None)
+    assert isinstance(new, E2BSandboxBackend)
+    await new.get_sandbox()
+    assert fake_e2b.create_calls[-1].api_key == 'key-of-a'
+
+    ref = WorkspaceRef(provider='e2b', id='sbx-1')
+    attached = [capability.get_workspace(ctx, ref=ref), capability.backend(ref)]
+    for backend in attached:
+        assert isinstance(backend, E2BSandboxBackend)
+        await backend.get_sandbox()
+    await capability.destroy(ref)
+    assert fake_e2b.api_keys == ['key-of-a', 'key-of-a', 'key-of-a']
+
+
+async def test_no_api_key_leaves_it_to_the_environment(fake_e2b: FakeE2B) -> None:
+    capability = E2BSandbox()
+    ref = WorkspaceRef(provider='e2b', id='sbx-1')
+    await capability.backend(ref).get_sandbox()
+    await capability.destroy(ref)
+    assert fake_e2b.api_keys == [None, None]
+
+
+def test_api_key_is_refused_with_a_ready_sandbox(fake_e2b: FakeE2B) -> None:
+    with pytest.raises(ValueError, match='either `sandbox` or `api_key`'):
+        E2BSandboxBackend(sandbox=fake_e2b.new_sandbox('sbx-ready'), api_key='key-of-a')  # pyright: ignore[reportArgumentType]
+
+
+async def test_a_capability_can_use_each_users_key_from_deps(fake_e2b: FakeE2B) -> None:
+    @dataclass
+    class EachUsersKey(AbstractCapability[str]):
+        def get_workspace(self, ctx: RunContext[str], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+            return E2BSandboxBackend(ref=ref, api_key=ctx.deps)
+
+    agent = Agent(TestModel(call_tools=['run_command']), deps_type=str, capabilities=[EachUsersKey()])
+
+    @agent.tool
+    async def run_command(ctx: RunContext[str]) -> str:
+        return (await ctx.workspace.run(['echo', 'ok'])).stdout
+
+    await agent.run('run', deps='key-of-a')
+    await agent.run('run', deps='key-of-b')
+    assert [call.api_key for call in fake_e2b.create_calls] == ['key-of-a', 'key-of-b']
 
 
 def test_capability_uses_workspace_contract() -> None:

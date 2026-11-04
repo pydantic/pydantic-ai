@@ -1051,7 +1051,7 @@ async def test_auth_error_classifies_expired_key_without_leaking_it(fake_e2b: Fa
     with pytest.raises(WorkspaceUnavailableError) as exc:
         await E2BSandboxBackend().get_sandbox()
     assert str(exc.value) == (
-        'Credential expired. E2B rejected the credentials. Set a valid E2B_API_KEY in the environment.'
+        'Credential expired. E2B rejected the credentials. Set a valid E2B_API_KEY in the environment, or pass `api_key`.'
     )
     assert 'sensitive-credential-value' not in str(exc.value)
 
@@ -1063,7 +1063,7 @@ async def test_missing_key_is_reported_as_not_found(fake_e2b: FakeE2B) -> None:
     )
     with pytest.raises(WorkspaceUnavailableError) as exc:
         await E2BSandboxBackend().get_sandbox()
-    assert str(exc.value) == 'No E2B API key found. Set E2B_API_KEY in the environment.'
+    assert str(exc.value) == 'No E2B API key found. Set E2B_API_KEY in the environment, or pass `api_key`.'
 
 
 def test_missing_e2b_extra_has_an_install_hint(monkeypatch: pytest.MonkeyPatch) -> None:

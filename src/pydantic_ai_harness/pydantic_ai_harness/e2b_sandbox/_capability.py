@@ -57,6 +57,13 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
     The agent's commands can read them, and a new sandbox keeps them for every process it runs.
     """
 
+    api_key: str | None = field(default=None, repr=False)
+    """The E2B API key to create, attach and destroy with; `E2B_API_KEY` when `None`.
+
+    To use a different key for each user, supply the workspace from a capability of your own, which
+    can read the key from the run's `deps` and pass it to `E2BSandboxBackend`.
+    """
+
     def __post_init__(self) -> None:
         reject_defer_loading('E2BSandbox', self.defer_loading)
         check_integer('sandbox_timeout', self.sandbox_timeout)
@@ -69,13 +76,17 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
     def backend(self, ref: WorkspaceRef) -> E2BSandboxBackend:
         """Attach lazily to an existing E2B sandbox."""
         return E2BSandboxBackend(
-            ref=ref, sandbox_timeout=self.sandbox_timeout, working_dir=self.working_dir, env=self.env
+            ref=ref,
+            sandbox_timeout=self.sandbox_timeout,
+            working_dir=self.working_dir,
+            env=self.env,
+            api_key=self.api_key,
         )
 
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Kill a sandbox by ID, including paused sandboxes, without attaching."""
         check_provider(ref, 'e2b')
-        await _backend.kill_sandbox(ref.id)
+        await _backend.kill_sandbox(ref.id, api_key=self.api_key)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build the backend for this run. No I/O here: it attaches or creates on first use."""
@@ -89,4 +100,5 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
             sandbox_timeout=self.sandbox_timeout,
             working_dir=self.working_dir,
             env=self.env,
+            api_key=self.api_key,
         )
