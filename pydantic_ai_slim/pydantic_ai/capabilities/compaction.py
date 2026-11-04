@@ -12,7 +12,31 @@ if TYPE_CHECKING:
     from pydantic_ai.models import Model, ModelRequestParameters
     from pydantic_ai.settings import ModelSettings
 
-__all__ = ('CompactionRequest', 'CompactionResult')
+__all__ = ('CompactionModelRequest', 'CompactionRequest', 'CompactionResult')
+
+
+@dataclass(frozen=True, kw_only=True)
+class CompactionModelRequest:
+    """The request the conversation would send the model, for a handler that compacts with it.
+
+    Core builds it, for each attempt, from the request as the
+    [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] hooks left it.
+    """
+
+    model: Model
+    """The model that will serve the request the compacted history is sent with.
+
+    Under [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] this is the candidate the attempt is for,
+    not the step's model in [`RunContext.model`][pydantic_ai.tools.RunContext.model]. Under durable execution
+    it's the model durability wrapped, so a request made through it runs as a durable model operation, like
+    [`compact_messages`][pydantic_ai.models.Model.compact_messages].
+    """
+
+    settings: ModelSettings | None
+    """The settings the conversation's request will be sent with."""
+
+    parameters: ModelRequestParameters
+    """The tools, output schema and other parameters the conversation's request will be sent with."""
 
 
 @dataclass(kw_only=True)
@@ -26,15 +50,6 @@ class CompactionRequest:
     `'context_overflow'` when the model rejected the attempt for exceeding its context window.
     """
 
-    model: Model
-    """The model that will serve the request the compacted history is sent with.
-
-    Under [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] this is the candidate the attempt is for,
-    not the step's model in [`RunContext.model`][pydantic_ai.tools.RunContext.model]. Under durable execution
-    it's the model durability wrapped, so a request made through it runs as a durable model operation, like
-    [`compact_messages`][pydantic_ai.models.Model.compact_messages].
-    """
-
     messages: list[ModelMessage]
     """The run's history, ending with the request being answered, as this request shows it.
 
@@ -46,15 +61,14 @@ class CompactionRequest:
     `scope`: keep it out of a summary as standing content, since it only applies to its own request.
     """
 
-    model_settings: ModelSettings | None
-    """The settings the request will be sent with.
+    conversation_request: CompactionModelRequest
+    """The model, settings and parameters the conversation's own request will be sent with. Core builds it.
 
-    A compaction request made with the same settings and parameters as the conversation's own requests can read
-    the provider's prompt cache.
+    An expert input, for a handler that compacts *with the conversation's own request*: the serving model's native
+    compaction, or a summary sent with the same settings and tools so it reads the provider's prompt cache. A
+    handler with a summarizer model of its own ignores it and uses its own settings. Its
+    [`model`][pydantic_ai.capabilities.CompactionModelRequest.model] is the model the compacted history is for.
     """
-
-    model_request_parameters: ModelRequestParameters
-    """The tools, output schema and other parameters the request will be sent with."""
 
     focus: str | None = None
     """What the compaction should keep, if the request said, like the argument to a `/compact` command."""
@@ -84,15 +98,16 @@ class CompactionResult:
     handler: str
     """A stable identifier for what compacted, like `'openai'` or `'summarizing'`.
 
-    It's reported on [`CompactionEndEvent.handler`][pydantic_ai.messages.CompactionEndEvent.handler]. Pick an
-    identifier that is safe to persist and branch on, never a Python class name.
+    It's reported on [`CompactionRecord.handler`][pydantic_ai.messages.CompactionRecord.handler], on the run result
+    and in the [`CompactionEndEvent`][pydantic_ai.messages.CompactionEndEvent]'s record. Pick an identifier that is
+    safe to persist and branch on, never a Python class name.
     """
 
     usage: RequestUsage = field(default_factory=RequestUsage)
     """What the compaction cost, for compaction that made model requests.
 
     It's counted in the run's usage, and checked against its usage limits. Without a `cost`, it's priced as a
-    request to [`CompactionRequest.model`][pydantic_ai.capabilities.CompactionRequest.model].
+    request to [`CompactionModelRequest.model`][pydantic_ai.capabilities.CompactionModelRequest.model].
     """
 
     kept_from: int | None = None

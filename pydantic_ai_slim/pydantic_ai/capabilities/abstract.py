@@ -1229,7 +1229,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         `'context_overflow'` when the model rejected the attempt for exceeding its context window, to send it to
         that model once more. It runs after the
         [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] hooks, with
-        [`request.model`][pydantic_ai.capabilities.CompactionRequest.model] set to the model about to serve the
+        [`request.conversation_request.model`][pydantic_ai.capabilities.CompactionModelRequest.model] set to the model
+        about to serve the
         attempt. Capabilities are asked in order and the first result is used, so capability order is the fallback
         chain: a capability that can't compact for this model, or this request, returns `None`.
 
@@ -1250,7 +1251,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         provider's encrypted content, and end with the request being answered. A summary in a `ModelRequest` has to
         come after the standing system prompt the history it was given opens with, which the result keeps first.
         Under durable execution this
-        runs in workflow code; requests through `request.model` are durable model operations, and other I/O
+        runs in workflow code; requests through `request.conversation_request.model` are durable model operations, and other I/O
         belongs in a [`durable_operation`][pydantic_ai.capabilities.durable_operation].
         """
         return None

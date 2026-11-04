@@ -63,7 +63,7 @@ from pydantic_ai._utils import (
 )
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.capabilities.abstract import AbstractCapability, ModelSelector
-from pydantic_ai.capabilities.compaction import CompactionRequest, CompactionResult
+from pydantic_ai.capabilities.compaction import CompactionModelRequest, CompactionRequest, CompactionResult
 from pydantic_ai.models import (
     CompletedStreamedResponse,
     ModelRequestContext,
@@ -3947,10 +3947,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         request = CompactionRequest(
             reason=requested.reason,
             focus=requested.focus,
-            model=model,
             messages=list(view.messages),
-            model_settings=prepared.model_settings,
-            model_request_parameters=prepared.model_request_parameters,
+            conversation_request=CompactionModelRequest(
+                model=model, settings=prepared.model_settings, parameters=prepared.model_request_parameters
+            ),
         )
         try:
             result = await ctx.deps.root_capability.compact_history(run_context, request)
@@ -3975,7 +3975,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         compaction.result = result
         compaction.committed = committed
         compaction.sent = sent
-        compaction.record = _messages.CompactionRecord(
+        compaction.record = record = _messages.CompactionRecord(
             part=result.part,
             handler=result.handler,
             reason=requested.reason,
@@ -4001,13 +4001,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.deps.usage_limits.check_cost(ctx.state.usage, warn_if_cost_unavailable=False)
         await run_context._publish_event(  # pyright: ignore[reportPrivateUsage]
             _messages.CompactionEndEvent(
-                reason=requested.reason,
-                handler=result.handler,
-                model_name=model.model_name,
-                provider_name=model.system,
-                messages_before=len(history),
-                messages_after=len(committed),
-                kept_from=committed_kept_from,
+                # The same object `AgentRunResult.compactions` lists once the attempt is kept.
+                record=record,
                 tokens_before=tokens_before,
                 summary_tokens=result.usage.output_tokens or None,
                 usage=result.usage,
