@@ -17,7 +17,7 @@ except ImportError:  # pragma: lax no cover
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.durable_exec._codec import JSON_CODEC
+from pydantic_ai.durable_exec import JSON_CODEC
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -157,7 +157,14 @@ def test_a_guardrail_without_an_id_cannot_bind_to_a_durable_agent(capability: Ab
 
 @pytest.mark.parametrize(
     'verdict',
-    [GuardrailResult.allow(), GuardrailResult.block(), GuardrailResult.replace(None), GuardrailResult.retry('again')],
+    [
+        GuardrailResult.allow(),
+        GuardrailResult.block(),
+        GuardrailResult.replace(None),
+        GuardrailResult.replace('x'),
+        GuardrailResult.retry('again'),
+        GuardrailResult.approve(),
+    ],
 )
 def test_a_verdict_round_trips_through_a_json_journal(verdict: GuardrailResult) -> None:
     assert JSON_CODEC.load(GuardrailResult, JSON_CODEC.dump(GuardrailResult, verdict)) == verdict

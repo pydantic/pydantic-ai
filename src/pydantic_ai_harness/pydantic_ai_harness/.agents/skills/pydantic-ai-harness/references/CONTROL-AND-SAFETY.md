@@ -180,7 +180,9 @@ Key parameters:
   callables; for several tool checks, stack several `ToolGuardrail` capabilities: argument guards run
   in list order, result guards in reverse.
 - Guard verdicts are durable operations under Temporal, DBOS, and Prefect. Give every guardrail on a
-  durable-capable agent a distinct explicit `id`; ordinary runs do not require one.
+  durable-capable agent a distinct explicit `id`; ordinary runs do not require one. Under Temporal
+  a guard's `RunContext` has no `messages` or `prompt`, and a raised `ApprovalRequired` fails the
+  activity: return `GuardrailResult.approve()` instead.
 
 Detectors (`pydantic_ai_harness.guardrails.detectors`), plain functions returning `GuardrailResult`
 (`.action` is `'allow'`, `'block'`, or `'replace'`; `.replacement` holds the redacted text). To block
