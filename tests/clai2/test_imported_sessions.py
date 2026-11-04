@@ -1327,12 +1327,12 @@ def test_browser_marks_sessions_to_import() -> None:
     importing[0] = False
     frame = '\n'.join(browser.frame(width=100, height=20))
     assert frame.count('Claude Code · 0 msgs') == 1 and frame.count('#claude') == 1
-    # A narrow pane drops the source before it clips the counts.
-    narrow = re.sub(r'\x1b\[[0-9;]*m', '', '\n'.join(browser.frame(width=22, height=20)))
-    assert re.search(r' 0 msgs\n', narrow) and '·' not in narrow
-    importing[0] = True
-    narrow = re.sub(r'\x1b\[[0-9;]*m', '', '\n'.join(browser.frame(width=22, height=20)))
-    assert re.search(r' to import\n', narrow) and '·' not in narrow
+    # A narrow pane drops the source before it squeezes out the title or clips the counts.
+    for counts in ('0 msgs', 'to import'):
+        importing[0] = counts == 'to import'
+        narrow = re.sub(r'\x1b\[[0-9;]*m', '', '\n'.join(browser.frame(width=22, height=20)))
+        card = narrow.splitlines()[4]
+        assert ' Fr' in card and card.endswith(f' {counts}'), narrow
     assert browser.handle_key('d') is None
     assert browser.confirm is None and browser.notice.startswith('Not imported yet.')
     browser.notice = ''
