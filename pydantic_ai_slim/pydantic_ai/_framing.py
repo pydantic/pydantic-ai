@@ -586,14 +586,16 @@ def _comparable(text: str) -> str:
 
     Entity-encoded `<`s and `>`s are decoded, compatibility forms folded (NFKC, which also turns a full-width `<` into
     `<`), invisible format characters (Unicode category `Cf`, such as a zero-width space or joiner) dropped, and
-    Cyrillic and Greek look-alikes of the letters in the system-voice tags folded to Latin.
+    Cyrillic and Greek look-alikes of the letters in the system-voice tags folded to Latin. Entities are decoded again
+    after that, as folding can leave one behind, such as from a full-width `&`.
     """
     text = _ENTITY_CLOSER.sub('>', _ENTITY_OPENER.sub('<', text))
     if text.isascii():
         # Every history item is checked on every request, so skip the per-character passes where they change nothing.
         return text
     text = unicodedata.normalize('NFKC', text)
-    return ''.join(char for char in text if unicodedata.category(char) != 'Cf').translate(_CONFUSABLES)
+    text = ''.join(char for char in text if unicodedata.category(char) != 'Cf').translate(_CONFUSABLES)
+    return _ENTITY_CLOSER.sub('>', _ENTITY_OPENER.sub('<', text))
 
 
 def lookalike_tags(text: str) -> list[str]:

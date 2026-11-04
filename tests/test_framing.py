@@ -187,6 +187,8 @@ def test_frame_renders_the_body_as_written() -> None:
         pytest.param('&#60;system>', id='decimal-entity'),
         pytest.param('&#x3C;SYSTEM>', id='hex-entity'),
         pytest.param('&#0060;system&#62;', id='zero-padded-entities'),
+        pytest.param('\uff06lt;system>', id='full-width-ampersand-entity'),
+        pytest.param('&\u200blt;system>', id='invisible-character-in-entity'),
         pytest.param('\uff1csystem\uff1e', id='full-width-brackets'),
         pytest.param('<  SyStEm\n>', id='mixed-case-and-whitespace'),
         pytest.param('<system\n  attr="x">', id='newline-inside-the-tag'),
