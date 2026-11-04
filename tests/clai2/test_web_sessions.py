@@ -33,6 +33,7 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, Transcript
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 
+from .test_live_runtimes import until
 from .test_web import HOSTS, TOKEN, QuestionModel, static_dir
 from .test_web_parts import REQUEST
 
@@ -430,6 +431,8 @@ def test_archiving_closes_an_idle_session_no_browser_shows(make_fleet: MakeFleet
         messages(socket, until=snapshot_of(b))
         fleet.post(f'/api/sessions/{b}/input', {'text': 'hi'})
         messages(socket, until=kind('turn_ended', session=b))
+        # `turn_ended` is sent as the run returns; b handles the turn's end a while longer, so it is not idle yet.
+        fleet.portal.call(until, fleet.launch.process.live, lambda: fleet.runtimes['b'].idle)
         refused = fleet.post('/api/sessions/archive', {'ids': [b]})
         assert (refused.status_code, 'is open in another live session' in refused.json()['detail']) == (400, True)
         refused = fleet.post('/api/sessions/archive', {'ids': [a]})

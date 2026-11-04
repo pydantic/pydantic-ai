@@ -23,6 +23,7 @@ from pydantic_ai._agent_graph import GraphAgentState
 from pydantic_ai.capabilities import AbstractCapability, Hooks
 from pydantic_ai.capabilities.abstract import AgentNode, NodeResult
 from pydantic_ai.messages import (
+    DocumentUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -31,6 +32,7 @@ from pydantic_ai.messages import (
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
 )
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
@@ -397,6 +399,16 @@ class TestInMemoryStepStore:
 # ---------------------------------------------------------------------------
 
 
+def _without_file_records(node: Any) -> Any:
+    """`node` as an earlier version saved it, before tool results recorded their files."""
+    if isinstance(node, dict):
+        mapping = cast(dict[str, Any], node)
+        return {key: _without_file_records(value) for key, value in mapping.items() if key != 'content_file_digests'}
+    if isinstance(node, list):
+        return [_without_file_records(item) for item in cast(list[Any], node)]
+    return node
+
+
 class TestFileStepStore:
     async def test_keyed_writes_are_idempotent_after_snapshot_pruning(self, tmp_path: Path) -> None:
         store = FileStepStore(tmp_path, max_snapshots_per_run=1)
@@ -539,6 +551,25 @@ class TestFileStepStore:
         assert snap.parent_run_id == 'p1'
         assert snap.agent_name == 'a'
         assert len(snap.messages) == 2
+
+    async def test_snapshot_saved_before_file_records_keeps_its_tool_files(self, tmp_path: Path) -> None:
+        files = [UploadedFile('file-1', 'openai'), DocumentUrl('s3://bucket/report.pdf')]
+        messages: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart(content='read it')]),
+            ModelResponse(parts=[ToolCallPart(tool_name='read', tool_call_id='c')]),
+            ModelRequest(parts=[ToolReturnPart(tool_name='read', content=files, tool_call_id='c')]),
+        ]
+        store = FileStepStore(tmp_path / 'runs')
+        await store.save_snapshot(ContinuableSnapshot(run_id='run', step_index=0, messages=messages, state='complete'))
+        for path in (tmp_path / 'runs' / 'run' / 'snapshots').glob('*.json'):
+            path.write_text(json.dumps(_without_file_records(json.loads(path.read_text()))))
+
+        snapshot = await store.latest_snapshot(run_id='run')
+
+        assert snapshot is not None
+        tool_return = snapshot.messages[-1].parts[0]
+        assert isinstance(tool_return, ToolReturnPart)
+        assert tool_return.content == files
 
     async def test_latest_snapshot_picks_most_recent_seq(self, tmp_path: Path) -> None:
         """Latest is by physical write order (filename seq), not by `step_index`."""

@@ -101,6 +101,14 @@ def _seconds(text: str) -> float:
     return seconds
 
 
+def _named(spinners: Spinners, args: list[str]) -> tuple[str, float | None]:
+    """The spinner `/spinner NAME [SECONDS]` names, and the speed it sets, if any."""
+    found = spinners.find(args[0])
+    if found is None:
+        raise ValueError(f'Unknown spinner {args[0]!r}. Choose from: {", ".join(spinners.catalogue())}')
+    return found.name, _seconds(args[1]) if len(args) == 2 else None
+
+
 async def spinner_command(
     context: CommandContext, spinners: Spinners, args: list[str], *, runners: Runners = TERMINAL
 ) -> str:
@@ -112,10 +120,7 @@ async def spinner_command(
     if len(args) > 2:
         raise ValueError(USAGE)
     if args:
-        found = spinners.find(args[0])
-        if found is None:
-            raise ValueError(f'Unknown spinner {args[0]!r}. Choose from: {", ".join(spinners.catalogue())}')
-        name, interval = found.name, _seconds(args[1]) if len(args) == 2 else None
+        name, interval = _named(spinners, args)
     else:
         picker = SpinnerPicker(spinners)
         result = await run_worker(lambda: runners.run_list(picker.build()))

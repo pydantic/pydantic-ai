@@ -39,7 +39,7 @@ def is_provider_valid(messages: list[ModelMessage]) -> bool:
 
     Since pydantic-ai 2.10 repairs broken pairing before every model request,
     a failing history is still sendable via `Agent.run(message_history=...)`;
-    this predicate now classifies snapshots (`complete` vs `interrupted`,
+    this predicate classifies snapshots (`complete` vs `interrupted`,
     see `SnapshotState`) rather than gating what gets persisted.
     """
     open_calls: set[str] = set()

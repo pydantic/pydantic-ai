@@ -66,6 +66,14 @@ snapshots that can revise earlier words, so caption UIs should render the full
 [`TranscriptUpdate.transcript`][pydantic_ai.realtime.TranscriptUpdate.transcript] rather than
 append deltas.
 
+### Speech timestamps
+
+With [`output_speech_timestamps=True`][pydantic_ai.realtime.RealtimeModelSettings.output_speech_timestamps]
+(see [Speech timestamps](audio.md#speech-timestamps)), Grok Voice's speech is timed per `'segment'`: each
+piece of transcript xAI streams, a few words to a sentence, with where it starts in the part's audio. A
+segment lasts until the next one starts, or the audio ends, so it's reported once that's known, a moment
+after its own text. The segments' texts together make up the part's transcript.
+
 ### Reasoning
 
 `grok-voice-latest` and `grok-voice-think-*` models support the shared
@@ -85,6 +93,7 @@ Other Grok Voice models ignore the setting.
 | Input transcription | Full feature support | [Dedicated provider path](audio.md#input-transcription); `'auto'` by default |
 | Native tools | Unsupported | xAI offers web search, X search, file search, and MCP tools, which Pydantic AI does not expose yet; configure [local fallbacks](tools.md#native-tools) for web capabilities |
 | Async tool calls | Full feature support | Grok Voice keeps talking, and answers the user, while a [tool runs](tools.md#concurrent-tool-execution) |
+| Speech timestamps | Limited parameter support | Per [segment](#speech-timestamps), not per word |
 | Usage | Full feature support | Audio-token buckets and `billable_audio_seconds` in `RunUsage.details` |
 | Reconnection | Full feature support | Pydantic AI [replays completed local history](lifecycle.md#state-restoration) into a new conversation; in-flight media is lost |
 
