@@ -1383,6 +1383,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         Any other exception still raises at the call site, and nothing else about the run input is
         deferred.
 
+        With a [`conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store], the `UserError` for
+        passing `message_history` as well or for having no conversation ID to load also raises at the call
+        site, but the conversation is loaded on the first iteration of the returned stream, so whatever
+        the load raises surfaces there, such as a `UserError` for a conversation that wasn't found or an
+        error from the store's backend.
+
         Args:
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
