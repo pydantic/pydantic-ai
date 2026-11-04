@@ -81,11 +81,6 @@ _logger = logging.getLogger(__name__)
 _MODEL_CONFIG_ID = 'model'
 
 
-def _all_known_model_names() -> tuple[str, ...]:
-    """Every model name Pydantic AI exposes through the public `known_model_names()` API."""
-    return known_model_names()
-
-
 def _finish_reason_to_stop_reason(finish_reason: FinishReason | None) -> schema.StopReason:
     """Map the model's terminal `finish_reason` to the ACP stop reason for a completed turn.
 
@@ -186,7 +181,7 @@ class _TurnState:
     conn: Client
     session_id: str
     cwd: str
-    # Best-effort pre-run guess at which tools pause for approval (see `_approval_tool_names`):
+    # Best-effort pre-run guess at which tools pause for approval (see `_scan_approval_names`):
     # tools the static scan cannot see (per-run `for_run()` toolsets, callable `AgentToolset`
     # arms, non-`FunctionToolset` toolsets) are initially announced as running and corrected to
     # `pending` once the run reports which calls actually paused.
@@ -326,7 +321,7 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
         self._mcp_capabilities = mcp_capabilities or schema.McpCapabilities()
         self._tool_presenter = tool_presenter or default_coding_presenter
         self._session_store = session_store
-        self._models: tuple[str, ...] = _all_known_model_names() if models == 'all' else tuple(models) if models else ()
+        self._models: tuple[str, ...] = known_model_names() if models == 'all' else tuple(models) if models else ()
         self._model_resolver = model_resolver
         self._usage_limits = usage_limits if usage_limits is not None else UsageLimits(request_limit=None)
         self._client_capabilities: schema.ClientCapabilities | None = None
@@ -454,10 +449,7 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
     async def _persist(self, state: SessionState[AgentDepsT]) -> None:
         """Save a session's committed state (history, transcript, selected model), if a store is configured.
 
-        A store failure is logged and swallowed rather than failing the operation that triggered the
-        save: the turn (or session) has already streamed and committed in memory, so a durable-write
-        error must not surface as a failure for work the user already saw succeed. The session stays
-        usable and the next successful save catches the store back up.
+        A store failure is logged, not raised; see `SessionStore` for why.
         """
         if self._session_store is None:
             return
@@ -667,12 +659,13 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
         deferred_results: DeferredToolResults | None = None
         run_input: list[UserContent] | None = user_content
         output_type = [self._agent.output_type, DeferredToolRequests]
+        approval_names, known_non_approval_names = self._scan_approval_names(config)
         turn = _TurnState(
             conn=conn,
             session_id=state.session_id,
             cwd=state.cwd,
-            approval_names=self._approval_tool_names(config),
-            known_non_approval_names=self._known_non_approval_names(config),
+            approval_names=approval_names,
+            known_non_approval_names=known_non_approval_names,
         )
         # Recorded for replay only, never sent live: the client renders its own prompt during
         # the turn, but `session/load` must rebuild the user side of the conversation too.
@@ -711,7 +704,7 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
 
                 assert result is not None, 'run_stream_events always yields a final result event'
                 history = result.all_messages()
-                usage += result.usage  # pydantic-ai 2.0: `usage` is a property, not a method
+                usage += result.usage
                 output = result.output
                 if isinstance(output, DeferredToolRequests):
                     if not output.approvals and not output.calls:  # pragma: no cover
@@ -764,8 +757,7 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
                 # The turn is already committed: a cancel landing inside the store's save came
                 # too late to roll anything back. The spec still requires the prompt to answer
                 # `cancelled`, so that stop reason is reported alongside committed usage. The
-                # interrupted save is the same benign failure `_persist` swallows; the next
-                # successful save catches the store up.
+                # interrupted save is handled like any other `_persist` failure.
                 _logger.warning(
                     'persisting ACP session %s was cancelled; durable state is now behind', state.session_id
                 )
@@ -837,9 +829,6 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
             fields = self._tool_call_fields(call, turn.cwd, default_kind=None)
             # A call awaiting approval is not running yet: it starts `pending` and
             # `_resolve_approvals` promotes it once approved. Any other call is already executing.
-            # The pre-run scan cannot see every approval requirement (per-run `for_run()` toolsets,
-            # callable `AgentToolset` arms, non-`FunctionToolset` toolsets), so a call announced
-            # here may still pause: `_resolve_approvals` corrects it once the run reports so.
             status: schema.ToolCallStatus = 'pending' if call.tool_name in turn.approval_names else 'in_progress'
             turn.announced_status[call.tool_call_id] = status
             await self._send_update(
@@ -894,11 +883,9 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
 
         results = DeferredToolResults()
         for call in requests.approvals:
-            # A call announced `in_progress` that paused for approval never actually ran when its
-            # tool is invisible to the pre-run scan (a per-run `for_run()` toolset): correct it to
-            # `pending` before the decision so a client never renders a rejected call as if it had
-            # executed. A statically-known non-approval tool that pauses must have raised
-            # `ApprovalRequired` from its body after starting, so that one stays `in_progress`.
+            # A scan-invisible tool announced `in_progress` that paused for approval never ran:
+            # correct it to `pending` before the decision so a rejected call is not rendered as
+            # executed (see `_TurnState.known_non_approval_names`).
             if (
                 turn.announced_status.get(call.tool_call_id) == 'in_progress'
                 and call.tool_name not in turn.known_non_approval_names
@@ -951,33 +938,19 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
                 toolsets.append(cast(AbstractToolset[AgentDepsT], contributed))
         return toolsets
 
-    def _approval_tool_names(self, config: AcpSessionConfig[AgentDepsT]) -> frozenset[str]:
-        """Best-effort pre-run guess at the tools that pause for the client's approval.
+    def _scan_approval_names(self, config: AcpSessionConfig[AgentDepsT]) -> tuple[frozenset[str], frozenset[str]]:
+        """Split the statically visible tools into those that require approval and those that don't.
 
-        Only `FunctionToolset`-held tools expose `requires_approval` without a live run context;
-        tools from other toolset types are treated as not requiring approval. A capability that
-        builds its toolset per run is invisible to this scan, but a call to such a tool pauses
-        anyway (the run reports it in `DeferredToolRequests.approvals`), and `_resolve_approvals`
-        then corrects its announced status to `pending`.
+        Only `FunctionToolset`-held tools expose `requires_approval` without a live run context, so
+        tools from other toolsets appear in neither set.
         """
-        names: set[str] = set()
+        approval: set[str] = set()
+        non_approval: set[str] = set()
         for toolset in self._static_toolsets(config):
             if isinstance(toolset, FunctionToolset):
-                names.update(name for name, tool in toolset.tools.items() if tool.requires_approval)
-        return frozenset(names)
-
-    def _known_non_approval_names(self, config: AcpSessionConfig[AgentDepsT]) -> frozenset[str]:
-        """Names the pre-run scan sees as not requiring approval.
-
-        A call for one of these that pauses anyway must have raised `ApprovalRequired` from its
-        body after starting to execute, so its announced `in_progress` is kept and `_resolve_approvals`
-        corrects only scan-invisible tools.
-        """
-        names: set[str] = set()
-        for toolset in self._static_toolsets(config):
-            if isinstance(toolset, FunctionToolset):
-                names.update(name for name, tool in toolset.tools.items() if not tool.requires_approval)
-        return frozenset(names)
+                for name, tool in toolset.tools.items():
+                    (approval if tool.requires_approval else non_approval).add(name)
+        return frozenset(approval), frozenset(non_approval)
 
     async def _request_permission(
         self, turn: _TurnState, state: SessionState[AgentDepsT], call: ToolCallPart, scope: Hashable
@@ -1014,23 +987,6 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
             return True
         return ToolDenied('Rejected by the client.')
 
-    # --- Optional ACP methods not supported by this adapter ------------------------------
-    # The capabilities for these are advertised as off in `initialize`, but the SDK router still
-    # routes the methods here (`acp.Agent` is a Protocol whose inherited stub bodies would answer
-    # success-`null`), so these raises are what a client calling them anyway actually receives.
-
-    async def authenticate(self, method_id: str, **kwargs: object) -> schema.AuthenticateResponse | None:
-        """No authentication is required, so this is a no-op."""
-        return None
-
-    async def list_sessions(
-        self,
-        cwd: str | None = None,
-        cursor: str | None = None,
-        **kwargs: object,
-    ) -> schema.ListSessionsResponse:
-        raise acp.RequestError.method_not_found('session/list')
-
     def _resolve_run_model(self, model_id: str | None) -> Model | str | None:
         """Map an advertised model id to the per-run override, applying `model_resolver` if set.
 
@@ -1039,11 +995,6 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
         if model_id is None or self._model_resolver is None:
             return model_id
         return self._model_resolver(model_id)
-
-    async def set_session_mode(
-        self, session_id: str, mode_id: str, **kwargs: object
-    ) -> schema.SetSessionModeResponse | None:
-        raise acp.RequestError.method_not_found('session/set_mode')
 
     async def set_config_option(
         self, config_id: str, session_id: str, value: str | bool, **kwargs: object
@@ -1061,6 +1012,28 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
         options = self._model_config_options(state.model)
         assert options is not None
         return schema.SetSessionConfigOptionResponse(config_options=options)
+
+    # --- Optional ACP methods not supported by this adapter ------------------------------
+    # The capabilities for these are advertised as off in `initialize`, but the SDK router still
+    # routes the methods here (`acp.Agent` is a Protocol whose inherited stub bodies would answer
+    # success-`null`), so these raises are what a client calling them anyway actually receives.
+
+    async def authenticate(self, method_id: str, **kwargs: object) -> schema.AuthenticateResponse | None:
+        """No authentication is required, so this is a no-op."""
+        return None
+
+    async def list_sessions(
+        self,
+        cwd: str | None = None,
+        cursor: str | None = None,
+        **kwargs: object,
+    ) -> schema.ListSessionsResponse:
+        raise acp.RequestError.method_not_found('session/list')
+
+    async def set_session_mode(
+        self, session_id: str, mode_id: str, **kwargs: object
+    ) -> schema.SetSessionModeResponse | None:
+        raise acp.RequestError.method_not_found('session/set_mode')
 
     async def fork_session(
         self,

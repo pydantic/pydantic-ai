@@ -94,6 +94,7 @@ else:
 from . import _mcp, _utils, exceptions, messages, models
 from ._mcp_apps import MCP_APP_METADATA_KEY, MCPAppToolResult
 from ._mcp_compat import is_mcp_sdk_v2, mcp_field, mcp_optional_field, mcp_validated_field
+from ._removed_names import removed_names_getattr
 from ._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
 from .settings import ModelSettings
 
@@ -1204,14 +1205,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     @property
     def _explicit_id(self) -> str | None:
         return self._id if self._id_explicit else None
-
-    @property
-    def _appends_instructions_by_default(self) -> bool:
-        # The server instructions `get_instructions` returns append by the framework's choice. This is
-        # declared for the toolset, not for each block, so a subclass's own append blocks under the same
-        # `id` are silent too where appending isn't supported. So is a block a `DynamicToolset` with an
-        # `id` of its own keys anew, since only the toolset's own `id` is recognised.
-        return self.include_instructions
 
     @property
     def label(self) -> str:
@@ -2430,3 +2423,20 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
         toolsets.append(toolset.prefixed(name))
 
     return toolsets
+
+
+_USE_MCP_TOOLSET = (
+    'use `MCPToolset`, which picks the transport from its arguments; its timeout and retry defaults differ.'
+)
+
+_REMOVED_IN_V2 = {
+    'MCPServerStdio': _USE_MCP_TOOLSET,
+    'MCPServerSSE': _USE_MCP_TOOLSET,
+    'MCPServerStreamableHTTP': _USE_MCP_TOOLSET,
+    'MCPServerHTTP': _USE_MCP_TOOLSET,
+    'load_mcp_servers': 'use `load_mcp_toolsets`.',
+}
+
+# Kept from type checkers, which would otherwise accept any name on this module.
+if not TYPE_CHECKING:  # pragma: no branch
+    __getattr__ = removed_names_getattr(__name__, _REMOVED_IN_V2)

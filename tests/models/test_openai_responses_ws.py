@@ -73,7 +73,7 @@ from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers import Provider
 from pydantic_ai.providers.gateway import gateway_provider
 
-from ..conftest import try_import
+from ..conftest import no_leaked_tasks, try_import
 from ..durable_exec.responses_websocket import (
     FRAME_ADAPTER,
     Frame,
@@ -805,9 +805,14 @@ def sockets(monkeypatch: pytest.MonkeyPatch) -> SocketHarness:
             raise harness.connect_error
         harness.urls.append(uri)
         headers = {key.lower(): value for key, value in additional_headers.items()}
-        authorization = headers.pop('authorization')
-        assert authorization.startswith('Bearer ')
-        harness.authorization_headers.append(authorization)
+        authorization = headers.pop('authorization', None)
+        if authorization is None:
+            assert uri == 'wss://example.openai.azure.com/openai/responses?api-version=2024-12-01-preview'
+            api_key = headers.pop('api-key', None)
+            assert api_key == 'test'
+        else:
+            assert authorization.startswith('Bearer ')
+            harness.authorization_headers.append(authorization)
         harness.headers.append(headers)
         harness.options.append(options)
         socket = harness.pending.popleft()
@@ -2066,35 +2071,32 @@ async def test_interruption(allow_model_requests: None, sockets: SocketHarness, 
     socket = sockets.pending[0]
     socket.responses = deque([text_events()[:-1], text_events(response_id='resp_next')])
     model = websocket_model()
-    before = asyncio.all_tasks()
-    async with model:
-        if interrupt == 'early_exit':
-            async with Agent(model).run_stream('hello') as result:
-                async for _ in result.stream_text(delta=True):  # pragma: no branch
-                    break
-        elif interrupt == 'explicit_close':
-            async with model.request_stream(user_prompt('hello'), None, ModelRequestParameters()) as response:
-                await response.close_stream()
-        else:
-            started = anyio.Event()
-
-            async def consume() -> None:
+    with no_leaked_tasks():
+        async with model:
+            if interrupt == 'early_exit':
                 async with Agent(model).run_stream('hello') as result:
-                    async for _ in result.stream_text(delta=True):
-                        started.set()
+                    async for _ in result.stream_text(delta=True):  # pragma: no branch
+                        break
+            elif interrupt == 'explicit_close':
+                async with model.request_stream(user_prompt('hello'), None, ModelRequestParameters()) as response:
+                    await response.close_stream()
+            else:
+                started = anyio.Event()
 
-            async with anyio.create_task_group() as tasks:
-                tasks.start_soon(consume)
-                with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-                    await started.wait()
-                tasks.cancel_scope.cancel()
-        assert (await Agent(model).run('reuse')).output == 'ready'
-        assert socket.close_count == 0
-    assert [frame.get('stream_id') for frame in socket.sent] == [None, 'lane-1']
-    assert socket.close_count == 1
-    if interrupt != 'early_exit':
-        # Breaking from `stream_text()` schedules Python's async-generator finalizer separately.
-        assert asyncio.all_tasks() == before
+                async def consume() -> None:
+                    async with Agent(model).run_stream('hello') as result:
+                        async for _ in result.stream_text(delta=True):
+                            started.set()
+
+                async with anyio.create_task_group() as tasks:
+                    tasks.start_soon(consume)
+                    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                        await started.wait()
+                    tasks.cancel_scope.cancel()
+            assert (await Agent(model).run('reuse')).output == 'ready'
+            assert socket.close_count == 0
+        assert [frame.get('stream_id') for frame in socket.sent] == [None, 'lane-1']
+        assert socket.close_count == 1
 
 
 async def test_stream_cancel_during_receive(allow_model_requests: None, sockets: SocketHarness):
@@ -2509,48 +2511,48 @@ async def test_handshake_timeout(
     allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses, timeout_source: str
 ):
     """A stalled handshake honors the request's connect timeout without leaking a connection."""
-    before = asyncio.all_tasks()
-    sockets.connect_gate = anyio.Event()
-    settings: OpenAIResponsesModelSettings = {'timeout': Timeout(10, connect=0.01)} if timeout_source == 'model' else {}
-    client = AsyncOpenAI(
-        api_key='test',
-        http_client=http.client,
-        timeout=httpx2.Timeout(10, connect=0.01) if timeout_source == 'client' else 30,
-    )
-    model = OpenAIResponsesModel(
-        'gpt-4o', provider=OpenAIProvider(openai_client=client), settings={**WEBSOCKET, **settings}
-    )
-    async with client, model:
-        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-            with pytest.warns(UnsupportedSettingWarning, match='WebSocket connection timed out'):
-                response = await model.request(user_prompt('hello'), None, ModelRequestParameters())
-        assert response.text == 'from HTTP'
-        assert len(http.requests) == 1
-        assert sockets.connect_count == 1
-        assert sockets.opened == []
-        assert not model.client.is_closed()
-    assert asyncio.all_tasks() == before
+    with no_leaked_tasks():
+        sockets.connect_gate = anyio.Event()
+        settings: OpenAIResponsesModelSettings = (
+            {'timeout': Timeout(10, connect=0.01)} if timeout_source == 'model' else {}
+        )
+        client = AsyncOpenAI(
+            api_key='test',
+            http_client=http.client,
+            timeout=httpx2.Timeout(10, connect=0.01) if timeout_source == 'client' else 30,
+        )
+        model = OpenAIResponsesModel(
+            'gpt-4o', provider=OpenAIProvider(openai_client=client), settings={**WEBSOCKET, **settings}
+        )
+        async with client, model:
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                with pytest.warns(UnsupportedSettingWarning, match='WebSocket connection timed out'):
+                    response = await model.request(user_prompt('hello'), None, ModelRequestParameters())
+            assert response.text == 'from HTTP'
+            assert len(http.requests) == 1
+            assert sockets.connect_count == 1
+            assert sockets.opened == []
+            assert not model.client.is_closed()
 
 
 async def test_send_timeout(allow_model_requests: None, sockets: SocketHarness):
     """A stalled send honors the request's write timeout and fails the socket, so the next request opens another."""
-    before = asyncio.all_tasks()
-    socket = sockets.pending[0]
-    socket.send_gate = anyio.Event()
-    next_socket = ScriptedSocket()
-    sockets.pending.append(next_socket)
-    agent = Agent(websocket_model())
-    async with agent:
-        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-            with pytest.raises(ModelTimeoutError, match='WebSocket request timed out') as raised:
-                await agent.run('hello', model_settings={'timeout': Timeout(10, write=0.01)})
-        assert raised.value.phase == 'write'
-        assert isinstance(raised.value.__cause__, TimeoutError)
-        assert socket.sent == []
-        assert socket.close_count == 1
-        assert (await agent.run('again')).output == 'ready'
-    assert len(next_socket.sent) == 1
-    assert asyncio.all_tasks() == before
+    with no_leaked_tasks():
+        socket = sockets.pending[0]
+        socket.send_gate = anyio.Event()
+        next_socket = ScriptedSocket()
+        sockets.pending.append(next_socket)
+        agent = Agent(websocket_model())
+        async with agent:
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                with pytest.raises(ModelTimeoutError, match='WebSocket request timed out') as raised:
+                    await agent.run('hello', model_settings={'timeout': Timeout(10, write=0.01)})
+            assert raised.value.phase == 'write'
+            assert isinstance(raised.value.__cause__, TimeoutError)
+            assert socket.sent == []
+            assert socket.close_count == 1
+            assert (await agent.run('again')).output == 'ready'
+        assert len(next_socket.sent) == 1
 
 
 @pytest.mark.parametrize(
@@ -2576,66 +2578,65 @@ async def test_handshake_transport_failure_uses_http(
     reconnect: Literal['initial', 'idle', 'retired'],
 ):
     """A failed initial or replacement handshake sends the unwritten request over HTTP."""
-    before = asyncio.all_tasks()
-    socket = sockets.pending[0]
-    unopened = ScriptedSocket()
-    model = websocket_model(http.provider())
-    messages: list[ModelMessage] = user_prompt('hello')
-    async with model:
+    with no_leaked_tasks():
+        socket = sockets.pending[0]
+        unopened = ScriptedSocket()
+        model = websocket_model(http.provider())
+        messages: list[ModelMessage] = user_prompt('hello')
+        async with model:
+            if reconnect != 'initial':
+                first = await model.request(user_prompt('first'), None, ModelRequestParameters())
+                messages = [*user_prompt('first'), first, *messages]
+                if reconnect == 'idle':
+                    socket.send_error = ConnectionClosedOK(None, None)
+                else:
+                    monkeypatch.setattr('pydantic_ai.models._openai_responses_websocket.RETIREMENT_AGE', 0)
+                sockets.pending.append(unopened)
+            sockets.connect_error = connect_error()
+            if stream or reconnect == 'idle':
+                events = text_events('from HTTP', 'resp_http')
+                body = ''.join(
+                    f'event: {event["type"]}\ndata: {FRAME_ADAPTER.dump_json(event).decode()}\n\n' for event in events
+                )
+                http.replies.append(
+                    httpx2.Response(200, content=body.encode(), headers={'content-type': 'text/event-stream'})
+                )
+            with pytest.warns(UnsupportedSettingWarning, match='using HTTP'):
+                if stream:
+                    async with model.request_stream(messages, None, ModelRequestParameters()) as streamed:
+                        async for _ in streamed:
+                            pass
+                    response = streamed.get()
+                else:
+                    response = await model.request(messages, None, ModelRequestParameters())
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter('always')
+                second = await model.request(user_prompt('again'), None, ModelRequestParameters())
+            assert sockets.connect_count == (1 if reconnect == 'initial' else 2)
+            assert second.text == 'from HTTP'
+            assert not caught
+        assert response.text == 'from HTTP'
+        assert response.history_digest is not None
+        assert 'transport' not in (response.provider_details or {})
+        assert sockets.opened == ([] if reconnect == 'initial' else [socket])
+        assert len(socket.sent) == (0 if reconnect == 'initial' else 1)
+        assert unopened.sent == []
+        assert len(http.requests) == 2
+        assert http.requests[0].method == 'POST'
+        assert http.requests[0].url.path == '/v1/responses'
+        assert http.bodies[0]['stream'] is (stream or reconnect == 'idle')
+        assert http.bodies[1]['stream'] is False
         if reconnect != 'initial':
-            first = await model.request(user_prompt('first'), None, ModelRequestParameters())
-            messages = [*user_prompt('first'), first, *messages]
-            if reconnect == 'idle':
-                socket.send_error = ConnectionClosedOK(None, None)
-            else:
-                monkeypatch.setattr('pydantic_ai.models._openai_responses_websocket.RETIREMENT_AGE', 0)
-            sockets.pending.append(unopened)
-        sockets.connect_error = connect_error()
-        if stream or reconnect == 'idle':
-            events = text_events('from HTTP', 'resp_http')
-            body = ''.join(
-                f'event: {event["type"]}\ndata: {FRAME_ADAPTER.dump_json(event).decode()}\n\n' for event in events
-            )
-            http.replies.append(
-                httpx2.Response(200, content=body.encode(), headers={'content-type': 'text/event-stream'})
-            )
-        with pytest.warns(UnsupportedSettingWarning, match='using HTTP'):
-            if stream:
-                async with model.request_stream(messages, None, ModelRequestParameters()) as streamed:
-                    async for _ in streamed:
-                        pass
-                response = streamed.get()
-            else:
-                response = await model.request(messages, None, ModelRequestParameters())
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter('always')
-            second = await model.request(user_prompt('again'), None, ModelRequestParameters())
-        assert sockets.connect_count == (1 if reconnect == 'initial' else 2)
-        assert second.text == 'from HTTP'
-        assert not caught
-    assert response.text == 'from HTTP'
-    assert response.history_digest is not None
-    assert 'transport' not in (response.provider_details or {})
-    assert sockets.opened == ([] if reconnect == 'initial' else [socket])
-    assert len(socket.sent) == (0 if reconnect == 'initial' else 1)
-    assert unopened.sent == []
-    assert len(http.requests) == 2
-    assert http.requests[0].method == 'POST'
-    assert http.requests[0].url.path == '/v1/responses'
-    assert http.bodies[0]['stream'] is (stream or reconnect == 'idle')
-    assert http.bodies[1]['stream'] is False
-    if reconnect != 'initial':
-        assert 'previous_response_id' not in http.bodies[0]
-        assert http.bodies[0]['input'] == [
-            {'role': 'user', 'content': 'first'},
-            {'role': 'assistant', 'content': 'ready'},
-            {'role': 'user', 'content': 'hello'},
-        ]
-    sockets.connect_error = None
-    async with model:
-        assert (await model.request(user_prompt('new scope'), None, ModelRequestParameters())).text == 'ready'
-    assert sockets.connect_count == (2 if reconnect == 'initial' else 3)
-    assert asyncio.all_tasks() == before
+            assert 'previous_response_id' not in http.bodies[0]
+            assert http.bodies[0]['input'] == [
+                {'role': 'user', 'content': 'first'},
+                {'role': 'assistant', 'content': 'ready'},
+                {'role': 'user', 'content': 'hello'},
+            ]
+        sockets.connect_error = None
+        async with model:
+            assert (await model.request(user_prompt('new scope'), None, ModelRequestParameters())).text == 'ready'
+        assert sockets.connect_count == (2 if reconnect == 'initial' else 3)
 
 
 @pytest.mark.parametrize('status_code', [200, 302, 401])
@@ -2953,15 +2954,31 @@ async def test_setup_that_can_never_use_a_socket_warns_and_uses_http(
     assert sockets.connect_count == 0
 
 
-@pytest.mark.parametrize('setup', OVERRIDABLE_NEVER_SOCKET_SETUPS)
+@pytest.mark.parametrize(
+    ('setup', 'api_key_only'),
+    [pytest.param(setup, False, id=setup) for setup in OVERRIDABLE_NEVER_SOCKET_SETUPS]
+    + [pytest.param('azure-client', True, id='azure-client-api-key-only')],
+)
 async def test_profile_flag_overrides_a_setup_that_can_never_use_a_socket(
-    allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses, setup: str
+    allow_model_requests: None,
+    sockets: SocketHarness,
+    http: HTTPResponses,
+    setup: str,
+    api_key_only: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     """`openai_responses_supports_websocket=True` in `profile=` wins over the Azure and gateway defaults."""
+    if api_key_only:
+        # Exercise the API-key-only handshake even with SDKs that also send Bearer authentication.
+        auth_headers: dict[str, str] = {}
+        monkeypatch.setattr(AsyncAzureOpenAI, 'auth_headers', property(lambda _: auth_headers))
     model = never_socket_model(setup, http.client, WEBSOCKET_PROFILE)
     assert (await Agent(model).run('hello')).output == 'ready'
     assert sockets.connect_count == 1
     assert http.requests == []
+    if api_key_only:
+        assert sockets.authorization_headers == []
+        assert 'api-key' not in sockets.headers[0]
 
 
 async def test_azure_named_provider_can_advertise_socket_support(

@@ -311,9 +311,8 @@ installation, use `gh extension upgrade gh-aw --force`.
 The protected-capture runtime rejects workflows with `evals`, whose secondary engine invocation
 reads `evals.log`. Omit `evals` when using this engine.
 
-The workflow summary is the canonical success/failure report. Categorical summary labels
-for specific MCP failures and maximum-turn outcomes are removed; MCP startup and
-request-limit errors retain their CLAI 2 diagnostics and nonzero exit status.
+The workflow summary is the canonical success/failure report. MCP startup and
+request-limit errors keep their CLAI 2 diagnostics and nonzero exit status.
 
 ## Pointing the engine at your own endpoint
 

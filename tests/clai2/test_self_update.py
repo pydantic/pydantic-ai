@@ -30,6 +30,7 @@ from pydantic_clai2.cli import cli as cli_module, self_update
 from pydantic_clai2.cli.cli import relaunch_argv
 from pydantic_clai2.cli.self_update import (
     BLEEDING_URL,
+    CHECK_MAX_AGE,
     PACKAGES,
     PYPI_URL,
     Installed,
@@ -61,7 +62,7 @@ from pydantic_clai2.runtime import session_runtime
 from pydantic_clai2.ui.menus import dialogs, update_menu as update_menu_module
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.set_menu import SettingsSource
-from pydantic_clai2.ui.menus.update_menu import VERSION, AboutSource, update_menu
+from pydantic_clai2.ui.menus.update_menu import ABOUT_MAX_AGE, VERSION, AboutSource, update_menu
 from tests.clai2.dialog_script import Back, Confirm, ScriptedDialogs
 from tests.clai2.menu_script import Script, make_context, pick
 from tests.clai2.test_app_edges import inputs
@@ -897,11 +898,11 @@ def test_the_about_menu_says_whether_a_newer_clai_is_out(tmp_path: Path, monkeyp
         raise httpx.ConnectError('offline')
 
     newest, _ = _updates(['stable'], current=Installed(version='0.53.0', tool=True))
-    assert note(newest) == 'clai2 is already on the latest version 0.53.0 on the stable channel.'
+    assert note(newest) == 'clai2 is already on the latest version 0.53.0 on the stable channel (checked just now).'
     newer, _ = _updates(['main'])
-    assert note(newer) == 'a new version 9e08a34ee of clai2 is available on the main channel.'
+    assert note(newer) == 'a new version 9e08a34ee of clai2 is available on the main channel (checked just now).'
     source, _ = _updates(['stable'], current=Installed(version='0.52.0'))
-    assert note(source) == 'a new version 0.53.0 of clai2 is available on the stable channel.'
+    assert note(source) == 'a new version 0.53.0 of clai2 is available on the stable channel (checked just now).'
     assert source.segment() == '', 'the footer still checks only `uv tool` installs'
     failing, _ = _updates(['stable'], fetch=offline)
     assert note(failing) == 'Could not check for a newer CLAI: offline'
@@ -913,7 +914,45 @@ def test_the_about_menu_says_whether_a_newer_clai_is_out(tmp_path: Path, monkeyp
     assert note(pending) == 'Checking for a newer CLAI…'
     assert note(pending) == 'Checking for a newer CLAI…' and len(checks) == 1, 'one check per channel'
     checks[0]()
-    assert note(pending) == 'a new version 0.53.0 of clai2 is available on the stable channel.'
+    assert note(pending) == 'a new version 0.53.0 of clai2 is available on the stable channel (checked just now).'
+
+
+def test_a_stale_check_runs_again_and_the_about_note_says_when_it_ran(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(update_menu_module, 'CHECK_WAIT', 0.0)
+    context, _ = make_context(tmp_path)
+    now = [0.0]
+    builds = ['0.53.0']
+    checks: list[Callable[[], None]] = []
+    updates = Updates(
+        channel=lambda: 'stable',
+        current=Installed(version='0.53.0', tool=True),
+        fetch=lambda channel: builds[-1],
+        spawn=checks.append,
+        clock=lambda: now[0],
+    )
+
+    def note() -> str:
+        return AboutSource(context, updates).status()
+
+    updates.check()
+    checks.pop()()
+    now[0] = 170.0
+    assert note() == 'clai2 is already on the latest version 0.53.0 on the stable channel (checked 2 min ago).'
+    assert not checks, 'a recent answer is not checked again'
+    builds.append('0.54.0')
+    now[0] = ABOUT_MAX_AGE + 1
+    assert note() == 'clai2 is already on the latest version 0.53.0 on the stable channel (checked 5 min ago).'
+    assert updates.segment() == '' and len(checks) == 1, 'About checks again; the footer keeps the old answer meanwhile'
+    checks.pop()()
+    assert note() == 'a new version 0.54.0 of clai2 is available on the stable channel (checked just now).'
+    now[0] += 2 * ABOUT_MAX_AGE
+    assert updates.segment() == 'update 0.54.0: /update' and not checks, 'the footer checks again only after an hour'
+    now[0] += CHECK_MAX_AGE
+    assert updates.segment() == 'update 0.54.0: /update' and len(checks) == 1, 'the old answer stays while it re-checks'
+    assert note() == 'a new version 0.54.0 of clai2 is available on the stable channel (checked 1 h ago).'
+    assert len(checks) == 1, 'one check at a time'
 
 
 def test_check_waits_for_the_answer_until_its_deadline() -> None:

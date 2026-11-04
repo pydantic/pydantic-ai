@@ -250,6 +250,48 @@ _CACHE_SETTINGS_KEYS = (
 )
 
 
+def _move_trailing_cache_control(openai_messages: list[chat.ChatCompletionMessageParam]) -> None:
+    """Keep only the last conversation breakpoint, and move it off the end of the request and off tool results.
+
+    Runs for profiles without `openrouter_supports_trailing_cache_control` (Gemini routes), where OpenRouter uses only the
+    last breakpoint across message content. A breakpoint on the final content part of the request makes OpenRouter's
+    Google Vertex endpoint bill the prompt twice, and one on a tool message isn't used, so the breakpoint goes on the
+    last part of the closest earlier user or assistant message. A breakpoint inside the final user message, with
+    content after it, stays where it is. System message breakpoints aren't touched.
+    """
+    carriers: list[tuple[int, int, dict[str, Any]]] = [
+        (message_index, part_index, part)
+        for message_index, message in enumerate(openai_messages)
+        if message['role'] not in ('system', 'developer') and isinstance(content := message.get('content'), list)
+        for part_index, part in enumerate(cast(list[dict[str, Any]], content))
+        if 'cache_control' in part
+    ]
+    if not carriers:
+        return
+    message_index, part_index, last_carrier = carriers[-1]
+    cache_control = last_carrier['cache_control']
+    for _, _, part in carriers:
+        del part['cache_control']
+
+    message = openai_messages[message_index]
+    is_request_end = (
+        message_index == len(openai_messages) - 1 and part_index == len(cast(list[Any], message.get('content'))) - 1
+    )
+    if message['role'] != 'tool' and not is_request_end:
+        last_carrier['cache_control'] = cache_control
+        return
+    for earlier in reversed(openai_messages[:message_index]):
+        content = earlier.get('content')
+        if earlier['role'] in ('user', 'assistant') and content:
+            if isinstance(content, str):
+                cast(dict[str, Any], earlier)['content'] = [
+                    {'type': 'text', 'text': content, 'cache_control': cache_control}
+                ]
+            else:
+                cast(list[dict[str, Any]], content)[-1]['cache_control'] = cache_control
+            return
+
+
 def _chat_message_block_count(message: chat.ChatCompletionMessageParam) -> int:
     """How many content blocks a mapped chat message becomes downstream: its content parts plus its tool calls."""
     content = message.get('content')
@@ -379,7 +421,7 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     openrouter_cache_messages: OpenRouterCacheTTL
     """Convenience setting to enable caching for the last message in the conversation.
 
-    When enabled, this automatically adds `cache_control` to the last content block
+    On Anthropic routes, this adds `cache_control` to the last content block
     in the final message (regardless of role), which is useful for Anthropic's prefix-based
     caching in multi-turn conversations. In tool-use flows, this may target a tool result
     message rather than a user message, which is correct for prefix caching.
@@ -387,10 +429,10 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
     TTL is only included for Anthropic models; Gemini does not support explicit TTL.
 
-    Note: OpenRouter uses only the last breakpoint across normal message content for
-    Gemini caching. Use this when caching the final message boundary is intentional;
-    use `openrouter_cache_instructions` for stable system context. Anthropic supports
-    prefix-based caching across multi-turn conversations with this setting.
+    On Gemini routes, OpenRouter uses only the last breakpoint across normal message
+    content, and it goes on the closest user or assistant message
+    before the final one: a breakpoint at the very end of the request makes OpenRouter's
+    Google Vertex endpoint bill the prompt twice, and one on a tool result isn't used.
 
     See https://openrouter.ai/docs/guides/best-practices/prompt-caching for more information.
     """
@@ -878,11 +920,14 @@ class OpenRouterModel(OpenAIChatModel):
         if max_points is None:
             return
 
+        # The leading system messages carry the instruction points. A later one is a mid-conversation system message,
+        # whose breakpoint is a message point like any other.
+        system_prefix_count = _system_prefix_count(openai_messages)
         reserved, optional_points = split_instruction_cache_points(
             [
                 cast('dict[str, Any]', part)
-                for msg in openai_messages
-                if msg.get('role') in ('system', 'developer') and isinstance(content := msg.get('content'), list)
+                for msg in openai_messages[:system_prefix_count]
+                if isinstance(content := msg.get('content'), list)
                 for part in content
                 if 'cache_control' in cast('dict[str, Any]', part)
             ]
@@ -891,8 +936,8 @@ class OpenRouterModel(OpenAIChatModel):
 
         message_parts = (
             cast('dict[str, Any]', part)
-            for msg in reversed(openai_messages)
-            if msg.get('role') not in ('system', 'developer') and isinstance(content := msg.get('content'), list)
+            for msg in reversed(openai_messages[system_prefix_count:])
+            if isinstance(content := msg.get('content'), list)
             for part in reversed(content)
         )
         for part_dict in excess_cache_points(
@@ -913,8 +958,8 @@ class OpenRouterModel(OpenAIChatModel):
         Anthropic rejects a request where a one-hour breakpoint comes after a five-minute one, processing `tools`, then
         `system`, then `messages` (https://platform.claude.com/docs/en/build-with-claude/prompt-caching), and OpenRouter
         passes that error through. Walking the tools and then the messages matches that order: the only `system`
-        messages are the leading ones that become Anthropic's `system`, since a mid-conversation system prompt is sent
-        as a `<system>`-wrapped user message (`supports_inline_system_prompts=False`).
+        messages are the leading ones that become Anthropic's `system`, and the mid-conversation ones that stay in
+        `messages` as native entries where they are.
         """
         if not self._resolved_profile.get('openrouter_supports_cache_ttl', False):
             return
@@ -1023,10 +1068,9 @@ class OpenRouterModel(OpenAIChatModel):
     ) -> None:
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters)
         if not instruction_parts:
-            for msg in reversed(openai_messages):
-                if msg.get('role') in ('system', 'developer'):
-                    self._add_cache_control_to_message(msg, ttl)
-                    break
+            # The leading system messages only: a later one is a mid-conversation system message, not the system prompt.
+            if system_prefix_count := _system_prefix_count(openai_messages):
+                self._add_cache_control_to_message(openai_messages[system_prefix_count - 1], ttl)
             return
 
         instruction_role = self._resolved_profile.get('openai_system_prompt_role', None) or 'system'
@@ -1281,6 +1325,10 @@ class OpenRouterModel(OpenAIChatModel):
         model_settings: ModelSettings | None = None,
     ) -> list[chat.ChatCompletionMessageParam]:
         mapped = await super()._map_messages(messages, model_request_parameters, model_settings=model_settings)
+        if self._resolved_profile.get('supports_inline_system_prompts', False) and self._resolved_profile.get(
+            'openrouter_system_messages_precede_generation', False
+        ):
+            _place_system_messages_before_generation(mapped)
         # A `configuration_update` message has no content to carry a breakpoint, and an empty text block with one is
         # rejected, so breakpoints are placed as if it weren't there and it goes back in its place afterwards.
         updates = [(index, message) for index, message in enumerate(mapped) if 'configuration_update' in message]
@@ -1305,7 +1353,7 @@ class OpenRouterModel(OpenAIChatModel):
             # A request-scoped prompt ends the request as its own user message (see `_request_scoped_tail_texts`),
             # and the next request won't send it, so the breakpoint goes on the message before it.
             end, _ = _request_scoped_suffix_start(
-                openai_messages, _request_scoped_tail_texts(messages), _user_message_text
+                openai_messages, _request_scoped_tail_texts(messages), _request_scoped_message_text
             )
             if end:
                 self._add_cache_control_to_message(openai_messages[end - 1], cache_messages)
@@ -1318,6 +1366,9 @@ class OpenRouterModel(OpenAIChatModel):
             self._add_cache_control_to_instructions(
                 openai_messages, messages, model_request_parameters, cache_instructions
             )
+
+        if not self._resolved_profile.get('openrouter_supports_trailing_cache_control', True):
+            _move_trailing_cache_control(openai_messages)
 
         has_tool_cache_point = bool(
             model_settings
@@ -1629,7 +1680,41 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
         return _CHAT_FINISH_REASON_MAP.get(key)
 
 
-def _user_message_text(message: chat.ChatCompletionMessageParam) -> str | None:
-    """A user message's text content, which is how a request-scoped prompt renders."""
+def _request_scoped_message_text(message: chat.ChatCompletionMessageParam) -> str | None:
+    """A user or system message's text content, which is how a request-scoped prompt renders.
+
+    It's a `system` message on a route that takes one mid-conversation, and a `<system>`-tagged user message elsewhere.
+    """
     content = message.get('content')
-    return content if message['role'] == 'user' and isinstance(content, str) else None
+    return content if message['role'] in ('user', 'system') and isinstance(content, str) else None
+
+
+def _system_prefix_count(messages: Sequence[chat.ChatCompletionMessageParam]) -> int:
+    """How many `system` and `developer` messages lead the request: the system prompt and instructions."""
+    return next(
+        (index for index, message in enumerate(messages) if message['role'] not in ('system', 'developer')),
+        len(messages),
+    )
+
+
+def _place_system_messages_before_generation(messages: list[chat.ChatCompletionMessageParam]) -> None:
+    """Move each mid-conversation `system` message past the user and tool messages that follow it.
+
+    On a route with `openrouter_system_messages_precede_generation`, OpenRouter keeps a `system` message only right
+    before an assistant turn or at the end of the request, and turns one anywhere else into user text. An instruction
+    governs the generation that follows it, which is the same one either way, so moving it costs nothing and keeps its
+    authority. Only user and tool messages are hopped over, so a later instruction never overtakes an earlier one. The
+    content-less `configuration_update` message is hopped over too, since it doesn't have to follow these rules. The
+    leading system messages are the system prompt and stay where they are. See
+    `place_system_messages_before_generation` for `AnthropicModel`'s counterpart.
+    """
+    for index in range(len(messages) - 1, _system_prefix_count(messages) - 1, -1):
+        if messages[index]['role'] != 'system' or 'configuration_update' in messages[index]:
+            continue
+        target = index + 1
+        while target < len(messages) and (
+            messages[target]['role'] in ('user', 'tool') or 'configuration_update' in messages[target]
+        ):
+            target += 1
+        if target > index + 1:
+            messages.insert(target - 1, messages.pop(index))
