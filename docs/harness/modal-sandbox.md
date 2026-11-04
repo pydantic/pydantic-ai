@@ -148,6 +148,8 @@ agent = Agent('{{ anthropic:large }}', deps_type=User, capabilities=[UsersModal(
 
 Building a Modal client opens a connection, so build it ahead of the run rather than in `get_workspace`, which must not do I/O. Under [Temporal](../durable_execution/temporal.md), `deps` are serialized for every activity, so a client can't be on them: put a user ID there instead, and have `get_workspace` look that user's client up on the worker.
 
+Destroy a user's sandbox with that user's client, as in `await ModalSandbox(client=user.modal_client).destroy(ref)`. A client for another account may not find the sandbox, and a sandbox that isn't found returns quietly, so it would keep running and billing with no error.
+
 ## Prepare a sandbox before the run
 
 To seed files or install packages before the agent starts, create the backend yourself, work in it through `Workspace`, and pass it to the run:
@@ -198,7 +200,7 @@ async def terminate_sandbox(ref: WorkspaceRef) -> None:
     await ModalSandbox().destroy(ref)
 ```
 
-`ModalSandbox().backend(ref)` constructs a backend for an existing ref without I/O. `destroy(ref)` uses the sandbox ID directly; it does not resume an expired sandbox or run its tools, and a sandbox that no longer exists returns quietly. A sandbox whose image command ignores Modal's stop signal (a bare `python` image, for example) can keep running for about 30 seconds after `destroy` returns. Only destroy sandboxes you own.
+`ModalSandbox().backend(ref)` constructs a backend for an existing ref without I/O. `destroy(ref)` uses the sandbox ID directly, with the instance's `client`; it does not resume an expired sandbox or run its tools, and a sandbox that no longer exists returns quietly. A sandbox whose image command ignores Modal's stop signal (a bare `python` image, for example) can keep running for about 30 seconds after `destroy` returns. Only destroy sandboxes you own.
 
 A sandbox you don't terminate ends when its `sandbox_timeout` runs out, or after `idle_timeout` seconds without activity if you set one. See [Modal's timeouts](https://modal.com/docs/guide/sandbox#timeouts).
 
