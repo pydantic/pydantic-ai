@@ -3124,9 +3124,10 @@ def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: Tool
     """
     try:
         schema_transformer = transformer(tool_def.parameters_json_schema, strict=tool_def.strict)
+        # Walking can also raise, e.g. for a malformed node only reachable through a `$ref`.
+        parameters_json_schema = schema_transformer.walk()
     except UserError as e:
         raise UserError(f'Tool {tool_def.name!r}: {e}') from None
-    parameters_json_schema = schema_transformer.walk()
     return replace(
         tool_def,
         parameters_json_schema=parameters_json_schema,

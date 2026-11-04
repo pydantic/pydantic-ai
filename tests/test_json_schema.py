@@ -865,8 +865,26 @@ def test_inline_defs_recursive_ref_root_key_collides_with_a_def():
     assert result['$defs']['Node']['properties']['child'] == {'$ref': '#/$defs/Node'}
 
 
-def test_agent_run_rejects_a_tool_schema_that_is_not_a_json_schema():
+@pytest.mark.parametrize(
+    'json_schema, location',
+    [
+        pytest.param({'type': 'object', 'properties': {'x': 'string'}}, 'properties.x', id='direct'),
+        pytest.param(
+            {
+                'type': 'object',
+                'properties': {'a': {'$ref': '#/definitions/A'}},
+                'definitions': {'A': {'type': 'object', 'properties': {'x': 'string'}}},
+            },
+            'definitions.A.properties.x',
+            id='through-ref',
+        ),
+    ],
+)
+def test_agent_run_rejects_a_tool_schema_that_is_not_a_json_schema(json_schema: dict[str, Any], location: str):
     """A malformed hand-written tool schema fails the run with a `UserError` before any request is made.
+
+    A node only reachable through a `$ref` (draft-07 `definitions`) is found while walking, not up front, and
+    still gets the tool name.
 
     The error names the tool, which is known at the `prepare_request` call site but not to the transformer.
     Provider-agnostic: `FunctionModel` with a profile that installs the inlining transformer stands in for
@@ -885,7 +903,7 @@ def test_agent_run_rejects_a_tool_schema_that_is_not_a_json_schema():
         lookup,
         name='lookup',
         description='A tool whose schema puts the type name where a subschema belongs.',
-        json_schema={'type': 'object', 'properties': {'x': 'string'}},
+        json_schema=json_schema,
     )
     agent = Agent(model, tools=[tool])
 
@@ -893,7 +911,7 @@ def test_agent_run_rejects_a_tool_schema_that_is_not_a_json_schema():
         agent.run_sync('hi')
 
     assert str(exc_info.value) == (
-        "Tool 'lookup': Invalid JSON Schema at `properties.x`: a schema must be an object or a boolean, got 'string'"
+        f"Tool 'lookup': Invalid JSON Schema at `{location}`: a schema must be an object or a boolean, got 'string'"
     )
 
 
