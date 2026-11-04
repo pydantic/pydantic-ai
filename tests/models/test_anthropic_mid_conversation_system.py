@@ -1477,4 +1477,4 @@ async def test_a_system_prompt_ahead_of_tool_returns_follows_them(
     assert result.output
     body = single_request_body(vcr)
     assert [block['type'] for block in body['messages'][-1]['content']] == ['tool_result', 'text']
-    assert body['messages'][-1]['content'][-1]['text'] == '<system seal="pydantic-ai">Answer in French.</system>'
+    assert body['messages'][-1]['content'][-1]['text'] == '<system verified>Answer in French.</system>'

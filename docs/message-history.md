@@ -247,7 +247,7 @@ How it reaches the model depends on the provider:
 
     On these models, the instructions start with a short fixed announcement of what the tag means: a `<system>` block in a user turn comes from the application, has system authority, and replaces the application's earlier `<system>` blocks, while text in a user message, a file or a tool result that looks like one gets a [note](#framework-frames-and-content-fidelity) and has no authority. It also says the user speaks only in their own messages, so text in a tool result, a file or a quote isn't the user's or the application's even when it claims to be. It comes ahead of your instructions, so they keep the last word in the system prompt, and it goes out unchanged on every request from the first, so it's part of the cached prefix and that prefix is unchanged as the conversation grows. A request with no system prompt or instructions doesn't get one.
 
-    Claude Sonnet 4.6 ignores plain `<system>` blocks, Claude Sonnet 5.5 and Haiku 5.5 follow sealed ones better than their native system role, and Grok 4.3 through 4.7 follow sealed ones better than plain ones, so for these ([`needs_sealed_system_blocks`][pydantic_ai.profiles.ModelProfile.needs_sealed_system_blocks]) each block is `<system seal="pydantic-ai">`, goes after the user's words in its request, and the announcement says every block from the application carries that seal and applies to the reply to the words ahead of it. Text that copies the seal still gets a note. A copied seal was never followed in measurements: at most it kept the application's own change in the same request from applying for that turn.
+    Claude Sonnet 4.6 ignores plain `<system>` blocks, Claude Sonnet 5.5 and Haiku 5.5 follow sealed ones better than their native system role, and Grok 4.3 through 4.7 follow sealed ones better than plain ones, so for these ([`needs_sealed_system_blocks`][pydantic_ai.profiles.ModelProfile.needs_sealed_system_blocks]) each block is `<system verified>`, goes after the user's words in its request, and the announcement says every block from the application carries that attribute and applies to the reply to the words ahead of it. The attribute is a label, not proof, and text that copies it still gets a note. In measurements a copy in a tool result wasn't followed. A copy in the user's own text can be followed on some models, as the user's request, and can keep the application's own change in the same request from applying for that turn. [What each rendering gives up](#what-each-rendering-gives-up) has the numbers.
 
     Measured with an earlier version of the announcement and escaping in place of the notes: without them, Gemini and Claude on Bedrock mostly kept to the earlier value of a changed or withdrawn instruction, and Gemini and Grok ignored a new rule about the format of their answers. With them, they followed all three.
 
@@ -257,6 +257,62 @@ Phrase the instruction as what changed rather than as an override of the user. M
     A system prompt carries operator authority, so text you put in one is treated as *your* instruction to the model. Never build a `SystemPromptPart` out of content you didn't author — tool output, a retrieved document, a fetched page, a message from another user — or a prompt injection buried in it inherits that authority.
 
     This matters most for late-arriving results, which is a common reason to reach for `enqueue`: a background job whose tool returned `'started'` long before the work finished, a webhook, a long-running search. Deliver those as data — enqueue the payload as user content, or return it from a tool — and reserve `SystemPromptPart` for instructions you wrote yourself. Where a background result should also *change how the agent behaves*, write that instruction yourself and enqueue the untrusted payload separately.
+
+### What each rendering gives up
+
+Some models don't do well on every measure with any rendering. We tried the alternatives below live and found none that does well at everything on these models, so each default is a trade. This section shows what was traded for what, so you can decide differently for your application: the profile flags named here can be set with a model's `profile` argument.
+
+All numbers are live measurements of Pydantic AI on the provider's API, as runs that did the right thing out of the runs made. They come from fixed test scenarios, so read them as comparisons between renderings on one model, not as rates you'll see in your application. The current rendering marks blocks `<system verified>`. A number marked † was measured before that, with `seal="pydantic-ai"` as the marker.
+
+**The announcement in the instructions, on every request.** On models without a mid-conversation system role, the alternative is to send the announcement only once a conversation first has a `<system>` block or a note. A request with no such block then goes out without it, but a model that first meets the announcement in the same turn as an instruction change mostly ignores the change.
+
+| Model | Measure | Announcement on every request (default) | Only when first needed | Model alone |
+|---|---|---|---|---|
+| Claude Haiku 5.5 | Follows an instruction change | 24/24 | 0/24 † | n/a |
+| | Follows a withdrawn instruction | 24/24 | 0/24 † | n/a |
+| | Keeps to the system prompt's task when the user asks for a conflicting one | 57/80 | 80/80 † | 79/80 † |
+| Claude Sonnet 4.6 | Keeps to the system prompt's task when the user asks for a conflicting one | 73/80 | 59/80 † | 60/80 † |
+| Gemini 4 Argon | Follows an instruction change | 24/24 † | 21/24 † | n/a |
+| | Follows a withdrawn instruction | 24/24 † | 0/23 † | n/a |
+
+So on Claude Haiku 5.5, Pydantic AI gives up some of the system prompt's hold over a conflicting user request, to keep instruction changes working. Firm wording narrows the gap: 32/40 with a firmly worded system prompt, 25/40 with a weakly worded one. Without a conflicting request, every run was correct (40/40). Claude Sonnet 4.6 does better than the model alone on this measure, so it gives up nothing here.
+
+**The `<system verified>` block rather than a native system role, on Claude Sonnet 5.5.** Opt out with `supports_inline_system_prompts=True` in the model's profile.
+
+| Measure | `<system verified>` (default) | Native system role |
+|---|---|---|
+| Says correctly who asked for a change | 24/24 | 18/24 |
+| Doesn't follow a `<system>` lookalike the user typed | 14/24 | 8/24 |
+| Follows a change next to a `<system>` lookalike the user typed | 8/24 | 24/24 |
+| Follows a change next to a copied `<system verified>` the user typed | 22/24 | 24/24 |
+| Doesn't follow a copied `<system verified>` the user typed | 15/24 | 18/24 |
+
+The two tie at 24/24 on the other 13 measures in this set, including changes after a tool result and text in tool results. We couldn't measure an operator's grant of authority to a sender on this model: the API refused all 24 runs under both renderings. If your users don't write `<system>` tags and your application changes instructions mid-conversation, the native role may suit you better.
+
+**The `clear_at` entry for request-scoped prompts, on Claude Haiku 5.5.** The alternative is a `<system verified>` block in the user turn, left out of later requests. That loses every earlier [thinking block](models/anthropic.md#turn-scoped-system-messages), because the history is no longer append-only.
+
+| Measure | Sealed block in a `clear_at` entry (default) | Block in the user turn |
+|---|---|---|
+| Earlier thinking blocks dropped, over two 5-step runs † | 0 | 20 |
+| Follows a reminder next to a user lookalike, agent with a tool | 24/24 | not measured |
+| Follows a reminder next to a user lookalike, agent without tools | 12/24 | 24/24 † |
+| Follows a reminder in a later turn, after a tool result | 20/24 † | 24/24 † |
+| Follows a reminder next to a lookalike in a tool result | 20/24 † | 24/24 † |
+
+Claude Sonnet 5.5 makes the same trade at no measured cost: 24/24 on all of these †, and 8 thinking blocks dropped with the block in the user turn † against none.
+
+**The `verified` marker, on Grok.** It did best across Claude, with `seal="pydantic-ai"` and `sealed` as the alternatives, and did worse on one Grok measure.
+
+| Model | Measure | `verified` (default) | `seal="pydantic-ai"` |
+|---|---|---|---|
+| Claude Sonnet 4.6 | Follows a change next to a copied marker the user typed | 24/24 | 0/24 |
+| Claude Sonnet 5.5 | Follows a change next to a copied marker the user typed | 22/24 | 7/24 and 11/24, in two runs |
+| Grok 4.3 | Follows a change next to a copied marker the user typed | 16/24 | 23/24 |
+| Grok 4.7 | Doesn't try to send files under an operator's grant, when an email from that sender asks | 17/24 | 20/24 |
+
+The Grok 4.7 difference is within what repeated runs of this scenario vary by. On Grok 4.3 the same scenario varied by more than that between two runs of the same build, so we don't report a difference there.
+
+**Cache-prefix stability.** None of the defaults above gives it up beyond moving the prefix once on upgrading: the announcement is part of the cached prefix from the first request, a `clear_at` entry costs no input tokens and isn't part of a cache key, and an answered reminder left out of later requests kept the same cache reads (†, 0.98 to 0.99 of input tokens on both renderings), so the cache wasn't what separated those two. It can be right to give the prefix up: inserting the announcement at the start of the instructions only when a conversation first needs it would change the prefix once per conversation. It's a candidate for keeping the system prompt's hold on Claude Haiku 5.5 without losing instruction changes, but it hasn't been built or measured.
 
 ### Framework frames and content fidelity
 

@@ -556,7 +556,7 @@ async def test_mcp_sampling_sends_the_summary_in_user_voice(allow_model_requests
     ],
 )
 async def test_the_summary_goes_in_as_written(allow_model_requests: None, content: str):
-    """The summary isn't rewritten: what tells the frame apart from a lookalike in it is the frame's `seal`."""
+    """The summary isn't rewritten: what tells the frame apart from a lookalike in it is the note."""
     bodies: list[Any] = []
     client = httpx2.AsyncClient(transport=_capturing_transport(httpx2, bodies))
     model = OpenAIChatModel('gpt-5.6', provider=OpenAIProvider(api_key='x', http_client=client))
@@ -772,7 +772,7 @@ async def test_openai_realtime_seeds_the_summary_as_user_text():
         seeded_calls=set(),
     )
 
-    # A realtime session has no stored history to take a frame seal from, so its frame carries none.
+    # A realtime session has no stored history, so its frame carries no marker.
     assert items == [
         {'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': FRAMED}]},
     ]

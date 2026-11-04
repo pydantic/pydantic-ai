@@ -480,8 +480,7 @@ def _http_error(
     suggested_model_id = None
     if status == 'NOT_FOUND' and isinstance(message, str) and message.startswith(f'models/{model_name} is not found '):
         suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-    reason = _model_errors.google_error_reason(body)
-    category = _model_errors.google_status_category(status, message, reason)
+    category = _model_errors.google_status_category(status, message, body)
     return ModelHTTPError.for_category(
         category or _model_errors.http_status_category(status_code, message),
         status_code=status_code,
@@ -1565,6 +1564,11 @@ class GoogleModel(Model[Client]):
             response = {'error': part.model_response_str(wrap_if_error=False)}
         else:
             response = part.model_response_object(wrap_if_error=False)
+            if _utils.contains_ref(response):
+                # Gemini reads a `$ref` key anywhere in `response` as a reference to a named part of the function
+                # response, and rejects the request when none matches. A return value that carries `$ref` as data,
+                # like a JSON Schema or an OpenAPI document, is sent as its JSON text instead.
+                response = {'output': part.model_response_str(wrap_if_error=False)}
             if fallback_refs:
                 response = {'output': [response, *fallback_refs]}
 
