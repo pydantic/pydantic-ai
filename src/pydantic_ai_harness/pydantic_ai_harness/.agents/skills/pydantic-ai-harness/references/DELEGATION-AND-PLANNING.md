@@ -210,7 +210,8 @@ orchestrator = Agent(
 - `dynamic_agents=DynamicAgents(models=['fast'])` adds `create_agent`, with a vetoable
   `AgentCreatedEvent`; works with or without task control.
 - One `SubAgents` per agent may set `task_control` (or `dynamic_agents`). `task_control`, and `dynamic_agents`
-  within a bound `DelegationTasks` owner, raise `UserError` under a durability capability; don't use it with the deprecated wrapper agents (`TemporalAgent`, ...) either.
+  within a bound `DelegationTasks` owner, raise `UserError` under a durability capability; don't use either
+  with the deprecated wrapper agents (`TemporalAgent`, ...).
   Under durability, `dynamic_agents` runs each delegation other than to `self` in a durable unit of its own.
 
 ## DelegationReports
