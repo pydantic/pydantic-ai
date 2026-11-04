@@ -11,6 +11,7 @@ from pydantic import TypeAdapter, ValidationError
 from pydantic_core import ErrorDetails
 
 from pydantic_ai import ModelRetry, ToolFailed
+from pydantic_ai._json_schema import InlinedSchemaTooLargeError
 from pydantic_ai._model_errors import transport_phase
 from pydantic_ai._output import build_retried_tool_return
 from pydantic_ai.exceptions import (
@@ -252,6 +253,10 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         ),
         (lambda: IncompleteToolCall('incomplete'), {'message': 'incomplete', 'body': None}),
         (lambda: OutputTokenLimitExceeded('cut off'), {'message': 'cut off', 'body': None}),
+        (
+            lambda: InlinedSchemaTooLargeError("The JSON schema of tool 'x'", 'Leave it out.'),
+            {'subject': "The JSON schema of tool 'x'", 'remedy': 'Leave it out.'},
+        ),
     ],
     ids=[
         'ModelRetry',
@@ -281,6 +286,7 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         'ModelHTTPError-ModelNotFoundError-with-model-suggestion',
         'IncompleteToolCall',
         'OutputTokenLimitExceeded',
+        'InlinedSchemaTooLargeError',
     ],
 )
 def test_exceptions_pickle_round_trip(exc_factory: Callable[[], Exception], check_attrs: dict[str, Any]):
