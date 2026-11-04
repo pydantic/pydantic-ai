@@ -3758,8 +3758,10 @@ class TestFitTranscript:
         trimmed = _fit_transcript(entries, 200)
 
         assert trimmed is not None
-        # The newest entry is what the trim keeps, so what goes is the head of the older one.
-        assert 'y' * 402 in trimmed.text
+        # One token over is still over, and the newest entry is what the trim keeps: the older one
+        # goes whole rather than being cut into its tag.
+        assert trimmed.dropped_entries == 1
+        assert trimmed.text == 'y' * 402
 
     def test_drops_tool_output_bodies_first_and_keeps_their_tag(self):
         entries: list[tuple[Any, str]] = [
@@ -3800,18 +3802,47 @@ class TestFitTranscript:
         assert trimmed.text == '<message role="user">\nnewest\n</message>'
 
     def test_a_single_entry_too_large_on_its_own_keeps_its_tail(self):
-        trimmed = _fit_transcript([('user', 'x' * 4_000 + '\nnewest tail')], 40)
+        entry = '<message role="user">\n' + 'x' * 4_000 + '\nnewest tail\n</message>'
+        trimmed = _fit_transcript([('user', entry)], 40)
 
         assert trimmed is not None
         assert trimmed.dropped_entries == 0
-        assert trimmed.text.startswith(_OMITTED_TRANSCRIPT_HEAD)
-        assert trimmed.text.endswith('newest tail')
+        assert trimmed.text.startswith(f'<message role="user">\n{_OMITTED_TRANSCRIPT_HEAD}')
+        assert trimmed.text.endswith('newest tail\n</message>')
 
-    def test_a_budget_too_small_for_the_marker_leaves_the_marker(self):
-        trimmed = _fit_transcript([('user', 'x' * 400)], 1)
+    def test_a_last_harness_data_entry_keeps_its_origin_when_only_its_body_is_cut(self):
+        # The tail of the newest entry is what has to survive, but not at the cost of the opener that
+        # says where it came from: `<harness_data origin=...>` is what `_HARNESS_DATA_INSTRUCTION`
+        # points at to tell the summarizer this is tool data rather than something a user asked for,
+        # so a body cut out of its wrapper would read as a plain instruction.
+        entries: list[tuple[Any, str]] = [
+            ('user', '<message role="user">\ncheck the deploy\n</message>'),
+            ('harness_data', '<harness_data origin="background_tool">\n' + 'log line\n' * 2_000 + '</harness_data>'),
+        ]
+        trimmed = _fit_transcript(entries, 100)
 
         assert trimmed is not None
-        assert trimmed.text == f'{_OMITTED_TRANSCRIPT_HEAD}\n'
+        assert trimmed.dropped_entries == 1
+        assert trimmed.text.startswith('<harness_data origin="background_tool">\n')
+        assert trimmed.text.endswith('line\n</harness_data>')
+        assert trimmed.text.count('<harness_data') == 1
+
+    def test_a_tool_return_entry_too_large_on_its_own_keeps_its_role(self):
+        entry = '<message role="tool_return" name="read_file">\n' + 'r' * 4_000 + '\n</message>'
+        trimmed = _fit_transcript([('tool_return', entry)], 40)
+
+        assert trimmed is not None
+        # Its body goes first, and what is left still says a `read_file` call returned something.
+        assert trimmed.dropped_tool_results == 1
+        assert trimmed.text.startswith('<message role="tool_return" name="read_file">\n')
+        assert trimmed.text.endswith('\n</message>')
+
+    def test_a_budget_too_small_for_the_marker_keeps_the_tags_around_it(self):
+        entry = '<message role="user">\n' + 'x' * 400 + '\n</message>'
+        trimmed = _fit_transcript([('user', entry)], 1)
+
+        assert trimmed is not None
+        assert trimmed.text == f'<message role="user">\n{_OMITTED_TRANSCRIPT_HEAD}\n</message>'
 
 
 # ---------------------------------------------------------------------------

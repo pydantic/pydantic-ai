@@ -414,24 +414,64 @@ def _without_body(element: str) -> str:
     return f'{element[: element.index(">") + 1]}\n{_OMITTED_TOOL_OUTPUT}\n</message>'
 
 
-def _keep_tail(text: str, max_tokens: int, tokenizer: Callable[[str], int] | None) -> str:
-    """The longest tail of *text* that fits *max_tokens*, under `_OMITTED_TRANSCRIPT_HEAD`.
+def _keep_element_tail(element: str, max_tokens: int, tokenizer: Callable[[str], int] | None) -> str:
+    """*element* with the longest tail of its body that fits *max_tokens*, its own tags kept.
 
-    The head goes rather than the middle or the tail: the newest turn is what the summary has to
-    carry. The binary search asks the tokenizer rather than assuming it counts characters, so a real
-    tokenizer still lands under the budget. A budget too small for the marker alone leaves the
+    The head of the body goes rather than its middle or its tail: the newest turn is what the summary
+    has to carry. The tags stay because the opening one is a label: `role="tool_return"` and
+    `<harness_data origin=...>` are what tell the summarizer a tool printed this rather than a user
+    asking for it, so a body cut out of its wrapper would read as plain instructions. The binary
+    search asks the tokenizer rather than assuming it counts characters, so a real tokenizer still
+    lands under the budget. A budget too small for the marker alone leaves the tags around the
     marker, which is a request the provider may still reject but the closest thing to fitting.
     """
-    marker = f'{_OMITTED_TRANSCRIPT_HEAD}\n'
-    budget = max_tokens - estimate_text_tokens(marker, tokenizer)
-    start, end = 0, len(text)
+    # `_message_element` and `_harness_data_element` are the only producers of these elements and
+    # always write `...>\n{body}\n</...>`, with `>` escaped in their attributes and `<` in the body,
+    # so the first and the last newline bracket the body.
+    opening, _, rest = element.partition('\n')
+    body, _, closing = rest.rpartition('\n')
+    fixed = f'{opening}\n{_OMITTED_TRANSCRIPT_HEAD}\n{closing}'
+    budget = max_tokens - estimate_text_tokens(fixed, tokenizer)
+    start, end = 0, len(body)
     while start < end:
         middle = (start + end) // 2
-        if estimate_text_tokens(text[middle:], tokenizer) <= budget:
+        if estimate_text_tokens(body[middle:], tokenizer) <= budget:
             end = middle
         else:
             start = middle + 1
-    return f'{marker}{text[start:]}'
+    if not (tail := body[start:]):
+        return fixed
+    return f'{opening}\n{_OMITTED_TRANSCRIPT_HEAD}\n{tail}\n{closing}'
+
+
+def _keep_newest(
+    elements: Sequence[str],
+    sizes: Sequence[int],
+    total: int,
+    max_tokens: int,
+    tokenizer: Callable[[str], int] | None,
+) -> tuple[str, int]:
+    """The text of the newest entries that fit *max_tokens*, and how many whole entries that dropped.
+
+    Entries go from the oldest end and whole. The per-entry sum decides how far to go rather than a
+    re-measurement per candidate cut, so a long history costs one tokenizer call per entry; the
+    separators between entries are not in that sum, though, so the joined text can still be over
+    budget. It then costs the next oldest entry rather than the head of an element, and only a single
+    entry left too large keeps a tail of its body.
+    """
+    start = 0
+    while total > max_tokens and len(elements) - start > 1:
+        total -= sizes[start]
+        start += 1
+    kept = list(elements[start:])
+    text = '\n'.join(kept)
+    while len(kept) > 1 and estimate_text_tokens(text, tokenizer) > max_tokens:
+        kept.pop(0)
+        start += 1
+        text = '\n'.join(kept)
+    if estimate_text_tokens(text, tokenizer) > max_tokens:
+        text = _keep_element_tail(kept[0], max_tokens, tokenizer)
+    return text, start
 
 
 def _fit_transcript(
@@ -443,7 +483,8 @@ def _fit_transcript(
 
     Tool output goes first, oldest first, and only its body: a summary rarely needs what a tool
     printed, while the call's tag and name still tell it that a call happened. Whole entries are then
-    dropped from the oldest end, and a last entry too large on its own keeps only its tail.
+    dropped from the oldest end, and a last entry too large on its own keeps only a tail of its body,
+    inside the tags that say what it is.
 
     Sizes are accounted per entry rather than by re-measuring the joined text, so a long history costs
     one tokenizer call per entry instead of one per candidate cut. What decides whether the entries
@@ -469,14 +510,8 @@ def _fit_transcript(
             elements[index] = reduced
             sizes[index] = reduced_size
             dropped_tool_results += 1
-    start = 0
-    while total > max_tokens and len(elements) - start > 1:
-        total -= sizes[start]
-        start += 1
-    text = '\n'.join(elements[start:])
-    if estimate_text_tokens(text, tokenizer) > max_tokens:
-        text = _keep_tail(text, max_tokens, tokenizer)
-    return _TrimmedTranscript(text, dropped_tool_results, start)
+    text, dropped_entries = _keep_newest(elements, sizes, total, max_tokens, tokenizer)
+    return _TrimmedTranscript(text, dropped_tool_results, dropped_entries)
 
 
 _TRANSCRIPT_TAG_OPENER = re.compile(
