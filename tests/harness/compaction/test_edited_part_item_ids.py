@@ -39,7 +39,7 @@ def _model(api_key: str, capture: RequestCapture) -> OpenAIResponsesModel:
 
 def _input_shape(body: dict[str, Any]) -> list[tuple[str, bool]]:
     """Each input item's type, or role for a message without one, and whether it was sent with an item ID."""
-    return [(item.get('type', item['role']), 'id' in item) for item in body['input']]
+    return [(item.get('type', item.get('role')), 'id' in item) for item in body['input']]
 
 
 async def test_clamped_text_reaches_the_model(
@@ -54,7 +54,7 @@ async def test_clamped_text_reaches_the_model(
     assert second.output == snapshot('2')
     # The reasoning item keeps its ID: the API accepts it before a message that has none.
     assert _input_shape(request_capture.body('/responses', 1)) == snapshot(
-        [('easy', False), ('reasoning', True), ('easy', False), ('easy', False)]
+        [('user', False), ('reasoning', True), ('assistant', False), ('user', False)]
     )
 
 
@@ -73,12 +73,12 @@ async def test_clamped_tool_call_args_reach_the_model(
     assert second.output == snapshot('2')
     assert _input_shape(request_capture.body('/responses', 2)) == snapshot(
         [
-            ('easy', False),
+            ('user', False),
             ('reasoning', True),
             ('function_call', False),
             ('function_call_output', False),
             ('message', True),
-            ('easy', False),
+            ('user', False),
         ]
     )
 
@@ -98,11 +98,11 @@ async def test_cleared_tool_inputs_reach_the_model(
     assert second.output == snapshot('0')
     assert _input_shape(request_capture.body('/responses', 2)) == snapshot(
         [
-            ('easy', False),
+            ('user', False),
             ('reasoning', True),
             ('function_call', False),
             ('function_call_output', False),
             ('message', True),
-            ('easy', False),
+            ('user', False),
         ]
     )
