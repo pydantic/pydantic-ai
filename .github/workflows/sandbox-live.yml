@@ -119,7 +119,7 @@ jobs:
           upper="$(printf %s "$PROVIDER" | tr '[:lower:]' '[:upper:]')"
           export "PYDANTIC_AI_HARNESS_${upper}_LIVE=1" "${upper}_REQUIRE_LIVE=1"
           uv run --no-sync python -c "import ssl,timeit; print('create_default_context ms', [round(t*1000,1) for t in timeit.repeat(ssl.create_default_context, number=1, repeat=5)])"
-          uv run --no-sync pytest -p no:cacheprovider --tb=line --deselect "tests/harness/sprites_sandbox/test_sprites_live.py::test_docs_example[line 209]" -m "${PROVIDER}_live" "tests/harness/${PROVIDER}_sandbox" -q
+          uv run --no-sync pytest -p no:cacheprovider -o log_cli=true -o log_cli_level=WARNING --tb=short -m "${PROVIDER}_live" "tests/harness/${PROVIDER}_sandbox" -q
         env:
           PROVIDER: ${{ matrix.provider }}
           # Scoped to this step so checkout and setup never see the secrets.
