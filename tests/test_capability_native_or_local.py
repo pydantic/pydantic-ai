@@ -742,6 +742,19 @@ class TestMCPCapability:
         assert isinstance(native_sse, MCPServerTool)
         assert native_sse.id == 'server1.example.com'
 
+    def test_mcp_id_from_ipv6_url(self):
+        """An IPv6 literal host is spelled with `-` like `MCPToolset` does, since `:` is reserved in capability ids."""
+        from pydantic_ai.mcp import MCPToolset
+
+        url = 'http://[::1]:8000/mcp'
+        cap = MCP[object](url=url, native=True)
+        Agent(TestModel(), capabilities=[cap])
+        native = cap.get_native_tools()[0]
+        assert isinstance(native, MCPServerTool)
+        local = cap.local
+        assert isinstance(local, MCPToolset)
+        assert native.id == local.id == MCPToolset(url).id == '--1'
+
     def test_mcp_capabilities_on_one_host_need_explicit_ids(self):
         """Two servers on one host derive the same id, so the agent asks for an explicit one on each."""
         with pytest.raises(
