@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from datetime import timedelta
 from uuid import uuid4
 
@@ -102,6 +103,17 @@ class PatternDefenderWorkflow(PydanticAIWorkflow):
         return (await pattern_agent.run('Fetch the weather')).output
 
 
+_RUNNER = SandboxedWorkflowRunner(
+    restrictions=SandboxRestrictions.default.with_passthrough_modules(__name__, 'annotated_types', 'coverage')
+)
+
+
+@pytest.fixture(scope='module')
+async def client() -> AsyncIterator[Client]:
+    async with await WorkflowEnvironment.start_local(download_dest_dir=temporal_dev_server_cache_dir()) as env:  # pyright: ignore[reportUnknownMemberType]
+        yield await Client.connect(env.client.service_client.config.target_host, plugins=[PydanticAIPlugin()])
+
+
 @pytest.mark.parametrize(
     ('workflow_class', 'operations'),
     [
@@ -114,18 +126,14 @@ class PatternDefenderWorkflow(PydanticAIWorkflow):
 async def test_defender_withholds_inside_a_workflow_and_survives_replay(
     workflow_class: type[SemanticDefenderWorkflow | CustomDefenderWorkflow | PatternDefenderWorkflow],
     operations: list[str],
+    client: Client,
 ) -> None:
-    runner = SandboxedWorkflowRunner(
-        restrictions=SandboxRestrictions.default.with_passthrough_modules(__name__, 'annotated_types', 'coverage')
-    )
-    async with await WorkflowEnvironment.start_local(download_dest_dir=temporal_dev_server_cache_dir()) as env:  # pyright: ignore[reportUnknownMemberType]
-        client = await Client.connect(env.client.service_client.config.target_host, plugins=[PydanticAIPlugin()])
-        workflow_id = uuid4().hex
-        async with Worker(client, task_queue='defender', workflows=[workflow_class], workflow_runner=runner):
-            output = await client.execute_workflow(
-                workflow_class.run, id=workflow_id, task_queue='defender', execution_timeout=timedelta(seconds=30)
-            )
-        history = await client.get_workflow_handle(workflow_id).fetch_history()
+    workflow_id = uuid4().hex
+    async with Worker(client, task_queue='defender', workflows=[workflow_class], workflow_runner=_RUNNER):
+        output = await client.execute_workflow(
+            workflow_class.run, id=workflow_id, task_queue='defender', execution_timeout=timedelta(seconds=30)
+        )
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
 
     assert output == (
         'The result of `fetch` was withheld: it matched prompt injection patterns (risk: high). '
@@ -137,7 +145,7 @@ async def test_defender_withholds_inside_a_workflow_and_survives_replay(
         if event.HasField('activity_task_scheduled_event_attributes')
     ]
     assert [name.rsplit('__', 1)[1] for name in activities if '__capability__defender__' in name] == operations
-    replayer = Replayer(workflows=[workflow_class], plugins=[PydanticAIPlugin()], workflow_runner=runner)
+    replayer = Replayer(workflows=[workflow_class], plugins=[PydanticAIPlugin()], workflow_runner=_RUNNER)
     replay = await replayer.replay_workflow(history, raise_on_replay_failure=False)
     assert replay.replay_failure is None
 
