@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from enum import Enum
 from functools import cached_property
+from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -80,8 +81,12 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.exceptions import ContentFilterError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
+    CapabilitySource,
     CompactionPart,
+    InstructionCapabilityPart,
     InstructionPart,
+    OperatorSource,
+    OperatorText,
     ToolAvailabilityDeltaPart,
     ToolReturn,
     ToolSearchCallPart,
@@ -17694,3 +17699,98 @@ async def test_text_plain_response_body_raises_model_api_error(allow_model_reque
 
     assert type(exc_info.value) is ModelAPIError
     assert exc_info.value.message == snapshot("Expected a JSON response, got: 'upstream connect error'")
+
+
+@dataclass(kw_only=True)
+class _RequestsLeftPart(InstructionCapabilityPart, namespace='test_anthropic', name='requests_left'):
+    pass
+
+
+@dataclass(kw_only=True)
+class _LastingNotePart(InstructionCapabilityPart, namespace='test_anthropic', name='lasting_note'):
+    pass
+
+
+@dataclass
+class _LoweredBudget(AbstractCapability[None]):
+    """Sends the requests left with every request, lowered to no authority, and optionally a lasting operator note."""
+
+    lasting_note: bool
+    left: int = 3
+
+    async def before_model_request(
+        self, ctx: RunContext[None], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if self.lasting_note:
+            ctx.enqueue(_LastingNotePart(content=OperatorText(f'Note {self.left}.'), source=OperatorSource()))
+        ctx.enqueue(
+            _RequestsLeftPart(
+                content=OperatorText(f'{self.left} left.'),
+                source=CapabilitySource('budget', authority='none'),
+                scope='request',
+            )
+        )
+        self.left -= 1
+        return request_context
+
+
+def _wire_blocks(request: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """Each content block of a request's messages with its role, and without the `cache_control` it carries there."""
+    return [
+        (message['role'], {key: value for key, value in block.items() if key != 'cache_control'})
+        for message in request['messages']
+        for block in message['content']
+    ]
+
+
+@pytest.mark.parametrize('automatic', [pytest.param(False, id='cache-messages'), pytest.param(True, id='automatic')])
+@pytest.mark.parametrize('lasting_note', [False, True])
+@pytest.mark.parametrize(
+    'model_name',
+    [pytest.param('claude-opus-5-5', id='clears'), pytest.param('claude-haiku-5-5', id='sealed-fallback')],
+)
+async def test_message_cache_breakpoint_stays_ahead_of_a_downgraded_request_scoped_frame(
+    allow_model_requests: None, model_name: str, lasting_note: bool, automatic: bool
+) -> None:
+    """The next request doesn't send the frame, so a breakpoint behind it would write a cache entry nothing reads.
+
+    Mocked, because the claim is about the bytes of two consecutive requests: `test_capability_parts` and the
+    cache-prefix checks have no adapter's breakpoints to look at, and the live measurement is in the PR description.
+    """
+    tool_call = BetaToolUseBlock(id='call', input={}, name='work', type='tool_use')
+    usage = BetaUsage(input_tokens=1, output_tokens=1)
+    client = MockAnthropic.create_mock(
+        [
+            completion_message([tool_call], usage),
+            completion_message([tool_call], usage),
+            completion_message([BetaTextBlock(text='Done.', type='text')], usage),
+        ]
+    )
+    agent = Agent(
+        AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client)),
+        capabilities=[_LoweredBudget(lasting_note=lasting_note)],
+        model_settings=AnthropicModelSettings(anthropic_cache=True)
+        if automatic
+        else AnthropicModelSettings(anthropic_cache_messages=True),
+    )
+
+    @agent.tool_plain
+    def work() -> str:
+        return 'ok'
+
+    await agent.run('Go.')
+
+    requests = get_mock_chat_completion_kwargs(client)
+    assert len(requests) == 3
+    for index, (earlier, later) in enumerate(pairwise(requests)):
+        blocks = [block for message in earlier['messages'] for block in message['content']]
+        breakpoint_at = max(position for position, block in enumerate(blocks) if 'cache_control' in block)
+        cached = _wire_blocks(earlier)[: breakpoint_at + 1]
+        # Ahead of this request's frame, and of everything behind it, which is a system entry on this adapter.
+        frame_at = next(position for position, block in enumerate(blocks) if f'{3 - index} left.' in str(block))
+        assert breakpoint_at < frame_at
+        # Everything up to it comes back byte for byte in the next request, so that request reads it from the cache.
+        assert _wire_blocks(later)[: breakpoint_at + 1] == cached
+        # The frame itself stays one block, which is how the adapter finds it.
+        assert blocks[frame_at]['text'] == f'<requests_left>{3 - index} left.</requests_left>'
+        assert f'{3 - index} left.' not in str(later['messages'])
