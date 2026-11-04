@@ -23,7 +23,7 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any, cast
@@ -2956,11 +2956,12 @@ def test_rate_limit_retry_attempts_each_get_an_http_span(monkeypatch: pytest.Mon
 
 
 @pytest.fixture
-def agent_spans() -> Iterator[InMemorySpanExporter]:
-    """Every agent's spans, instrumented as `configure_observability` instruments a gh-aw run."""
+def agent_spans(monkeypatch: pytest.MonkeyPatch) -> Iterator[InMemorySpanExporter]:
+    """Every agent's spans and the shim's own, instrumented as `configure_observability` instruments a gh-aw run."""
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
+    monkeypatch.setattr(shim, '_tracer', provider.get_tracer(shim.__name__))
     Agent.instrument_all(InstrumentationSettings(tracer_provider=provider))
     yield exporter
     Agent.instrument_all(False)
@@ -2993,6 +2994,104 @@ async def _skip_clock_and_hang(seconds: float) -> None:
     assert isinstance(loop, _ClockSkippingLoop)
     loop.skipped += seconds
     await asyncio.Event().wait()
+
+
+def _short_summariser(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('SHORT SUMMARY')])
+
+
+async def _hanging_summariser(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    await _skip_clock_and_hang(shim.COMPACTION_TIMEOUT_SECS)
+    raise AssertionError('the compaction timeout cancels the summariser first')
+
+
+@pytest.mark.parametrize(
+    ('summariser', 'outcome', 'status'),
+    [
+        (_short_summariser, 'done', 'UNSET'),
+        (_failing_summariser, 'failed', 'ERROR'),
+        (_hanging_summariser, 'timed_out', 'ERROR'),
+        (_oversized_summariser, 'discarded', 'UNSET'),
+    ],
+)
+def test_compact_history_records_the_summariser_outcome(
+    summariser: Callable[[list[ModelMessage], AgentInfo], ModelResponse | Awaitable[ModelResponse]],
+    outcome: str,
+    status: str,
+    agent_spans: InMemorySpanExporter,
+):
+    big = 'x' * 50_000
+    msgs: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=shim.RUN_TRIGGER)])]
+    for i in range(6):
+        msgs += [ModelResponse(parts=[TextPart(f'r{i} {big}')]), ModelRequest(parts=[UserPromptPart(f'q{i} {big}')])]
+
+    class _Ctx:
+        model = FunctionModel(summariser)
+        usage = RunUsage()
+
+    with asyncio.Runner(loop_factory=_ClockSkippingLoop) as runner:
+        runner.run(shim._compact_history(cast(RunContext[None], _Ctx()), msgs))  # pyright: ignore[reportPrivateUsage]
+
+    spans = agent_spans.get_finished_spans()
+    [compaction] = [span for span in spans if span.name == 'compact history']
+    [summariser_run] = [span for span in spans if span.name == 'invoke_agent history-summariser']
+    assert (compaction.attributes or {}).get('gh_aw.compaction.outcome') == outcome
+    assert compaction.status.status_code.name == status
+    assert summariser_run.parent is not None and compaction.context is not None
+    assert summariser_run.parent.span_id == compaction.context.span_id
+
+
+def test_root_run_span_records_the_whole_runs_usage(agent_spans: InMemorySpanExporter, monkeypatch: pytest.MonkeyPatch):
+    async def _stream(messages: list[ModelMessage], info: AgentInfo):
+        if shim.SUBAGENT_INSTRUCTIONS in (info.instructions or ''):
+            yield 'found'
+        elif any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            yield 'done'
+        else:
+            yield {0: DeltaToolCall(name='Task', json_args='{"description": "probe", "prompt": "look"}')}
+
+    monkeypatch.setattr(shim, 'log_safe_outputs_state', lambda: None)
+    with redirect_stdout(io.StringIO()):
+        rc = asyncio.run(
+            shim.run(
+                prompt='review the PR',
+                model=FunctionModel(stream_function=_stream),
+                label='test-model',
+                claude_code_toolset=shim.select_claude_code_toolset(None, None, task=shim.task),
+                mcp_servers=[],
+                session_id='run-totals',
+            )
+        )
+    assert rc == 0
+    spans = agent_spans.get_finished_spans()
+    [root] = [span for span in spans if span.parent is None]
+    chats = [span.attributes or {} for span in spans if span.name.startswith('chat')]
+    root_attributes = root.attributes or {}
+    # Two root requests and the delegate's one.
+    assert root_attributes['gh_aw.total_usage.requests'] == len(chats) == 3
+    assert root_attributes['gh_aw.total_usage.input_tokens'] == sum(
+        int(str(chat['gen_ai.usage.input_tokens'])) for chat in chats
+    )
+    assert root_attributes['gh_aw.total_usage.output_tokens'] == sum(
+        int(str(chat['gen_ai.usage.output_tokens'])) for chat in chats
+    )
+
+
+def test_observability_names_the_running_shim_sources(monkeypatch: pytest.MonkeyPatch):
+    configured: dict[str, object] = {}
+
+    def _configure(**kwargs: object) -> None:
+        configured.update(kwargs)
+
+    def _instrument(*_args: object, **_kwargs: object) -> None:
+        pass
+
+    monkeypatch.setenv('LOGFIRE_TOKEN', 'test-token')
+    monkeypatch.setattr(shim.logfire, 'configure', _configure)
+    for name in ('instrument_pydantic_ai', 'instrument_httpx', 'instrument_mcp'):
+        monkeypatch.setattr(shim.logfire, name, _instrument)
+    shim.configure_observability()
+    assert re.fullmatch('[0-9a-f]{12}', str(configured['service_version']))
 
 
 @pytest.mark.parametrize('chunks_before_cutoff', [0, 1])

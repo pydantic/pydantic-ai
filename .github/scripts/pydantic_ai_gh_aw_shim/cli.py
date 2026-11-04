@@ -35,6 +35,7 @@ annotations breaks pydantic-ai's `takes_run_context` detection.
 import argparse
 import asyncio
 import dataclasses
+import hashlib
 import json
 import logging
 import math
@@ -53,7 +54,7 @@ import httpx2
 import logfire
 from anthropic import APITimeoutError, AsyncAnthropic
 from mcp.shared.exceptions import McpError
-from opentelemetry.trace import Span, Status, StatusCode, get_current_span
+from opentelemetry.trace import Span, Status, StatusCode, get_current_span, get_tracer
 from pydantic import Field, TypeAdapter, ValidationError
 from tenacity import RetryCallState, stop_after_delay, wait_random_exponential
 from tenacity.asyncio.retry import retry_if_result
@@ -259,6 +260,29 @@ class _MarkTimedOutSpans(AbstractCapability[object]):
             if _wall_clock_cap_expired():
                 _mark_timed_out(get_current_span())
             raise
+
+
+class _RecordRunTotals(AbstractCapability[object]):
+    """Record on the root agent-run span what the whole run spent, delegates and the history summariser included.
+
+    pydantic-ai's `gen_ai.aggregated_usage.*` counts only the run's own requests, so that summing it
+    across a trace's agent-run spans counts each request once.
+    """
+
+    async def wrap_run(self, ctx: RunContext[object], *, handler: WrapRunHandler) -> AgentRunResult[object]:
+        try:
+            return await handler()
+        finally:
+            usage = ctx.usage
+            get_current_span().set_attributes(
+                {
+                    'gh_aw.total_usage.requests': usage.requests,
+                    'gh_aw.total_usage.input_tokens': usage.input_tokens,
+                    'gh_aw.total_usage.output_tokens': usage.output_tokens,
+                    'gh_aw.total_usage.cache_read_tokens': usage.cache_read_tokens,
+                    'gh_aw.total_usage.cache_write_tokens': usage.cache_write_tokens,
+                }
+            )
 
 
 # pydantic-ai's built-in request_limit default of 50 is too low for the
@@ -552,6 +576,9 @@ _run_deadline: float | None = None
 
 # Whether each wall-clock cap the current work runs under has expired, innermost last.
 _wall_clock_caps: ContextVar[tuple[Callable[[], bool], ...]] = ContextVar('_wall_clock_caps', default=())
+
+# Resolves to the provider `configure_observability` installs, once it has.
+_tracer = get_tracer(__name__)
 
 
 @asynccontextmanager
@@ -883,42 +910,51 @@ async def _compact_history(ctx: RunContext[object], messages: list[ModelMessage]
     # always a `Model` here.
     model = ctx.model
     assert isinstance(model, Model)
-    try:
-        r = await asyncio.wait_for(
-            Agent(cast('Model[Any]', model), instructions=COMPACTION_SUMMARY_INSTRUCTIONS).run(
-                f'Transcript to summarise:\n\n{transcript[:COMPACTION_TRANSCRIPT_MAX_CHARS]}',
-                usage_limits=UsageLimits(request_limit=2),
-                usage=sub_usage,
-            ),
-            timeout=COMPACTION_TIMEOUT_SECS,
-        )
-        summary = str(r.output or '').strip() or '(empty summary)'
-    except Exception as exc:
-        # Well-handled fallback: the run continues on the trimmed history, so the
-        # stack is kept available (`exc_info`) without escalating the log level.
-        # A bare `TimeoutError` stringifies to '' — fall back to the type name so
-        # the emitted `error` is never empty.
+    # `gh_aw.compaction.outcome` is `done`, `failed`, `timed_out` or `discarded`. The summariser's own
+    # span ends before a summary is discarded, and a timeout cancels it without marking it.
+    with _tracer.start_as_current_span('compact history') as span:
+        try:
+            r = await asyncio.wait_for(
+                Agent(
+                    cast('Model[Any]', model), name='history-summariser', instructions=COMPACTION_SUMMARY_INSTRUCTIONS
+                ).run(
+                    f'Transcript to summarise:\n\n{transcript[:COMPACTION_TRANSCRIPT_MAX_CHARS]}',
+                    usage_limits=UsageLimits(request_limit=2),
+                    usage=sub_usage,
+                ),
+                timeout=COMPACTION_TIMEOUT_SECS,
+            )
+            summary = str(r.output or '').strip() or '(empty summary)'
+        except Exception as exc:
+            # Well-handled fallback: the run continues on the trimmed history, so the
+            # stack is kept available (`exc_info`) without escalating the log level.
+            # A bare `TimeoutError` stringifies to '' — fall back to the type name so
+            # the emitted `error` is never empty.
+            ctx.usage.incr(sub_usage)
+            detail = f'{type(exc).__name__}: {exc}' if str(exc) else type(exc).__name__
+            logger.warning('compaction summarisation failed (%s); falling back', detail, exc_info=True)
+            emit({'type': 'system', 'subtype': 'compaction_summary_failed', 'error': detail})
+            span.set_attribute('gh_aw.compaction.outcome', 'timed_out' if isinstance(exc, TimeoutError) else 'failed')
+            span.set_status(Status(StatusCode.ERROR, detail))
+            return [head, *tail]
         ctx.usage.incr(sub_usage)
-        detail = f'{type(exc).__name__}: {exc}' if str(exc) else type(exc).__name__
-        logger.warning('compaction summarisation failed (%s); falling back', detail, exc_info=True)
-        emit({'type': 'system', 'subtype': 'compaction_summary_failed', 'error': detail})
-        return [head, *tail]
-    ctx.usage.incr(sub_usage)
-    # If the summariser produces output larger than the middle it's replacing,
-    # the next compaction round would trip on the same too-large synthetic
-    # and never converge — fall back to the head + tail.
-    middle_size = _history_size_chars(middle)
-    if len(summary) >= middle_size:
-        logger.info('compaction summary discarded (%d >= %d chars); falling back', len(summary), middle_size)
-        emit(
-            {
-                'type': 'system',
-                'subtype': 'compaction_summary_discarded',
-                'summary_chars': len(summary),
-                'middle_chars': middle_size,
-            }
-        )
-        return [head, *tail]
+        # If the summariser produces output larger than the middle it's replacing,
+        # the next compaction round would trip on the same too-large synthetic
+        # and never converge — fall back to the head + tail.
+        middle_size = _history_size_chars(middle)
+        if len(summary) >= middle_size:
+            logger.info('compaction summary discarded (%d >= %d chars); falling back', len(summary), middle_size)
+            emit(
+                {
+                    'type': 'system',
+                    'subtype': 'compaction_summary_discarded',
+                    'summary_chars': len(summary),
+                    'middle_chars': middle_size,
+                }
+            )
+            span.set_attribute('gh_aw.compaction.outcome', 'discarded')
+            return [head, *tail]
+        span.set_attribute('gh_aw.compaction.outcome', 'done')
     logger.info(
         'compaction summary done: %d middle messages (%d chars) -> %d-char summary',
         len(middle),
@@ -1069,8 +1105,14 @@ def configure_observability() -> None:
     if not (os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT') or os.environ.get('GH_AW_OTLP_ENDPOINTS') or write_token):
         return
     try:
+        # The shim's sources name the code that ran. A commit SHA from the run's environment does not:
+        # under `workflow_run`, CI Review runs the shim from the pull request head it checked out.
+        digest = hashlib.sha256()
+        for source in sorted(pathlib.Path(__file__).parent.glob('*.py')):
+            digest.update(source.name.encode() + b'\0' + source.read_bytes())
         logfire.configure(
             service_name=os.environ.get('OTEL_SERVICE_NAME', 'gh-aw'),
+            service_version=digest.hexdigest()[:12],
             send_to_logfire='if-token-present',
             console=False,
             token=write_token or None,
@@ -1582,6 +1624,7 @@ async def run(
             ProcessHistory(_compact_history),
             ProcessEventStream(_stream_events),
             _MarkTimedOutSpans(),
+            _RecordRunTotals(),
             _CIReviewToolPolicy(),
             PrepareTools(hold_time_reserve_for_safe_output),
         ],
