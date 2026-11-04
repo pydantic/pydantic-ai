@@ -2422,7 +2422,7 @@ def test_many_enum_fields_in_nested_models_stay_checked():
 
 
 class _ListThatCannotBeScanned(list[Any]):
-    def __iter__(self) -> Iterator[Any]:
+    def __iter__(self) -> Iterator[Any]:  # pragma: no cover
         raise AssertionError('a `$ref` through a list looks up one index')
 
 
