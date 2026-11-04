@@ -43,7 +43,7 @@ def repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     git(repo, 'config', 'user.name', 'CLAI Test')
     git(repo, 'config', 'user.email', 'clai@example.com')
     (repo / '.clai').mkdir()
-    (repo / '.clai/settings.json').write_text('{"request_limit": 7}')
+    (repo / '.clai/settings.json').write_text('{"shell_lines": 7}')
     (repo / 'tracked.txt').write_text('committed')
     git(repo, 'add', '.')
     git(repo, 'commit', '-m', 'Initial workspace')
@@ -58,7 +58,7 @@ def test_launches_in_new_worktree(repository: Path, launch: Launcher, args: list
     original_head = git(repository, 'rev-parse', 'HEAD')
     original_branch = git(repository, 'symbolic-ref', 'HEAD')
     (repository / 'tracked.txt').write_text('uncommitted')
-    (repository / '.clai/settings.json').write_text('{"request_limit": 9}')
+    (repository / '.clai/settings.json').write_text('{"shell_lines": 9}')
     (repository / 'untracked.txt').write_text('keep this')
     nested = repository / 'nested'
     nested.mkdir()
@@ -73,7 +73,7 @@ def test_launches_in_new_worktree(repository: Path, launch: Launcher, args: list
         '        return []\n'
     )
 
-    result = launch(nested, *args, prompt='/set run.request_limit\n/exit\n')
+    result = launch(nested, *args, prompt='/set display.shell_lines\n/exit\n')
 
     assert result.returncode == 0, result.stderr
     worktrees = list((repository / '.worktrees').iterdir())
