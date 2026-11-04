@@ -562,7 +562,7 @@ RepoContext(walk_up='repo_root')  # also load the ancestors up to the nearest `.
 directory holding one of `root_markers` (`('.git',)`; `Coder` uses this); `'all'` walks every ancestor.
 `home_dir` walks up to that ancestor (and stops `'all'` there); it cannot be combined with
 `walk_up='repo_root'`. It is a workspace path (on E2B, `/home/user`, not `Path.home()`); `~` raises
-`UserError`. `global_files` lists user-global instruction files, loaded first with the lowest precedence.
+`UserError`.
 Use keyword-only `autoload_symlink_roots=()` to authorize shared instruction
 targets for autoload only; the default is empty. Authorize only a directory of
 trusted instructions, not `/` or all of home; repository links can select readable

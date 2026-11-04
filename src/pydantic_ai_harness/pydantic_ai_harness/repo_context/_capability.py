@@ -86,8 +86,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
        working directory's instruction file, one per directory: the first of
        `filenames` (`AGENTS.md`, then `CLAUDE.md`) that exists. `walk_up` adds the
        ancestors up to the repository root (`'repo_root'`) or the filesystem root
-       (`'all'`), and `global_files` adds user-global files ahead of them; files
-       are deduped by content, broadest first. These are read once at run start
+       (`'all'`); files are deduped by content, broadest first. These are read once at run start
        and injected as system instructions via `get_instructions`, so they stay in
        the cached prefix, stable within a run; a change between runs of a
        conversation is appended rather than rewritten.
@@ -191,13 +190,6 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     An entry of any kind counts, so a linked worktree's `.git` file marks its root like a `.git` directory.
     """
 
-    global_files: Sequence[str | Path] = ()
-    """Workspace paths of user-global instruction files, such as `/home/user/.codex/AGENTS.md`.
-
-    They load before the walk-up, so they have the lowest precedence, and a missing one is skipped. A
-    relative path resolves against the working directory; `~` is not expanded.
-    """
-
     _context_files: list[ContextFile] | None = field(default=None, init=False, repr=False, compare=False)
     """Walk-up result for this run, loaded once in `before_run` via `ctx.workspace`."""
 
@@ -221,10 +213,6 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     def __post_init__(self) -> None:
         if isinstance(self.root_markers, str):
             raise UserError(f'`RepoContext.root_markers` takes a sequence of names, e.g. `({self.root_markers!r},)`.')
-        if isinstance(self.global_files, str | Path):
-            raise UserError(f'`RepoContext.global_files` takes a sequence of paths, e.g. `({self.global_files!r},)`.')
-        for path in self.global_files:
-            workspace_path(Path(path))
         if self.home_dir is not None and self.walk_up == 'repo_root':
             raise UserError(
                 "`RepoContext` takes either `home_dir` or `walk_up='repo_root'` to stop the walk-up, not both."
@@ -265,13 +253,11 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             top = await find_root(workspace, working_dir, self.root_markers)
         elif self.walk_up == 'all':
             top = Path(working_dir.anchor)
-        global_files = [Path(await workspace.resolve(workspace_path(Path(path)))) for path in self.global_files]
         self._context_files = await discover_instruction_files(
             workspace,
             working_dir,
             top,
             self.filenames,
-            global_files=global_files,
             autoload_symlink_roots=await self._autoload_symlink_roots(workspace),
         )
         # The walk-up loaded the working directory's instruction files (or an identical ancestor copy), so nested

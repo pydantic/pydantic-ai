@@ -15,24 +15,9 @@ from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.tools import RunContext
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_clai2.plugins import DepsT, Plugin
-from pydantic_clai2.runtime import codex_sessions
 from pydantic_clai2.runtime.session import WorkspacelessCapability, supports_local_workspace
 
 _PATHS = TypeAdapter(list[str])
-
-
-def _global_instruction_files() -> list[Path]:
-    """User-global instruction files, broadest first, where Claude Code and Codex keep them.
-
-    Codex's is under `CODEX_HOME` when that is set, as Codex reads it. `~/.pydantic-ai/AGENTS.md` is the
-    harness's own, so it comes last and is the most specific of the three.
-    """
-    home = Path.home()
-    return [
-        home / '.claude' / 'CLAUDE.md',
-        codex_sessions.home() / 'AGENTS.md',
-        home / '.pydantic-ai' / 'AGENTS.md',
-    ]
 
 
 class RepoContextSettings(BaseModel):
@@ -45,13 +30,6 @@ class RepoContextSettings(BaseModel):
             'Also load instruction files from the directories above the workspace: up to the nearest '
             '`repo_context.walk_up_roots` entry (home by default), or up to the repository root when no entry '
             'contains the workspace.'
-        ),
-    )
-    global_files: bool = Field(
-        default=True,
-        description=(
-            'Also load your user-global instruction files: `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md` (or '
-            '`$CODEX_HOME/AGENTS.md`) and `~/.pydantic-ai/AGENTS.md`.'
         ),
     )
     inventory_tool: bool = Field(
@@ -94,7 +72,6 @@ class RepoContextPlugin(Plugin[RepoContextSettings, DepsT]):
             home_dir=home_dir,
             # Outside every listed root, still load the repository's own instruction files, without reading above it.
             walk_up='repo_root' if settings.walk_up and home_dir is None else None,
-            global_files=_global_instruction_files() if settings.global_files else (),
             autoload_symlink_roots=[Path(root).expanduser() for root in symlink_roots],
             expose_inventory_tool=settings.inventory_tool,
             nested_traversal=settings.nested_traversal,

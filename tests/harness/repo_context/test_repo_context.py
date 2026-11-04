@@ -662,46 +662,6 @@ pkg claude
 </context-file>\
 """)
 
-    async def test_global_files_load_first_and_skip_missing_and_duplicate_ones(self, tmp_path: Path) -> None:
-        home = tmp_path / 'home'
-        _write(home / '.claude' / 'CLAUDE.md', 'personal')
-        _write(home / '.pydantic-ai' / 'AGENTS.md', 'same as project')
-        _write(tmp_path / 'project' / 'AGENTS.md', 'same as project')
-        cap = RepoContext[object](
-            global_files=[
-                str(home / '.claude' / 'CLAUDE.md'),
-                str(home / '.codex' / 'AGENTS.md'),
-                str(home / '.claude'),
-                str(home / '.pydantic-ai' / 'AGENTS.md'),
-            ],
-            nested_traversal=False,
-        )
-        ctx = _run_context(workspace=Workspace(LocalWorkspaceBackend(tmp_path / 'project')))
-        await cap.before_run(ctx)
-        rendered = _render_capability_instructions(cap, ctx) or ''
-        assert rendered == (
-            f'<context-file path="{(home / ".claude" / "CLAUDE.md").as_posix()}">\npersonal\n</context-file>\n\n'
-            f'<context-file path="{(home / ".pydantic-ai" / "AGENTS.md").as_posix()}">\nsame as project\n</context-file>'
-        )
-
-    @pytest.mark.skipif(sys.platform == 'win32', reason='symlinks need privileges on Windows')
-    async def test_a_global_file_may_link_elsewhere(self, tmp_path: Path) -> None:
-        dotfiles = _write(tmp_path / 'dotfiles' / 'CLAUDE.md', 'from dotfiles')
-        link = tmp_path / 'home' / '.claude' / 'CLAUDE.md'
-        link.parent.mkdir(parents=True)
-        link.symlink_to(dotfiles)
-        (tmp_path / 'project').mkdir()
-        cap = RepoContext[object](global_files=[str(link)], nested_traversal=False)
-        ctx = _run_context(workspace=Workspace(LocalWorkspaceBackend(tmp_path / 'project')))
-        await cap.before_run(ctx)
-        assert 'from dotfiles' in (_render_capability_instructions(cap, ctx) or '')
-
-    def test_global_files_reject_a_bare_string_and_tilde(self) -> None:
-        with pytest.raises(UserError, match='takes a sequence of paths'):
-            RepoContext[object](global_files='/home/user/.codex/AGENTS.md')
-        with pytest.raises(UserError, match='do not expand `~`'):
-            RepoContext[object](global_files=['~/.codex/AGENTS.md'])
-
 
 class TestToolset:
     def test_get_toolset_none_by_default(self, tmp_path: Path) -> None:

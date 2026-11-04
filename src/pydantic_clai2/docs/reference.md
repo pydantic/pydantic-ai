@@ -441,9 +441,7 @@ origin. CLAI prints the file it found when it starts.
 The built-in `repo_context` plugin (harness `RepoContext`), which is separate
 from the project file, reads instruction files automatically: one per directory,
 `AGENTS.md` else `CLAUDE.md`, from the launch directory and the directories above
-it, plus your global files (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md` or
-`$CODEX_HOME/AGENTS.md`, and `~/.pydantic-ai/AGENTS.md`), which also load when
-you use CLAI to run another agent. Under your home the walk-up stops at `~`;
+it. Under your home the walk-up stops at `~`;
 elsewhere it stops at the repository root (see
 [Repository instructions](#repository-instructions)). A subdirectory's file is added the first time
 the agent reads or lists something in it. `/plugins disable repo_context` turns it off, for this and
@@ -471,7 +469,9 @@ users can write to, such as `/tmp`. To scan only the workspace, turn the walk of
 
 ```text
 /plugins add repo_context pydantic_clai2.builtin_plugins.repo_context '{"walk_up": false}'
-``` `repo_context.autoload_symlink_roots` defaults to `[]`; set
+```
+
+`repo_context.autoload_symlink_roots` defaults to `[]`; set
 it to a JSON list of directories if your instruction files are symlinks into a
 shared directory.
 
@@ -2831,7 +2831,7 @@ default, `/plugins disable coder` for a chat-only shell. The model can also ask
 you multiple-choice questions mid-run through the built-in `ask_user` plugin;
 see [Questions from the model](#questions-from-the-model). The built-in
 `repo_context` plugin reads the instruction files (`AGENTS.md`, else `CLAUDE.md`)
-of the launch directory, its ancestors and your global files into the agent's
+of the launch directory and its ancestors into the agent's
 instructions, and a subdirectory's as the agent works there; `/plugins disable
 repo_context` turns that off.
 On Windows, CLAI does not provide an agent workspace or repository context yet.
@@ -3195,11 +3195,7 @@ configured as in `clai2`, except that `coder`'s `task_control` is off: pass
 `plugin_settings={'coder': {'task_control': True}}` to give the model the task
 tools and background delegation. The file and shell tools work in `workspace`,
 and the instruction files (`AGENTS.md`, else `CLAUDE.md`) of `workspace` and its
-ancestors are read, plus a subdirectory's as the agent works there. Your own
-global instruction files (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`,
-`~/.pydantic-ai/AGENTS.md`) are left out, since they belong to whoever runs the
-host: pass `plugin_settings={'repo_context': {'global_files': True}}` to load
-them. A capability you pass that
+ancestors are read, plus a subdirectory's as the agent works there. A capability you pass that
 supplies a workspace, such as a sandbox, takes its place, and a run's own
 `workspace=` replaces it for that run. Commands get this process's environment
 minus LLM provider API keys. Model names resolve as in `clai2`, the agent's own

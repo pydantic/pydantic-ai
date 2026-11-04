@@ -1128,7 +1128,7 @@ settings using the former import paths are redirected to the new modules.
 |---|---|---|---|
 | `coder` | `pydantic_clai2.builtin_plugins.coder` | `{"unrestricted_filesystem": true, "repo_context": false, "sub_agents": true, "agent_folders": ["agents"]}` | the file and shell tools, task delegation and disk agents, and Agent Skills with a `/command` each |
 | `ask_user` | `pydantic_clai2.builtin_plugins.ask_user_menu` | `{}` | the `ask_user_question` tool: multiple-choice questions answered from the terminal |
-| `repo_context` | `pydantic_clai2.builtin_plugins.repo_context` | `{}` | reads the instruction files (`AGENTS.md`, else `CLAUDE.md`) of the launch directory and its ancestors, plus your user-global ones (`~/.claude/CLAUDE.md` and the like), into the instructions, and a subdirectory's as the agent works there |
+| `repo_context` | `pydantic_clai2.builtin_plugins.repo_context` | `{}` | reads the instruction files (`AGENTS.md`, else `CLAUDE.md`) of the launch directory and its ancestors into the instructions, and a subdirectory's as the agent works there |
 | `persistence` | `pydantic_clai2.runtime.sessions` | `{}` | Harness step checkpoints for interrupted session recovery |
 | `compaction` | `pydantic_clai2.builtin_plugins.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
 | `hooks` | `pydantic_clai2.builtin_plugins.hooks` | `{}` | runs your commands before and after tool calls and turns; see [lifecycle hooks](#lifecycle-hooks-commands-from-settings) |
@@ -1191,7 +1191,7 @@ the same name and it takes the built-in's place:
 
 ```text
 /plugins add coder pydantic_clai2.builtin_plugins.coder '{"unrestricted_filesystem": false, "repo_context": false}'
-/plugins add repo_context pydantic_clai2.builtin_plugins.repo_context '{"walk_up": false, "global_files": false}'
+/plugins add repo_context pydantic_clai2.builtin_plugins.repo_context '{"walk_up": false}'
 ```
 
 Keep `"repo_context": false` on a replacement `coder`: `Coder` bundles its own
@@ -1326,15 +1326,9 @@ workspace and its default filenames: one instruction file per directory,
 | Key | Default | Does |
 |---|---|---|
 | `walk_up` | `true` | also load instruction files from the directories above the workspace: up to the nearest `repo_context.walk_up_roots` entry containing it, inclusive (home by default), or up to the repository root (the nearest `.git`) when no entry contains it |
-| `global_files` | `true` | also load your user-global instruction files, first and with the lowest precedence: `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md` (`$CODEX_HOME/AGENTS.md` when that is set), then `~/.pydantic-ai/AGENTS.md` |
 | `inventory_tool` | `false` | give the agent `inventory_agent_context`, which maps the repo's `.claude`, `.agents`, `.codex`, and `.grok` assets |
 | `nested_traversal` | `true` | when the agent reads a file in, or lists, a directory, tell it about the instruction files of that directory and of every directory between it and the workspace |
 | `nested_inject` | `"contents"` | what nested traversal adds: `"contents"` (the file itself) or `"pointer"` (one line naming the file) |
-
-The global files load whenever CLAI runs, including when you use CLAI to run
-another agent, such as your company's: that agent then also sees your personal
-instructions. Set `global_files` to `false` in a declaration for that agent, or
-`/plugins disable repo_context`, to keep them out.
 
 Under home, the walk-up reads every directory up to and including `~`, not just
 the repository. Add a root to `repo_context.walk_up_roots` to stop it elsewhere;

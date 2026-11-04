@@ -32,7 +32,7 @@ result = agent.run_sync('Summarize the coding-assistant setup in this repo.')
 print(result.output)
 ```
 
-`RepoContext` reads from the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), starting at its working directory. To point it at a subdirectory, set it on the workspace: `LocalWorkspace('./repo')`. `home_dir`, `global_files`, `asset_roots` and `autoload_symlink_roots` are paths in the workspace: relative ones resolve from the working directory, and `~` is not expanded. A run without a workspace fails at its start.
+`RepoContext` reads from the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), starting at its working directory. To point it at a subdirectory, set it on the workspace: `LocalWorkspace('./repo')`. `home_dir`, `asset_roots` and `autoload_symlink_roots` are paths in the workspace: relative ones resolve from the working directory, and `~` is not expanded. A run without a workspace fails at its start.
 
 ### 1. Instruction autoload (on by default)
 
@@ -53,9 +53,7 @@ target, to load it.
 
 `home_dir` also walks up, to that workspace directory inclusive, and with `walk_up='all'` it stops the walk there. It cannot be combined with `walk_up='repo_root'`. For a remote sandbox, use its home (for example `home_dir='/home/user'` on E2B), not the agent host's `Path.home()`. If `home_dir` is not an ancestor of the working directory, only the working directory is scanned.
 
-`global_files` names user-global instruction files, such as `/home/user/.codex/AGENTS.md`. They load before the walk-up, so they come first and have the lowest precedence; a missing one is skipped, and one may be a symlink to anywhere, since it is the user's own.
-
-Precedence is global-first, then ancestor-first, workspace-last: broadest context first, most specific last. Files are deduped by content hash, so two ancestors (or a global file and a project file) with identical content load once. A file in an ancestor is labeled relative to the working directory, such as `../AGENTS.md`, not by its absolute path; a global file outside the working directory's ancestry is labeled by its absolute path.
+Precedence is ancestor-first, workspace-last: broadest context first, most specific last. Files are deduped by content hash, so two ancestors with identical content load once. A file in an ancestor is labeled relative to the working directory, such as `../AGENTS.md`, not by its absolute path.
 
 #### Shared instruction symlinks
 
@@ -164,7 +162,7 @@ the same note twice.
 
 Walk-up files become part of the agent's instructions, so the model gives them
 the same weight as the instructions you write yourself. That is what the strategy
-is for, and it means the working directory and every directory the walk-up reaches (`home_dir`, the repository root for `walk_up='repo_root'`, or every ancestor for `'all'`) and every `global_files` entry should hold only
+is for, and it means the working directory and every directory the walk-up reaches (`home_dir`, the repository root for `walk_up='repo_root'`, or every ancestor for `'all'`) should hold only
 instruction files you would put in your own instructions.
 
 Authorize a directory containing only trusted instruction files, such as
@@ -208,7 +206,6 @@ RepoContext(
     walk_up=None,                   # None | 'repo_root' | 'all' -- how far above the working directory to look
     root_markers=('.git',),         # what marks the repository root for walk_up='repo_root'
     home_dir=None,                  # str | Path | None -- walk up to this workspace dir, inclusive
-    global_files=(),                # Sequence[str | Path] -- user-global instruction files, loaded first
     filenames=('AGENTS.md', 'CLAUDE.md'),  # one per directory: the first that exists
     autoload_instructions=True,     # Strategy 1
     autoload_symlink_roots=(),      # authorized external target roots for Strategy 1 only
