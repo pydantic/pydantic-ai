@@ -6,21 +6,24 @@ The single-occurrence case is backed by pydantic-ai-harness's
 has no harness equivalent, so it keeps the prior in-place read/replace/write.
 """
 
+from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelRetry
 
 from ._backends import filesystem
 from .shared import attach_context, resolve
 
 
-async def edit_file(file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> str:
+async def edit_file(
+    ctx: RunContext[object], file_path: str, old_string: str, new_string: str, replace_all: bool = False
+) -> str:
     """Replace `old_string` with `new_string` in a workspace file.
 
     Replaces the single (unique) occurrence, or every occurrence when `replace_all`.
     """
     if replace_all:
-        return await _replace_all(file_path, old_string, new_string)
+        return await _replace_all(ctx, file_path, old_string, new_string)
     try:
-        result = await filesystem().edit_file(file_path, old_string, new_string)
+        result = await filesystem().edit_file(file_path, old_string, new_string, workspace=ctx.workspace)
     except (ModelRetry, OSError) as exc:
         # The harness only converts a fixed set of errors to `ModelRetry`; a bare
         # `OSError` (e.g. `ENAMETOOLONG` while resolving the path) would otherwise
@@ -29,7 +32,7 @@ async def edit_file(file_path: str, old_string: str, new_string: str, replace_al
     return attach_context(file_path) + result
 
 
-async def _replace_all(file_path: str, old_string: str, new_string: str) -> str:
+async def _replace_all(ctx: RunContext[object], file_path: str, old_string: str, new_string: str) -> str:
     """Replace every occurrence of `old_string`.
 
     The harness `edit_file` rejects non-unique matches, so replace-all stays an
@@ -39,7 +42,7 @@ async def _replace_all(file_path: str, old_string: str, new_string: str) -> str:
     can't escape the workspace root while the single-edit branch can't.
     """
     try:
-        await filesystem().file_info(file_path)  # rejects a path that escapes the workspace
+        await filesystem().file_info(file_path, workspace=ctx.workspace)  # rejects a path that escapes the workspace
         p = resolve(file_path)
         text = p.read_text(encoding='utf-8')
         if old_string not in text:

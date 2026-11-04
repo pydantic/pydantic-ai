@@ -13,6 +13,7 @@ from starlette.routing import Route
 
 from ag_ui.core import CustomEvent, EventType
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Caching
 from pydantic_ai.ui import StateDeps
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
@@ -23,7 +24,9 @@ class DocumentState(BaseModel):
     document: str = ''
 
 
-agent = Agent('openai:gpt-5-mini', deps_type=StateDeps[DocumentState])
+agent = Agent(
+    'openai:gpt-5-mini', deps_type=StateDeps[DocumentState], capabilities=[Caching()]
+)
 
 
 # Tools which return AG-UI events will be sent to the client as part of the

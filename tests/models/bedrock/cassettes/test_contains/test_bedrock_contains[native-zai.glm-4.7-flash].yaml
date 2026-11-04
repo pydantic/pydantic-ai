@@ -1,0 +1,56 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/zai.glm-4.7-flash/converse
+    headers:
+      amz-sdk-invocation-id:
+      - e565e48e-0e42-487c-892f-ed52ec578251
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "455"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: Return values equal to ["ok"].
+        system: []
+        inferenceConfig: {}
+        outputConfig:
+          textFormat:
+            type: json_schema
+            structure:
+              jsonSchema:
+                name: Result
+                schema: "{\"properties\":{\"values\":{\"items\":{\"type\":\"string\"},\"type\":\"array\",\"description\":\"contains={'type': 'string'}\"}},\"required\":[\"values\"],\"type\":\"object\",\"additionalProperties\":false}"
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "243"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 474
+        output:
+          message:
+            content:
+            - text: "{\"values\": [\"ok\"]}"
+            role: assistant
+        stopReason: end_turn
+        usage:
+          inputTokens: 12
+          outputTokens: 7
+          serverToolUsage: {}
+          totalTokens: 19
+  recorded_at: 2026-10-20T14:41:04.147228+00:00

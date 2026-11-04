@@ -1,0 +1,240 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "3724"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-6-astra
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - id: cmp_0158fcfc919d881f016adffdc6916087d1b8399fc45996c3b0
+          encrypted_content: >-
+            gAAAAABq3_3JMyP_x326FW3N7Hv2UAjZx_x4zHJANR1rTuQEt9rmDbmOzFiNQnV2UkLb6frE1AQJZYLgrNH6NtTuVt0R_oajRcdXEJD0v3pfVHIvV08prYegn7joqzP6z_mFDMNfawRebzHpTPtLoSXZLaHGkj_aTpaM90ssxhns1a99zAN_GNBpPv2RxnFYoatqyFYa3a2YjC956ZxHQoUDKkNupix19jV3k17alSTqQYroIk_TGS13SIaX03pNYkYespNKRXHU9xgbJwLiVXmU9yqL7CZ851unPL00q4qVSLXzURzairBATTqRigtiiIDkzJu2ZpOKA_-WjW40DeZFmSozYjU87HgiyDbu-zPhAijbEhDsouRXYODQflU5Y4cnJmmKH8xSWBqrMD7Gjp1_i5NAUo8L0S9mXRSIbBgrnfJVWtxiDF66afkEpSm-qHvNz_cC9BAAb8Ni94BvxsJyGnoDAG_9jNwS2OLG-BbOhhzyMu5aE9d-ZcZREfwu5Q0hIu4JxV7c1Opdpd30jnVxsxzrMNiWiPjvFDC2FmWw8Dj8VTx6YbcP8aiZ2wA_i5JnsMWLMmx27rUFgHFCumtO6JLbubgtZnZRBjj0CiEbdtHHntvaING1WlXSz-ot1ljixODdwDLw6c-BK1UVTBtDrMHyTeZB-tJ-kMVcdiA4wPrdv1970BeMlQSkia3jqiRacEW6xoarUnk3JrwvGSS0A2Gnt1ifKEOX_ZbFpwNbc6ALj5n8rO57E5u2KeP2iT5bi6EGF1h3Pm7KFAlPnt8_yZYk63NmXCuBpxwr36N4XyHDzsZ2gZpEmoQKZklm2Fe2-wWmccbwb1YJvHoiGK0tHuV_Un0UQ5xFJ7f16smdxq6s_DQoayL9MNecJ-dfmxYenMsFu6eGipVT4aF7XoMdGYeJkEX5ySGOpdzt_bEixqr0UeVEDmMbhyxqe0oA_NTu4gEUZot_VeIODwFU327kD_qXYVhtUtWZd9lBb2pnvuF510JRVc3hmU8Xt_f3uuJQOJh-sgCpyo0L3QwR2WNtI6TSUL7d6pTuyHMcc3CTCtn7wOiW1OTGNDOYcj8kmATILMGwT3qkBdESoA6IfpXPVkp8rxIFsdywdlBw6V2TDSW1vBNa3lYm_8DCQNuDx8waH_SXDkCpNmM25I7B88wSeROha3haRdKf3L6agX3xmGVwn5kQ3y_V9gwvqSdyx9ObSTJv0r2lGZtX5uCeSBF_F-zXj9Fl59_g1j0G745P0abOudOv-XvbKvOFcddvU7g9kIicI3ilI27yvttRjaUywVWpujPl8DAqgTnRrFNSa1IxfUt4A5tzNRc54HcIimLrJ16e_ogQ3yvbF5ZBjFM_9XpEQ9yU1pBZcr4m-MRPOJP0YGHHIgA4U18ua8uUTZozK92HMcOSiywwvH6V6GEp5pBUpwuXGTToJrK8spRU74kLBh_gr7bnDU7BUhdLmnyBu1FmeziND4O0ZYr0k93F7G0RO3IB08ZaTBK9DJx2TbnhuGzHT97Hvtw1J8xE0bxKoXQwB1ryo2kt6ZrKgDLtSyiMsW9TKm8WbtKftZb6uqcFICm-rt7AKk8iLVUk7rXyGM0Y0BprHnEVCjw4NfIWwZ7mTX6NwtqkTHfC4jv2GiUDS4dsCAs04kkTEy_Q9VxUJ_BOQwg0vZJoIDdeKbm44Ymq-AamADRySXLFU4rGzLfyIo2oO0J-yw5TrqX97vz4-qDl9g7ZjfcX3pW-olkAyQ26YzpQ5hHo57vjXXv9YrFf7nuHwl80jgpd1vvNAxSuLl6xWzFmf4XKKv8zuz3VaWbWhzJi8AbqybGrdtCKsY4ntKr5Omca1fHGhhKlG20zmpcGFGnBKu95HmQiX3hZaeoFqAJftRsUjEVEaqn5082y_YCSCETFUZE5ZLepLM-B92ijsmD4IaYIExDnvGeYWYHF1KhLiZbzamEcH6xIAsJ5eG0CXxFtJGXniWp5biW6cZ7Zqg68TAXxseA8fsjdL6_lEhCVNY1mTKTxpPUqasBsyFZMP-hr2a9rd-rkrfvCglpAuJC6gJV3YQTKmTd5a3OVD1Sl6KhuXyt7WgESVNTO_R0cT1mAJC7r88z8IM4_72EnquAx80bjTNF_m3uBqeLSduB81Rqj2lLTGEQWzqpz7B-XgMI3sFhZjrhyEug_1ouyUFRr34jceCsI9f3w-OgusdJaOoBSr5tko-0-OMvP2id-M9VYufuB9ZwYf2AhVgQyeFQe__BhNtPCJ5aTqLvgAsdIMDYhQJGwWRtkf-itX9DpDHviO7Iv1C9-ynyvPh8SsQahiO2IqMbn6nvCEwuE4SHTYr42SWUi8yWUj4lF6Nexf9N4cbnzy0A9uFesLLBq-lMDDMHUC85zIqlD0c2HxgVIGMzTwTPyk7-JbRHJUCz80G1-g_xN7abesnpRb9yHVMD4TRxKdv5S7yGrAohubsWUOaVG-cbDjdVYe72vakeA0JKogaXYmZHMl0b6g9Dc-r-Mlx0g-606MrdWaurpnmWG2hhPmIIym6N4UR7bjAmbnlr2zMYYN0Pnrzl44BGeRYR1yCZLq_AmP-MC6eF1_TwtYQkGRq93O1TaTOPzvk3RRc7FQJzDT5dke5DN6OAfQHuL2s-r1NMwTG-_nqTlcriGir082GBBh26oiXpv0ekqtQsEAprzP3kkzXWYx9QcEECoYrHNMslsp6eREXlLaiMmDv4qFv3QHc23572vFCnTj9ICvajqEE008q5ahSgOUcKOpUAjOvBZ8OgTe6zXb4DyKIJAl4xmLTuHhPbkKmCjdq97Nf5EJnuFLMDZTIDSyk91q7nAojpjw31RwW6IRvrdzYb7HyKfuiKrdyr2douZcbxxxXZg6ZAvVwXuedwGVzuvKSNP9Y564PONGT35Yb3saETpPxDsjMld1i6SLTWkuXjp5ccsDMZZZ6jrgm1zZ_2OVfTEPWqRHfBJB8NxBJRZ64buyqXSpw-9AOMH5d5iAmpIVpgLeThESR2R7GI2XX6ptjRRlPKdeDiRDJYKAGwLiYwsYGFpthTAUddZ6WJy7KOjVTdcaB_zEHuJib2YdTamDR4AljrPOxf6ix1xjvclmGKak-zeK-BP1PgcaTlXK86iwupr1YxOVPj74id4M-_6mtBVPIgk5XcTBre6tgRJjW4UlS8ed_IivjEE2li4bQDhAT5_1SYYKxbfbL5TzZ-LDjEKz5_39saGRb33fh2shLJqHwqgBk2jU5oBoXm1Av9xGiLNTVKG9xMd_Q9oWE_0gvLxdDeIqXUwudo8QgjGoAkYQGrPWfnv0V2uQkRKYbJT0Lhp8zCZDZnH-WGf6u6VRTSLuriMPLCwPfRYDURFlDQ0QmGnXbk3-YnKq_OD43s=
+          type: compaction
+        - role: user
+          content: What was the secret word? Reply with just the word.
+        instructions: Be brief.
+        reasoning:
+          context: all_turns
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "2213"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0158fcfc919d881f006adffdca041487d19c54063fa9d53642
+        object: response
+        created_at: 1793064394
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1793064396
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: Be brief.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-6-astra
+        moderation: null
+        output:
+        - id: msg_0158fcfc919d881f006adffdcbe82887d18ae82bd94f700301
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: pelican
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 1753
+          input_tokens_details:
+            cache_write_tokens: 1750
+            cached_tokens: 0
+          output_tokens: 6
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 1759
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-27T01:26:36.248982+00:00
+- request:
+    method: POST
+    uri: https://chatgpt.com/backend-api/codex/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "5180"
+      content-type:
+      - application/json
+      host:
+      - chatgpt.com
+      originator:
+      - pydantic-ai
+      session-id:
+      - 01a17af7-391b-74b6-a8ab-4939f8da063b
+      thread-id:
+      - 01a17af7-391b-74b6-a8ab-4939f8da063b
+    body:
+      type: json
+      content:
+        model: gpt-6-astra
+        stream: true
+        context_management:
+        - type: compaction
+          compact_threshold: 1000
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: |-
+            Fact 0: the number 0 is even. Fact 1: the number 1 is odd. Fact 2: the number 2 is even. Fact 3: the number 3 is odd. Fact 4: the number 4 is even. Fact 5: the number 5 is odd. Fact 6: the number 6 is even. Fact 7: the number 7 is odd. Fact 8: the number 8 is even. Fact 9: the number 9 is odd. Fact 10: the number 10 is even. Fact 11: the number 11 is odd. Fact 12: the number 12 is even. Fact 13: the number 13 is odd. Fact 14: the number 14 is even. Fact 15: the number 15 is odd. Fact 16: the number 16 is even. Fact 17: the number 17 is odd. Fact 18: the number 18 is even. Fact 19: the number 19 is odd. Fact 20: the number 20 is even. Fact 21: the number 21 is odd. Fact 22: the number 22 is even. Fact 23: the number 23 is odd. Fact 24: the number 24 is even. Fact 25: the number 25 is odd. Fact 26: the number 26 is even. Fact 27: the number 27 is odd. Fact 28: the number 28 is even. Fact 29: the number 29 is odd. Fact 30: the number 30 is even. Fact 31: the number 31 is odd. Fact 32: the number 32 is even. Fact 33: the number 33 is odd. Fact 34: the number 34 is even. Fact 35: the number 35 is odd. Fact 36: the number 36 is even. Fact 37: the number 37 is odd. Fact 38: the number 38 is even. Fact 39: the number 39 is odd. Fact 40: the number 40 is even. Fact 41: the number 41 is odd. Fact 42: the number 42 is even. Fact 43: the number 43 is odd. Fact 44: the number 44 is even. Fact 45: the number 45 is odd. Fact 46: the number 46 is even. Fact 47: the number 47 is odd. Fact 48: the number 48 is even. Fact 49: the number 49 is odd. Fact 50: the number 50 is even. Fact 51: the number 51 is odd. Fact 52: the number 52 is even. Fact 53: the number 53 is odd. Fact 54: the number 54 is even. Fact 55: the number 55 is odd. Fact 56: the number 56 is even. Fact 57: the number 57 is odd. Fact 58: the number 58 is even. Fact 59: the number 59 is odd. Fact 60: the number 60 is even. Fact 61: the number 61 is odd. Fact 62: the number 62 is even. Fact 63: the number 63 is odd. Fact 64: the number 64 is even. Fact 65: the number 65 is odd. Fact 66: the number 66 is even. Fact 67: the number 67 is odd. Fact 68: the number 68 is even. Fact 69: the number 69 is odd. Fact 70: the number 70 is even. Fact 71: the number 71 is odd. Fact 72: the number 72 is even. Fact 73: the number 73 is odd. Fact 74: the number 74 is even. Fact 75: the number 75 is odd. Fact 76: the number 76 is even. Fact 77: the number 77 is odd. Fact 78: the number 78 is even. Fact 79: the number 79 is odd. Fact 80: the number 80 is even. Fact 81: the number 81 is odd. Fact 82: the number 82 is even. Fact 83: the number 83 is odd. Fact 84: the number 84 is even. Fact 85: the number 85 is odd. Fact 86: the number 86 is even. Fact 87: the number 87 is odd. Fact 88: the number 88 is even. Fact 89: the number 89 is odd. Fact 90: the number 90 is even. Fact 91: the number 91 is odd. Fact 92: the number 92 is even. Fact 93: the number 93 is odd. Fact 94: the number 94 is even. Fact 95: the number 95 is odd. Fact 96: the number 96 is even. Fact 97: the number 97 is odd. Fact 98: the number 98 is even. Fact 99: the number 99 is odd. Fact 100: the number 100 is even. Fact 101: the number 101 is odd. Fact 102: the number 102 is even. Fact 103: the number 103 is odd. Fact 104: the number 104 is even. Fact 105: the number 105 is odd. Fact 106: the number 106 is even. Fact 107: the number 107 is odd. Fact 108: the number 108 is even. Fact 109: the number 109 is odd. Fact 110: the number 110 is even. Fact 111: the number 111 is odd. Fact 112: the number 112 is even. Fact 113: the number 113 is odd. Fact 114: the number 114 is even. Fact 115: the number 115 is odd. Fact 116: the number 116 is even. Fact 117: the number 117 is odd. Fact 118: the number 118 is even. Fact 119: the number 119 is odd. Fact 120: the number 120 is even. Fact 121: the number 121 is odd. Fact 122: the number 122 is even. Fact 123: the number 123 is odd. Fact 124: the number 124 is even. Fact 125: the number 125 is odd. Fact 126: the number 126 is even. Fact 127: the number 127 is odd. Fact 128: the number 128 is even. Fact 129: the number 129 is odd. Fact 130: the number 130 is even. Fact 131: the number 131 is odd. Fact 132: the number 132 is even. Fact 133: the number 133 is odd. Fact 134: the number 134 is even. Fact 135: the number 135 is odd. Fact 136: the number 136 is even. Fact 137: the number 137 is odd. Fact 138: the number 138 is even. Fact 139: the number 139 is odd. Fact 140: the number 140 is even. Fact 141: the number 141 is odd. Fact 142: the number 142 is even. Fact 143: the number 143 is odd. Fact 144: the number 144 is even. Fact 145: the number 145 is odd. Fact 146: the number 146 is even. Fact 147: the number 147 is odd. Fact 148: the number 148 is even. Fact 149: the number 149 is odd.
+            The secret word is "pelican". Reply with just OK.
+        instructions: Be brief.
+        prompt_cache_key: 01a17af7-391b-74b6-a8ab-4939f8da063b
+        reasoning:
+          context: all_turns
+        store: false
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      cross-origin-opener-policy:
+      - same-origin-allow-popups
+      nel:
+      - "{\"report_to\":\"cf-nel\",\"success_fraction\":0.01,\"max_age\":604800}"
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      report-to:
+      - "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=qnfzIdnFTx0hPCnqtlRA%2FTEDuttv5jbtfVUAtmNXI%2BjXZ%2BoRg2ddwjMWVZBXTp0CAQZ2yBxxKw37bGWC0%2F%2F7MilROo6s8AMOlOtqCHs%2BhldT7o33c%2B6O7oCXdZcb\"}]}"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_0158fcfc919d881f016adffdc16d1887d198404d2c7984d635","object":"response","created_at":1793064385,"status":"in_progress","access_programs":{"cyber":"standard"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"Be brief.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-6-astra","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":"01a17af7-391b-74b6-a8ab-4939f8da063b","prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":"scrubbed","service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_0158fcfc919d881f016adffdc16d1887d198404d2c7984d635","object":"response","created_at":1793064385,"status":"in_progress","access_programs":{"cyber":"standard"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"Be brief.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-6-astra","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":"01a17af7-391b-74b6-a8ab-4939f8da063b","prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":"scrubbed","service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"cmp_0158fcfc919d881f016adffdc525ec87d18384253a52c81072","type":"compaction","encrypted_content":"gAAAAABq3_3FWYDaxnh8ztcMTK-cHzEctL3q-WFrB5VKQNbRe8EcFDFtZJ3ZBbGiDD6EB0DI7rDu2rnp_10t_aKtqA0nbrdItJVCvuvJB-lsEEvMm7-z5xHaXwAupalGJCZfPemRnq6X7YdUumucBZu6l5sFGhtYWrTuLR3w3sbhmC2ORvpCutQW_YTRUlFzF9xe6jNFcGuJ_9NFHteriBQxhbPvwEfuLv3BqbhFGpfuP1dx8JPgbVNEitbO7QP1dIhdR3Bdp0CAbx12m4WACwtWRdclGtgBVVDEVElk8XoVvlf-0yBLm3PtBcLJekiHnfLOrInqWRnAtu-qD_hPW3BPXV9gg_o2spZEmc0GEq_hiyD2XUmkcd5sWF4-kUfAS6k1o1KyJ09GXPLYtkZn6vIghSrYxVbcNRY-VFpgrfBrUzXqJbsFU5-l-WunIa639giskt-EuD_Ne4lL-gQJ7dEYmGkATsmx5vtn4qIaoTHo9o0LegbHsyCcKV1faH-T8EXG2-Msn3IFL0rozfQA-pkwtSifqWIa6xnVxGou9ZJ9ERTBlR1R2rvxOwXj_28Sgw0O5qvLf_PadDrjlART38JEDnGd7HnBWqiEtTByG8ame8pclbTHtFed_Jt1d44SwfZAEpcmDJd2gFlOI1VfRLEWJgfK1Ul4N-rU10UgWyzNQxLypDwZBP9oGgdeRtwxHEly9ozXOHFER8COJ4bn_Yv08MGKIYnmBbRy17j05Ps3a4l1i8FgHMwL2Ie2gotXqoOukL14XatyAleg2yDkqK4bbN94DUoJglTXgQzOhmOuZUPxbOHMB6fJnkdV8Op_QW2hLk9mA-1868HebABhmOHcwMHjO5WPryNzmFgl0WWsjxx-tjenGrso4VX7h4mgAPEnk65SnzXJgF5bJdwFLmAHoftd2Efez1YPUFwzma-Kw2g4tZ9xVdGASN1YJJ3mvxxYaKL9ZCenwTlDux5cwpSOHgjN8YrTzJdSCBQBg_naA20zdAol7cLGunonbxAN-P-xKuuNn0oxk-Kd8D8vNbjPTOpHhJZo_3kCIM76KjmIDAA10z7MJz8V4SAEkOQQU6Aw6hF9O-IaXRkW0dnah9fk7w9JQ1Iqt4iuxJRCknYcKTKFl6HXm34="},"output_index":0,"sequence_number":2}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"cmp_0158fcfc919d881f016adffdc525ec87d18384253a52c81072","type":"compaction","encrypted_content":"gAAAAABq3_3FwfGNXaq6tCtSRns6Mtn5demwt54ayUgo6n8pnrXrzi34j7dj_VFfjcKHoCeqKGLjoY0wI3kGTnQRkXkg8O8gUAUkXEwIz40bvVIEkFKB-Kddgu9-nXdr9_jwzkfaeVjvRShmMBTjra0OmbtewYtzG9C5mOHbTM6qUKR4ZXwCMeo2xrlUFWW_mypQ02vHXAgIPA77khfSDFB1X93u4BRr01_XJWMTgXvIu0ayGQiZK09n7RV0yGfaCBKhMard7eeqyZnGAiDFtt_hzxxWv0on_LzJNbL90Y-lVlIMAQbvcv164oTTvbCh-qqmsYehPVBaMA2h3FI0AePnST8yls9BV0F0xe-Vkk6yutG6R6noZiNos76noQKllFetN8SPdqOMVLHn5rFBrfxwngc653M8rSYu7X6CnzwJvgYnaPtBXaDUBcjimJ87SnOjreKS0puPc3nak9dwoipQVfwnbK5j-xfzU4pxkg_6malF93BtbdT17KcHDVAVCNXmEzhBtUMYDTLwA3VlBaMr6dqrdCox7WMS-AhDKSh-YaOMx6n7VvLqvW-EyykvcVJmeclbgh3Seu7dPKg-qGrZzKyQkzD6y09kx0UOWex_-aSn865bgv0yhB5RZsb5HIv5UO4ZorlWdFtOlPuKi51DJrIyjc8rQOskbwt2ocql7__OdLONkh8hvVvlMsL6IxdGWwAYXc1r9Zg6XQUcgKb8T2rmwMZddAEZqv7Gp0yCfVJJKmoW9A-Fz62uhbZ64lhEPr2QY5KcMNhLY_aVfSSxdEnAm5eGDBUKPyIXnjIyY4-JBwrvdNES4VWPnO9QuaCGj89EXgizKdmIt9u4JPoIQbYPfvSKUF39k35C7oCWTZpv8tMdHfh1yiL6uXeMeGoouqhtEYNi7JC32v34Czd_tideQV1Xqmo_TnrKMWNduRmXNgpL8_qJhVZdC8Q6k9V-uCGPXF4_xq3NJOTzrad2gEkRp8gBYcXKEIVXJN3xdcAM3n_N_rs9OTBvK4_P-3_p6agQKHjp70NJXJDC9u2bFKL5bHwcis0yjf551UlQ5BCmojBNSP0ZW4TL9ZF3GtSZVsYQ5K1xeFdLAeYuXZZpkiNtGaw9DaQvkiUTFhTpaPwfw-H3zwJwhhEYzc3a_ZracTtvWf8PwuMqrW0UXHot4LJwg_8TK7qI1lOG5M0e9Is_epHHTsQlbrZuifxKwEuBRjCee5CN5ZLdkVmlfQDOo3Wuab83spJB0GIeEDdmnrujvKvx-mXUC9UoFSGP4kpEe_fF_0dTwwZheFogh_a5T-DAOUeDoK0bjcwOxDNtLr82iCLyjnGPBp7VaQGYn5GdJ2NhcNX3t2-KfkFcM1gxkdfWO28d7k5Hi_ObhN4bD8pP2UVesW9_Gu6zX2B4VjqUbj3rysI_t4ViSSW5fnZkN5GnL-yu_YD8l9CSI3VS2vgfGrSU2GNOMcRJThK-4MRmKgwI62VpWEAu6cUKCf1H5Z0lytGBpXNNsxmto0HnLWaHHv-tCojYCdCU92_DcjrQGVnBqnQd1J-yv5jbAjfaRpHRfEUdOSOYuT7SPgvfvJvcfbL0fhY7s7PEdIs_pctTgdHdxCQ-scWBu7uU4t4P6ZHBKgAFSV2fN7or948ziT5nbrP9d91WnT8f7rioBfH18igppr5BNduGJ7r1jOinErUUlB3VyAOlhAJvW02GXjBHcV7eK75vYTv-HKDFaI9hPqcZMyvGW87AHZXXiPA0XXusZnVV7xTLRwT_x88LGeiCmttQHf79-jEcPx9VG8h3QFWqnVi3tbRy4NPBp5ad4QwmbFSsZ0l-v-6mvRopVhhzUs93hQlkSrzZ1vvW6keGdNqQBjumIEAmoA9Up5IExDFVbK3VyMcd5qRFwR-3eJjKLnErzN4OWPNvKPpJcSo-2Y7bDCy6oRbL-qiuHLoeso0G1ElwR2s3TVRDxNUg2uathOQpNqEqJNAhPMbZr8JkKWi-pdRJNK6dTXXxclKn5jEjDm5SilTZRUT3owDHfBlgoIKGq4BAbHJJvMYWa5r5Po_WlyiuXjh5Pq08HiCdaaf9EfGPYiNxBdqzEp6KfcS5iRoxC2fzE3Jwkh7Cw4hXRRHhGttilhqwPfrV3EHVMJORWmpT7a_evcM4p23TtoqQqHBDxkiXrwXjv0fKfhcM2bDYiXyNKtgqlB8qfTkLDtfCI60ida2C6lvS0udZDFnmf4gdbpPGYukkycHgLmJtIlV_ezGCmVuPYjDiYy3mLv9HVs5LufKKHVlbgPsOxDBcmw8xASuWCXA857jUZlN_Qcs7ykrKwci8smughOyegnknInJLf5FnL5TMHg-NK3xyQapyKeU7HGiwZnIIbsm3u-tbzGzOBnUU36zKnF29yl8fD5MqU7uQfo3S8fxsVnzIuNTPkk1lBykaT2Le5Xyk53jjCfPy0XNEwEgc6CFUSv5RkqnlUfyqvxxqQ-GL1WkIexS9ZGIyBKQqnPEHrM_dK1Dr8OmDo4HPj5LYugFL-k6yC8PWnVQvtR3tJHiojGmUr44QipmR4G3Ytsq_mln80A7AFQg5GMBTjDglTm_g1pMIYTdn_gtL3feQRvtadnFtbixKcwjhP3Jt5A9KOlthlmbfKiA7_byJimh9kcDEaBsuC0zreJn9grRP8vbeoghaL6kxOjm-kKY3MA5NXBlKUMWQ5vqo4KOcYnS3nx9fwxZ42kmIheSd9icJtmv1MesJz_YT0G9PQEn2VqqCx0WIaaZ9tQLOh_FNAzRmQB855OHrl-5pWhXMiWiHyFU23cWncxQKtltRDobaqKnfcdKt5uaDWJ15ZH8m6Vj_XuMrjDs9dvdOllj8384U2xGo4sNYtmgMTuiTykWEu7RCrgpAJry3STLHaAAuID_ll62Ul5on67YuLyJ8JSAFI98veef8i4bomCM7xWVBSLDQZvymYdHCYI01d7B4txzuLWqTBJaqgKKGCynuG4Ba_fOqMKXkr8q541oOKnwrwHEkXi8oVz1lp0tvVmxH75zz4f_kwlINmeUP_k8pyctjO9ffUFlYPKCDqX5sr0Ia_-VtFdqydrDyAw7OTdtRSPQWB49law_ByKZLvh95U-1JBMlVbzvBnzW1gXSrHCyY9o5NQBkqGNpvWMdvtViQu7MfL1iEW2DTuTnD82BzA6ivioB4gLwirvBaCIOLT8UvReD0RbsukvHBbtKEzwWKOd_yReqigJ9Rjy0oY1CA4PvSerNHFCDZ8cRpoIS_S9qhsDt3hZBFSBklTzmIHpEwgYtXY4CKYc2jcNjH0w=="},"output_index":0,"sequence_number":3}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_0158fcfc919d881f016adffdc686b887d1979ab9ee0a8f8d01","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":1,"sequence_number":4}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_0158fcfc919d881f016adffdc686b887d1979ab9ee0a8f8d01","output_index":1,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":5}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"OK","item_id":"msg_0158fcfc919d881f016adffdc686b887d1979ab9ee0a8f8d01","logprobs":[],"obfuscation":"cDG9e2rKbfttXo","output_index":1,"sequence_number":6}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_0158fcfc919d881f016adffdc686b887d1979ab9ee0a8f8d01","logprobs":[],"output_index":1,"sequence_number":7,"text":"OK"}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_0158fcfc919d881f016adffdc686b887d1979ab9ee0a8f8d01","output_index":1,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"OK"},"sequence_number":8}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_0158fcfc919d881f016adffdc686b887d1979ab9ee0a8f8d01","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"OK"}],"phase":"final_answer","role":"assistant"},"output_index":1,"sequence_number":9}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"cmp_0158fcfc919d881f016adffdc6916087d1b8399fc45996c3b0","type":"compaction","encrypted_content":"gAAAAABq3_3GGn2Y_TsJdRzvTxhFREWDelGyzn_iEqjhq-6MyHC2HBMzyvpJ9Fex1WcfkTNut2937hucHUiT8nSdH4yMKl1m0lMzn2dzQfFguOjv5brXIkRl4As96sAq8bgJYWCO_D91MRQLH6DZnERQF53D09Z45c3Q1VF9aUL27ns6cCHK1MrGKrNbC-9bpd0XTQYUGP9cRlk8fmN4gykdQ6sY-k_3O8H_BTLnoli5LGGxsl7_5U2x_w2b1P9i_J9BtdirbSBJY6I_R3_GUKrSJjh66VeavztRCNjmeZmXkFuX7ocZ4GOcHUHenQmIb07XCstr2JEGuk-jnfnpRSbJres1KmuketYKBUSIdnJzIYfptGZsV_nGXiPChN8gdH7itzbcioPSNje4QIFgLDBJzGVn-sH-YCZVegEpnTqBorFhhM8SqEu7hB90PRQwEgeZns-a_kQHcKWYhC_uaJjd5ZZTmx6gPLtiMcC2E8587XuGBKbuPQM9NUxkQDx3s6RUwvQzIQrtKeJL9WqHDbTxEdt9DR5AgyT8MKGltGFAVwWeN3NXeET8_Wyavsal88DEydAMp7T5K_Apjj3O4m1zbCcevc4TSI9UUYhEga5FsRPHQI5BtWSnbEtNrNnMOH830A-O3Ol36MYTxpzCJ39BpvJ3xbTPDQXDNVQjCM-7e73BDeYzRHtZZ3BnmFdzjO8gdLhQBnbXAdYcSMRxkNijl9ghk0-EbGB30e3LiG8gASiBVBT7xSIjIFNmd3om9LgzkYd2MZyu0R0MN5zbLhaWlI7JELmJld93NL6kHXO20f0K0WmryY-AhXvSbJw0YBeMDAMyEASA252xbSxbu0kQixeZ2Wvu2REsaAhxHCAKBBPJPITD0M6UvFBpIrY_AeN9rhmtopmP40M-GCFDDzhDjgMoX1J20KXvcorVATOZAZOYEt-SEBUVdffLVEWsMV_Ys_D81R33TkFjiFUjsXanELwwZl5F09GFez4xBphfKOCMIlLaXyb_uyvApPoe-u0r7nMxU1jdTnaKqpiGjfH0-61PDc3HRzG2zO8OVMst4LOY1yDDozoRLCGDSxUHQf1Yb0Zc1tVhCUOylv9gZWAmP39dSoQyfQWqNYmY9csiQ-1TTdpWjlU="},"output_index":2,"sequence_number":10}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"cmp_0158fcfc919d881f016adffdc6916087d1b8399fc45996c3b0","type":"compaction","encrypted_content":"gAAAAABq3_3JMyP_x326FW3N7Hv2UAjZx_x4zHJANR1rTuQEt9rmDbmOzFiNQnV2UkLb6frE1AQJZYLgrNH6NtTuVt0R_oajRcdXEJD0v3pfVHIvV08prYegn7joqzP6z_mFDMNfawRebzHpTPtLoSXZLaHGkj_aTpaM90ssxhns1a99zAN_GNBpPv2RxnFYoatqyFYa3a2YjC956ZxHQoUDKkNupix19jV3k17alSTqQYroIk_TGS13SIaX03pNYkYespNKRXHU9xgbJwLiVXmU9yqL7CZ851unPL00q4qVSLXzURzairBATTqRigtiiIDkzJu2ZpOKA_-WjW40DeZFmSozYjU87HgiyDbu-zPhAijbEhDsouRXYODQflU5Y4cnJmmKH8xSWBqrMD7Gjp1_i5NAUo8L0S9mXRSIbBgrnfJVWtxiDF66afkEpSm-qHvNz_cC9BAAb8Ni94BvxsJyGnoDAG_9jNwS2OLG-BbOhhzyMu5aE9d-ZcZREfwu5Q0hIu4JxV7c1Opdpd30jnVxsxzrMNiWiPjvFDC2FmWw8Dj8VTx6YbcP8aiZ2wA_i5JnsMWLMmx27rUFgHFCumtO6JLbubgtZnZRBjj0CiEbdtHHntvaING1WlXSz-ot1ljixODdwDLw6c-BK1UVTBtDrMHyTeZB-tJ-kMVcdiA4wPrdv1970BeMlQSkia3jqiRacEW6xoarUnk3JrwvGSS0A2Gnt1ifKEOX_ZbFpwNbc6ALj5n8rO57E5u2KeP2iT5bi6EGF1h3Pm7KFAlPnt8_yZYk63NmXCuBpxwr36N4XyHDzsZ2gZpEmoQKZklm2Fe2-wWmccbwb1YJvHoiGK0tHuV_Un0UQ5xFJ7f16smdxq6s_DQoayL9MNecJ-dfmxYenMsFu6eGipVT4aF7XoMdGYeJkEX5ySGOpdzt_bEixqr0UeVEDmMbhyxqe0oA_NTu4gEUZot_VeIODwFU327kD_qXYVhtUtWZd9lBb2pnvuF510JRVc3hmU8Xt_f3uuJQOJh-sgCpyo0L3QwR2WNtI6TSUL7d6pTuyHMcc3CTCtn7wOiW1OTGNDOYcj8kmATILMGwT3qkBdESoA6IfpXPVkp8rxIFsdywdlBw6V2TDSW1vBNa3lYm_8DCQNuDx8waH_SXDkCpNmM25I7B88wSeROha3haRdKf3L6agX3xmGVwn5kQ3y_V9gwvqSdyx9ObSTJv0r2lGZtX5uCeSBF_F-zXj9Fl59_g1j0G745P0abOudOv-XvbKvOFcddvU7g9kIicI3ilI27yvttRjaUywVWpujPl8DAqgTnRrFNSa1IxfUt4A5tzNRc54HcIimLrJ16e_ogQ3yvbF5ZBjFM_9XpEQ9yU1pBZcr4m-MRPOJP0YGHHIgA4U18ua8uUTZozK92HMcOSiywwvH6V6GEp5pBUpwuXGTToJrK8spRU74kLBh_gr7bnDU7BUhdLmnyBu1FmeziND4O0ZYr0k93F7G0RO3IB08ZaTBK9DJx2TbnhuGzHT97Hvtw1J8xE0bxKoXQwB1ryo2kt6ZrKgDLtSyiMsW9TKm8WbtKftZb6uqcFICm-rt7AKk8iLVUk7rXyGM0Y0BprHnEVCjw4NfIWwZ7mTX6NwtqkTHfC4jv2GiUDS4dsCAs04kkTEy_Q9VxUJ_BOQwg0vZJoIDdeKbm44Ymq-AamADRySXLFU4rGzLfyIo2oO0J-yw5TrqX97vz4-qDl9g7ZjfcX3pW-olkAyQ26YzpQ5hHo57vjXXv9YrFf7nuHwl80jgpd1vvNAxSuLl6xWzFmf4XKKv8zuz3VaWbWhzJi8AbqybGrdtCKsY4ntKr5Omca1fHGhhKlG20zmpcGFGnBKu95HmQiX3hZaeoFqAJftRsUjEVEaqn5082y_YCSCETFUZE5ZLepLM-B92ijsmD4IaYIExDnvGeYWYHF1KhLiZbzamEcH6xIAsJ5eG0CXxFtJGXniWp5biW6cZ7Zqg68TAXxseA8fsjdL6_lEhCVNY1mTKTxpPUqasBsyFZMP-hr2a9rd-rkrfvCglpAuJC6gJV3YQTKmTd5a3OVD1Sl6KhuXyt7WgESVNTO_R0cT1mAJC7r88z8IM4_72EnquAx80bjTNF_m3uBqeLSduB81Rqj2lLTGEQWzqpz7B-XgMI3sFhZjrhyEug_1ouyUFRr34jceCsI9f3w-OgusdJaOoBSr5tko-0-OMvP2id-M9VYufuB9ZwYf2AhVgQyeFQe__BhNtPCJ5aTqLvgAsdIMDYhQJGwWRtkf-itX9DpDHviO7Iv1C9-ynyvPh8SsQahiO2IqMbn6nvCEwuE4SHTYr42SWUi8yWUj4lF6Nexf9N4cbnzy0A9uFesLLBq-lMDDMHUC85zIqlD0c2HxgVIGMzTwTPyk7-JbRHJUCz80G1-g_xN7abesnpRb9yHVMD4TRxKdv5S7yGrAohubsWUOaVG-cbDjdVYe72vakeA0JKogaXYmZHMl0b6g9Dc-r-Mlx0g-606MrdWaurpnmWG2hhPmIIym6N4UR7bjAmbnlr2zMYYN0Pnrzl44BGeRYR1yCZLq_AmP-MC6eF1_TwtYQkGRq93O1TaTOPzvk3RRc7FQJzDT5dke5DN6OAfQHuL2s-r1NMwTG-_nqTlcriGir082GBBh26oiXpv0ekqtQsEAprzP3kkzXWYx9QcEECoYrHNMslsp6eREXlLaiMmDv4qFv3QHc23572vFCnTj9ICvajqEE008q5ahSgOUcKOpUAjOvBZ8OgTe6zXb4DyKIJAl4xmLTuHhPbkKmCjdq97Nf5EJnuFLMDZTIDSyk91q7nAojpjw31RwW6IRvrdzYb7HyKfuiKrdyr2douZcbxxxXZg6ZAvVwXuedwGVzuvKSNP9Y564PONGT35Yb3saETpPxDsjMld1i6SLTWkuXjp5ccsDMZZZ6jrgm1zZ_2OVfTEPWqRHfBJB8NxBJRZ64buyqXSpw-9AOMH5d5iAmpIVpgLeThESR2R7GI2XX6ptjRRlPKdeDiRDJYKAGwLiYwsYGFpthTAUddZ6WJy7KOjVTdcaB_zEHuJib2YdTamDR4AljrPOxf6ix1xjvclmGKak-zeK-BP1PgcaTlXK86iwupr1YxOVPj74id4M-_6mtBVPIgk5XcTBre6tgRJjW4UlS8ed_IivjEE2li4bQDhAT5_1SYYKxbfbL5TzZ-LDjEKz5_39saGRb33fh2shLJqHwqgBk2jU5oBoXm1Av9xGiLNTVKG9xMd_Q9oWE_0gvLxdDeIqXUwudo8QgjGoAkYQGrPWfnv0V2uQkRKYbJT0Lhp8zCZDZnH-WGf6u6VRTSLuriMPLCwPfRYDURFlDQ0QmGnXbk3-YnKq_OD43s="},"output_index":2,"sequence_number":11}
+
+        event: response.metadata
+        data: {"type":"response.metadata","response_id":"resp_0158fcfc919d881f016adffdc16d1887d198404d2c7984d635","sequence_number":12,"metadata":{"openai_chatgpt_moderation_metadata":{"prompt":{"omnimod":{"protection_type":"omnimod","outputs":[{"results":[{"category_flags":{"A1":false,"A2":false,"A3":false,"C1":false,"C11":false,"C2":false,"E1":false,"E2":false,"E3":false,"H1":false,"H2":false,"H3":false,"JB1":false,"K1":false,"K2":false,"K3":false,"K4":false,"P1":false,"P2":false,"P3":false,"P4":false,"PD1":false,"PD4":false,"S1":false,"S3+":false,"S4":false,"SH":false,"TXT-C3":false,"TXT-C4":false,"V1":false,"V2+":false,"V4+":false,"REFUSED":false,"CBRN-B1+":false,"IMG-C1":false,"IMG-C11":false,"IMG-C2":false,"IMG-S1":false,"IMG-SH":false,"IMG-V1":false,"IMG-V2+":false,"IMG-V4+":false}}],"is_blocked":false}]}},"generation":{},"tool_call":{},"tool_response":{}}}}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_0158fcfc919d881f016adffdc16d1887d198404d2c7984d635","object":"response","created_at":1793064385,"status":"completed","access_programs":{"cyber":"standard"},"background":false,"completed_at":1793064393,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"Be brief.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-6-astra","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":"01a17af7-391b-74b6-a8ab-4939f8da063b","prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":"scrubbed","service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":1720,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":101,"output_tokens_details":{"reasoning_tokens":96},"total_tokens":1821},"user":null,"metadata":{}},"sequence_number":13}
+
+  recorded_at: 2026-10-27T01:26:33.779320+00:00

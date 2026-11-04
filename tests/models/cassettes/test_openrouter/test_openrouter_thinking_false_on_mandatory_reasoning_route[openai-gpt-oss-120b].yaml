@@ -1,0 +1,92 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "139"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: openai/gpt-oss-120b
+        stream: false
+        messages:
+        - role: user
+          content: "Reply with exactly: OK"
+        reasoning:
+          effort: low
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1793032229-Dx3mvN9HDQxYewWz2GbW
+        object: chat.completion
+        created: 1793032229
+        model: openai/gpt-oss-120b
+        provider: AkashML
+        system_fingerprint: null
+        service_tier: null
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: stop
+          message:
+            role: assistant
+            content: OK
+            refusal: null
+            reasoning: The user wants reply with exactly "OK". No extra text.
+            reasoning_details:
+            - type: reasoning.text
+              text: The user wants reply with exactly "OK". No extra text.
+              format: unknown
+              index: 0
+        usage:
+          prompt_tokens: 72
+          completion_tokens: 24
+          total_tokens: 96
+          cost: 6.648e-6
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 64
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 6.648e-6
+            upstream_inference_prompt_cost: 2.16e-6
+            upstream_inference_completions_cost: 4.488e-6
+          completion_tokens_details:
+            reasoning_tokens: 0
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-26T16:30:30.465554+00:00

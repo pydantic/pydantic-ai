@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -14,7 +14,7 @@ with try_import() as imports_successful:
     from pydantic_evals.otel._errors import SpanTreeRecordingError
     from pydantic_evals.otel.span_tree import SpanNode, SpanTree
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')]
 
 
 def test_evaluator_context_basic():
@@ -142,8 +142,8 @@ def test_evaluator_context_serde_with_span_tree():
         trace_id=1,
         span_id=1,
         parent_span_id=None,
-        start_timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
-        end_timestamp=datetime(2025, 1, 1, 0, 0, 1, tzinfo=timezone.utc),
+        start_timestamp=datetime(2025, 1, 1, tzinfo=UTC),
+        end_timestamp=datetime(2025, 1, 1, 0, 0, 1, tzinfo=UTC),
         attributes={'key': 'value'},
     )
     child = SpanNode(
@@ -151,8 +151,8 @@ def test_evaluator_context_serde_with_span_tree():
         trace_id=1,
         span_id=2,
         parent_span_id=1,
-        start_timestamp=datetime(2025, 1, 1, 0, 0, 0, 500_000, tzinfo=timezone.utc),
-        end_timestamp=datetime(2025, 1, 1, 0, 0, 1, tzinfo=timezone.utc),
+        start_timestamp=datetime(2025, 1, 1, 0, 0, 0, 500_000, tzinfo=UTC),
+        end_timestamp=datetime(2025, 1, 1, 0, 0, 1, tzinfo=UTC),
         attributes={},
     )
     span_tree = SpanTree()

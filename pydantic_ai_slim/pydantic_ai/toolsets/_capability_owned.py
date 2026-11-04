@@ -31,7 +31,10 @@ class CapabilityOwnedToolset(WrapperToolset[AgentDepsT]):
                 tool,
                 tool_def=replace(
                     tool_def,
-                    capability_id=tool_def.capability_id if tool_def.capability_id is not None else capability_id,
+                    # A deferred capability claims every tool beneath it, so loading it reveals them all.
+                    capability_id=capability_id
+                    if defer_loading or tool_def.capability_id is None
+                    else tool_def.capability_id,
                     defer_loading=defer_loading or tool_def.defer_loading,
                 ),
             )
@@ -42,7 +45,7 @@ class CapabilityOwnedToolset(WrapperToolset[AgentDepsT]):
     ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
         if self.capability.defer_loading is True:
             return None
-        return await self.wrapped.get_instructions(ctx)
+        return await super().get_instructions(ctx)
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
         visitor(self)
