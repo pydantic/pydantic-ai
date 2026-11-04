@@ -8,7 +8,9 @@ import functools
 import importlib.util
 import itertools
 import os
+import subprocess
 import sys
+import textwrap
 import threading
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
@@ -1548,3 +1550,46 @@ async def test_scoped_task_result_raises_task_error_without_awaiter_cancellation
     with pytest.raises(ValueError, match='boom') as exc_info:
         awaiter.result()
     assert exc_info.value.__context__ is None
+
+
+_SYNC_ENTRY_POINTS = {
+    'run_sync': """
+        from pydantic_ai import Agent
+        from pydantic_ai.models.test import TestModel
+
+        Agent(TestModel()).run_sync('hello')
+    """,
+    'run_stream_sync': """
+        from pydantic_ai import Agent
+        from pydantic_ai.models.test import TestModel
+
+        with Agent(TestModel()).run_stream_sync('hello') as result:
+            result.get_output()
+    """,
+    'evaluate_sync': """
+        from pydantic_evals import Case, Dataset
+
+        Dataset(name='d', cases=[Case(inputs='hello')]).evaluate_sync(lambda inputs: inputs, progress=False)
+    """,
+}
+
+
+@pytest.mark.skipif(sys.version_info >= (3, 14), reason='Python 3.14 raises instead of warning, which is handled')
+@pytest.mark.subprocess(reason='the warning only fires the first time a fresh interpreter asks for an event loop')
+@pytest.mark.parametrize('entry_point', list(_SYNC_ENTRY_POINTS))
+def test_sync_entry_point_does_not_warn_about_a_missing_event_loop(entry_point: str):
+    """On Python 3.12 and 3.13, a sync run in a script used to warn `There is no current event loop` (#1196).
+
+    A subprocess, since only the first request for a loop in a fresh interpreter's main thread warns, and the
+    rest of the suite has set one long before.
+    """
+    script = textwrap.dedent(_SYNC_ENTRY_POINTS[entry_point])
+    env = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
+    process = subprocess.run(
+        [sys.executable, '-W', 'error::DeprecationWarning', '-c', script],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=env,
+    )
+    assert process.returncode == 0, process.stderr

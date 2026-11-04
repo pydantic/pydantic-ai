@@ -11,6 +11,7 @@ import sys
 import textwrap
 import time
 import uuid
+import warnings
 from builtins import BaseExceptionGroup as BaseExceptionGroup
 from collections.abc import (
     AsyncGenerator,
@@ -1245,7 +1246,12 @@ def get_union_args(tp: Any, *, unwrap_members: bool = True) -> tuple[Any, ...]:
 
 def get_event_loop() -> asyncio.AbstractEventLoop:
     try:
-        event_loop = asyncio.get_event_loop()
+        with warnings.catch_warnings():
+            # With no current loop in the main thread, Python 3.12 and 3.13 create one and warn that this will
+            # change; 3.14 raises `RuntimeError` instead, handled below. Either way, the loop handling here stays
+            # the same.
+            warnings.simplefilter('ignore', DeprecationWarning)
+            event_loop = asyncio.get_event_loop()
     except RuntimeError:
         event_loop = None
 
