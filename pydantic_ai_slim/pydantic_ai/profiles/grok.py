@@ -130,7 +130,8 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
         grok_supports_builtin_tools=grok_supports_builtin_tools,
         grok_reasoning_efforts=grok_reasoning_efforts,
         # Verified live 2026-11-04 across the known Grok ids, including the retired slugs that redirect to a reasoning
-        # model, like `grok-4-1-fast-non-reasoning`.
+        # model, like `grok-4-1-fast-non-reasoning`. Deliberately `False` for an id this doesn't recognize, unlike the
+        # field's `True` default for a profile that doesn't set it: every Grok model but these rejects them.
         grok_supports_stop_sequences=model_name.startswith('grok-4.20') and 'non-reasoning' in model_name,
         supported_native_tools=supported_native_tools,
     )
