@@ -538,15 +538,27 @@ its span as an error. When tracing leaves out content, the span keeps
 the command as configured, without filled placeholders, and leaves out stderr.
 Warnings and spans show the first 1,000 characters of a command.
 
-A project's table is code from the repository, so it gets the same approval as
-a project's plugins. It is listed in `/plugins` as `project_hooks` (project),
-off, and runs only after `/plugins enable project_hooks`. The approval covers
-the table exactly as it is: once the file's `hooks` change, they stay off until
-you enable `project_hooks` again, and removing them stops them too. CLAI
-remembers one approved project table at a time, and it runs only in sessions
-whose project file declares that very table. Headless runs use the same
-approval, so they only run a project table you already approved. A project
-cannot list the hooks plugin's module in its `plugins`, under any id.
+A project's table is code from the repository, so it gets the same approval as a
+project's plugins. It is listed in `/plugins` as `project_hooks` (project), off,
+and runs only after `/plugins enable project_hooks`. The approval covers the
+table exactly as it is, and the contents of each program inside the project that
+a list command runs, such as `["./scripts/guard-paths.sh"]`: once the file's
+`hooks` or one of those programs change, they stay off until you enable
+`project_hooks` again, and removing them stops them too. CLAI checks such a
+program every time it starts it. One that changed does not start: it is reported
+as a failed command, or for `before_tool` as a blocked one, which stops the call
+instead of letting it through. The check runs just before the start, so a change
+landing between the two is not caught. A string command is approved as written:
+the programs it runs are not checked. Nor does the approval cover a program
+outside the project, such as `sh` or `/usr/bin/python3`, a file such a program
+reads, or a script passed to another program, as in `["python",
+"scripts/check.py"]`; make the script a list command's program to have the
+approval cover it. A table cannot be approved while one of its programs is
+missing or unreadable. CLAI remembers one approved project table at a time, and
+it runs only in sessions whose project file declares that very table. Headless
+runs use the same approval, so they only run a project table you already
+approved. A project cannot list the hooks plugin's module in its `plugins`,
+under any id.
 
 ## Observability: default agent tracing
 
@@ -1480,7 +1492,8 @@ worktree under its repository by the checkout saved with it (`ConversationSummar
 page lists them by project, or all together, in the order they were created
 (`ConversationSummary.created_at`). Archived ones are left out except in its Archived view
 (`GET /api/sessions?include_archived=true`; `POST /api/sessions/ID/archive` and `/unarchive`, and
-`POST /api/sessions/archive` for a branch's or project's sessions at once).
+`POST /api/sessions/archive` for a branch's or project's sessions at once). A session imported from
+Claude Code or Codex carries that agent's name (`source`), shown beside its title.
 
 Under `clai2 --web`, clicking a session opens it live (`POST /api/sessions/ID/open`, which calls
 `host.live.open`), even while other sessions run turns: it is resumed in a session of its own, in
@@ -1825,7 +1838,7 @@ card that names a workspace has an **Open** button that shows that session in th
 | `session_wait(workspace, timeout=300)` | wait, up to an hour, until the turn ends (then its final answer) or the session asks something |
 | `session_interrupt(workspace)` | stop the running turn |
 | `session_answer(workspace, request, answers=None)` | answer a question request; no `answers` declines |
-| `sessions_find(query='', project='', older_than_days=None, include_archived=False, limit=50)` | saved sessions of every project, from `host.sessions`, as a table: ID, title, project, worktree, last active, archived |
+| `sessions_find(query='', project='', older_than_days=None, include_archived=False, limit=50)` | saved sessions of every project, from `host.sessions`, as a table: ID, title (with `(from Claude Code)` or `(from Codex)` for an imported one), project, worktree, last active, archived |
 | `sessions_archive(ids)` | archive them, reporting each one archived and each refused (the current session, running ones) with the reason |
 | `sessions_unarchive(ids)` | list them again |
 

@@ -15,7 +15,7 @@ Over a long run, an agent can lose track of its instructions, build on unsupport
 
 ## The solution
 
-`TrajectoryJudge` reviews the run's recent trajectory with a second model on a cadence: every `every` model requests, the most recent `window` tokens of the conversation (user messages, assistant messages, tool calls, and tool results, rendered as a transcript) go to the judge model for evaluation. The evaluation runs concurrently with the agent, so the run is never blocked waiting on a judge.
+`TrajectoryJudge` reviews the run's recent trajectory with a second model on a cadence: every `every` model requests, the most recent `window` tokens of the conversation (user messages, assistant messages, tool calls, and tool results, rendered as a transcript) go to the judge model for evaluation. Outside durable execution, the evaluation runs concurrently with the agent, so the run is never blocked waiting on a judge.
 
 The judge delivers exactly one verdict per evaluation, as its output type:
 
@@ -129,8 +129,21 @@ agent = Agent(
 ## Cost and failure semantics
 
 - The judge's model usage is threaded onto the run's `usage` and respects the run's `usage_limits`: each launch claims one request on the shared usage before the evaluation starts, so the parent's next request and concurrent judges account for in-flight evaluations and the shared request limit cannot be exceeded. A launch the request budget cannot fit skips the tick, like one that finds an evaluation still in flight. The judge run is filed under the judged run's `conversation_id`.
-- An evaluation failure is raised on the run at the next cadence tick or at run end. To have a judge degrade instead, pass an `agent` that falls back to another model (for example with the `ModelFallback` capability).
-- A judged run inside a durable workflow or flow (Temporal, DBOS, Prefect) is rejected with `UserError` before the first model request: the evaluation is launched from a capability hook in orchestration context, so its model calls would not be checkpointed and could repeat on replay. A durable-capable agent run outside its workflow or flow is unaffected. Run judged work outside durable execution.
+- Outside durable execution, an evaluation failure is raised on the run at the next cadence tick or at run end; inside a workflow or flow it is raised from the request that launched it. To have a judge degrade instead, pass an `agent` that falls back to another model (for example with the `ModelFallback` capability).
+
+## Durable execution
+
+Inside a durable execution workflow or flow (Temporal, DBOS, Prefect), a judge with an `id` checkpoints each evaluation as the durable operation `<agent>__capability__<id>.evaluate`. The evaluation is awaited before the run continues, so a replay reuses the recorded verdict and delivers the same steering at the same point, and the judge is billed once. Give each judge its own `id`:
+
+```python
+from pydantic_ai_harness import TrajectoryJudge
+
+judge = TrajectoryJudge(model='anthropic:claude-haiku-4-5', id='evidence-judge', every=10)
+```
+
+A judge without an `id` is rejected with `UserError` before the first model request inside a workflow or flow. Outside one, nothing changes and `id` stays optional.
+
+`on_verdict` is not part of the durable operation, so a replay calls it again with the recorded verdict. Make the callback idempotent if it writes to an external system.
 
 ## Observability
 

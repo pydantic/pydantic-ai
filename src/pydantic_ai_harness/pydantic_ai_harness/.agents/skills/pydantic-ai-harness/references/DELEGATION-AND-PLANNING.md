@@ -209,8 +209,11 @@ orchestrator = Agent(
   in the other process. `accept_timeout=30.0` fails a task no worker picks up.
 - `dynamic_agents=DynamicAgents(models=['fast'])` adds `create_agent`, with a vetoable
   `AgentCreatedEvent`; works with or without task control.
-- One `SubAgents` per agent may set `task_control` (or `dynamic_agents`). Both raise `UserError` under a
-  durability capability; don't use them with the deprecated wrapper agents (`TemporalAgent`, ...) either.
+- One `SubAgents` per agent may set `task_control` (or `dynamic_agents`). `task_control`, and `dynamic_agents`
+  within a bound `DelegationTasks` owner, raise `UserError` under a durability capability; don't use either
+  with the deprecated wrapper agents (`TemporalAgent`, ...).
+  On Temporal and DBOS, `dynamic_agents` runs each delegation other than to `self` in a durable unit of its
+  own; other durable engines raise `UserError`.
 
 ## DelegationReports
 
@@ -348,7 +351,9 @@ Gotchas:
   `max_uses`.
 - An agent has one advisor (tool name `advisor`): two `Advisor`s merge, a `None` option taking the
   other instance's value, two list `output_type`s combining, and any other option the later one's.
-  For durable runs use `mode='native'`; local execution is unsupported there.
+- Durable runs: DBOS records each local consultation under the default `id` (`advisor`; keep it stable once
+  deployed). Under Temporal and Prefect use `mode='native'`: their activity- or task-local usage doesn't merge
+  back into the run, so local execution is unsupported there.
 
 ## BackgroundTools
 
