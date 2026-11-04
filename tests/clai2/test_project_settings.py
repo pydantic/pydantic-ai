@@ -299,6 +299,25 @@ async def test_a_changed_project_plugin_file_waits_for_approval_again(
     assert ran(tmp_path) == ['changed']
 
 
+async def test_a_project_path_through_the_plugins_folder_is_still_a_project_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only a file that stays inside the plugins folder is the user's own drop-in; `..` leaving it does not count."""
+    trusted = repository(tmp_path, 'trusted', declared=False)
+    store = SettingsStore(tmp_path / 'config.db')
+    store.plugins_dir.mkdir()
+    through = store.plugins_dir / '..' / 'trusted' / 'plugins' / 'helper.py'
+    write(trusted, {'plugins': [{'id': 'helper', 'factory': 'helper', 'path': str(through)}]})
+    monkeypatch.chdir(trusted)
+    await plugin_loader(store, load_project_settings(trusted), io.StringIO()).command(['enable', 'helper'])
+    assert ran(tmp_path) == ['trusted']
+
+    (tmp_path / 'trusted.ran').unlink()
+    (trusted / 'plugins' / 'helper.py').write_text(HELPER.format(marker=str(tmp_path / 'changed.ran')))
+    await plugin_loader(store, load_project_settings(trusted), io.StringIO()).load_all()
+    assert ran(tmp_path) == []
+
+
 async def test_a_project_plugin_file_that_cannot_be_read_cannot_be_approved(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

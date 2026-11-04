@@ -11,6 +11,7 @@ live session; `on_session_start` and `on_session_end` reach it once. `LiveSessio
 import hashlib
 import importlib
 import logging
+import os
 from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -463,7 +464,9 @@ class ProcessPlugins(Generic[DepsT]):
         if declaration.path is None or (shipped is not None and shipped.path == declaration.path):
             return []
         path = Path(declaration.path)
-        return [] if path.is_relative_to(self.plugins_dir) else [path]
+        # `..` collapsed first: a path that only passes through the plugins folder names a file outside it.
+        inside = Path(os.path.normpath(path)).is_relative_to(os.path.normpath(self.plugins_dir))
+        return [] if inside else [path]
 
     def contents_approved(self, name: str, declaration: PluginSettings) -> bool:
         """Whether each of the declaration's `project_files` still has the contents `/plugins enable` approved."""
