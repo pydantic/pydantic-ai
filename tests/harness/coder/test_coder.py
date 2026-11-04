@@ -124,9 +124,7 @@ def test_coder_members_and_parameters() -> None:
     assert (shell.tools, shell.denied_commands, shell.allow_interactive) == (['shell'], [], True)
     assert (shell.env, shell.denied_env_patterns) == (None, [])
     guidance = next(item for item in coder.capabilities if isinstance(item, Capability))
-    instructions = str(guidance.get_instructions())
-    for text in ('Custom instructions', 'software engineering agent', "Match the surrounding code's style"):
-        assert text in instructions
+    assert guidance.id == 'coder_instructions'
     delegation = next(item for item in coder.capabilities if isinstance(item, SubAgents))
     assert (delegation.include_self, delegation.agents, delegation.agent_folders) == (True, (), None)
     limits = next(item for item in coder.capabilities if isinstance(item, ToolOutputLimits))
@@ -209,3 +207,13 @@ async def test_coder_strict_reaches_the_delegates_ask_parent(tmp_path: Path, str
 
     assert 'ask_parent' in delegate_tools
     assert set(delegate_tools.values()) == {strict}
+
+
+async def test_coder_appends_custom_instructions(tmp_path: Path) -> None:
+    model = TestModel(call_tools=[])
+    coder = Coder(instructions='Custom instructions', repo_context=False)
+    await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
+    assert model.last_model_request_parameters is not None
+    instructions = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
+    for text in ('Custom instructions', 'software engineering agent', "Match the surrounding code's style"):
+        assert text in instructions

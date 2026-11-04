@@ -17,6 +17,9 @@ _AGENCY: dict[Agency, str] = {
     'max': 'Work fully autonomously; nobody will answer questions. Choose sensible defaults and finish.',
 }
 
+_DELEGATED = 'You are running a delegated task and nobody can answer questions. Choose sensible defaults and finish.'
+"""Replaces the agency sentence in a delegate that has no `ask_parent`, which a plan-and-wait level would leave idle."""
+
 _INTRO = "You are a software engineering agent. Match the surrounding code's style, structure, and imports."
 
 _READING = (
@@ -37,8 +40,11 @@ _CLEANUP = 'Leave only the requested change; delete your scratch files.'
 _FINISHING = 'Finish long-running work before replying; poll until done or blocked. Stop servers you no longer need.'
 
 
-def coder_instructions(*, agency: Agency, delegate_tool: str | None) -> str:
-    """`Coder`'s default guidance for an agency level, with the delegation rule only when it can delegate."""
+def coder_instructions(*, agency: Agency, delegate_tool: str | None, delegated: bool = False) -> str:
+    """`Coder`'s default guidance for an agency level, with the delegation rule only when it can delegate.
+
+    `delegated` marks a delegate run that cannot ask its parent, so it is told to finish on its own.
+    """
     autonomous = agency in ('high', 'max')
     checks = [
         'If deliverables will run elsewhere, make them self-contained.',
@@ -52,7 +58,7 @@ def coder_instructions(*, agency: Agency, delegate_tool: str | None) -> str:
     ]
     sections = [
         _INTRO,
-        _AGENCY[agency],
+        _DELEGATED if delegated else _AGENCY[agency],
         _READING,
         *([_DELEGATION.format(tool_name=delegate_tool)] if delegate_tool is not None else []),
         ' '.join(checks),

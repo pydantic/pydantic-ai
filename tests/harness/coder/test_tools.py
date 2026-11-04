@@ -19,11 +19,15 @@ from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Wor
 from pydantic_ai_harness.coder import Agency, Coder
 from pydantic_ai_harness.coder._capability import MAX_FILE_TOOL_RETRIES
 from pydantic_ai_harness.subagents import TaskControl
+from pydantic_ai_harness.subagents._toolset import delegation_level
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 
 from ...workspace_fakes import FakeWorkspace, FilesystemOnlyWorkspaceBackend
 from .._recording_durability import RecordingDurability
 from .._tool_calls import call_tool, call_tools
+
+_PLAN = 'Propose a plan and wait for approval before editing.'
+_FINISH = 'You are running a delegated task and nobody can answer questions.'
 
 
 @dataclass
@@ -235,6 +239,31 @@ class TestCoder:
         assert ask in text
         assert ('Measure results against any numeric target the task states.' in text) is targets
         assert ('Leave only the requested change; delete your scratch files.' in text) is cleanup
+
+    async def test_a_delegate_is_told_to_finish_on_its_own(self, tmp_path: Path) -> None:
+        """A `'low'` delegate without `ask_parent` would propose a plan to nobody, so it is told to finish instead."""
+        seen: dict[str, str] = {}
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            first = messages[0].parts[-1]
+            seen.setdefault(str(first.content if isinstance(first, UserPromptPart) else None), info.instructions or '')
+            return _delegate_a_command(messages, info)
+
+        agent = Agent(
+            FunctionModel(respond), capabilities=[LocalWorkspace(tmp_path), Coder(agency='low', repo_context=False)]
+        )
+        assert (await agent.run('Delegate it')).output == 'done'
+        assert _PLAN in seen['Delegate it'] and _FINISH not in seen['Delegate it']
+        assert _FINISH in seen['Run it'] and _PLAN not in seen['Run it']
+
+    async def test_a_delegate_that_can_ask_its_parent_keeps_the_agency(self, tmp_path: Path) -> None:
+        model = TestModel(call_tools=[])
+        coder = Coder(agency='low', repo_context=False, task_control=TaskControl())
+        with delegation_level(2):
+            await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
+        assert model.last_model_request_parameters is not None
+        text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
+        assert _PLAN in text and _FINISH not in text
 
     def test_unknown_agency_is_rejected(self) -> None:
         with pytest.raises(ValueError, match=r"`agency` must be one of 'low', 'medium', 'high', 'max', not 'full'"):

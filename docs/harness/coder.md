@@ -234,6 +234,8 @@ behavior with heredocs rather than new files; and finish long-running work befor
 | `'high'` (default) | Asks only for credentials, approvals, or real ambiguity, and measures results against any numeric target the task states. |
 | `'max'` | Never asks: chooses sensible defaults, measures against numeric targets, and deletes its scratch files. Use it for runs nobody can answer, such as CI jobs. |
 
+A delegate started with `delegate_task` can't ask anyone without `task_control`, so it is told to choose sensible defaults and finish, whatever the level.
+
 Tool descriptions supply tool usage; `RepoContext` supplies repository instructions and structure.
 The instructions also name the workspace's working directory as the project, where shell commands start and the file tools work.
 `Coder(instructions='...')` appends project-specific guidance rather than replacing defaults.
