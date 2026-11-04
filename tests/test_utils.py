@@ -1576,7 +1576,19 @@ _SYNC_ENTRY_POINTS = {
 
 @pytest.mark.skipif(sys.version_info >= (3, 14), reason='Python 3.14 raises instead of warning, which is handled')
 @pytest.mark.subprocess(reason='the warning only fires the first time a fresh interpreter asks for an event loop')
-@pytest.mark.parametrize('entry_point', list(_SYNC_ENTRY_POINTS))
+@pytest.mark.parametrize(
+    'entry_point',
+    [
+        'run_sync',
+        'run_stream_sync',
+        pytest.param(
+            'evaluate_sync',
+            marks=pytest.mark.skipif(
+                importlib.util.find_spec('pydantic_evals') is None, reason='pydantic-evals not installed'
+            ),
+        ),
+    ],
+)
 def test_sync_entry_point_does_not_warn_about_a_missing_event_loop(entry_point: str):
     """On Python 3.12 and 3.13, a sync run in a script used to warn `There is no current event loop` (#1196).
 
@@ -1586,7 +1598,8 @@ def test_sync_entry_point_does_not_warn_about_a_missing_event_loop(entry_point: 
     script = textwrap.dedent(_SYNC_ENTRY_POINTS[entry_point])
     env = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
     process = subprocess.run(
-        [sys.executable, '-W', 'error::DeprecationWarning', '-c', script],
+        # Only the warning under test: dependencies' own deprecations aren't this test's concern.
+        [sys.executable, '-W', 'error:There is no current event loop:DeprecationWarning', '-c', script],
         capture_output=True,
         text=True,
         timeout=120,
