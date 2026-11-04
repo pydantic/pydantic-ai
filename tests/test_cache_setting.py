@@ -284,7 +284,9 @@ class TestExcessCachePoints:
 
         spans = [span for span in exporter.get_finished_spans() if span.name.startswith('chat ')]
         assert len(spans) == 1
-        cache_attributes = {k: v for k, v in spans[0].attributes.items() if k.startswith('pydantic_ai.cache.')}
+        attributes = spans[0].attributes
+        assert attributes is not None
+        cache_attributes = {k: v for k, v in attributes.items() if k.startswith('pydantic_ai.cache.')}
         assert cache_attributes == {
             'pydantic_ai.cache.dropped_points': 1,
             'pydantic_ai.cache.dropped_points_cause': 'automatic_breakpoint_reservation',
@@ -321,7 +323,9 @@ class TestExcessCachePoints:
 
         spans = [span for span in exporter.get_finished_spans() if span.name.startswith('chat ')]
         assert len(spans) == 1
-        assert [key for key in spans[0].attributes if key.startswith('pydantic_ai.cache.')] == []
+        attributes = spans[0].attributes
+        assert attributes is not None
+        assert [key for key in attributes if key.startswith('pydantic_ai.cache.')] == []
         assert [event for event in spans[0].events if event.name.startswith('pydantic_ai.cache.')] == []
 
     @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
@@ -353,7 +357,9 @@ class TestExcessCachePoints:
 
         spans = [span for span in exporter.get_finished_spans() if span.name.startswith('chat ')]
         assert len(spans) == 1
-        cache_attributes = {k: v for k, v in spans[0].attributes.items() if k.startswith('pydantic_ai.cache.')}
+        attributes = spans[0].attributes
+        assert attributes is not None
+        cache_attributes = {k: v for k, v in attributes.items() if k.startswith('pydantic_ai.cache.')}
         assert cache_attributes == {
             'pydantic_ai.cache.dropped_points': 1,
             'pydantic_ai.cache.dropped_points_cause': 'budget_excess',
