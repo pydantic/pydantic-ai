@@ -545,9 +545,8 @@ def _split_content_parts(content: object) -> tuple[object, list[object]]:
 
     Some OpenAI-compatible servers (Mistral models served by the Albert API, for one) return `content` as a list of
     parts like `[{'type': 'text', 'text': '...'}]`, especially when the answer carries references. The text parts are
-    joined; the others, like those references, are returned as they came, for the response's
-    `provider_details['content_parts']`. Anything that isn't a list is returned unchanged; a list with no text becomes
-    `None`.
+    joined; the others, like those references, are returned as they came, for `openai_include_unmapped_response_data`.
+    Anything that isn't a list is returned unchanged; a list with no text becomes `None`.
     """
     if not isinstance(content, list):
         return content, []
@@ -561,6 +560,35 @@ def _split_content_parts(content: object) -> tuple[object, list[object]]:
         else:
             others.append(part)
     return ''.join(texts) or None, others
+
+
+_MAPPED_COMPLETION_EXTRA_FIELDS = frozenset({'tool_usage'})
+"""Vendor fields on a completion or chunk that the Chat Completions mapping already reads."""
+
+_MAPPED_MESSAGE_EXTRA_FIELDS = frozenset({'reasoning', 'reasoning_content'})
+"""Vendor fields on a message or delta that the Chat Completions mapping already reads, besides the profile's
+`openai_chat_thinking_field`."""
+
+
+def _unmapped_extra_fields(obj: object, mapped: frozenset[str] = frozenset()) -> dict[str, Any]:
+    """The fields of an OpenAI SDK object that its schema doesn't declare and the mapping doesn't read, as received."""
+    extra: dict[str, Any] = getattr(obj, 'model_extra', None) or {}
+    return {key: value for key, value in extra.items() if key not in mapped}
+
+
+def _unmapped_choice_data(
+    response: object, choice: object, message: object, *, message_key: str, thinking_field: str | None
+) -> dict[str, Any]:
+    """The data of one completion or chunk that the mapping doesn't read, keyed by where it came from."""
+    mapped_message_fields = _MAPPED_MESSAGE_EXTRA_FIELDS | ({thinking_field} if thinking_field else set())
+    _, content_parts = _split_content_parts(getattr(message, 'content', None))
+    data = {
+        'response': _unmapped_extra_fields(response, _MAPPED_COMPLETION_EXTRA_FIELDS),
+        'choice': _unmapped_extra_fields(choice),
+        message_key: _unmapped_extra_fields(message, mapped_message_fields),
+        'content_parts': content_parts,
+    }
+    return {key: value for key, value in data.items() if value}
 
 
 class _ChatCompletionMessage(chat.ChatCompletionMessage):
@@ -1228,6 +1256,18 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     removing thinking tags. Enable this when the original annotation payload is also needed.
     """
 
+    openai_include_unmapped_response_data: bool
+    """Whether to keep Chat Completions response data Pydantic AI doesn't map, in `ModelResponse.provider_details['unmapped']`.
+
+    OpenAI-compatible servers often return vendor fields the Chat Completions API doesn't define, or `content` as a list
+    of parts where only the text parts are mapped (the others, like references, are otherwise dropped). With this on,
+    that data is kept exactly as received, keyed by where it came from: `response`, `choice`, `message` and
+    `content_parts`. A streamed response collects it per chunk, under `chunks`, with `delta` in place of `message`.
+
+    It's response data for reading only: it's stored with the message history but never sent back to a provider.
+    Defaults to `False`, since most users don't read it and it grows stored histories.
+    """
+
 
 class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """Settings used for an OpenAI Responses model request.
@@ -1758,6 +1798,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         model_response = self._process_response(
             response,
             include_raw_annotations=bool(model_settings and model_settings.get('openai_include_raw_annotations')),
+            include_unmapped_response_data=bool(
+                model_settings and model_settings.get('openai_include_unmapped_response_data')
+            ),
         )
         return model_response
 
@@ -1953,8 +1996,24 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """
         return _map_provider_details(response.choices[0])
 
+    def _unmapped_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any]:
+        """`provider_details['unmapped']` for `openai_include_unmapped_response_data`, read before validation."""
+        choice = response.choices[0] if response.choices else None
+        data = _unmapped_choice_data(
+            response,
+            choice,
+            getattr(choice, 'message', None),
+            message_key='message',
+            thinking_field=self.profile.get('openai_chat_thinking_field', None),
+        )
+        return {'unmapped': data} if data else {}
+
     def _process_response(  # noqa: C901
-        self, response: chat.ChatCompletion | str, *, include_raw_annotations: bool = False
+        self,
+        response: chat.ChatCompletion | str,
+        *,
+        include_raw_annotations: bool = False,
+        include_unmapped_response_data: bool = False,
     ) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         # Although the OpenAI SDK claims to return a Pydantic model (`ChatCompletion`) from the chat completions function:
@@ -1984,8 +2043,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         # Read before validation, which joins a list `content` into its text. The SDK doesn't validate the response, so a
         # choice can lack a `message` here; validation below reports that.
-        raw_message = getattr(response.choices[0], 'message', None) if response.choices else None
-        _, content_parts = _split_content_parts(getattr(raw_message, 'content', None))
+        unmapped_details = self._unmapped_provider_details(response) if include_unmapped_response_data else {}
 
         try:
             response = self._validate_completion(response)
@@ -2005,8 +2063,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             provider_details['moderation'] = response.moderation.model_dump()
         if response.service_tier:
             provider_details['service_tier'] = response.service_tier
-        if content_parts:
-            provider_details['content_parts'] = content_parts
+        provider_details.update(unmapped_details)
 
         # Handle refusal responses (structured output safety filter)
         if choice.message.refusal:
@@ -6072,7 +6129,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _logprobs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]], init=False)
     _raw_text_content: str = field(default='', init=False)
     _pending_raw_annotations: list[object] = field(default_factory=list[object], init=False)
-    _non_text_content_parts: list[object] = field(default_factory=list[object], init=False)
+    _unmapped_chunks: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]], init=False)
 
     async def close_stream(self) -> None:
         await self._response.source.close()
@@ -6109,6 +6166,7 @@ class OpenAIStreamedResponse(StreamedResponse):
                     self.provider_details = {**(self.provider_details or {}), 'service_tier': chunk.service_tier}
                 if chunk_provider_details := self._map_chunk_provider_details(chunk):
                     self.provider_details = {**(self.provider_details or {}), **chunk_provider_details}
+                self._record_unmapped_chunk_data(chunk)
 
                 # Empty on the final usage-only chunk; `None` from OpenAI-compatible providers emitting
                 # malformed chunks that the openai SDK's loose constructor lets through (https://github.com/pydantic/pydantic-ai/issues/5165).
@@ -6146,10 +6204,10 @@ class OpenAIStreamedResponse(StreamedResponse):
                 self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
             if self._logprobs:
                 self.provider_details = {**(self.provider_details or {}), 'logprobs': self._logprobs}
-            if self._non_text_content_parts:
+            if self._unmapped_chunks:
                 self.provider_details = {
                     **(self.provider_details or {}),
-                    'content_parts': self._non_text_content_parts,
+                    'unmapped': {'chunks': self._unmapped_chunks},
                 }
             if (
                 self._model_profile.get('openai_chat_streaming_requires_finish_reason', False)
@@ -6295,8 +6353,7 @@ class OpenAIStreamedResponse(StreamedResponse):
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the mapping.
         """
         # Handle the text part of the response. Some OpenAI-compatible servers stream it as a list of parts.
-        content, non_text_parts = _split_content_parts(choice.delta.content)
-        self._non_text_content_parts.extend(non_text_parts)
+        content, _ = _split_content_parts(choice.delta.content)
         if isinstance(content, str) and content:
             self._raw_text_content += content
             emitted = False
@@ -6366,6 +6423,21 @@ class OpenAIStreamedResponse(StreamedResponse):
         This method may be overridden by subclasses of `OpenAIStreamResponse` whose model picks another one.
         """
         return 'stop'
+
+    def _record_unmapped_chunk_data(self, chunk: ChatCompletionChunk) -> None:
+        """Keep the data of `chunk` the mapping doesn't read, when `openai_include_unmapped_response_data` is on."""
+        if not (self._model_settings and self._model_settings.get('openai_include_unmapped_response_data')):
+            return
+        choice = chunk.choices[0] if chunk.choices else None
+        data = _unmapped_choice_data(
+            chunk,
+            choice,
+            getattr(choice, 'delta', None),
+            message_key='delta',
+            thinking_field=self._model_profile.get('openai_chat_thinking_field', None),
+        )
+        if data:
+            self._unmapped_chunks.append(data)
 
     def _map_chunk_provider_details(self, chunk: ChatCompletionChunk) -> dict[str, Any] | None:
         """Hook that generates provider details from a chunk's top-level fields, rather than its choice.

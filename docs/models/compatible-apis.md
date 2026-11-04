@@ -395,9 +395,22 @@ Compatibility with one API does not imply support for the other or for every Ope
 
 When an OpenAI-compatible API returns a `finish_reason` outside the five that OpenAI defines, `OpenAIChatModel` keeps the response, gives it a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `None`, and keeps the raw value in [`provider_details['finish_reason']`][pydantic_ai.messages.ModelResponse.provider_details].
 
-## Content as a list of parts
+## Response data Pydantic AI doesn't map
 
-Some OpenAI-compatible APIs return or stream a message's `content` as a list of parts rather than a string, for example Mistral models on the Albert API when an answer carries references: `[{"type": "text", "text": "..."}, {"type": "reference", "reference_ids": [1]}]`. `OpenAIChatModel` joins the text parts into the response's text, and keeps the other parts, as received, in [`provider_details['content_parts']`][pydantic_ai.messages.ModelResponse.provider_details]. On a streamed response, the key is set once the stream ends.
+OpenAI-compatible APIs often return more than the Chat Completions API defines: vendor fields on the response, choice or message, or a message's `content` as a list of parts rather than a string. Mistral models on the Albert API, for example, return `[{"type": "text", "text": "..."}, {"type": "reference", "reference_ids": [1]}]` when an answer carries references. `OpenAIChatModel` joins the text parts into the response's text and ignores the rest.
+
+To keep that data, set [`openai_include_unmapped_response_data`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_include_unmapped_response_data]. It's stored, exactly as received, in [`provider_details['unmapped']`][pydantic_ai.messages.ModelResponse.provider_details], keyed by where it came from:
+
+```python {test="skip"}
+{
+    'response': {...},  # vendor fields on the completion
+    'choice': {...},  # vendor fields on the choice
+    'message': {...},  # vendor fields on the message
+    'content_parts': [{'type': 'reference', 'reference_ids': [1]}],
+}
+```
+
+A streamed response collects it per chunk, as `{'chunks': [...]}` with `delta` in place of `message`, once the stream ends. Fields Pydantic AI already maps, like `reasoning_content`, aren't repeated. The data is for reading only: it's kept with the message history but never sent back to a provider.
 
 ## Model profile
 
