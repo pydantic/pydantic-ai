@@ -279,4 +279,4 @@ With a store, the adapter also uses what the store knows that the messages don't
 
 After saving, the stream sends the ids of the stored [`ConversationEntry`][pydantic_ai.conversation_store.ConversationEntry]s to the client, so it can record them next to its own messages, for a rating, say: a transient Vercel AI `data-conversation-saved` part, or an AG-UI `pydantic_ai_conversation_saved` custom event, each with a `conversation_id` and a list of `entry_ids`. An adapter instance drives one run at a time, as [`from_request`][pydantic_ai.ui.UIAdapter.from_request] builds one per request.
 
-A run that fails or is stopped isn't saved yet, so the rules under "Runs that don't complete" above still apply.
+A run that fails or is stopped isn't saved, so the rules under "Runs that don't complete" above still apply.
