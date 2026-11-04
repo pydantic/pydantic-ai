@@ -538,26 +538,27 @@ its span as an error. When tracing leaves out content, the span keeps
 the command as configured, without filled placeholders, and leaves out stderr.
 Warnings and spans show the first 1,000 characters of a command.
 
-A project's table is code from the repository, so it gets the same approval as
-a project's plugins. It is listed in `/plugins` as `project_hooks` (project),
-off, and runs only after `/plugins enable project_hooks`. The approval covers
-the table exactly as it is, and the contents of each program a list command
-names by a path, such as `["./scripts/guard-paths.sh"]`: once the file's
+A project's table is code from the repository, so it gets the same approval as a
+project's plugins. It is listed in `/plugins` as `project_hooks` (project), off,
+and runs only after `/plugins enable project_hooks`. The approval covers the
+table exactly as it is, and the contents of each program inside the project that
+a list command runs, such as `["./scripts/guard-paths.sh"]`: once the file's
 `hooks` or one of those programs change, they stay off until you enable
 `project_hooks` again, and removing them stops them too. CLAI checks such a
-program every time it starts it. One that changed does not start: it is
-reported as a failed command, or for `before_tool` as a blocked one, which
-stops the call instead of letting it through. The check runs just before the start, so a change
-landing between the two is not caught. A string command is approved as
-written: the programs it runs are not checked. Nor does the approval cover a
-file such a program reads, or a script passed to another program, as in
-`["python", "scripts/check.py"]`; make the script a list command's program to
-have the approval cover it. A table cannot be approved while one of its
-programs is missing or unreadable. CLAI remembers one approved project table
-at a time, and it runs only in sessions whose project file declares that very
-table. Headless runs use the same approval, so they only run a project table
-you already approved. A project cannot list the hooks plugin's module in its
-`plugins`, under any id.
+program every time it starts it. One that changed does not start: it is reported
+as a failed command, or for `before_tool` as a blocked one, which stops the call
+instead of letting it through. The check runs just before the start, so a change
+landing between the two is not caught. A string command is approved as written:
+the programs it runs are not checked. Nor does the approval cover a program
+outside the project, such as `sh` or `/usr/bin/python3`, a file such a program
+reads, or a script passed to another program, as in `["python",
+"scripts/check.py"]`; make the script a list command's program to have the
+approval cover it. A table cannot be approved while one of its programs is
+missing or unreadable. CLAI remembers one approved project table at a time, and
+it runs only in sessions whose project file declares that very table. Headless
+runs use the same approval, so they only run a project table you already
+approved. A project cannot list the hooks plugin's module in its `plugins`,
+under any id.
 
 ## Observability: default agent tracing
 

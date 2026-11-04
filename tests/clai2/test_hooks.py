@@ -613,6 +613,36 @@ async def test_a_program_changed_since_its_approval_does_not_run(
     assert 'mark.sh is not as you approved it; run /plugins enable project_hooks' in shown
 
 
+async def test_an_absolute_program_inside_the_project_is_covered_and_one_outside_is_not(tmp_path: Path) -> None:
+    """A repository can name its own script by an absolute path, as in a devcontainer; `/bin/sh` is not its file."""
+    repo = repository(tmp_path, 'repo', None)
+    inside, outside = repo / 'scripts' / 'mark.sh', tmp_path / 'tools' / 'mark.sh'
+    for program in (inside, outside):
+        program.parent.mkdir()
+    write_program(inside, 'inside')
+    write_program(outside, 'outside')
+    write_hooks(
+        repo,
+        {
+            'turn_end': [
+                {'command': [str(repo / 'scripts' / '..' / 'scripts' / 'mark.sh')]},
+                {'command': [str(outside)]},
+            ]
+        },
+    )
+    store = SettingsStore(tmp_path / 'config.db')
+    await approve_and_end_turn(project_loader(store, repo, io.StringIO()))
+    assert (repo / 'inside').exists() and (repo / 'outside').exists()
+
+    write_program(outside, 'updated')
+    await end_turn(project_loader(store, repo, io.StringIO()))
+    assert (repo / 'updated').exists(), 'a program outside the project is approved as written'
+
+    write_program(inside, 'changed')
+    await end_turn(project_loader(store, repo, io.StringIO()))
+    assert not (repo / 'changed').exists(), 'a program inside the project is approved with its contents'
+
+
 async def test_enabling_again_approves_a_program_changed_while_loaded(tmp_path: Path) -> None:
     """`/plugins enable project_hooks` approves the program as it is now, in the session that refused it."""
     repo = repository(tmp_path, 'repo', {'turn_end': [{'command': ['./mark.sh']}]})

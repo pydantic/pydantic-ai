@@ -75,7 +75,11 @@ class HooksSettings(HookTable):
     the approval is saved with your settings, which every repository shares."""
 
     def project_programs(self) -> list[Path]:
-        """The files in the project that list commands run as their program, found by `project_program`."""
+        """The files in the project that list commands run as their program.
+
+        A relative path is taken from the project folder by `project_program`; an absolute one counts when it
+        lies inside that folder. Programs elsewhere, such as `/bin/sh` or one found on `PATH`, are not project files.
+        """
         if self.project is None:
             return []
         root = Path(self.project)
@@ -85,6 +89,10 @@ class HooksSettings(HookTable):
             for command in self.commands(event)
             if isinstance(command.command, list)
         ]
+        inside = os.path.normpath(root)
         return [
-            Path(found) for program in dict.fromkeys(programs) if (found := project_program(program, root)) != program
+            Path(found)
+            for program in dict.fromkeys(programs)
+            if (found := project_program(program, root)) != program
+            or (Path(program).is_absolute() and Path(os.path.normpath(program)).is_relative_to(inside))
         ]

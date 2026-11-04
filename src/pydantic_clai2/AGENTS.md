@@ -228,7 +228,7 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   own plugin under that id is never replaced.
   `/plugins enable` also records the SHA-256 of each repository file the
   declaration runs (`ProcessPlugins.project_files`: a file plugin's own file,
-  and the programs a `hooks` table names by path) in the store's
+  and the programs inside the project a `hooks` table runs) in the store's
   `approved_files` table, beside `plugins` so older builds never read it. An
   `APPROVED_AS_WRITTEN` approval whose files differ is stale too, and
   `import_module` refuses a project file whose bytes differ, executing the bytes

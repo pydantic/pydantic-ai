@@ -431,8 +431,8 @@ turn starts and ends; see
 [lifecycle hooks](../PLUGINS.md#lifecycle-hooks-commands-from-settings). It is
 listed as the project plugin `project_hooks` and is off until
 `/plugins enable project_hooks`; unlike a plugin's declaration, any change to
-the table, or to the program a list command names by a path, such as
-`["./scripts/check.sh"]` (a string command is approved as written),
+the table, or to a program inside the project that a list command runs, such
+as `["./scripts/check.sh"]` (a string command is approved as written),
 turns it off until you enable it again (CLAI checks such a program each time it
 starts it), and removing the table stops
 its commands (the listing keeps `project_hooks` until you remove it).

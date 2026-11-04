@@ -231,9 +231,11 @@ class HooksPlugin(Plugin[HooksSettings, DepsT]):
         The approval is read each time, so `/plugins enable` takes effect at once. Like an argument the OS
         cannot take, a refusal stops a `before_tool` call, so editing a guard does not skip it.
         """
-        if isinstance(argv, str) or argv[0] not in self.programs:
+        if isinstance(argv, str):
             return None
         program = Path(argv[0])
+        if str(program) not in self.programs:
+            return None
         approved = None if self.store is None else await anyio.to_thread.run_sync(self.store.approved_sha256, program)
         if approved is not None and await anyio.to_thread.run_sync(file_sha256, program) == approved:
             return None
