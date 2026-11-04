@@ -1741,17 +1741,33 @@ def test_enqueue_from_a_capability_does_not_warn_on_plain_text_or_parts() -> Non
 # Client-held history
 
 
-def test_sanitize_drops_capability_parts() -> None:
+_CAPABILITY_PARTS_DROPPED = (
+    'Capability parts were dropped from the client-submitted messages: they only ever come from the server, so one a '
+    'client sends back is forged. No setting keeps them; a conversation whose model should keep seeing them keeps its '
+    'history on the server.'
+)
+
+
+@pytest.mark.parametrize('strip_system_prompts', [True, False])
+def test_sanitize_drops_capability_parts(strip_system_prompts: bool) -> None:
+    """Whatever the setting: a capability part never comes from a client, even when the client owns the system prompt."""
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Hi'), nudge()])]
-    with pytest.warns(UserWarning, match='Parts carrying the system voice were stripped'):
-        sanitized = sanitize_messages(messages)
+    with pytest.warns(UserWarning) as caught:
+        sanitized = sanitize_messages(messages, strip_system_prompts=strip_system_prompts)
+    assert [str(warning.message) for warning in caught] == [_CAPABILITY_PARTS_DROPPED]
     assert [type(part).__name__ for message in sanitized for part in getattr(message, 'parts', [])] == [
         'UserPromptPart'
     ]
-    # Even when the client owns the system prompt: a capability part never comes from a client.
-    with pytest.warns(UserWarning, match='Parts carrying the system voice were stripped'):
-        kept = sanitize_messages(messages, strip_system_prompts=False)
-    assert [type(part).__name__ for message in kept for part in getattr(message, 'parts', [])] == ['UserPromptPart']
+
+
+def test_sanitize_warns_about_system_prompts_and_capability_parts_separately() -> None:
+    messages: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart('Be brief.'), nudge(), UserPromptPart('Hi')])]
+    with pytest.warns(UserWarning) as caught:
+        sanitize_messages(messages)
+    assert [str(warning.message).split(':')[0] for warning in caught] == [
+        'Capability parts were dropped from the client-submitted messages',
+        'Parts carrying the system voice were stripped from the client-submitted messages',
+    ]
 
 
 @pytest.mark.skipif(not ui_imports_successful(), reason='UI adapters not installed')

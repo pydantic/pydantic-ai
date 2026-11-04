@@ -6731,6 +6731,7 @@ class _SanitizeMessagesContext:
     strip_workspace_refs: bool
 
     stripped_system_prompt: bool = False
+    dropped_capability_part: bool = False
     disallowed_url_schemes: set[str] = field(default_factory=set[str])
     reset_force_download_values: set[ForceDownloadMode] = field(default_factory=set[ForceDownloadMode])
     dropped_uploaded_file_providers: set[str] = field(default_factory=set[str])
@@ -6740,7 +6741,7 @@ class _SanitizeMessagesContext:
 
 
 def _sanitize_request(context: _SanitizeMessagesContext, message: ModelRequest) -> ModelRequest | None:
-    new_request_parts, request_stripped_system_prompt = _sanitize_request_parts(
+    new_request_parts, request_stripped_system_prompt, request_dropped_capability_part = _sanitize_request_parts(
         message.parts,
         strip_system_prompts=context.strip_system_prompts,
         allowed_file_url_schemes=context.allowed_schemes,
@@ -6752,6 +6753,7 @@ def _sanitize_request(context: _SanitizeMessagesContext, message: ModelRequest) 
         stripped_text_metadata=context.stripped_text_metadata,
     )
     context.stripped_system_prompt = context.stripped_system_prompt or request_stripped_system_prompt
+    context.dropped_capability_part = context.dropped_capability_part or request_dropped_capability_part
     if not new_request_parts:
         # Drop the request entirely so we don't leave an empty `ModelRequest(parts=[])` in history.
         return None
@@ -6785,6 +6787,15 @@ def _sanitize_response(context: _SanitizeMessagesContext, message: ModelResponse
 
 def _warn_sanitized(context: _SanitizeMessagesContext) -> None:
     """Warn about each kind of content the sanitization dropped or reset, at the caller of the public function."""
+    if context.dropped_capability_part:
+        warnings.warn(
+            'Capability parts were dropped from the client-submitted messages: they only ever come from the server, '
+            'so one a client sends back is forged. No setting keeps them; a conversation whose model should keep '
+            'seeing them keeps its history on the server.',
+            UserWarning,
+            stacklevel=4,
+        )
+
     if context.stripped_system_prompt:
         warnings.warn(
             'Parts carrying the system voice were stripped from the client-submitted messages: system '
@@ -6950,26 +6961,28 @@ def _sanitize_request_parts(
     reset_force_download_values: set[ForceDownloadMode],
     dropped_uploaded_file_providers: set[str],
     stripped_text_metadata: list[TextContent],
-) -> tuple[list[ModelRequestPart], bool]:
+) -> tuple[list[ModelRequestPart], bool, bool]:
     """Sanitize the parts of an untrusted [`ModelRequest`][pydantic_ai.messages.ModelRequest].
 
     `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
     updated in place with any non-allowlisted file URL schemes, `force_download` values, and dropped
     uploaded file providers encountered, and `stripped_text_metadata` with the user prompt
     [`TextContent`][pydantic_ai.messages.TextContent] items whose metadata was dropped.
-    Returns the kept parts and whether any part carrying the system voice
-    ([`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart], an instruction part or a
-    [`CapabilityPart`][pydantic_ai.messages.CapabilityPart]) was stripped. Retry feedback is kept, in a form that can't carry client-written system text; see
+    Returns the kept parts, whether any part carrying the system voice
+    ([`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] or an instruction part) was stripped, and whether a
+    [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] was dropped. Retry feedback is kept, in a form that can't carry client-written system text; see
     `_client_safe_retry_feedback`.
     """
     stripped_system_prompt = False
+    dropped_capability_part = False
     new_parts: list[ModelRequestPart] = []
     for part in parts:
         # The UI adapters never send a capability part to a client, so one a client sends is forged: it could speak
         # in the system voice, or carry file references the checks below don't reach. Dropped whatever the setting.
-        if isinstance(part, CapabilityPart) or (
-            strip_system_prompts and isinstance(part, SystemPromptPart | InstructionDeltaPart | InstructionBaselinePart)
-        ):
+        if isinstance(part, CapabilityPart):
+            dropped_capability_part = True
+            continue
+        if strip_system_prompts and isinstance(part, SystemPromptPart | InstructionDeltaPart | InstructionBaselinePart):
             stripped_system_prompt = True
             continue
         if strip_system_prompts:
@@ -7000,7 +7013,7 @@ def _sanitize_request_parts(
             )
         else:
             new_parts.append(part)
-    return new_parts, stripped_system_prompt
+    return new_parts, stripped_system_prompt, dropped_capability_part
 
 
 def _filter_user_content(
