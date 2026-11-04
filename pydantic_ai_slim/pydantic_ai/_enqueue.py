@@ -9,7 +9,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Literal, SupportsIndex, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, NoReturn, SupportsIndex, TypeAlias
 
 from ._capability_parts import operator_voice_lookalike
 from ._framing import resembles_frame
@@ -268,6 +268,22 @@ class PendingMessage:
 
 CapabilityLoadRecord: TypeAlias = CapabilityLoadDeltaPart | ToolAvailabilityDeltaPart
 """A part recording a capability load from code: the load itself, or the reveal of the capability's tools."""
+
+
+class EnqueueGuard(list[PendingMessage]):
+    """Replaces `ctx.pending_messages` inside a durable unit, where enqueueing can't be supported.
+
+    A durable unit's recorded output is replayed on recovery (DBOS), cache hit (Prefect), or
+    across the activity boundary (Temporal) without re-running the code, so messages enqueued
+    inside it would be silently dropped; enqueueing raises an explanatory `UserError` instead.
+    """
+
+    def __init__(self, message: str):
+        super().__init__()
+        self._message = message
+
+    def append(self, pending: PendingMessage) -> NoReturn:
+        raise UserError(self._message)
 
 
 class PendingMessageQueue(list[PendingMessage]):

@@ -24,6 +24,7 @@ from ._cancel import current_run_clock
 from ._context_size import context_tokens
 from ._enqueue import (
     EnqueueContent,
+    EnqueueGuard,
     PendingMessage,
     PendingMessagePriority,
     hand_built_capability_speech,
@@ -1050,6 +1051,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
         )
         if pending is None:
             return None
+        if isinstance(self.pending_messages, EnqueueGuard):
+            # Nowhere to deliver to, such as inside a durable unit, where the run's state isn't all available: its
+            # queue says why before anything else is looked up.
+            self.pending_messages.append(pending)
         capability_id = self._calling_capability_id()
         owner = self._capability if self._capability is not None else self.capabilities.get(capability_id or '')
         # An app-facing callback capability, such as `Hooks`, runs the application's own functions: what they enqueue
@@ -1061,7 +1066,6 @@ class RunContext(Generic[RunContextAgentDepsT]):
             # Stamped before it's queued: once queued, a run on another thread may deliver it at once, and it must
             # never reach the model with more authority than the capability has.
             stamp_capability_parts(pending.messages, capability_id, ceiling)
-        # A context with nowhere to deliver to, such as one inside a durable unit, raises here.
         self.pending_messages.append(pending)
         if capability_id is not None and (reason := hand_built_capability_speech(pending.messages)):
             warnings.warn(

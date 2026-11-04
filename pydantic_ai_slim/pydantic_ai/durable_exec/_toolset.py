@@ -15,7 +15,7 @@ from pydantic_core import PydanticCustomError, PydanticSerializationError, to_js
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai._agent_graph import build_validation_context
 from pydantic_ai._cancel import RunCancellation
-from pydantic_ai._enqueue import PendingMessage
+from pydantic_ai._enqueue import EnqueueGuard
 from pydantic_ai._run_context import ToolNamePath, with_tool_name_path, without_tool_name_path
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.exceptions import (
@@ -518,22 +518,6 @@ async def revalidate_function_call(
             ) from exc
     args = tool.args_validator.validate_python(params.tool_args, context=unit_validation_context(params.ctx))
     return ToolsetCallToolParams(params.name, tool_args=args, ctx=params.ctx, tool=tool)
-
-
-class EnqueueGuard(list[PendingMessage]):
-    """Replaces `ctx.pending_messages` inside a durable unit, where enqueueing can't be supported.
-
-    A durable unit's recorded output is replayed on recovery (DBOS), cache hit (Prefect), or
-    across the activity boundary (Temporal) without re-running the code, so messages enqueued
-    inside it would be silently dropped; enqueueing raises an explanatory `UserError` instead.
-    """
-
-    def __init__(self, message: str):
-        super().__init__()
-        self._message = message
-
-    def append(self, pending: PendingMessage) -> None:
-        raise UserError(self._message)
 
 
 @dataclass
