@@ -329,12 +329,13 @@ class ModelProfile(TypedDict, total=False):
 
     Many hosts of open-weight models do, so a literal `<|im_start|>` in a tool result opens a real turn in the role it
     names. When `True`, `Model.prepare_messages` puts a zero-width joiner inside each such token in user prompts, tool
-    results, inlined text files and replayed model output, on the outgoing copy only. Text without one goes out unchanged.
+    results, inlined text files and replayed model output, on the outgoing copy only, and the joiner is removed again
+    from the tokens in each response's text and tool call arguments. Text without one is unchanged.
 
     The host decides this, not the model family, so a provider sets it from `model_profile`, through the one table in
-    `profiles/_special_tokens.py`. A model can copy the joiner into what it writes, so an application that has its
-    model edit text containing these tokens, or that has pinned a route known to treat them as text, can turn it off
-    with `profile=`. See [Special tokens in content](../message-history.md#special-tokens-in-content).
+    `profiles/_special_tokens.py`. An application that has pinned a route known to treat these tokens as text, or that
+    needs them sent as written, can turn it off with `profile=`.
+    See [Special tokens in content](../message-history.md#special-tokens-in-content).
     """
 
     mimics_assistant_message_formatting: bool

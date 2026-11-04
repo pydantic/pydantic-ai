@@ -7,30 +7,50 @@ aren't sensitive to it, so these tests assert on those kwargs directly.
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, BinaryContent, DocumentUrl, ModelMessage, ModelRetry, TextContent
-from pydantic_ai._special_tokens import ZERO_WIDTH_JOINER as Z, break_special_tokens, break_special_tokens_in_messages
+from pydantic_ai._special_tokens import (
+    ZERO_WIDTH_JOINER as Z,
+    StreamRestorer,
+    break_special_tokens,
+    break_special_tokens_in_messages,
+    restore_special_tokens,
+    restore_special_tokens_in_parts,
+)
 from pydantic_ai.messages import (
     CachePoint,
     CompactionPart,
+    FinalResultEvent,
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
     StructuredContent,
     SystemPromptPart,
     TextPart,
+    TextPartDelta,
     ThinkingPart,
+    ThinkingPartDelta,
     ToolCallPart,
+    ToolCallPartDelta,
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.batch import BatchRequest, BatchResult
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaToolCall, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentedModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers import Provider
 
@@ -38,6 +58,7 @@ from .conftest import try_import
 
 with try_import() as imports_successful:
     from openai.types import chat
+    from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice, ChoiceDelta
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
     from openai.types.chat.chat_completion_message_function_tool_call import (
         ChatCompletionMessageFunctionToolCall,
@@ -507,3 +528,294 @@ def _route_cases() -> list[Any]:
 def test_route_table(provider: type[Provider[Any]], model_name: str, expected: bool):
     profile = provider.model_profile(model_name) or {}
     assert profile.get(FLAG, False) is expected
+
+
+# --- The inverse, on what the model writes ---
+
+
+def _model_writes(*responses: chat.ChatCompletion, **kwargs: Any) -> OpenAIChatModel:
+    return _model(*responses, **kwargs)
+
+
+BROKEN_ARGS = f'<{Z}|im_start|>x'
+LITERAL_ARGS = '<|im_start|>x'
+
+
+async def test_tools_and_users_get_the_literal_token_and_replay_sends_what_the_model_wrote(
+    allow_model_requests: None, looked_up: list[str]
+):
+    """A model's copy of the joiner never reaches a tool, the output or history, and the next request repeats its bytes."""
+    model = _model_writes(
+        _tool_call('look_up', {'query': BROKEN_ARGS}),
+        _text(f'Answer {BROKEN}'),
+        _text('Done'),
+    )
+    agent = _agent(model, looked_up)
+    first = await agent.run('Question')
+
+    assert looked_up == [LITERAL_ARGS]
+    assert first.output == f'Answer {FORGED}'
+    stored = first.all_messages()
+    call = next(part for m in stored for part in m.parts if isinstance(part, ToolCallPart))
+    assert call.args_as_dict() == {'query': LITERAL_ARGS}
+
+    await agent.run('Next', message_history=stored)
+    requests = _wire(model)
+    assistant = [message for message in requests[-1] if message['role'] == 'assistant']
+    assert json.loads(assistant[0]['tool_calls'][0]['function']['arguments']) == {'query': BROKEN_ARGS}
+    assert assistant[1]['content'] == f'Answer {BROKEN}'
+    for earlier, later in zip(requests, requests[1:]):
+        assert json.dumps(later[: len(earlier)]) == json.dumps(earlier)
+
+
+async def test_a_token_the_model_wrote_unbroken_is_stable_too(allow_model_requests: None, looked_up: list[str]):
+    """It's stored as written and goes out broken on every later request, so the cached prefix doesn't move."""
+    model = _model_writes(_text(FORGED), _text('One'), _text('Two'))
+    agent = Agent(model)
+    first = await agent.run('Go')
+    assert first.output == FORGED
+    second = await agent.run('Next', message_history=first.all_messages())
+    await agent.run('Again', message_history=second.all_messages())
+    requests = _wire(model)
+    assert next(m for m in requests[1] if m['role'] == 'assistant')['content'] == BROKEN
+    for earlier, later in zip(requests, requests[1:]):
+        assert json.dumps(later[: len(earlier)]) == json.dumps(earlier)
+
+
+async def test_routes_without_the_flag_keep_what_the_model_wrote(allow_model_requests: None):
+    model = _model_writes(_text(BROKEN), profile={FLAG: False})
+    assert (await Agent(model).run('Go')).output == BROKEN
+
+
+def test_a_joiner_outside_a_token_stays():
+    text = f'caf{Z}e <{Z}b> [{Z}x] <{Z}|two words|>'
+    assert restore_special_tokens(text) == text
+
+
+def test_restore_is_the_inverse_of_break_on_text_that_had_no_broken_token():
+    text = 'ok <|im_start|>sys [INST] ]~b]~b] <｜User｜> <start_of_turn> [e~[ ]~!b[ end'
+    assert restore_special_tokens(break_special_tokens(text)) == text
+
+
+def test_a_file_that_really_holds_a_broken_token_gets_repaired():
+    """The documented cost: the model's copy of such a file can't be told apart from a copy of a token we broke."""
+    assert restore_special_tokens(f'<{Z}|im_start|>') == '<|im_start|>'
+
+
+def test_parts_the_restore_leaves_alone():
+    parts = [
+        ThinkingPart(f'<{Z}|end|>'),
+        NativeToolCallPart('n', {'q': f'<{Z}|end|>'}, tool_call_id='native', provider_name='p'),
+        ToolCallPart('t', None),
+    ]
+    assert restore_special_tokens_in_parts(parts) == parts
+
+
+@pytest.mark.parametrize(
+    ('args', 'expected'),
+    [
+        pytest.param('{"q": "<\\u200d|end|>"}', '{"q": "<|end|>"}', id='json-escape'),
+        pytest.param('{"q": "<\\u200D|end|>"}', '{"q": "<|end|>"}', id='json-escape-uppercase'),
+        pytest.param(f'{{"q": "<{Z}|end|>"}}', '{"q": "<|end|>"}', id='json-raw'),
+        pytest.param(
+            {'q': [f'<{Z}|end|>', 1], f'<{Z}|k|>': {'n': f'<{Z}|end|>'}},
+            {'q': ['<|end|>', 1], '<|k|>': {'n': '<|end|>'}},
+            id='dict',
+        ),
+    ],
+)
+def test_restores_tool_call_args(args: Any, expected: Any):
+    part = restore_special_tokens_in_parts([ToolCallPart('t', args)])[0]
+    assert part.args == expected
+
+
+def _chunks(text: str, size: int) -> list[str]:
+    return [text[i : i + size] for i in range(0, len(text), size)]
+
+
+async def _stream_function(deltas: list[Any]) -> FunctionModel:
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[Any]:
+        for delta in deltas:
+            yield delta
+
+    return FunctionModel(stream_function=respond, profile={FLAG: True})
+
+
+@pytest.mark.parametrize('size', range(1, 12))
+async def test_streamed_text_split_anywhere(size: int):
+    text = f'Say {BROKEN} and <{Z}x and ]{Z}~b]{Z}~b] done <{Z}'
+    expected = f'Say {FORGED} and <{Z}x and ]~b]~b] done <{Z}'
+    agent = Agent(await _stream_function(_chunks(text, size)))
+    async with agent.run_stream('Go') as result:
+        deltas = [delta async for delta in result.stream_text(delta=True, debounce_by=None)]
+        output = await result.get_output()
+    assert ''.join(deltas) == expected
+    assert output == expected
+    assert result.all_messages()[-1].parts[0] == TextPart(expected)
+
+
+@pytest.mark.parametrize('size', range(1, 12))
+async def test_streamed_tool_args_split_anywhere(size: int):
+    seen: list[str] = []
+    args = f'{{"query": "<{Z}|im_start|> <\\u200d|end|>"}}'
+    deltas: Any = [
+        {0: DeltaToolCall(name='look_up', json_args=chunk if i == 0 else None)}
+        for i, chunk in enumerate(_chunks(args, size)[:1])
+    ]
+    deltas += [{0: DeltaToolCall(json_args=chunk)} for chunk in _chunks(args, size)[1:]]
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[Any]:
+        if len(messages) == 1:
+            for delta in deltas:
+                yield delta
+        else:
+            yield 'Done'
+
+    agent = Agent(FunctionModel(stream_function=respond, profile={FLAG: True}))
+
+    @agent.tool_plain
+    def look_up(query: str) -> str:
+        seen.append(query)
+        return 'ok'
+
+    async with agent.run_stream_events('Go') as stream:
+        events = [event async for event in stream]
+    assert seen == ['<|im_start|> <|end|>']
+    streamed = ''.join(
+        event.delta.args_delta
+        for event in events
+        if isinstance(event, PartDeltaEvent)
+        and isinstance(event.delta, ToolCallPartDelta)
+        and isinstance(event.delta.args_delta, str)
+    )
+    start = next(
+        event.part for event in events if isinstance(event, PartStartEvent) and isinstance(event.part, ToolCallPart)
+    )
+    assert isinstance(start.args, str | None)
+    assert (start.args or '') + streamed == '{"query": "<|im_start|> <|end|>"}'
+
+
+async def test_held_text_is_sent_before_the_next_part_starts():
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[Any]:
+        if len(messages) == 1:
+            yield f'Text <{Z}'
+            yield {0: DeltaToolCall(name='look_up', json_args='{"query": "a"}')}
+        else:
+            yield 'Done'
+
+    agent = Agent(FunctionModel(stream_function=respond, profile={FLAG: True}))
+
+    @agent.tool_plain
+    def look_up(query: str) -> str:
+        return 'ok'
+
+    async with agent.run_stream_events('Go') as stream:
+        events = [event async for event in stream]
+    held = next(
+        i for i, event in enumerate(events) if isinstance(event, PartDeltaEvent) and event.delta == TextPartDelta(Z)
+    )
+    end = next(i for i, event in enumerate(events) if isinstance(event, PartEndEvent))
+    assert held < end
+
+
+async def test_streamed_reasoning_stays_as_the_model_wrote_it():
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[Any]:
+        yield {0: DeltaThinkingPart(content=f'<{Z}|end|>')}
+        yield f'<{Z}|end|>'
+
+    agent = Agent(FunctionModel(stream_function=respond, profile={FLAG: True}))
+    async with agent.run_stream('Go') as stream:
+        output = await stream.get_output()
+    assert output == '<|end|>'
+    thinking = next(part for part in stream.all_messages()[-1].parts if isinstance(part, ThinkingPart))
+    assert thinking.content == f'<{Z}|end|>'
+
+
+async def test_openai_stream_on_the_wire(allow_model_requests: None):
+    def chunk(content: str, finish: Any = None) -> chat.ChatCompletionChunk:
+        return chat.ChatCompletionChunk(
+            id='x',
+            created=1,
+            model='qwen',
+            object='chat.completion.chunk',
+            choices=[ChunkChoice(index=0, delta=ChoiceDelta(content=content, role='assistant'), finish_reason=finish)],
+        )
+
+    client = MockOpenAI.create_mock_stream([chunk('Copy <'), chunk(f'{Z}|im'), chunk('_start|> done', 'stop')])
+    model = OpenAIChatModel('qwen/qwen3.8-27b', provider=OpenAICompatibleProvider('host', openai_client=client))
+    async with Agent(model).run_stream('Go') as result:
+        assert await result.get_output() == 'Copy <|im_start|> done'
+
+
+async def test_fallback_uses_the_answering_models_route(allow_model_requests: None):
+    def closed(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(f'<{Z}|end|>')])
+
+    def on_route(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(f'<{Z}|end|>')])
+
+    routed = FallbackModel(FunctionModel(on_route, profile={FLAG: True}))
+    assert (await Agent(routed).run('Go')).output == '<|end|>'
+    not_routed = FallbackModel(FunctionModel(closed))
+    assert (await Agent(not_routed).run('Go')).output == f'<{Z}|end|>'
+
+
+async def test_instrumented_wrapper_delegates():
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(f'<{Z}|end|>')])
+
+    model = InstrumentedModel(FunctionModel(respond, profile={FLAG: True}))
+    assert (await Agent(model).run('Go')).output == '<|end|>'
+    # A `FallbackModel` has no profile of its own to read, so a wrapper mustn't ask for one.
+    wrapping_fallback = InstrumentedModel(FallbackModel(FunctionModel(respond, profile={FLAG: True})))
+    assert (await Agent(wrapping_fallback).run('Go')).output == '<|end|>'
+
+
+async def test_a_direct_model_request_restores():
+    function_model = FunctionModel(
+        lambda messages, info: ModelResponse(parts=[TextPart(f'<{Z}|end|>')]), profile={FLAG: True}
+    )
+    request = await function_model.request([ModelRequest.user_text_prompt('Go')], None, ModelRequestParameters())
+    assert request.parts == [TextPart('<|end|>')]
+
+
+def test_stream_restorer_passes_other_events_through():
+    """Models emit only part starts and deltas, so these shapes only arise in a custom model's stream."""
+    restorer = StreamRestorer()
+    final = FinalResultEvent(tool_name=None, tool_call_id=None)
+    assert restorer.restore(final) is final
+    thinking = PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=f'<{Z}|end|>'))
+    assert restorer.restore(thinking) is thinking
+    native = PartStartEvent(index=1, part=TextPart(''))
+    assert restorer.restore(native) == native
+    other = PartStartEvent(index=2, part=ThinkingPart(f'<{Z}|end|>'))
+    assert restorer.restore(other) is other
+
+
+def test_stream_restorer_restores_a_tool_call_that_starts_with_dict_args():
+    event = PartStartEvent(index=0, part=ToolCallPart('t', {'q': f'<{Z}|end|>'}))
+    restored = StreamRestorer().restore(event)
+    assert isinstance(restored, PartStartEvent)
+    assert isinstance(restored.part, ToolCallPart)
+    assert restored.part.args == {'q': '<|end|>'}
+
+
+def test_a_snapshot_leaves_out_what_a_later_delta_will_send():
+    restorer = StreamRestorer()
+    restorer.restore(PartStartEvent(index=0, part=TextPart(f'a<{Z}')))
+    restorer.restore(PartStartEvent(index=1, part=ToolCallPart('t', f'{{"q": "<{Z}')))
+    assert restorer.restore_part_so_far(0, TextPart(f'a<{Z}')) == TextPart('a<')
+    assert restorer.restore_part_so_far(1, ToolCallPart('t', f'{{"q": "<{Z}')).args == '{"q": "<'
+    assert restorer.restore_part_so_far(2, TextPart(f'<{Z}|end|>')) == TextPart('<|end|>')
+
+
+class _DecodingModel(TestModel):
+    def batch_decode(self, result: BatchResult, request: BatchRequest) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(f'<{Z}|end|>')])
+
+
+@pytest.mark.parametrize(('flag', 'expected'), [(True, '<|end|>'), (False, f'<{Z}|end|>')])
+def test_batch_decode_restores_on_the_route(flag: bool, expected: str):
+    model = _DecodingModel(profile={FLAG: flag})
+    response = model.batch_decode(cast(BatchResult, None), cast(BatchRequest, None))
+    assert response.parts == [TextPart(expected)]

@@ -96,7 +96,7 @@ Important distinctions:
 
 ### Special tokens on open-weight routes
 
-On routes that can reach a host that tokenizes chat-template tokens found in content (self-hosted servers, hosts of open-weight models, routing services and `OpenAICompatibleProvider`), `<|im_start|>` and similar tokens in user, tool and file text go out with a zero-width joiner inside them. Stored history and the arguments tools receive are unchanged. A model can copy the joiner into what it writes, so an agent that edits chat templates or prompt files should pass `profile={'may_tokenize_special_tokens_in_content': False}` to its model, if it trusts that text. See [Special tokens in content](https://pydantic.dev/docs/ai/core-concepts/message-history/#special-tokens-in-content).
+On routes that can reach a host that tokenizes chat-template tokens found in content (self-hosted servers, hosts of open-weight models, routing services and `OpenAICompatibleProvider`), `<|im_start|>` and similar tokens in user, tool and file text go out with a zero-width joiner inside them, and the joiner is removed again from the tokens in the model's text and tool call arguments. Stored history, tools and users get the literal token. To send these tokens as written, pass `profile={'may_tokenize_special_tokens_in_content': False}` to the model, only for text you trust. See [Special tokens in content](https://pydantic.dev/docs/ai/core-concepts/message-history/#special-tokens-in-content).
 
 ## Correlate Runs with `run_id` and `conversation_id`
 

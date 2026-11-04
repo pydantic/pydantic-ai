@@ -8,6 +8,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import hashlib
+import inspect
 import json
 import reprlib
 import time
@@ -20,7 +21,7 @@ from copy import copy
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timedelta
 from difflib import get_close_matches
-from functools import cache, cached_property
+from functools import cache, cached_property, wraps
 from types import TracebackType
 from typing import (
     TYPE_CHECKING,
@@ -88,7 +89,13 @@ from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._removed_names import removed_names_getattr
 from .._run_context import RunContext
-from .._special_tokens import break_special_tokens, break_special_tokens_in_messages
+from .._special_tokens import (
+    StreamRestorer,
+    break_special_tokens,
+    break_special_tokens_in_messages,
+    restore_special_tokens_in_response,
+    restore_special_tokens_in_stream,
+)
 from .._unsupported_settings import SUPPRESSED_WARNINGS, warn_unsupported_settings
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
 from ..exceptions import ModelAPIError, UserError
@@ -1018,6 +1025,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             shown.append(f'profile={self._profile!r}')
         return f'{self.__class__.__qualname__}({", ".join(shown)})'
 
+    _answers_requests_itself: ClassVar[bool] = True
+    """Whether this class's `request` and `request_stream` produce a model's output, as opposed to another `Model`'s."""
+
+    @property
+    def _restores_special_tokens(self) -> bool:
+        """Whether this model's responses lose the joiner that `prepare_messages` put inside each special token."""
+        return self._answers_requests_itself and self.profile.get('may_tokenize_special_tokens_in_content', False)
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         # `@dataclass` generates `__eq__` and `__repr__` from the subclass's own fields, which leaves out the
@@ -1039,6 +1054,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             )
             # Pydantic AI calls `resolve_cache_retention`, so route it to the legacy override.
             cls.resolve_cache_retention = legacy
+        _restore_special_tokens_at_the_model_boundary(cls)
 
     def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve prompt cache retention requested by model settings.
@@ -1754,7 +1770,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         Where the profile's `may_tokenize_special_tokens_in_content` is `True`, puts a zero-width joiner inside each
         chat-template special token in user prompts, tool results and replayed model output, so a host can't encode it
-        as a control token. The same text always comes out the same, and the history itself isn't changed.
+        as a control token. The same text always comes out the same, and the history itself isn't changed. The
+        joiner is removed again from each response, by `_restore_special_tokens_at_the_model_boundary`.
 
         When the conversation has `<context>` elements, follows each user prompt, attached text file and tool result
         whose text opens one with a note saying who wrote it, so the model doesn't take it as a change to its
@@ -2324,7 +2341,9 @@ class StreamedResponse(ABC):
                     if not self._cancelled:
                         self._finished = True
 
-            events = self._get_event_iterator()
+            events = restore_special_tokens_in_stream(
+                self._get_event_iterator(), self._parts_manager.special_token_restorer
+            )
             if self._request_deadline is not None:
                 events = self._request_deadline.iterate(events)
             self._event_iterator = iterator_with_cancel_guard(iterator_with_part_end(iterator_with_final_event(events)))
@@ -3881,6 +3900,47 @@ def _announce_system_voice(messages: list[ModelMessage]) -> list[ModelMessage]:
     )
     parts = [*first_request.parts[:position], announcement, *first_request.parts[position:]]
     return [*messages[:first_request_idx], replace(first_request, parts=parts), *messages[first_request_idx + 1 :]]
+
+
+def _restore_special_tokens_at_the_model_boundary(cls: type[Model]) -> None:
+    """Have each method of `cls` that returns a model's output remove the joiner `prepare_messages` put in its tokens.
+
+    Done here, for every model class, because a model copies the joiner into what it writes. A class that left this out
+    would corrupt the files its model edits, and everything after this boundary (tools, output validation, users, stored
+    history) sees the same value whichever way the response was produced.
+    """
+    request = cls.__dict__.get('request')
+    if inspect.iscoroutinefunction(request):
+
+        @wraps(request)
+        async def restoring_request(self: Model, *args: Any, **kwargs: Any) -> ModelResponse:
+            response = await request(self, *args, **kwargs)
+            return restore_special_tokens_in_response(response) if self._restores_special_tokens else response
+
+        cls.request = restoring_request
+
+    request_stream = cls.__dict__.get('request_stream')
+    if inspect.isfunction(request_stream):
+
+        @wraps(request_stream)
+        @asynccontextmanager
+        async def restoring_request_stream(self: Model, *args: Any, **kwargs: Any) -> AsyncIterator[StreamedResponse]:
+            async with request_stream(self, *args, **kwargs) as stream:
+                if self._restores_special_tokens:
+                    stream._parts_manager.special_token_restorer = StreamRestorer()  # pyright: ignore[reportPrivateUsage]
+                yield stream
+
+        cls.request_stream = restoring_request_stream
+
+    batch_decode = cls.__dict__.get('batch_decode')
+    if inspect.isfunction(batch_decode):
+
+        @wraps(batch_decode)
+        def restoring_batch_decode(self: Model, *args: Any, **kwargs: Any) -> ModelResponse:
+            response = batch_decode(self, *args, **kwargs)
+            return restore_special_tokens_in_response(response) if self._restores_special_tokens else response
+
+        cls.batch_decode = restoring_batch_decode
 
 
 def _neutralize_voice_tags(messages: list[ModelMessage]) -> list[ModelMessage]:

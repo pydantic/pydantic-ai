@@ -8,13 +8,19 @@ On a profile with [`may_tokenize_special_tokens_in_content`][pydantic_ai.profile
 `Model.prepare_messages` puts a zero-width joiner inside each such token, so no tokenizer can match it. It only
 changes the outgoing copy, and the same text always gets the same joiners, so stored history stays as written and
 replaying it sends the same bytes.
+
+The model reads the joiner as part of the text and copies it into what it writes, which would silently corrupt a file
+it edits. So the inverse runs on each response, at the `Model` boundary: text and tool call arguments lose the joiner
+inside a token before anything else sees them, whether the response was streamed or not. Tools, output validation,
+users and stored history get the literal token. When that text is sent back, the break restores the bytes the model
+wrote.
 """
 
 from __future__ import annotations as _annotations
 
 import re
-from collections.abc import Sequence
-from dataclasses import replace
+from collections.abc import AsyncIterator, Sequence
+from dataclasses import dataclass, field, replace
 from itertools import groupby
 from typing import TYPE_CHECKING, Any, Final, TypeVar, cast
 
@@ -25,9 +31,16 @@ from .messages import (
     CompactionPart,
     ModelMessage,
     ModelRequest,
+    ModelResponse,
+    ModelResponseStreamEvent,
+    PartDeltaEvent,
+    PartStartEvent,
     TextContent,
     TextPart,
+    TextPartDelta,
     ThinkingPart,
+    ToolCallPart,
+    ToolCallPartDelta,
     UserPromptPart,
     is_multi_modal_content,
     tool_return_ta,
@@ -38,15 +51,64 @@ if TYPE_CHECKING:
 
 ZERO_WIDTH_JOINER: Final = '‍'
 
-_SPECIAL_TOKEN_START: Final = re.compile(
-    # Only the token's first character is consumed, so overlapping tokens, as in `]~b]~b]`, each get a joiner.
-    r'<(?=\|[^\s<>|]{1,64}\|>)'  # `<|im_start|>`, `<|eot_id|>`, `<|start_header_id|>`, `<|end|>`, `<|user|>`
-    r'|<(?=｜[^\s<>｜]{1,64}｜>)'  # `<｜User｜>`, `<｜end▁of▁sentence｜>`
-    r'|<(?=(?:start|end)_of_turn>)'
-    r'|\[(?=/?(?:INST|SYSTEM_PROMPT|AVAILABLE_TOOLS|TOOL_RESULTS)\]|TOOL_CALLS\])'
-    r'|\](?=~!?b[\]\[])'  # `]~b]`, `]~!b[`
-    r'|\[(?=e~\[)'
+_LITERAL_TOKEN_TAILS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
+    ('<', ('start_of_turn>', 'end_of_turn>')),
+    (
+        '[',
+        (
+            'INST]',
+            '/INST]',
+            'SYSTEM_PROMPT]',
+            '/SYSTEM_PROMPT]',
+            'AVAILABLE_TOOLS]',
+            '/AVAILABLE_TOOLS]',
+            'TOOL_RESULTS]',
+            '/TOOL_RESULTS]',
+            'TOOL_CALLS]',
+            'e~[',
+        ),
+    ),
+    (']', ('~b]', '~!b[')),
 )
+"""The fixed tokens, as their first character and the rest."""
+
+_NAMED_TOKEN_TAILS: Final = rf'\|[^\s<>|{ZERO_WIDTH_JOINER}]{{1,64}}\|>|｜[^\s<>｜{ZERO_WIDTH_JOINER}]{{1,64}}｜>'
+"""What follows the `<` of a `<|im_start|>` or a `<｜User｜>`, whichever name a template gives it."""
+
+_TOKEN_SHAPES: Final[tuple[tuple[str, str], ...]] = (
+    ('<', _NAMED_TOKEN_TAILS),
+    *((re.escape(first), '|'.join(re.escape(tail) for tail in tails)) for first, tails in _LITERAL_TOKEN_TAILS),
+)
+
+_SPECIAL_TOKEN_START: Final = re.compile('|'.join(f'{first}(?={tails})' for first, tails in _TOKEN_SHAPES))
+"""Only the token's first character is consumed, so overlapping tokens, as in `]~b]~b]`, each get a joiner."""
+
+
+def _joiner_inside_token(joiner: str) -> re.Pattern[str]:
+    return re.compile('|'.join(f'(?<={first}){joiner}(?={tails})' for first, tails in _TOKEN_SHAPES))
+
+
+_JOINER_IN_TEXT: Final = _joiner_inside_token(ZERO_WIDTH_JOINER)
+_JOINER_IN_JSON: Final = _joiner_inside_token(rf'(?:{ZERO_WIDTH_JOINER}|\\u200[dD])')
+"""A model can write the joiner in a tool call's JSON arguments as an escape."""
+
+_POSSIBLE_JOINER_IN_TEXT: Final = re.compile(rf'(?<=[<\[\]]){ZERO_WIDTH_JOINER}')
+_POSSIBLE_JOINER_IN_JSON: Final = re.compile(
+    rf'(?<=[<\[\]])(?:{ZERO_WIDTH_JOINER}|\\u200[dD]|\\(?:u(?:2(?:0(?:0)?)?)?)?$)'
+)
+"""Where a joiner has started, also when a chunk ended partway through its escape."""
+
+_TOKEN_TAIL_PREFIX: Final = re.compile(
+    rf'\|[^\s<>|{ZERO_WIDTH_JOINER}]{{0,64}}\|?|｜[^\s<>｜{ZERO_WIDTH_JOINER}]{{0,64}}｜?|'
+    + '|'.join(
+        re.escape(tail[:length])
+        for _, tails in _LITERAL_TOKEN_TAILS
+        for tail in tails
+        for length in range(1, len(tail))
+    )
+    + '|'
+)
+"""The start of what can follow a joiner in a token, including nothing yet."""
 
 _PartT = TypeVar('_PartT')
 
@@ -54,6 +116,182 @@ _PartT = TypeVar('_PartT')
 def break_special_tokens(text: str) -> str:
     """`text` with a zero-width joiner after the first character of each chat-template special token in it."""
     return _SPECIAL_TOKEN_START.sub(lambda match: match[0] + ZERO_WIDTH_JOINER, text)
+
+
+def restore_special_tokens(text: str) -> str:
+    """The inverse of [`break_special_tokens`][pydantic_ai._special_tokens.break_special_tokens], for a model's text."""
+    return _JOINER_IN_TEXT.sub('', text)
+
+
+def restore_special_tokens_in_parts(parts: Sequence[_PartT]) -> list[_PartT]:
+    """Remove the joiner from the tokens in response text and tool call arguments.
+
+    Reasoning is left as the model wrote it, as it can be signed, and so are native tool calls, which the provider ran.
+    """
+    return [_restore_part(part) for part in parts]
+
+
+def restore_special_tokens_in_response(response: ModelResponse) -> ModelResponse:
+    """`response` with [`restore_special_tokens_in_parts`][pydantic_ai._special_tokens.restore_special_tokens_in_parts] applied."""
+    parts = restore_special_tokens_in_parts(response.parts)
+    return (
+        replace(response, parts=parts) if any(new is not old for new, old in zip(parts, response.parts)) else response
+    )
+
+
+def _restore_part(part: _PartT) -> _PartT:
+    new_part: Any = part
+    if isinstance(part, TextPart):
+        content = restore_special_tokens(part.content)
+        if content != part.content:
+            new_part = replace(part, content=content)
+    elif isinstance(part, ToolCallPart):
+        args = _restore_args(part.args)
+        if args != part.args:
+            new_part = replace(part, args=args)
+    return new_part
+
+
+def _restore_args(args: str | dict[str, Any] | None) -> str | dict[str, Any] | None:
+    if isinstance(args, str):
+        return _JOINER_IN_JSON.sub('', args)
+    return None if args is None else _restore_value(args)
+
+
+def _restore_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return restore_special_tokens(value)
+    if isinstance(value, dict):
+        mapping = cast('dict[Any, Any]', value)
+        return {_restore_value(key): _restore_value(item) for key, item in mapping.items()}
+    if isinstance(value, list):
+        return [_restore_value(item) for item in cast('list[Any]', value)]
+    return value
+
+
+@dataclass
+class _StreamedTextRestorer:
+    """Removes the joiner from the tokens in text that arrives in chunks, however they split it.
+
+    Only a joiner is ever held back, from where it starts until what follows shows whether it's in a token, so text
+    without one goes out as it arrives.
+    """
+
+    joiner_inside_token: re.Pattern[str]
+    possible_joiner: re.Pattern[str]
+    previous_character: str = ''
+    held: str = ''
+
+    def feed(self, chunk: str) -> str:
+        window = self.previous_character + self.held + chunk
+        restored = self.joiner_inside_token.sub('', window)
+        hold_from = self._hold_from(restored)
+        text = restored[len(self.previous_character) : hold_from]
+        self.held = restored[hold_from:]
+        self.previous_character = text[-1:] or self.previous_character
+        return text
+
+    def flush(self) -> str:
+        """What's still held, when no more text is coming: a joiner that didn't end up in a token stays as written."""
+        held, self.held = self.held, ''
+        return held
+
+    def _hold_from(self, text: str) -> int:
+        start = None
+        for start in self.possible_joiner.finditer(text):
+            pass
+        if start is None:
+            return len(text)
+        if start.end() == len(text) or _TOKEN_TAIL_PREFIX.fullmatch(text, start.end()):
+            return start.start()
+        return len(text)
+
+
+@dataclass
+class StreamRestorer:
+    """Applies the joiner's removal to a response's stream events, one text per part."""
+
+    restorers: dict[int, _StreamedTextRestorer] = field(default_factory=dict[int, _StreamedTextRestorer])
+    args_parts: set[int] = field(default_factory=set[int])
+
+    def restore(self, event: ModelResponseStreamEvent) -> ModelResponseStreamEvent:
+        if isinstance(event, PartStartEvent):
+            return self._restore_start(event)
+        if isinstance(event, PartDeltaEvent):
+            return self._restore_delta(event)
+        return event
+
+    def _restore_start(self, event: PartStartEvent) -> PartStartEvent:
+        part = event.part
+        if isinstance(part, TextPart):
+            return replace(event, part=replace(part, content=self._text_restorer(event.index).feed(part.content)))
+        if isinstance(part, ToolCallPart):
+            if isinstance(part.args, str):
+                return replace(event, part=replace(part, args=self._args_restorer(event.index).feed(part.args)))
+            return replace(event, part=_restore_part(part))
+        return event
+
+    def _restore_delta(self, event: PartDeltaEvent) -> PartDeltaEvent:
+        delta = event.delta
+        if isinstance(delta, TextPartDelta):
+            return replace(
+                event, delta=replace(delta, content_delta=self._text_restorer(event.index).feed(delta.content_delta))
+            )
+        if isinstance(delta, ToolCallPartDelta) and isinstance(delta.args_delta, str):
+            return replace(
+                event, delta=replace(delta, args_delta=self._args_restorer(event.index).feed(delta.args_delta))
+            )
+        return event
+
+    def _text_restorer(self, index: int) -> _StreamedTextRestorer:
+        return self.restorers.setdefault(index, _StreamedTextRestorer(_JOINER_IN_TEXT, _POSSIBLE_JOINER_IN_TEXT))
+
+    def _args_restorer(self, index: int) -> _StreamedTextRestorer:
+        self.args_parts.add(index)
+        return self.restorers.setdefault(index, _StreamedTextRestorer(_JOINER_IN_JSON, _POSSIBLE_JOINER_IN_JSON))
+
+    def restore_part_so_far(self, index: int, part: _PartT) -> _PartT:
+        """`part` as the stream's events have delivered it, so a snapshot and later deltas never overlap."""
+        restored: Any = _restore_part(part)
+        restorer = self.restorers.get(index)
+        if restorer is None or not restorer.held:
+            return restored
+        if isinstance(restored, TextPart):
+            return replace(restored, content=restored.content.removesuffix(restorer.held))  # pyright: ignore[reportReturnType]
+        assert isinstance(restored, ToolCallPart) and isinstance(restored.args, str)
+        return replace(restored, args=restored.args.removesuffix(restorer.held))  # pyright: ignore[reportReturnType]
+
+    def flush(self) -> list[PartDeltaEvent]:
+        """Send what's held for every part, as deltas: at the end of the stream, or before a new part starts."""
+        events: list[PartDeltaEvent] = []
+        for index, restorer in self.restorers.items():
+            if held := restorer.flush():
+                delta = (
+                    ToolCallPartDelta(args_delta=held)
+                    if index in self.args_parts
+                    else TextPartDelta(content_delta=held)
+                )
+                events.append(PartDeltaEvent(index=index, delta=delta))
+        return events
+
+
+def restore_special_tokens_in_stream(
+    events: AsyncIterator[ModelResponseStreamEvent], restorer: StreamRestorer | None
+) -> AsyncIterator[ModelResponseStreamEvent]:
+    """`events` with the joiner removed from the tokens in their text and tool call arguments, if there's a `restorer`."""
+    return events if restorer is None else _restored_events(events, restorer)
+
+
+async def _restored_events(
+    events: AsyncIterator[ModelResponseStreamEvent], restorer: StreamRestorer
+) -> AsyncIterator[ModelResponseStreamEvent]:
+    async for event in events:
+        if isinstance(event, PartStartEvent):
+            for flushed in restorer.flush():
+                yield flushed
+        yield restorer.restore(event)
+    for flushed in restorer.flush():
+        yield flushed
 
 
 def break_special_tokens_in_messages(messages: list[ModelMessage], profile: ModelProfile) -> list[ModelMessage]:
