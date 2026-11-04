@@ -573,6 +573,15 @@ def _unmapped_extra_fields(obj: object, mapped: frozenset[str] = frozenset()) ->
     return {key: value for key, value in extra.items() if key not in mapped}
 
 
+def _raw_non_text_content_parts(response: chat.ChatCompletion) -> list[object]:
+    """The non-text parts of a completion's list `content`, read before validation joins it into its text.
+
+    The SDK doesn't validate the response, so a choice can lack a `message` here; validation reports that later.
+    """
+    message = getattr(response.choices[0], 'message', None) if response.choices else None
+    return _split_content_parts(getattr(message, 'content', None))[1]
+
+
 def _unmapped_choice_data(
     response: object,
     choice: object,
@@ -586,7 +595,7 @@ def _unmapped_choice_data(
 
     Read from the validated objects, so fields a subclass's response type declares (and maps) aren't extras.
     """
-    mapped_message_fields = _MAPPED_MESSAGE_EXTRA_FIELDS | ({thinking_field} if thinking_field else set())
+    mapped_message_fields = _MAPPED_MESSAGE_EXTRA_FIELDS | frozenset([thinking_field] if thinking_field else [])
     data = {
         'response': _unmapped_extra_fields(response),
         'choice': _unmapped_extra_fields(choice),
@@ -2051,10 +2060,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             if choice.finish_reason is None:
                 choice.finish_reason = self._missing_finish_reason(choice)
 
-        # Read before validation, which joins a list `content` into its text. The SDK doesn't validate the response, so a
-        # choice can lack a `message` here; validation below reports that.
-        raw_message = getattr(response.choices[0], 'message', None) if response.choices else None
-        _, content_parts = _split_content_parts(getattr(raw_message, 'content', None))
+        content_parts = _raw_non_text_content_parts(response)
 
         try:
             response = self._validate_completion(response)
@@ -6217,11 +6223,7 @@ class OpenAIStreamedResponse(StreamedResponse):
                 self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
             if self._logprobs:
                 self.provider_details = {**(self.provider_details or {}), 'logprobs': self._logprobs}
-            if self._unmapped_chunks:
-                self.provider_details = {
-                    **(self.provider_details or {}),
-                    'unmapped': {'chunks': self._unmapped_chunks},
-                }
+            self._publish_unmapped_chunks()
             if (
                 self._model_profile.get('openai_chat_streaming_requires_finish_reason', False)
                 and not self._has_finish_reason
@@ -6436,6 +6438,11 @@ class OpenAIStreamedResponse(StreamedResponse):
         This method may be overridden by subclasses of `OpenAIStreamResponse` whose model picks another one.
         """
         return 'stop'
+
+    def _publish_unmapped_chunks(self) -> None:
+        """Put the collected `_record_unmapped_chunk_data` into `provider_details['unmapped']`, once the stream ends."""
+        if self._unmapped_chunks:
+            self.provider_details = {**(self.provider_details or {}), 'unmapped': {'chunks': self._unmapped_chunks}}
 
     def _record_unmapped_chunk_data(self, chunk: ChatCompletionChunk) -> None:
         """Keep the data of `chunk` the mapping doesn't read, when `openai_include_unmapped_response_data` is on."""

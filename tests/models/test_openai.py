@@ -736,10 +736,15 @@ async def test_request_unmapped_response_data(allow_model_requests: None):
         citations=[{'id': 1, 'url': 'https://example.com'}],
         reasoning_content='thinking',
     )
-    completion = completion_message(message)
-    choice = Choice.model_construct(**dict(completion.choices[0]), stop_reason='eos')
+    choice = Choice.model_construct(index=0, message=message, finish_reason='stop', stop_reason='eos')
     completion = chat.ChatCompletion.model_construct(
-        **{**dict(completion), 'choices': [choice]}, prompt_filter='none', tool_usage={}
+        id='123',
+        choices=[choice],
+        created=1704067200,
+        model='gpt-4o-123',
+        object='chat.completion',
+        prompt_filter='none',
+        tool_usage={},
     )
     mock_client = MockOpenAI.create_mock(completion)
     agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
