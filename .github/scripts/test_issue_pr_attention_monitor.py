@@ -2956,7 +2956,10 @@ def _workflow_jobs() -> list[tuple[str, str, list[dict[str, Any]]]]:
 
 
 def test_every_script_running_job_installs_the_same_pinned_boundary_dependency():
-    """pydantic is the scripts' one required package; every job that runs one pins it, to one version."""
+    """pydantic is the scripts' one required package; every job that runs one pins it and its whole closure, to one set.
+
+    `--no-deps` keeps pip from resolving anything past the pins, so no fresh transitive release reaches a job.
+    """
     boundary = _boundary_script_names(_script_sources())
     pins: set[str] = set()
     checked: list[tuple[str, str]] = []
@@ -2965,7 +2968,10 @@ def test_every_script_running_job_installs_the_same_pinned_boundary_dependency()
         if not any(f'.github/scripts/{name}' in run for run in runs for name in boundary):
             continue
         checked.append((file_name, job_name))
-        installs = re.findall(r"pip install --quiet 'pydantic==([0-9][0-9a-z.]*)'", '\n'.join(runs))
+        commands = re.sub(r'\s+', ' ', '\n'.join(runs).replace('\\\n', ' '))
+        installs = re.findall(
+            r"pip install --quiet ('pydantic==[0-9][0-9a-z.]*'(?: '[a-z-]+==[0-9][0-9a-z.]*')+) --no-deps", commands
+        )
         assert installs, (file_name, job_name)
         pins.update(installs)
     # The discovery itself is under test: if the glob or the import scan break,

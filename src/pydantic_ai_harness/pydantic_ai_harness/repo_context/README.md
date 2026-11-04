@@ -52,6 +52,13 @@ same-directory symlink is labeled with its target's name, so `CLAUDE.md -> AGENT
 reaches the model as `AGENTS.md`. A file in an ancestor is labeled relative to the
 working directory, such as `../AGENTS.md`, not by its absolute path.
 
+A same-directory link loads only when it points to another instruction file,
+one named in `filenames` or `AGENTS.md`/`CLAUDE.md`: `CLAUDE.md -> AGENTS.md`
+works, while a link to any other file, such as `AGENTS.md -> CONTRIBUTING.md` or
+`AGENTS.md -> .env`, is skipped, so a repository can't use one to hand the model
+a file the file tools may deny. Make such a file a regular file, or rename its
+target, to load it.
+
 When `home_dir` is `None` (the default), only the working directory is scanned --
 no walk-up. Pass the workspace home path explicitly to walk up to it. For a remote
 sandbox, use its home (for example `home_dir='/home/user'` on E2B), not the agent
@@ -82,8 +89,8 @@ directories are skipped.
 
 ### 2. Asset inventory (off by default)
 
-Set `expose_inventory_tool=True` to expose `inventory_agent_context()`, which reports where the repo's CE
-assets live -- the `.claude`/`.agents`/`.codex`/`.grok` roots and, within each,
+Set `expose_inventory_tool=True` to expose `inventory_agent_context()`, which reports where the repo's
+coding-assistant assets live -- the `.claude`/`.agents`/`.codex`/`.grok` roots and, within each,
 the `skills/` (SKILL.md), `agents/` (`.md`), and `settings.json` (hooks) it
 contains. It returns a structured `AgentContextInventory`; it locates assets and
 does not parse them.
@@ -92,7 +99,7 @@ Rename the tool with `inventory_tool_name`, or scope which roots it scans with
 `asset_roots`.
 Skill discovery goes at most eight directories deep.
 
-With `FileSystem` on the agent, the inventory tool steps aside for `FileSystem`'s `read_file`, as long as every asset root is inside the working directory (the default roots are). The tool is marked with [`unless_tool_kind`](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#unless-tool-kind) set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind (keep `FileSystem` under its own names for now: a renamed `FileSystem` tool can't be called yet, [#10927](https://github.com/pydantic/pydantic-ai/issues/10927)). The instructions name the asset roots and say to inspect them with file tools, or with the inventory tool when it's offered. They name no reader, so they're the same with or without `FileSystem` and stay static. The decision is made from `asset_roots`, not from `FileSystem`'s access rules: `denied_patterns` that cover the roots, or `allowed_patterns` that leave them out, still drop the inventory tool.
+With `FileSystem` on the agent, the inventory tool steps aside for `FileSystem`'s `read_file`, as long as every asset root is inside the working directory (the default roots are). The tool is marked with [`unless_tool_kind`](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#unless-tool-kind) set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind. The instructions name the asset roots and say to inspect them with file tools, or with the inventory tool when it's offered. They name no reader, so they're the same with or without `FileSystem` and stay static. The decision is made from `asset_roots`, not from `FileSystem`'s access rules: `denied_patterns` that cover the roots, or `allowed_patterns` that leave them out, still drop the inventory tool.
 
 ### 3. Nested-on-traversal (off by default)
 
@@ -131,7 +138,8 @@ surfaces it again. The working directory's files are not surfaced again when
 the walk-up already loaded them. Every part of a note carries
 `{'origin': 'pydantic-ai-harness.repo_context.nested_note.v1', 'directory': ...}`
 in its `metadata`, which is how `RepoContext` and compaction recognize it.
-Same-directory instruction symlinks are named after their targets. Where the
+Same-directory instruction symlinks are named after their targets, and load
+only when the target is itself an instruction file, as in the walk-up. Where the
 backend resolves symlinks, external instruction symlinks are skipped, even when
 `autoload_symlink_roots` authorizes their targets for autoload.
 
@@ -148,7 +156,9 @@ the same types by importing `FileReadEvent` and `DirectoryListedEvent` from
 The traversed location is `root_dir / path`, so a `FileSystem` rooted at a
 subdirectory of the working directory still surfaces the right directory. A
 traversal that resolves outside the working directory is ignored: it is not nested in
-the workspace, so there is no nested context to surface.
+the workspace, so there is no nested context to surface. Each directory in the
+chain must itself resolve inside the working directory, so a symlinked directory
+in the path can't surface an instruction file from outside it.
 
 `traversal_tool_names` and `traversal_path_arg` are deprecated. Setting either
 to a non-default value emits `HarnessDeprecationWarning` and keeps the old

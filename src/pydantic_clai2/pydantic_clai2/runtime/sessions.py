@@ -17,6 +17,7 @@ from pydantic_ai.messages import ModelMessage
 from pydantic_ai_harness.step_persistence import StepPersistence
 from pydantic_ai_harness.step_persistence.conversations import (
     ConversationConflict,
+    ConversationOrder,
     ConversationSummary,
     SavedConversation,
     SqliteConversationStore,
@@ -221,10 +222,18 @@ class Sessions(Generic[DepsT, OutputT]):
         return await save_import(self.store, imported, delegations=self.tasks)
 
     async def listing(
-        self, *, query: str = '', limit: int = 200, archived: bool | None = False
+        self,
+        *,
+        query: str = '',
+        limit: int = 200,
+        archived: bool | None = False,
+        order_by: ConversationOrder = 'updated_at',
     ) -> list[ConversationSummary]:
-        """Saved conversations from every directory, newest first, as `/resume` lists them, queueing untitled ones for naming."""
-        entries = await self.store.listing(query=query, limit=limit, archived=archived)
+        """Saved conversations from every directory, newest first, as `/resume` lists them, queueing untitled ones for naming.
+
+        `order_by='created_at'` pages by creation instead of activity, as the web sidebar lists them.
+        """
+        entries = await self.store.listing(query=query, limit=limit, archived=archived, order_by=order_by)
         self.namer.backfill(entries, client=self.naming)
         return entries
 
