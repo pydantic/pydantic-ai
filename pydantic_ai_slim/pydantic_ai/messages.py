@@ -4719,7 +4719,9 @@ class OperatorText(str):
 
     Build one from a workspace file with [`from_workspace`][pydantic_ai.messages.OperatorText.from_workspace], which
     remembers where the text came from: a part holding it never has more authority than that workspace, whatever source
-    the part names.
+    the part names. Only that instance remembers: a string method such as `strip()` returns a plain `str`, and wrapping
+    the result in a new `OperatorText` claims the operator's voice for it. To change text read from a workspace, pass
+    [`WorkspaceSource.from_workspace`][pydantic_ai.messages.WorkspaceSource.from_workspace] as the part's source too.
     """
 
     _source: WorkspaceSource | None = None
