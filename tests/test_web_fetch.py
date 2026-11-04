@@ -4,24 +4,30 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
+import sys
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import suppress
 from threading import Event, Lock
+from types import FrameType
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import anyio
 import httpx2
 import pytest
-from markdownify import MarkdownConverter, markdownify
+from markdownify import (
+    MarkdownConverter,
+    markdownify,
+    re_newline_whitespace,  # pyright: ignore[reportAttributeAccessIssue,reportUnknownVariableType]
+)
 
 from pydantic_ai._utils import run_in_executor, using_thread_executor
 from pydantic_ai.common_tools.web_fetch import (
     _HTML_CONVERSION_LIMITER,  # pyright: ignore[reportPrivateUsage]
     _MAX_HTML_CONVERSION_COST,  # pyright: ignore[reportPrivateUsage]
     _MAX_HTML_TEXT_SCAN_COST,  # pyright: ignore[reportPrivateUsage]
+    _TITLE_OPEN_RE,  # pyright: ignore[reportPrivateUsage]
     WebFetchLocalTool,
     _convert_html,  # pyright: ignore[reportPrivateUsage]
     web_fetch_tool,
@@ -750,28 +756,29 @@ class TestWebFetchLocalTool:
         assert [future.result() for future in executor.submitted] == [html, ('Threaded', 'Threaded\n\nContent')]
 
     async def test_fetch_html_repeated_unclosed_title_tags(self):
-        """A body made of `<title` fragments with no closing `>` converts in seconds, not minutes.
+        """A body made of `<title` fragments with no closing `>` is scanned for its title once.
 
         Each fragment is a candidate title start with no end in reach, which previously made title
-        extraction quadratic in the body size: a body of this size took minutes, during which the
-        event loop was blocked. The bound is generous; the point is that it isn't minutes.
+        extraction quadratic in the body size: a body of 300k fragments took minutes, during which the
+        event loop was blocked.
         """
-        html = '<title' * 300_000
+        html = '<title' * 1000
 
-        with patch(
-            'pydantic_ai.common_tools.web_fetch.safe_download',
-            new_callable=AsyncMock,
-            return_value=_html_response(html),
+        with (
+            patch(
+                'pydantic_ai.common_tools.web_fetch.safe_download',
+                new_callable=AsyncMock,
+                return_value=_html_response(html),
+            ),
+            patch('pydantic_ai.common_tools.web_fetch._TITLE_OPEN_RE', wraps=_TITLE_OPEN_RE) as title_open_re,
         ):
             tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
-            start = time.perf_counter()
             result = await tool('https://example.com')
-            elapsed = time.perf_counter() - start
 
         assert isinstance(result, dict)
         assert result['title'] == ''
         assert result['content'] == ''
-        assert elapsed < 60
+        title_open_re.search.assert_called_once()
 
     @pytest.mark.parametrize('html', ['<title>never closed', '<title never opened'])
     async def test_fetch_html_unterminated_title_is_empty(self, html: str):
@@ -1060,6 +1067,31 @@ def scaled_text_scan_budget():
         yield
 
 
+def _assert_rejected_before_conversion(html: str) -> None:
+    """The cost estimate rejects `html` before any of the work it estimates has started."""
+    with patch.object(MarkdownConverter, 'convert_soup', autospec=True) as convert_soup:
+        with pytest.raises(ModelRetry, match='too complex'):
+            _convert_html(html)
+    convert_soup.assert_not_called()
+
+
+def _python_calls_converting(html: str) -> int:
+    """How many Python calls, counting each generator resumption, converting `html` takes."""
+    calls = 0
+
+    def count_call(_frame: FrameType, event: str, _arg: object) -> None:
+        nonlocal calls
+        if event == 'call':
+            calls += 1
+
+    sys.setprofile(count_call)
+    try:
+        _convert_html(html)
+    finally:
+        sys.setprofile(None)
+    return calls
+
+
 class TestMarkdownConverter:
     def test_large_well_formed_reference_list_passes_markup_budgets(self):
         """A page with more markup than a 2.9 MB Wikipedia article (~101k parser events) reaches parsing."""
@@ -1304,26 +1336,17 @@ class TestMarkdownConverter:
     def test_deeply_nested_indentation_is_bounded(self, tag: str):
         """The converter rejects repeated indentation before intermediate Markdown expands."""
         html = f'<{tag}>' * 120 + 'line\n' * 150_000 + f'</{tag}>' * 120
-        started = time.perf_counter()
-        with pytest.raises(ModelRetry, match='too complex'):
-            _convert_html(html)
-        assert time.perf_counter() - started < 60
+        _assert_rejected_before_conversion(html)
 
     def test_deeply_nested_empty_tags_are_bounded(self):
         """Generated line breaks must count towards work even without descendant text."""
         html = '<q>' * 120 + '<br>' * 30_000 + '</q>' * 120
-        started = time.perf_counter()
-        with pytest.raises(ModelRetry, match='too complex'):
-            _convert_html(html)
-        assert time.perf_counter() - started < 60
+        _assert_rejected_before_conversion(html)
 
     def test_shallow_nested_indentation_is_bounded(self):
         """Indented lines also count when the document is fewer than 16 levels deep."""
         html = '<dd>' * 15 + 'x\n' * 300_000 + '</dd>' * 15
-        started = time.perf_counter()
-        with pytest.raises(ModelRetry, match='too complex'):
-            _convert_html(html)
-        assert time.perf_counter() - started < 60
+        _assert_rejected_before_conversion(html)
 
     @pytest.mark.parametrize(
         ('tag', 'depth', 'prefix'),
@@ -1493,18 +1516,12 @@ class TestMarkdownConverter:
     def test_repeated_table_row_search_is_bounded(self):
         """Rows under thead must not each rescan all of their siblings."""
         html = '<table><thead>' + '<tr><td>x</td></tr>' * 5000 + '</thead></table>'
-        started = time.perf_counter()
-        with pytest.raises(ModelRetry, match='too complex'):
-            _convert_html(html)
-        assert time.perf_counter() - started < 60
+        _assert_rejected_before_conversion(html)
 
     def test_repeated_tbody_table_search_is_bounded(self):
         """The first row of each tbody must not rescan the whole table."""
         html = '<table>' + '<tbody><tr><td>x</td></tr></tbody>' * 2000 + '</table>'
-        started = time.perf_counter()
-        with pytest.raises(ModelRetry, match='too complex'):
-            _convert_html(html)
-        assert time.perf_counter() - started < 60
+        _assert_rejected_before_conversion(html)
 
     def test_small_table_colspan_converts(self):
         """Small decimal colspans retain the converter's output."""
@@ -1586,10 +1603,7 @@ class TestMarkdownConverter:
     def test_wide_ordered_list_marker_is_bounded(self):
         """A large list start must count towards indentation on every continuation line."""
         html = '<ol start="' + '9' * 4300 + '"><li>' + 'x\n' * 10_000 + '</li></ol>'
-        started = time.perf_counter()
-        with pytest.raises(ModelRetry, match='too complex'):
-            _convert_html(html)
-        assert time.perf_counter() - started < 60
+        _assert_rejected_before_conversion(html)
 
     def test_generated_list_lines_with_wide_marker_are_bounded(self):
         """A URL can generate the lines an ordered-list marker would indent."""
@@ -1598,31 +1612,50 @@ class TestMarkdownConverter:
             _convert_html(html)
 
     @pytest.mark.parametrize(
-        'html',
+        ('opening', 'repeated', 'closing'),
         [
-            pytest.param('<p>x' + ' ' * 300_000 + 'x</p>', id='spaces-in-paragraph'),
-            pytest.param('<p><![CDATA[x' + ' ' * 300_000 + 'x]]></p>', id='spaces-in-cdata'),
-            pytest.param('<pre>' + ' ' * 300_000 + 'x</pre>', id='spaces-in-pre'),
-            pytest.param('<ol>' + '<li>x</li>' * 50_000 + '</ol>', id='long-ordered-list'),
-            pytest.param('<div>x' * 20_000, id='deep-nesting'),
-            pytest.param('x <i></i>' * 50_000, id='many-sibling-text-nodes'),
+            pytest.param('<ol>', '<li>x</li>', '</ol>', id='long-ordered-list'),
+            pytest.param('', 'x <i></i>', '', id='many-sibling-text-nodes'),
         ],
     )
-    def test_converts_pathological_runs_quickly(self, html: str):
-        """Whitespace runs, `<pre>` padding, ordered lists, deep nesting, and wide trees are handled in linear time.
+    def test_conversion_work_is_linear(self, opening: str, repeated: str, closing: str):
+        """Doubling the page at most doubles the work, as counted in Python calls rather than on a clock.
 
-        `markdownify` on its own takes minutes on the whitespace and list shapes: a run of spaces
-        restarts its whitespace regexes at every character, and each `<li>` recounts its previous
-        siblings. The nested page can't be converted at all, but finding that out must not take
-        long either, and neither may normalizing text among tens of thousands of siblings. The
-        bound is generous; the point is that it isn't minutes.
+        On its own, `markdownify` numbers each `<li>` by counting its previous siblings, and normalizing a text
+        node among its siblings must not scan them either.
         """
-        start = time.perf_counter()
-        try:
+
+        def calls_at_size(size: int) -> int:
+            return _python_calls_converting(opening + repeated * size + closing)
+
+        calls_at_size(10)  # So the first measurement below doesn't include filling caches.
+        assert calls_at_size(2000) <= 2.2 * calls_at_size(1000)
+
+    @pytest.mark.parametrize(
+        'html',
+        [
+            pytest.param('<p>x' + ' ' * 1000 + 'x</p>', id='spaces-in-paragraph'),
+            pytest.param('<p><![CDATA[x' + ' ' * 1000 + 'x]]></p>', id='spaces-in-cdata'),
+        ],
+    )
+    def test_upstream_whitespace_regex_only_sees_collapsed_runs(self, html: str):
+        """`markdownify`'s newline regex restarts at every space of a run, so it's quadratic in the run's length."""
+        with patch('markdownify.re_newline_whitespace', wraps=re_newline_whitespace) as regex:
             _convert_html(html)
-        except (RecursionError, ModelRetry):
-            assert html.startswith('<div>x<div>')
-        assert time.perf_counter() - start < 60
+        texts = [call.args[1] for call in regex.sub.call_args_list]
+        assert texts
+        assert not any('  ' in text for text in texts)
+
+    def test_pre_padding_skips_upstream_strip(self):
+        """`markdownify.strip_pre` restarts its regex at every space of a run that isn't at the very end."""
+        with patch('markdownify.strip_pre') as upstream_strip_pre:
+            _, content = _convert_html('<pre>' + ' ' * 1000 + 'x</pre>')
+        upstream_strip_pre.assert_not_called()
+        assert content == '```\n' + ' ' * 1000 + 'x\n```'
+
+    def test_deep_nesting_is_rejected_before_conversion(self):
+        """A page nested too deeply to convert is rejected without starting `markdownify`'s recursive walk."""
+        _assert_rejected_before_conversion('<div>x' * 20_000)
 
 
 class TestWebFetchToolFactory:
