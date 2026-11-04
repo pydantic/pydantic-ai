@@ -376,20 +376,23 @@ def _message_element(
 def _capability_part_elements(part: CapabilityPart, max_chars: int | None) -> list[str]:
     """A capability part, recognized by its type, as the transcript shows it.
 
-    An instruction in the application's voice reads as a system message, except a request-scoped one, which applied
-    to its own request only. Anything else, data a capability added or an instruction its source downgraded, the model
-    saw framed rather than in the application's voice, so it's labeled with its kind, never taken for the user's.
+    A request-scoped part applied to its own request only, whatever its voice, so it's left out. An instruction in the
+    application's voice reads as a system message. Anything else, data a capability added or an instruction its source
+    downgraded, the model saw framed rather than in the application's voice, so it's labeled with its kind, never taken
+    for the user's.
     """
-    if effective_authority(part) != 'operator':
-        return [_harness_data_element(part.kind, capability_part_text(part), max_chars)]
     if part.scope == 'request':
         return []
+    if effective_authority(part) != 'operator':
+        return [_harness_data_element(part.kind, capability_part_text(part), max_chars)]
     return [_message_element('system', capability_part_text(part))]
 
 
 def _is_transcript_data(part: ModelRequestPart) -> bool:
     """Whether *part* is a `<harness_data>` element in the transcript: harness data, or a downgraded instruction."""
-    return is_harness_data(part) or (isinstance(part, CapabilityPart) and effective_authority(part) != 'operator')
+    return is_harness_data(part) or (
+        isinstance(part, CapabilityPart) and part.scope != 'request' and effective_authority(part) != 'operator'
+    )
 
 
 def _harness_data_element(origin: str, content: str, max_chars: int | None) -> str:

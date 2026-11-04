@@ -1138,6 +1138,56 @@ def test_rendering_is_append_only(profile: ModelProfile) -> None:
         assert later[len(earlier) - 1]['parts'] == sent_again
 
 
+def _lowered_budget(left: int, *, scope: Literal['conversation', 'request'] = 'request') -> NudgePart:
+    return NudgePart(
+        content=OperatorText(f'{left} left.'),
+        source=CapabilitySource('plugin', authority='none'),
+        scope=scope,
+        timestamp=TIMESTAMP,
+    )
+
+
+@pytest.mark.parametrize('profile', [pytest.param(INLINE, id='inline'), pytest.param(FALLBACK, id='fallback')])
+def test_an_answered_downgraded_request_scoped_part_is_left_out(profile: ModelProfile) -> None:
+    """Framed on the user channel, it has no scope of its own, so stale budgets would pile up and contradict each other."""
+    *_, history = conversation([_lowered_budget(3)], [_lowered_budget(2)])
+    prepared = json.dumps(prepared_bytes(profile, history))
+    assert '3 left.' not in prepared
+    assert '2 left.' in prepared
+    # The history keeps it, as it does any request-scoped part.
+    assert [part.content for message in history for part in message.parts if isinstance(part, NudgePart)] == [
+        '3 left.',
+        '2 left.',
+    ]
+
+
+def test_a_request_holding_only_an_answered_downgraded_part_is_left_out() -> None:
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Turn 0')]),
+        ModelResponse(parts=[TextPart('Answer 0')]),
+        ModelRequest(parts=[_lowered_budget(3)]),
+        ModelResponse(parts=[TextPart('Answer 1')]),
+        ModelRequest(parts=[UserPromptPart('Turn 2')]),
+    ]
+    prepared = prepared_bytes(INLINE, history)
+    assert len(prepared) == 4
+    assert '3 left.' not in json.dumps(prepared)
+
+
+@pytest.mark.parametrize('profile', [pytest.param(INLINE, id='inline'), pytest.param(FALLBACK, id='fallback')])
+def test_only_a_request_scoped_downgraded_part_breaks_append_only(profile: ModelProfile) -> None:
+    """A lowered part in the conversation's scope keeps the prefix as it was."""
+    histories = conversation([_lowered_budget(3, scope='conversation')], [_lowered_budget(2, scope='conversation')])
+    rendered = [prepared_bytes(profile, history) for history in histories]
+    assert rendered[1][: len(rendered[0])] == rendered[0]
+
+
+def test_an_operator_request_scoped_part_is_not_left_out_on_a_model_that_clears_it() -> None:
+    profile = ModelProfile(supports_inline_system_prompts=True, supports_request_scoped_system_prompts=True)
+    *_, history = conversation([nudge('3 left.', scope='request')], [nudge('2 left.', scope='request')])
+    assert '3 left.' in json.dumps(prepared_bytes(profile, history))
+
+
 @pytest.mark.parametrize('profile', [pytest.param(INLINE, id='inline'), pytest.param(FALLBACK, id='fallback')])
 def test_rendering_has_no_hidden_inputs(profile: ModelProfile) -> None:
     [history] = conversation([report(), nudge()])

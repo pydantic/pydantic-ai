@@ -57,6 +57,7 @@ from .. import _utils
 from .._canonical_system import accepts_stateless_artifact
 from .._capability_parts import (
     LookalikeNaming,
+    is_downgraded_request_scoped,
     render_capability_part,
     render_capability_parts,
 )
@@ -1845,6 +1846,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         # history was authored with, and a note or announcement in the first request is not part of it.
         first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
         standing_prompt_count = _standing_system_prompt_count(first_request) if first_request else 0
+        # Left out while they're still typed: once rendered, nothing says they were request-scoped.
+        messages = _without_answered_parts(messages, is_downgraded_request_scoped)
         # Kept as stored, after speech becomes user text: only text from the user, tools and files is checked for
         # lookalike frames below, never the frames the framework renders from a retry.
         authored = messages
@@ -4101,19 +4104,29 @@ _REQUEST_SCOPED_TAIL_KEY = 'request_scoped_tail'
 def _drop_superseded_request_scoped_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
     """Leave out the request-scoped `SystemPromptPart`s whose request has been answered, for a model that can't clear them itself.
 
-    A request emptied this way is left out too: it held nothing but prompts the model no longer sees.
+    Returns the original list when nothing changed.
+    """
+    return _without_answered_parts(messages, _is_request_scoped)
+
+
+def _without_answered_parts(
+    messages: list[ModelMessage], is_answered_part: Callable[[ModelRequestPart], bool]
+) -> list[ModelMessage]:
+    """`messages` without the parts `is_answered_part` picks out in requests that have been answered.
+
+    A request emptied this way is left out too: it held nothing but parts the model no longer sees.
     Returns the original list when nothing changed.
     """
     start = _current_request_start(messages)
     if not any(
-        isinstance(message, ModelRequest) and any(_is_request_scoped(part) for part in message.parts)
+        isinstance(message, ModelRequest) and any(is_answered_part(part) for part in message.parts)
         for message in messages[:start]
     ):
         return messages
     kept_messages: list[ModelMessage] = []
     for message in messages[:start]:
-        if isinstance(message, ModelRequest) and any(_is_request_scoped(part) for part in message.parts):
-            if parts := [part for part in message.parts if not _is_request_scoped(part)]:
+        if isinstance(message, ModelRequest) and any(is_answered_part(part) for part in message.parts):
+            if parts := [part for part in message.parts if not is_answered_part(part)]:
                 kept_messages.append(replace(message, parts=parts))
         else:
             kept_messages.append(message)

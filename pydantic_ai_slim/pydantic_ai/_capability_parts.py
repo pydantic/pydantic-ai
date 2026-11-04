@@ -62,6 +62,14 @@ def effective_authority(part: CapabilityPart) -> Authority:
     return _lower_authority(asked, part.source.authority)
 
 
+def is_downgraded_request_scoped(part: ModelRequestPart) -> bool:
+    """Whether `part` is a request-scoped capability part that reaches the model framed on the user channel.
+
+    There it's user content, which no provider clears, so nothing but leaving it out ends its scope.
+    """
+    return isinstance(part, CapabilityPart) and part.scope == 'request' and effective_authority(part) != 'operator'
+
+
 def check_operator_text(text: str, *, what: str) -> None:
     """Raise unless `text` can go out in the application's voice: it can't look like a framework frame.
 
