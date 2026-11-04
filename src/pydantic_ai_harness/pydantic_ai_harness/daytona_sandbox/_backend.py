@@ -88,9 +88,9 @@ _ASYNCIO_ONLY = 'Daytona needs the asyncio event loop: the Daytona SDK runs its 
 
 
 async def _new_client() -> AsyncDaytona:
-    """An `AsyncDaytona` configured from the environment, built off the event loop.
+    """An `AsyncDaytona` built off the event loop, because its constructor checks for dotenv files.
 
-    The environment means `DAYTONA_API_KEY`, or a JWT token and organization ID. The SDK also reads dotenv files.
+    It reads `DAYTONA_API_KEY`, or a JWT token and organization ID, from the environment.
     """
     try:
         return await anyio.to_thread.run_sync(daytona.AsyncDaytona)

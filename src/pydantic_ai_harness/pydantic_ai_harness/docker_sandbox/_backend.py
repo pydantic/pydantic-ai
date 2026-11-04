@@ -108,7 +108,9 @@ read -r pid 2> /dev/null < "$pidfile" || exit 0
 [ -n "$pid" ] || exit 0
 if kill -0 "-$pid" 2> /dev/null; then
     kill -KILL "-$pid" "$pid" 2> /dev/null
-else
+elif read -r line 2> /dev/null < "/proc/$pid/stat"; then
+    set -- ${{line##*) }}
+    group=$3
     tree=" $pid "
     grew=1
     while [ -n "$grew" ]; do
@@ -120,7 +122,7 @@ else
             proc=${{proc%/stat}}
             case "$tree" in
                 *" $proc "*) ;;
-                *" $2 "*) tree="$tree$proc "; grew=1 ;;
+                *" $2 "*) [ "$3" != "$group" ] || {{ tree="$tree$proc "; grew=1; }} ;;
             esac
         done
     done
@@ -139,8 +141,10 @@ container's process limit and nothing can fork. It kills at once: the command is
 
 A `docker exec` process leads a session of its own in runc and current crun, so its group is the command's; a
 command that started a session of its own (the harness `Shell`'s jobs) is in another group and keeps running.
-Where the exec has no group of its own (crun 1.14.1), the stop kills the process and its descendants instead, found
-by parent ID in `/proc`. A descendant whose parent already exited has lost that link and keeps running there.
+Where the exec has no group of its own (crun 1.14.1), the stop kills the process and those of its descendants that
+share its group number, found by parent ID in `/proc`, so a command in a session of its own keeps running there too.
+A descendant whose parent already exited has lost that link, and one forked after the scan isn't seen; both keep
+running.
 Groups are signalled as `kill -SIGNAL -PGID`, without `--`, which BusyBox's `kill` rejects, as does dash's after `-0`.
 """
 
