@@ -55,11 +55,8 @@ def _parent(messages: list[ModelMessage], background: bool) -> ModelResponse:
 def background_parent(*, background: bool = True) -> FunctionModel:
     """Without `background`, the task only moves to the background with `auto_background_after`.
 
-    Streams too, as a run whose capabilities handle events streams its model requests.
+    Streams only, as a run whose capabilities handle events streams its model requests.
     """
-
-    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return _parent(messages, background)
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         [part] = _parent(messages, background).parts
@@ -69,7 +66,7 @@ def background_parent(*, background: bool = True) -> FunctionModel:
             assert isinstance(part, ToolCallPart)
             yield {0: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
 
-    return FunctionModel(respond, stream_function=stream)
+    return FunctionModel(stream_function=stream)
 
 
 async def background_worker(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
