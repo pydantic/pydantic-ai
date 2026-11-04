@@ -6524,6 +6524,7 @@ def test_dbos_toolsets_without_child_workflow_tools_stay_unwrapped() -> None:
     durability = DBOSDurability.from_agent(agent)
     assert durability is not None
     assert durability.get_wrapper_toolset(plain) is None
+    assert durability.get_wrapper_toolset(ExternalToolset(tool_defs=[])) is None
 
 
 step_one_selections: list[tuple[int, str | None, str | None, datetime | None]] = []
