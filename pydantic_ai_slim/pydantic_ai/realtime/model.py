@@ -577,8 +577,8 @@ class RealtimeConnectContext:
     `messages`, or returning `dataclasses.replace(connect_context, messages=...)`.
 
     Only `messages` can be changed. `model`, `model_settings` and `model_request_parameters` are read-only: the
-    session raises [`UserError`][pydantic_ai.exceptions.UserError] if a hook returns a context with any of them
-    replaced.
+    session raises [`UserError`][pydantic_ai.exceptions.UserError] if a hook replaces any of them, and they must not
+    be modified in place either.
     """
 
     model: RealtimeModel
@@ -602,8 +602,8 @@ class RealtimeConnectContext:
     model_request_parameters: ModelRequestParameters
     """The tools and instructions the session connects with. Read-only.
 
-    The instructions of the on-demand capabilities `messages` loaded are resolved from it before the hooks run, and
-    again afterwards if the hooks changed which capabilities it loads.
+    Its instructions include those of the on-demand capabilities `messages` loaded before the hooks ran. If the hooks
+    change which capabilities `messages` loads, the session resolves its instructions again from what they leave.
     """
 
 

@@ -1100,10 +1100,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         is what the provider is seeded with, what the session records as its history's start, and what a reconnect
         replays. The model, settings and request parameters are read-only.
 
-        It runs inside `wrap_run`, after `before_run` and after the seeded history's dynamic system prompts are
-        re-evaluated, in capability order, and also when there's no history to seed. It doesn't run on reconnect,
-        or in a standard run. An exception stops the session from connecting and goes through `on_run_error`.
-        WebRTC signaling resolves the configuration a session connects with, so it runs there too, outside any run.
+        In a session, it runs inside `wrap_run`, after `before_run` and after the seeded history's dynamic system
+        prompts are re-evaluated, in capability order, and also when there's no history to seed. An exception stops
+        the session from connecting and goes through `on_run_error`. It doesn't run on reconnect, or in a standard
+        run. WebRTC signaling resolves the configuration a session connects with, so it also runs there, outside any
+        run: there's no `wrap_run` or `on_run_error` around it then.
         [`ctx.realtime_session`][pydantic_ai.tools.RunContext.realtime_session] is `None`, since the session
         doesn't exist yet.
         """
