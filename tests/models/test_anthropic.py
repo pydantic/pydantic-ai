@@ -17712,14 +17712,14 @@ class _LastingNotePart(InstructionCapabilityPart, namespace='test_anthropic', na
 
 
 @dataclass
-class _LoweredBudget(AbstractCapability[None]):
+class _LoweredBudget(AbstractCapability[Any]):
     """Sends the requests left with every request, lowered to no authority, and optionally a lasting operator note."""
 
     lasting_note: bool
     left: int = 3
 
     async def before_model_request(
-        self, ctx: RunContext[None], request_context: ModelRequestContext
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
     ) -> ModelRequestContext:
         if self.lasting_note:
             ctx.enqueue(_LastingNotePart(content=OperatorText(f'Note {self.left}.'), source=OperatorSource()))

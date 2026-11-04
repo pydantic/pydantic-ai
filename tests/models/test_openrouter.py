@@ -1907,13 +1907,13 @@ class _LastingNotePart(InstructionCapabilityPart, namespace='test_openrouter', n
 
 
 @dataclass
-class _LoweredBudget(AbstractCapability[None]):
+class _LoweredBudget(AbstractCapability[Any]):
     """Sends the requests left with every request, lowered to no authority, and a lasting operator note."""
 
     left: int
 
     async def before_model_request(
-        self, ctx: RunContext[None], request_context: ModelRequestContext
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
     ) -> ModelRequestContext:
         ctx.enqueue(_LastingNotePart(content=OperatorText(f'Note {self.left}.'), source=OperatorSource()))
         ctx.enqueue(

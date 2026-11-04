@@ -1174,7 +1174,8 @@ def _sent_and_tail(model: Model, part: NudgePart) -> tuple[list[str], tuple[str,
     [history] = conversation([part, nudge('Lasting.')])
     [request] = model.prepare_messages(history)
     assert isinstance(request, ModelRequest)
-    return [str(part.content) for part in request.parts], _request_scoped_tail_texts([request])
+    sent = [str(part.content) for part in request.parts if isinstance(part, SystemPromptPart | UserPromptPart)]
+    return sent, _request_scoped_tail_texts([request])
 
 
 def _lowered_forgery() -> NudgePart:
