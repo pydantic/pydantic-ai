@@ -461,12 +461,8 @@ class FunctionSignature:
         if isinstance(expr, GenericTypeExpr):
             expr.args = [FunctionSignature._replace_types(arg, canonical) for arg in expr.args]
         elif isinstance(expr, UnionTypeExpr):
-            # Members that are now one type are one member. Only here can that be known, as types are unified by then.
-            members = [FunctionSignature._replace_types(member, canonical) for member in expr.members]
-            classes: dict[int, object] = {id(t): id(t) for member in members for t in _types_in(member)}
-            expr.members = list({_expr_key(member, classes): member for member in members}.values())
-            if len(expr.members) == 1:
-                return expr.members[0]
+            # Types that have just become one are one member.
+            return _union_of([FunctionSignature._replace_types(member, canonical) for member in expr.members])
         return expr
 
     @staticmethod
@@ -606,7 +602,10 @@ _MAPS_OF_SCHEMAS = frozenset({'$defs', 'definitions', 'dependentSchemas', 'patte
 
 
 def _is_typed_dict_schema(schema: dict[str, Any]) -> bool:
-    return schema.get('type') == 'object' and 'properties' in schema
+    """Whether a schema is an object with named fields, which can be nullable too."""
+    schema_type = schema.get('type')
+    is_object = schema_type == 'object' or (isinstance(schema_type, list) and 'object' in schema_type)
+    return is_object and 'properties' in schema
 
 
 def _ref_pointer(root: dict[str, Any], ref: Any) -> list[str] | None:
@@ -619,11 +618,14 @@ def _ref_pointer(root: dict[str, Any], ref: Any) -> list[str] | None:
     """
     if not isinstance(ref, str):
         return None
-    uri, fragment = urldefrag(ref)
-    if uri:
-        base = root.get('$id')
-        if not isinstance(base, str) or urldefrag(urljoin(base, uri)).url != urldefrag(base).url:
-            return None
+    try:
+        uri, fragment = urldefrag(ref)
+        if uri:
+            base = root.get('$id')
+            if not isinstance(base, str) or urldefrag(urljoin(base, uri)).url != urldefrag(base).url:
+                return None
+    except ValueError:  # Not a URI, so it has no target.
+        return None
     pointer = unquote(fragment)
     if pointer and not pointer.startswith('/'):
         return None
@@ -637,8 +639,9 @@ def _follow_pointer(root: dict[str, Any], tokens: list[str]) -> dict[str, Any] |
     for token in tokens:
         if isinstance(node, dict):
             node = cast(dict[str, Any], node).get(token)
-        elif isinstance(node, list) and token.isascii() and token.isdigit() and int(token) < len(cast(list[Any], node)):
-            node = cast(list[Any], node)[int(token)]
+        elif isinstance(node, list):
+            # By spelling, as RFC 6901 section 4 has one way to write an index: `01` isn't one.
+            node = {str(index): item for index, item in enumerate(cast(list[Any], node))}.get(token)
         else:
             return None
         at_map_of_schemas = not at_map_of_schemas and token in _MAPS_OF_SCHEMAS
@@ -657,14 +660,15 @@ def _ref_to_type_expr(
     target = None if tokens is None else _follow_pointer(root, tokens)
     if tokens is None or target is None:
         return _ANY
-    if id(target) in referenced_types:
-        return referenced_types[id(target)]
     if _is_typed_dict_schema(target):
-        # Named from the pointer, not the reference, so a name doesn't depend on which of the two comes first.
-        last_token = tokens[-1] if tokens else ''
-        is_definition = tokens[-2:-1] in (['$defs'], ['definitions'])
-        name = last_token if is_definition else _object_type_name(target, tool_name, last_token)
-        return _build_and_register_type(name, target, root, referenced_types, tool_name, path)
+        if id(target) not in referenced_types:
+            # Named from the pointer, not the reference, so a name doesn't depend on which of the two comes first.
+            last_token = tokens[-1] if tokens else ''
+            is_definition = tokens[-2:-1] in (['$defs'], ['definitions'])
+            name = last_token if is_definition else _object_type_name(target, tool_name, last_token)
+            _build_and_register_type(name, target, root, referenced_types, tool_name, path)
+        target_type = referenced_types[id(target)]
+        return UnionTypeExpr(members=[target_type, _NONE]) if 'null' in target['type'] else target_type
     # Only object defs become TypedDicts. Pydantic emits enums, constrained aliases, list aliases
     # and unions as non-object defs, so resolve them inline: `Literal[...]`, `int`, `list[str]`.
     resolving = _resolving_refs.get()
@@ -884,11 +888,10 @@ def _handle_union_schema(
         else:
             type_exprs.append(_schema_to_type_expr(s, root, referenced_types, tool_name, path))
 
-    # Repeated members are dropped, and a lone member unwrapped, when types are unified: only then can types be compared.
     if has_null:
         type_exprs.append(_NONE)
 
-    return UnionTypeExpr(members=type_exprs)
+    return _union_of(type_exprs)
 
 
 def _build_and_register_type(
@@ -970,6 +973,13 @@ def _with_nested_types(types: Iterable[TypeSignature]) -> list[TypeSignature]:
             for f in type_sig.fields.values():
                 pending.extend(_types_in(f.type))
     return list(found.values())
+
+
+def _union_of(members: list[TypeExpr]) -> TypeExpr:
+    """A union without repeats, or its one member if that's all that's left. A type only repeats as the same object."""
+    classes: dict[int, object] = {id(t): id(t) for member in members for t in _types_in(member)}
+    unique = list({_expr_key(member, classes): member for member in members}.values())
+    return unique[0] if len(unique) == 1 else UnionTypeExpr(members=unique)
 
 
 def _expr_key(expr: TypeExpr, classes: dict[int, object]) -> object:

@@ -2298,6 +2298,77 @@ class TestCodeMode:
                 "tool(x='s')",
                 id='percent-encoded-pointer',
             ),
+            pytest.param(
+                {
+                    'type': 'object',
+                    '$defs': {
+                        'User': {
+                            'type': ['object', 'null'],
+                            'properties': {'name': {'type': 'string'}},
+                            'required': ['name'],
+                        }
+                    },
+                    'properties': {'a': {'$ref': '#/$defs/User'}, 'b': {'$ref': '#/$defs/User'}},
+                    'required': ['a', 'b'],
+                },
+                "tool(a={'name': 'x'}, b=None)",
+                "tool(a={'name': 'x'}, b={'name': 1})",
+                id='nullable-object-with-two-refs',
+            ),
+            pytest.param(
+                {
+                    'type': 'object',
+                    'properties': {
+                        'a': {
+                            'type': ['object', 'null'],
+                            'properties': {'name': {'type': 'string'}},
+                            'required': ['name'],
+                        },
+                        'b': {'$ref': '#/properties/a'},
+                    },
+                    'required': ['a', 'b'],
+                },
+                'tool(a=None, b=None)',
+                'tool(a=None, b=1)',
+                id='nullable-object-with-a-path-ref',
+            ),
+            pytest.param(
+                {
+                    'type': 'object',
+                    '$defs': {
+                        'User': {
+                            'type': ['object', 'null'],
+                            'properties': {'name': {'type': 'string'}},
+                            'required': ['name'],
+                        }
+                    },
+                    'properties': {
+                        'a': {'type': 'array', 'items': {'$ref': '#/$defs/User'}},
+                        'b': {'type': 'array', 'items': {'$ref': '#/$defs/User'}},
+                    },
+                    'required': ['a', 'b'],
+                },
+                'tool(a=[None], b=[None])',
+                'tool(a=[None], b=[1])',
+                id='list-of-nullable-objects-with-two-refs',
+            ),
+            pytest.param(
+                {
+                    'type': 'object',
+                    '$defs': {
+                        'Node': {
+                            'type': ['object', 'null'],
+                            'properties': {'v': {'type': 'integer'}, 'next': {'$ref': '#/$defs/Node'}},
+                            'required': ['v', 'next'],
+                        }
+                    },
+                    'properties': {'head': {'$ref': '#/$defs/Node'}},
+                    'required': ['head'],
+                },
+                "tool(head={'v': 1, 'next': {'v': 2, 'next': None}})",
+                "tool(head={'v': 1, 'next': {'v': 'x', 'next': None}})",
+                id='linked-list',
+            ),
         ],
     )
     async def test_ref_is_checked_against_its_target(self, schema: dict[str, Any], right: str, wrong: str) -> None:
@@ -2338,6 +2409,8 @@ class TestCodeMode:
             '#/$defs/bytes',
             '#/$defs/class',
             'other.json',
+            '#/$defs/Strings/anyOf/01',
+            'http://[oops/x#/$defs/Strings',
         ],
     )
     async def test_ref_without_a_target_accepts_a_correct_call(self, ref: str) -> None:
@@ -2345,6 +2418,7 @@ class TestCodeMode:
             name='tool',
             parameters_json_schema={
                 'type': 'object',
+                '$defs': {'Strings': {'anyOf': [{'type': 'string'}, {'type': 'string'}]}},
                 'properties': {'x': {'$ref': ref}, 'y': {'type': 'string'}},
                 'required': ['x', 'y'],
             },
@@ -2354,6 +2428,26 @@ class TestCodeMode:
         assert output == {'output': 'ok\n'}
         with pytest.raises(ModelRetry, match='Type error in code'):
             await self._run_code_with_tools('await tool(x=1, y=1)', tool_def)
+
+    async def test_invalid_uri_in_a_ref_leaves_the_tool_beside_it_checked(self) -> None:
+        bad = ToolDefinition(
+            name='bad',
+            parameters_json_schema={
+                'type': 'object',
+                'properties': {'x': {'$ref': 'http://[oops/x#/$defs/Foo'}},
+                'required': ['x'],
+            },
+            return_schema={'type': 'string'},
+        )
+        good = ToolDefinition(
+            name='good',
+            parameters_json_schema={'type': 'object', 'properties': {'q': {'type': 'string'}}, 'required': ['q']},
+            return_schema={'type': 'string'},
+        )
+        output, _ = await self._run_code_with_tools("print(await bad(x=1))\nprint(await good(q='a'))", bad, good)
+        assert output == {'output': 'ok\nok\n'}
+        with pytest.raises(ModelRetry, match='Type error in code'):
+            await self._run_code_with_tools('await good(q=1)', bad, good)
 
     # ---------------------------------------------------------------------------
     # Deferred tools

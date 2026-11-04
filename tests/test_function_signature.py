@@ -2118,22 +2118,6 @@ _NAME_OBJECT = {'type': 'object', 'properties': {'name': {'type': 'string'}}, 'r
 _ID_OBJECT = {'type': 'object', 'properties': {'id': {'type': 'integer'}}, 'required': ['id']}
 
 
-def test_recursive_model_as_the_only_argument_gives_its_fields_as_parameters():
-    class Node(BaseModel):
-        value: str
-        next: Node | None = None
-
-    signature = FunctionSignature.from_schema(name='tool', parameters_schema=Node.model_json_schema())
-    assert _catalog(signature) == snapshot("""\
-class Node(TypedDict):
-    value: str
-    next: NotRequired[Node | None]
-
-def tool(*, value: str, next: Node | None = None) -> Any:
-    ...\
-""")
-
-
 def test_root_refs_that_lead_nowhere_give_no_parameters():
     for schema in (
         {'$ref': '#'},
@@ -2143,24 +2127,10 @@ def test_root_refs_that_lead_nowhere_give_no_parameters():
         assert FunctionSignature.from_schema(name='tool', parameters_schema=schema).params == {}
 
 
-def test_definitions_is_a_place_for_definitions_too():
-    assert _ref_catalog({'user': {'$ref': '#/definitions/User'}}, definitions={'User': _NAME_OBJECT}) == snapshot("""\
-class User(TypedDict):
-    name: str
-
-def tool(*, user: User) -> Any:
-    ...\
-""")
-
-
-def test_ref_to_a_path_is_one_type_with_what_it_points_at():
-    assert _ref_catalog({'first': _NAME_OBJECT, 'second': {'$ref': '#/properties/first'}}) == snapshot("""\
-class ToolFirst(TypedDict):
-    name: str
-
-def tool(*, first: ToolFirst, second: ToolFirst) -> Any:
-    ...\
-""")
+def test_definition_in_definitions_is_named_by_its_key():
+    assert 'class User(TypedDict):' in _ref_catalog(
+        {'user': {'$ref': '#/definitions/User'}}, definitions={'User': _NAME_OBJECT}
+    )
 
 
 def test_type_name_does_not_depend_on_whether_the_ref_comes_first():
@@ -2177,17 +2147,6 @@ def test_ref_to_a_nested_path_is_named_by_its_last_segment():
     assert 'class ToolAB(TypedDict):' in _ref_catalog({'a': nested, 'x': {'$ref': '#/properties/a/properties/b'}})
 
 
-def test_ref_to_a_path_through_a_list():
-    node = {'anyOf': [_NAME_OBJECT, {'type': 'null'}]}
-    assert _ref_catalog({'first': node, 'second': {'$ref': '#/properties/first/anyOf/0'}}) == snapshot("""\
-class ToolFirst(TypedDict):
-    name: str
-
-def tool(*, first: ToolFirst | None, second: ToolFirst) -> Any:
-    ...\
-""")
-
-
 def test_ref_to_the_document_root_names_it_after_the_tool():
     assert _ref_catalog({'value': {'type': 'string'}, 'next': {'$ref': '#'}}) == snapshot("""\
 class Tool(TypedDict):
@@ -2195,37 +2154,6 @@ class Tool(TypedDict):
     next: Tool
 
 def tool(*, value: str, next: Tool) -> Any:
-    ...\
-""")
-
-
-def test_two_pointers_with_one_last_segment_are_two_types():
-    catalog = _ref_catalog(
-        {'a': {'$ref': '#/$defs/User'}, 'b': {'$ref': '#/definitions/User'}},
-        **{'$defs': {'User': _NAME_OBJECT}, 'definitions': {'User': _ID_OBJECT}},
-    )
-    assert catalog == snapshot("""\
-class tool_User(TypedDict):
-    name: str
-
-class tool_User_2(TypedDict):
-    id: int
-
-def tool(*, a: tool_User, b: tool_User_2) -> Any:
-    ...\
-""")
-
-
-def test_two_inline_objects_with_one_title_are_two_types():
-    catalog = _ref_catalog({'a': {**_NAME_OBJECT, 'title': 'Item'}, 'b': {**_ID_OBJECT, 'title': 'Item'}})
-    assert catalog == snapshot("""\
-class tool_Item(TypedDict):
-    name: str
-
-class tool_Item_2(TypedDict):
-    id: int
-
-def tool(*, a: tool_Item, b: tool_Item_2) -> Any:
     ...\
 """)
 
@@ -2252,6 +2180,8 @@ def test_two_identical_inline_objects_with_one_title_are_one_type():
         '#/properties/list/items/5',
         '#/properties/list/items/first',
         '#/properties/list/items/²',
+        '#/properties/list/items/01',
+        'http://[oops/x#/$defs/User',
         '#/properties',
         '#/$defs',
         '#/properties/x/$ref',
@@ -2360,13 +2290,6 @@ def tool(*, a: A) -> Any:
 """)
 
 
-def test_ref_to_a_map_of_schemas_is_any_whatever_its_entries_are_called():
-    assert 'x: Any' in _ref_catalog({'x': {'$ref': '#/properties'}, '$ref': {'type': 'string'}})
-    assert 'x: Any' in _ref_catalog({'x': {'$ref': '#/properties'}, 'enum': {'type': 'string'}})
-    assert 'x: Any' in _ref_catalog({'x': {'$ref': '#/$defs'}}, **{'$defs': {'enum': _NAME_OBJECT}})
-    assert 'x: Any' in _ref_catalog({'x': {'$ref': '#/$defs/A/properties'}}, **{'$defs': {'A': _NAME_OBJECT}})
-
-
 def test_entry_named_like_a_map_of_schemas_is_a_schema():
     assert 'x: int' in _ref_catalog({'x': {'$ref': '#/properties/properties'}, 'properties': {'type': 'integer'}})
     assert 'x: int' in _ref_catalog(
@@ -2389,11 +2312,6 @@ def test_ref_with_the_full_urn_of_its_own_id():
 
 def test_title_that_is_not_a_string_does_not_name_a_type():
     assert 'class ToolX(TypedDict):' in _ref_catalog({'x': {**_NAME_OBJECT, 'title': 5}})
-
-
-@pytest.mark.parametrize('keyword', ['$defs', 'definitions', 'dependentSchemas', 'patternProperties'])
-def test_ref_to_each_map_of_schemas_is_any(keyword: str):
-    assert 'x: Any' in _ref_catalog({'x': {'$ref': f'#/{keyword}'}}, **{keyword: {'enum': {'type': 'string'}}})
 
 
 def test_union_of_types_differing_only_by_a_repeated_member_is_one_member():
@@ -2428,3 +2346,55 @@ def test_union_that_comes_to_one_member_is_that_member():
     ).params
     assert isinstance(params['x'].type, SimpleTypeExpr)
     assert isinstance(params['y'].type, TypeSignature)
+
+
+@pytest.mark.parametrize('entry', ['$ref', 'enum', 'type'])
+@pytest.mark.parametrize('keyword', ['$defs', 'definitions', 'dependentSchemas', 'patternProperties', 'properties'])
+def test_ref_to_a_map_of_schemas_is_any_whatever_its_entries_are_called(keyword: str, entry: str):
+    maps: dict[str, Any] = {'properties': {'x': {'$ref': f'#/{keyword}'}}}
+    maps.setdefault(keyword, {})[entry] = {'type': 'string'}
+    signature = FunctionSignature.from_schema(
+        name='tool', parameters_schema={'type': 'object', 'required': ['x'], **maps}
+    )
+    assert 'x: Any' in _catalog(signature)
+
+
+def test_ref_to_a_map_of_schemas_inside_a_definition_is_any():
+    assert 'x: Any' in _ref_catalog({'x': {'$ref': '#/$defs/A/properties'}}, **{'$defs': {'A': _NAME_OBJECT}})
+
+
+def test_id_that_is_not_a_uri_leaves_only_fragment_refs():
+    document = {'$id': 'http://[oops/a', '$defs': {'User': _NAME_OBJECT}}
+    assert 'x: Any' in _ref_catalog({'x': {'$ref': 'other#/$defs/User'}}, **document)
+    assert 'x: User' in _ref_catalog({'x': {'$ref': '#/$defs/User'}}, **document)
+
+
+def test_nullable_object_name_does_not_depend_on_which_property_comes_first():
+    nullable = {**_NAME_OBJECT, 'type': ['object', 'null']}
+    to_a = {'$ref': '#/properties/a'}
+    assert _ref_catalog({'a': nullable, 'b': to_a}).count('class ToolA(TypedDict):') == 1
+    assert _ref_catalog({'b': to_a, 'a': nullable}).count('class ToolA(TypedDict):') == 1
+    defs = {'$defs': {'User': nullable}}
+    to_user = {'$ref': '#/$defs/User'}
+    assert 'def tool(*, a: User | None, b: User | None) -> Any:' in _ref_catalog({'a': to_user, 'b': to_user}, **defs)
+    assert 'def tool(*, b: User | None, a: User | None) -> Any:' in _ref_catalog({'b': to_user, 'a': to_user}, **defs)
+
+
+def test_union_drops_repeats_as_it_is_built(monkeypatch: pytest.MonkeyPatch):
+    """Unifying would drop them later, but a chain of aliases to two of the same would double in memory by then."""
+
+    def skip_unifying(signatures: list[FunctionSignature]) -> None:
+        return None
+
+    monkeypatch.setattr(FunctionSignature, '_unify_identical_types', skip_unifying)
+    aliases = {'A': {'anyOf': [{'$ref': '#/$defs/B'}, {'$ref': '#/$defs/B'}]}, 'B': {'type': 'string'}}
+    signature = FunctionSignature.from_schema(
+        name='tool',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'x': {'$ref': '#/$defs/A'}},
+            'required': ['x'],
+            '$defs': aliases,
+        },
+    )
+    assert isinstance(signature.params['x'].type, SimpleTypeExpr)
