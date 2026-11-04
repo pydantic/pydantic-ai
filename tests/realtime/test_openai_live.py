@@ -3697,7 +3697,7 @@ async def test_the_sideband_runs_the_session_it_attaches_to(model: OpenAILiveMod
 
 async def test_a_sideband_tool_update_keeps_the_backends_native_tools(model: OpenAILiveModel) -> None:
     """The backend a sideband attaches to was started by the offer, so an update builds on the tools Live reports."""
-    responses = {
+    responses: dict[str, Any] = {
         'model': 'gpt-5.6-luna',
         'instructions': 'Be brief.',
         'tools': [

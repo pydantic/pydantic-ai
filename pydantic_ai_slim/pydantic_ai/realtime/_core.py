@@ -498,7 +498,7 @@ class SessionCore:
             self._opening.append(opening)
         self._annotate_response = annotate_response
         """Adds what instrumentation knows about each response's parts (its tools' OTel metadata) before it's recorded."""
-        self._tool_kinds = tool_kinds if tool_kinds is not None else {}
+        self._tool_kinds: Mapping[str, ToolPartKind] = tool_kinds if tool_kinds is not None else {}
         """The `tool_kind` of each tool that has one, by name, which promotes a call to its typed subclass as the graph does."""
         self.usage = usage if usage is not None else RunUsage()
         """Token usage and requests, as the provider reported them for this session, added to what it held."""
