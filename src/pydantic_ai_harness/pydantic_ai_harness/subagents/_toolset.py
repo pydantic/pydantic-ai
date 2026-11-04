@@ -18,7 +18,7 @@ import anyio
 from pydantic_ai import AgentStreamEvent, CapabilityEvent
 from pydantic_ai.agent import AbstractAgent, AgentRunResult, EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, HookTimeoutError
-from pydantic_ai.durable_exec import DurableRunContext
+from pydantic_ai.durable_exec import BaseDurabilityCapability, DurableRunContext
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -387,6 +387,10 @@ def _task_line(owner: DelegationTasks, record: DelegationTask) -> str:
     return line
 
 
+_CHILD_WORKFLOW_KEYS = {'Temporal': 'temporal', 'DBOS': 'dbos'}
+"""Tool metadata keys of the engines that run a tool call as a child workflow, by engine name."""
+
+
 def _preview(text: str) -> str:
     return text if len(text) <= _PREVIEW_CHARS else f'{text[:_PREVIEW_CHARS]}...'
 
@@ -470,16 +474,17 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         # the same durable agent, so under Temporal it runs in the workflow, where the child's model
         # requests and tools become activities; a tool activity cannot run it on the parent run's model
         # (`ctx.model` is unavailable there). Any other delegate would make its model requests in
-        # workflow code, so it stays an activity. With `dynamic_agents`, the roster and the tools that read it
-        # stay in the workflow, and a delegation to any other agent runs in the `delegate` operation's activity,
-        # which carries the parent run's model across.
+        # workflow code, so it stays an activity, or a child workflow when it is durable itself. With
+        # `dynamic_agents`, the roster and the tools that read it stay in the workflow, and a delegation to
+        # any other agent runs in the `delegate` operation's activity, which carries the parent run's model
+        # across.
         in_workflow = (include_self and not self._agents) or dynamic_agents is not None
         self.add_function(
             self.delegate_task,
             name=tool_name,
             retries=tool_retries,
             prepare=self._prepare_delegate,
-            metadata={'temporal': False} if in_workflow else None,
+            metadata={'temporal': False} if in_workflow else self._child_workflow_metadata(),
         )
         if task_control is not None:
             self.add_function(self.list_tasks, prepare=self._prepare_control)
@@ -493,6 +498,22 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 prepare=self._prepare_control,
                 metadata={'temporal': False},
             )
+
+    def _child_workflow_metadata(self) -> dict[str, Any] | None:
+        """Run delegations as child workflows when every delegate is durable on the same Temporal or DBOS engine.
+
+        The delegate's own operations then land in the child's history. A delegation that hands the delegate
+        anything from the parent run (itself, its tools, a model option, or shared capabilities) stays as before.
+        """
+        if self._include_self or self._inherit_tools or self._models or self._shared_capabilities:
+            return None
+        keys = {
+            _CHILD_WORKFLOW_KEYS.get(durability.engine_spec.engine_name) if durability is not None else None
+            for durability in (BaseDurabilityCapability.from_agent(sub.agent) for sub in self._agents.values())
+        }
+        if len(keys) != 1 or (key := keys.pop()) is None:
+            return None
+        return {key: {'child_workflow': {}}}
 
     def _prepare_control(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition | None:
         """Offer a task-control or `create_agent` tool only where the delegate tool is offered."""

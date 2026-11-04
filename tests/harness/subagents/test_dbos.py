@@ -9,8 +9,9 @@ from pathlib import Path
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.models.function import FunctionModel
-from pydantic_ai_harness.subagents import DynamicAgents, SubAgents
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai_harness.subagents import DynamicAgents, SubAgent, SubAgents
 from tests.conftest import detach_dbos_logging, try_import
 from tests.harness.subagents._dynamic import POET_CALLS, POET_RESULT, creator
 
@@ -64,3 +65,47 @@ async def test_created_agent_survives_recovery(dbos: DBOS) -> None:
     handle = await DBOS.fork_workflow_async(workflow_id, len(steps))
     assert await handle.get_result(polling_interval_sec=0.01) == POET_RESULT
     assert len(POET_CALLS) == 1, 'recovery ran the created agent again'
+
+
+def _worker(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('from the worker')])
+
+
+def _delegator(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+    if returns:
+        return ModelResponse(parts=[TextPart(returns[-1].model_response_str())])
+    return ModelResponse(parts=[ToolCallPart('delegate_task', {'agent_name': 'dbos_worker', 'task': 'Work on it'})])
+
+
+if imports_successful():
+    dbos_worker = Agent(FunctionModel(_worker), name='dbos_worker', capabilities=[DBOSDurability()])
+    dbos_delegator = Agent(
+        FunctionModel(_delegator),
+        name='dbos_delegator',
+        deps_type=type(None),
+        capabilities=[SubAgents[None](agents=[SubAgent(dbos_worker)]), DBOSDurability[None]()],
+    )
+
+    @DBOS.workflow(name='subagents_child_workflow')
+    async def child_workflow_workflow() -> str:
+        return (await dbos_delegator.run('Delegate it')).output
+
+
+async def test_durable_delegate_runs_as_a_child_workflow(dbos: DBOS) -> None:
+    """A delegate with its own `DBOSDurability` runs in a child workflow, whose history holds its steps."""
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id):
+        assert await child_workflow_workflow() == 'from the worker'
+    steps = await dbos.list_workflow_steps_async(workflow_id)
+    child_name = 'dbos_delegator__function_toolset__sub_agents.call_tool__child_workflow'
+    assert [step['function_name'] for step in steps] == [
+        'dbos_delegator__model.request',
+        child_name,
+        'DBOS.getResult',
+        'dbos_delegator__model.request',
+    ]
+    child_id = steps[1]['child_workflow_id']
+    assert child_id is not None
+    child_steps = await dbos.list_workflow_steps_async(child_id)
+    assert [step['function_name'] for step in child_steps] == ['dbos_worker__model.request']
