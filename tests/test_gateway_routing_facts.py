@@ -34,6 +34,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 
@@ -46,7 +47,14 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.openai import OpenAIProvider
 
-pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
+# Hypothesis notes this deprecation when the global `random` state changes during a draw, and a different thread on
+# the same xdist worker can change it. The strategies here do not use `random`. See `tests/test_history_properties.py`.
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
+    pytest.mark.filterwarnings(
+        'ignore:Do not use the `random` module inside strategies:hypothesis.errors.HypothesisDeprecationWarning'
+    ),
+]
 
 
 def _routing_headers(headers: httpx2.Headers) -> dict[str, str]:
@@ -302,6 +310,24 @@ async def test_fallback_model_sends_the_headers_only_when_every_model_can(route:
     await agent.run('What is the capital of France?')
 
     assert [bool(sent) for sent in [*first_route.sent, *second_route.sent]] == [case.sends_headers] * 2
+
+
+async def test_fallback_model_sends_no_headers_when_a_model_has_no_provider(route: RouteFactory):
+    """A model with no provider, such as a `FunctionModel`, is not behind the Gateway.
+
+    So a `FallbackModel` that can try one sends the headers to none of its models.
+    """
+
+    def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('Paris')])
+
+    gateway, gateway_route = route(_REJECTED)
+    agent = Agent(FallbackModel(gateway, FunctionModel(answer)), name='geographer')
+
+    result = await agent.run('What is the capital of France?')
+
+    assert result.output == 'Paris'
+    assert gateway_route.sent == [{}]
 
 
 async def test_opting_out(route: RouteFactory):

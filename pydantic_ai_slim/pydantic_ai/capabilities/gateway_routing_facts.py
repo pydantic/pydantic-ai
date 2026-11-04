@@ -9,7 +9,6 @@ from pydantic_ai.messages import ModelMessage, ModelRequestPart, ModelResponse, 
 from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.wrapper import WrapperModel
-from pydantic_ai.providers.gateway import is_gateway_provider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 
@@ -99,7 +98,14 @@ class GatewayRoutingFacts(AbstractCapability[Any]):
         if not self.enabled:
             return request_context
         models = _serving_models(request_context.model)
-        if not all((provider := model.provider) is not None and is_gateway_provider(provider) for model in models):
+        providers = [provider for model in models if (provider := model.provider) is not None]
+        if len(providers) < len(models):
+            return request_context
+        # Imported here because every agent has this capability, and a model with no provider, such as `TestModel`,
+        # never needs the Gateway provider module.
+        from pydantic_ai.providers.gateway import is_gateway_provider
+
+        if not all(is_gateway_provider(provider) for provider in providers):
             return request_context
         headers = _current_headers(request_context.model_settings, models)
         if headers is None:
