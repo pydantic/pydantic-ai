@@ -5,8 +5,10 @@ import importlib
 import inspect
 import json
 import os
+import shlex
 import signal
 import sys
+import threading
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -1104,13 +1106,19 @@ class TestSpritesSandbox:
 
         async def run() -> None:
             with pytest.raises(WorkspaceTimeoutError) as error:
-                await backend.run(f'printf ready >&2; : > {printed}; exec sleep 5', shell=True, timeout=0.5)
+                await backend.run(
+                    f'printf ready >&2; : > {shlex.quote(str(printed))}; exec sleep 5', shell=True, timeout=0.5
+                )
             caught.append(error.value)
 
         async with anyio.create_task_group() as group:
             group.start_soon(run)
-            # Opening the FIFO returns once the command opens it too, after it has printed.
-            await anyio.to_thread.run_sync(printed.read_bytes, abandon_on_cancel=True)
+            # Opening the FIFO returns once the command opens it too, after it has printed. The frozen clock
+            # cannot bound that wait, so the join does, in real time. Hang guard only.
+            reader = threading.Thread(target=printed.read_bytes, daemon=True)
+            reader.start()
+            await anyio.to_thread.run_sync(reader.join, 120, abandon_on_cancel=True)
+            assert not reader.is_alive()
             now += 0.5
         assert caught[0].stderr == 'ready'
         assert not Path(transport.execs[0].query['cmd'][4]).exists()
