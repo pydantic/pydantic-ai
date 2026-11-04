@@ -62,7 +62,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from . import cassette_hooks, cost_guards
+from . import cassette_hooks, cost_guards, gc_isolation
 from ._inline_snapshot import Builder, Custom, customize
 from .cassette_utils import check_cache_prefix_stability
 from .function_model_prefix import RequestRecorder, check_function_model_prefix_stability, patch_models
@@ -119,6 +119,7 @@ os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
 
 def pytest_configure(config: pytest.Config) -> None:
     config.pluginmanager.register(cost_guards, cost_guards.PLUGIN_NAME)
+    config.pluginmanager.register(gc_isolation, gc_isolation.PLUGIN_NAME)
     config.addinivalue_line(
         'markers',
         'moves_cache_prefix(reason): recorded conversation deliberately moves the cache prefix; reason required',
@@ -817,41 +818,16 @@ def missing_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
         asyncio.set_event_loop(original_loop)
 
 
-@pytest.fixture
-def young_gc() -> Iterator[None]:
-    """Limit the test's garbage collections to the objects it creates.
-
-    A full collection walks every object the worker has accumulated, which takes seconds per call
-    late in a CI run, whether the test calls `gc.collect()` or allocates enough to trigger one.
-    Freezing everything that exists before the test keeps it out of the collector's reach until
-    teardown, so collections stay cheap, and garbage leaked by an earlier test can't be finalized
-    (and raise an unraisable exception or `ResourceWarning`) in the middle of this one.
-    """
-    gc.freeze()
-    try:
-        yield
-    finally:
-        gc.unfreeze()
-
-
 @contextmanager
 def no_leaked_tasks(loop: asyncio.AbstractEventLoop | None = None) -> Generator[None]:
     """Fail if a task started inside the block is still running at its end.
 
-    Freezes every existing object out of the cyclic collector's reach for the block, as `young_gc` does, so an
-    earlier test's garbage can't be finalized here and queue tasks on the running loop. Tasks already running at
-    entry are ignored. Pass `loop` when the test drives that loop itself instead of running on it.
-
-    Don't use it in a test that requests `young_gc`: `gc.unfreeze()` thaws every frozen object, so leaving the
-    block would undo the fixture's freeze for the rest of the test.
+    Tasks already running at entry are ignored. Pass `loop` when the test drives that loop itself instead of running
+    on it.
     """
-    gc.freeze()
-    try:
-        before = asyncio.all_tasks(loop)
-        yield
-        assert asyncio.all_tasks(loop) - before == set()
-    finally:
-        gc.unfreeze()
+    before = asyncio.all_tasks(loop)
+    yield
+    assert asyncio.all_tasks(loop) - before == set()
 
 
 @pytest.fixture(autouse=True)

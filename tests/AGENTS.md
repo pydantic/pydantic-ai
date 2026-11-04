@@ -300,6 +300,14 @@ The suite runs on every push across a matrix of Python versions and install shap
 
 When `PYTEST_COLLECT_BUDGET_SECONDS` is set (on the same CI leg), a test module that takes longer to collect fails the session, with no escape hatch: check whether a heavy dependency is installed with `importlib.util.find_spec` for the skip condition, and import it in the tests that use it, after a `module`-scoped fixture has imported it once outside the per-test budget.
 
+## Garbage from earlier tests
+
+`tests/gc_isolation.py` freezes every existing object before each test, so a test's collections, including explicit `gc.collect()` calls, only reach objects created since. A leak from an earlier test therefore can't land in this test's `pytest.warns` record or raise under its `simplefilter('error')`. Don't add per-test `gc.freeze()` calls or filter `ResourceWarning`s out of a record to work around that kind of failure.
+
+- A test still collects its own garbage, so `del obj; gc.collect()` followed by a `weakref` check keeps working.
+- `gc.get_referrers()` and `gc.get_objects()` don't see frozen objects, so a test that needs them to find something created before it must create that object itself, or run them in a subprocess.
+- A leak the suite's `filterwarnings` doesn't ignore fails the test that caused it, in teardown, because each test's own garbage is collected there. Close the resource where it's created.
+
 ## Property tests
 
 `tests/history_strategies.py` draws message histories with Hypothesis. `tests/history_invariants.py` holds the checkers: plain functions that return a stable code for each violation. `tests/test_history_properties.py` runs the properties, and `tests/test_history_invariants.py` holds the falsifiers.

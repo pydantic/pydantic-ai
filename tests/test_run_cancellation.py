@@ -2564,7 +2564,6 @@ async def test_iter_break_teardown_propagates_external_cancellation():
         task.result()
 
 
-@pytest.mark.usefixtures('young_gc')
 async def test_iter_early_exit_discards_wrap_run_cleanup_failure():
     """A failure in `wrap_run` cleanup after leaving `iter()` early has no result to surface on, so it's discarded."""
 
