@@ -146,6 +146,8 @@ class UsersModal(AbstractCapability[User]):
 agent = Agent('anthropic:claude-opus-5-5', deps_type=User, capabilities=[UsersModal(), Coder()])
 ```
 
+Building a Modal client opens a connection, so build it ahead of the run rather than in `get_workspace`, which must not do I/O. Under [Temporal](../durable_execution/temporal.md), `deps` are serialized for every activity, so a client can't be on them: put a user ID there instead, and have `get_workspace` look that user's client up on the worker.
+
 ## Prepare a sandbox before the run
 
 To seed files or install packages before the agent starts, create the backend yourself, work in it through `Workspace`, and pass it to the run:
