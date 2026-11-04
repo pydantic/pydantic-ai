@@ -260,8 +260,9 @@ After `RealtimeTurnCompleteEvent` (or a greeting's finalized `SpeechPart`), awai
 device-paced `stream_audio()` view to account for all audio emitted so far — played, discarded on a barge-in or a
 full buffer, or emitted before the view subscribed; it requires exactly one audio view.
 To align spoken words with playback (e.g. karaoke-style captions), set `output_speech_timestamps=True`: on a model
-that reports them (Azure AI Voice Live with an Azure voice, or ElevenLabs Agents), `SpeechPartDelta.timestamps` streams `SpeechTimestamp`s
-whose `start_ms` counts from the start of that part's audio, and `SpeechPart.timestamps` records them in history.
+that reports them (Azure AI Voice Live with an Azure voice, or ElevenLabs Agents, per word; xAI Grok Voice, per
+segment of a few words), `SpeechPartDelta.timestamps` streams `SpeechTimestamp`s whose `start_ms` counts from the
+start of that part's audio, and `SpeechPart.timestamps` records them in history.
 ElevenLabs Agents wraps an agent hosted on ElevenLabs, addressed as `elevenlabs-agents:<agent_id>`: the agent must
 permit the conversation overrides the session sends (instructions, voice, ...) in its Security tab, and its client
 tools must match the session's unless `elevenlabs_agents_tool_sync` is `'sync'` (which updates the agent) or `'off'`.

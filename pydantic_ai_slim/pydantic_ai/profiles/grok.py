@@ -160,6 +160,8 @@ def grok_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # mirrors: a tool it adds is called from the next response on (checked live).
         'supports_tool_updates': True,
         'emits_input_speech_events': True,
+        # Each transcript delta, of a few words to a sentence, says where it starts in its item's audio.
+        'output_speech_timestamp_granularity': 'segment',
         # A response's `input_tokens` counts only the input added since the previous response, not the
         # whole conversation, so it can't measure how full the context window is.
         'response_usage_covers_context': False,
