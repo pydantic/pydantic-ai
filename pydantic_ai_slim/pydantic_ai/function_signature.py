@@ -94,7 +94,6 @@ class UnionTypeExpr:
 
 
 TypeExpr: TypeAlias = 'TypeSignature | SimpleTypeExpr | LiteralTypeExpr | GenericTypeExpr | UnionTypeExpr'
-
 """A type expression node in the signature's type tree."""
 
 
@@ -174,7 +173,7 @@ def _annotation(type_field: TypeFieldSignature) -> str:
 
 @dataclass(kw_only=True)
 class TypeSignature:
-    """A TypedDict-style class definition with named fields."""
+    """A TypedDict definition with named fields."""
 
     name: str
 
