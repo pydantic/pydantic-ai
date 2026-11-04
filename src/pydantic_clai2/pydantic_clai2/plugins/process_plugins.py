@@ -464,8 +464,10 @@ class ProcessPlugins(Generic[DepsT]):
         if declaration.path is None or (shipped is not None and shipped.path == declaration.path):
             return []
         path = Path(declaration.path)
-        # `..` collapsed first: a path that only passes through the plugins folder names a file outside it.
-        inside = Path(os.path.normpath(path)).is_relative_to(os.path.normpath(self.plugins_dir))
+        # `..` collapsed first: a path that only passes through the plugins folder names a file outside it. The
+        # folder counts resolved too, as Git installs are saved there; the path is not, so a symlinked drop-in stays.
+        folders = (self.plugins_dir, self.plugins_dir.resolve())
+        inside = any(Path(os.path.normpath(path)).is_relative_to(os.path.normpath(folder)) for folder in folders)
         return [] if inside else [path]
 
     def contents_approved(self, name: str, declaration: PluginSettings) -> bool:

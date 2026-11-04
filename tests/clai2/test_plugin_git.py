@@ -199,6 +199,21 @@ async def test_add_git_plugin_lifecycle(tmp_path: Path, repository: Path, entryp
     await restarted.loader.close('exit')
 
 
+@pytest.mark.skipif(sys.platform == 'win32', reason='requires creating a directory symlink without special privileges')
+async def test_add_git_plugin_under_a_symlinked_plugins_folder(tmp_path: Path, repository: Path) -> None:
+    """The checkout path is saved resolved, and still counts as inside a plugins folder reached through a symlink."""
+    (tmp_path / 'real-plugins').mkdir()
+    (tmp_path / 'plugins').symlink_to(tmp_path / 'real-plugins')
+    harness = Harness(tmp_path)
+    assert (await harness.loader.command(['add', repository.as_uri()])).startswith('Added and loaded demo_plugin.')
+    await harness.loader.close('exit')
+
+    fresh = Harness(tmp_path)
+    await fresh.loader.load_all()
+    assert await fresh.commands.execute_async('/git_hello') == 'Hello from Git'
+    await fresh.loader.close('exit')
+
+
 async def test_remove_git_plugin_with_a_missing_entrypoint(tmp_path: Path, repository: Path) -> None:
     harness = Harness(tmp_path)
     await harness.loader.command(['add', repository.as_uri()])
