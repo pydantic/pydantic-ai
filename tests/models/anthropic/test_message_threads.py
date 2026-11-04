@@ -433,8 +433,8 @@ async def test_new_system_prompt_is_sent_on_continue(allow_model_requests: None)
 
     def add_restriction(messages: list[ModelMessage]) -> list[ModelMessage]:
         last = messages[-1]
-        if len(messages) > 1 and isinstance(last, ModelRequest):
-            messages[-1] = replace(last, parts=[SystemPromptPart('Never repeat the PIN.'), *last.parts])
+        assert isinstance(last, ModelRequest)
+        messages[-1] = replace(last, parts=[SystemPromptPart('Never repeat the PIN.'), *last.parts])
         return messages
 
     api = _Api()
