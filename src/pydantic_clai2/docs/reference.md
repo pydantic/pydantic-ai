@@ -32,6 +32,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/accounts` | Add, rename, reorder, and sign out of accounts |
 | `/keys` | Manage saved API keys |
 | `/permissions [full\|auto\|read-only]` | Show or set what runs without asking |
+| `/project [approve NAME...\|all \| revoke NAME...\|all]` | Review what `.clai/settings.json` sets, and approve or revoke its keys for this repository |
 | `/set [KEY [VALUE]]` | Change a setting; no arguments opens the menu (alias `/settings`) |
 | `/config show\|get\|set\|reset` | Read or write saved settings; writes apply on restart |
 | `/system_prompt` | View the system prompt and edit your own instructions |
@@ -402,6 +403,37 @@ validated the same way as `/set`. A bad value stops startup with the file name
 and the problem; a key CLAI does not know is reported once at startup and
 ignored, so a newer file still works with an older CLAI. Precedence, lowest
 first: defaults, your user settings, the project file, `CLAI_MODEL`, CLI flags.
+
+Display settings (the `display.*` keys: `thinking`, `task_models`, `theme`, `spinner`,
+`splash`, `tool_calls`, `tool_output`, `shell_lines`, `grep_lines`, `tool_arg_chars`,
+`smooth_seconds`) apply as soon as CLAI finds the file. Every other key asks you
+first, as project plugins do: `model`, `request_limit`, `tool_retries`, `code_mode`,
+`speculative_code_mode`, `permissions`, `instructions`, `pool_accounts`,
+`session_namer`, and `session_namer_model`. The exception is a `permissions` value
+no wider than your own, which applies at once: the modes run from `full` through
+`auto` to `read-only`, so a repository can ask for more confirmation without
+your approval, but never for less. `/permissions` still changes the mode for the
+current session, and the project value returns at the next start. A project file
+cannot set `update_channel`: like `worktree_remove_commands`, it is user-only, and
+a file that sets it stops startup. Until you approve
+one, CLAI uses your own setting for it and names it under the banner at startup.
+`/project` lists what the file sets, with each value and whether it applies;
+`/project approve NAME...` (or `all`) applies those keys now and in every later
+session in that repository, and `/project revoke NAME...` (or `all`) removes saved
+approvals and returns to your own settings, including an approval of a key or value
+the file no longer sets, or of a file that is gone, which would otherwise apply
+again if the repository brought it back. An approval is kept in your user settings, for the folder
+that holds `.clai` and for the value you approved: once the file changes that
+value, as after a pull, it waits for your approval again. You approve at the
+prompt; `clai2` has no subcommand for it. A headless `clai2 -p` run or `clai2 --web`
+launch uses the approvals you saved and prints the keys it leaves out (on stderr
+for `-p`).
+
+The project's `instructions` are still sent while they wait, but as the
+repository's text rather than as your own: framed on the user channel, with a
+note from CLAI that they come from `.clai/settings.json` and are not approved,
+never in the system prompt where your own `run.instructions` go. Once approved, they take the place of
+your own instructions, as before.
 
 For instruction-loading settings, see [Repository instructions](#repository-instructions).
 

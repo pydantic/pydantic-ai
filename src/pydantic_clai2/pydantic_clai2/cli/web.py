@@ -13,7 +13,7 @@ from pydantic_clai2.app import STOCK_PLUGINS, create_stock_agent
 from pydantic_clai2.builtin_plugins.web import WebPlugin
 from pydantic_clai2.cli.self_update import WebHandoff
 from pydantic_clai2.config import Settings
-from pydantic_clai2.config.project_settings import ProjectSettings, load_project_settings
+from pydantic_clai2.config.project_settings import ProjectSettings, load_project_settings, with_current_approvals
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import DepsT, SessionEndReason
 from pydantic_clai2.plugins.loader import SessionPlugins
@@ -64,6 +64,8 @@ async def run_web(
     workspace = None
     if resume and resume_from is None and (saved := await _start_in(store=store, conversation_id=resume)):
         workspace, project = saved
+    if project.pending_notice is not None:
+        console.print(project.pending_notice, markup=False)
     shell = _web_session(
         settings_for=settings_for,
         project=project,
@@ -75,7 +77,9 @@ async def run_web(
         # Sessions opened from the browser log nothing: their output would interleave with this one's.
         shell.process.live.build = lambda directory: _web_session(
             settings_for=settings_for,
-            project=launch_project if directory in (None, launched_in) else load_project_settings(directory),
+            project=with_current_approvals(launch_project, store=store)
+            if directory in (None, launched_in)
+            else load_project_settings(directory, store=store),
             console=Console(file=sink, force_terminal=False),
             workspace=directory or launched_in,
             process=shell.process,
@@ -119,6 +123,7 @@ def _web_session(
         process=process,
         # Ctrl-C reaches the session CLAI started with, which ends CLAI; the others are interrupted from the browser.
         signals=process is None,
+        settings_for=settings_for,
     )
     SessionWorkspace(
         session=shell.session,
@@ -232,4 +237,4 @@ async def _start_in(*, store: SettingsStore, conversation_id: str) -> tuple[Path
         raise ValueError(
             f'{exc} Session {conversation_id} was saved there; start without --resume to read it in the sidebar.'
         ) from exc
-    return directory, load_project_settings(directory)
+    return directory, load_project_settings(directory, store=store)

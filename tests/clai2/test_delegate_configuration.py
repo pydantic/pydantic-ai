@@ -12,14 +12,14 @@ from rich.console import Console
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import Authority, ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
-from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
+from pydantic_ai.workspaces import AuthorityWorkspace, LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
 from pydantic_ai_harness.bubblewrap_sandbox import BubblewrapWorkspace
 from pydantic_ai_harness.subagents import DelegationTask, DelegationTasks, DelegationWorkspaceRequest
 from pydantic_clai2 import open_stock_agent
@@ -202,6 +202,25 @@ async def test_review_rejects_missing_parent_workspace_and_keeps_read_only(tmp_p
     assert await (
         await review_workspace(ctx, DelegationWorkspaceRequest(agent_name='Review', directory='.'))
     ).working_dir() == str(tmp_path)
+
+
+@pytest.mark.parametrize('read_only', [False, True])
+@pytest.mark.parametrize('authority', ['operator', 'user', 'none'])
+async def test_review_workspace_has_at_most_the_parents_authority(
+    tmp_path: Path, authority: Authority, read_only: bool
+) -> None:
+    """The model picks Review's directory, so its files carry no more authority than the parent's own."""
+    project, picked = tmp_path / 'project', tmp_path / 'picked'
+    project.mkdir()
+    picked.mkdir()
+    parent: Workspace = Workspace(LocalWorkspaceBackend(project))
+    if authority != 'operator':
+        parent = AuthorityWorkspace(parent, authority=authority)
+    if read_only:
+        parent = ReadOnlyWorkspace(parent)
+    ctx = RunContext(deps=object(), model=TestModel(), usage=RunUsage(), workspace=parent)
+    review = await review_workspace(ctx, DelegationWorkspaceRequest(agent_name='Review', directory=str(picked)))
+    assert (await review.working_dir(), review.authority) == (str(picked), authority)
 
 
 @pytest.mark.parametrize('read_only', [False, True])
