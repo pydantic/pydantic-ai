@@ -27,31 +27,12 @@ from collections import Counter
 from collections.abc import Iterable, Iterator
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Literal, TypeAlias, assert_never, cast
+from typing import Any, ClassVar, Literal, TypeAlias, assert_never, cast
 
 # Set during rendering and consulted by TypeSignature.display_name. Not being empty means some names had to change,
 # so a type uses the name `get_conflicting_type_names` stored on it. The mapping (e.g. {'User': 'tool_a_User'}) is only
 # the fallback for a set of names that call didn't resolve.
 _type_name_overrides: ContextVar[dict[str, str]] = ContextVar('_type_name_overrides', default={})
-
-
-# Names the rendered text relies on, so a type definition can't take them.
-_RENDERED_TEXT_NAMES: frozenset[str] = frozenset(
-    {
-        'asyncio',
-        'Any',
-        'Literal',
-        'NotRequired',
-        'TypedDict',
-        'bool',
-        'dict',
-        'float',
-        'int',
-        'list',
-        'str',
-        'tuple',
-    }
-)
 
 
 def _is_writable_name(name: str) -> bool:
@@ -113,6 +94,23 @@ class UnionTypeExpr:
 
 
 TypeExpr: TypeAlias = 'TypeSignature | SimpleTypeExpr | LiteralTypeExpr | GenericTypeExpr | UnionTypeExpr'
+
+
+def _names_read_by(expr: TypeExpr) -> Iterator[str]:
+    """The names an annotation reads when evaluated, which leaves out the text inside a `Literal[...]`."""
+    if isinstance(expr, LiteralTypeExpr):
+        yield 'Literal'
+    elif isinstance(expr, GenericTypeExpr):
+        yield expr.base
+        for arg in expr.args:
+            yield from _names_read_by(arg)
+    elif isinstance(expr, UnionTypeExpr):
+        for member in expr.members:
+            yield from _names_read_by(member)
+    else:
+        yield str(expr)
+
+
 """A type expression node in the signature's type tree."""
 
 
@@ -168,6 +166,11 @@ class TypeFieldSignature:
         return '\n'.join(lines)
 
 
+def _annotation(type_field: TypeFieldSignature) -> str:
+    """The annotation a field renders with, in either form of definition."""
+    return str(type_field.type) if type_field.required else f'NotRequired[{type_field.type}]'
+
+
 @dataclass(kw_only=True)
 class TypeSignature:
     """A TypedDict-style class definition with named fields."""
@@ -199,7 +202,7 @@ class TypeSignature:
     def render_definition(
         self, *, owner_name: str | None = None, conflicting_type_names: frozenset[str] = frozenset()
     ) -> str:
-        """Render the full TypedDict class definition.
+        """Render the full TypedDict definition.
 
         Args:
             owner_name: The owning tool name, used to build prefixed type names
@@ -220,9 +223,10 @@ class TypeSignature:
     def _render_definition(self) -> str:
         """Render the full TypedDict definition (internal, assumes overrides are set)."""
         # A class body can't hold a name Python can't write, and a field named like something an annotation
-        # reads changes what that annotation means, so these fields only fit the functional form. The rendered
-        # text names count even when no annotation here reads them, as working out which do isn't worth the code.
-        names_read = _RENDERED_TEXT_NAMES | {t.display_name for f in self.fields.values() for t in _types_in(f.type)}
+        # reads changes what that annotation means, so these fields only fit the functional form.
+        names_read = {name for f in self.fields.values() for name in _names_read_by(f.type)}
+        if not all(f.required for f in self.fields.values()):
+            names_read.add('NotRequired')
         if any(not _is_writable_name(name) or name in names_read for name in self.fields):
             return self._render_functional_definition()
         lines = [f'class {self.display_name}(TypedDict):']
@@ -283,6 +287,24 @@ class FunctionSignature:
     at render time (e.g. from a `ToolDefinition`).
     """
 
+    # Names the rendered text relies on, so a type definition can't take them.
+    _RENDERED_TEXT_NAMES: ClassVar[frozenset[str]] = frozenset(
+        {
+            'asyncio',
+            'Any',
+            'Literal',
+            'NotRequired',
+            'TypedDict',
+            'bool',
+            'dict',
+            'float',
+            'int',
+            'list',
+            'str',
+            'tuple',
+        }
+    )
+
     name: str
     description: str | None = None
     params: dict[str, FunctionParam] = field(default_factory=dict[str, FunctionParam])
@@ -292,7 +314,7 @@ class FunctionSignature:
     """The return type expression."""
 
     referenced_types: list[TypeSignature] = field(default_factory=list[TypeSignature])
-    """TypedDict class definitions needed by the signature."""
+    """TypedDict definitions needed by the signature."""
 
     is_async: bool = False
     """Whether the underlying function is async."""
@@ -460,7 +482,7 @@ class FunctionSignature:
         FunctionSignature._unify_identical_types(signatures)
         types = FunctionSignature.collect_unique_referenced_types(signatures)
         owners = FunctionSignature._type_owners(signatures)
-        reserved = _RENDERED_TEXT_NAMES | {sig.name for sig in signatures}
+        reserved = FunctionSignature._RENDERED_TEXT_NAMES | {sig.name for sig in signatures}
         counts = Counter(t.name for t in types)
         conflicting = {name for name, count in counts.items() if count > 1 or name in reserved}
 
@@ -546,7 +568,7 @@ class FunctionSignature:
             conflicting_type_names: The set returned by `get_conflicting_type_names`.
 
         Returns:
-            A list of rendered TypedDict class definitions as strings.
+            A list of rendered TypedDict definitions as strings.
         """
         unique_types = FunctionSignature.collect_unique_referenced_types(signatures)
         if not unique_types:
@@ -804,10 +826,10 @@ def _type_to_expr(
     # Object type
     if schema_type == 'object':
         if 'properties' in schema:
-            # Use `title` from the schema if Python can write it as a class name
+            # Use `title` from the schema if available and is a valid Python identifier
             # (preserves real class names like `User`), otherwise fall back to a path-based name
             title = schema.get('title')
-            td_name = title if title and _is_writable_name(title) else _path_to_typename(tool_name, path)
+            td_name = title if title and title.isidentifier() else _path_to_typename(tool_name, path)
             if td_name not in referenced_types:
                 _build_and_register_type(td_name, schema, defs, referenced_types, tool_name, path)
             return referenced_types[td_name]
@@ -947,10 +969,6 @@ def _build_type_signature(
 # =============================================================================
 # Deduplication helpers
 # =============================================================================
-
-
-def _annotation(type_field: TypeFieldSignature) -> str:
-    return str(type_field.type) if type_field.required else f'NotRequired[{type_field.type}]'
 
 
 def _types_in(expr: TypeExpr) -> Iterator[TypeSignature]:

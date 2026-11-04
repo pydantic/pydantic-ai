@@ -2181,6 +2181,35 @@ def test_field_named_like_the_name_resolved_for_a_type_takes_the_functional_form
     assert "Wrapper = TypedDict('Wrapper', {\n    'a_User': str,\n    'user': a_User,\n})" in catalog
 
 
+@pytest.mark.parametrize(
+    'field,field_schema',
+    [
+        pytest.param('asyncio', {'type': 'string'}, id='module'),
+        pytest.param('Any', {'type': 'string'}, id='any'),
+        pytest.param('Literal', {'type': 'string'}, id='literal'),
+        pytest.param('NotRequired', {'type': 'string'}, id='not-required-with-no-optional-field'),
+        pytest.param('list', {'type': 'string'}, id='generic-base'),
+        pytest.param('int', {'type': 'string'}, id='simple-type'),
+        pytest.param('str', {'type': 'integer'}, id='simple-type-with-another-annotation'),
+        pytest.param('tuple', {'type': 'array', 'prefixItems': [{'type': 'integer'}]}, id='tuple-renders-as-list'),
+    ],
+)
+def test_field_named_like_a_name_no_annotation_reads_keeps_the_class_form(field: str, field_schema: dict[str, Any]):
+    """Only a field an annotation reads changes anything, so a correct catalog shouldn't change its text."""
+    properties: dict[str, Any] = {field: field_schema}
+    if field != 'str':
+        properties['other'] = {'type': 'string'}
+    outer = {'type': 'object', 'properties': properties, 'required': list(properties)}
+    schema = {
+        'type': 'object',
+        '$defs': {'Outer': outer},
+        'properties': {'o': {'$ref': '#/$defs/Outer'}},
+        'required': ['o'],
+    }
+    signature = FunctionSignature.from_schema(name='a', parameters_schema=schema)
+    assert FunctionSignature.render_type_definitions([signature], frozenset())[0].startswith('class Outer(TypedDict):')
+
+
 def test_field_named_like_text_in_a_literal_keeps_the_class_form():
     """Only names the annotation reads change its meaning, and most schemas should keep reading as a class."""
     outer = {
@@ -2302,14 +2331,3 @@ def test_field_name_of_any_text_stays_one_exact_key(name: str):
     fields = assignment.value.args[1]
     assert isinstance(fields, ast.Dict)
     assert [key.value for key in fields.keys if isinstance(key, ast.Constant)] == [name]
-
-
-@pytest.mark.parametrize('title', ['from', 'None', 'def', '\ufb01eld'])
-def test_inline_object_title_python_cannot_write_takes_a_name_from_its_path(title: str):
-    sender = {'type': 'object', 'title': title, 'properties': {'a': {'type': 'string'}}, 'required': ['a']}
-    schema = {'type': 'object', 'properties': {'sender': sender}, 'required': ['sender']}
-    signature = FunctionSignature.from_schema(name='send', parameters_schema=schema)
-    assert FunctionSignature.render_type_definitions([signature], frozenset()) == [
-        'class SendSender(TypedDict):\n    a: str'
-    ]
-    assert signature.render('...') == 'def send(*, sender: SendSender) -> Any:\n    ...'

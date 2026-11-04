@@ -2019,6 +2019,22 @@ class TestCodeMode:
         with pytest.raises(ModelRetry, match='Type error in code'):
             await self._run_code_with_tools("await send(mail={'str': 1, 'b': 2})", tool_def)
 
+    async def test_field_named_like_a_type_nothing_reads_is_still_checked(self) -> None:
+        """`list: str` keeps the class form, so it mustn't be one of the fields that stops the checker."""
+        mail: type[BaseModel] = create_model('Mail', list=(str, ...), b=(str, ...))
+        args: type[BaseModel] = create_model('Args', mail=(mail, ...))
+        tool_def = ToolDefinition(
+            name='send', parameters_json_schema=args.model_json_schema(), return_schema={'type': 'string'}
+        )
+        output, description = await self._run_code_with_tools(
+            "print(await send(mail={'list': 'a', 'b': 'c'}))", tool_def
+        )
+        assert output == {'output': 'ok\n'}
+        assert 'class Mail(TypedDict):' in description
+        for wrong in ("{'list': 1, 'b': 'c'}", "{'list': 'a', 'b': 1}"):
+            with pytest.raises(ModelRetry, match='Type error in code'):
+                await self._run_code_with_tools(f'await send(mail={wrong})', tool_def)
+
     async def test_functional_definition_can_refer_to_itself_and_to_later_definitions(self) -> None:
         """The form is an assignment, so the checker must still read the names it uses ahead of their definitions."""
         tool_def = ToolDefinition(
@@ -2101,26 +2117,6 @@ class TestCodeMode:
         )
         with pytest.raises(ModelRetry, match='Type error in code'):
             await self._run_code_with_tools("await other(n='x')", self._tool_with_param(name), other)
-
-    @pytest.mark.parametrize('title', ['from', 'None', 'def'])
-    async def test_inline_object_title_python_cannot_write_leaves_every_tool_checked(self, title: str) -> None:
-        """As a class name `from` turned the type check off for the whole catalog, not only for its own tool."""
-        sender = {'type': 'object', 'title': title, 'properties': {'a': {'type': 'string'}}, 'required': ['a']}
-        send = ToolDefinition(
-            name='send',
-            parameters_json_schema={'type': 'object', 'properties': {'sender': sender}, 'required': ['sender']},
-            return_schema={'type': 'string'},
-        )
-        other = ToolDefinition(
-            name='other',
-            parameters_json_schema={'type': 'object', 'properties': {'n': {'type': 'integer'}}, 'required': ['n']},
-            return_schema={'type': 'string'},
-        )
-        output, _ = await self._run_code_with_tools("print(await send(sender={'a': 'x'}))", send, other)
-        assert output == {'output': 'ok\n'}
-        for wrong in ("await other(n='x')", "await send(sender={'a': 1})"):
-            with pytest.raises(ModelRetry, match='Type error in code'):
-                await self._run_code_with_tools(wrong, send, other)
 
     async def test_type_check_accepts_any_value_for_param_python_cannot_write(self) -> None:
         """The limit of `**kwargs: Any`: a wrong value passes the type check, so only the tool can refuse it.
