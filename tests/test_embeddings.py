@@ -2663,6 +2663,22 @@ async def test_instrumentation_records_settings_without_extra_headers_and_extra_
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 @pytest.mark.parametrize('include_content', [True, False])
+async def test_instrumentation_embeddings_honor_include_content(capfire: CaptureLogfire, include_content: bool):
+    """The embedding span carries the returned vectors only when content capture is on."""
+    embedder = Embedder(
+        TestEmbeddingModel(dimensions=3), instrument=InstrumentationSettings(include_content=include_content)
+    )
+    result = await embedder.embed_query('hello')
+
+    [span] = capfire.exporter.exported_spans_as_dict()
+    if include_content:
+        assert span['attributes']['embeddings'] == json.dumps(result.embeddings)
+    else:
+        assert 'embeddings' not in span['attributes']
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
 async def test_instrumentation_exception_honors_include_content(capfire: CaptureLogfire, include_content: bool):
     """A failing embedding request follows `include_content` like the agent's spans do.
 
