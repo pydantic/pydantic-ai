@@ -110,7 +110,7 @@ from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
-from ..conftest import IsDatetime, IsNow, IsStr, detach_dbos_logging
+from ..conftest import IsDatetime, IsNow, IsStr, detach_dbos_logging, without_admin_server
 from ..realtime_connections import InferredConnection
 
 try:
@@ -214,10 +214,9 @@ def dbos(tmp_path_factory: pytest.TempPathFactory) -> Generator[DBOS, Any, None]
     dbos_config: DBOSConfig = {
         'name': 'pydantic_dbos_tests',
         'system_database_url': f'sqlite:///{dbos_sqlite_file}',
-        'run_admin_server': False,
         'enable_otlp': True,
     }
-    dbos = DBOS(config=dbos_config)
+    dbos = DBOS(config=without_admin_server(dbos_config))
     DBOS.launch()
     try:
         yield dbos
