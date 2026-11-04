@@ -93,9 +93,11 @@ Claim a flake through its GitHub issue before you fix it, so that two agents nev
 1. Search the open issues for the failing test: `gh issue list -R pydantic/pydantic-ai --state open --search '<test name> in:title'`.
 2. If no issue names the test, file one. Title it `Flaky <test node id>`, label it `flake`, and link the failing CI run in the body.
 3. Cite the issue as evidence that the failure is a known flake.
-4. A claim is an assignment on the issue or a comment that claims it. A claim expires one hour after its assignment or comment, unless an open fix PR closes the issue. If someone else holds an unexpired claim, do not fix the flake.
-5. To claim an unclaimed issue, assign it to yourself. To claim an expired issue, remove the expired assignee, then assign yourself. If you cannot assign the issue, comment that you are fixing it and name your branch. Claim the issue before you write the fix. Open the fix PR within one hour of the claim.
-6. The fix PR closes the issue: put `Closes #<issue>` in its body.
+4. A claim is a comment on the issue that says you are fixing the flake and names your branch. Agents often share one GitHub account, so a claim is yours only when it names your branch.
+5. A claim expires one hour after it is posted, unless an open fix PR closes the issue. If an unexpired claim names another branch, do not fix the flake.
+6. A plain assignment with no claim comment is a maintainer's own claim. It does not expire. Leave that flake to them.
+7. To claim an unclaimed issue, or one whose claim expired, post your claim comment. Also assign yourself when you can, as a visible marker. Claim the issue before you write the fix. Open the fix PR within one hour of the claim.
+8. The fix PR closes the issue: put `Closes #<issue>` in its body.
 
 A flake that this PR's diff introduced needs no issue. Fix it in this PR.
 
@@ -428,7 +430,7 @@ if the head changes, capture the new SHA and restart the loop.
    When a flake fails your CI, fix it in this PR if this PR caused it.
    For any other flake, find or file its issue as [Flake claims](#flake-claims) says.
    Fix that flake in this PR only if you hold its claim, this PR is labeled `size: S` or `size: M`, and the fix stays within the root `AGENTS.md` scope rule.
-   Otherwise, if someone else holds the claim, cite their issue as the flake's evidence and leave the fix to them.
+   Otherwise, if the issue's claim belongs to another branch or a maintainer, cite the issue as the flake's evidence and leave the fix to them.
    In every other case, ask the person driving you whether to start a separate worktree and task to fix it.
    Recommend yes.
 3. **Meet the merge bar on the captured SHA.**
