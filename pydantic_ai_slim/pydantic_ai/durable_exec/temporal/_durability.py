@@ -19,6 +19,7 @@ from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering, WrapRunHandler
 from pydantic_ai.capabilities.retry_on_model_errors import RetryOnModelErrors
 from pydantic_ai.capabilities.set_tool_metadata import SetToolMetadata
+from pydantic_ai.capabilities.wrapper import WrapperCapability
 from pydantic_ai.durable_exec._base import (
     MODEL_RESPONSE_STREAM_EVENT_TYPES,
     BaseDurabilityCapability,
@@ -259,8 +260,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 the default, and `()` lets the retry policy retry every model error. When the agent is built
                 with [`RetryOnModelErrors`][pydantic_ai.capabilities.RetryOnModelErrors], every model error is
                 non-retryable, so that capability is the one that retries them, and the retry policy still
-                covers worker crashes and activity timeouts. A `RetryOnModelErrors` passed to a run inside a
-                workflow instead raises a `UserError`.
+                covers worker crashes and activity timeouts. A `RetryOnModelErrors` that only a
+                `DynamicCapability` returns for the run raises a `UserError` inside a workflow instead.
 
         Note:
             Per-tool activity config (custom timeouts, retry policies, or disabling
@@ -792,11 +793,17 @@ def worker_registrations(durability: TemporalDurability[Any]) -> tuple[list[Call
 
 
 def _has_retry_on_model_errors(capability: AbstractCapability[Any]) -> bool:
-    """Whether the agent's capabilities include `RetryOnModelErrors`."""
+    """Whether the agent's capabilities include `RetryOnModelErrors`, including one a wrapper capability wraps.
+
+    `apply` doesn't visit what a wrapper wraps, like the capability a `DynamicCapability` returned for the run, whose
+    hooks still run, so wrappers are unwrapped here.
+    """
     found = False
 
     def visit(cap: AbstractCapability[Any]) -> None:
         nonlocal found
+        if isinstance(cap, WrapperCapability):
+            found = found or _has_retry_on_model_errors(cap.wrapped)
         found = found or isinstance(cap, RetryOnModelErrors)
 
     capability.apply(visit)
