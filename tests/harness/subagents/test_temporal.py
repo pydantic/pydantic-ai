@@ -280,6 +280,12 @@ async def test_durable_delegate_runs_as_a_child_workflow(client: Client) -> None
     assert not any('sub_agents' in name for name in _activities(history))
     child_history = await client.get_workflow_handle(child_id).fetch_history()
     assert 'agent__durable_worker__model_request' in _activities(child_history)
+    replay = await Replayer(
+        workflows=[ChildWorkflowWorkflow],
+        plugins=[PydanticAIPlugin()],
+        workflow_runner=SandboxedWorkflowRunner(restrictions=_RESTRICTIONS),
+    ).replay_workflow(history)
+    assert replay.replay_failure is None
 
 
 @pytest.fixture(scope='module')

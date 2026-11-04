@@ -13,6 +13,7 @@ from pydantic_ai import Agent, AgentStreamEvent, RunContext
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.subagents import DynamicAgents, SubAgent, SubAgents, SubAgentToolset
 from tests.conftest import detach_dbos_logging, try_import
 from tests.harness.subagents._dynamic import POET_CALLS, POET_RESULT, creator
@@ -134,6 +135,12 @@ def _delegate_metadata(capability: SubAgents[None]) -> object:
 )
 def test_delegation_relying_on_the_parent_run_stays_in_it(kwargs: dict[str, Any]) -> None:
     assert _delegate_metadata(SubAgents[None](agents=[SubAgent(dbos_worker)], **kwargs)) is None
+
+
+def test_delegation_inheriting_tools_stays_in_the_parent_run() -> None:
+    with pytest.warns(HarnessDeprecationWarning, match='inherit_tools'):
+        capability = SubAgents[None](agents=[SubAgent(dbos_worker)], inherit_tools=True)
+    assert _delegate_metadata(capability) is None
 
 
 def test_child_workflow_needs_every_delegate_durable_without_a_call_budget() -> None:
