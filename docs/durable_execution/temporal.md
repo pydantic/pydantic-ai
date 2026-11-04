@@ -1041,6 +1041,9 @@ agent = Agent(
 
 1. On top of the defaults, don't retry a model that's unavailable, for example to let `ModelFallback` move on to the next model straight away.
 
+!!! note "With `RetryOnModelErrors`"
+    When the agent has the [`RetryOnModelErrors`](../capabilities/retry-on-model-errors.md) capability, it's the one that retries model errors, so the model request activity treats every model error as non-retryable: the error fails the activity on its first attempt and reaches the capability as its own class. A `non_retryable_model_errors` you pass has no effect then, and a model error that `retry_on` doesn't name, like a `ModelServerError` with `retry_on=(ModelRateLimitError,)`, isn't retried by the activity's retry policy either. The policy still covers what never reaches the capability, like a worker crash or an activity timeout. The activity's retry policy is set when `TemporalDurability` binds to the agent, so `RetryOnModelErrors` has to be one of the capabilities the agent is built with: one that only a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability] returns for the run raises a [`UserError`][pydantic_ai.exceptions.UserError] inside a workflow, as any capability passed to a run there does. See [Durable execution](../capabilities/retry-on-model-errors.md#durable-execution) on the capability's page.
+
 ## Observability with Logfire
 
 Temporal generates telemetry events and metrics for each workflow and activity execution, and Pydantic AI generates events for each agent run, model request and tool call. These can be sent to [Pydantic Logfire](../logfire.md) to get a complete picture of what's happening in your application.

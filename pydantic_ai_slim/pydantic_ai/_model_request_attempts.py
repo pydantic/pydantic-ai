@@ -12,7 +12,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from time import perf_counter_ns
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from opentelemetry.trace import Span, Status, StatusCode, Tracer, set_span_in_context
 from opentelemetry.util.types import AttributeValue
@@ -25,7 +25,7 @@ from ._instrumentation import (
     set_error_status,
     span_include_content,
 )
-from .exceptions import FallbackExceptionGroup
+from .exceptions import FallbackExceptionGroup, ModelAPIError
 from .messages import ModelRequestAttempt, ModelResponse
 
 if TYPE_CHECKING:
@@ -73,11 +73,17 @@ def carried_attempts(error: BaseException) -> list[ModelRequestAttempt]:
 
 
 def failed_attempt(
-    model: Model, failure: Exception | ModelResponse, *, start: AttemptStart, duration: timedelta
+    model: Model,
+    failure: Exception | ModelResponse,
+    *,
+    start: AttemptStart,
+    duration: timedelta,
+    kind: Literal['retry', 'fallback'] = 'fallback',
 ) -> ModelRequestAttempt:
     """Describe an attempt at a request to `model` that raised `failure`, or returned the rejected response `failure`.
 
-    A rejected response's cost is filled in first, so the attempt carries it.
+    `kind` says whether the request moved on from it to the same model or another one. A rejected response's cost is
+    filled in first, so the attempt carries it.
     """
     timestamp = start.timestamp
     if isinstance(failure, Exception):
@@ -88,6 +94,8 @@ def failed_attempt(
             error=_describe_error(failure),
             timestamp=timestamp,
             duration=duration,
+            kind=kind,
+            retry_after=failure.retry_after if isinstance(failure, ModelAPIError) else None,
         )
     fill_response_cost(failure)
     return ModelRequestAttempt(
@@ -97,6 +105,7 @@ def failed_attempt(
         timestamp=timestamp,
         duration=duration,
         usage=failure.usage,
+        kind=kind,
     )
 
 

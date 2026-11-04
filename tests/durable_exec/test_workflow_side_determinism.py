@@ -38,6 +38,7 @@ the workflow does next -- each of which the trace shows running on the workflow 
 - `_output.py`: output processing and validation.
 - `_run_context.py`: the run context and its event emission.
 - `capabilities/combined.py`: hook dispatch across the run's capabilities.
+- `capabilities/retry_on_model_errors.py`: the wait before each retry, which must be the same on replay.
 - `durable_exec/*.py` (the top level) and `durable_exec/temporal/` (recursively): every module, so a
   new one is checked without being listed. Their activity-side calls are accepted in `_ACCEPTED`.
 
@@ -357,6 +358,7 @@ def test_workflow_side_code_makes_no_new_nondeterministic_calls():
         f'{CORE}/_tool_execution.py',
         f'{CORE}/agent/__init__.py',
         f'{CORE}/capabilities/combined.py',
+        f'{CORE}/capabilities/retry_on_model_errors.py',
         f'{CORE}/run.py',
         f'{CORE}/tool_manager.py',
         *sorted(path.relative_to(REPO_ROOT).as_posix() for paths in engine_modules.values() for path in paths),
