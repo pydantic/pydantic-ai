@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from types import NoneType
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import anyio
 import pytest
@@ -28,7 +28,7 @@ from pydantic_ai.capabilities import (
     ToolSearch,
     UseThreadExecutor,
 )
-from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities.abstract import AbstractCapability, AgentNode, NodeResult, WrapNodeRunHandler
 from pydantic_ai.capabilities.hooks import Hooks
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -5416,3 +5416,49 @@ async def test_after_node_run_node_to_end():
     result = await agent.run('hello')
     assert result.output == 'short-circuited'
     assert model_call_count == 1
+
+
+@pytest.mark.parametrize('retry_hook', ['wrapper', 'recovery'])
+async def test_retry_failed_tool_node_preserves_original_error(retry_hook: Literal['wrapper', 'recovery']) -> None:
+    original_error = RuntimeError('tool failed')
+    seen_errors: list[Exception] = []
+
+    class RetryWrapper(AbstractCapability[None]):
+        async def wrap_node_run(
+            self, ctx: RunContext[None], *, node: AgentNode[None], handler: WrapNodeRunHandler[None]
+        ) -> NodeResult[None]:
+            try:
+                return await handler(node)
+            except RuntimeError as error:
+                seen_errors.append(error)
+                return await handler(node)
+
+    class RetryRecovery(AbstractCapability[None]):
+        async def on_node_run_error(
+            self, ctx: RunContext[None], *, node: AgentNode[None], error: Exception
+        ) -> NodeResult[None]:
+            seen_errors.append(error)
+            if len(seen_errors) == 1:
+                return node
+            raise error
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('fail', {})])
+
+    capability: AbstractCapability[None] = RetryWrapper() if retry_hook == 'wrapper' else RetryRecovery()
+    agent = Agent[None, str](FunctionModel(model), deps_type=NoneType, capabilities=[capability])
+    tool_calls = 0
+
+    @agent.tool_plain
+    async def fail() -> str:
+        nonlocal tool_calls
+        tool_calls += 1
+        raise original_error
+
+    with pytest.raises(RuntimeError, match=r'^tool failed$') as raised:
+        await agent.run('hi', infer_name=False)
+
+    assert raised.value is original_error
+    assert tool_calls == 1
+    assert len(seen_errors) == (1 if retry_hook == 'wrapper' else 2)
+    assert all(error is original_error for error in seen_errors)

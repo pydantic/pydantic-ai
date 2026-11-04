@@ -105,8 +105,8 @@ from pydantic_ai_harness import StackOne
 StackOne(account_id='your-linked-account-id', defer_loading=True)
 ```
 
-Two capabilities on the *same* account share that id and are rejected at agent construction, which is what you want:
-one linked account is one connection. Pass an explicit `id=` if you need to override the derived one.
+Two capabilities on the *same* account share that id and are rejected at agent construction: one linked account is
+one connection. Pass an explicit `id=` if you need to override the derived one.
 
 ### Two accounts on one agent
 
@@ -119,8 +119,7 @@ UserError: StackOneToolset 'stackone-crm-account' defines a tool whose name conf
 existing tool from StackOneToolset: 'bamboohr_list_employees'
 ```
 
-Namespace them with [`PrefixTools`](https://pydantic.dev/docs/ai/capabilities/overview/), which is
-what it is for:
+Namespace them with [`PrefixTools`](../capabilities/prefix-tools.md):
 
 ```python
 from pydantic_ai import Agent
@@ -202,7 +201,7 @@ from pydantic_ai_harness import StackOne
 agent = Agent.from_file('agent.yaml', custom_capability_types=[StackOne])
 ```
 
-Pass `custom_capability_types` so the spec loader knows how to instantiate `StackOne`.
+## Connection customization
 
 Use the lower-level `StackOneToolset` directly when you need
 [`Agent(toolsets=[...])`](../toolsets.md) or other toolset wrappers.

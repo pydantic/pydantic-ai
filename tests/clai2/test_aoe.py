@@ -46,7 +46,9 @@ pytestmark = pytest.mark.skipif(sys.platform == 'win32', reason='AoE and its hoo
 
 READINESS_WAIT_TIMEOUT = 10
 INSTANCE = 'abcd1234ef567890'
-PANE_PID = 4242
+FAKE_PID = 1 << 22
+"""Above every process ID Linux (under `2**22`) and macOS assign, so no fake process is this one."""
+PANE_PID = FAKE_PID + 4242
 
 
 @dataclass
@@ -258,7 +260,9 @@ async def test_inert_outside_an_aoe_agent_session(env: Fixture, monkeypatch: pyt
         system.pane_pid = 'not-a-pid'
     else:
         system.processes = (
-            f'{os.getpid()} 300 python\n300 200 /bin/sh -c pytest\n200 {PANE_PID} /usr/bin/python3 /usr/bin/clai2\n'
+            f'{os.getpid()} {FAKE_PID + 300} python\n'
+            f'{FAKE_PID + 300} {FAKE_PID + 200} /bin/sh -c pytest\n'
+            f'{FAKE_PID + 200} {PANE_PID} /usr/bin/python3 /usr/bin/clai2\n'
         )
     loaded = await load()
     assert not reporting(loaded)
