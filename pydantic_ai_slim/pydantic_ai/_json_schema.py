@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, ClassVar, Literal, NoReturn, TypeAlias, cast
@@ -17,8 +17,13 @@ _JsonSchemaNode: TypeAlias = JsonSchema | bool
 
 def _is_type_value(value: Any) -> bool:
     return isinstance(value, str) or (
-        isinstance(value, list) and all(isinstance(t, str) for t in cast(list[Any], value))
+        isinstance(value, list | tuple) and all(isinstance(t, str) for t in cast(Sequence[Any], value))
     )
+
+
+def _is_sequence(value: Any) -> bool:
+    # A tuple serializes as a JSON array, and every reader treats these as sequences.
+    return isinstance(value, list | tuple)
 
 
 # The keywords the walker and the provider `transform()`s read, grouped by the shape they expect.
@@ -42,8 +47,8 @@ _VALUE_KEYWORDS: dict[str, tuple[Callable[[Any], bool], str]] = {
     # keyword: (is the value well-formed, what a well-formed value is)
     '$ref': (lambda value: isinstance(value, str), 'must be a string'),
     'type': (_is_type_value, 'must be a string or a list of strings'),
-    'required': (lambda value: isinstance(value, list), 'must be a list'),
-    'enum': (lambda value: isinstance(value, list), 'must be a list'),
+    'required': (_is_sequence, 'must be a list'),
+    'enum': (_is_sequence, 'must be a list'),
     'minItems': (lambda value: isinstance(value, int) and not isinstance(value, bool), 'must be an integer'),
 }
 """Keywords whose value the transformers interpret."""
@@ -64,8 +69,9 @@ def _check_schema_shape(node: Any, path: str = '') -> None:
     prefix = f'{path}.' if path else ''
 
     for key in _SCHEMA_KEYWORDS:
-        if key in schema:
-            _check_subschema(schema[key], f'{prefix}{key}', allow_list=key == 'items')
+        # `None` is skipped like an absent key, as the walker and OpenAI's `transform()` do.
+        if (value := schema.get(key)) is not None:
+            _check_subschema(value, f'{prefix}{key}', allow_list=key == 'items')
     for key, container in _SCHEMA_CONTAINER_KEYWORDS.items():
         if (value := schema.get(key)) is not None:
             _check_schema_container(key, container, value, f'{prefix}{key}')
@@ -93,6 +99,11 @@ def _check_schema_container(key: str, container: type[dict[str, Any]] | type[lis
     )
     for name, member in members:
         _check_schema_shape(member, f'{path}.{name}')
+
+
+def _json_pointer_path(ref: str) -> str:
+    """The dotted path an error names for a local JSON pointer, with its `~1` and `~0` escapes decoded."""
+    return '.'.join(token.replace('~1', '/').replace('~0', '~') for token in ref.split('/')[1:])
 
 
 def resolve_json_pointer(schema: JsonSchema, ref: str) -> JsonSchema | None:
@@ -285,7 +296,7 @@ class JsonSchemaTransformer(ABC):
             def_schema = resolve_json_pointer(self.schema, key)
             # A pointer can reach nodes the up-front check doesn't visit, like draft-07 `definitions`.
             if def_schema is not None:
-                _check_schema_shape(def_schema, key.removeprefix('#/').replace('/', '.'))
+                _check_schema_shape(def_schema, _json_pointer_path(key))
         if def_schema is None:
             raise UserError(f'Could not find $ref definition for {key}')
 

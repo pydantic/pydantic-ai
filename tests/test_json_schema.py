@@ -225,10 +225,6 @@ _MALFORMED_SCHEMAS: dict[str, tuple[Any, str]] = {
         {'type': ['string', 5]},
         "Invalid JSON Schema at `type`: `type` must be a string or a list of strings, got ['string', 5]",
     ),
-    'required-is-a-tuple': (
-        {'type': 'object', 'required': ('a', 'b')},
-        "Invalid JSON Schema at `required`: `required` must be a list, got ('a', 'b')",
-    ),
     'minItems-is-a-string': (
         {'type': 'array', 'items': {'type': 'string'}, 'minItems': 'x'},
         "Invalid JSON Schema at `minItems`: `minItems` must be an integer, got 'x'",
@@ -318,6 +314,12 @@ def test_malformed_schema_error_is_the_same_for_every_provider(strict: bool | No
 
 _VALID_SCHEMAS: dict[str, Any] = {
     'type-is-a-list': {'type': ['string', 'null']},
+    # Tuples serialize as JSON arrays, and worked before the shape check existed.
+    'type-is-a-tuple': {'type': ('string', 'null')},
+    'required-is-a-tuple': {'type': 'object', 'properties': {'a': {'type': 'string'}}, 'required': ('a',)},
+    'enum-is-a-tuple': {'enum': ('a', 'b')},
+    # `None` is treated as an absent key, as tooling that dumps with `exclude_none=False` produces.
+    'none-subschemas': {'additionalProperties': None, 'items': None, 'propertyNames': None, 'contains': None},
     'boolean-property': {'type': 'object', 'properties': {'x': True, 'y': False}},
     'boolean-pattern-property': {'type': 'object', 'patternProperties': {'^x': True}},
     'boolean-additional-properties': {'type': 'object', 'additionalProperties': False},
