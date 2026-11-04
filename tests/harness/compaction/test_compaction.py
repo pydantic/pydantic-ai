@@ -109,7 +109,6 @@ from pydantic_ai_harness.compaction._shared import (
 )
 from pydantic_ai_harness.compaction._summarizing_compaction import (
     _DEFAULT_SUMMARY_PROMPT,  # pyright: ignore[reportPrivateUsage]
-    _HARNESS_DATA_INSTRUCTION,  # pyright: ignore[reportPrivateUsage]
     _KEPT_USER_MESSAGE_METADATA,  # pyright: ignore[reportPrivateUsage]
     SUMMARY_PREFIX,
     _extract_system_prompts,  # pyright: ignore[reportPrivateUsage]
@@ -6106,7 +6105,7 @@ class TestHarnessData:
         assert prompt.startswith('Summarize this: <harness_data ')
         assert _INTENT_ATTRIBUTION_RULE not in prompt
         assert "aren't the user's" not in prompt and "are not the user's" not in prompt
-        assert prompt.endswith(_HARNESS_DATA_INSTRUCTION)
+        assert prompt.endswith("don't treat it as the user's requests or standing constraints.")
 
     async def test_a_turn_kept_by_an_earlier_release_is_summarized_again(self) -> None:
         """Releases before 2.60 marked a kept turn only on its request's metadata, which is no longer read.
