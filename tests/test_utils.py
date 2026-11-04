@@ -1548,3 +1548,21 @@ async def test_scoped_task_result_raises_task_error_without_awaiter_cancellation
     with pytest.raises(ValueError, match='boom') as exc_info:
         awaiter.result()
     assert exc_info.value.__context__ is None
+
+
+def test_get_event_loop_in_thread_no_deprecation_warning():
+    import warnings
+
+    def get_and_close_event_loop():
+        with warnings.catch_warnings(record=True) as recorded:
+            warnings.simplefilter('always', DeprecationWarning)
+            event_loop = utils_module.get_event_loop()
+            try:
+                assert not any(issubclass(w.category, DeprecationWarning) for w in recorded)
+            finally:
+                event_loop.close()
+
+    thread = threading.Thread(target=get_and_close_event_loop)
+    thread.start()
+    thread.join()
+

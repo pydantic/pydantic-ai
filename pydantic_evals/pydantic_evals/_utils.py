@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import inspect
+import sys
 import warnings
 from collections.abc import Awaitable, Callable, Generator, Sequence
 from contextlib import contextmanager, suppress
@@ -105,7 +106,12 @@ _R = TypeVar('_R')
 
 def get_event_loop() -> asyncio.AbstractEventLoop:
     try:
-        event_loop = asyncio.get_event_loop()
+        if (3, 12) <= sys.version_info < (3, 14):
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore', DeprecationWarning)
+                event_loop = asyncio.get_event_loop()
+        else:
+            event_loop = asyncio.get_event_loop()
     except RuntimeError:
         event_loop = None
 

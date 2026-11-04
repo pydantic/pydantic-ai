@@ -1,4 +1,5 @@
 import inspect
+import warnings
 from collections.abc import Generator
 from importlib.util import find_spec
 from threading import Thread
@@ -42,8 +43,13 @@ def test_get_traceparent_from_logfire_span(capfire: 'CaptureLogfire'):
 
 def test_get_event_loop_in_thread():
     def get_and_close_event_loop():
-        event_loop = get_event_loop()
-        event_loop.close()
+        with warnings.catch_warnings(record=True) as recorded:
+            warnings.simplefilter('always', DeprecationWarning)
+            event_loop = get_event_loop()
+            try:
+                assert not any(issubclass(w.category, DeprecationWarning) for w in recorded)
+            finally:
+                event_loop.close()
 
     thread = Thread(target=get_and_close_event_loop)
     thread.start()

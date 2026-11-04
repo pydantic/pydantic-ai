@@ -230,3 +230,22 @@ async def test_running_on_asyncio_without_sniffio(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr('pydantic_evals._utils._sniffio', None)
     assert running_on_asyncio()
     assert not await anyio.to_thread.run_sync(running_on_asyncio)
+
+
+def test_get_event_loop_in_thread_no_deprecation_warning():
+    import threading
+    import warnings
+
+    def get_and_close_event_loop():
+        with warnings.catch_warnings(record=True) as recorded:
+            warnings.simplefilter('always', DeprecationWarning)
+            event_loop = get_event_loop()
+            try:
+                assert not any(issubclass(w.category, DeprecationWarning) for w in recorded)
+            finally:
+                event_loop.close()
+
+    thread = threading.Thread(target=get_and_close_event_loop)
+    thread.start()
+    thread.join()
+
