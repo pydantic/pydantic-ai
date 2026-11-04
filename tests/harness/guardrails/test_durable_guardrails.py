@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import gc
 import uuid
+import weakref
 from collections.abc import Generator
 from pathlib import Path
 
@@ -23,6 +25,7 @@ from pydantic_ai.durable_exec import JSON_CODEC
 from pydantic_ai.exceptions import ApprovalRequired, UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.tools import RunContext
 from pydantic_ai_harness.guardrails import (
     GuardrailResult,
     InputGuardrail,
@@ -294,3 +297,24 @@ async def test_a_deliberate_plain_data_replacement_is_not_rebuilt() -> None:
     result = await agent.run('go')
 
     assert result.output == {'redacted': True}
+
+
+class _Deps:
+    pass
+
+
+async def test_a_carried_guard_error_does_not_outlive_its_run() -> None:
+    def refuse(ctx: RunContext[_Deps], prompt: str) -> bool:
+        raise InputBlocked('no')
+
+    agent = Agent(FunctionModel(_respond), deps_type=_Deps, capabilities=[InputGuardrail(guard=refuse)])
+    deps = _Deps()
+    deps_ref = weakref.ref(deps)
+    try:
+        await agent.run('go', deps=deps)
+    except InputBlocked:
+        pass
+    del deps
+    gc.collect()
+
+    assert deps_ref() is None
