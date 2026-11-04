@@ -338,12 +338,16 @@ agent = Agent(
 [`authority_of(path)`][pydantic_ai.workspaces.Workspace.authority_of] gives a file's level:
 
 - The longest matching path wins, so a lower directory can sit inside a higher one and the other way around.
-- Relative paths resolve against the working directory, and `~` is expanded.
+- Relative paths resolve against the working directory. `LocalWorkspace` expands `~`; `AuthorityWorkspace`
+  takes workspace paths as they are, and refuses one starting with `~`.
 - A file outside the working directory is outside the workspace, at `'none'`, unless `path_authority` lists a
   path containing it, like `~/.config/my-app` above.
 - Symlinks are followed, and a file gets the lower of the levels of where its path is written and where it
   leads: a link from a `'none'` directory to an `'operator'` file is at `'none'`, and so is a link from an
-  `'operator'` directory to a `'none'` file.
+  `'operator'` directory to a `'none'` file. In a chain of links, the links on the path itself count, and
+  so does the final target, but not a link reached only through another link's target.
+- Paths also match ignoring case, keeping the lower level, so on a case-insensitive filesystem `Vendor/` can't
+  escape a lower `vendor/`.
 - Without `path_authority`, every file in the working directory is at `authority`.
 - A wrapper's `path_authority` never raises a level another wrapper set: with several, the lowest wins.
 

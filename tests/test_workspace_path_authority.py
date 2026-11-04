@@ -10,6 +10,7 @@ import pytest
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import Authority
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import AuthorityWorkspace, LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
@@ -136,6 +137,28 @@ async def test_path_authority_keys_resolve_through_links(root: Path) -> None:
     assert await reversed_ws.authority_of('vendor/AGENTS.md') == 'none'
 
 
+async def test_another_spelling_of_a_lower_path_is_lowered_too(root: Path) -> None:
+    # On a case-insensitive filesystem `Vendor/` is `vendor/`; on this one it's a sibling, which only gets lowered.
+    ws = workspace(root, path_authority={'vendor': 'none', 'Trusted': 'operator'})
+
+    assert await ws.authority_of('Vendor/AGENTS.md') == 'none'
+    assert await ws.authority_of('VENDOR/ours/AGENTS.md') == 'none'
+    # Folding never raises: `trusted/` matching `Trusted` ignoring case stays at the default.
+    lowered = workspace(root, 'none', {'Trusted': 'operator'})
+    assert await lowered.authority_of('trusted/AGENTS.md') == 'none'
+    assert await lowered.authority_of('Trusted/AGENTS.md') == 'operator'
+    # Keys differing only in case keep the lower level.
+    assert (
+        await workspace(root, path_authority={'Vendor': 'none', 'vendor': 'operator'}).authority_of('vendor/AGENTS.md')
+        == 'none'
+    )
+
+
+def test_a_home_relative_path_is_refused(root: Path) -> None:
+    with pytest.raises(UserError, match=r"`~` is not expanded: got '~/.config/app'"):
+        workspace(root, 'none', {'~/.config/app': 'operator'})
+
+
 async def test_wrappers_only_lower_the_level(root: Path) -> None:
     inner = workspace(root, path_authority={'vendor': 'none', 'trusted': 'user'})
 
@@ -168,6 +191,10 @@ async def test_local_workspace_path_authority(root: Path, monkeypatch: pytest.Mo
         root, authority='none', path_authority={'~/.config/app': 'operator', 'vendor/ours': 'user'}
     )
     assert capability.path_authority == {str(home / '.config' / 'app'): 'operator', 'vendor/ours': 'user'}
+    # Two spellings of one path keep the lower level, whichever comes first.
+    assert LocalWorkspace(
+        root, path_authority={'~/vendor': 'none', str(home / 'vendor'): 'operator'}
+    ).path_authority == {str(home / 'vendor'): 'none'}
     agent = Agent(TestModel(call_tools=['probe']), capabilities=[capability])
 
     @agent.tool

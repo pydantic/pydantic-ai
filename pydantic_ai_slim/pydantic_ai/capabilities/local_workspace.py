@@ -15,6 +15,7 @@ from pydantic_ai.workspaces import (
     WorkspaceBackend,
     WorkspaceRef,
 )
+from pydantic_ai.workspaces.workspace import merge_path_authority
 
 from .abstract import AbstractCapability
 
@@ -69,7 +70,10 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
         # capability is written, not on the first run.
         self.working_dir = LocalWorkspaceBackend(self.working_dir).ref.id
         if self.path_authority:
-            self.path_authority = {os.path.expanduser(path): level for path, level in self.path_authority.items()}
+            # Two spellings of one path, like `~/x` and `/home/me/x`, keep the lower level.
+            self.path_authority = merge_path_authority(
+                (os.path.expanduser(path), level) for path, level in self.path_authority.items()
+            )
 
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:

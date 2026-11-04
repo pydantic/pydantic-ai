@@ -73,7 +73,7 @@ AuthorityLayer: TypeAlias = tuple[Authority, Mapping[str, Authority]]
 """One wrapper's authority: its level for the workspace's files, and the levels it gives paths, keyed by path."""
 
 
-def _lowest(levels: Iterable[Authority]) -> Authority:
+def lowest_authority(levels: Iterable[Authority]) -> Authority:
     """The lowest of `levels`; `'operator'`, the highest, when there are none."""
     lowest: Authority = 'operator'
     for level in levels:
@@ -82,15 +82,35 @@ def _lowest(levels: Iterable[Authority]) -> Authority:
     return lowest
 
 
+def merge_path_authority(paths: Iterable[tuple[str, Authority]]) -> dict[str, Authority]:
+    """Map each path to its level, keeping the lowest for a path given more than once."""
+    merged: dict[str, Authority] = {}
+    for path, level in paths:
+        merged[path] = lowest_authority((level, merged.get(path, level)))
+    return merged
+
+
 def _is_within(path: str, directory: str) -> bool:
     return path == directory or path.startswith(directory.rstrip('/') + '/')
 
 
-def _layer_authority(location: str, layer: AuthorityLayer) -> Authority:
-    """The level one wrapper gives a location: its longest matching path's, else its own."""
-    level, path_authority = layer
+def _longest_match(location: str, path_authority: Mapping[str, Authority], default: Authority) -> Authority:
     matches = [path for path in path_authority if _is_within(location, path)]
-    return path_authority[max(matches, key=len)] if matches else level
+    return path_authority[max(matches, key=len)] if matches else default
+
+
+def _layer_authority(location: str, layer: AuthorityLayer) -> Authority:
+    """The level one wrapper gives a location: its longest matching path's, else its own.
+
+    Paths also match case-folded, keeping the lower level, so on a case-insensitive filesystem (macOS by
+    default) another spelling of a lower path can't escape it. On a case-sensitive one, this can only lower
+    a level, never raise one.
+    """
+    level, path_authority = layer
+    folded = merge_path_authority((path.casefold(), path_level) for path, path_level in path_authority.items())
+    return lowest_authority(
+        (_longest_match(location, path_authority, level), _longest_match(location.casefold(), folded, level))
+    )
 
 
 class _DamagedOutputError(WorkspaceError):
@@ -424,7 +444,7 @@ class Workspace(WorkspaceBackend):
         other levels for some paths: ask [`authority_of`][pydantic_ai.workspaces.Workspace.authority_of] for a
         given file's.
         """
-        return _lowest(level for level, _ in self._authority_layers())
+        return lowest_authority(level for level, _ in self._authority_layers())
 
     def _authority_layers(self) -> list[AuthorityLayer]:
         """The authority each wrapper sets, innermost first."""
@@ -441,7 +461,8 @@ class Workspace(WorkspaceBackend):
 
         The path is resolved like file methods resolve it, and the level is the lower of where it's written and
         where it leads: a symlink in the workspace takes the lower of its own level and its target's, so a link
-        can't raise its target's level, nor launder a lower one. On a backend whose
+        can't raise its target's level, nor launder a lower one. A link that only another link's target leads
+        through, in a chain of links, isn't seen: `realpath` resolves a chain at once. On a backend whose
         [`realpath`][pydantic_ai.workspaces.Workspace.realpath] can't follow symlinks, only the path as written
         counts.
 
@@ -452,11 +473,11 @@ class Workspace(WorkspaceBackend):
         layers: list[AuthorityLayer] = []
         for level, path_authority in self._authority_layers():
             # Keys resolve against the working directory and through symlinks, as the paths they're compared to do.
-            resolved: dict[str, Authority] = {}
-            for key, key_level in path_authority.items():
-                real_key = await self.realpath(await self.resolve(key, base=root))
-                resolved[real_key] = _lowest((key_level, resolved.get(real_key, key_level)))
-            layers.append((level, resolved))
+            real_keys: list[tuple[str, Authority]] = [
+                (await self.realpath(await self.resolve(key, base=root)), key_level)
+                for key, key_level in path_authority.items()
+            ]
+            layers.append((level, merge_path_authority(real_keys)))
         zones = [root, *(key for _, path_authority in layers for key in path_authority)]
 
         written = await self.resolve(path)
@@ -473,7 +494,7 @@ class Workspace(WorkspaceBackend):
                 parent = await self.realpath(location)
                 if parent != location and any(_is_within(location, zone) for zone in zones):
                     locations.append(location)
-        return _lowest(_layer_authority(location, layer) for location in locations for layer in layers)
+        return lowest_authority(_layer_authority(location, layer) for location in locations for layer in layers)
 
     def durable_policy(self) -> tuple[object, ...]:
         """Configuration a durable unit must rebuild with this wrapper.
