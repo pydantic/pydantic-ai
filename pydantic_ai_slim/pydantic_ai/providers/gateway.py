@@ -246,7 +246,7 @@ def _create_gateway_provider(
 
         # Narrower than the other routes: `anthropic>=1` rejects a legacy client outright, so the
         # route can't fall back to one the way the OpenAI and Google routes still do.
-        if http_client is not None and not _accepts_http_client(canonical, http_client):
+        if not _accepts_http_client(canonical, http_client):
             raise UserError('The Anthropic Gateway route requires an `httpx2.AsyncClient`.')
         assert http_client is None or isinstance(http_client, httpx2.AsyncClient)  # what `_accepts_http_client` allows
 
@@ -262,7 +262,7 @@ def _create_gateway_provider(
             create_http_client=create_async_httpx2_client,
         )
 
-    if http_client is not None and not _accepts_http_client(canonical, http_client):
+    if not _accepts_http_client(canonical, http_client):
         raise UserError('`httpx2.AsyncClient` is only supported for OpenAI, Google and Anthropic Gateway routes.')
     assert not isinstance(http_client, httpx2.AsyncClient)  # what `_accepts_http_client` allows
 
@@ -540,11 +540,7 @@ def _fallback_provider(provider: Provider[Any], upstream_provider: str) -> Provi
             route=config.route,
             api_key=config.api_key,
             base_url=config.base_url,
-            http_client=(
-                config.http_client
-                if config.http_client is not None and _accepts_http_client(canonical, config.http_client)
-                else None
-            ),
+            http_client=config.http_client if _accepts_http_client(canonical, config.http_client) else None,
         )
     return fallback
 
@@ -552,12 +548,14 @@ def _fallback_provider(provider: Provider[Any], upstream_provider: str) -> Provi
 _fallback_providers: weakref.WeakKeyDictionary[Provider[Any], dict[str, Provider[Any]]] = weakref.WeakKeyDictionary()
 
 
-def _accepts_http_client(canonical: str, http_client: AsyncHTTPClient) -> bool:
+def _accepts_http_client(canonical: str, http_client: AsyncHTTPClient | None) -> bool:
     """Whether the route for `canonical` takes `http_client`: the one place each route's client support is decided.
 
     Bedrock goes through botocore, so it takes none; Anthropic takes only an `httpx2.AsyncClient`; the OpenAI and Google
-    routes take either; the rest take only a legacy `httpx.AsyncClient`.
+    routes take either; the rest take only a legacy `httpx.AsyncClient`. Every route works without one.
     """
+    if http_client is None:
+        return True
     if canonical == 'bedrock':
         return False
     if canonical == 'anthropic':
