@@ -546,7 +546,6 @@ The `ImageGenerationTool` supports several configuration parameters:
 ```py {title="image_generation_configured.py"}
 from pydantic_ai import Agent, BinaryImage, ImageGenerationTool
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.native_tools import OpenAIImageGenerationToolSettings
 
 agent = Agent(
     'openai-responses:{{ openai:medium.name }}',
@@ -554,15 +553,15 @@ agent = Agent(
         NativeTool(
             ImageGenerationTool(
                 provider_settings={
-                    'openai': OpenAIImageGenerationToolSettings(
-                        action='generate',
-                        background='transparent',
-                        input_fidelity='high',
-                        model='{{ openai:image.name }}',
-                        moderation='low',
-                        partial_images=3,
-                        quality='high',
-                    )
+                    'openai': {
+                        'action': 'generate',
+                        'background': 'transparent',
+                        'input_fidelity': 'high',
+                        'model': '{{ openai:image.name }}',
+                        'moderation': 'low',
+                        'partial_images': 3,
+                        'quality': 'high',
+                    }
                 },
                 output_compression=100,
                 output_format='png',

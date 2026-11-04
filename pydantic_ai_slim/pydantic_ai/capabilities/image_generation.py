@@ -4,7 +4,7 @@ import warnings
 from collections.abc import Awaitable, Callable, Iterator, Sequence
 from dataclasses import dataclass, replace
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Literal, get_args
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, get_args
 
 from typing_extensions import deprecated
 
@@ -25,6 +25,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import (
     SUPPORTED_NATIVE_TOOLS,
+    AbstractNativeTool,
     ImageAspectRatio,
     ImageGenerationModelName,
     ImageGenerationTool,
@@ -39,6 +40,7 @@ from ._deprecated_fallback_model import check_deprecated_fallback_model
 from .abstract import AbstractCapability
 from .native_or_local import NativeOrLocalTool
 
+_NativeToolT = TypeVar('_NativeToolT', bound=AbstractNativeTool)
 if TYPE_CHECKING:
     from pydantic_ai.common_tools.image_generation import ImageGenerationFallbackModel, ImageGenerationNativeTool
 
@@ -799,6 +801,14 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
 
     def _native_unique_id(self) -> str:
         return ImageGenerationTool.kind
+
+    def _apply_native_overrides(self, tool: _NativeToolT, overrides: dict[str, Any]) -> _NativeToolT:
+        """Also drop overridden options from the tool's `provider_settings`, which would otherwise conflict with them."""
+        if overrides and isinstance(tool, ImageGenerationTool) and tool.provider_settings:
+            if openai := tool.provider_settings.get('openai'):
+                kept = {option: value for option, value in openai.items() if option not in overrides}
+                overrides = {**overrides, 'provider_settings': {**tool.provider_settings, 'openai': kept}}
+        return super()._apply_native_overrides(tool, overrides)
 
     def _resolved_native(self) -> ImageGenerationNativeTool[AgentDepsT]:
         """Get the ImageGenerationTool for the fallback, with capability-level overrides applied."""

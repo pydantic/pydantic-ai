@@ -97,6 +97,8 @@ def _xai_request_search(tool: AbstractNativeTool) -> dict[str, Any]:
     return get_mock_chat_create_kwargs(client)[0]['tools'][0]['collections_search']
 
 
+QUALITY_DEPRECATED = r'`quality` is deprecated .*provider_settings=\{"openai"'
+
 ANTHROPIC_OPTIONS: list[tuple[AbstractNativeTool, str, Any]] = [
     (
         WebSearchTool(provider_settings={'anthropic': {'response_inclusion': 'excluded'}}),
@@ -212,7 +214,9 @@ def test_every_declared_option_is_covered() -> None:
 def test_moved_field_warns_and_sends_the_same_request_as_nested(
     request_tool: Any, tool_type: Any, required: dict[str, Any], system: str, option: str, value: Any
 ) -> None:
-    with pytest.warns(PydanticAIDeprecationWarning, match=rf'`{option}` is deprecated') as warnings:
+    with pytest.warns(
+        PydanticAIDeprecationWarning, match=rf'`{option}` is deprecated .*provider_settings=\{{"{system}"'
+    ) as warnings:
         legacy = tool_type(**required, **{option: value})
     nested = tool_type(**required, provider_settings={system: {option: value}})
 
@@ -241,7 +245,7 @@ def test_moved_field_conflicting_with_nested_value_is_rejected(tool_type: Any, k
 
 
 def test_moved_field_matching_nested_value_only_warns() -> None:
-    with pytest.warns(PydanticAIDeprecationWarning, match='`quality` is deprecated'):
+    with pytest.warns(PydanticAIDeprecationWarning, match=QUALITY_DEPRECATED):
         tool = ImageGenerationTool(quality='high', provider_settings={'openai': {'quality': 'high'}})
 
     assert _openai_request_tool(tool)['quality'] == 'high'
@@ -266,7 +270,7 @@ def test_rebuilding_a_capability_tool_from_data_does_not_warn() -> None:
     ],
 )
 def test_moved_field_in_a_spec_warns(spec: dict[str, Any]) -> None:
-    with pytest.warns(PydanticAIDeprecationWarning, match='`quality` is deprecated'):
+    with pytest.warns(PydanticAIDeprecationWarning, match=QUALITY_DEPRECATED):
         capability = NativeTool.from_spec(**spec)
 
     assert isinstance(capability.tool, ImageGenerationTool)
@@ -274,7 +278,7 @@ def test_moved_field_in_a_spec_warns(spec: dict[str, Any]) -> None:
 
 
 def test_moved_field_on_a_tool_passed_to_a_spec_warns_once() -> None:
-    with pytest.warns(PydanticAIDeprecationWarning, match='`quality` is deprecated') as warnings:
+    with pytest.warns(PydanticAIDeprecationWarning, match=QUALITY_DEPRECATED) as warnings:
         NativeTool.from_spec(tool=ImageGenerationTool(quality='high'))
 
     assert len(warnings) == 1
