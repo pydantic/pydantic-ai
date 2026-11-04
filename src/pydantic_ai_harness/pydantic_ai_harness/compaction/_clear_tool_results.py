@@ -26,8 +26,6 @@ from pydantic_ai_harness.compaction._shared import (
     validate_token_trigger,
 )
 
-_DEFAULT_KEEP_PAIRS = 3
-
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
 
@@ -97,10 +95,11 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
     Only consulted alongside `max_fraction`. Supply the real number for a deployment the
     registry cannot resolve."""
 
-    keep_pairs: int | None = None
+    keep_pairs: int = 3
     """Number of most-recent tool-call / tool-return pairs left untouched.
 
-    `None` keeps 3, unless `keep_turns` is set. Mutually exclusive with `keep_turns`."""
+    `keep_turns` replaces the pair count when set; setting both to a `keep_pairs` other than the
+    default raises a `UserError`."""
 
     placeholder: str | Callable[[ToolReturnPart], str] = '[tool result cleared]'
     """Replacement content for a cleared tool result, or a function that builds it from the result.
@@ -144,19 +143,19 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
     A user turn starts at a request carrying the user's prompt, and runs until the next one. The
     current turn, the one the model is answering, is never cleared, so `0` clears the results of
     every earlier turn. Prompts added by harness capabilities, such as pinned messages and
-    compaction receipts, don't start a turn. Mutually exclusive with `keep_pairs`."""
+    compaction receipts, don't start a turn. Replaces the `keep_pairs` count when set."""
 
     def __post_init__(self) -> None:
         if self.tools is not None and self.exclude_tools:
             raise UserError('Set at most one of tools or exclude_tools.')
-        if self.keep_turns is not None and self.keep_pairs is not None:
+        if self.keep_turns is not None and self.keep_pairs != 3:
             raise UserError('Set at most one of keep_pairs or keep_turns.')
         if self.max_messages is None and self.max_tokens is None and self.max_fraction is None:
             raise ValueError('At least one of max_messages, max_tokens, or max_fraction must be set.')
         if self.max_messages is not None and self.max_messages < 1:
             raise ValueError('max_messages must be positive.')
         validate_token_trigger(self.max_tokens, self.max_fraction, self.fallback_context_window, self.context_window)
-        if self.keep_pairs is not None and self.keep_pairs < 0:
+        if self.keep_pairs < 0:
             raise ValueError('keep_pairs must be non-negative.')
         if self.keep_turns is not None and self.keep_turns < 0:
             raise ValueError('keep_turns must be non-negative.')
@@ -173,8 +172,7 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
         if self.keep_turns is None:
             # Clears by tool call id across the whole history, as it always has.
             pairs = iter_tool_pairs(messages)
-            keep_pairs = _DEFAULT_KEEP_PAIRS if self.keep_pairs is None else self.keep_pairs
-            clearable = pairs[: max(0, len(pairs) - keep_pairs)]
+            clearable = pairs[: max(0, len(pairs) - self.keep_pairs)]
         else:
             # Only the messages before the kept turns are rebuilt, so a tool call id a provider reuses
             # in a kept turn can't reach back into it.

@@ -560,8 +560,9 @@ the last `keep_turns` completed user turns, plus the current one. A user turn st
 carrying the user's prompt and runs until the next one; prompts added by harness capabilities, such as
 pinned messages and compaction receipts, don't start one. The current turn, the one the model is
 answering, is never cleared, so `keep_turns=0` clears every earlier turn's results. A run resumed
-without a new prompt answers the history's last turn, so that turn counts as the current one. Setting
-both `keep_pairs` and `keep_turns` raises a `UserError`.
+without a new prompt answers the history's last turn, so that turn counts as the current one.
+`keep_turns` replaces the pair count when set; passing a `keep_pairs` other than its default of 3
+along with it raises a `UserError`.
 
 `placeholder` also takes a function that receives the `ToolReturnPart` being cleared and returns its
 replacement text. For example, to keep each earlier turn's search results down to their first line,

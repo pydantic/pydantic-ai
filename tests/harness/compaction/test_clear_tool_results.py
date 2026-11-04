@@ -89,7 +89,13 @@ class TestClearToolResultsTargeting:
 
     def test_keep_pairs_and_keep_turns_are_exclusive(self):
         with pytest.raises(UserError, match='Set at most one of keep_pairs or keep_turns'):
-            ClearToolResults(max_tokens=1, keep_pairs=3, keep_turns=1)
+            ClearToolResults(max_tokens=1, keep_pairs=2, keep_turns=1)
+
+    async def test_keep_turns_replaces_the_default_pair_count(self):
+        # An explicit `keep_pairs=3` can't be told apart from the default, so `keep_turns` wins.
+        messages = [*_turn('one', 'a', 'b', 'c', 'd'), _user('two')]
+        cap = ClearToolResults[None](max_tokens=1, keep_pairs=3, keep_turns=0)
+        assert _contents(await cap.compact(messages, _ctx())) == dict.fromkeys('abcd', CLEARED)
 
     def test_negative_keep_turns(self):
         with pytest.raises(ValueError, match='keep_turns must be non-negative'):
