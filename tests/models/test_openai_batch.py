@@ -310,6 +310,20 @@ async def test_batch_group_is_the_credential_the_client_sends(header: str) -> No
         assert await group(tenant_a) == await group(_model(api_key='tenant-a'))
 
 
+async def test_batch_group_does_not_build_platform_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reading `default_headers` spawns `uname -p`; `credential_hash` drops those platform headers anyway."""
+    model = _model(api_key='placeholder')
+
+    def unexpected() -> str:
+        raise AssertionError('batch grouping must not build platform headers')
+
+    monkeypatch.setattr('openai._base_client.get_platform', unexpected)
+    monkeypatch.setattr('openai._base_client.get_architecture', unexpected)
+
+    group = (await model.batch_encode(_request())).group
+    assert json.loads(group)['credential']
+
+
 async def test_batch_group_holds_the_model_but_no_secrets() -> None:
     model = _model(api_key='secret-key', organization='org-secret', default_headers={'X-Tenant': 'tenant-secret'})
     group = (await model.batch_encode(_request())).group

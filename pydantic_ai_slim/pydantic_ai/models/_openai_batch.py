@@ -70,6 +70,11 @@ class _Group(TypedDict):
     model: str
 
 
+# The SDK's constant request headers, which `credential_hash` keeps. They are not read through `default_headers` because
+# that also builds the platform headers, which call `uname -p` synchronously and are dropped by `credential_hash`.
+_OPENAI_STATIC_HEADERS = {'Accept': 'application/json', 'Content-Type': 'application/json'}
+
+
 class _BatchDetails(TypedDict, total=False):
     """What a `Batch` handle records under `provider_details`, so its results can be read without looking it up."""
 
@@ -336,8 +341,13 @@ def _batch_group(model: OpenAIResponsesModel) -> str:
     client = _batch_client(model)
     group: _Group = {
         'endpoint': hashlib.sha256(str(client.base_url).encode()).hexdigest(),
-        # The client sends its API key's header under its default headers, which can replace it.
-        'credential': credential_hash([client.auth_headers, client.default_headers], client.default_query),
+        # The client sends its API key's header under its `auth_headers`, which a custom default header can replace.
+        # The SDK's constant headers keep the hash stable, while the platform headers `default_headers` would add call
+        # `uname -p` synchronously and are dropped by `credential_hash`.
+        'credential': credential_hash(
+            [client.auth_headers, _OPENAI_STATIC_HEADERS, client._custom_headers],  # pyright: ignore[reportPrivateUsage]
+            client.default_query,
+        ),
         # An OpenAI batch runs one model.
         'model': model.model_name,
     }
