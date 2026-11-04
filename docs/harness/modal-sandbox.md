@@ -143,7 +143,7 @@ class UsersModal(AbstractCapability[User]):
         return ModalSandboxBackend(ref=ref, client=ctx.deps.modal_client)
 
 
-agent = Agent('anthropic:claude-opus-5-5', deps_type=User, capabilities=[UsersModal(), Coder()])
+agent = Agent('{{ anthropic:large }}', deps_type=User, capabilities=[UsersModal(), Coder()])
 ```
 
 Building a Modal client opens a connection, so build it ahead of the run rather than in `get_workspace`, which must not do I/O. Under [Temporal](../durable_execution/temporal.md), `deps` are serialized for every activity, so a client can't be on them: put a user ID there instead, and have `get_workspace` look that user's client up on the worker.
