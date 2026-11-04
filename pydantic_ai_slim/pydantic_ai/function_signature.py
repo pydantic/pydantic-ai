@@ -1014,6 +1014,7 @@ def _with_nested_types(types: Iterable[TypeSignature]) -> list[TypeSignature]:
 
 def _union_of(members: list[TypeExpr]) -> TypeExpr:
     """A union without repeats, or its one member if that's all that's left. A type only repeats as the same object."""
+    # Each type stands for itself, so `_expr_key` compares types by identity here.
     classes: dict[int, object] = {id(t): id(t) for member in members for t in _types_in(member)}
     unique = list({_expr_key(member, classes): member for member in members}.values())
     return unique[0] if len(unique) == 1 else UnionTypeExpr(members=unique)
