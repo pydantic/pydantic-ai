@@ -272,10 +272,12 @@ class FunctionParam:
 
     def __str__(self) -> str:
         """Render this parameter as a function parameter string."""
-        type_str = str(self.type)
-        if self.default is not None:
-            return f'{self.name}: {type_str} = {self.default}'
-        return f'{self.name}: {type_str}'
+        return f'{self.name}: {_type_and_default(self)}'
+
+
+def _type_and_default(param: FunctionParam) -> str:
+    """The part of a parameter after its name, in either form of signature."""
+    return f'{param.type} = {param.default}' if param.default is not None else str(param.type)
 
 
 @dataclass(kw_only=True)
@@ -358,7 +360,7 @@ class FunctionSignature:
             description_lines = (param.description or '').strip().splitlines()
             if not writable_params:
                 # With no parameter list to show them, the type and default go here.
-                description_lines = [str(param).removeprefix(f'{param.name}: '), *description_lines]
+                description_lines = [_type_and_default(param), *description_lines]
             if not description_lines:
                 continue
             first_line, *continuation = description_lines
