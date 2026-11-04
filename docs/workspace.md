@@ -423,7 +423,7 @@ DBOS and Prefect. Attach them next to the workspace and the durability capabilit
 conversation from `message_history`, in a new workflow or flow, works in the
 [same environment](#continuing-in-the-same-workspace).
 
-`Shell` and `FileSystem` also work under [Azure Durable Task](harness/azure-durable-task.md)
+`FileSystem` and the `Shell` tool named `shell` also work under [Azure Durable Task](harness/azure-durable-task.md)
 and [Render Workflows](harness/render-workflows.md). There, the `FileSystem` write tools run in the
 orchestrator or parent task, so file-change requests reach listeners live. On Azure, events from the
 other tools are dropped and listeners re-run on every orchestrator replay; on Render, those events are

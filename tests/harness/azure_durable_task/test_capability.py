@@ -28,6 +28,7 @@ from pydantic_ai.capabilities import (
     BatchModelRequests,
     Instrumentation,
     LocalWorkspace,
+    SetToolMetadata,
     durable_operation,
 )
 from pydantic_ai.durable_exec import (
@@ -233,6 +234,22 @@ class TestAzureDurableTaskDurability:
         # The orchestrator, and so its listeners, re-run on every replay.
         assert set(requests) == {'write', 'edit'}
         assert (tmp_path / 'note.txt').read_text() == content
+
+    def test_file_change_in_an_activity_fails_closed(self, durable_worker: InMemoryWorker, tmp_path: Path) -> None:
+        agent = Agent(
+            scripted_model([('write_file', {'path': 'note.txt', 'content': 'changed'})]),
+            name='coder',
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                FileSystem(),
+                SetToolMetadata(tools=['write_file'], azure_durable_task=None),
+                AzureDurableTaskDurability(),
+            ],
+        )
+        with registered_agent(durable_worker, agent):
+            with pytest.raises(OrchestrationFailedError, match='cannot ask listeners about a change'):
+                run_agent(durable_worker, agent, deps=None)
+        assert not (tmp_path / 'note.txt').exists()
 
     @pytest.mark.parametrize('same_agent', [False, True])
     def test_multiple_runs_have_distinct_replay_stable_ids(
