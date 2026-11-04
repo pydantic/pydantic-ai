@@ -4439,10 +4439,13 @@ def _lower_authority(a: Authority, b: Authority) -> Authority:
     return a if _AUTHORITY_RANK[a] <= _AUTHORITY_RANK[b] else b
 
 
-def _workspace_is_trusted(workspace: Workspace) -> bool:
-    """Whether the operator controls `workspace`'s files."""
-    # TODO(#11836): read `workspace.trusted` directly once `Workspace.trusted` lands; until then every workspace is.
-    return getattr(workspace, 'trusted', True) is not False
+def _workspace_authority(workspace: Workspace, path: str) -> Authority:
+    """The [authority][pydantic_ai.messages.Authority] of the file at `path` in `workspace`.
+
+    A workspace reports one authority for all its files, [`Workspace.authority`][pydantic_ai.workspaces.Workspace.authority],
+    so `path` doesn't change it yet; it's taken so that a workspace can report it per file.
+    """
+    return workspace.authority
 
 
 class OperatorText(str):
@@ -4465,10 +4468,11 @@ class OperatorText(str):
     async def from_workspace(cls, workspace: Workspace, path: str) -> Self:
         """Read the text file at `path` in `workspace` as operator text.
 
-        In a workspace whose files the operator doesn't control, such as a cloned third-party repository, the text has
-        no authority: a part holding it is downgraded to data, as its source were
-        [`WorkspaceSource.from_workspace(workspace, path)`][pydantic_ai.messages.WorkspaceSource.from_workspace].
-        Workspaces don't report that yet (#11836), so for now every workspace counts as controlled by the operator.
+        The text has no more authority than the workspace's files
+        ([`Workspace.authority`][pydantic_ai.workspaces.Workspace.authority]): a part holding it is downgraded as if its
+        source were [`WorkspaceSource.from_workspace(workspace, path)`][pydantic_ai.messages.WorkspaceSource.from_workspace],
+        to the user's turn for the user's files and to data for files nobody on the application's side wrote, such as a
+        cloned third-party repository.
         """
         text = cls(await workspace.read_text(path))
         text._source = WorkspaceSource.from_workspace(workspace, path)
@@ -4500,16 +4504,17 @@ class WorkspaceSource:
     """A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] whose content was read from a file in a workspace.
 
     Built only with [`from_workspace`][pydantic_ai.messages.WorkspaceSource.from_workspace], which asks the workspace
-    whether the operator controls its files: there's no constructor to state its authority yourself.
+    for the [authority][pydantic_ai.workspaces.Workspace.authority] of its files: there's no constructor to state it
+    yourself.
     """
 
     path: str
     """The path the content was read from."""
 
     authority: Authority
-    """`'operator'` when the operator controlled the workspace's files when the content was read, else `'none'`.
+    """The [authority][pydantic_ai.workspaces.Workspace.authority] of the workspace's files when the content was read.
 
-    Stored with the part, so a workspace that becomes untrusted later doesn't change parts already in the history.
+    Stored with the part, so a workspace whose authority changes later doesn't change parts already in the history.
     """
 
     source_kind: Literal['workspace'] = 'workspace'
@@ -4520,14 +4525,15 @@ class WorkspaceSource:
 
     @classmethod
     def from_workspace(cls, workspace: Workspace, path: str) -> WorkspaceSource:
-        """The source for content read from `path` in `workspace`: `'operator'` authority when the operator controls its files, else `'none'`.
+        """The source for content read from `path` in `workspace`, with the authority of the workspace's files.
 
-        Workspaces don't report that yet (#11836), so for now every workspace counts as controlled by the operator.
+        That's [`workspace.authority`][pydantic_ai.workspaces.Workspace.authority]: `'operator'` unless an
+        [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace] lowers it.
         """
         source = cls.__new__(cls)
         # Frozen, and with no generated `__init__`, so the fields are set the way a frozen dataclass sets them.
         object.__setattr__(source, 'path', path)
-        object.__setattr__(source, 'authority', 'operator' if _workspace_is_trusted(workspace) else 'none')
+        object.__setattr__(source, 'authority', _workspace_authority(workspace, path))
         object.__setattr__(source, 'source_kind', 'workspace')
         return source
 
@@ -4624,11 +4630,11 @@ CapabilityPartSource = Annotated[
 ]
 """Where a [`CapabilityPart`][pydantic_ai.messages.CapabilityPart]'s content came from, which gives it its [`Authority`][pydantic_ai.messages.Authority].
 
-An [`OperatorSource`][pydantic_ai.messages.OperatorSource], and a [`WorkspaceSource`][pydantic_ai.messages.WorkspaceSource]
-from a workspace the operator controls, have `'operator'` authority, a [`UserSource`][pydantic_ai.messages.UserSource]
-has `'user'`, and a [`ToolResultSource`][pydantic_ai.messages.ToolResultSource],
-[`ModelSource`][pydantic_ai.messages.ModelSource] or any other `WorkspaceSource` has `'none'`. A
-[`CapabilitySource`][pydantic_ai.messages.CapabilitySource] has its capability's authority ceiling.
+An [`OperatorSource`][pydantic_ai.messages.OperatorSource] has `'operator'` authority, a
+[`UserSource`][pydantic_ai.messages.UserSource] `'user'`, and a [`ToolResultSource`][pydantic_ai.messages.ToolResultSource]
+or [`ModelSource`][pydantic_ai.messages.ModelSource] `'none'`. A [`WorkspaceSource`][pydantic_ai.messages.WorkspaceSource]
+has its workspace's [authority][pydantic_ai.workspaces.Workspace.authority], and a
+[`CapabilitySource`][pydantic_ai.messages.CapabilitySource] its capability's authority ceiling.
 """
 
 

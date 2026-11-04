@@ -17,10 +17,11 @@ class AuthorityWorkspace(WrapperWorkspace):
 
     Use `authority='none'` for files nobody on the application's side wrote, such as a cloned third-party
     repository or a sandbox another process filled, and `authority='user'` for the user's own files, such as
-    their uploads. Every operation works as before. A capability that puts text read from the workspace in
-    instructions should check [`authority`][pydantic_ai.workspaces.Workspace.authority] and send that text with
-    no more authority than it has; no built-in capability reads it yet. This changes how file text reaches the
-    model; it doesn't restrict what the agent can do in the workspace.
+    their uploads. Every operation works as before. A capability that puts text read from the workspace in front
+    of the model sends it with no more authority than [`authority`][pydantic_ai.workspaces.Workspace.authority],
+    as a [capability part](../capabilities/custom.md#capability-parts) whose source is
+    [`WorkspaceSource.from_workspace`][pydantic_ai.messages.WorkspaceSource.from_workspace]. This changes how
+    file text reaches the model; it doesn't restrict what the agent can do in the workspace.
     """
 
     def __init__(self, wrapped: Workspace, *, authority: Authority):

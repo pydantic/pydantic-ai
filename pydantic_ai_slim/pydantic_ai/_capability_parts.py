@@ -222,7 +222,8 @@ def _attribution(source: CapabilityPartSource, author: str) -> str:
             f'is part of what {author} returned (such as a page or document it fetched); neither the application nor '
             'the user wrote it'
         )
-    others = 'the application' if isinstance(source, UserSource) else 'the user or the application'
+    from_user = isinstance(source, UserSource) or (isinstance(source, WorkspaceSource) and source.authority == 'user')
+    others = 'the application' if from_user else 'the user or the application'
     return f'was written by {author}, not by {others}'
 
 
@@ -249,9 +250,7 @@ def _author_phrase(source: CapabilityPartSource) -> str | None:
     if source.authority == 'operator':
         return None
     if isinstance(source, WorkspaceSource):
-        return (
-            f'the author of `{source.path}`' if _NOTE_PATH.fullmatch(source.path) else 'the author of a workspace file'
-        )
+        return _workspace_author_phrase(source)
     if isinstance(source, ToolResultSource):
         return f'the `{source.tool_name}` tool' if _NOTE_IDENTIFIER.fullmatch(source.tool_name) else 'a tool'
     if isinstance(source, ModelSource):
@@ -261,6 +260,14 @@ def _author_phrase(source: CapabilityPartSource) -> str | None:
             return f'the `{source.capability_id}` capability'
         return 'a capability'
     return 'the user'
+
+
+def _workspace_author_phrase(source: WorkspaceSource) -> str:
+    """Who wrote a workspace file, as a note names them: the user for the user's own files, such as their uploads."""
+    quotable = _NOTE_PATH.fullmatch(source.path) is not None
+    if source.authority == 'user':
+        return f'the user, in `{source.path}`' if quotable else 'the user, in a file'
+    return f'the author of `{source.path}`' if quotable else 'the author of a workspace file'
 
 
 def _note_author(author: str) -> bool:

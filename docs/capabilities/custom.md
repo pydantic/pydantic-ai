@@ -432,7 +432,7 @@ Every part has a [`source`][pydantic_ai.messages.CapabilityPart.source], which s
 | Source | Authority |
 |---|---|
 | [`OperatorSource()`][pydantic_ai.messages.OperatorSource]: your code or your configuration wrote it | `'operator'` |
-| [`WorkspaceSource.from_workspace(workspace, path)`][pydantic_ai.messages.WorkspaceSource.from_workspace]: read from a file in a workspace, which it asks whether the operator controls its files; there's no other way to build one | `'operator'` when the operator controls the workspace's files, which the workspace reports (#11836), and `'none'` otherwise; until workspaces report it, every workspace counts as the operator's |
+| [`WorkspaceSource.from_workspace(workspace, path)`][pydantic_ai.messages.WorkspaceSource.from_workspace]: read from a file in a workspace, which it asks for the authority of its files; there's no other way to build one | The workspace's [`authority`][pydantic_ai.workspaces.Workspace.authority]: `'operator'` unless an [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace] lowers it, such as to `'user'` for the user's uploads or `'none'` for a cloned third-party repository |
 | [`UserSource()`][pydantic_ai.messages.UserSource]: the user wrote it, such as a prompt they saved earlier | `'user'` |
 | [`ToolResultSource(tool_name=...)`][pydantic_ai.messages.ToolResultSource]: a tool's output | `'none'` |
 | [`ModelSource(author)`][pydantic_ai.messages.ModelSource]: a model wrote it, such as a judge or a sub-agent, which `author` names | `'none'` |
