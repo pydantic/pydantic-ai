@@ -1315,6 +1315,22 @@ class TestEndToEnd:
             await agent.run('go')
         assert not (tmp_path / 'ran').exists()
 
+    async def test_refuses_a_store_directory_that_climbs_out_of_a_link_into_a_lower_path(self, tmp_path: Path) -> None:
+        # `link/../store` is `<tmp_path>/store` as text, but `vendor/store` to the filesystem, where the code runs.
+        (tmp_path / 'vendor' / 'subdir').mkdir(parents=True)
+        (tmp_path / 'link').symlink_to(tmp_path / 'vendor' / 'subdir')
+        agent = Agent(
+            _authoring_model(tmp_path),
+            capabilities=[
+                LocalWorkspace(tmp_path, path_authority={'vendor': 'none'}),
+                CapabilityCreation(Path(f'{tmp_path}/link/../store')),
+            ],
+        )
+        with pytest.raises(UserError, match="has `'none'` authority"):
+            await agent.run('go')
+        assert not (tmp_path / 'vendor' / 'store').exists()
+        assert not (tmp_path / 'ran').exists()
+
     async def test_relative_store_directory_resolves_against_the_process_directory(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

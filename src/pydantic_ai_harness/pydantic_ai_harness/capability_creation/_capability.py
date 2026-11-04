@@ -130,15 +130,17 @@ class CapabilityCreation(AbstractCapability[AgentDepsT]):
                 "the run's workspace is this machine and writable. Attach a writable `LocalWorkspace('.')`, not "
                 'a sandbox or a read-only workspace.'
             )
-        directory = await self._absolute_directory()
-        authority = await workspace.authority_of(directory)
-        if authority != 'operator':
-            raise UserError(
-                f"`CapabilityCreation` runs the code in its `directory` as the operator's, but {directory!r} has "
-                f"`'{authority}'` authority in the run's workspace. Point `directory` at a location that holds only "
-                "operator-written code and give it `'operator'` authority with `path_authority`, which a directory "
-                "outside the workspace's working directory needs too."
-            )
+        written = await self._absolute_directory()
+        # `authority_of` collapses `..` as text, while the store's file operations climb from a link's target.
+        for directory in dict.fromkeys((written, await workspace.realpath(written))):
+            authority = await workspace.authority_of(directory)
+            if authority != 'operator':
+                raise UserError(
+                    f"`CapabilityCreation` runs the code in its `directory` as the operator's, but {directory!r} has "
+                    f"`'{authority}'` authority in the run's workspace. Point `directory` at a location that holds "
+                    "only operator-written code and give it `'operator'` authority with `path_authority`, which a "
+                    "directory outside the workspace's working directory needs too."
+                )
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Static, cache-stable guidance on the authoring tools."""
