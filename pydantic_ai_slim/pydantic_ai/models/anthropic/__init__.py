@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from functools import cached_property
 from itertools import chain
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, TypeVar, assert_never, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, assert_never, cast, overload
 
 from typing_extensions import TypedDict
 
@@ -114,6 +114,7 @@ from .. import (
 )
 from .._anthropic_schema_limits import default_output_mode_within_limits, limit_exceeded_error, model_exceeded_limit
 from .._decode_errors import check_json_response, map_decode_errors
+from .._history_digest import Hasher, continuation_digest, history_hasher
 from .._prompt_cache import (
     excess_cache_points,
     instruction_cache_boundaries,
@@ -375,6 +376,9 @@ __all__ = (
     'code_execution_tool_result_content_ta',
     'text_editor_code_execution_tool_result_content_ta',
     'web_search_tool_result_content_ta',
+    'BaseToolReturnPart',
+    'ModelMessagesTypeAdapter',
+    'ModelRequestPart',
 )
 
 # Fast mode is not available on any Bedrock transport, so it goes in `_FAST_MODE_UNSUPPORTED_CLIENTS`.
@@ -657,8 +661,9 @@ class AnthropicModelSettings(ModelSettings, total=False):
     continues from it only when its own fingerprint matches, so changing the instructions, tools or another fixed
     field starts a new thread. So does a response from another model, a refusal, or an expired thread, which
     Anthropic reports when the continue request fails, and the full conversation is then sent again. The
-    fingerprint also covers the history the response was created from, so a history processor that trims or
-    redacts it starts a new thread instead of continuing from the unchanged copy Anthropic holds. A request
+    response also records its [`history_digest`][pydantic_ai.messages.ModelResponse.history_digest], covering
+    its parts and the history it was created from, so a history processor that trims or redacts either starts a
+    new thread instead of continuing from the unchanged copy Anthropic holds. A request
     using something threads don't support, like context management, is sent without a thread.
 
     Threads aren't eligible for Zero Data Retention. Defaults to `False`.
@@ -953,44 +958,6 @@ def _thread_fingerprint(params: _MessageCreateParams, betas: set[str]) -> str:
     return hashlib.sha256(serialized.encode()).hexdigest()
 
 
-def _thread_key(fingerprint: str, history: Sequence[ModelMessage]) -> str:
-    """What a response records to be continued from: the thread's fingerprint and the history it was created from.
-
-    The thread holds that history as it was sent, so if a history processor or the application changed it since,
-    the key no longer matches and a new thread is started with the history as it is now.
-    This digests the whole history once per request, which costs about as much as mapping it. Edits to the response
-    itself aren't caught, as only the history before it is digested; its parts can be added once a response can be
-    digested as sent (see `history_digest` in `openai.py`).
-    """
-    hasher = hashlib.sha256(fingerprint.encode())
-    hasher.update(ModelMessagesTypeAdapter.dump_json([_as_sent(m) for m in history], exclude_none=True))
-    return hasher.hexdigest()
-
-
-def _as_sent(message: ModelMessage) -> ModelMessage:
-    """`message` without the application-only `metadata` fields, which are never sent and may not serialize to JSON.
-
-    A request's `instructions` are left out too: the fingerprint's `system` covers them.
-    This mirrors `_without_application_metadata` in `openai.py`; the two could share one helper.
-    """
-    if isinstance(message, ModelRequest):
-        parts = [_part_as_sent(part) for part in message.parts]
-        return replace(message, parts=parts, metadata=None, instructions=None)
-    return replace(message, parts=[_part_as_sent(part) for part in message.parts], metadata=None)
-
-
-_PartT = TypeVar('_PartT', ModelRequestPart, ModelResponsePart)
-
-
-def _part_as_sent(part: _PartT) -> _PartT:
-    if isinstance(part, BaseToolReturnPart):
-        return replace(part, metadata=None)
-    if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
-        content = [replace(item, metadata=None) if isinstance(item, TextContent) else item for item in part.content]
-        return replace(part, content=content)
-    return part
-
-
 @dataclass(kw_only=True)
 class _Thread:
     """The `thread` of one request: a create request, or a continue request with only the new messages."""
@@ -1021,22 +988,41 @@ def _with_thread(
 
 @dataclass
 class _ThreadRecord:
-    """Set by `_messages_create` to the fingerprint of the thread its request was sent in, if any."""
+    """Set by `_messages_create` when its request was sent in a thread: the thread's fingerprint and the history.
+
+    The response is stamped with both: the fingerprint in its `provider_details`, and the digest of the history
+    with the response's own parts as its `history_digest`.
+    """
 
     fingerprint: str | None = None
+    history: Hasher | None = None
+
+    def stamp(self, response: ModelResponse) -> ModelResponse:
+        """`response` with its thread recorded, if its request was sent in one."""
+        if self.fingerprint is None or self.history is None:
+            return response
+        details = {**(response.provider_details or {}), _THREAD_FINGERPRINT_KEY: self.fingerprint}
+        return replace(
+            response, provider_details=details, history_digest=continuation_digest(self.history, response.parts)
+        )
 
 
 _THREAD_FINGERPRINT_KEY = 'thread_fingerprint'
 
 
 def _thread_continuation(
-    model: AnthropicModel, messages: list[ModelMessage], fingerprint: str
+    model: AnthropicModel, messages: list[ModelMessage], fingerprint: str, history_digest_key: bytes | None
 ) -> tuple[str, list[ModelMessage]] | None:
     """The response ID to continue a thread from, and the messages after it, if the latest response allows it.
 
     Only the most recent response counts, as each response ID can be continued once: a later response from
     another model (say, through `FallbackModel`) wasn't stored in the thread. A refusal isn't continued, and
     neither is a paused turn, which pydantic-ai resumes by sending it back.
+
+    The thread holds the response and the history before it as they were sent, so if a history processor or the
+    application has changed either since (trimmed, redacted or rewritten them), the digest no longer matches and a
+    new thread is started with the history as it is now. A response with no digest isn't continued: unlike
+    `OpenAIResponsesModel`, there are no responses from before digests were recorded to stay compatible with.
     """
     for index in range(len(messages) - 1, -1, -1):
         response = messages[index]
@@ -1047,7 +1033,10 @@ def _thread_continuation(
         if (
             model.accepts_server_state(response)
             and response.provider_response_id
-            and details.get(_THREAD_FINGERPRINT_KEY) == _thread_key(fingerprint, messages[:index])
+            and details.get(_THREAD_FINGERPRINT_KEY) == fingerprint
+            and response.history_digest is not None
+            and response.history_digest
+            == continuation_digest(history_hasher(messages[:index], history_digest_key), response.parts)
             and response.finish_reason != 'content_filter'
             and response.state == 'complete'
             and new_messages
@@ -1127,6 +1116,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     _model_name: AnthropicModelName = field(repr=False)
     _provider: Provider[AsyncAnthropicClient] = field(repr=False)
+    _history_digest_key: bytes | None = field(default=None, repr=False)
 
     def __init__(
         self,
@@ -1135,6 +1125,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         provider: Literal['anthropic', 'gateway'] | Provider[AsyncAnthropicClient] = 'anthropic',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
+        history_digest_key: bytes | None = None,
     ):
         """Initialize an Anthropic model.
 
@@ -1146,8 +1137,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
                 The default 'anthropic' provider will use the default `..profiles.anthropic.anthropic_model_profile`.
             settings: Default model settings for this model instance.
+            history_digest_key: A secret to key each thread response's
+                [`history_digest`][pydantic_ai.messages.ModelResponse.history_digest] with (an HMAC-SHA256), so
+                stored history can't be used to test guesses at content redacted from it later. Every model
+                continuing the same conversations needs the same key; a response recorded with another key, or
+                none, starts a new thread rather than being continued.
         """
         self._model_name = model_name
+        self._history_digest_key = history_digest_key
 
         if isinstance(provider, str):
             provider = infer_provider('gateway/anthropic' if provider == 'gateway' else provider)
@@ -1387,11 +1384,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             messages, False, model_settings, model_request_parameters, thread_record=thread_record
         )
         model_response = await self._finish_response(response, messages, model_settings, model_request_parameters)
-        if thread_record.fingerprint is not None:
-            model_response.provider_details = {
-                **(model_response.provider_details or {}),
-                _THREAD_FINGERPRINT_KEY: thread_record.fingerprint,
-            }
+        model_response = thread_record.stamp(model_response)
         mark_continuation_context_input_tokens(messages, model_response)
         return model_response
 
@@ -1528,9 +1521,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             streamed_response = await self._process_streamed_response(
                 response, model_request_parameters, model_settings, fetched_pages_from_history(messages)
             )
-            if thread_record.fingerprint is not None:
-                # The stream only adds keys to `provider_details`, so this survives it.
-                streamed_response.provider_details = {_THREAD_FINGERPRINT_KEY: thread_record.fingerprint}
+            # Stamped in `get()`, once the response's parts are known.
+            streamed_response._stamp_thread = thread_record.stamp  # pyright: ignore[reportPrivateUsage]
             yield streamed_response
             mark_continuation_context_input_tokens(messages, streamed_response)
 
@@ -1864,11 +1856,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return await create(*initial)
         params = self._messages_create_params(messages, model_settings, prepared, *initial[:2], initial[3])
         fingerprint = _thread_fingerprint(params, prepared.initial_betas | {MESSAGE_THREADS_BETA})
-        if continuation := _thread_continuation(self, messages, fingerprint):
+        if continuation := _thread_continuation(self, messages, fingerprint, self._history_digest_key):
             previous_message_id, new_messages = continuation
             # This maps the new messages a second time. A slice of `prepared.anthropic_messages` would avoid that
-            # once the mapping can say where each history message starts.
-            new_prepared = await self._prepare_messages_create(new_messages, model_settings, model_request_parameters)
+            # once the mapping can say where each history message starts. `continues_thread` keeps their
+            # `SystemPromptPart`s where the full mapping puts them: none of them opens the conversation, so none is
+            # hoisted into `system`, which a continue request doesn't send.
+            new_prepared = await self._prepare_messages_create(
+                new_messages, model_settings, model_request_parameters, continues_thread=True
+            )
             try:
                 response = await create(
                     *initial,
@@ -1878,7 +1874,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 if not is_thread_replay_error(error):
                     raise
             else:
-                thread_record.fingerprint = _thread_key(fingerprint, messages)
+                thread_record.fingerprint = fingerprint
+                thread_record.history = history_hasher(messages, self._history_digest_key)
                 return response
         try:
             response = await create(*initial, _Thread())
@@ -1887,7 +1884,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 raise
             # The request uses something threads don't support, like context management: send it without one.
             return await create(*initial)
-        thread_record.fingerprint = _thread_key(fingerprint, messages)
+        thread_record.fingerprint = fingerprint
+        thread_record.history = history_hasher(messages, self._history_digest_key)
         return response
 
     def _messages_create_params(
@@ -1929,6 +1927,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_request_parameters: ModelRequestParameters,
         *,
         compaction: BetaCompactionConfigParam | None = None,
+        continues_thread: bool = False,
     ) -> _PreparedMessagesCreate:
         model_request_parameters = self._declare_newcomers_left_alone(model_settings, model_request_parameters)
         # Native search remains in the stable segment when a reveal lands. Revealed non-corpus deferred
@@ -1947,7 +1946,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
 
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
-        system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
+        system_prompt, anthropic_messages = await self._map_message(
+            messages, model_request_parameters, model_settings, continues_thread=continues_thread
+        )
         request_scoped_texts = _request_scoped_tail_texts(messages)
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages, request_scoped_texts)
         self._apply_explicit_message_caching(model_settings, anthropic_messages, request_scoped_texts)
@@ -2894,8 +2895,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters,
         model_settings: AnthropicModelSettings,
+        *,
+        continues_thread: bool = False,
     ) -> tuple[str | list[BetaTextBlockParam], list[BetaMessageParam]]:
-        """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
+        """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`.
+
+        With `continues_thread`, `messages` are the new messages of a thread continue request, which follow the
+        thread's history, so their first request doesn't open the conversation and its system prompts aren't
+        hoisted into the top-level `system`.
+        """
         messages = self._trim_before_compaction(messages)
         map_context = _MapMessagesContext(
             model_request_parameters=model_request_parameters,
@@ -2943,7 +2951,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             declared_tool_names=set(self._tool_choice_declarations(model_settings, model_request_parameters)[0]),
             tool_defs_by_name={tool.name: tool for tool in model_request_parameters.function_tools},
         )
-        leading_request = next((m for m in messages if isinstance(m, ModelRequest)), None)
+        leading_request = None if continues_thread else next((m for m in messages if isinstance(m, ModelRequest)), None)
         for m in messages:
             if isinstance(m, ModelRequest):
                 standing_prompt_count = _standing_system_prompt_count(m) if m is leading_request else 0

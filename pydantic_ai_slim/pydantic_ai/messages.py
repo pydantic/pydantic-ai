@@ -4691,7 +4691,9 @@ class ModelResponse:
 
     Set by models that continue server-side state, such as
     [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] with
-    [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id],
+    [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id]
+    and [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] with
+    [`anthropic_thread`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_thread],
     so a later request continues from this response only while it and the messages before it are unchanged.
     The `metadata` fields on messages, tool return parts and user prompt `TextContent` are never sent to
     the model, so they're left out, and changing them doesn't count as a change. A request's `instructions`

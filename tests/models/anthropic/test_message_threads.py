@@ -24,11 +24,13 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     NativeToolReturnPart,
+    SystemPromptPart,
     TextContent,
     TextPart,
     ToolReturn,
     UserPromptPart,
 )
+from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.exceptions import ModelHTTPError
 
 from ...conftest import try_import
@@ -36,6 +38,7 @@ from ...conftest import try_import
 with try_import() as imports_successful:
     from anthropic import AsyncAnthropic
 
+    from pydantic_ai.models._history_digest import continuation_digest, history_hasher
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
@@ -91,10 +94,13 @@ class _Api:
 
 
 @asynccontextmanager
-async def _model(api: _Api) -> AsyncGenerator[AnthropicModel]:
+async def _model(
+    api: _Api, model_name: str = 'claude-sonnet-4-5', history_digest_key: bytes | None = None
+) -> AsyncGenerator[AnthropicModel]:
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(api.handle)) as http_client:
         client = AsyncAnthropic(api_key='x', http_client=http_client)
-        yield AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
+        provider = AnthropicProvider(anthropic_client=client)
+        yield AnthropicModel(model_name, provider=provider, history_digest_key=history_digest_key)
 
 
 def _thread_error(status: int, error_code: str) -> httpx2.Response:
@@ -390,13 +396,72 @@ def test_response_part_metadata_is_not_digested():
 
     A unit test, as a native tool return with application metadata needs a server tool turn to reach the history.
     """
-    from pydantic_ai.models.anthropic import _thread_key  # pyright: ignore[reportPrivateUsage]
-
     part = NativeToolReturnPart(tool_name='web_search', content='ok', provider_name='anthropic')
     request = ModelRequest.user_text_prompt('Hi')
-    response = ModelResponse(parts=[part], provider_name='anthropic')
 
-    def history(metadata: dict[str, Any] | None) -> list[ModelMessage]:
-        return [request, replace(response, parts=[replace(part, metadata=metadata)])]
+    def digest(metadata: dict[str, Any] | None) -> str:
+        return continuation_digest(history_hasher([request], None), [replace(part, metadata=metadata)])
 
-    assert _thread_key('f', history({'handle': object()})) == _thread_key('f', history(None))
+    assert digest({'handle': object()}) == digest(None)
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_edited_response_starts_a_new_thread(allow_model_requests: None, stream: bool):
+    """The thread holds the response as it was sent too, so after redacting it the next request creates a thread.
+
+    Continuing would leave the model reading Anthropic's unredacted copy and never seeing the edit.
+    """
+    api = _Api(stream=stream, replies=[{'type': 'text', 'text': 'Your PIN is 4321'}])
+    async with _model(api) as model:
+        agent = Agent(model, model_settings=_SETTINGS)
+        first = await _run(agent, 'What is my PIN?', [], stream)
+        response = first[-1]
+        assert isinstance(response, ModelResponse) and response.history_digest is not None
+        redacted = [*first[:-1], replace(response, parts=[TextPart('Your PIN is [redacted]')])]
+        await _run(agent, 'Again', redacted, stream)
+
+    assert api.bodies[1]['thread'] == {'type': 'create'}
+    assert _user_texts(api.bodies[1]) == ['What is my PIN?', 'Your PIN is [redacted]', 'Again']
+
+
+async def test_new_system_prompt_is_sent_on_continue(allow_model_requests: None):
+    """A system prompt added in the new messages goes out with them on a continue request.
+
+    Mapped on their own, the new messages' first request looked like the conversation's opening one, so its
+    system prompt was hoisted into `system`, which a continue request leaves out.
+    """
+
+    def add_restriction(messages: list[ModelMessage]) -> list[ModelMessage]:
+        last = messages[-1]
+        if len(messages) > 1 and isinstance(last, ModelRequest):
+            messages[-1] = replace(last, parts=[SystemPromptPart('Never repeat the PIN.'), *last.parts])
+        return messages
+
+    api = _Api()
+    async with _model(api, 'claude-opus-4-8') as model:
+        first = await Agent(model, model_settings=_SETTINGS).run('Hi')
+        agent = Agent(model, model_settings=_SETTINGS, capabilities=[ProcessHistory(add_restriction)])
+        await agent.run('Again', message_history=first.all_messages())
+
+    cont = api.bodies[1]
+    assert cont['thread']['type'] == 'continue'
+    assert 'system' not in cont
+    assert 'Never repeat the PIN.' in json.dumps(cont['messages'])
+
+
+async def test_history_digest_key(allow_model_requests: None):
+    """With `history_digest_key` the digest is an HMAC, and a response recorded under another key isn't continued."""
+    api = _Api()
+    async with _model(api, history_digest_key=b'one') as model:
+        agent = Agent(model, model_settings=_SETTINGS)
+        first = (await agent.run('Hi')).all_messages()
+        await agent.run('Again', message_history=first)
+    async with _model(api, history_digest_key=b'two') as model:
+        await Agent(model, model_settings=_SETTINGS).run('Again', message_history=first)
+    async with _model(api) as model:
+        plain = (await Agent(model, model_settings=_SETTINGS).run('Hi')).all_messages()
+
+    assert [body['thread']['type'] for body in api.bodies] == ['create', 'continue', 'create', 'create']
+    keyed, unkeyed = first[-1], plain[-1]
+    assert isinstance(keyed, ModelResponse) and isinstance(unkeyed, ModelResponse)
+    assert keyed.history_digest != unkeyed.history_digest
