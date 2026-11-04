@@ -4361,6 +4361,19 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace._ensure"
       ]
     },
+    "_JOURNAL_CONTEXT": {
+      "engines": [
+        "durable_exec",
+        "temporal"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_codec.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_payload_converter.py::<module>"
+      ]
+    },
     "_RecordsContentFiles": {
       "engines": [
         "durable_exec"

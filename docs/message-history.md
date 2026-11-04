@@ -552,6 +552,10 @@ _(This example is complete, it can be run "as is")_
     returned stays that mapping, even one that spells out one of our items in full, so a round trip
     hands back exactly what your tool returned.
 
+    The record identifies each item by its saved form. To change a file item in stored history, such as
+    to refresh a presigned URL, load the history, edit the item and save it again: an item edited in the
+    stored JSON directly no longer matches its record, and loads as a mapping.
+
     History saved by an earlier version has no such record. In it, a mapping shaped like a URL-based
     item is reconstructed only as an HTTP(S) URL with `force_download` reset, and only when it carries
     `media_type`. A mapping shaped like an uploaded file or a non-HTTP URL stays a mapping, and so do
@@ -562,6 +566,9 @@ _(This example is complete, it can be run "as is")_
     (or `validate_python`) and its files load as they did before. Save it again afterwards, and it
     carries the record and no longer needs the context. Load other history without it; saving that
     history again keeps only what it loaded as.
+
+    [Durable execution](durable_execution/overview.md) decodes its own journal this way, so a run in
+    flight across an upgrade keeps the files its earlier steps recorded.
 
     A URL whose media type Pydantic AI can't infer from the URL is serialized with `media_type: null`,
     which validates back into the URL part's default (no media type) and dumps `null` again, in a tool

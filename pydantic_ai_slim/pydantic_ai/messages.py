@@ -1380,6 +1380,14 @@ class _RecordsContentFiles:
             _loaded_file_digests.reset(token)
 
 
+_JOURNAL_CONTEXT: Mapping[str, Any] = {'pydantic_ai': {'trusted_history': True}}
+"""The validation context durable execution decodes its own journal with.
+
+A journal entry written before tool results recorded their files carries no record, and the worker that
+wrote it is the application's own, so it loads as it did then rather than losing files mid-run.
+"""
+
+
 def _trusts_history(context: Any) -> bool:
     """Whether a validation context carries `{'pydantic_ai': {'trusted_history': True}}`."""
     if not isinstance(context, Mapping):

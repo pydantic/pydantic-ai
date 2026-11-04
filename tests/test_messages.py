@@ -2259,6 +2259,37 @@ def test_tool_return_inferred_serialization_encodes_bytes_like_the_adapter():
     assert to_json(messages) == ModelMessagesTypeAdapter.dump_json(messages)
 
 
+def test_durable_journal_written_before_records_loads_completely():
+    """A journal entry an earlier worker wrote has no record, and still decodes with every file it held.
+
+    The application's own worker wrote it, so a run in flight across an upgrade keeps its tool results.
+    """
+    from pydantic_ai.durable_exec._codec import _JsonCodec  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.durable_exec._toolset import (
+        CallToolResult,
+        _ToolReturn,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    files: list[FileUrl | UploadedFile] = [
+        UploadedFile('file-1', 'openai'),
+        DocumentUrl('s3://bucket/report.pdf'),
+        ImageUrl('https://example.com/chart.png', force_download=True),
+    ]
+    result = _ToolReturn(result=files)
+    journaled = TypeAdapter[Any](CallToolResult).dump_python(result, mode='json')
+    del journaled['content_file_digests']
+
+    assert _JsonCodec().load(CallToolResult, journaled) == result
+
+    pytest.importorskip('temporalio')
+    from temporalio.api.common.v1 import Payload
+
+    from pydantic_ai.durable_exec.temporal._payload_converter import PydanticAIJSONPlainPayloadConverter
+
+    payload = Payload(metadata={'encoding': b'json/plain'}, data=json.dumps(journaled).encode())
+    assert PydanticAIJSONPlainPayloadConverter().from_payload(payload, cast(type, CallToolResult)) == result
+
+
 def test_tool_return_records_only_the_files_in_its_content():
     """A file the application keeps in `metadata`, or sends as `ToolReturn.content`, doesn't count toward the result's record."""
     uploaded = UploadedFile('file-1', 'openai')
