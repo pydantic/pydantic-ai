@@ -648,9 +648,9 @@ which stay exactly as they were, and the original first user turn when `preserve
 keeps it. Each provider model receives it as user-voice text inside `<conversation_summary>`, saying a
 separate summarization model wrote it (a `FunctionModel` gets the part itself), never as part of the
 system prompt: a model wrote it, from a history that can include tool output. Because it is a compaction
-part, Pydantic AI also treats it as a compaction boundary, so tool discoveries and on-demand capability
-loads from before it are recorded again after it (see "Tool search discoveries across compaction" and
-"On-demand capabilities across compaction" below), and `WarnOnCacheBusts` reports the cache drop it causes as
+part, Pydantic AI also treats it as a compaction boundary, which would reset tool discoveries and on-demand
+capability loads from before it, so the strategy records them again after it (see "Tool search discoveries
+across compaction" and "On-demand capabilities across compaction" below), and `WarnOnCacheBusts` reports the cache drop it causes as
 `compacted`. The part carries `{'pydantic-ai-harness.compaction.summary.v1': True}` in its `metadata`,
 which the model never sees; that marker, together with the part having no provider data, is how
 `SummarizingCompaction` recognizes its own summaries, so a `CompactionPart` your application wrote is
