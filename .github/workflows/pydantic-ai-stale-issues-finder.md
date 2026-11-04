@@ -162,7 +162,6 @@ pre-agent-steps:
       # One file per issue under /tmp/gh-aw/agent/issues/all.
       # Batches under /tmp/gh-aw/agent/issues/batches/batch-XXX.
       BATCH_SIZE: 25
-      ISSUE_LIMIT: 1000
     run: |
       bash .github/scripts/prefetch-open-issues.sh
 

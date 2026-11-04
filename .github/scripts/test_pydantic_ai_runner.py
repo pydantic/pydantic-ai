@@ -145,6 +145,7 @@ def test_launcher_rejects_unsupported_continuation_without_output():
 def _run_context_prefetch(
     tmp_path: Path,
     *,
+    script: str = 'prefetch-github-context.sh',
     gh_script: str | None = None,
     env_vars: dict[str, str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
@@ -168,8 +169,9 @@ def _run_context_prefetch(
         GH_AW_AGENT_DIR=str(agent_dir),
     )
     env.update(env_vars or {})
-    script = Path(__file__).with_name('prefetch-github-context.sh')
-    result = subprocess.run(['bash', script], text=True, capture_output=True, check=False, env=env)
+    result = subprocess.run(
+        ['bash', Path(__file__).with_name(script)], text=True, capture_output=True, check=False, env=env
+    )
     return result, agent_dir
 
 
@@ -300,6 +302,49 @@ fi
     assert ('Could not prefetch open issues' in result.stdout) is not kept
     assert (context_dir / 'open-issues.json').exists() is kept
     assert (context_dir / 'open-pull-requests.json').exists()
+
+
+# GitHub search returns at most 1,000 results whatever `--limit` asks for, so a search-sorted list
+# of 1,237 open issues kept only the 1,000 least recently updated. This fake caps search at 5.
+_OPEN_ISSUES_GH = """\
+[ "$1:$2" = "issue:list" ] || exit 8
+python3 - {open_issues} "$@" <<'EOF'
+import json, sys
+open_issues, args = int(sys.argv[1]), sys.argv[2:]
+returned = min(open_issues, int(args[args.index('--limit') + 1]), 5 if '--search' in args else open_issues)
+print(json.dumps([
+    {{'number': n, 'title': f'Issue {{n}}', 'updatedAt': f'2026-01-{{n:02d}}T00:00:00Z', 'createdAt': '2026-01-01T00:00:00Z', 'labels': []}}
+    for n in range(returned, 0, -1)
+]))
+EOF
+"""
+
+
+def test_prefetch_open_issues_keeps_every_open_issue_oldest_update_first(tmp_path: Path):
+    result, agent_dir = _run_context_prefetch(
+        tmp_path,
+        script='prefetch-open-issues.sh',
+        gh_script=_OPEN_ISSUES_GH.format(open_issues=7),
+        env_vars={'GITHUB_REPOSITORY': 'pydantic/pydantic-ai', 'ISSUE_LIMIT': '20'},
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    rows = (agent_dir / 'open-issues.tsv').read_text(encoding='utf-8').splitlines()[1:]
+    assert [row.split('\t')[0] for row in rows] == ['1', '2', '3', '4', '5', '6', '7']
+    assert len(list((agent_dir / 'issues/all').iterdir())) == 7
+
+
+def test_prefetch_open_issues_fails_on_a_capped_list(tmp_path: Path):
+    result, agent_dir = _run_context_prefetch(
+        tmp_path,
+        script='prefetch-open-issues.sh',
+        gh_script=_OPEN_ISSUES_GH.format(open_issues=20),
+        env_vars={'GITHUB_REPOSITORY': 'pydantic/pydantic-ai', 'ISSUE_LIMIT': '20'},
+    )
+
+    assert result.returncode != 0
+    assert '::error::' in result.stdout
+    assert not list((agent_dir / 'issues/all').iterdir())
 
 
 def test_shared_context_setup_is_scoped_and_uses_runtime_paths():
