@@ -103,6 +103,21 @@ class FunctionSchema:
         return args, args_dict
 
 
+def _single_field_name(
+    single_arg_name: str | None, json_schema: ObjectJsonSchema, fields: dict[str, core_schema.TypedDictField]
+) -> str | None:
+    """The Python parameter name a single value-carrying arg is wrapped under, or `None` for any other signature.
+
+    The name is read off `fields` rather than the JSON schema property, which is the alias when the parameter
+    has one, while the validated args dict is always keyed by the Python name.
+    """
+    if single_arg_name is not None:
+        return single_arg_name
+    if len(json_schema.get('properties', {})) == 1:
+        return next(iter(fields))
+    return None
+
+
 def function_schema(  # noqa: C901
     function: Callable[..., Any],
     schema_generator: type[GenerateJsonSchema],
@@ -260,11 +275,7 @@ def function_schema(  # noqa: C901
     name = tool_name or function.__name__
     checked_json_schema = check_object_json_schema(json_schema)
 
-    single_field_name = single_arg_name
-    if single_field_name is None and len(checked_json_schema.get('properties', {})) == 1:
-        # Read the name off `fields` rather than the JSON schema property, which is the alias when the
-        # parameter has one, while the validated args dict is always keyed by the Python name.
-        single_field_name = next(iter(fields))
+    single_field_name = _single_field_name(single_arg_name, checked_json_schema, fields)
 
     # Compute return schema eagerly (before Temporal sandbox where TypeAdapter is too slow)
     return_annotation = type_hints.get('return')
