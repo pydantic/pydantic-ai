@@ -467,10 +467,11 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         self._call_counts = call_counts
         # A delegation to the running agent alone, on its own model or a menu option, runs the child on
         # the same durable agent, so under Temporal it runs in the workflow, where the child's model
-        # requests and tools become activities; an activity cannot run it on the parent run's model
+        # requests and tools become activities; a tool activity cannot run it on the parent run's model
         # (`ctx.model` is unavailable there). Any other delegate would make its model requests in
         # workflow code, so it stays an activity. With `dynamic_agents`, the roster and the tools that read it
-        # stay in the workflow, and a delegation to any other agent gets an activity of its own instead.
+        # stay in the workflow, and a delegation to any other agent runs in the `delegate` operation's activity,
+        # which carries the parent run's model across.
         in_workflow = (include_self and not self._agents) or dynamic_agents is not None
         self.add_function(
             self.delegate_task,
