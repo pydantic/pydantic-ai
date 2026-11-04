@@ -30,6 +30,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend, _backend
+from tests.realtime.simulation._loop import SimulatedLoop
 
 from .fake_modal import FakeImage, FakeModal, FileInfo
 
@@ -305,23 +306,17 @@ class TestRun:
         fake_modal.sandboxes[0].poll_error = ValueError('control plane unavailable')
         assert (await backend.run(['kill-self'])).exit_code == 137
 
+    @pytest.mark.parametrize(
+        'anyio_backend', [pytest.param(('asyncio', {'loop_factory': SimulatedLoop}), id='virtual-clock')]
+    )
     async def test_early_sigkill_with_slow_output_is_a_real_exit(
         self, fake_modal: FakeModal, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # A delayed output drain should not make an early exit look like a deadline kill. Only the drain moves the
-        # clocks the backend reads, so a stalled runner cannot use up the command's deadline before it exits.
-        loop = asyncio.get_running_loop()
-        loop_time_at_start = loop.time()
-        elapsed = 0.0
-        monkeypatch.setattr(loop, 'time', lambda: loop_time_at_start + elapsed)
-        monkeypatch.setattr(_backend, 'time', types.SimpleNamespace(monotonic=lambda: elapsed))
-
-        def drain_past_the_deadline_within_the_grace() -> None:
-            nonlocal elapsed
-            elapsed = 1.5
-
+        # A delayed output drain should not make an early exit look like a deadline kill. On a virtual clock, a stalled
+        # runner can't use up the command's deadline before it exits.
+        monkeypatch.setattr(_backend, 'time', types.SimpleNamespace(monotonic=asyncio.get_running_loop().time))
         fake_modal.responder = lambda argv, timeout: ('', '', 137)
-        fake_modal.stdout_drained_after_exit = drain_past_the_deadline_within_the_grace
+        fake_modal.stdout_delay = 1.1
         backend = await started()
         assert (await backend.run(['kill-self'], timeout=1)).exit_code == 137
 

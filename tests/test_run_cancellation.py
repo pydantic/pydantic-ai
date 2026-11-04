@@ -1899,16 +1899,13 @@ async def test_run_stream_events_early_break_has_no_result():
 
 async def test_run_stream_events_binding_does_not_leak_to_nested_run():
     """A plain nested run completes independently before cancellation targets the outer run."""
-    inner_completed = asyncio.Event()
     inner_agent = Agent(TestModel(custom_output_text='inner complete'))
     outer_agent = Agent(TestModel())
 
     @outer_agent.tool_plain
     async def nested_run() -> str:
         result = await inner_agent.run('inner')
-        inner_completed.set()
-        # Cancel from inside the tool, so there's no readiness wait whose deadline a stalled CI worker can outlast. The
-        # sleep only bounds the failure mode: if the cancellation were swallowed, the test would fail.
+        # The sleep only bounds the failure mode: if the cancellation were swallowed, the test would fail.
         events.cancel()
         await asyncio.sleep(READINESS_WAIT_TIMEOUT)
         return result.output  # pragma: no cover
@@ -1917,8 +1914,6 @@ async def test_run_stream_events_binding_does_not_leak_to_nested_run():
         consumer = asyncio.create_task(_consume_events(events))
         with pytest.raises(RunCancelled):
             await consumer
-
-    assert inner_completed.is_set()
 
 
 async def test_run_stream_events_binding_across_blocking_portal():

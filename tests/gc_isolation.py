@@ -13,16 +13,15 @@ leaks in its own teardown under the suite's `filterwarnings`: a leak the suite d
 fails the test that caused it.
 
 An object in a reference cycle that outlives its test and is dropped later, such as one in a cache that a later test
-clears, stays frozen. It's collected once, after the last test, where no test can be blamed for it, and reported on stderr
-without failing anything. Left to pytest's own end-of-session collection, it would fail the session with no test to point
-at. Until then it keeps whatever it holds, because collecting it sooner would finalize it in a test. An object in no cycle
-is freed as it's dropped, as ever, freeze or not.
+clears, stays frozen, keeping whatever it holds, because collecting it sooner would finalize it in a test. One collection
+after the last test finalizes it, where no test can be blamed, and reports it on stderr instead of failing. Left to
+pytest's own end-of-session collection, it would fail the session with no test to point at. The freeze has no effect on
+an object in no cycle, which is freed as it's dropped, even in a later test.
 
-The freeze has one visible side effect: `gc.get_referrers()` and `gc.get_objects()` don't see frozen objects. Hypothesis's
-`register_random()` is what notices, because it warns when `gc.get_referrers()` finds nothing holding a random that's still
-referenced. Hypothesis's own random is held by a frozen thread-local, so the first Hypothesis test in a worker would fail
-on that warning, and this plugin ignores it during tests. So the freeze also ends with the test loop, before session-end
-hooks, where those filters don't apply and Hypothesis's terminal summary can be what imports it.
+Frozen objects are invisible to `gc.get_referrers()` and `gc.get_objects()`. Hypothesis's `register_random()` notices, on
+Python 3.14 and later: the frozen thread-local holding its own random leaves `gc.get_referrers()` finding nothing, so the
+first derandomized Hypothesis test in a worker would fail on the warning this plugin ignores. That warning means something
+references the random that `gc.get_referrers()` can't see; a random that nothing references still raises `ReferenceError`.
 """
 
 from __future__ import annotations as _annotations
@@ -39,8 +38,6 @@ PLUGIN_NAME = 'pydantic_ai_gc_isolation'
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    # A random that nothing references still raises `ReferenceError` in `register_random()`: this warning only means that
-    # whatever does reference it isn't visible to `gc.get_referrers()`.
     config.addinivalue_line('filterwarnings', 'ignore:It looks like `register_random` was passed')
 
 
@@ -52,8 +49,9 @@ def pytest_runtest_protocol() -> Generator[None, object, object]:
 
 @pytest.fixture(autouse=True)
 def _finalize_this_tests_garbage(request: pytest.FixtureRequest) -> Iterator[None]:
-    """Set up before the test's other function-scoped fixtures, so it collects after they are torn down.
+    """Set up before the function-scoped fixtures of `tests/` and the test module, so it collects after they are torn down.
 
+    Garbage from an autouse fixture of a plugin registered earlier, such as `pytest-recording`'s `cassette`, stays frozen.
     pytest holds fixture values in `funcargs` until after teardown, which would keep a leaked one out of this collection.
     """
     yield
@@ -71,14 +69,14 @@ def pytest_runtestloop() -> Generator[None, object, object]:
 
 def _collect_what_outlived_its_test() -> None:
     leaks: list[object] = []
-    previous_hook = sys.unraisablehook
-    sys.unraisablehook = lambda unraisable: leaks.append(repr(unraisable.exc_value))
-    try:
-        with warnings.catch_warnings(record=True) as warned:
-            warnings.simplefilter('always')
-            gc.unfreeze()
-            gc.collect()
-    finally:
-        sys.unraisablehook = previous_hook
+
+    def record(unraisable: sys.UnraisableHookArgs) -> None:
+        leaks.append(repr(unraisable.exc_value))
+
+    with pytest.MonkeyPatch.context() as patch, warnings.catch_warnings(record=True) as warned:
+        patch.setattr(sys, 'unraisablehook', record)
+        warnings.simplefilter('always')
+        gc.unfreeze()
+        gc.collect()
     for leak in (*leaks, *(warning.message for warning in warned)):  # pragma: lax no cover
         print(f'Leaked by a test, and dropped after it ended: {leak}', file=sys.stderr)

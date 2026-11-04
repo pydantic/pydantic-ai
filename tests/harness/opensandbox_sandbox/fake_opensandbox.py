@@ -42,7 +42,7 @@ DOMAIN = 'opensandbox.invalid'
 """A name that cannot resolve, so a request that skips the fake's transport fails instead of leaving the host."""
 EXECD_PORT = 44772
 _NOT_FOUND = 'DOCKER::SANDBOX_NOT_FOUND'
-_DRAIN_GRACE = 0.05
+_DRAIN_STEPS_AFTER_EXIT = 1000
 
 
 def _now() -> str:
@@ -322,23 +322,24 @@ class _EventStream(httpx.AsyncByteStream):
             asyncio.create_task(self._wait()),
         ]
         # execd reports the exit as soon as the command exits, even while a background child holds its output
-        # open: once the command has exited, output still arriving is read for a moment, the rest dropped.
+        # open. What the command wrote is in its pipes by then, so a bounded number of event loop turns delivers it
+        # however slow the machine is, and output still arriving after that is dropped.
         code: int | None = None
-        deadline: float | None = None
+        steps_left = _DRAIN_STEPS_AFTER_EXIT
         open_pipes = 2
         while code is None or open_pipes:
-            remaining = None if deadline is None else deadline - time.monotonic()
-            if remaining is not None and remaining <= 0:
-                break
-            try:
-                kind, value = await asyncio.wait_for(self._queue.get(), remaining)
-            except TimeoutError:
-                break
+            if code is not None:
+                if not steps_left:
+                    break
+                steps_left -= 1
+                if self._queue.empty():
+                    await asyncio.sleep(0)
+                    continue
+            kind, value = await self._queue.get()
             if kind == 'broken':
                 raise httpx.RemoteProtocolError('peer closed connection without sending complete message body')
             if kind == 'exit':
                 code = value
-                deadline = time.monotonic() + _DRAIN_GRACE
             elif kind == 'eof':
                 open_pipes -= 1
             else:

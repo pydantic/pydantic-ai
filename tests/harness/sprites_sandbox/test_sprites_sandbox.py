@@ -1083,7 +1083,7 @@ class TestSpritesSandbox:
 
         async def run() -> None:
             with pytest.raises(WorkspaceTimeoutError) as caught:
-                await backend.run('printf ready >&2; exec sleep 5', shell=True, timeout=60)
+                await backend.run('printf ready >&2; exec sleep 600', shell=True, timeout=60)
             assert caught.value.stderr == 'ready'
 
         async with anyio.create_task_group() as group:

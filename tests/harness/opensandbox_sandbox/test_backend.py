@@ -95,15 +95,9 @@ class TestCommands:
         await wait_until_gone(*map(int, pids.read_text(encoding='utf-8').split()))
 
     async def test_a_background_child_writing_continuously_does_not_hold_up_the_result(
-        self, server: FakeOpenSandbox, working_dir: str, monkeypatch: pytest.MonkeyPatch
+        self, server: FakeOpenSandbox, working_dir: str
     ) -> None:
         """execd reports the leader's exit even when a background child keeps writing."""
-        ticks = itertools.count()
-        monkeypatch.setattr(
-            fake_opensandbox,
-            'time',
-            types.SimpleNamespace(monotonic=lambda: float(next(ticks)), time_ns=fake_opensandbox.time.time_ns),
-        )
         with no_leaked_tasks(), anyio.fail_after(5):
             result = await _create(server, working_dir).run(['sh', '-c', '(while :; do printf x; done) &'])
         assert result.exit_code == 0

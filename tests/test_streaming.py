@@ -1477,8 +1477,8 @@ async def test_run_stream_cancel_during_debounce_from_another_task():
     A synthetic `PeekableAsyncStream` makes the second chunk wait deterministically; a recorded provider response cannot
     guarantee that the debounced prefetch is still active when cancellation starts.
 
-    The deadlines only catch a hang, so the test runs on a virtual clock that moves when nothing else can run: a real
-    hang fails at once, and no amount of real time on a stalled runner can expire them.
+    The deadlines only catch a hang, so the test runs on a virtual clock that moves when nothing else can run: a task
+    waiting forever fails at once, and no amount of real time on a stalled runner can expire them.
     """
     pull_started = anyio.Event()
     finalization_started = anyio.Event()

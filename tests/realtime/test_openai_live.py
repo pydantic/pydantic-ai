@@ -4090,7 +4090,7 @@ async def test_closing_a_session_whose_socket_drops_finishes_promptly(model: Ope
 
     started = json.dumps({'type': 'session.started', 'event_id': 'e', 'session': {'id': 's', 'model': 'gpt-live-1'}})
     ws = _DroppingSocket([started])
-    with _patched_connect(ws), anyio.fail_after(1):
+    with _patched_connect(ws), anyio.fail_after(0.02):
         async with Agent().realtime(model).session() as session:
             reading = asyncio.ensure_future(anext(aiter(session)))
             await asyncio.sleep(0.01)

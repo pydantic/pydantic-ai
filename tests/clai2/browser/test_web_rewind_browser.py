@@ -3,6 +3,7 @@
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 
+import anyio
 import pytest
 from anyio.from_thread import start_blocking_portal
 from anyio.to_thread import run_sync
@@ -38,10 +39,15 @@ class RewindUI:
     session: str
     fleet: Fleet
 
-    async def idle(self) -> None:
+    async def wait_until_idle(self) -> None:
         """Wait for the session to finish its turn's end, until when it refuses a rewind though the page reads `ready`."""
         fleet, runtime = self.fleet, self.fleet.runtimes['echo']
-        await run_sync(lambda: fleet.portal.call(until, fleet.launch.process.live, lambda: runtime.idle))
+
+        async def idle_or_hung() -> None:
+            with anyio.fail_after(300):
+                await until(fleet.launch.process.live, lambda: runtime.idle)
+
+        await run_sync(lambda: fleet.portal.call(idle_or_hung))
 
 
 @pytest.fixture(scope='module')
@@ -85,7 +91,7 @@ async def test_edit_and_retry_go_on_from_an_earlier_prompt(page: Page, rewind_ui
     editor = first.get_by_role('textbox', name='Edit prompt')
     await expect(editor).to_have_value('A')
     await editor.fill("A'")
-    await rewind_ui.idle()
+    await rewind_ui.wait_until_idle()
     async with page.expect_response(f'**/api/sessions/{rewind_ui.session}/rewind/*') as rewound:
         await editor.press('Enter')
     assert (await rewound.value).status == 204
@@ -95,7 +101,7 @@ async def test_edit_and_retry_go_on_from_an_earlier_prompt(page: Page, rewind_ui
 
     first = page.locator('.user-row').first
     await first.hover()
-    await rewind_ui.idle()
+    await rewind_ui.wait_until_idle()
     async with page.expect_response(f'**/api/sessions/{rewind_ui.session}/rewind/*') as retried:
         await first.get_by_role('button', name='Retry prompt').click()
     assert (await retried.value).status == 204

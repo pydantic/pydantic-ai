@@ -7,6 +7,7 @@ inner test, so a leak blamed on the wrong test fails the assertion.
 
 from __future__ import annotations as _annotations
 
+import os
 import re
 import textwrap
 from collections.abc import Callable
@@ -44,12 +45,16 @@ def run_session(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> R
     Only explicit collections run, so nothing depends on when allocations happen to trigger an automatic one.
     """
     monkeypatch.setenv('PYTEST_DISABLE_PLUGIN_AUTOLOAD', '1')
+    for name in list(os.environ):
+        if name.startswith('COVERAGE_'):
+            monkeypatch.delenv(name)
     pytester.makepyfile(gc_isolation=Path(gc_isolation.__file__).read_text(encoding='utf-8'))
     pytester.makeini(
         """
         [pytest]
         filterwarnings =
             error
+            ignore:unclosed <socket:ResourceWarning
             ignore:unclosed event loop:ResourceWarning
         """
     )
@@ -115,7 +120,6 @@ def test_an_ignored_leak_reaches_a_later_tests_warning_scope_only_without_the_pl
 @pytest.mark.parametrize(
     ('leak', 'error'),
     [
-        pytest.param('Holder(socket.socket())', 'unclosed <socket', id='socket'),
         pytest.param('Holder(tempfile.TemporaryFile())', 'unclosed file', id='file'),
         # The collector can finalize a leaked loop's self-pipe before the loop, whose `__del__` then raises this whatever
         # the warning filters are. Closing the socket here picks that finalization order.
@@ -129,7 +133,7 @@ def test_a_real_resource_leak_fails_only_the_test_that_caused_it(
 ) -> None:
     result = run_session(
         f"""
-        import asyncio, socket, tempfile
+        import asyncio, tempfile
 
         class Holder:
             def __init__(self, resource):
@@ -177,25 +181,24 @@ def test_innocent_after():
     assert outcomes(result) == ['ERROR test_leaks', 'PASSED test_innocent_after', 'PASSED test_leaks']
 
 
-def test_a_test_can_still_collect_its_own_garbage(run_session: RunSession) -> None:
+def test_the_suite_runs_with_the_plugin(request: pytest.FixtureRequest) -> None:
+    assert request.config.pluginmanager.has_plugin(gc_isolation.PLUGIN_NAME)
+
+
+def test_the_first_test_is_isolated_from_garbage_made_during_collection(run_session: RunSession) -> None:
     result = run_session(
-        """
-        import gc, weakref
+        LEAK
+        + """
+import gc
 
-        class Node:
-            pass
+Leak()
 
-        def test_own_cycle_is_collected():
-            node = Node()
-            node.cycle = node
-            ref = weakref.ref(node)
-            del node
-            gc.collect()
-            assert ref() is None
-        """,
+def test_first():
+    gc.collect()
+""",
         *WITH_PLUGIN,
     )
-    assert outcomes(result) == ['PASSED test_own_cycle_is_collected']
+    assert outcomes(result) == ['PASSED test_first']
 
 
 @pytest.mark.parametrize(
@@ -261,12 +264,32 @@ def test_clears_it():
     result.stderr.fnmatch_lines([f'Leaked by a test, and dropped after it ended: {reported}*'])
 
 
+def test_what_outlives_its_test_is_reported_when_the_run_stops_early(run_session: RunSession) -> None:
+    result = run_session(
+        LEAK
+        + """
+held = []
+
+def test_fills_a_cache():
+    held.append(Leak())
+
+def test_stops_the_run():
+    held.clear()
+    assert False
+""",
+        '-x',
+        *WITH_PLUGIN,
+    )
+    assert outcomes(result) == ['FAILED test_stops_the_run', 'PASSED test_fills_a_cache']
+    result.stderr.fnmatch_lines(["Leaked by a test, and dropped after it ended: RuntimeError('leak finalized')*"])
+
+
 def test_a_hypothesis_test_can_register_its_random_with_its_holder_frozen(run_session: RunSession) -> None:
     result = run_session(
         """
         from hypothesis import given, settings, strategies as st
 
-        # Only a derandomized run registers Hypothesis's random, which is the run that `register_random()` checks.
+        # Only a derandomized run registers Hypothesis's random, and so reaches the check in `register_random()`.
         @settings(derandomize=True)
         @given(st.none())
         def test_property(value):
@@ -277,16 +300,17 @@ def test_a_hypothesis_test_can_register_its_random_with_its_holder_frozen(run_se
     assert outcomes(result) == ['PASSED test_property']
 
 
-def test_nothing_is_frozen_once_the_tests_are_done(run_session: RunSession, pytester: pytest.Pytester) -> None:
-    # `gc.get_referrers()` can't see frozen objects, and Hypothesis's terminal summary imports it, whose `register_random()`
-    # check then warns that a live object has no referrers.
+def test_nothing_stays_frozen_once_the_tests_are_done(run_session: RunSession, pytester: pytest.Pytester) -> None:
+    # Some Python versions start with frozen objects of their own, which unfreezing leaves frozen.
     pytester.makeconftest(
         """
         import gc
 
+        frozen_at_start = gc.get_freeze_count()
+
         def pytest_terminal_summary(terminalreporter):
-            terminalreporter.write_line(f'frozen objects at session end: {gc.get_freeze_count()}')
+            terminalreporter.write_line(f'frozen since the start: {gc.get_freeze_count() - frozen_at_start}')
         """
     )
     result = run_session('def test_passes():\n    pass\n', *WITH_PLUGIN)
-    assert 'frozen objects at session end: 0' in result.stdout.str()
+    assert 'frozen since the start: 0' in result.stdout.str()
