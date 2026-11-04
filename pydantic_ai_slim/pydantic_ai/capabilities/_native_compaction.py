@@ -35,12 +35,14 @@ async def compact_with_model(
     if kept_from == 0:
         # Nothing before the turn being answered, so nothing to compact.
         return None
-    model = request.model
+    # Compacted with the conversation's own request, so the provider reads its prompt cache.
+    conversation = request.conversation_request
+    model = conversation.model
     compact_context = ModelRequestContext(
         model=model,
         messages=request.messages[:kept_from],
-        model_settings=request.model_settings,
-        model_request_parameters=request.model_request_parameters,
+        model_settings=conversation.settings,
+        model_request_parameters=conversation.parameters,
     )
     response = await model.compact_messages(compact_context, instructions=instructions)
     part = next((part for part in response.parts if isinstance(part, CompactionPart)), None)

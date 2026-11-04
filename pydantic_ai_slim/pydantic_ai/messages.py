@@ -4375,6 +4375,17 @@ from ._tool_search import (  # noqa: E402  (intentional late import: typed subcl
     ToolSearchReturnPart as ToolSearchReturnPart,
 )
 
+Authority: TypeAlias = Literal['operator', 'user', 'none']
+"""How much authority content carries with the model, by who wrote it.
+
+- `'operator'`: the application's own, such as its instructions or files the operator controls.
+- `'user'`: the user's, such as a user's saved notes or uploads.
+- `'none'`: data, such as a tool's output, another model's text or a file someone else wrote.
+
+A [`Workspace`][pydantic_ai.workspaces.Workspace]'s [`authority`][pydantic_ai.workspaces.Workspace.authority] is
+the authority of the files in it.
+"""
+
 
 def _model_request_part_discriminator(v: Any) -> str | None:
     """Callable discriminator for [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart].
@@ -7241,59 +7252,6 @@ class CompactionStartEvent:
 
 
 @dataclass(repr=False, kw_only=True)
-class CompactionEndEvent:
-    """Emitted after a capability's [`compact_history`][pydantic_ai.capabilities.AbstractCapability.compact_history] hook compacted the history.
-
-    The compacted history is sent with the attempt it was made for. If that attempt fails and the request moves
-    on to another model, the compaction is discarded, and the next attempt may compact again, with events of its
-    own.
-    """
-
-    reason: CompactionReason
-    """Why compaction was requested."""
-
-    handler: str
-    """The stable identifier of the capability that compacted, from
-    [`CompactionResult.handler`][pydantic_ai.capabilities.CompactionResult.handler]."""
-
-    model_name: str
-    """The name of the model that will serve the request the compacted history is sent with."""
-
-    provider_name: str
-    """The provider of that model."""
-
-    messages_before: int
-    """The number of messages in the history that was compacted."""
-
-    messages_after: int
-    """The number of messages in the history that replaced it."""
-
-    kept_from: int
-    """The index in the compacted history where the messages kept as they were start.
-
-    See [`CompactionRecord.kept_from`][pydantic_ai.messages.CompactionRecord.kept_from].
-    """
-
-    tokens_before: int | None = None
-    """The context size the latest response in the history reported before compaction, or `None` without one."""
-
-    summary_tokens: int | None = None
-    """The size of the summary the compaction produced: the output tokens it reported, or `None` when it reported none.
-
-    That's not the size of the compacted history, which can also keep recent messages: the context size is only
-    known again from the next response.
-    """
-
-    usage: RequestUsage = field(default_factory=RequestUsage)
-    """What the compaction cost, which is counted in the run's usage."""
-
-    event_kind: Literal['compaction_end'] = 'compaction_end'
-    """Event type identifier, used as a discriminator."""
-
-    __repr__ = _utils.dataclasses_no_defaults_repr
-
-
-@dataclass(repr=False, kw_only=True)
 class CompactionRecord:
     """A compaction a run kept, on [`AgentRunResult.compactions`][pydantic_ai.agent.AgentRunResult.compactions].
 
@@ -7358,6 +7316,41 @@ class CompactionRecord:
         if self.replaced is None:
             return None
         return self.replaced[: self.messages_before - (self.messages_after - self.kept_from)]
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class CompactionEndEvent:
+    """Emitted after a capability's [`compact_history`][pydantic_ai.capabilities.AbstractCapability.compact_history] hook compacted the history.
+
+    The compacted history is sent with the attempt it was made for. If that attempt fails and the request moves
+    on to another model, the compaction is discarded, and the next attempt may compact again, with events of its
+    own. Once an attempt is kept, its [`record`][pydantic_ai.messages.CompactionEndEvent.record] is the object on
+    [`AgentRunResult.compactions`][pydantic_ai.agent.AgentRunResult.compactions].
+    """
+
+    record: CompactionRecord
+    """What the compaction did: the reason, the handler, the model it was for and where the kept messages start.
+
+    Its [`replaced`][pydantic_ai.messages.CompactionRecord.replaced] history isn't serialized with the event either.
+    """
+
+    tokens_before: int | None = None
+    """The context size the latest response in the history reported before compaction, or `None` without one."""
+
+    summary_tokens: int | None = None
+    """The size of the summary the compaction produced: the output tokens it reported, or `None` when it reported none.
+
+    That's not the size of the compacted history, which can also keep recent messages: the context size is only
+    known again from the next response.
+    """
+
+    usage: RequestUsage = field(default_factory=RequestUsage)
+    """What the compaction cost, which is counted in the run's usage."""
+
+    event_kind: Literal['compaction_end'] = 'compaction_end'
+    """Event type identifier, used as a discriminator."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

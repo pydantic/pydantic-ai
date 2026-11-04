@@ -1639,7 +1639,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         ) or super().resolve_cache_retention(model_settings)
 
     def _no_batch_api_message(self) -> str:
-        if self.system == 'openai':
+        # The profile's Batch API flag, not the provider name, so renamed and compatible providers get the hint too.
+        if self.profile.get('openai_supports_batch_api', False):
             return (
                 f'`{type(self).__name__}` {self.model_name!r} has no batch API: batch it through the Responses API, with '
                 '`OpenAIResponsesModel` or the `openai:` prefix.'
@@ -7391,13 +7392,15 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
     async def compact_history(self, ctx: RunContext[AgentDepsT], request: CompactionRequest) -> CompactionResult | None:
         if not self.stateless:
             return None
-        if not isinstance(unwrap_model(request.model), OpenAIResponsesModel):
+        if not isinstance(unwrap_model(request.conversation_request.model), OpenAIResponsesModel):
             # Another model serves this attempt, like a `ModelFallback` candidate: not OpenAI's to compact.
             return None
         # Unlike `NativeCompaction`, whatever the profile's `supports_compaction_on_demand` says: you chose an
         # OpenAI capability, for a Responses API that may not be OpenAI's own, as with LiteLLM.
         return await compact_with_model(
-            request, request.model.profile.get('compaction_instructions'), focus_as_system_prompt=False
+            request,
+            request.conversation_request.model.profile.get('compaction_instructions'),
+            focus_as_system_prompt=False,
         )
 
     @classmethod

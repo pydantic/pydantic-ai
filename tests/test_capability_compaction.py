@@ -90,7 +90,7 @@ class Summarize(AbstractCapability[Any]):
 
     async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
         self.calls.append(request)
-        messages, part = summary_window(request, f'{self.handler} for {request.model.model_name}')
+        messages, part = summary_window(request, f'{self.handler} for {request.conversation_request.model.model_name}')
         return CompactionResult(messages=messages, part=part, handler=self.handler, usage=COMPACTION_USAGE)
 
 
@@ -209,7 +209,11 @@ async def test_tool_requests_compaction_of_the_next_request():
 
     assert result.output == 'done'
     [request] = summarize.calls
-    assert (request.reason, request.focus, request.model.model_name) == ('manual', 'the decisions', 'primary')
+    assert (request.reason, request.focus, request.conversation_request.model.model_name) == (
+        'manual',
+        'the decisions',
+        'primary',
+    )
     assert isinstance(request.messages[-1], ModelRequest)
     assert [type(message).__name__ for message in request.messages] == ['ModelRequest', 'ModelResponse', 'ModelRequest']
     # The second request is sent the summary in place of the first exchange, and the third isn't compacted again.
@@ -301,7 +305,7 @@ async def test_discarded_attempt_compacts_again_for_the_next_model():
     )
     result = await agent.run('hi')
 
-    assert [request.model.model_name for request in summarize.calls] == ['primary', 'fallback']
+    assert [request.conversation_request.model.model_name for request in summarize.calls] == ['primary', 'fallback']
     assert seen[0][0].parts[0] == CompactionPart(content='summarize for fallback')
     assert [m for m in result.all_messages() if any(isinstance(p, CompactionPart) for p in m.parts)] == [
         ModelRequest(parts=[CompactionPart(content='summarize for fallback')])
@@ -321,7 +325,7 @@ class FailFor(AbstractCapability[Any]):
     model_name: str
 
     async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
-        if request.model.model_name == self.model_name:
+        if request.conversation_request.model.model_name == self.model_name:
             raise ModelAPIError(model_name=self.model_name, message='compaction rate limited')
         return None
 
@@ -348,7 +352,7 @@ async def test_compaction_failure_falls_back():
     result = await agent.run('hi')
     assert result.output == 'hello'
     assert called == []
-    assert [request.model.model_name for request in summarize.calls] == ['fallback']
+    assert [request.conversation_request.model.model_name for request in summarize.calls] == ['fallback']
     [response] = [m for m in result.all_messages() if isinstance(m, ModelResponse)]
     assert response.failed_attempts is not None and [a.model_name for a in response.failed_attempts] == ['primary']
 
@@ -394,7 +398,7 @@ async def test_streamed_compaction_failure_falls_back():
     )
     async with agent.run_stream('hi') as result:
         assert await result.get_output() == 'hello'
-    assert [request.model.model_name for request in summarize.calls] == ['fallback']
+    assert [request.conversation_request.model.model_name for request in summarize.calls] == ['fallback']
     assert result.all_messages()[0] == ModelRequest(parts=[CompactionPart(content='summarize for fallback')])
 
 
@@ -423,7 +427,7 @@ async def test_events():
         TestModel(custom_output_text='done'),
         capabilities=[RequestOnce(focus='decisions'), events, Summarize()],
     )
-    await agent.run(
+    result = await agent.run(
         'hi', message_history=[ModelRequest(parts=[UserPromptPart('before')]), previous], event_stream_handler=handler
     )
     assert events.events == snapshot(
@@ -437,13 +441,16 @@ async def test_events():
                 tokens_before=220,
             ),
             CompactionEndEvent(
-                reason='threshold',
-                handler='summarize',
-                model_name='test',
-                provider_name='test',
-                messages_before=3,
-                messages_after=3,
-                kept_from=1,
+                record=CompactionRecord(
+                    part=CompactionPart(content='summarize for test'),
+                    handler='summarize',
+                    reason='threshold',
+                    model_name='test',
+                    provider_name='test',
+                    messages_before=3,
+                    messages_after=3,
+                    kept_from=1,
+                ),
                 tokens_before=220,
                 summary_tokens=50,
                 usage=RequestUsage(input_tokens=1000, output_tokens=50),
@@ -451,6 +458,11 @@ async def test_events():
         ]
     )
     assert streamed == events.events
+    # The event's record is the one the run result lists.
+    end = events.events[1]
+    assert isinstance(end, CompactionEndEvent)
+    assert result.compactions == [end.record]
+    assert result.compactions[0] is end.record
 
 
 async def test_cancelled_start_skips_compaction():
@@ -475,18 +487,28 @@ async def test_cancelled_start_skips_compaction():
 def test_events_round_trip():
     adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
     start = CompactionStartEvent(reason='manual', model_name='m', provider_name='p', messages_before=4)
-    end = CompactionEndEvent(
-        reason='manual',
+    replaced: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('the history')])]
+    record = CompactionRecord(
+        part=CompactionPart(content='summary'),
         handler='h',
+        reason='manual',
         model_name='m',
         provider_name='p',
         messages_before=4,
         messages_after=2,
         kept_from=1,
+        replaced=replaced,
     )
+    end = CompactionEndEvent(record=record)
     assert adapter.validate_python(adapter.dump_python(start)) == start
     assert adapter.validate_python(adapter.dump_python(end)) == end
     assert adapter.dump_python(start, mode='json')['event_kind'] == 'compaction_start'
+    # The record's `replaced` history isn't serialized with the event, as it isn't with the run result.
+    dumped = adapter.dump_python(end, mode='json')
+    assert 'replaced' not in dumped['record']
+    loaded = adapter.validate_python(dumped)
+    assert isinstance(loaded, CompactionEndEvent)
+    assert loaded.record.replaced is None
 
 
 @dataclass
@@ -828,10 +850,13 @@ async def test_context_overflow_is_compacted_and_retried_on_the_same_model():
 
     assert result.output == 'fits now'
     assert calls == ['primary', 'primary']
-    assert [(request.reason, request.model.model_name) for request in summarize.calls] == [
+    assert [(request.reason, request.conversation_request.model.model_name) for request in summarize.calls] == [
         ('context_overflow', 'primary')
     ]
-    assert [(type(event).__name__, event.reason) for event in events.events] == [
+    assert [
+        (type(event).__name__, event.reason if isinstance(event, CompactionStartEvent) else event.record.reason)
+        for event in events.events
+    ] == [
         ('CompactionStartEvent', 'context_overflow'),
         ('CompactionEndEvent', 'context_overflow'),
     ]
@@ -917,7 +942,7 @@ async def test_context_overflow_retry_does_not_advance_the_fallback_chain():
     result = await agent.run('hi')
     assert result.output == 'fits now'
     assert calls == ['primary', 'primary']
-    assert [request.model.model_name for request in summarize.calls] == ['primary']
+    assert [request.conversation_request.model.model_name for request in summarize.calls] == ['primary']
 
 
 async def test_context_overflow_after_the_retry_falls_back_as_before():
@@ -1229,7 +1254,9 @@ async def test_batch_requests_are_never_compacted_while_pending_and_compaction_i
     assert isinstance(pending.output, PendingModelResponse)
     # Compacted before the request was submitted, with the model the batch wrapper wraps, not the wrapper.
     [request] = summarize.calls
-    assert request.model is wrapped and not isinstance(request.model, BatchedModel)
+    assert request.conversation_request.model is wrapped and not isinstance(
+        request.conversation_request.model, BatchedModel
+    )
 
     stored = pending.all_messages()
     while isinstance((finished := await agent.run(message_history=stored)).output, PendingModelResponse):
