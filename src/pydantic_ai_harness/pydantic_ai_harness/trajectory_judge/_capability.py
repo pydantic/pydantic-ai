@@ -9,7 +9,7 @@ import re
 import secrets
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Annotated, Any, TypeAlias
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, TypeAlias
 
 from pydantic import Field, TypeAdapter
 
@@ -32,6 +32,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness._durable import in_durable_context
 from pydantic_ai_harness._judge import claim_offset_limits, render_part
 from pydantic_ai_harness._message_text import CHARS_PER_TOKEN, user_prompt_text
@@ -194,6 +195,9 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
     """Optional observability callback invoked with each verdict after it is processed
     (after any steering has been enqueued)."""
 
+    _durable_operations_need_id: ClassVar[bool] = False
+    """An id-less judge binds no durable operation; `before_run` rejects it inside a workflow or flow instead."""
+
     _judge: Agent[None, object] = field(init=False, repr=False, compare=False)
     _steps: int = field(default=0, init=False, repr=False, compare=False)
     _task: asyncio.Task[None] | None = field(default=None, init=False, repr=False, compare=False)
@@ -225,17 +229,6 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
                 )
             self._judge = self.agent
 
-    def __new__(cls, *args: Any, **kwargs: Any) -> TrajectoryJudge[AgentDepsT]:
-        """Build a `_DurableTrajectoryJudge` when given an `id`.
-
-        A durable operation needs a stable `id`, and durability binds every class-level operation when the
-        agent is built, so only judges with an `id` declare one: an id-less judge on a durable-capable agent
-        keeps building.
-        """
-        if cls is TrajectoryJudge and kwargs.get('id') is not None:
-            return object.__new__(_DurableTrajectoryJudge)
-        return object.__new__(cls)
-
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> TrajectoryJudge[AgentDepsT]:
         """Return a fresh per-run instance so step counts and in-flight evaluations are not shared.
 
@@ -246,7 +239,7 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Reject an id-less judged run inside a durable workflow or flow, before any budget is spent."""
-        if in_durable_context(ctx):
+        if self.id is None and in_durable_context(ctx):
             raise UserError(
                 '`TrajectoryJudge` needs an `id` inside a durable workflow or flow, so its evaluations can be '
                 "checkpointed: construct it as `TrajectoryJudge(..., id='...')`."
@@ -273,10 +266,12 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
         if self._steps % self.every == 0 and self._task is None and self._claim_request(ctx):
             prompt = _judge_prompt([*request_context.messages, response], self.window, ctx.run_id)
             if in_durable_context(ctx):
-                await self._evaluate(ctx, prompt)
+                # The claim stands in for the parent's request, committed only after this hook returns.
+                await self._evaluate(ctx, prompt, ctx.usage_limits)
             else:
                 self._task = asyncio.create_task(
-                    self._evaluate(ctx, prompt), name=f'trajectory-judge:{self._judge_name()}'
+                    self._evaluate(ctx, prompt, claim_offset_limits(ctx.usage_limits)),
+                    name=f'trajectory-judge:{self._judge_name()}',
                 )
         return response
 
@@ -328,16 +323,16 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
         await self._discard_in_flight(ctx)
         return result
 
-    async def _evaluate(self, ctx: RunContext[AgentDepsT], prompt: str) -> None:
+    async def _evaluate(self, ctx: RunContext[AgentDepsT], prompt: str, usage_limits: UsageLimits | None) -> None:
         """Run the judge once and enqueue attributed steering when it says to steer.
 
         `output_type=[AllGood, Steer]` is set here, at the run boundary, so the verdict
         contract holds at runtime whatever output type the judge agent was configured with.
 
-        The judge runs against the shared `usage` under a request limit raised by exactly
-        one: the launch's claim occupies a slot in `usage.requests` for the whole
-        evaluation, so the unadjusted limit would count this evaluation against itself
-        twice. The claim is released once the run has recorded the judge's real spend (or
+        The judge runs against the shared `usage` under `usage_limits`. In the background the
+        request limit is raised by exactly one: the launch's claim occupies a slot in
+        `usage.requests` for the whole evaluation, so the unadjusted limit would count this
+        evaluation against itself twice. The claim is released once the run has recorded the judge's real spend (or
         recorded nothing, on failure or cancellation); a task cancelled before this
         coroutine starts never reaches the `finally`, so `_discard_in_flight` releases the
         claim instead.
@@ -347,7 +342,7 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
         durable execution.
         """
         try:
-            verdict, ref = await self._judge_verdict(ctx, prompt)
+            verdict, ref = await self._judge_verdict(ctx, prompt, usage_limits)
         finally:
             self._release_claim(ctx)
         if isinstance(verdict, Steer):
@@ -355,17 +350,20 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
         if self.on_verdict is not None:
             self.on_verdict(verdict)
 
-    async def _judge_verdict(self, ctx: RunContext[AgentDepsT], prompt: str) -> tuple[TrajectoryVerdict, str]:
-        """Run the judge, returning its verdict and a steering `ref`.
+    @durable_operation('evaluate')
+    async def _judge_verdict(
+        self, ctx: RunContext[AgentDepsT], prompt: str, usage_limits: UsageLimits | None
+    ) -> tuple[TrajectoryVerdict, str]:
+        """Run the judge, as a durable operation inside a workflow or flow, returning its verdict and a steering `ref`.
 
-        The random `ref` is made here so a durable replay reuses the recorded one and delivers the same steering.
+        The random `ref` is made here so a replay reuses the recorded one and delivers the same steering.
         """
         result = await self._judge.run(
             prompt,
             output_type=[AllGood, Steer],
             conversation_id=ctx.conversation_id,
             usage=ctx.usage,
-            usage_limits=claim_offset_limits(ctx.usage_limits),
+            usage_limits=usage_limits,
         )
         return result.output, secrets.token_hex(8)
 
@@ -408,17 +406,6 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
     def get_serialization_name(cls) -> str | None:
         """Not spec-serializable: the capability may hold a live `Agent` and a callback."""
         return None
-
-
-class _DurableTrajectoryJudge(TrajectoryJudge[AgentDepsT]):
-    """A `TrajectoryJudge` with an `id`, whose evaluation is a durable operation inside a workflow or flow."""
-
-    async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
-        return None
-
-    @durable_operation('evaluate')
-    async def _judge_verdict(self, ctx: RunContext[AgentDepsT], prompt: str) -> tuple[TrajectoryVerdict, str]:
-        return await super()._judge_verdict(ctx, prompt)
 
 
 def _steering_parts(judge: str, message: str, ref: str) -> tuple[SystemPromptPart, TextContent]:

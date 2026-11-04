@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 import secrets
-from dataclasses import is_dataclass
+from dataclasses import dataclass, is_dataclass
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -1597,6 +1597,11 @@ class TestUsageCoordination:
         assert ctx.usage.requests == 1  # the judge's real request; the launch claim was released
 
 
+@dataclass(kw_only=True)
+class _JudgeSubclass(TrajectoryJudge[None]):
+    pass
+
+
 class TestDurableExecution:
     async def test_a_judge_without_an_id_is_rejected_inside_a_durable_container(self) -> None:
         """Without an `id` there is no durable operation, so the run fails fast before any model request."""
@@ -1617,7 +1622,14 @@ class TestDurableExecution:
         with pytest.raises(UserError, match='needs an `id`'):
             await agent.run('do the thing')
 
-    async def test_evaluation_is_a_durable_operation_awaited_before_the_next_request(self) -> None:
+    async def test_a_judge_without_an_id_still_builds_a_durable_agent(self) -> None:
+        """An id-less judge has no durable operation to bind, so a durable-capable agent keeps building."""
+        Agent(TestModel(), name='unnamed', capabilities=[TrajectoryJudge(model=_steer_model()), RecordingDurability()])
+
+    @pytest.mark.parametrize('judge_type', [TrajectoryJudge, _JudgeSubclass])
+    async def test_evaluation_is_a_durable_operation_awaited_before_the_next_request(
+        self, judge_type: type[TrajectoryJudge[None]]
+    ) -> None:
         """Inside a durable container the evaluation is checkpointed and its steering reaches the very next request."""
         seen: list[str] = []
 
@@ -1631,7 +1643,7 @@ class TestDurableExecution:
             return _text_response('done')
 
         capabilities: list[AbstractCapability[None]] = [
-            TrajectoryJudge(model=FunctionModel(judge_fn), id='judge', every=1),
+            judge_type(model=FunctionModel(judge_fn), id='judge', every=1),
             RecordingDurability(),
         ]
         agent = Agent(FunctionModel(main_fn), name='judged', deps_type=type(None), capabilities=capabilities)
@@ -1646,6 +1658,33 @@ class TestDurableExecution:
         assert bound is not None
         assert [name for name, _ in bound.calls] == ['judged__model.request', 'judged__capability__judge.evaluate'] * 2
         assert seen[1].endswith(_steering('trajectory-judge', 'cite the file'))
+
+    async def test_an_inline_evaluation_leaves_room_for_the_pending_parent_request(self) -> None:
+        """The parent's just-finished request is committed after the inline evaluation, so the judge can't spend its slot."""
+        judge_calls = 0
+
+        def judge_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal judge_calls
+            judge_calls += 1
+            return _text_response('thinking') if judge_calls == 1 else _steer_response('refocus')
+
+        def main_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart('work', {})]) if len(messages) == 1 else _text_response('done')
+
+        capabilities: list[AbstractCapability[None]] = [
+            TrajectoryJudge(model=FunctionModel(judge_fn), id='judge', every=1),
+            RecordingDurability(),
+        ]
+        agent = Agent(FunctionModel(main_fn), name='limited', deps_type=type(None), capabilities=capabilities)
+
+        @agent.tool_plain
+        def work() -> str:  # pragma: no cover - the judge's retry exceeds the limit first
+            return 'worked'
+
+        usage = RunUsage()
+        with pytest.raises(UsageLimitExceeded):
+            await agent.run('do the thing', usage=usage, usage_limits=UsageLimits(request_limit=2))
+        assert usage.requests <= 2
 
     async def test_durable_capable_agent_outside_its_container_is_judged(self) -> None:
         """Outside its durable container the judge still runs as a background task, not a durable operation."""

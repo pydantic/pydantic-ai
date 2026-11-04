@@ -299,6 +299,20 @@ def _as_capability(value: object, capability: AbstractCapability[Any]) -> object
     return value
 
 
+def _operation_capability_id(capability: AbstractCapability[Any]) -> str | None:
+    """The `id` a capability's durable operations bind under, or `None` for an id-less one that opted out of binding."""
+    if capability.id is not None:
+        return capability.id
+    # A capability that rejects its own id-less durable runs opts out, so it keeps building without one.
+    if not getattr(capability, '_durable_operations_need_id', True):
+        return None
+    raise UserError(
+        f'Capability {type(capability).__name__!r} contributes durable operations and needs an explicit '
+        '`id` because persisted operation identity and worker-side recovery must remain stable. '
+        f"Construct it as `{type(capability).__name__}(id='...')`."
+    )
+
+
 class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     """Base for building a durable execution engine as an agent capability.
 
@@ -584,15 +598,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         backend = self.get_durable_operation_backend()
         for capability in leaf_capabilities(agent.root_capability):
             declarations = collect_capability_operations(capability)
-            if not declarations:
+            if not declarations or (capability_id := _operation_capability_id(capability)) is None:
                 continue
-            capability_id = capability.id
-            if capability_id is None:
-                raise UserError(
-                    f'Capability {type(capability).__name__!r} contributes durable operations and needs an explicit '
-                    '`id` because persisted operation identity and worker-side recovery must remain stable. '
-                    f"Construct it as `{type(capability).__name__}(id='...')`."
-                )
             for operation_name, declaration in declarations.items():
                 key = (capability_id, operation_name)
 

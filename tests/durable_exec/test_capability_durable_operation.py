@@ -1617,6 +1617,20 @@ def test_decorated_capability_requires_explicit_stable_id() -> None:
         Agent(TestModel(), name='missing_id', capabilities=[MissingId(), RecordingDurability()])
 
 
+def test_capability_can_opt_its_id_less_instances_out_of_binding() -> None:
+    class OptionalId(AbstractCapability[Any]):
+        _durable_operations_need_id = False
+
+        @durable_operation('operation')
+        async def operation(self, ctx: RunContext[Any]) -> None:
+            pass  # pragma: no cover
+
+    agent = Agent(TestModel(), name='optional_id', capabilities=[OptionalId(), RecordingDurability()])
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    assert durability._bound_capability_operations == {}  # pyright: ignore[reportPrivateUsage]
+
+
 def test_duplicate_operation_names_fail_during_agent_construction() -> None:
     class Duplicate(AbstractCapability[Any]):
         id = 'duplicate'

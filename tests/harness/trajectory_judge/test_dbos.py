@@ -10,7 +10,6 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.models.function import FunctionModel
-from pydantic_ai_harness.trajectory_judge import TrajectoryJudge
 from tests.conftest import detach_dbos_logging, try_import
 
 from ._durable_agent import judge_calls, judge_respond, respond, steering, trajectory_judge, work
@@ -40,12 +39,6 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
     finally:
         DBOS.destroy()
         detach_dbos_logging()
-
-
-def test_a_judge_without_an_id_still_builds_a_durable_agent() -> None:
-    """Only a judge with an `id` declares the durable operation, so an id-less one keeps binding."""
-    judge = TrajectoryJudge(model=FunctionModel(judge_respond))
-    Agent(FunctionModel(respond), name='unnamed_trajectory_judge', capabilities=[judge, DBOSDurability()])
 
 
 async def test_replay_reuses_the_recorded_evaluation(dbos: DBOS) -> None:
