@@ -15,6 +15,8 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('dbos not installed', allow_module_level=True)
 
+from pydantic import BaseModel
+
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.durable_exec import JSON_CODEC
@@ -30,6 +32,7 @@ from pydantic_ai_harness.guardrails import (
     ToolResultInfo,
 )
 from tests.conftest import detach_dbos_logging
+from tests.harness._recording_durability import RecordingDurability
 
 pytestmark = pytest.mark.anyio
 
@@ -168,3 +171,51 @@ def test_a_guardrail_without_an_id_cannot_bind_to_a_durable_agent(capability: Ab
 )
 def test_a_verdict_round_trips_through_a_json_journal(verdict: GuardrailResult) -> None:
     assert JSON_CODEC.load(GuardrailResult, JSON_CODEC.dump(GuardrailResult, verdict)) == verdict
+
+
+class Record(BaseModel):
+    name: str
+    ssn: str | None
+
+
+async def test_a_replacement_keeps_its_type_through_a_json_journal() -> None:
+    """A replacement comes back from a JSON journal as plain data and is rebuilt as the value it replaces."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        if returns:
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'name': 'a', 'ssn': '123'})])
+        return ModelResponse(parts=[ToolCallPart('lookup', {'key': 'a'})])
+
+    agent = Agent(
+        FunctionModel(respond),
+        name='json_guardrails',
+        output_type=Record,
+        capabilities=[
+            OutputGuardrail(guard=lambda output: GuardrailResult.replace(Record(name='a', ssn=None)), id='output'),
+            ToolGuardrail(result_guard=lambda result: GuardrailResult.replace(Record(name='b', ssn=None)), id='tool'),
+            RecordingDurability(),
+        ],
+    )
+
+    @agent.tool_plain
+    def lookup(key: str) -> Record:
+        return Record(name=key, ssn='123')
+
+    result = await agent.run('look it up')
+
+    assert result.output == Record(name='a', ssn=None)
+    tool_return = next(
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'lookup'
+    )
+    assert tool_return.content == Record(name='b', ssn=None)

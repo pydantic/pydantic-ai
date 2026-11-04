@@ -55,6 +55,7 @@ from pydantic_ai_harness.guardrails._shared import (
     GuardrailResult,
     as_guards,
     evaluate_all,
+    rebuild_replacement,
     trace_block,
     trace_redaction,
 )
@@ -605,8 +606,9 @@ class OutputGuardrail(AbstractCapability[AgentDepsT]):
                     'calls only.'
                 )
             case 'replace':
-                trace_redaction(ctx, direction='output', replacement=verdict.replacement)
-                return verdict.replacement
+                replacement = rebuild_replacement(ctx, verdict.replacement, output)
+                trace_redaction(ctx, direction='output', replacement=replacement)
+                return replacement
             case _:  # pragma: no cover - assert_never exhaustiveness guard
                 assert_never(verdict.action)
 

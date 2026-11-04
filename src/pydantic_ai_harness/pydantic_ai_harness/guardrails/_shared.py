@@ -15,13 +15,14 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, assert_never
 
-from pydantic import Field, GetCoreSchemaHandler
+from pydantic import Field, GetCoreSchemaHandler, TypeAdapter
 from pydantic_core import core_schema
 from typing_extensions import TypeIs
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._callable import takes_context
+from pydantic_ai_harness._durable import in_durable_context
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
 
@@ -314,6 +315,16 @@ async def evaluate_all(
             continue
         return verdict, position
     return (GuardrailResult.replace(value) if replaced else GuardrailResult.allow()), len(guards) - 1
+
+
+_JSON_TYPES = (str, int, float, bool, type(None), dict, list)
+
+
+def rebuild_replacement(ctx: RunContext[AgentDepsT], replacement: object, original: object) -> object:
+    """Rebuild a replacement a JSON-transport durable engine returned as plain data, as the type of `original`."""
+    if type(replacement) in (dict, list) and not isinstance(original, _JSON_TYPES) and in_durable_context(ctx):
+        return TypeAdapter(type(original)).validate_python(replacement)
+    return replacement
 
 
 def direction_attributes(direction: str, action: str, tool_name: str | None) -> dict[str, str]:

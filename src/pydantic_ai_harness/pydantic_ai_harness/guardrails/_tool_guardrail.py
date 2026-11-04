@@ -48,6 +48,7 @@ from pydantic_ai_harness.guardrails._shared import (
     GuardOutcome,
     GuardrailResult,
     evaluate,
+    rebuild_replacement,
     trace_approval,
     trace_block,
     trace_redaction,
@@ -571,10 +572,9 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
                 trace_block(ctx, direction=_RESULT_DIRECTION, message=message, tool_name=call.tool_name)
                 return message
             case 'replace':
-                trace_redaction(
-                    ctx, direction=_RESULT_DIRECTION, replacement=verdict.replacement, tool_name=call.tool_name
-                )
-                return verdict.replacement
+                replacement = rebuild_replacement(ctx, verdict.replacement, result)
+                trace_redaction(ctx, direction=_RESULT_DIRECTION, replacement=replacement, tool_name=call.tool_name)
+                return replacement
             case 'retry':
                 # Even for a tool that already failed, `retry` still means retry: collapsing it into
                 # a replacement message would hand the model a failed result where it was asked to

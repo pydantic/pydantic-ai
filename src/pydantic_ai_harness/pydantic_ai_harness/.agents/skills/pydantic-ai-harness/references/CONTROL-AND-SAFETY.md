@@ -181,8 +181,10 @@ Key parameters:
   in list order, result guards in reverse.
 - Guard verdicts are durable operations under Temporal, DBOS, and Prefect. Give every guardrail on a
   durable-capable agent a distinct explicit `id`; ordinary runs do not require one. Under Temporal
-  a guard's `RunContext` has no `messages` or `prompt`, and an exception it raises fails (and
-  retries) the activity instead of reaching the run: return a verdict instead.
+  a structured output or tool result reaches the guard as JSON data (serialize with
+  `pydantic_core.to_json(out)`, not `out.model_dump_json()`), its `RunContext` has no `messages`
+  or `prompt`, and an exception it raises fails (and retries) the activity instead of reaching the
+  run: return a verdict instead.
 
 Detectors (`pydantic_ai_harness.guardrails.detectors`), plain functions returning `GuardrailResult`
 (`.action` is `'allow'`, `'block'`, or `'replace'`; `.replacement` holds the redacted text). To block
