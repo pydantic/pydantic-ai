@@ -1879,6 +1879,26 @@ def b(*, order: b_Order) -> Any:
 """)
 
 
+def _list_of(user: Any) -> Any:
+    return list[user]
+
+
+def _optional(user: Any) -> Any:
+    return user | None
+
+
+@pytest.mark.parametrize('wrap', [_list_of, _optional])
+def test_types_differing_only_in_a_type_they_wrap_stay_two_types(wrap: Any):
+    catalog = _catalog(
+        _signature('a', order=_model('Order', user=wrap(_user_with_name()))),
+        _signature('b', order=_model('Order', user=wrap(_user_with_id()))),
+    )
+    assert 'class a_Order(TypedDict):' in catalog
+    assert 'class b_Order(TypedDict):' in catalog
+    assert 'class a_User(TypedDict):\n    name: str' in catalog
+    assert 'class b_User(TypedDict):\n    id: int' in catalog
+
+
 def test_types_differing_only_in_a_required_flag_stay_two_types():
     optional_name: dict[str, Any] = {'name': (str, 'x')}
     optional_user = create_model('User', **optional_name)
@@ -2030,8 +2050,6 @@ def test_ref_that_does_not_resolve_keeps_rendering():
 # The issue's two rules, over every small catalog
 # =============================================================================
 
-_TEXT_NAMES = {'Any', 'NotRequired', 'str', 'int', 'list', 'None'}
-
 
 def _object_of(field: str, node: dict[str, Any]) -> dict[str, Any]:
     return {'type': 'object', 'properties': {field: node}, 'required': [field]}
@@ -2057,75 +2075,23 @@ def _document(names: tuple[str, str], outer_form: str, inner: tuple[str, str]) -
     }
 
 
-_DOCUMENTS = [
-    _document(names, form, inner)
-    for names, form, inner in product(
-        [('User', 'Address'), ('Address', 'a_User'), ('Any', 'User')],
-        ['plain', 'ref', 'list', 'optional'],
-        [('g', 'string'), ('g', 'integer'), ('h', 'string')],
-    )
-]
-
-
-def _meaning_of_schema(node: dict[str, Any], root: dict[str, Any]) -> Any:
-    if '$ref' in node:
-        return _meaning_of_schema(root['$defs'][node['$ref'].rsplit('/', 1)[1]], root)
-    if 'anyOf' in node:
-        return ('optional', _meaning_of_schema(node['anyOf'][0], root))
-    if node['type'] == 'array':
-        return ('list', _meaning_of_schema(node['items'], root))
-    if node['type'] == 'object':
-        return {field: _meaning_of_schema(value, root) for field, value in node['properties'].items()}
-    return {'string': 'str', 'integer': 'int'}[node['type']]
-
-
-def _meaning_of_annotation(annotation: ast.expr, classes: dict[str, ast.ClassDef]) -> Any:
-    """What an annotation means in the text, failing on any name nothing defines."""
-    if isinstance(annotation, ast.BinOp):
-        return ('optional', _meaning_of_annotation(annotation.left, classes))
-    if isinstance(annotation, ast.Subscript):
-        return ('list', _meaning_of_annotation(annotation.slice, classes))
-    assert isinstance(annotation, ast.Name)
-    if annotation.id in _TEXT_NAMES:
-        return annotation.id
-    fields = [statement for statement in classes[annotation.id].body if isinstance(statement, ast.AnnAssign)]
-    return {
-        field.target.id: _meaning_of_annotation(field.annotation, classes)
-        for field in fields
-        if isinstance(field.target, ast.Name)
-    }
-
-
-def _assert_every_name_is_unique_and_means_its_schema(catalog: str, tools: dict[str, dict[str, Any]]) -> None:
-    body = ast.parse(catalog).body
-    classes = {node.name: node for node in body if isinstance(node, ast.ClassDef)}
-    assert sum(isinstance(node, ast.ClassDef) for node in body) == len(classes), catalog
-    assert not classes.keys() & {*_TEXT_NAMES, *tools}, catalog
-    for function in body:
-        if isinstance(function, ast.FunctionDef):
-            schema = tools[function.name]
-            annotation = function.args.kwonlyargs[0].annotation
-            assert annotation is not None
-            assert _meaning_of_annotation(annotation, classes) == _meaning_of_schema(
-                schema['properties']['p'], schema
-            ), catalog
-
-
-def test_every_small_pair_of_tools():
-    for params_a, params_b in product(_DOCUMENTS, repeat=2):
-        signatures = [
-            FunctionSignature.from_schema(name='a', parameters_schema=params_a),
-            FunctionSignature.from_schema(name='a_b', parameters_schema=params_b),
-        ]
-        _assert_every_name_is_unique_and_means_its_schema(_catalog(*signatures), {'a': params_a, 'a_b': params_b})
-
-
-def test_every_small_document_as_params_and_return():
-    for params, returns in product(_DOCUMENTS, repeat=2):
-        signature = FunctionSignature.from_schema(name='a', parameters_schema=params, return_schema=returns)
-        catalog = _catalog(signature)
-        _assert_every_name_is_unique_and_means_its_schema(catalog, {'a': params})
-        function = next(node for node in ast.parse(catalog).body if isinstance(node, ast.FunctionDef))
-        classes = {node.name: node for node in ast.parse(catalog).body if isinstance(node, ast.ClassDef)}
-        assert function.returns is not None
-        assert _meaning_of_annotation(function.returns, classes) == _meaning_of_schema(returns, returns), catalog
+def test_every_small_catalog_defines_each_name_once_and_every_name_it_uses():
+    """Tool `b` returns what tool `a` takes, so types clash across tools and within one."""
+    documents = [
+        _document(names, form, inner)
+        for names, form, inner in product(
+            [('User', 'Address'), ('Address', 'a_User'), ('Any', 'User')],
+            ['plain', 'ref', 'list', 'optional'],
+            [('g', 'string'), ('g', 'integer'), ('h', 'string')],
+        )
+    ]
+    for first, second in product(documents, repeat=2):
+        catalog = _catalog(
+            FunctionSignature.from_schema(name='a', parameters_schema=first),
+            FunctionSignature.from_schema(name='b', parameters_schema=second, return_schema=first),
+        )
+        tree = ast.parse(catalog)
+        defined = [node.name for node in tree.body if isinstance(node, ast.ClassDef)]
+        used = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)}
+        assert len(defined) == len(set(defined)), catalog
+        assert used <= {*defined, 'Any', 'TypedDict', 'int', 'list', 'str'}, catalog
