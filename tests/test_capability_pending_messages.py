@@ -2807,3 +2807,47 @@ def test_run_context_queue_changes_need_a_live_queue(
             ctx.dequeue('some-id')
         else:
             ctx.set_enqueue_priority('some-id', 'asap')
+
+
+async def test_asap_message_waits_for_a_request_that_resumes_a_suspended_response():
+    """A queued `'asap'` message waits rather than landing after the suspended response a resume re-sends.
+
+    The request that resumes a turn the provider paused mid-flight echoes the history ending in that suspended
+    `ModelResponse`, which has to stay the tail as the continuation seed: drained content has nowhere to go
+    there, so it waits for the request after it instead of failing the run.
+    """
+    calls: list[list[ModelMessage]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append(list(messages))
+        return ModelResponse(parts=[TextPart(content=f'reply {len(calls)}')])
+
+    agent = Agent(FunctionModel(model_fn))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='hi')]),
+        ModelResponse(parts=[TextPart(content='partial turn')], state='suspended'),
+    ]
+
+    async with agent.iter(message_history=history) as agent_run:
+        first = True
+        async for _node in agent_run:
+            if first:
+                first = False
+                agent_run.enqueue('steering from the user')
+
+    # The resumed request still echoes the suspended response as the tip of the history.
+    assert cast(ModelResponse, calls[0][-1]).state == 'suspended'
+    assert not any(
+        isinstance(part, UserPromptPart) and part.content == 'steering from the user'
+        for message in calls[0]
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    )
+    # The message is delivered on the request after it, rather than being dropped.
+    assert [
+        part.content
+        for message in calls[-1]
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    ] == ['hi', 'steering from the user']
