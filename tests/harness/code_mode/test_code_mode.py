@@ -2084,6 +2084,8 @@ class TestCodeMode:
         assert isinstance(wrapper, CodeModeToolset)
         ctx = await build_ctx(None, wrapper)
         tools = await wrapper.get_tools(ctx)
+        description = tools['run_code'].tool_def.description
+        assert description is not None and 'send(**kwargs: Any)' in description
         await wrapper.call_tool(
             'run_code', {'code': f'await send(**{{{name!r}: "a", "count": 1}})'}, ctx, tools['run_code']
         )
@@ -2100,8 +2102,50 @@ class TestCodeMode:
         with pytest.raises(ModelRetry, match='Type error in code'):
             await self._run_code_with_tools("await other(n='x')", self._tool_with_param(name), other)
 
-    async def test_wrong_value_for_param_python_cannot_write_is_left_to_the_tools_own_validation(self) -> None:
-        """The limit of `**kwargs: Any`: the type check accepts this call, so only the tool's validator can refuse it."""
+    @pytest.mark.parametrize('title', ['from', 'None', 'def'])
+    async def test_inline_object_title_python_cannot_write_leaves_every_tool_checked(self, title: str) -> None:
+        """As a class name `from` turned the type check off for the whole catalog, not only for its own tool."""
+        sender = {'type': 'object', 'title': title, 'properties': {'a': {'type': 'string'}}, 'required': ['a']}
+        send = ToolDefinition(
+            name='send',
+            parameters_json_schema={'type': 'object', 'properties': {'sender': sender}, 'required': ['sender']},
+            return_schema={'type': 'string'},
+        )
+        other = ToolDefinition(
+            name='other',
+            parameters_json_schema={'type': 'object', 'properties': {'n': {'type': 'integer'}}, 'required': ['n']},
+            return_schema={'type': 'string'},
+        )
+        output, _ = await self._run_code_with_tools("print(await send(sender={'a': 'x'}))", send, other)
+        assert output == {'output': 'ok\n'}
+        for wrong in ("await other(n='x')", "await send(sender={'a': 1})"):
+            with pytest.raises(ModelRetry, match='Type error in code'):
+                await self._run_code_with_tools(wrong, send, other)
+
+    async def test_type_check_accepts_any_value_for_param_python_cannot_write(self) -> None:
+        """The limit of `**kwargs: Any`: a wrong value passes the type check, so only the tool can refuse it.
+
+        A tool with a validator for its arguments does. MCP tools, `Tool.from_schema` and `ExternalToolset` have
+        none, so there the wrong value goes on to the remote server, the tool's own code or the caller.
+        """
+        received: list[dict[str, Any]] = []
+
+        class RecordingToolset(_StaticToolset):
+            async def call_tool(
+                self, name: str, tool_args: dict[str, Any], ctx: RunContext[object], tool: ToolsetTool[object]
+            ) -> Any:
+                received.append(tool_args)
+                return 'ok'
+
+        wrong_call = "await send(**{'from': 1, 'count': 1})"
+        no_validator = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(
+            RecordingToolset([self._tool_with_param('from')])
+        )
+        assert isinstance(no_validator, CodeModeToolset)
+        ctx = await build_ctx(None, no_validator)
+        tools = await no_validator.get_tools(ctx)
+        await no_validator.call_tool('run_code', {'code': wrong_call}, ctx, tools['run_code'])
+        assert received == [{'from': 1, 'count': 1}]
 
         class ValidatingToolset(_StaticToolset):
             async def get_tools(self, ctx: RunContext[object]) -> dict[str, ToolsetTool[object]]:
@@ -2118,9 +2162,7 @@ class TestCodeMode:
         ctx = await build_ctx(None, wrapper)
         tools = await wrapper.get_tools(ctx)
         with pytest.raises(ModelRetry, match='valid string'):
-            await wrapper.call_tool(
-                'run_code', {'code': "await send(**{'from': 1, 'count': 1})"}, ctx, tools['run_code']
-            )
+            await wrapper.call_tool('run_code', {'code': wrong_call}, ctx, tools['run_code'])
 
     # ---------------------------------------------------------------------------
     # Deferred tools

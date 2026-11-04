@@ -27,12 +27,31 @@ from collections import Counter
 from collections.abc import Iterable, Iterator
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Literal, TypeAlias, assert_never, cast
+from typing import Any, Literal, TypeAlias, assert_never, cast
 
 # Set during rendering and consulted by TypeSignature.display_name. Not being empty means some names had to change,
 # so a type uses the name `get_conflicting_type_names` stored on it. The mapping (e.g. {'User': 'tool_a_User'}) is only
 # the fallback for a set of names that call didn't resolve.
 _type_name_overrides: ContextVar[dict[str, str]] = ContextVar('_type_name_overrides', default={})
+
+
+# Names the rendered text relies on, so a type definition can't take them.
+_RENDERED_TEXT_NAMES: frozenset[str] = frozenset(
+    {
+        'asyncio',
+        'Any',
+        'Literal',
+        'NotRequired',
+        'TypedDict',
+        'bool',
+        'dict',
+        'float',
+        'int',
+        'list',
+        'str',
+        'tuple',
+    }
+)
 
 
 def _is_writable_name(name: str) -> bool:
@@ -201,10 +220,9 @@ class TypeSignature:
     def _render_definition(self) -> str:
         """Render the full TypedDict definition (internal, assumes overrides are set)."""
         # A class body can't hold a name Python can't write, and a field named like something an annotation
-        # reads changes what that annotation means, so these fields only fit the functional form.
-        names_read = FunctionSignature._RENDERED_TEXT_NAMES | {
-            t.display_name for f in self.fields.values() for t in _types_in(f.type)
-        }
+        # reads changes what that annotation means, so these fields only fit the functional form. The rendered
+        # text names count even when no annotation here reads them, as working out which do isn't worth the code.
+        names_read = _RENDERED_TEXT_NAMES | {t.display_name for f in self.fields.values() for t in _types_in(f.type)}
         if any(not _is_writable_name(name) or name in names_read for name in self.fields):
             return self._render_functional_definition()
         lines = [f'class {self.display_name}(TypedDict):']
@@ -265,24 +283,6 @@ class FunctionSignature:
     at render time (e.g. from a `ToolDefinition`).
     """
 
-    # Names the rendered text relies on, so a type definition can't take them.
-    _RENDERED_TEXT_NAMES: ClassVar[frozenset[str]] = frozenset(
-        {
-            'asyncio',
-            'Any',
-            'Literal',
-            'NotRequired',
-            'TypedDict',
-            'bool',
-            'dict',
-            'float',
-            'int',
-            'list',
-            'str',
-            'tuple',
-        }
-    )
-
     name: str
     description: str | None = None
     params: dict[str, FunctionParam] = field(default_factory=dict[str, FunctionParam])
@@ -340,7 +340,9 @@ class FunctionSignature:
             if not description_lines:
                 continue
             first_line, *continuation = description_lines
-            lines.append(f'{_DOC_INDENT}{param.name}: {first_line}')
+            # Such a name can hold anything, and the model has to copy it into a dict key.
+            shown_name = param.name if writable_params else repr(param.name)
+            lines.append(f'{_DOC_INDENT}{shown_name}: {first_line}')
             # Continuation lines nest one level past the parameter name
             lines.extend(f'{_DOC_INDENT * 2}{line}' for line in continuation)
         return lines
@@ -356,23 +358,20 @@ class FunctionSignature:
         async_flag = is_async if is_async is not None else self.is_async
         prefix = 'async def' if async_flag else 'def'
         params_str = ', '.join(str(p) for p in self.params.values())
-
-        return_str = str(self.return_type)
         writable_params = all(_is_writable_name(param_name) for param_name in self.params)
         if not writable_params:
             # A `**{...}` call is the only way to pass these. `Unpack[...]` of a TypedDict would check it, but a
             # type checker tests a dict literal's value type against every field, rejecting correct calls.
-            parts = [f'{prefix} {name}(**kwargs: Any) -> {return_str}:']
+            params_str = '**kwargs: Any'
         elif params_str:
             # Force keyword-only params so LLMs always use named arguments
-            parts = [f'{prefix} {name}(*, {params_str}) -> {return_str}:']
-        else:
-            parts = [f'{prefix} {name}() -> {return_str}:']
+            params_str = f'*, {params_str}'
+        parts = [f'{prefix} {name}({params_str}) -> {self.return_type}:']
 
         description_sections = [description] if description else []
         if not writable_params:
             description_sections.append(
-                f'Some argument names are not valid in Python, so pass all arguments as `{name}(**{{...}})`.'
+                f"Some argument names can't be passed as keywords, so pass all arguments as `{name}(**{{...}})`."
             )
 
         args_lines = self._render_args_lines(writable_params)
@@ -461,7 +460,7 @@ class FunctionSignature:
         FunctionSignature._unify_identical_types(signatures)
         types = FunctionSignature.collect_unique_referenced_types(signatures)
         owners = FunctionSignature._type_owners(signatures)
-        reserved = FunctionSignature._RENDERED_TEXT_NAMES | {sig.name for sig in signatures}
+        reserved = _RENDERED_TEXT_NAMES | {sig.name for sig in signatures}
         counts = Counter(t.name for t in types)
         conflicting = {name for name, count in counts.items() if count > 1 or name in reserved}
 
@@ -805,10 +804,10 @@ def _type_to_expr(
     # Object type
     if schema_type == 'object':
         if 'properties' in schema:
-            # Use `title` from the schema if available and is a valid Python identifier
+            # Use `title` from the schema if Python can write it as a class name
             # (preserves real class names like `User`), otherwise fall back to a path-based name
             title = schema.get('title')
-            td_name = title if title and title.isidentifier() else _path_to_typename(tool_name, path)
+            td_name = title if title and _is_writable_name(title) else _path_to_typename(tool_name, path)
             if td_name not in referenced_types:
                 _build_and_register_type(td_name, schema, defs, referenced_types, tool_name, path)
             return referenced_types[td_name]

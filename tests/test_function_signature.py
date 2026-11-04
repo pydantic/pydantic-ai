@@ -2175,6 +2175,12 @@ def test_field_named_like_a_name_an_annotation_reads_takes_the_functional_form(f
     assert FunctionSignature.render_type_definitions([signature], frozenset())[0].startswith('Outer = TypedDict(')
 
 
+def test_field_named_like_the_name_resolved_for_a_type_takes_the_functional_form():
+    wrapper = create_model('Wrapper', a_User=(str, ...), user=(_user_with_name(), ...))
+    catalog = _catalog(_signature('a', wrapper=wrapper), _signature('b', user=_user_with_id()))
+    assert "Wrapper = TypedDict('Wrapper', {\n    'a_User': str,\n    'user': a_User,\n})" in catalog
+
+
 def test_field_named_like_text_in_a_literal_keeps_the_class_form():
     """Only names the annotation reads change its meaning, and most schemas should keep reading as a class."""
     outer = {
@@ -2211,15 +2217,15 @@ def send(**kwargs: Any) -> Any:
     \"\"\"
     Send it.
 
-    Some argument names are not valid in Python, so pass all arguments as `send(**{...})`.
+    Some argument names can't be passed as keywords, so pass all arguments as `send(**{...})`.
 
     Args:
-        from: str
+        'from': str
             The sender.
             With two lines.
-        mail: M
-        count: int = 1
-        note: str | None = None
+        'mail': M
+        'count': int = 1
+        'note': str | None = None
     \"\"\"
     ...\
 """)
@@ -2245,4 +2251,65 @@ def test_docstring_of_kwargs_uses_the_names_resolved_for_the_catalog():
     catalog = _catalog(
         FunctionSignature.from_schema(name='b', parameters_schema=schema), _signature('c', user=_user_with_name())
     )
-    assert 'from: b_User' in catalog
+    function = next(node for node in ast.parse(catalog).body if isinstance(node, ast.FunctionDef) and node.name == 'b')
+    assert "'from': b_User" in (ast.get_docstring(function) or '')
+
+
+@pytest.mark.parametrize('name', ["it's", 'a\nb', 'a\rb', 'a\\b', 'a\u200bb'])
+def test_docstring_of_kwargs_shows_the_dict_key_for_each_name_on_one_line(name: str):
+    schema = {'type': 'object', 'properties': {name: {'type': 'string'}}, 'required': [name]}
+    rendered = FunctionSignature.from_schema(name='send', parameters_schema=schema).render('...')
+    function = ast.parse(rendered).body[0]
+    assert isinstance(function, ast.FunctionDef)
+    assert ast.get_docstring(function, clean=False) == (
+        f"\n    Some argument names can't be passed as keywords, so pass all arguments as `send(**{{...}})`.\n\n"
+        f'    Args:\n        {name!r}: str\n    '
+    )
+
+
+@pytest.mark.parametrize('line_break', ['\n', '\r', '\r\n'])
+def test_description_stays_in_the_comments_of_the_functional_form(line_break: str):
+    payload = f'A description.{line_break}import os{line_break}os.system("x")'
+    mail = {
+        'type': 'object',
+        'description': payload,
+        'properties': {'from': {'type': 'string', 'description': payload}},
+        'required': ['from'],
+    }
+    schema = {
+        'type': 'object',
+        '$defs': {'Mail': mail},
+        'properties': {'mail': {'$ref': '#/$defs/Mail'}},
+        'required': ['mail'],
+    }
+    signature = FunctionSignature.from_schema(name='a', parameters_schema=schema)
+    statements = ast.parse(FunctionSignature.render_type_definitions([signature], frozenset())[0]).body
+    assert [type(statement) for statement in statements] == [ast.Assign]
+
+
+@pytest.mark.parametrize('name', ["it's", 'a"b', 'a\\b', 'a\nb', '\'"'])
+def test_field_name_of_any_text_stays_one_exact_key(name: str):
+    mail = {'type': 'object', 'properties': {name: {'type': 'string'}}, 'required': [name]}
+    schema = {
+        'type': 'object',
+        '$defs': {'Mail': mail},
+        'properties': {'mail': {'$ref': '#/$defs/Mail'}},
+        'required': ['mail'],
+    }
+    signature = FunctionSignature.from_schema(name='a', parameters_schema=schema)
+    assignment = ast.parse(FunctionSignature.render_type_definitions([signature], frozenset())[0]).body[0]
+    assert isinstance(assignment, ast.Assign) and isinstance(assignment.value, ast.Call)
+    fields = assignment.value.args[1]
+    assert isinstance(fields, ast.Dict)
+    assert [key.value for key in fields.keys if isinstance(key, ast.Constant)] == [name]
+
+
+@pytest.mark.parametrize('title', ['from', 'None', 'def', '\ufb01eld'])
+def test_inline_object_title_python_cannot_write_takes_a_name_from_its_path(title: str):
+    sender = {'type': 'object', 'title': title, 'properties': {'a': {'type': 'string'}}, 'required': ['a']}
+    schema = {'type': 'object', 'properties': {'sender': sender}, 'required': ['sender']}
+    signature = FunctionSignature.from_schema(name='send', parameters_schema=schema)
+    assert FunctionSignature.render_type_definitions([signature], frozenset()) == [
+        'class SendSender(TypedDict):\n    a: str'
+    ]
+    assert signature.render('...') == 'def send(*, sender: SendSender) -> Any:\n    ...'
