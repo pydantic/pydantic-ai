@@ -964,12 +964,17 @@ def _is_harness_marker_part(part: ModelRequestPart) -> bool:
     return is_pinned(part) or is_receipt_part(part) or is_harness_data(part)
 
 
+def starts_user_turn(message: ModelMessage) -> bool:
+    """Whether *message* is a `ModelRequest` carrying a user prompt, not only harness bookkeeping or data."""
+    return isinstance(message, ModelRequest) and any(
+        isinstance(part, UserPromptPart) and not _is_harness_marker_part(part) for part in message.parts
+    )
+
+
 def find_first_user_message(messages: list[ModelMessage]) -> ModelRequest | None:
     """Return the first `ModelRequest` that contains a `UserPromptPart`, or `None`."""
     for msg in messages:
-        if isinstance(msg, ModelRequest) and any(
-            isinstance(part, UserPromptPart) and not _is_harness_marker_part(part) for part in msg.parts
-        ):
+        if isinstance(msg, ModelRequest) and starts_user_turn(msg):
             return msg
     return None
 
@@ -1049,6 +1054,11 @@ CLEARED_TOOL_RESULT_METADATA = 'pydantic-ai-harness.compaction.cleared-tool-resu
 """Model-invisible `ToolReturnPart.metadata` key marking a result compaction has cleared."""
 
 
+def _has_clearable_type(part: ToolReturnPart) -> bool:
+    """Whether *part* is a plain `ToolReturnPart` or a `read_file` return, the types `cleared_return` clears."""
+    return type(part) is ToolReturnPart or part.tool_kind == READ_FILE_KIND.id
+
+
 def cleared_return(part: ToolReturnPart, placeholder: str) -> ToolReturnPart | None:
     """*part* with its content replaced by *placeholder*, or `None` if it can't be cleared.
 
@@ -1062,9 +1072,9 @@ def cleared_return(part: ToolReturnPart, placeholder: str) -> ToolReturnPart | N
     `is_cleared_return` recognizes it without trusting its model-visible content. A typed part with
     other metadata can't be marked, so it isn't cleared.
     """
-    is_plain = type(part) is ToolReturnPart
-    if not is_plain and part.tool_kind != READ_FILE_KIND.id:
+    if not _has_clearable_type(part):
         return None
+    is_plain = type(part) is ToolReturnPart
     metadata = part.metadata
     if metadata is None:
         metadata = {CLEARED_TOOL_RESULT_METADATA: True}
@@ -1078,6 +1088,11 @@ def cleared_return(part: ToolReturnPart, placeholder: str) -> ToolReturnPart | N
     return replace(part, content=placeholder, metadata=metadata)
 
 
+def has_cleared_mark(part: ToolReturnPart) -> bool:
+    """Whether *part* carries the mark `cleared_return` leaves in its metadata, whichever strategy cleared it."""
+    return is_str_dict(part.metadata) and part.metadata.get(CLEARED_TOOL_RESULT_METADATA) is True
+
+
 def is_cleared_return(part: ToolReturnPart, placeholder: str) -> bool:
     """Whether a compaction using *placeholder* cleared *part*.
 
@@ -1089,22 +1104,39 @@ def is_cleared_return(part: ToolReturnPart, placeholder: str) -> bool:
     """
     if str(part.content) != placeholder:
         return False
-    metadata = part.metadata
-    return type(part) is ToolReturnPart or (
-        is_str_dict(metadata) and metadata.get(CLEARED_TOOL_RESULT_METADATA) is True
-    )
+    return type(part) is ToolReturnPart or has_cleared_mark(part)
+
+
+def _clear_once(part: ToolReturnPart, placeholder: str | Callable[[ToolReturnPart], str]) -> ToolReturnPart | None:
+    """*part* cleared with *placeholder*, or `None` if it is already cleared or can't be cleared.
+
+    A string placeholder recognizes its own clears by their content, as it always has. A callable's
+    output differs per part, so its clears are recognized by the metadata mark instead, and a part
+    whose metadata can't hold the mark is left alone: clearing it again would call the placeholder on
+    its own output.
+    """
+    if isinstance(placeholder, str):
+        return cleared_return(part, placeholder) if str(part.content) != placeholder else None
+    if (
+        has_cleared_mark(part)
+        or not (part.metadata is None or is_str_dict(part.metadata))
+        or not _has_clearable_type(part)
+    ):
+        return None
+    return cleared_return(part, placeholder(part))
 
 
 def rebuild_with_cleared(
     messages: Sequence[ModelMessage],
     clear_return_ids: set[str],
     clear_input_ids: set[str],
-    placeholder: str,
+    placeholder: str | Callable[[ToolReturnPart], str],
 ) -> list[ModelMessage]:
     """Return *messages* with selected tool results (and optionally inputs) blanked.
 
     The `ToolReturnPart` / `ToolCallPart` are kept in place with placeholder content,
     so tool-call pairing is never broken.  Already-blanked parts are left untouched. A
+    callable *placeholder* is called once per part it clears, with the original part. A
     `load_capability` call keeps its input: core reads which capability is loaded from it.
     """
     out: list[ModelMessage] = []
@@ -1114,10 +1146,8 @@ def rebuild_with_cleared(
             changed = False
             for part in msg.parts:
                 cleared = (
-                    cleared_return(part, placeholder)
-                    if isinstance(part, ToolReturnPart)
-                    and part.tool_call_id in clear_return_ids
-                    and str(part.content) != placeholder
+                    _clear_once(part, placeholder)
+                    if isinstance(part, ToolReturnPart) and part.tool_call_id in clear_return_ids
                     else None
                 )
                 if cleared is not None:

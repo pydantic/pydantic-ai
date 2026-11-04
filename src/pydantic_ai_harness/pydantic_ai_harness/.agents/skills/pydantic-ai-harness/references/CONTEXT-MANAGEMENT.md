@@ -111,12 +111,20 @@ hence `max_tokens=1` / `max_messages=1`. `tiers` must be non-empty and exactly o
 
 ### `ClearToolResults`
 
-`ClearToolResults(max_messages=None, max_tokens=None, keep_pairs=3, placeholder='[tool result cleared]', exclude_tools=frozenset(), clear_tool_inputs=False, min_clear_tokens=None)`:
-blanks old tool results, keeping the newest `keep_pairs`. `min_clear_tokens` skips clears too
-small to be worth a cache bust. Core `search_tools` / `load_capability` returns are never cleared.
-`max_messages` counts from the last cleared result, so clears come in batches about
-`(max_messages - 2 * keep_pairs) / 2` tool steps apart; at or below `2 * keep_pairs` it clears on
-every request.
+`ClearToolResults(max_messages=None, max_tokens=None, keep_pairs=None, placeholder='[tool result cleared]', exclude_tools=frozenset(), clear_tool_inputs=False, min_clear_tokens=None, *, tools=None, keep_turns=None)`:
+blanks old tool results, keeping the newest `keep_pairs` (3 when neither it nor `keep_turns` is set).
+`keep_turns=N` keeps the results of the last N completed user turns plus the current one, which is
+never cleared; `keep_turns=0` clears every earlier turn's. Only genuine user prompts start a turn,
+not pinned messages, receipts or other harness-added prompts. `tools=[...]` clears only those tools'
+results; `exclude_tools` never clears them. Setting `tools` with `exclude_tools`, or `keep_pairs`
+with `keep_turns`, raises `UserError`. `placeholder` can be a function of the `ToolReturnPart`
+(e.g. `lambda part: part.model_response_str().partition('\n')[0]` keeps the first line, so ids
+survive). It runs once per result, when it is cleared, must be deterministic so the cache prefix
+stays stable, skips results whose `metadata` isn't `None` or a `dict`, and can't be set from an
+agent spec (strings only). `min_clear_tokens` skips clears too small to be worth a cache bust.
+Core `search_tools` / `load_capability` returns are never cleared. `max_messages` counts from the
+last cleared result, so clears come in batches about `(max_messages - 2 * keep_pairs) / 2` tool
+steps apart; at or below `2 * keep_pairs` it clears on every request.
 
 ### `DeduplicateFileReads`
 

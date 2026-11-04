@@ -22,7 +22,7 @@ alternative: they work with every model and keep the compaction logic (and its c
 |---|---|---|---|
 | `ClampOversizedMessages` | zero-LLM | Head/tail-truncates a single oversized part (response text, tool-call args) | One runaway generation blew past the context cap and no other strategy can reach it |
 | `SlidingWindowCompaction` | zero-LLM | Drops the oldest whole messages down to a tail | You only need the recent turns and can discard old context entirely |
-| `ClearToolResults` | zero-LLM | Blanks the content of old tool *results* in place, keeping the last `keep_pairs` | Tool outputs dominate context and can be re-fetched on demand (the cheap first tier) |
+| `ClearToolResults` | zero-LLM | Blanks the content of old tool *results* in place, keeping the last `keep_pairs` or `keep_turns` | Tool outputs dominate context and can be re-fetched on demand (the cheap first tier) |
 | `DeduplicateFileReads` | zero-LLM | Blanks every file read superseded by a newer read of the same file | The agent re-reads files and only the latest version matters |
 | `SummarizingCompaction` | one LLM call | Summarizes older messages into a structured summary, keeping the recent tail | Old context still matters but must be compressed; use behind the cheap tiers |
 | `RelevanceCompaction` | one judge request per new step, plus an optional summary | Keeps, reduces, or drops each older step by a judge model's answers | Some old tool results are still needed verbatim and others are dead weight |
@@ -537,7 +537,8 @@ the newest message, the request being answered.
 the call again, is never cleared and doesn't count toward `keep_pairs`. Set `clear_tool_inputs=True` to also blank the
 arguments of the cleared calls. A `load_capability` call keeps its argument, because Pydantic AI reads from
 it which capability is loaded. Set `exclude_tools` to a set of tool names whose results are never
-cleared. Framework-typed tool results -- core's `search_tools` and `load_capability` returns -- are
+cleared, or `tools` to the names whose results are the only ones cleared; setting both raises a
+`UserError`. Framework-typed tool results -- core's `search_tools` and `load_capability` returns -- are
 left intact (a small token floor), because their structured content is re-parsed on later requests and
 rewriting it via `dataclasses.replace` would bypass validation and corrupt the part. `FileSystem`'s typed
 `read_file` results (`ReadFileReturnPart`) are cleared like any other result and keep their type, unless
@@ -550,7 +551,48 @@ more than `max_messages` messages follow the last cleared result, so the request
 the cached prefix instead of rewriting it. The kept pairs count toward that: right after a clear,
 about `2 * keep_pairs` messages follow the last cleared result, and each tool step adds two more. So
 each clear is followed by another after about `(max_messages - 2 * keep_pairs) / 2` tool steps, and
-at or below `2 * keep_pairs` it clears on every request. Pick the value with that gap in mind.
+at or below `2 * keep_pairs` it clears on every request. Pick the value with that gap in mind. With
+`keep_turns`, the messages of the kept turns count toward `max_messages` the same way.
+
+`keep_pairs` counts tool calls, so a turn that made many calls can push out the previous turn's
+results while a quiet one keeps several turns'. Set `keep_turns` instead to keep the tool results of
+the last `keep_turns` completed user turns, plus the current one. A user turn starts at a request
+carrying the user's prompt and runs until the next one; prompts added by harness capabilities, such as
+pinned messages and compaction receipts, don't start one. The current turn, the one the model is
+answering, is never cleared, so `keep_turns=0` clears every earlier turn's results. A run resumed
+without a new prompt answers the history's last turn, so that turn counts as the current one. Setting
+both `keep_pairs` and `keep_turns` raises a `UserError`.
+
+`placeholder` also takes a function that receives the `ToolReturnPart` being cleared and returns its
+replacement text. For example, to keep each earlier turn's search results down to their first line,
+so the ids they listed survive:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.messages import ToolReturnPart
+from pydantic_ai_harness import ClearToolResults
+
+
+def first_line(part: ToolReturnPart) -> str:
+    return part.model_response_str().partition('\n')[0]
+
+
+agent = Agent(
+    'openai:gpt-5.6-luna',
+    capabilities=[
+        ClearToolResults(max_tokens=50_000, tools=['search'], keep_turns=0, placeholder=first_line),
+    ],
+)
+```
+
+The function runs once per result, when the result is cleared, and its return value is what the
+history stores; a result that is already cleared isn't passed to it again. Keep it deterministic: a
+history cleared again from its original messages, as on a resumed or replayed run, has to come out the
+same, or the provider's prompt cache misses from the first result that differs. A cleared result is
+recognized by a mark in its `metadata`, so with a function, a result whose `metadata` is something
+other than `None` or a `dict` is left uncleared. An
+[agent spec](https://pydantic.dev/docs/ai/core-concepts/agent-spec/) can only set `placeholder` to a
+string, because a function has no spec form.
 
 ## `WarnNearLimits` thresholds
 
