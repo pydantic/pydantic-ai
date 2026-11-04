@@ -7,7 +7,7 @@ import posixpath
 import shlex
 import uuid
 from collections.abc import Mapping, Sequence
-from typing import cast
+from typing import TypeAlias, cast
 
 import anyio
 from typing_extensions import get_protocol_members
@@ -65,6 +65,28 @@ _SHELL_CHECK_PARENTS = (
     f'if test -d "$parent"; then test -w "$parent" || exit {_SHELL_EXIT_PERMISSION}; break; fi; '
     'parent=${parent%/*}; [ -n "$parent" ] || parent=/; done; '
 )
+
+
+_AUTHORITY_RANK: dict[Authority, int] = {'none': 0, 'user': 1, 'operator': 2}
+
+AuthorityLayer: TypeAlias = tuple[Authority, Mapping[str, Authority]]
+"""One wrapper's authority: its level for the workspace's files, and the levels it gives paths, keyed by path."""
+
+
+def _lowest(*levels: Authority) -> Authority:
+    """The lowest of `levels`; `'operator'`, the highest, when there are none."""
+    return min((*levels, 'operator'), key=_AUTHORITY_RANK.__getitem__)
+
+
+def _is_within(path: str, directory: str) -> bool:
+    return path == directory or path.startswith(directory.rstrip('/') + '/')
+
+
+def _layer_authority(location: str, layer: AuthorityLayer) -> Authority:
+    """The level one wrapper gives a location: its longest matching path's, else its own."""
+    level, path_authority = layer
+    matches = [path for path in path_authority if _is_within(location, path)]
+    return path_authority[max(matches, key=len)] if matches else level
 
 
 class _DamagedOutputError(WorkspaceError):
@@ -394,9 +416,60 @@ class Workspace(WorkspaceBackend):
         """The [authority][pydantic_ai.messages.Authority] of this workspace's files, so capabilities know how to send their text.
 
         `'operator'` unless an [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace] wrapper lowers it;
-        with several, the lowest wins. Tools work the same either way.
+        with several, the lowest wins. Tools work the same either way. A wrapper's `path_authority` can set
+        other levels for some paths: ask [`authority_of`][pydantic_ai.workspaces.Workspace.authority_of] for a
+        given file's.
         """
-        return self._backend.authority if isinstance(self._backend, Workspace) else 'operator'
+        return _lowest(*(level for level, _ in self._authority_layers()))
+
+    def _authority_layers(self) -> list[AuthorityLayer]:
+        """The authority each wrapper sets, innermost first."""
+        backend = self._backend
+        return backend._authority_layers() if isinstance(backend, Workspace) else []
+
+    async def authority_of(self, path: str) -> Authority:
+        """The [authority][pydantic_ai.messages.Authority] of the file at `path`, so a capability knows how to send its text.
+
+        A file in the working directory has [`authority`][pydantic_ai.workspaces.Workspace.authority], unless a
+        wrapper's `path_authority` sets another level for a directory or file containing it: the longest matching
+        path wins, and with several wrappers, the lowest of their levels. A path outside the working directory that no
+        wrapper's `path_authority` contains is outside the workspace, so its level is `'none'`.
+
+        The path is resolved like file methods resolve it, and the level is the lower of where it's written and
+        where it leads: a symlink in the workspace takes the lower of its own level and its target's, so a link
+        can't raise its target's level, nor launder a lower one. On a backend whose
+        [`realpath`][pydantic_ai.workspaces.Workspace.realpath] can't follow symlinks, only the path as written
+        counts.
+
+        The answer reflects the filesystem now: call it when reading the file, and keep the level with the text,
+        rather than asking again when the text is sent.
+        """
+        root = await self.working_dir()
+        layers: list[AuthorityLayer] = []
+        for level, path_authority in self._authority_layers():
+            # Keys resolve against the working directory and through symlinks, as the paths they're compared to do.
+            resolved: dict[str, Authority] = {}
+            for key, key_level in path_authority.items():
+                real_key = await self.realpath(await self.resolve(key, base=root))
+                resolved[real_key] = _lowest(key_level, resolved.get(real_key, key_level))
+            layers.append((level, resolved))
+        zones = [root, *(key for _, path_authority in layers for key in path_authority)]
+
+        written = await self.resolve(path)
+        target = await self.realpath(written)
+        if not any(_is_within(target, zone) for zone in zones):
+            return 'none'
+        locations = [target]
+        if target != written:
+            # A symlink is on the way: walk the path to find each link, and count where it is, not only where it
+            # leads. A link outside the workspace, such as a system directory above it, isn't the workspace's.
+            parent = '/'
+            for part in written.split('/')[1:]:
+                location = posixpath.join(parent, part)
+                parent = await self.realpath(location)
+                if parent != location and any(_is_within(location, zone) for zone in zones):
+                    locations.append(location)
+        return _lowest(*(_layer_authority(location, layer) for location in locations for layer in layers))
 
     def durable_policy(self) -> tuple[object, ...]:
         """Configuration a durable unit must rebuild with this wrapper.

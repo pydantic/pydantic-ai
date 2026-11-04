@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass
 from pathlib import Path
@@ -48,6 +49,12 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
     `'none'` for files nobody on the application's side wrote. Anything below `'operator'` wraps the workspace in an
     [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace]."""
 
+    path_authority: Mapping[str, Authority] | None = None
+    """Levels for some directories and files, overriding `authority` for the paths under them; the longest matching
+    path wins. Relative paths resolve against `working_dir`, and `~` is expanded. A path outside `working_dir`, such
+    as `'~/.config/my-app/AGENTS.md'`, is part of the workspace only when it's listed here; any other is at `'none'`.
+    See [`Workspace.authority_of`][pydantic_ai.workspaces.Workspace.authority_of]."""
+
     env: Mapping[str, str] | None = None
     """Environment variables for every command, on top of `PATH`, `HOME`, `LANG`, `LC_ALL` and `LC_CTYPE`.
 
@@ -61,11 +68,13 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
         # Pin a relative `working_dir` to today's directory, and surface an unusable platform where the
         # capability is written, not on the first run.
         self.working_dir = LocalWorkspaceBackend(self.working_dir).ref.id
+        if self.path_authority:
+            self.path_authority = {os.path.expanduser(path): level for path, level in self.path_authority.items()}
 
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
-        # The later configuration replaces the earlier one whole, so
-        # an `env` (and its secrets), `read_only` or `authority` stated only on the replaced one never carries over.
+        # The later configuration replaces the earlier one whole, so an `env` (and its secrets), `read_only`,
+        # `authority` or `path_authority` stated only on the replaced one never carries over.
         return capabilities[-1]
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
@@ -76,6 +85,8 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
         workspace: WorkspaceBackend = backend
         if self.read_only:
             workspace = ReadOnlyWorkspace(Workspace(workspace))
-        if self.authority != 'operator':
-            workspace = AuthorityWorkspace(Workspace(workspace), authority=self.authority)
+        if self.authority != 'operator' or self.path_authority:
+            workspace = AuthorityWorkspace(
+                Workspace(workspace), authority=self.authority, path_authority=self.path_authority
+            )
         return workspace

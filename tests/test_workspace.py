@@ -819,7 +819,7 @@ def test_authority_is_the_lowest_through_the_wrappers() -> None:
     assert Workspace(ReadOnlyWorkspace(AuthorityWorkspace(users, authority='none'))).authority == 'none'
     # An outer wrapper can't raise what an inner one capped.
     assert AuthorityWorkspace(AuthorityWorkspace(plain, authority='none'), authority='operator').authority == 'none'
-    assert users.durable_policy() == ('user',)
+    assert users.durable_policy() == ('user', {})
 
 
 async def test_bare_run_context_workspace_explains_how_to_attach_one() -> None:
