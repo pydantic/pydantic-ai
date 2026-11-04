@@ -43,12 +43,21 @@ async def editor(
     toolbar: Callable[[], list[tuple[str, str]]] = lambda: [('', 'ready')],
     clock: Callable[[], float] = lambda: 0,
     panel: Callable[[str], Sequence[str]] = lambda _: (),
+    key_wait_limit: float | None = 5,
 ) -> AsyncGenerator[tuple[LivePrompt, PipeInput, io.StringIO]]:
+    """An opened editor on a pipe; `key_wait_limit` fails a test left waiting for keys that never come.
+
+    A test that feeds no keys and writes to a real store passes `None`: it has no such wait, and a slow disk is no hang.
+    """
     output = output if output is not None else io.StringIO()
     console = Console(file=output, force_terminal=True, width=80, height=24)
     commands = Commands()
     commands.register(Command(name='help', description='Help', handler=lambda args: 'help'))
-    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(5):
+    with (
+        create_pipe_input() as pipe,
+        create_app_session(input=pipe, output=DummyOutput()),
+        anyio.fail_after(key_wait_limit),
+    ):
         live = LivePrompt(
             console=console,
             commands=commands,
