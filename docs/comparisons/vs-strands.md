@@ -15,7 +15,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Harnesses | Strands harness, or build your own | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Enterprise support | None documented for Strands; [AWS Support](https://aws.amazon.com/premiumsupport/) for the cloud | [For the framework itself](../enterprise-support.md), no platform required |
-| Durable execution | Temporal plugin, maintained by Temporal (public preview) | [Eight integrations](../durable_execution/overview.md) |
+| Durable execution | Temporal plugin, maintained by Temporal (public preview) | [Nine integrations](../durable_execution/overview.md) |
 | Interfaces | CLI, A2A; AG-UI via a partner package | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) |
 | Realtime voice | Yes | [Realtime](../realtime/overview.md) |
 | Evals | Yes | [Pydantic Evals](../evals.md) |
