@@ -165,6 +165,8 @@ agent = Agent('anthropic:claude-opus-5-5', deps_type=User, capabilities=[UsersE2
 
 E2B's client falls back to `E2B_API_KEY` when its key is empty or `None`. If that variable is set where your app runs, a user with no key would run on that account, so check for a key before building the client, as above.
 
+Under Temporal, `deps` are serialized for every activity, which puts a key on them in the workflow's history. Put a user ID there instead, and have `get_workspace` look that user's key up on the worker. A client itself can't be on `deps` there at all.
+
 ## Prepare a sandbox before the run
 
 To seed files or install packages before the agent starts, create the backend yourself, work in it through `Workspace`, and pass it to the run:
