@@ -189,20 +189,26 @@ def _pydantic_ai_workspace(encoded):
             except FileNotFoundError:
                 return 0
 
-        def content(name):
-            return tail(os.path.join(directory, name), inline)
+        def head(name):
+            try:
+                with open(os.path.join(directory, name), 'rb') as file:
+                    return file.read(inline + 1)
+            except FileNotFoundError:
+                return b''
 
         try:
             with open(os.path.join(directory, 'rc')) as file:
                 code = file.read().strip()
         except FileNotFoundError:
             code = None
-        total = size('out') + size('err')
-        reply = {'exit_code': code, 'size': total, 'out': None, 'err': None}
-        # Most output is small: return it now and clean up, saving a round trip per stream.
-        if code is not None and total <= inline:
-            reply.update(out=content('out'), err=content('err'))
-            shutil.rmtree(directory, ignore_errors=True)
+        reply = {'exit_code': code, 'size': size('out') + size('err'), 'out': None, 'err': None}
+        if code is not None:
+            out, err = head('out'), head('err')
+            # Most output is small: return it now and clean up, saving a round trip per stream. Decided on
+            # what was read, as a process the command left in the background can still be writing.
+            if len(out) + len(err) <= inline:
+                reply.update(out=base64.b64encode(out).decode(), err=base64.b64encode(err).decode())
+                shutil.rmtree(directory, ignore_errors=True)
         return reply
 
     def tail(path, limit):
