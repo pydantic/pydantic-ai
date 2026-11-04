@@ -24,11 +24,18 @@ definition is inlined to. A `$ref` in it counts as the definition it refers to.
 class InlinedSchemaTooLargeError(UserError):
     """A schema whose `$ref`s expand past `MAX_INLINED_SCHEMA_VALUES` once inlined, with `subject` naming it."""
 
+    subject: str
+    """What the schema belongs to, as the message names it."""
+
     def __init__(self, subject: str):
+        self.subject = subject
         super().__init__(
             f'{subject} is too large: its `$ref`s expand to more than {MAX_INLINED_SCHEMA_VALUES:,} JSON values. '
             'Refer to large definitions from fewer places.'
         )
+
+    def __reduce__(self) -> tuple[type[InlinedSchemaTooLargeError], tuple[str]]:
+        return self.__class__, (self.subject,)
 
 
 @dataclass(init=False)
