@@ -34,9 +34,9 @@ _HEADER_VALUE = re.compile(r'[\x20-\x7e]{1,128}')
 class GatewayRoutingFacts(AbstractCapability[Any]):
     """Sends facts about the agent with each model request that goes through the [Pydantic AI Gateway](../gateway.md).
 
-    The gateway's Smart routing rules can match on these facts, and the conversation ID lets the gateway keep a
+    The Gateway's Smart routing rules can match on these facts, and the conversation ID lets the Gateway keep a
     conversation on one provider. Every agent has this capability: a model request that doesn't go through the
-    gateway is sent unchanged. Each request carries these headers:
+    Gateway is sent unchanged. Each request carries these headers:
 
     - `x-pydantic-agent-name`: the agent's [`name`][pydantic_ai.agent.Agent.name], or the name inferred from the
       variable the agent is assigned to, without surrounding whitespace. Left out when the agent has no name, or
@@ -53,9 +53,9 @@ class GatewayRoutingFacts(AbstractCapability[Any]):
     The headers go into the request's [`extra_headers`][pydantic_ai.settings.ModelSettings.extra_headers], next to
     the ones already set. A header you set yourself in `extra_headers` is sent as you set it.
 
-    With [`ModelFallback`][pydantic_ai.capabilities.ModelFallback], only the attempts at a model behind the gateway
+    With [`ModelFallback`][pydantic_ai.capabilities.ModelFallback], only the attempts at a model behind the Gateway
     carry the headers. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] sends one set of settings
-    to every model it tries, so it carries them only when all of its models are behind the gateway and set the
+    to every model it tries, so it carries them only when all of its models are behind the Gateway and set the
     same `extra_headers` of their own.
 
     To stop sending the headers, pass `GatewayRoutingFacts(enabled=False)` in `capabilities`, to the agent or to
@@ -65,7 +65,7 @@ class GatewayRoutingFacts(AbstractCapability[Any]):
     _: KW_ONLY
 
     enabled: bool = True
-    """Whether to send the headers. Pass `False` to send model requests through the gateway without them."""
+    """Whether to send the headers. Pass `False` to send model requests through the Gateway without them."""
 
     id: str | None = 'gateway_routing_facts'
     """One-off: an agent either sends the facts or doesn't, so the id is fixed by default.
@@ -85,7 +85,7 @@ class GatewayRoutingFacts(AbstractCapability[Any]):
         return type(self).prepare_model_request is not GatewayRoutingFacts.prepare_model_request
 
     def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
-        # A realtime session sends no model requests through the gateway's HTTP routes, and every agent has this
+        # A realtime session sends no model requests through the Gateway's HTTP routes, and every agent has this
         # capability, so it mustn't make every session warn. Measured against this class, so a subclass that adds
         # its own hooks still warns.
         return self._realtime_uncalled_hooks_overriding(GatewayRoutingFacts)
@@ -95,11 +95,11 @@ class GatewayRoutingFacts(AbstractCapability[Any]):
         ctx: RunContext[Any],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        """Add the routing headers to this attempt's `extra_headers`, when its model is behind the gateway."""
+        """Add the routing headers to this attempt's `extra_headers`, when its model is behind the Gateway."""
         if not self.enabled:
             return request_context
         models = _serving_models(request_context.model)
-        if not all(_behind_gateway(model) for model in models):
+        if not all((provider := model.provider) is not None and is_gateway_provider(provider) for model in models):
             return request_context
         headers = _current_headers(request_context.model_settings, models)
         if headers is None:
@@ -124,10 +124,6 @@ def _serving_models(model: Model) -> list[Model]:
     if isinstance(model, FallbackModel):
         return [serving for fallback in model.models for serving in _serving_models(fallback)]
     return [model]
-
-
-def _behind_gateway(model: Model) -> bool:
-    return (provider := model.provider) is not None and is_gateway_provider(provider)
 
 
 def _current_headers(model_settings: ModelSettings | None, models: list[Model]) -> dict[str, str] | None:
