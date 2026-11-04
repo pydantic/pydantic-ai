@@ -1618,6 +1618,14 @@ CASES = [
         attrs={'status_code': 503, 'body': None},
     ),
     Case(
+        id='cohere-transport-gave-up-stream',
+        model=_cohere,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'body': None},
+        stream=True,
+    ),
+    Case(
         id='openai-transport-gave-up-unread-body',
         model=_openai,
         handler=_gave_up(503, content=b'{"error": "unavailable"}', read=False),

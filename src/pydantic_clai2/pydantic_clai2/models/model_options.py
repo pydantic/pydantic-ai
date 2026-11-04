@@ -30,12 +30,17 @@ def model_options(*, model: str) -> dict[str, tuple[str, ...]]:
         if provider in ('openrouter', 'vllm') or (provider == 'azure' and family_defaults):
             options = _openai_options(provider='openai-chat', name=name, family_defaults=family_defaults)
     options['cache'] = ()
+    options.update(_glm_options(name=name))
+    return options
+
+
+def _glm_options(*, name: str) -> dict[str, tuple[str, ...]]:
     glm = _glm_version(name=name)
-    if glm is not None and glm >= (4, 5):
-        options['glm_thinking'] = ()
-        options['glm_clear_thinking'] = ()
-        if glm >= (5, 2):
-            options['glm_reasoning_effort'] = ()
+    if glm is None or glm < (4, 5):
+        return {}
+    options: dict[str, tuple[str, ...]] = {'glm_thinking': (), 'glm_clear_thinking': ()}
+    if glm >= (5, 2):
+        options['glm_reasoning_effort'] = ()
     return options
 
 
@@ -69,41 +74,33 @@ def _openai_options(*, provider: str, name: str, family_defaults: bool) -> dict[
     if provider != 'openai-chat':
         options.pop('seed')
     profile = openai_model_profile(name)
-    if family_defaults or profile.get('openai_supports_reasoning', False):
-        for key in ('temperature', 'top_p', 'seed'):
-            options.pop(key, None)
-        options['thinking'] = ()
-        efforts = _openai_efforts(name=name)
-        options['openai_reasoning_effort'] = tuple(efforts)
-        options['openai_text_verbosity'] = ()
-        if provider != 'openai-chat':
-            options['openai_reasoning_summary'] = ()
-            options['openai_reasoning_context'] = (
-                ('auto', 'current_turn', 'all_turns')
-                if family_defaults or profile.get('openai_responses_supports_reasoning_context', False)
-                else ('auto', 'current_turn')
-            )
-            if family_defaults or profile.get('openai_responses_supports_reasoning_mode', False):
-                options['openai_reasoning_mode'] = ()
+    if not (family_defaults or profile.get('openai_supports_reasoning', False)):
+        return options
+    for key in ('temperature', 'top_p', 'seed'):
+        options.pop(key, None)
+    options['thinking'] = ()
+    efforts = _openai_efforts(name=name)
+    options['openai_reasoning_effort'] = tuple(efforts)
+    options['openai_text_verbosity'] = ()
+    if provider != 'openai-chat':
+        options['openai_reasoning_summary'] = ()
+        options['openai_reasoning_context'] = (
+            ('auto', 'current_turn', 'all_turns')
+            if family_defaults or profile.get('openai_responses_supports_reasoning_context', False)
+            else ('auto', 'current_turn')
+        )
+        if family_defaults or profile.get('openai_responses_supports_reasoning_mode', False):
+            options['openai_reasoning_mode'] = ()
     return options
 
 
 def validate_model_options(*, model: str, form: ModelSettingsForm) -> None:
     """Reject unavailable native settings and incompatible thinking budgets before saving."""
-    options = model_options(model=model)
-    for key, value in form.model_dump(exclude_none=True).items():
-        if key not in options:
-            raise ValueError(f'{key} is not supported for {model}. Reset this override first.')
-        choices = options[key]
-        if choices and str(value) not in choices:
-            raise ValueError(f'{key}: choose {", ".join(choices)}.')
+    _validate_supported(model=model, form=form)
     if form.anthropic_thinking_budget is not None and form.anthropic_thinking_mode != 'enabled':
         raise ValueError('Set anthropic_thinking_mode to enabled before setting its budget.')
     if form.anthropic_thinking_mode == 'enabled':
-        if form.max_tokens is not None and (form.anthropic_thinking_budget or 10000) >= form.max_tokens:
-            raise ValueError('Thinking budget must be less than max_tokens.')
-        if form.temperature not in (None, 1.0) or form.top_p is not None:
-            raise ValueError('Classic thinking requires temperature=1 and no top_p override.')
+        _validate_classic_thinking(form=form)
     if provider_of(model) == 'anthropic':
         profile = anthropic_model_profile(model.partition(':')[2]) or {}
         if (
@@ -118,6 +115,23 @@ def validate_model_options(*, model: str, form: ModelSettingsForm) -> None:
         raise ValueError('Set extended thinking to enabled or adaptive before using its display or binding.')
     if form.glm_thinking == 'disabled' and form.glm_reasoning_effort is not None:
         raise ValueError('Set GLM thinking to enabled before setting its reasoning effort.')
+
+
+def _validate_supported(*, model: str, form: ModelSettingsForm) -> None:
+    options = model_options(model=model)
+    for key, value in form.model_dump(exclude_none=True).items():
+        if key not in options:
+            raise ValueError(f'{key} is not supported for {model}. Reset this override first.')
+        choices = options[key]
+        if choices and str(value) not in choices:
+            raise ValueError(f'{key}: choose {", ".join(choices)}.')
+
+
+def _validate_classic_thinking(*, form: ModelSettingsForm) -> None:
+    if form.max_tokens is not None and (form.anthropic_thinking_budget or 10000) >= form.max_tokens:
+        raise ValueError('Thinking budget must be less than max_tokens.')
+    if form.temperature not in (None, 1.0) or form.top_p is not None:
+        raise ValueError('Classic thinking requires temperature=1 and no top_p override.')
 
 
 # Fable 5.1 surfaces its inter-tool progress updates; both spellings appear in the wild.
