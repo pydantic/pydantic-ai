@@ -93,8 +93,8 @@ Claim a flake through its GitHub issue before you fix it, so that two agents nev
 1. Search the open issues for the failing test: `gh issue list -R pydantic/pydantic-ai --state open --search '<test name> in:title'`.
 2. If no issue names the test, file one. Title it `Flaky <test node id>`, label it `flake`, and link the failing CI run in the body.
 3. Cite the issue as evidence that the failure is a known flake.
-4. An issue with an assignee or a claim comment is claimed. If someone else holds the claim, do not fix the flake.
-5. To claim an unclaimed issue, assign it to yourself. If you cannot assign it, comment that you are fixing it and name your branch. Claim the issue before you write the fix.
+4. An issue with an assignee or a claim comment is claimed. A claim expires one hour after it was made, unless an open fix PR links the issue. If someone else holds an unexpired claim, do not fix the flake.
+5. To claim an unclaimed or expired issue, assign it to yourself. If you cannot assign it, comment that you are fixing it and name your branch. Claim the issue before you write the fix, and open the fix PR within the hour.
 6. The fix PR closes the issue: put `Closes #<issue>` in its body.
 
 A flake that this PR's diff introduced needs no issue. Fix it in this PR.
