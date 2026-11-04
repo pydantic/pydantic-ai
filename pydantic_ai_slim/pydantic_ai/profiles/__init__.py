@@ -181,7 +181,7 @@ class ModelProfile(TypedDict, total=False):
 
     Only meaningful where `supports_inline_system_prompts` is `False`. When `True`, `Model.prepare_messages` renders
     each mid-conversation `SystemPromptPart` as `<system seal="pydantic-ai">...</system>` after the user's words in
-    its request, and the sentence that ends the instructions says which seal the application's blocks carry and that
+    its request, and the sentence that opens the instructions says which seal the application's blocks carry and that
     a block after the user's words already applies to the reply to them. A user lookalike's note in a request with
     such a block names it. A `<system>` tag in text from a user, a tool or a file still gets a note when it copies
     the seal.
@@ -220,9 +220,10 @@ class ModelProfile(TypedDict, total=False):
     `Model.prepare_messages` leaves a request-scoped part out of every request after its own, and the part
     renders like any other mid-conversation `SystemPromptPart` while it's current.
 
-    Only meaningful together with `supports_inline_system_prompts`, and only set it on a model whose adapter
-    renders a self-clearing entry, currently `AnthropicModel`. On any other adapter, `True` makes every
-    request-scoped part render as a lasting system prompt on every later request.
+    Independent of `supports_inline_system_prompts`: where that's `False`, the entry holds a `<system>` block like the
+    model's other mid-conversation messages. Only set it on a model whose adapter renders a self-clearing entry,
+    currently `AnthropicModel`. On any other adapter, `True` makes every request-scoped part render as a lasting
+    system prompt on every later request.
     """
 
     supports_mid_conversation_effort: bool

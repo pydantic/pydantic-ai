@@ -46,7 +46,8 @@ application's instructions correctly and followed steering after a tool result m
 `<system>` rendering instead (`needs_sealed_system_blocks`), which measured equal or better on every cell
 (instruction changes, a genuine change next to a lookalike, request-scoped prompts), at +1.4% cost per cached
 conversation with the prefix unchanged. The unsealed fallback was worse than the entry on instruction history, so
-it's the sealed one or neither.
+it's the sealed one or neither. Request-scoped entries have their own list:
+`_REQUEST_SCOPED_SYSTEM_PROMPT_MODEL_PREFIXES` in `providers/anthropic.py`.
 
 It lives here rather than beside `AnthropicProvider` so `OpenRouterProvider` can share it without the `anthropic`
 SDK. It's a fact about Anthropic's API, not the model family, so `anthropic_model_profile()` doesn't apply it: the
@@ -236,8 +237,8 @@ class AnthropicModelProfile(ModelProfile, total=False):
     there and the system message comes from the application. Measured live, that block took Haiku 5.5 from 12 to
     64 of 64 runs following a rule change; Sonnet 5.5 and Opus 5.5 followed it without the block.
 
-    It only applies when the native entry is used, which Haiku 5.5's default profile doesn't: that sends it the sealed
-    `<system>` rendering instead (`needs_sealed_system_blocks`).
+    It only applies when a native entry is used. Haiku 5.5's default profile sends its lasting system messages as
+    sealed `<system>` blocks instead (`needs_sealed_system_blocks`), so that leaves its request-scoped entries.
     """
 
     anthropic_accepts_file_and_container_ids: bool

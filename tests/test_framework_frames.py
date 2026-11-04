@@ -691,7 +691,8 @@ def test_only_claude_sonnet_4_6_sonnet_5_5_and_haiku_5_5_need_sealed_system_bloc
     assert profile.get('needs_sealed_system_blocks', False) is sealed
     if sealed:
         assert profile.get('supports_inline_system_prompts') is False
-        assert profile.get('supports_request_scoped_system_prompts') is False
+        # Sonnet 4.6 rejects the entry; the other two take it, with the sealed block inside.
+        assert profile.get('supports_request_scoped_system_prompts') is (model_name != 'claude-sonnet-4-6')
 
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
