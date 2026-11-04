@@ -73,6 +73,8 @@ timeout-minutes: 30
 env:
   PYDANTIC_AI_JOB_TIMEOUT_MINUTES: '30'
 if: ${{ needs.provider_health.outputs.ready == 'true' }}
+engine:
+  model: anthropic/${{ vars.GH_AW_MODEL }}
 max-daily-ai-credits: -1
 imports:
   - shared/network-vendor-domains.md
@@ -80,7 +82,6 @@ imports:
   - shared/checkout.md
   - shared/engine-zai.md
   - shared/provider-health.md
-  - shared/pre-steps.md
   - shared/pre-agent-steps.md
 pre-agent-steps:
   - name: Inventory tracked CE and skip an existing workflow PR before inference
@@ -123,7 +124,7 @@ post-steps:
       SOURCE: ${{ github.sha }}
     run: |
       python3 "$RUNNER_TEMP/weekly-ce-audit/validate.py" validate --source "$SOURCE" \
-        --agent-output /tmp/gh-aw/agent_output.json --agent-log /tmp/gh-aw/agent-stdio.log \
+        --agent-output /tmp/gh-aw/agent_output.json --agent-session /tmp/gh-aw/agent-session.jsonl \
         --issue-evidence "$RUNNER_TEMP/weekly-ce-audit/issue"
   - name: Publish audit coverage
     if: always()

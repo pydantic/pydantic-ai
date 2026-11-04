@@ -3,21 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import json
 import subprocess
 import sys
-from collections.abc import AsyncIterator
-from contextlib import redirect_stdout
 from pathlib import Path
 
 import pytest
 import yaml
 
 from pydantic_ai import RunContext
-from pydantic_ai.messages import FunctionToolResultEvent, ModelMessage, ModelRequest, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
-from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -569,37 +565,32 @@ def test_compiled_publication_gate_and_health_dependencies():
 
 
 def record_task_review(directory: Path, result: str) -> None:
-    """Build execution-log fixtures using the shim's actual Task event schema."""
+    """Build canonical session fixtures using the engine recorder's actual Task event schema."""
     (directory / 'review/result.txt').write_text(result)
     events: list[dict[str, object]] = [
         {
-            'type': 'assistant',
-            'message': {
-                'content': [
-                    {
-                        'type': 'tool_use',
-                        'id': 'review-task',
-                        'name': 'Task',
-                        'input': {'prompt': (directory / 'review/instructions.md').read_text()},
-                    }
-                ]
+            'type': 'tool.execution_start',
+            'data': {
+                'toolCallId': 'review-task',
+                'toolName': 'Task',
+                'input': {
+                    'description': 'Independent review',
+                    'prompt': (directory / 'review/instructions.md').read_text(),
+                },
             },
         },
         {
-            'type': 'user',
-            'message': {
-                'content': [
-                    {
-                        'type': 'tool_result',
-                        'tool_use_id': 'review-task',
-                        'content': result,
-                        'is_error': False,
-                    }
-                ]
+            'type': 'tool.execution_complete',
+            'data': {
+                'toolCallId': 'review-task',
+                'toolName': 'Task',
+                'success': True,
+                'status': 'success',
+                'output': result,
             },
         },
     ]
-    (directory / 'review/task.log').write_text('\n'.join(json.dumps(event) for event in events))
+    (directory / 'review/agent-session.jsonl').write_text('\n'.join(json.dumps(event) for event in events))
 
 
 def approve_candidate(root: Path, source: str, revision: str, directory: Path) -> None:
@@ -722,8 +713,8 @@ def test_publication_rejects_noop_with_reviewed_proposal(
             str(directory),
             '--agent-output',
             str(output),
-            '--agent-log',
-            str(directory / 'review/task.log'),
+            '--agent-session',
+            str(directory / 'review/agent-session.jsonl'),
             '--issue-evidence',
             str(frozen_issues),
         ],
@@ -739,24 +730,29 @@ def test_independent_review_binds_candidate_and_metadata(reviewed_candidate: tup
     """A current independent report permits an issue-exempt edit without extra issue machinery."""
     root, source, revision, proposal = reviewed_candidate
     directory = root / '.ce-audit'
-    validate_review(root, source, revision, directory, proposal, directory / 'review/task.log')
+    validate_review(root, source, revision, directory, proposal, directory / 'review/agent-session.jsonl')
     with pytest.raises(ValueError, match='metadata'):
         validate_review(
-            root, source, revision, directory, {**proposal, 'body': 'Unreviewed body'}, directory / 'review/task.log'
+            root,
+            source,
+            revision,
+            directory,
+            {**proposal, 'body': 'Unreviewed body'},
+            directory / 'review/agent-session.jsonl',
         )
     metadata: dict[str, str] = json.loads((directory / 'review/candidate.json').read_text())
     for change in ({'head': source}, {'tree': source}, {'policy': 'stale'}):
         (directory / 'review/candidate.json').write_text(json.dumps({**metadata, **change}))
         with pytest.raises(ValueError, match='changed'):
-            validate_review(root, source, revision, directory, proposal, directory / 'review/task.log')
+            validate_review(root, source, revision, directory, proposal, directory / 'review/agent-session.jsonl')
     (directory / 'review/candidate.json').write_text(json.dumps(metadata))
     record_task_review(directory, 'incomplete')
     with pytest.raises(ValueError, match='pre-push'):
-        validate_review(root, source, revision, directory, proposal, directory / 'review/task.log')
+        validate_review(root, source, revision, directory, proposal, directory / 'review/agent-session.jsonl')
     approve_candidate(root, source, revision, directory)
     (directory / 'AGENTS.md').write_text('Candidate instruction overlay')
     with pytest.raises(ValueError, match='overlays'):
-        validate_review(root, source, revision, directory, proposal, directory / 'review/task.log')
+        validate_review(root, source, revision, directory, proposal, directory / 'review/agent-session.jsonl')
 
 
 def test_nontrivial_candidate_requires_aligned_assigned_issue(
@@ -770,7 +766,7 @@ def test_nontrivial_candidate_requires_aligned_assigned_issue(
     (directory / 'review/proposal.json').write_text(json.dumps(proposal))
     approve_candidate(root, source, revision, directory)
     with pytest.raises(FileNotFoundError):
-        validate_review(root, source, revision, directory, proposal, directory / 'review/task.log')
+        validate_review(root, source, revision, directory, proposal, directory / 'review/agent-session.jsonl')
     issue = {
         'number': 12,
         'state': 'open',
@@ -793,20 +789,20 @@ def test_nontrivial_candidate_requires_aligned_assigned_issue(
     (directory / 'issue-permissions.json').write_text(json.dumps([{'login': 'reviewer', 'permission': 'write'}]))
     approve_candidate(root, source, revision, directory)
     with pytest.raises(ValueError, match='close'):
-        validate_review(root, source, revision, directory, proposal, directory / 'review/task.log')
+        validate_review(root, source, revision, directory, proposal, directory / 'review/agent-session.jsonl')
     proposal = {**proposal, 'body': 'Closes #12\n\nA behavioral instruction change.'}
     (directory / 'review/proposal.json').write_text(json.dumps(proposal))
     approve_candidate(root, source, revision, directory)
-    validate_review(root, source, revision, directory, proposal, directory / 'review/task.log')
+    validate_review(root, source, revision, directory, proposal, directory / 'review/agent-session.jsonl')
     (directory / 'issue.json').write_text(json.dumps({**issue, 'assignees': []}))
     approve_candidate(root, source, revision, directory)
     with pytest.raises(ValueError, match='assigned'):
-        validate_review(root, source, revision, directory, proposal, directory / 'review/task.log')
+        validate_review(root, source, revision, directory, proposal, directory / 'review/agent-session.jsonl')
     (directory / 'issue.json').write_text(json.dumps(issue))
     (directory / 'issue-permissions.json').write_text(json.dumps([{'login': 'reviewer', 'permission': 'read'}]))
     approve_candidate(root, source, revision, directory)
     with pytest.raises(ValueError, match='agreement'):
-        validate_review(root, source, revision, directory, proposal, directory / 'review/task.log')
+        validate_review(root, source, revision, directory, proposal, directory / 'review/agent-session.jsonl')
 
 
 def test_saved_approval_without_independent_task_is_rejected(
@@ -815,12 +811,12 @@ def test_saved_approval_without_independent_task_is_rejected(
     """Reject saved approval that does not match the local Task evidence."""
     root, source, revision, proposal = reviewed_candidate
     directory = root / '.ce-audit'
-    log = directory / 'review/task.log'
+    log = directory / 'review/agent-session.jsonl'
     original = log.read_text()
     log.write_text('unrelated agent log\n123\n')
     with pytest.raises(ValueError, match='independent Task'):
         validate_review(root, source, revision, directory, proposal, log)
-    log.write_text(original.replace('"is_error": false', '"is_error": true'))
+    log.write_text(original.replace('"success": true', '"success": false'))
     with pytest.raises(ValueError, match='independent Task'):
         validate_review(root, source, revision, directory, proposal, log)
     log.write_text(original)
@@ -837,7 +833,7 @@ def test_host_snapshot_rejects_staged_issue_evidence_changes(
     directory = root / '.ce-audit'
     trusted = root.parent / f'{root.name}-host-issue'
     trusted.mkdir()
-    log = directory / 'review/task.log'
+    log = directory / 'review/agent-session.jsonl'
     validate_review(root, source, revision, directory, proposal, log, trusted)
     (directory / 'issue-permissions.json').write_text('[{"login":"invented","permission":"admin"}]')
     approve_candidate(root, source, revision, directory)
@@ -868,7 +864,7 @@ def test_rewritten_review_material_is_rejected(
     result = (directory / 'review/result.txt').read_text()
     record_task_review(directory, result)
     with pytest.raises(ValueError):
-        validate_review(root, source, revision, directory, proposal, directory / 'review/task.log')
+        validate_review(root, source, revision, directory, proposal, directory / 'review/agent-session.jsonl')
 
 
 def test_rewritten_proposal_after_review_is_rejected(
@@ -880,33 +876,7 @@ def test_rewritten_proposal_after_review_is_rejected(
     changed = {**proposal, 'body': 'Unreviewed replacement metadata.'}
     (directory / 'review/proposal.json').write_text(json.dumps(changed))
     with pytest.raises(ValueError):
-        validate_review(root, source, revision, directory, changed, directory / 'review/task.log')
-
-
-def test_actual_task_stream_can_authorize_current_candidate(
-    reviewed_candidate: tuple[Path, str, str, dict[str, object]],
-):
-    """Exercise the real stream formatter instead of assuming full tool results reach the execution log."""
-    root, source, revision, proposal = reviewed_candidate
-    directory = root / '.ce-audit'
-    report = (directory / 'review/result.txt').read_text()
-
-    async def events() -> AsyncIterator[FunctionToolResultEvent]:
-        yield FunctionToolResultEvent(part=ToolReturnPart(tool_name='Task', content=report, tool_call_id='review-task'))
-        yield FunctionToolResultEvent(part=ToolReturnPart(tool_name='Task', content='x' * 500, tool_call_id='control'))
-
-    buffer = io.StringIO()
-    ctx = RunContext[object](deps=None, model=TestModel(), usage=RunUsage())
-    with redirect_stdout(buffer):
-        asyncio.run(cli._stream_events(ctx, events()))  # pyright: ignore[reportPrivateUsage]
-    emitted = [json.loads(line)['message']['content'][0]['content'] for line in buffer.getvalue().splitlines()]
-    assert emitted[0] == report
-    assert len(report) == 72 and len(report) <= cli.MAX_LIVE_TOOL_RESULT_CHARS
-    assert '…[+' in emitted[1]
-    log = directory / 'review/task.log'
-    call = log.read_text().splitlines()[0]
-    log.write_text(call + '\n' + buffer.getvalue())
-    validate_review(root, source, revision, directory, proposal, log)
+        validate_review(root, source, revision, directory, changed, directory / 'review/agent-session.jsonl')
 
 
 def test_task_reads_diff_with_stable_policy_and_fresh_history(

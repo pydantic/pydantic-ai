@@ -360,11 +360,11 @@ def prepare_review(root: Path, source: str, branch: str, default_branch: str, di
     (review / 'instructions.md').write_text(prompt)
 
 
-def task_review(log: Path, prompt: str) -> str:
-    """Match local Task evidence; this is not attestation against a compromised coordinator."""
+def task_review(session: Path, prompt: str) -> str:
+    """Match Task evidence in the canonical agent session; this is not attestation against a compromised coordinator."""
     calls: set[str] = set()
     reports: list[str] = []
-    for line in log.read_text(encoding='utf-8').splitlines():
+    for line in session.read_text(encoding='utf-8').splitlines():
         try:
             payload: object = json.loads(line)
         except json.JSONDecodeError:
@@ -372,29 +372,27 @@ def task_review(log: Path, prompt: str) -> str:
         if not is_container(payload) or isinstance(payload, list):
             continue
         event = mapping(payload)
-        if 'message' not in event:
+        if event.get('type') not in ('tool.execution_start', 'tool.execution_complete'):
             continue
-        content = mapping(event['message']).get('content')
-        if not is_container(content) or isinstance(content, dict):
+        data = mapping(event.get('data'))
+        if data.get('toolName') != 'Task':
             continue
-        for item in content:
-            part = mapping(item)
-            if part.get('type') == 'tool_use' and part.get('name') == 'Task':
-                supplied_prompt = mapping(part.get('input')).get('prompt')
-                call_id = part.get('id')
-                if (
-                    isinstance(supplied_prompt, str)
-                    and supplied_prompt.strip() == prompt.strip()
-                    and isinstance(call_id, str)
-                ):
-                    calls.add(call_id)
-            elif part.get('type') == 'tool_result' and part.get('tool_use_id') in calls and not part.get('is_error'):
-                result = part.get('content')
-                if not isinstance(result, str):
-                    raise ValueError('Independent Task result must be text')
-                reports.append(result.strip())
+        call_id = data.get('toolCallId')
+        if event['type'] == 'tool.execution_start':
+            supplied_prompt = mapping(data.get('input')).get('prompt')
+            if (
+                isinstance(supplied_prompt, str)
+                and supplied_prompt.strip() == prompt.strip()
+                and isinstance(call_id, str)
+            ):
+                calls.add(call_id)
+        elif call_id in calls and data.get('success') is True:
+            result = data.get('output')
+            if not isinstance(result, str):
+                raise ValueError('Independent Task result must be text')
+            reports.append(result.strip())
     if len(calls) != 1 or len(reports) != 1:
-        raise ValueError('Missing or incomplete independent Task review in the agent log')
+        raise ValueError('Missing or incomplete independent Task review in the agent session')
     return reports[0]
 
 
@@ -404,7 +402,7 @@ def validate_review(
     revision: str,
     directory: Path,
     proposal: dict[str, object],
-    log: Path,
+    session: Path,
     issue_evidence: Path | None = None,
 ) -> None:
     """Bind semantic review to the tree and check frozen issue fields for non-exempt proposals."""
@@ -418,7 +416,7 @@ def validate_review(
     ).read_text() != prompt:
         raise ValueError('Prepared review prompt or diff differs from immutable inputs')
     review = (directory / 'review/result.txt').read_text().strip()
-    if review != task_review(log, prompt):
+    if review != task_review(session, prompt):
         raise ValueError('Saved report differs from the independent Task result')
     if review != f'current {expected["digest"]}':
         raise ValueError('Missing, incomplete, stale, or non-current independent pre-push review')
@@ -479,7 +477,7 @@ def main() -> None:
     parser.add_argument('--repository', default=os.environ.get('GITHUB_REPOSITORY', ''))
     parser.add_argument('--safe-outputs', type=Path)
     parser.add_argument('--agent-output', type=Path)
-    parser.add_argument('--agent-log', type=Path)
+    parser.add_argument('--agent-session', type=Path)
     parser.add_argument('--issue-evidence', type=Path)
     parser.add_argument('--branch')
     parser.add_argument('--default-branch')
@@ -518,10 +516,10 @@ def main() -> None:
             branch, proposal = publication
             git(args.root, 'merge-base', '--is-ancestor', args.source, branch)
             paths = sorted(set(paths) | set(validate_edits(args.root, args.source, entries, branch)))
-            if not args.agent_log or args.issue_evidence is None:
+            if not args.agent_session or args.issue_evidence is None:
                 raise ValueError('Publication needs Task execution evidence and the frozen host issue directory')
             validate_review(
-                args.root, args.source, branch, args.directory, proposal, args.agent_log, args.issue_evidence
+                args.root, args.source, branch, args.directory, proposal, args.agent_session, args.issue_evidence
             )
     receipt_path = args.directory / 'receipt.json'
     unread = sorted(entry.path for entry in entries if entry.scope in {'editable', 'report-only'})
