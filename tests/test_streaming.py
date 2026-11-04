@@ -101,6 +101,7 @@ from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsNow, IsStr, legacy_retry_prompt_part, message_part
+from .realtime.simulation._loop import SimulatedLoop
 
 READINESS_WAIT_TIMEOUT = 5
 """Seconds to wait for something that should happen promptly: only a hang should exceed it on a loaded runner."""
@@ -1467,11 +1468,17 @@ async def test_run_stream_early_break_during_debounce_closes_cleanly():
         assert await anext(stream)
 
 
+@pytest.mark.parametrize(
+    'anyio_backend', [pytest.param(('asyncio', {'loop_factory': SimulatedLoop}), id='virtual-clock')]
+)
 async def test_run_stream_cancel_during_debounce_from_another_task():
     """`cancel()` interrupts a debounced background pull without cancelling its caller.
 
     A synthetic `PeekableAsyncStream` makes the second chunk wait deterministically; a recorded provider response cannot
     guarantee that the debounced prefetch is still active when cancellation starts.
+
+    The deadlines only catch a hang, so the test runs on a virtual clock that moves when nothing else can run: a real
+    hang fails at once, and no amount of real time on a stalled runner can expire them.
     """
     pull_started = anyio.Event()
     finalization_started = anyio.Event()

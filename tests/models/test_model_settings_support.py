@@ -51,6 +51,7 @@ from __future__ import annotations
 import ast
 import importlib
 import inspect
+import itertools
 import json
 import pkgutil
 import re
@@ -59,6 +60,7 @@ import types
 import warnings
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -1005,6 +1007,11 @@ def _no_backoff(response: object, retries: int) -> float:
     return 0
 
 
+_mistral_retry_clock = types.SimpleNamespace(time=partial(next, itertools.count(step=0.02)))
+"""Stands in for `time` in Mistral's retry loop: each reading is 20 ms later, so the client's 50 ms budget runs out after
+the same attempts however long an attempt really takes."""
+
+
 @dataclass(frozen=True)
 class RetryCase:
     """One model, the `Supported by:` names that cover it, and the attempts it makes with each `max_retries`."""
@@ -1018,7 +1025,7 @@ class RetryCase:
     decision: bool = False
     status: int = RETRYABLE_STATUS
     instant_backoff: tuple[tuple[str, object], ...] = ()
-    """SDK internals to patch where the SDK would otherwise wait a second or more between attempts."""
+    """SDK internals to patch where the SDK would otherwise wait a second or more between attempts, or read a real clock."""
     marks: tuple[pytest.MarkDecorator, ...] = ()
 
     @property
@@ -1102,6 +1109,7 @@ RETRY_CASES = [
         ('Mistral',),
         _mistral_with_client_retries,
         ('several', 1, 'several'),
+        instant_backoff=(('mistralai.client.utils.retries.time', _mistral_retry_clock),),
         marks=_needs(mistral_available, 'mistral'),
     ),
     RetryCase(
