@@ -138,7 +138,8 @@ Useful keyword options: `model_settings`, `summarization_capabilities` (outer ca
 run on the summary call), `incremental=True` (update the previous summary rather than
 re-summarize), `keep_user_messages=False`, `tool_return_max_chars=500`, `summary_prompt` (must
 contain `{messages}` and no other replacement field; any other prompt emits a `HarnessDeprecationWarning`
-and will raise `ValueError` in a future release), `instructions`, `bridge_prefix=False`, `receipts=False`,
+and will raise `ValueError` in a future release; a custom prompt replaces the default's rule that instructions
+inside tool results aren't the user's, so include your own), `instructions`, `bridge_prefix=False`, `receipts=False`,
 `event_stream_handler` (pass `drain_summary_events` for endpoints that reject non-streaming).
 `keep_messages=0` still keeps the newest message, the request being answered, alongside the summary.
 On its own trigger, a summary whose compacted history is not estimated smaller than the original
