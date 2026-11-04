@@ -294,7 +294,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         return replaced if swapped else wrapped
 
     def _child_workflow_toolset(self, ts: AbstractToolset[AgentDepsT]) -> DurableFunctionToolset[AgentDepsT] | None:
-        """The wrapper that runs `ts`'s `child_workflow` tools; toolsets without them stay unwrapped, as before."""
+        """The wrapper that dispatches `ts`'s `child_workflow` tools; toolsets without them stay unwrapped, as before."""
         if not isinstance(ts, FunctionToolset):
             return None
         marked = any(_selects_child_workflow(tool.metadata) for tool in ts.tools.values())
@@ -303,12 +303,13 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         child = self._child_workflow_toolsets.get(ts._explicit_id or '')  # pyright: ignore[reportPrivateUsage]
         if child is not None and child.wrapped is ts:
             return child
-        if marked and self.in_durable_context:
-            raise UserError(
-                'A tool selects a DBOS child workflow, but its toolset has no registered child workflow. '
-                'Give the `FunctionToolset` a unique `id` and pass it to the agent when it is constructed.'
-            )
-        return None
+        return DurableFunctionToolset(
+            ts,
+            in_durable_context=in_workflow_code,
+            call_tool_operation=_reject_unregistered_child_workflow,
+            resolve_tool_config=_child_workflow_config,
+            lifecycle='enter-always',
+        )
 
     def _detect_child_workflow_metadata(self, capability: AbstractCapability[AgentDepsT]) -> None:
         # `SetToolMetadata` can select tools in any toolset, so it enables child workflows for all of them.
@@ -469,3 +470,12 @@ def _child_workflow_config(tool: ToolsetTool[Any] | None, name: str) -> ChildWor
             f'DBOS metadata for tool {name!r} selects a child workflow, but only async function tools can run as one.'
         )
     return cast(ChildWorkflowConfig, child_config)
+
+
+async def _reject_unregistered_child_workflow(
+    name: str, tool_args: dict[str, Any], *, ctx: RunContext[Any], tool: ToolsetTool[Any], config: Mapping[str, Any]
+) -> Any:
+    raise UserError(
+        f'Tool {name!r} selects a DBOS child workflow, but its toolset has no registered child workflow. '
+        'Give the `FunctionToolset` a unique `id` and pass it to the agent when it is constructed.'
+    )

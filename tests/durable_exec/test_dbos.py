@@ -6478,20 +6478,36 @@ async def test_dbos_child_workflow_metadata_errors(
         await run_agent()
 
 
-async def test_dbos_child_workflow_requires_a_registered_toolset(dbos: DBOS) -> None:
+@pytest.mark.parametrize('via_capability', [False, True])
+async def test_dbos_child_workflow_requires_a_registered_toolset(dbos: DBOS, via_capability: bool) -> None:
+    """A tool selecting a child workflow in a toolset that has none registered fails instead of running inline."""
+
     async def tool() -> None: ...  # pragma: no cover
 
-    runtime_toolset = FunctionToolset(id='runtime')
-    runtime_toolset.add_function(tool, metadata={'dbos': {'child_workflow': {}}})
-    agent = Agent(TestModel(), name='child_wf_unregistered', capabilities=[DBOSDurability()])
+    child_workflow: dict[str, Any] = {'dbos': {'child_workflow': {}}}
+    if via_capability:
+        unregistered = FunctionToolset()
+        unregistered.add_function(tool)
+        agent = Agent(
+            TestModel(),
+            name='child_wf_unregistered',
+            toolsets=[unregistered],
+            capabilities=[SetToolMetadata(**child_workflow), DBOSDurability()],
+        )
+        run_toolsets = None
+    else:
+        unregistered = FunctionToolset(id='runtime')
+        unregistered.add_function(tool, metadata=child_workflow)
+        agent = Agent(TestModel(), name='child_wf_unregistered', capabilities=[DBOSDurability()])
+        run_toolsets = [unregistered]
 
     @DBOS.workflow()
     async def run_agent() -> None:
-        await agent.run('Go.', toolsets=[runtime_toolset])
+        await agent.run('Go.', toolsets=run_toolsets)
 
     with workflow_raises(
         UserError,
-        'A tool selects a DBOS child workflow, but its toolset has no registered child workflow. '
+        "Tool 'tool' selects a DBOS child workflow, but its toolset has no registered child workflow. "
         'Give the `FunctionToolset` a unique `id` and pass it to the agent when it is constructed.',
     ):
         await run_agent()
