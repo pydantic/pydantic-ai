@@ -23,6 +23,11 @@ on:
   # access. Without this, any established external contributor's PR would
   # consume the configured Anthropic key and a model run.
   roles: [admin, maintainer, write]
+# PRs whose head branch is listed in the `UI_SECURITY_REVIEW_SKIP_BRANCHES`
+# repository variable skip this review. List branch names separated by commas,
+# with no spaces; the match ignores case. A dispatch has no `head_ref`, so the
+# check exempts it: an unset variable formats to `,,`, which matches an empty branch.
+if: ${{ github.head_ref == '' || !contains(format(',{0},', vars.UI_SECURITY_REVIEW_SKIP_BRANCHES), format(',{0},', github.head_ref)) }}
 permissions:
   contents: read
   # safe-outputs perform the actual writes in a separate conclusion job; the
