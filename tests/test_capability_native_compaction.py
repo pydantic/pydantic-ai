@@ -8,7 +8,7 @@ test is how `NativeCompaction` maps a `CompactionRequest` onto the model and bac
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -484,11 +484,26 @@ async def test_run_compact_runs_the_full_lifecycle():
     assert len(result.compactions) == 1
 
 
+def _with_own_event_loop(run: Callable[[], list[CompactionRecord]]) -> list[CompactionRecord]:
+    """Call `run` with an event loop of this thread's own, closed after it, for a sync run method off the main thread.
+
+    Without one, the run method creates a loop for the thread and leaves it open, which a later test's
+    `pytest.warns` then catches as an unclosed-loop `ResourceWarning` when it's garbage-collected.
+    """
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return run()
+    finally:
+        asyncio.set_event_loop(None)
+        loop.close()
+
+
 async def _run_with_compact(agent: AbstractAgent[None, str], method: str) -> list[CompactionRecord]:
     """Run `agent` on `history()` with `compact=True` through the run method `method`, returning its compactions."""
     if method == 'run_sync':
         return await asyncio.to_thread(
-            lambda: agent.run_sync('hi', message_history=history(), compact=True).compactions
+            _with_own_event_loop, lambda: agent.run_sync('hi', message_history=history(), compact=True).compactions
         )
     if method == 'run_stream_sync':
 
@@ -497,7 +512,7 @@ async def _run_with_compact(agent: AbstractAgent[None, str], method: str) -> lis
             result.get_output()
             return result.compactions
 
-        return await asyncio.to_thread(stream_sync)
+        return await asyncio.to_thread(_with_own_event_loop, stream_sync)
     if method == 'run_stream':
         async with agent.run_stream('hi', message_history=history(), compact=True) as stream:
             await stream.get_output()
