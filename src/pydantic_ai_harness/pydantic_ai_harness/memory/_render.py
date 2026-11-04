@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+from pydantic_ai_harness._message_text import CHARS_PER_TOKEN
 from pydantic_ai_harness.memory._store import MemoryStore
 from pydantic_ai_harness.memory._toolset import MAIN_FILENAME
 
-_CHARS_PER_TOKEN = 4
 _MIN_FILENAME_LIST_CHARS = 6
 
 
@@ -28,7 +28,7 @@ async def list_subfiles(store: MemoryStore, scope: str, *, limit: int) -> tuple[
 
 def injection_listing_limit(max_tokens: int) -> int:
     """Derive a finite backend listing bound from the complete prompt budget."""
-    return max(1, max_tokens * _CHARS_PER_TOKEN // _MIN_FILENAME_LIST_CHARS)
+    return max(1, max_tokens * CHARS_PER_TOKEN // _MIN_FILENAME_LIST_CHARS)
 
 
 def render_memory_prompt(
@@ -49,7 +49,7 @@ def render_memory_prompt(
     `read_main` is the call that reads the full notebook, named when lines are dropped. `location` is the
     workspace directory of the files, given when the run's file tools read them in place of `read_memory`.
     """
-    budget = max_tokens * _CHARS_PER_TOKEN
+    budget = max_tokens * CHARS_PER_TOKEN
     rendered_guidance = guidance
     source_lines = main_content.rstrip().splitlines()
     kept_lines = source_lines[-max_lines:] if max_lines else []
