@@ -83,6 +83,12 @@ class GrokModelProfile(ModelProfile, total=False):
     grok_default_effort_omitted: bool
     """Whether a default thinking request omits `reasoning_effort` so xAI applies its model default. Default: `False`."""
 
+    grok_supports_stop_sequences: bool
+    """Whether the model accepts `stop_sequences`. Default: `True`.
+
+    Only the Grok 4.20 non-reasoning models do: the others reject them with a 400.
+    """
+
 
 def grok_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Grok model."""
@@ -123,6 +129,9 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
         thinking_always_enabled=bool(grok_reasoning_efforts) and 'none' not in grok_reasoning_efforts,
         grok_supports_builtin_tools=grok_supports_builtin_tools,
         grok_reasoning_efforts=grok_reasoning_efforts,
+        # Verified live 2026-11-04 across the known Grok ids, including the retired slugs that redirect to a reasoning
+        # model, like `grok-4-1-fast-non-reasoning`.
+        grok_supports_stop_sequences=model_name.startswith('grok-4.20') and 'non-reasoning' in model_name,
         supported_native_tools=supported_native_tools,
     )
     if model_name in _GROK_43_REASONING_MODELS or model_name in _GROK_47_REASONING_MODELS:

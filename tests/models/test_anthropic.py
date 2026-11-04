@@ -2383,6 +2383,73 @@ async def test_anthropic_sampling_settings_reach_the_wire(
     )
 
 
+async def test_anthropic_thinking_drops_the_sampling_settings_it_rejects(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """With thinking, Claude rejects `temperature` other than `1`, `top_p` below `0.95` and any `top_k` with a 400.
+
+    They're dropped with a warning instead, so settings chosen for another model don't fail the request.
+    """
+    agent = Agent(anthropic_model('claude-haiku-4-5', capture=True))
+
+    with pytest.warns(UserWarning, match='Sampling parameter') as recorded:
+        result = await agent.run(
+            'What is 2+2? Answer with the number only.',
+            model_settings=ModelSettings(thinking=True, temperature=0.5, top_p=0.9, top_k=40),
+        )
+
+    assert result.output.strip() == snapshot('4')
+    assert [str(w.message) for w in recorded if 'Sampling parameter' in str(w.message)] == snapshot(
+        [
+            "Sampling parameter `temperature` is not supported by 'claude-haiku-4-5' other than `1` when thinking is enabled. It will be ignored.",
+            "Sampling parameter `top_k` is not supported by 'claude-haiku-4-5' when thinking is enabled. It will be ignored.",
+            "Sampling parameter `top_p` is not supported by 'claude-haiku-4-5' below `0.95` when thinking is enabled. It will be ignored.",
+        ]
+    )
+    body = request_capture.body('/v1/messages')
+    assert {key: value for key, value in body.items() if key in ('temperature', 'top_p', 'top_k', 'thinking')} == (
+        snapshot({'thinking': {'type': 'enabled', 'budget_tokens': 10000}})
+    )
+
+
+async def test_anthropic_thinking_keeps_the_sampling_settings_it_accepts(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """With thinking, `temperature=1` and `top_p` from `0.95` are accepted, so they're still sent."""
+    agent = Agent(anthropic_model('claude-sonnet-4-6', capture=True))
+
+    await agent.run(
+        'What is 2+2? Answer with the number only.', model_settings=ModelSettings(thinking=True, top_p=0.97)
+    )
+
+    body = request_capture.body('/v1/messages')
+    assert {key: value for key, value in body.items() if key in ('temperature', 'top_p', 'top_k')} == snapshot(
+        {'top_p': 0.97}
+    )
+
+
+async def test_anthropic_drops_top_p_set_together_with_temperature(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """Claude Haiku 4.5 takes `temperature` or `top_p`, not both, so `top_p` is dropped with a warning."""
+    agent = Agent(anthropic_model('claude-haiku-4-5', capture=True))
+
+    with pytest.warns(UserWarning, match='Sampling parameter') as recorded:
+        await agent.run(
+            'What is 2+2? Answer with the number only.', model_settings=ModelSettings(temperature=0.5, top_p=0.9)
+        )
+
+    assert [str(w.message) for w in recorded if 'Sampling parameter' in str(w.message)] == snapshot(
+        [
+            "Sampling parameter `top_p` is not supported by 'claude-haiku-4-5' together with `temperature`. It will be ignored."
+        ]
+    )
+    body = request_capture.body('/v1/messages')
+    assert {key: value for key, value in body.items() if key in ('temperature', 'top_p')} == snapshot(
+        {'temperature': 0.5}
+    )
+
+
 async def test_anthropic_betas_setting(allow_model_requests: None):
     """Verify anthropic_betas setting adds betas to the API request."""
     c = completion_message(

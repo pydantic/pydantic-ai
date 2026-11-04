@@ -244,6 +244,7 @@ def test_anthropic_claude_sonnet_4_6():
             ),
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_max_effort': True,
+            'anthropic_disallows_temperature_with_top_p': True,
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
@@ -285,6 +286,7 @@ def test_anthropic_claude_opus_4_7():
             'anthropic_supports_max_effort': True,
             'anthropic_supports_effort': True,
             'anthropic_supports_xhigh_effort': True,
+            'anthropic_disallows_temperature_with_top_p': False,
             'anthropic_disallows_budget_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
@@ -318,6 +320,7 @@ def test_anthropic_claude_haiku_4_5():
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
             'anthropic_supports_max_effort': True,
+            'anthropic_disallows_temperature_with_top_p': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
@@ -350,6 +353,7 @@ def test_anthropic_claude_3_5_sonnet_legacy():
             'default_cache_retention': timedelta(seconds=300),
             'thinking_tags': ('<thinking>', '</thinking>'),
             'anthropic_supports_max_effort': True,
+            'anthropic_disallows_temperature_with_top_p': False,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
@@ -752,6 +756,7 @@ def test_google_gemini_3_pro():
             ),
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
+            'google_supports_penalties': False,
         }
     )
 
@@ -770,6 +775,7 @@ def test_google_gemini_2_5_flash():
             'google_supports_thinking_level': False,
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': True,
+            'google_supports_penalties': True,
         }
     )
 
@@ -788,6 +794,7 @@ def test_google_gemini_2_5_flash_image():
             'supports_video_input': False,
             'google_supports_thinking_level': False,
             'google_web_search_billed_per_prompt': True,
+            'google_supports_penalties': True,
         }
     )
 
@@ -829,6 +836,7 @@ def test_google_gemini_3_7_flash_thinking_levels():
             'supports_json_schema_output': True,
             'supports_thinking': True,
             'google_web_search_billed_per_prompt': False,
+            'google_supports_penalties': False,
             'supports_tool_return_schema': True,
         }
     )
@@ -838,7 +846,12 @@ def test_google_gemini_3_7_flash_thinking_levels():
 def test_xai_grok_4():
     profile = XaiProvider.model_profile('grok-4')
     assert _normalize(profile) == snapshot(
-        {'supports_json_schema_output': True, 'supports_json_object_output': True, 'grok_supports_builtin_tools': True}
+        {
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'grok_supports_builtin_tools': True,
+            'grok_supports_stop_sequences': False,
+        }
     )
 
 
@@ -851,6 +864,7 @@ def test_xai_grok_3_mini():
             'supports_json_object_output': True,
             'supports_thinking': True,
             'grok_reasoning_efforts': frozenset({'high', 'low', 'none'}),
+            'grok_supports_stop_sequences': False,
             'supported_native_tools': frozenset(),
             'thinking_enabled_by_default': True,
         }
@@ -1066,6 +1080,7 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'supports_json_schema_output': True,
             'bedrock_supports_prompt_caching': True,
             'anthropic_supports_max_effort': True,
+            'anthropic_disallows_temperature_with_top_p': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
@@ -1148,6 +1163,7 @@ def test_bedrock_anthropic_with_geo_prefix():
             'supports_json_schema_output': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
             'anthropic_supports_max_effort': True,
+            'anthropic_disallows_temperature_with_top_p': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
@@ -1192,6 +1208,7 @@ def test_bedrock_anthropic_legacy_claude_3():
             'default_cache_retention': timedelta(seconds=300),
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
             'anthropic_supports_max_effort': True,
+            'anthropic_disallows_temperature_with_top_p': False,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
@@ -1432,6 +1449,7 @@ def test_bedrock_xai_grok(region: str):
                 'thinking_always_enabled': True,
                 'grok_supports_builtin_tools': True,
                 'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
+                'grok_supports_stop_sequences': False,
                 'supported_native_tools': frozenset(),
                 'bedrock_supports_tool_choice': True,
                 'bedrock_thinking_variant': 'xai',
@@ -1443,6 +1461,7 @@ def test_bedrock_xai_grok(region: str):
                 'thinking_always_enabled': True,
                 'grok_supports_builtin_tools': True,
                 'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
+                'grok_supports_stop_sequences': False,
                 'supported_native_tools': frozenset(),
                 'grok_default_effort_omitted': True,
                 'bedrock_supports_tool_choice': True,
@@ -1483,6 +1502,7 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_effort': True,
             'anthropic_supports_max_effort': True,
+            'anthropic_disallows_temperature_with_top_p': True,
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
@@ -1571,6 +1591,7 @@ def test_openrouter_google_gemini_3_pro():
             ),
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
+            'google_supports_penalties': False,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
@@ -1618,6 +1639,7 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
             'openai_chat_supports_file_urls': True,
             'openai_chat_supports_max_completion_tokens': False,
             'google_web_search_billed_per_prompt': False,
+            'google_supports_penalties': False,
             'openai_chat_supports_web_search': True,
             'openai_chat_thinking_field': 'reasoning',
             'openrouter_max_cache_points': None,
@@ -1701,6 +1723,7 @@ def test_openrouter_xai_grok_4():
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_thinking': True,
             'grok_supports_builtin_tools': True,
+            'grok_supports_stop_sequences': False,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
@@ -1738,6 +1761,7 @@ def test_github_copilot_anthropic_claude_haiku_4_5():
             'supports_thinking': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_supports_max_effort': True,
+            'anthropic_disallows_temperature_with_top_p': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
@@ -1802,6 +1826,7 @@ def test_github_copilot_google_gemini_3_pro():
             ),
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
+            'google_supports_penalties': False,
             'openai_chat_supports_max_completion_tokens': True,
             'openai_chat_thinking_field': 'reasoning_text',
         }
@@ -1820,6 +1845,7 @@ def test_github_copilot_xai_grok_4_5():
             'thinking_always_enabled': True,
             'grok_supports_builtin_tools': True,
             'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
+            'grok_supports_stop_sequences': False,
             'openai_chat_supports_max_completion_tokens': True,
         }
     )
@@ -2110,6 +2136,7 @@ def test_azure_grok_prefix():
             'supports_json_object_output': True,
             'json_schema_transformer': _AzureGrokJsonSchemaTransformer,
             'grok_supports_builtin_tools': True,
+            'grok_supports_stop_sequences': False,
             'openai_chat_supports_document_input': False,
             'openai_responses_supports_websocket': False,
         }
@@ -2218,6 +2245,7 @@ def test_xai_provider_grok_4():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'grok_supports_builtin_tools': True,
+            'grok_supports_stop_sequences': False,
         }
     )
 
@@ -2231,6 +2259,7 @@ def test_xai_provider_grok_3_mini():
             'supports_json_object_output': True,
             'supports_thinking': True,
             'grok_reasoning_efforts': frozenset({'high', 'low', 'none'}),
+            'grok_supports_stop_sequences': False,
             'supported_native_tools': frozenset(),
             'thinking_enabled_by_default': True,
         }
@@ -2476,6 +2505,7 @@ def test_fireworks_gemma():
             'supports_video_input': True,
             'google_supports_thinking_level': False,
             'google_web_search_billed_per_prompt': False,
+            'google_supports_penalties': False,
         }
     )
 
@@ -2543,6 +2573,7 @@ def test_anthropic_unknown_model_returns_some_profile():
             'default_cache_retention': timedelta(seconds=300),
             'thinking_tags': ('<thinking>', '</thinking>'),
             'anthropic_supports_max_effort': True,
+            'anthropic_disallows_temperature_with_top_p': False,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
@@ -2646,6 +2677,7 @@ def test_github_xai_grok():
             'supports_json_object_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'grok_supports_builtin_tools': True,
+            'grok_supports_stop_sequences': False,
         }
     )
 
@@ -2697,6 +2729,7 @@ def test_vercel_anthropic_claude_sonnet():
             'anthropic_supports_effort': True,
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_supports_max_effort': True,
+            'anthropic_disallows_temperature_with_top_p': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
@@ -2761,6 +2794,7 @@ def test_vercel_vertex_gemini():
             ),
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
+            'google_supports_penalties': False,
         }
     )
 
@@ -2774,6 +2808,7 @@ def test_vercel_xai_grok():
             'supports_json_object_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'grok_supports_builtin_tools': True,
+            'grok_supports_stop_sequences': False,
         }
     )
 
@@ -2821,6 +2856,7 @@ def test_heroku_returns_openai_transformer():
             'anthropic_supports_effort': True,
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_supports_max_effort': True,
+            'anthropic_disallows_temperature_with_top_p': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,

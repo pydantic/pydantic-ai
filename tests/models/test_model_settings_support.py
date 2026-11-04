@@ -112,6 +112,7 @@ with try_import() as google_available:
 
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 with try_import() as groq_available:
     from pydantic_ai.models.groq import GroqModel
@@ -522,7 +523,8 @@ def xai_sdk_probe(build: Callable[[AsyncXaiClient], Model]) -> Probe:
     return probe
 
 
-xai_probe = xai_sdk_probe(lambda client: XaiModel('grok-4', provider=XaiProvider(xai_client=client)))
+# Grok 4.20's non-reasoning models are the only ones that accept `stop_sequences`.
+xai_probe = xai_sdk_probe(lambda client: XaiModel('grok-4.20-non-reasoning', provider=XaiProvider(xai_client=client)))
 
 
 async def mcp_sampling_probe(settings: ModelSettings) -> ProbeResult:
@@ -702,7 +704,8 @@ def _cohere(client: httpx.AsyncClient) -> Model:
 
 
 def _google(client: httpx2.AsyncClient) -> Model:
-    return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=PROBE_KEY, http_client=client))
+    # Google Cloud, since the Gemini API rejects `presence_penalty` and `frequency_penalty` for every model.
+    return GoogleModel('gemini-2.5-flash', provider=GoogleCloudProvider(api_key=PROBE_KEY, http_client=client))
 
 
 def _typesafe(client: httpx2.AsyncClient) -> Model:

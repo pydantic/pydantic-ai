@@ -694,11 +694,22 @@ class GoogleModel(Model[Client]):
         return frozenset({self.system})
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        """Set `google_supports_batch_api` by the client's transport, before the user's `profile=` applies.
+        """Set the flags that depend on the client's transport, before the user's `profile=` applies.
 
         Batch Mode is the Gemini API's: Google Cloud runs batch prediction jobs from Cloud Storage or BigQuery instead.
+        The Gemini API rejects `presence_penalty` and `frequency_penalty` for every model (verified live 2026-11-04),
+        while Google Cloud accepts them for the models `google_model_profile` says do.
         """
-        return merge_profile(profile, GoogleModelProfile(google_supports_batch_api=not self._is_google_cloud))
+        if self._is_google_cloud:
+            return merge_profile(profile, GoogleModelProfile(google_supports_batch_api=False))
+        return merge_profile(
+            profile, GoogleModelProfile(google_supports_batch_api=True, google_supports_penalties=False)
+        )
+
+    def _unsupported_settings(self) -> frozenset[str]:
+        if self.profile.get('google_supports_penalties', True):
+            return self.unsupported_settings
+        return self.unsupported_settings | {'frequency_penalty', 'presence_penalty'}
 
     @cached_property
     def profile(self) -> GoogleModelProfile:
@@ -1277,6 +1288,7 @@ class GoogleModel(Model[Client]):
             gla_service_tier = _resolve_gla_service_tier(model_settings)
 
         http_options = self._build_http_options(model_settings, headers)
+        supports_penalties = self.profile.get('google_supports_penalties', True)
 
         # See `GoogleModelSettings.google_cached_content` for why these three fields are stripped.
         _warn_on_cached_content_strips(cached_content, system_instruction, tools)
@@ -1289,8 +1301,8 @@ class GoogleModel(Model[Client]):
             top_k=model_settings.get('top_k'),
             max_output_tokens=model_settings.get('max_tokens'),
             stop_sequences=model_settings.get('stop_sequences'),
-            presence_penalty=model_settings.get('presence_penalty'),
-            frequency_penalty=model_settings.get('frequency_penalty'),
+            presence_penalty=model_settings.get('presence_penalty') if supports_penalties else None,
+            frequency_penalty=model_settings.get('frequency_penalty') if supports_penalties else None,
             seed=model_settings.get('seed'),
             safety_settings=model_settings.get('google_safety_settings'),
             thinking_config=self._translate_thinking(model_settings, model_request_parameters),

@@ -9245,6 +9245,55 @@ async def test_bedrock_non_flagged_model_keeps_sampling_settings(
     assert sent['additionalModelRequestFields'] == snapshot({'top_k': 5})
 
 
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_bedrock_claude_thinking_drops_the_sampling_settings_it_rejects(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
+    """With thinking, Claude on Bedrock rejects `temperature` other than `1`, `top_p` below `0.95` and any `top_k`.
+
+    They're dropped with a warning, as on the Anthropic API, instead of failing the request with a 400.
+    """
+    settings = BedrockModelSettings(thinking=True, temperature=0.5, top_p=0.9, top_k=5)
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=settings)
+
+    with pytest.warns(UserWarning, match='Sampling parameter') as recorded:
+        result = await agent.run('What is 2+2? Answer with the number only.')
+
+    assert result.output.strip() == snapshot('4')
+    assert [str(w.message) for w in recorded if 'Sampling parameter' in str(w.message)] == snapshot(
+        [
+            "Sampling parameter `temperature` is not supported by 'us.anthropic.claude-haiku-4-5-20251001-v1:0' other than `1` when thinking is enabled. It will be ignored.",
+            "Sampling parameter `top_k` is not supported by 'us.anthropic.claude-haiku-4-5-20251001-v1:0' when thinking is enabled. It will be ignored.",
+            "Sampling parameter `top_p` is not supported by 'us.anthropic.claude-haiku-4-5-20251001-v1:0' below `0.95` when thinking is enabled. It will be ignored.",
+        ]
+    )
+    sent = single_request_body(vcr)
+    assert sent.get('inferenceConfig') == snapshot({'maxTokens': 64000})
+    assert sent['additionalModelRequestFields'] == snapshot({'thinking': {'type': 'enabled', 'budget_tokens': 10000}})
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_bedrock_claude_drops_top_p_set_together_with_temperature(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
+    """Claude Haiku 4.5 on Bedrock takes `temperature` or `top_p`, not both, so `top_p` is dropped with a warning."""
+    settings = BedrockModelSettings(max_tokens=16, temperature=0.2, top_p=0.3)
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=settings)
+
+    with pytest.warns(UserWarning, match='Sampling parameter') as recorded:
+        await agent.run('What is 2+2? Answer with the number only.')
+
+    assert [str(w.message) for w in recorded if 'Sampling parameter' in str(w.message)] == snapshot(
+        [
+            "Sampling parameter `top_p` is not supported by 'us.anthropic.claude-haiku-4-5-20251001-v1:0' together with `temperature`. It will be ignored."
+        ]
+    )
+    sent = single_request_body(vcr)
+    assert sent['inferenceConfig'] == snapshot({'maxTokens': 16, 'temperature': 0.2})
+
+
 BEDROCK_OPENAI_CONVERSE_MODELS_WITHOUT_SAMPLING_SETTINGS = [
     'us.openai.gpt-5.6-sol',
     'us.openai.gpt-5.6-luna',

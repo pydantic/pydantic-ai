@@ -1,7 +1,8 @@
 from __future__ import annotations as _annotations
 
+import warnings
 from contextvars import ContextVar
-from typing import Literal, TypeAlias
+from typing import Literal, TypeAlias, cast
 
 from ..native_tools import (
     AdvisorTool,
@@ -12,7 +13,7 @@ from ..native_tools import (
     WebSearchTool,
 )
 from ..native_tools._tool_search import ToolSearchTool
-from ..settings import ThinkingEffort, ThinkingLevel
+from ..settings import ModelSettings, ThinkingEffort, ThinkingLevel
 from . import ModelProfile
 
 _ANTHROPIC_BASE_BUILTINS = frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
@@ -147,6 +148,12 @@ class AnthropicModelProfile(ModelProfile, total=False):
 
     Claude Opus 4.7, 4.8, 5, and 5.5, plus Haiku 5.5, require these settings to be omitted from
     request payloads.
+    """
+
+    anthropic_disallows_temperature_with_top_p: bool
+    """Whether the model rejects `temperature` and `top_p` set together. Default: `False`.
+
+    Claude Haiku 4.5, Sonnet 4.5 and 4.6, and Opus 4.5 and 4.6 accept one or the other, and return a 400 for both.
     """
 
     anthropic_disallows_top_effort_when_thinking_disabled: bool
@@ -340,6 +347,45 @@ def resolve_anthropic_effort(
     return effort
 
 
+def drop_conflicting_sampling_settings(
+    model_settings: ModelSettings, model_name: str, *, thinking: bool, disallows_temperature_with_top_p: bool
+) -> ModelSettings:
+    """Drop the sampling settings a Claude model rejects in combination with the rest of the request, warning for each.
+
+    With thinking, Claude takes `temperature` only at `1`, `top_p` only from `0.95`, and no `top_k`
+    (https://platform.claude.com/docs/en/build-with-claude/extended-thinking#feature-compatibility). The models that
+    set `anthropic_disallows_temperature_with_top_p`, passed as `disallows_temperature_with_top_p`, take only one of
+    `temperature` and `top_p`: `top_p` is dropped, as Anthropic recommends tuning `temperature`. Each is rejected with a
+    400 (verified live 2026-11-04, on both the Anthropic API and Bedrock).
+
+    It lives here rather than beside either model because `models/bedrock.py` cannot import from `models/anthropic/`.
+    """
+    conflicting: dict[str, str] = {}
+    temperature = model_settings.get('temperature')
+    top_p = model_settings.get('top_p')
+    if thinking:
+        if temperature is not None and temperature != 1:
+            conflicting['temperature'] = 'other than `1` when thinking is enabled'
+        if model_settings.get('top_k') is not None:
+            conflicting['top_k'] = 'when thinking is enabled'
+        if top_p is not None and top_p < 0.95:
+            conflicting['top_p'] = 'below `0.95` when thinking is enabled'
+    if (
+        disallows_temperature_with_top_p
+        and temperature is not None
+        and top_p is not None
+        and not conflicting.keys() & {'temperature', 'top_p'}
+    ):
+        conflicting['top_p'] = 'together with `temperature`'
+    for setting, reason in conflicting.items():
+        warnings.warn(
+            f'Sampling parameter `{setting}` is not supported by {model_name!r} {reason}. It will be ignored.',
+            UserWarning,
+            stacklevel=3,
+        )
+    return cast(ModelSettings, {key: value for key, value in model_settings.items() if key not in conflicting})
+
+
 def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Anthropic model."""
     models_that_support_json_schema_output = (
@@ -428,6 +474,10 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
             'claude-sonnet-5',
             'claude-haiku-5-5',
         )
+    )
+    # Verified live 2026-11-04. The models that set `disallows_sampling_settings` take neither.
+    disallows_temperature_with_top_p = model_name.startswith(
+        ('claude-haiku-4-5', 'claude-sonnet-4-5', 'claude-sonnet-4-6', 'claude-opus-4-5', 'claude-opus-4-6')
     )
     # Opus 5, Sonnet 5.5, and Haiku 5.5 cap effort at `high` while thinking is disabled; Opus 4.8 and earlier accept
     # every level. Opus 5.5 rejects disabled thinking outright, so the effort-specific error would mislead.
@@ -619,6 +669,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_supports_max_effort=not model_name.startswith('claude-opus-4-5'),
         anthropic_disallows_budget_thinking=disallows_budget_thinking,
         anthropic_disallows_sampling_settings=disallows_sampling_settings,
+        anthropic_disallows_temperature_with_top_p=disallows_temperature_with_top_p,
         anthropic_disallows_top_effort_when_thinking_disabled=disallows_top_effort_when_thinking_disabled,
         anthropic_disables_thinking_with_between_tools=disables_thinking_with_between_tools,
         anthropic_distrusts_system_after_tool_result=distrusts_system_after_tool_result,
