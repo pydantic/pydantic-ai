@@ -1064,7 +1064,9 @@ async def test_openrouter_unmapped_response_data_omits_fields_openrouter_maps(al
     mock_client = MockOpenAI.create_mock(response)
     model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=OpenRouterProvider(openai_client=mock_client))
 
-    result = await Agent(model).run('hello', model_settings={'openai_include_unmapped_response_data': True})
+    result = await Agent(model).run(
+        'hello', model_settings=OpenRouterModelSettings(openai_include_unmapped_response_data=True)
+    )
 
     response_message = result.all_messages()[-1]
     assert isinstance(response_message, ModelResponse)
