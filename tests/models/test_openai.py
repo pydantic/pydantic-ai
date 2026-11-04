@@ -1953,6 +1953,15 @@ def test_is_text_like_media_type():
     assert _is_text_like_media_type('application/ld+json;charset=utf-8') is True
     assert _is_text_like_media_type('application/soap+xml;charset=utf-8') is True
     assert _is_text_like_media_type('application/pdf;charset=binary') is False
+    # Type and subtype tokens are case-insensitive (RFC 2045 section 5.1).
+    assert _is_text_like_media_type('TEXT/PLAIN') is True
+    assert _is_text_like_media_type('Text/Html') is True
+    assert _is_text_like_media_type('Application/JSON') is True
+    assert _is_text_like_media_type('application/ld+JSON') is True
+    assert _is_text_like_media_type('APPLICATION/SOAP+XML') is True
+    assert _is_text_like_media_type('TEXT/PLAIN; Charset=UTF-8') is True
+    assert _is_text_like_media_type('IMAGE/PNG') is False
+    assert _is_text_like_media_type('APPLICATION/PDF') is False
 
 
 async def test_toml_document_as_binary_content_input(allow_model_requests: None):
