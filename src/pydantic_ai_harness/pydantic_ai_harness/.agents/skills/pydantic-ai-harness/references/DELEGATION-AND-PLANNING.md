@@ -217,8 +217,8 @@ orchestrator = Agent(
 - Non-`self` delegations run in an activity on Temporal and inline in the workflow on DBOS. To keep a delegate's
   own durability, add `SetToolMetadata(tools=['delegate_task'], temporal={'child_workflow': {}})` (or `dbos=...`):
   every delegate must be durable on that engine, and on Temporal registered with the worker (`AgentPlugin`).
-  Combined with `include_self`, `inherit_tools`, `models`, `shared_capabilities`, `event_stream_handler`, or
-  `max_calls`, a delegation raises `UserError`.
+  Combined with `include_self`, `inherit_tools`, `models`, `shared_capabilities`, `event_stream_handler`,
+  `dynamic_agents`, or `max_calls`, a delegation raises `UserError`.
 
 ## DelegationReports
 

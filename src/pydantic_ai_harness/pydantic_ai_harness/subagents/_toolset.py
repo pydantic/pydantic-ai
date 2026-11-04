@@ -702,11 +702,13 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             or self._models
             or self._shared_capabilities
             or self._event_stream_handler is not None
+            or self._dynamic_agents is not None
             or any(sub.max_calls is not None for sub in self._agents.values())
         ):
             raise UserError(
                 'A `SubAgents` delegate tool running as a child workflow does not support `include_self`, '
-                "`inherit_tools`, `models`, `shared_capabilities`, `event_stream_handler`, or a delegate's `max_calls`."
+                '`inherit_tools`, `models`, `shared_capabilities`, `event_stream_handler`, `dynamic_agents`, or a '
+                "delegate's `max_calls`."
             )
 
     async def _delegate_recorded(
