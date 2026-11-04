@@ -295,13 +295,13 @@ async def test_a_skipped_calls_stub_is_not_wrapped():
         assert info.output_tools
         return ModelResponse(
             parts=[
-                ToolCallPart(info.output_tools[0].name, {'value': 1}, tool_call_id='output'),
+                ToolCallPart(info.output_tools[0].name, {'response': {'value': 1}}, tool_call_id='output'),
                 ToolCallPart('lookup', {}, tool_call_id='skipped'),
             ]
         )
 
     model = FunctionModel(respond, profile=ModelProfile(needs_json_string_tool_returns=True))
-    agent = Agent(model, output_type=ToolOutput(dict[str, int]))
+    agent = Agent(model, output_type=ToolOutput(dict[str, int]), end_strategy='early')
 
     @agent.tool_plain
     def lookup() -> str:  # pragma: no cover
