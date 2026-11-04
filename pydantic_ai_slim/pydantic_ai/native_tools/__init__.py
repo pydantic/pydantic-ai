@@ -965,9 +965,9 @@ class FileSearchTool(AbstractNativeTool):
     """
 
     max_num_results: int | None = None
-    """The portable maximum number of results to return.
+    """The maximum number of results to return.
 
-    Currently supported by:
+    Supported by:
 
     * xAI (mapped to collections search `limit`, defaults to 10 server-side)
     """

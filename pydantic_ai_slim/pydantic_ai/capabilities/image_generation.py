@@ -40,9 +40,10 @@ from ._deprecated_fallback_model import check_deprecated_fallback_model
 from .abstract import AbstractCapability
 from .native_or_local import NativeOrLocalTool
 
-_NativeToolT = TypeVar('_NativeToolT', bound=AbstractNativeTool)
 if TYPE_CHECKING:
     from pydantic_ai.common_tools.image_generation import ImageGenerationFallbackModel, ImageGenerationNativeTool
+
+_NativeToolT = TypeVar('_NativeToolT', bound=AbstractNativeTool)
 
 # Derived from the native tool's own aliases so widening either can't silently start dropping values.
 _NATIVE_IMAGE_SIZES = frozenset(get_args(ImageSize))
@@ -804,10 +805,14 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
 
     def _apply_native_overrides(self, tool: _NativeToolT, overrides: dict[str, Any]) -> _NativeToolT:
         """Also drop overridden options from the tool's `provider_settings`, which would otherwise conflict with them."""
-        if overrides and isinstance(tool, ImageGenerationTool) and tool.provider_settings:
-            if openai := tool.provider_settings.get('openai'):
-                kept = {option: value for option, value in openai.items() if option not in overrides}
-                overrides = {**overrides, 'provider_settings': {**tool.provider_settings, 'openai': kept}}
+        if (
+            overrides
+            and isinstance(tool, ImageGenerationTool)
+            and tool.provider_settings
+            and (openai := tool.provider_settings.get('openai'))
+        ):
+            kept = {option: value for option, value in openai.items() if option not in overrides}
+            overrides = {**overrides, 'provider_settings': {**tool.provider_settings, 'openai': kept}}
         return super()._apply_native_overrides(tool, overrides)
 
     def _resolved_native(self) -> ImageGenerationNativeTool[AgentDepsT]:
