@@ -19,7 +19,7 @@ from pydantic_ai_harness.compaction import ClampOversizedMessages, ClearToolResu
 from tests.conftest import RequestCapture
 from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 
-pytestmark = [pytest.mark.anyio, pytest.mark.vcr, pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)]
+pytestmark = [pytest.mark.vcr, pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)]
 
 LINES = '80 lines of the form `LINE <n>: <eight random lowercase English words>`, numbered from 1'
 ASK = (
@@ -38,8 +38,8 @@ def _model(api_key: str, capture: RequestCapture) -> OpenAIResponsesModel:
 
 
 def _input_shape(body: dict[str, Any]) -> list[tuple[str, bool]]:
-    """Each input item's type, and whether it was sent with an item ID."""
-    return [(item.get('type', 'easy'), 'id' in item) for item in body['input']]
+    """Each input item's type, or role for a message without one, and whether it was sent with an item ID."""
+    return [(item.get('type', item['role']), 'id' in item) for item in body['input']]
 
 
 async def test_clamped_text_reaches_the_model(
