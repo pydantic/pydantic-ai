@@ -17,6 +17,7 @@ from uuid import uuid4
 
 import anyio
 from pydantic import SerializerFunctionWrapHandler, TypeAdapter, WrapSerializer
+from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import AgentRunResult, AgentStreamEvent, CapabilityEvent, RunContext, capture_run_messages
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, on_event
@@ -28,6 +29,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.output import OutputContext
+from pydantic_ai_harness._history import STORED_HISTORY_CONTEXT
 from pydantic_ai_harness._task_report import make_task_output, make_task_question
 from pydantic_ai_harness.step_persistence import StepPersistence, StepStore
 from pydantic_ai_harness.subagents._events import DelegationOutcome
@@ -41,12 +43,16 @@ _CHILD: ContextVar[str | None] = ContextVar('delegation_child', default=None)
 NOT_BACKGROUNDABLE = 'This workspace is owned by the parent run and cannot run background children'
 """Why a delegation can't run in the background."""
 
+RESUME_DIRECTORY_MISMATCH = 'A resumed task cannot change its working directory.'
+"""Why a resume cannot select a different workspace."""
+
 
 def _dump_messages(messages: list[ModelMessage], handler: SerializerFunctionWrapHandler) -> object:
     try:
         return handler(messages)
-    except UnicodeDecodeError:
-        # Non-UTF-8 `bytes` in an `Any` field: only an outermost adapter's base64 config reaches them.
+    except (UnicodeDecodeError, PydanticSerializationError):
+        # Non-UTF-8 `bytes` in an `Any` field: only an outermost adapter's base64 config reaches them. The
+        # error arrives wrapped when a serializer function sits between, as tool results' do.
         return ModelMessagesTypeAdapter.dump_python(messages, mode='json')
 
 
@@ -60,6 +66,8 @@ class DelegationTask:
     conversation_id: str
     parent_id: str | None = None
     model: str | None = None
+    working_directory: str | None = None
+    """Resolved directory selected for this task, or `None` to inherit the parent workspace."""
     background: bool = False
     backgroundable: bool = True
     resumable: bool = True
@@ -156,7 +164,7 @@ _SAFE_ID = re.compile(r'[0-9a-f]{32}\Z')
 
 async def _read(path: anyio.Path) -> DelegationTask:
     """A saved task, checked to have the identity its file name gives it."""
-    record = _ADAPTER.validate_json(await path.read_bytes())
+    record = _ADAPTER.validate_json(await path.read_bytes(), context=STORED_HISTORY_CONTEXT)
     if not _SAFE_ID.fullmatch(record.id) or not _SAFE_ID.fullmatch(record.run_id) or path.name != f'{record.id}.json':
         raise ValueError(f'Invalid saved task identity in {path.name!r}')
     return record
@@ -353,6 +361,7 @@ class DelegationTasks:
         backgroundable: bool = True,
         task_id: str | None = None,
         resumable: bool = True,
+        working_directory: str | None = None,
     ) -> str:
         """Start or resume a child; foreground waiting can be released by `background`.
 
@@ -368,6 +377,8 @@ class DelegationTasks:
             conversation_id = self.records[parent_id].conversation_id
         if resume is not None:
             record = self.check_resume(resume, conversation_id=conversation_id, agent_name=agent_name)
+            if working_directory != record.working_directory:
+                raise ModelRetry(RESUME_DIRECTORY_MISMATCH)
             record.prompt, record.model = prompt, model
             record.background, record.status = background, 'running'
             record.outcome, record.output, record.finished_at = None, '', None
@@ -387,6 +398,7 @@ class DelegationTasks:
                 conversation_id=conversation_id,
                 parent_id=_CHILD.get(),
                 model=model,
+                working_directory=working_directory,
                 background=background,
                 resumable=resumable and agent_name not in self.one_shot,
                 backgroundable=backgroundable,

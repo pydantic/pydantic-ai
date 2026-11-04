@@ -6,11 +6,9 @@ model request -- paying its token cost for the rest of the run. `ToolOutputLimit
 intercepts a return when it is produced, reduces it once, and lets the reduced
 form persist. The reduction is not recomputed per request.
 
-This is the overflow-to-file follow-up the `compaction` README names as out of scope: it
-moves large tool outputs *out* of the window at production time, rather than compressing or
-dropping context already inside it.
-
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/tool_output_limits/)
+
+![ToolOutputLimits runs in the after_tool_execute hook, on a tool result before it enters the history. With the default band, a 48,000-character result is spilled: the full payload is written to the workspace store under .pydantic-ai-harness/tool-output/, and the model gets a short marker with the handle and a head and tail preview. The model reads slices back with the read_tool_result tool.](https://pydantic.dev/docs/ai/img/harness/tool-output-limits.svg)
 
 ## The three modes
 
@@ -21,8 +19,7 @@ dropping context already inside it.
 | `Summarize` | one LLM call | yes | A size-gated summary (inherits the run's model by default) |
 
 `Spill` is lossless: the full payload is persisted and the model reads slices of it through
-the registered `read_tool_result(handle, offset, limit, from_end, pattern)` tool (the Claude
-Code pattern, the core [#4352](https://github.com/pydantic/pydantic-ai/issues/4352) design).
+the registered `read_tool_result(handle, offset, limit, from_end, pattern)` tool.
 That tool is bounded: `offset >= 0`, `limit` clamped to a built-in line cap, the joined output
 capped, and `pattern` is a literal substring (not a regex), so a model-supplied value cannot
 hang the host with catastrophic backtracking. The read-back tool's own returns are exempt from
@@ -78,7 +75,7 @@ agent = Agent(
 ```
 
 The default band, when you pass no `bands`, is `Spill(then=Truncate())`: lossless when a
-store accepts the write, a bounded truncation otherwise -- zero LLM cost and no silent drop.
+store accepts the write, otherwise truncated to `max_chars`. Neither calls a model.
 
 `Passthrough()` is an explicit no-op action for `bands` or `per_tool` lists, leaving matching
 returns untouched.
@@ -275,10 +272,8 @@ When spills are files in the run's workspace (the default `WorkspaceStore()`, wi
 `workspace=` of its own) and `FileSystem` is on the agent, `read_tool_result` steps aside for
 `FileSystem`'s `read_file`. The tool is marked with
 [`unless_tool_kind`](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#unless-tool-kind)
-set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind. Keep
-`FileSystem` under its own names for now: a renamed `FileSystem` tool can't be called yet
-([#10927](https://github.com/pydantic/pydantic-ai/issues/10927)). The spill marker then names that tool as it is called in the
-run, with the spill's path:
+set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind. The
+spill marker then names that tool as it is called in the run, with the spill's path:
 
 ```text
 [Tool output too large (20,719 chars); stored to handle '/repo/.pydantic-ai-harness/tool-output/<run>/<call>.0'. Read it with read_file(path='/repo/.pydantic-ai-harness/tool-output/<run>/<call>.0').]
@@ -356,15 +351,19 @@ instance to `Summarize(model=...)` to override, or a `summarize` callable to byp
 built-in prompt entirely. The `summary_prompt` template on the capability must contain both
 `{tool_name}` and `{output}` placeholders.
 
-With a durable-execution capability attached, built-in model summarization is a journaled
-capability operation. `ToolOutputLimits` carries the stable default `id='tool_output_limits'`, so
-durable recovery works without configuration.
+With a durable-execution capability attached, spill writes and built-in model summarization are
+journaled capability operations: a replay reuses the recorded handle, fallback, or summary instead
+of writing or summarizing again. `ToolOutputLimits` carries the stable default
+`id='tool_output_limits'`, so durable recovery works without configuration.
 
-Two details matter when choosing a band under durability. The text being summarized is part of the
-journaled operation input, so prefer `Spill` over built-in `Summarize` for outputs near the
-engine's payload limit. And a custom `summarize` callable runs directly rather than as a durable
-operation -- arbitrary callables cannot be reconstructed on the worker side -- so it may be called
-again on replay.
+Three details matter when choosing a band and store under durability. The output being spilled or
+summarized is part of the journaled operation input, so on an engine that runs operations on a
+worker, such as Temporal, it counts against the engine's payload limit, as the tool's own result
+already does. A write that succeeds just before a worker crash, before the engine records it, runs
+again on recovery, so a custom `OverflowStore` should treat a repeated `write` of the same key as an
+overwrite. And a custom `summarize` callable runs directly rather than as a durable operation --
+arbitrary callables cannot be reconstructed on the worker side -- so it may be called again on
+replay.
 
 ## Edge cases
 
@@ -382,10 +381,8 @@ again on replay.
 
 ## Relationship to other capabilities
 
-- Supersedes the spill scope of PR #185 `ToolOutputManagement` (one-way truncate / spill with
-  no read-back); this capability's truncation and ANSI / binary handling are harvested from it.
 - Writes spills through the run's workspace, so they sit beside the files that
   [FileSystem](../filesystem/) and [Shell](../shell/) tools act on.
 - Distinct from `compaction`, which compresses or drops context already inside the window, and
-  from `ClampOversizedMessages` (PR #286), which clamps runaway model responses, not tool
+  from `ClampOversizedMessages`, which clamps runaway model responses, not tool
   returns.

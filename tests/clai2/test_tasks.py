@@ -52,13 +52,13 @@ from pydantic_ai_harness.subagents import (
     TaskQuestionEvent,
     is_task_report,
 )
-from pydantic_clai2._app import create_stock_agent
+from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.builtin_plugins.web.protocol import history_items
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import TurnStart
-from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.sandbox_calls import DelegationToolCallEvent
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.runtime.tasks import TaskPresentation, Tasks, task_row, task_tree
 from pydantic_clai2.ui.menus.field_menu import Runners
@@ -282,8 +282,12 @@ async def test_partial_stream_and_lifecycle_routing() -> None:
     assert ui.snapshots()[0].messages == []
     assert task_row(start) is None
     event = DelegationStartEvent(agent_name='self', task='hello', truncated=False, inherits_tools=True, model=None)
+    event.task_id = record.id
     await ui.observe(DelegationTaskEvent(task=record, event=event))
-    assert 'general-purpose' in output.getvalue()
+    assert 'general-purpose' not in output.getvalue()
+    await ui.observe(DelegationTaskEvent(task=record, event=start, model_name='child-model'))
+    assert 'general-purpose [aaaaaaaa] · child-model hello' in output.getvalue()
+    assert output.getvalue().count('general-purpose') == 1
     received: list[object] = []
 
     async def sink(event: object) -> None:
@@ -291,6 +295,8 @@ async def test_partial_stream_and_lifecycle_routing() -> None:
 
     ui.sink = sink
     await ui.observe(DelegationTaskEvent(task=record, event=event))
+    assert received == []
+    await ui.observe(DelegationTaskEvent(task=record, event=start, model_name='other-model'))
     assert received == [event]
     record.conversation_id = 'other'
     await ui.observe(DelegationTaskEvent(task=record, event=event))
@@ -306,6 +312,96 @@ async def test_partial_stream_and_lifecycle_routing() -> None:
     record.status = 'running'
     record.backgroundable = False
     assert 'workspace' in ui.promote()
+
+
+@pytest.mark.parametrize('show_model', [True, False])
+async def test_task_start_row_waits_for_model_unless_hidden(show_model: bool) -> None:
+    output = io.StringIO()
+    ui = Tasks(
+        console=Console(file=output),
+        conversation_id=lambda: 'root',
+        directory=None,
+        show_task_models=lambda: show_model,
+    )
+    record = task()
+    event = DelegationStartEvent(agent_name='worker', task='inspect', truncated=False, inherits_tools=False, model=None)
+    event.task_id = record.id
+    await ui.observe(DelegationTaskEvent(task=record, event=event))
+    assert ('worker [aaaaaaaa] inspect' in output.getvalue()) is not show_model
+    await ui.observe(
+        DelegationTaskEvent(task=record, event=PartStartEvent(index=0, part=TextPart('ok')), model_name='actual-model')
+    )
+    assert output.getvalue().count('worker [aaaaaaaa]') == 1
+    assert ('· actual-model' in output.getvalue()) is show_model
+    await ui.observe(
+        DelegationTaskEvent(task=record, event=PartEndEvent(index=0, part=TextPart('ok')), model_name='actual-model')
+    )
+    assert output.getvalue().count('worker [aaaaaaaa]') == 1
+
+
+@pytest.mark.parametrize('first', ['end', 'question'])
+async def test_task_ending_or_asking_before_its_model_gets_its_start_row_without_one(
+    first: Literal['end', 'question'],
+) -> None:
+    output = io.StringIO()
+    ui = Tasks(console=Console(file=output), conversation_id=lambda: 'root', directory=None)
+    record = task()
+    event = DelegationStartEvent(agent_name='worker', task='inspect', truncated=False, inherits_tools=False, model=None)
+    event.task_id = record.id
+    await ui.observe(DelegationTaskEvent(task=record, event=event))
+    released: AgentStreamEvent = (
+        DelegationEndEvent(
+            agent_name='worker',
+            outcome='failed',
+            output='failed',
+            truncated=False,
+            usage=None,
+            duration_seconds=1,
+            task_id=record.id,
+        )
+        if first == 'end'
+        else TaskQuestionEvent(task_id=record.id, agent_name='worker', question_id='q', question='Which?')
+    )
+    await ui.observe(DelegationTaskEvent(task=record, event=released))
+    lines = output.getvalue().splitlines()
+    assert lines[0] == '● worker [aaaaaaaa] inspect'
+    assert lines[1] == (
+        '  └ failed · 1.0s · /tasks to inspect' if first == 'end' else '? worker [aaaaaaaa] asks: Which?'
+    )
+    await ui.observe(DelegationTaskEvent(task=record, model_name='too-late'))
+    assert output.getvalue().splitlines() == lines
+
+
+async def test_resumed_task_ending_before_its_model_does_not_show_the_earlier_model() -> None:
+    output = io.StringIO()
+    ui = Tasks(console=Console(file=output), conversation_id=lambda: 'root', directory=None)
+    record = task()
+
+    def start() -> DelegationTaskEvent:
+        event = DelegationStartEvent(
+            agent_name='worker', task='inspect', truncated=False, inherits_tools=False, model=None
+        )
+        event.task_id = record.id
+        return DelegationTaskEvent(task=record, event=event)
+
+    end = DelegationEndEvent(
+        agent_name='worker',
+        outcome='failed',
+        output='failed',
+        truncated=False,
+        usage=None,
+        duration_seconds=1,
+        task_id=record.id,
+    )
+    await ui.observe(start())
+    await ui.observe(
+        DelegationTaskEvent(task=record, event=PartStartEvent(index=0, part=TextPart('ok')), model_name='old-model')
+    )
+    await ui.observe(DelegationTaskEvent(task=record, event=end))
+    await ui.observe(start())
+    await ui.observe(DelegationTaskEvent(task=record, event=end))
+    starts = [line for line in output.getvalue().splitlines() if line.startswith('●')]
+    assert starts == ['● worker [aaaaaaaa] · old-model inspect', '● worker [aaaaaaaa] inspect']
 
 
 async def test_presentation_classifies_capability_owned_tool() -> None:
@@ -631,7 +727,7 @@ async def test_managed_code_mode_delegation_has_one_typed_row(tmp_path: Path) ->
     from pydantic_clai2.runtime.sandbox_calls import DelegationCallStartedEvent, SandboxCallOrder
     from pydantic_clai2.runtime.speculation import SpeculationCounters
     from pydantic_clai2.runtime.speculative_mode import speculative_capabilities
-    from pydantic_clai2.ui.rendering._rendering import StreamRenderer
+    from pydantic_clai2.ui.rendering.rendering import StreamRenderer
     from tests.clai2.test_speculative_mode import streamed
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -647,7 +743,7 @@ async def test_managed_code_mode_delegation_has_one_typed_row(tmp_path: Path) ->
     output = io.StringIO()
     console = Console(file=output)
     ui = Tasks(console=console, conversation_id=lambda: 'root', directory=None)
-    renderer = StreamRenderer(console, stop_loading=lambda: None, renderers=[task_row])
+    renderer = StreamRenderer(console, stop_loading=lambda: None, renderers=[ui.row])
     ui.sink = renderer.on_stream_event
     seen: list[AgentStreamEvent] = []
 
@@ -876,14 +972,13 @@ async def test_a_background_task_question_reaches_the_parent_which_answers_it(
     monkeypatch.setattr(LivePrompt, 'read', read)
     questions = 0
 
-    def counted(event: AgentStreamEvent) -> Text | None:
+    def counted(event: AgentStreamEvent, *, model_name: str | None = None, show_model: bool = True) -> Text | None:
         nonlocal questions
         questions += isinstance(event, TaskQuestionEvent)
-        return task_row(event)
+        return task_row(event, model_name=model_name, show_model=show_model)
 
-    # The task panel's rows and the main run's stream both render through it.
+    # The task panel's rows and the main run's stream both render through `Tasks.row`, which calls it.
     monkeypatch.setattr('pydantic_clai2.runtime.tasks.task_row', counted)
-    monkeypatch.setattr('pydantic_clai2.runtime.session_runtime.task_row', counted)
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         first, last = messages[0], messages[-1]

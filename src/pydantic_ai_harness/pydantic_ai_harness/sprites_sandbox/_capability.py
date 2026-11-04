@@ -9,11 +9,10 @@ from typing import TYPE_CHECKING, Any
 from sprites import AsyncSpritesClient
 
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness._workspace import innermost_backend
-from pydantic_ai_harness._workspace_provider import check_working_dir
+from pydantic_ai_harness._workspace_provider import check_provider, check_working_dir, reject_defer_loading
 from pydantic_ai_harness.sprites_sandbox._backend import SpritesSandboxBackend, destroy_sprite
 
 if TYPE_CHECKING:
@@ -65,12 +64,7 @@ class SpritesSandbox(AbstractCapability[AgentDepsT]):
     """Environment variables every command gets, on top of the Sprite's own; a command's `env` is layered on top."""
 
     def __post_init__(self) -> None:
-        if self.defer_loading:
-            # Core picks the run's workspace from the always-on capabilities only.
-            raise UserError(
-                '`SpritesSandbox` does not support `defer_loading=True`: '
-                'the workspace is selected before deferred capabilities load.'
-            )
+        reject_defer_loading('SpritesSandbox', self.defer_loading)
         # Checked here rather than at the first workspace operation, so a bad value fails where it is written.
         check_working_dir(self.working_dir)
 
@@ -85,8 +79,7 @@ class SpritesSandbox(AbstractCapability[AgentDepsT]):
 
         A Sprite that no longer exists is already gone, so destroying it returns quietly.
         """
-        if ref.provider != 'sprites':
-            raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'sprites'")
+        check_provider(ref, 'sprites')
         await destroy_sprite(self.client, ref.id)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:

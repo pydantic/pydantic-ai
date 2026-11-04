@@ -7,17 +7,20 @@ import hashlib
 import html
 import io
 import json
+import os
 import re
 import shutil
+import subprocess
 import sys
 import threading
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import AbstractContextManager, asynccontextmanager
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from pathlib import Path
 from typing import TypeVar
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import anyio
 import httpx
@@ -67,6 +70,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     DialogOpened,
     DialogShown,
     ForkEntry,
+    Item,
     ItemAdded,
     Notice,
     PluginsChanged,
@@ -84,6 +88,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     TurnStarted,
     image_id,
 )
+from pydantic_clai2.builtin_plugins.web.sidebar import project_names
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config import PluginSettings, Settings, resolve_settings
 from pydantic_clai2.config.project_settings import ProjectSettings
@@ -91,7 +96,13 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionEndReason
 from pydantic_clai2.runtime import image_codec
 from pydantic_clai2.runtime.image_codec import decode_images
-from pydantic_clai2.runtime.project_identity import git_checkout, project_identity, worktree_roots
+from pydantic_clai2.runtime.project_identity import (
+    MISSING,
+    ProjectIdentity,
+    git_checkout,
+    project_identity,
+    worktree_roots,
+)
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.runtime.session_workspace import SessionWorkspace
 from pydantic_clai2.ui.menus.menu_worker import require_terminal
@@ -254,10 +265,15 @@ def test_a_turn_streams_to_the_browser(make_web: 'MakeWeb', monkeypatch: pytest.
         settled, _ = receive_until(socket, SessionsChanged)
         final = [message.status for message in settled if isinstance(message, StatusChanged)][-1]
         assert final.run is None and final.output_tokens == end.usage.output_tokens
-        # A browser connecting now sees the finished turn as history.
+        # A browser connecting now sees the finished turn as history, with its usage line.
         state = web_.get('/api/state').json()
-        assert [item['kind'] for item in state['items']] == ['user', 'tool', 'assistant']
-        assert state['items'][-1]['text'] == 'All **done**.'
+        assert [item['kind'] for item in state['items']] == ['user', 'tool', 'assistant', 'turn']
+        assert state['items'][-2]['text'] == 'All **done**.'
+        assert state['items'][-1]['usage'] == {
+            'input_tokens': end.usage.input_tokens,
+            'output_tokens': end.usage.output_tokens,
+            'requests': 2,
+        }
         assert web_.post('/api/input', {'text': '/cost'}).status_code == 200
         _, notice = receive_until(socket, Notice)
         assert (notice.command, notice.level) == ('/cost', 'info') and notice.text.startswith('Retained history')
@@ -819,13 +835,14 @@ def test_session_actions(make_web: 'MakeWeb', tmp_path: Path) -> None:
         projects = web_.get('/api/sessions').json()
         assert projects[0]['current'] is True
         [here] = projects[0]['worktrees']
-        assert [(entry['title'], entry['state'], entry['current']) for entry in here['sessions']] == [
-            ('first', 'completed', True)
-        ]
+        assert [
+            (entry['title'], entry['state'], entry['current'], entry['openable']) for entry in here['sessions']
+        ] == [('first', 'completed', True, True)]
         assert [(project['name'], [w['label'] for w in project['worktrees']]) for project in projects[1:]] == [
             ('Removed folders', ['else'])
         ]
-        assert web_.get('/api/sessions?q=Elsewhere').json()[0]['worktrees'][0]['sessions'][0]['id'] == elsewhere.id
+        [listed] = web_.get('/api/sessions?q=Elsewhere').json()[0]['worktrees'][0]['sessions']
+        assert (listed['id'], listed['openable']) == (elsewhere.id, False), 'its row says it only shows'
 
         transcript = web_.get(f'/api/sessions/{elsewhere.id}').json()
         assert (transcript['title'], transcript['openable'], transcript['items']) == ('Elsewhere', False, [])
@@ -851,7 +868,8 @@ def test_session_actions(make_web: 'MakeWeb', tmp_path: Path) -> None:
         copy = web_.post(f'/api/sessions/{first}/fork').json()['id']
         snapshot = receive_until(socket, Snapshot)[1]
         assert (snapshot.session.id, snapshot.session.title) == (copy, 'Renamed (fork)')
-        assert [item.text for item in snapshot.items] == ['first', 'ok']
+        assert [item.text for item in snapshot.items if isinstance(item, Item)] == ['first', 'ok']
+        assert snapshot.items[-1].kind == 'turn'
 
         other = web_.portal.call(
             lambda: shell.sessions.store.save(
@@ -869,8 +887,6 @@ def test_running_sessions_in_the_sidebar(make_web: 'MakeWeb') -> None:
     """A live session's turn shows as running; one another live process runs, as busy; a dead one, as cancelled."""
     web_ = make_web(Agent(TestModel()))
     store = web_.shell.sessions.store
-    import os
-
     for title, pid in (('Live', os.getppid()), ('Mine', os.getpid()), ('Dead', 2**22 + 12345)):
         web_.portal.call(
             lambda title=title, pid=pid: store.save(
@@ -884,10 +900,54 @@ def test_running_sessions_in_the_sidebar(make_web: 'MakeWeb') -> None:
         'Mine': 'cancelled',
         'Dead': 'cancelled',
     }, "this process's own turn is never busy elsewhere: no live session here holds it, so it ended unsaved"
+    assert {entry['title']: entry['owner_pid'] for entry in removed['sessions']} == {
+        'Live': os.getppid(),
+        'Mine': None,
+        'Dead': None,
+    }, 'the sidebar names the process another turn runs in'
     web_.shell.turning = True
     web_.portal.call(web_.shell.session.commit_messages, list[ModelMessage]())
     current = web_.get('/api/sessions').json()[0]['worktrees'][0]['sessions'][0]
     assert (current['current'], current['state']) == (True, 'running')
+
+
+def test_a_session_another_process_runs_shows_read_only_until_forked(make_web: 'MakeWeb') -> None:
+    """Viewing it saves nothing; opening it, the banner's explicit fork, continues one copy, reused thereafter."""
+    web_ = make_web(Agent(TestModel()))
+    store = web_.shell.sessions.store
+    busy = web_.portal.call(
+        lambda: store.save(
+            summary=ConversationSummary(
+                workspace=web_.shell.session.workspace, title='Busy', outcome='running', owner_pid=os.getppid()
+            ),
+            messages=[],
+        )
+    )
+    transcript = web_.get(f'/api/sessions/{busy.id}').json()
+    assert (transcript['openable'], transcript['missing'], transcript['owner_pid']) == (False, False, os.getppid())
+    assert [entry.id for entry in web_.portal.call(store.listing)] == [busy.id]
+    [row] = web_.get('/api/sessions').json()[0]['worktrees'][0]['sessions']
+    assert (row['id'], row['state'], row['openable']) == (busy.id, 'busy', False), 'a click fetches the transcript'
+    # A fork the user made from the row menu is theirs; continuing the busy session does not take it over.
+    mine = web_.portal.call(web_.shell.sessions.fork, busy.id).id
+
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
+        socket.receive_text()
+        running = web_.run()
+        assert web_.post(f'/api/sessions/{busy.id}/open').status_code == 200
+        copy = receive_until(socket, Snapshot)[1].session
+        assert copy.id not in (busy.id, mine)
+        assert copy.title == 'Busy (fork)'
+        assert web_.get(f'/api/sessions/{copy.id}').json()['owner_pid'] is None
+        web_.post('/api/input', {'text': '/new'})
+        receive_until(socket, Snapshot)
+        assert web_.post(f'/api/sessions/{busy.id}/open').status_code == 200
+        assert receive_until(socket, Snapshot)[1].session.id == copy.id, 'the fork is continued, not forked again'
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
+    assert sorted(entry.id for entry in web_.portal.call(store.listing)) == sorted([busy.id, mine, copy.id])
 
 
 def test_sidebar_groups_sessions_by_project_then_worktree(make_web: 'MakeWeb', tmp_path: Path) -> None:
@@ -956,6 +1016,138 @@ def test_sidebar_groups_sessions_by_project_then_worktree(make_web: 'MakeWeb', t
     assert [(w['label'], w['missing']) for w in found['worktrees']] == [('old', True)]
 
 
+def test_sidebar_tells_apart_projects_that_share_a_name(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """Projects whose folders share a name each add the shortest end of their path that no other one shares.
+
+    A relative workspace an older CLAI saved has no more path to add, so it keeps its name.
+    """
+    web_ = make_web(Agent(TestModel()))
+    first, second, third = tmp_path / 'a' / 'scratch', tmp_path / 'b' / 'scratch', tmp_path / 'z' / 'a' / 'scratch'
+    git('init', '-b', 'main', str(first))
+    git('init', '-b', 'main', str(third))
+    second.mkdir(parents=True)
+    other = tmp_path / 'other'
+    other.mkdir()
+    workspaces = [('First', first.resolve()), ('Second', second.resolve()), ('Third', third.resolve())]
+    for title, workspace in [*workspaces, ('Other', other.resolve()), ('Relative', Path('scratch'))]:
+        summary = ConversationSummary(workspace=str(workspace), title=title)
+        web_.portal.call(lambda summary=summary: web_.shell.sessions.store.save(summary=summary, messages=[]))
+    web_.shell.session.workspace = str(first.resolve())
+
+    projects = web_.get('/api/sessions').json()
+    names = {project['worktrees'][0]['sessions'][0]['title']: project['name'] for project in projects}
+    assert names == {
+        'First': str(Path(tmp_path.resolve().name, 'a', 'scratch')),
+        'Second': str(Path('b', 'scratch')),
+        'Third': str(Path('z', 'a', 'scratch')),
+        'Other': 'other',
+        'Relative': 'scratch',
+    }
+
+
+def test_projects_of_one_folder_show_their_keys() -> None:
+    """Two projects of one folder, as when Git failed once while listing it, show their keys.
+
+    Removed folders keeps its name, which a real folder of that name adds its parent to.
+    """
+    repository = ProjectIdentity(key='/x/scratch/.git', name='scratch', root='/x/scratch', checkout='main')
+    fallback = ProjectIdentity(key='/x/scratch', name='scratch', root='/x/scratch')
+    removed = ProjectIdentity(key=MISSING, name='Removed folders', root='/gone', missing=True)
+    named = ProjectIdentity(key='/y/Removed folders', name='Removed folders', root='/y/Removed folders')
+    identities = {identity.key: identity for identity in (repository, fallback, removed, named)}
+    assert project_names(identities) == {
+        '/x/scratch/.git': '/x/scratch/.git',
+        '/x/scratch': '/x/scratch',
+        MISSING: 'Removed folders',
+        '/y/Removed folders': str(Path('y', 'Removed folders')),
+    }
+
+
+def test_sidebar_lists_removed_worktrees_after_live_ones(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """A removed worktree comes after the project's live checkouts, even when its session is the newest."""
+    web_ = make_web(Agent(TestModel()))
+    repo, feature, gone = tmp_path / 'repo', tmp_path / 'wt' / 'feature', tmp_path / 'wt' / 'gone'
+    repository(repo, linked=feature, branch='feature')
+    git('-C', str(repo), 'worktree', 'add', '-b', 'gone', str(gone))
+    for title, workspace in [('Feature', feature), ('Main', repo), ('Gone', gone)]:
+        folder = str(workspace.resolve())
+        summary = ConversationSummary(workspace=folder, title=title, checkout=git_checkout(project_identity(folder)))
+        web_.portal.call(lambda summary=summary: web_.shell.sessions.store.save(summary=summary, messages=[]))
+    git('-C', str(repo), 'worktree', 'remove', str(gone))
+    plain = tmp_path / 'plain'
+    plain.mkdir()
+    web_.shell.session.workspace = str(plain.resolve())
+
+    [project] = [p for p in web_.get('/api/sessions').json() if p['name'] == 'repo']
+    assert [(w['label'], w['missing']) for w in project['worktrees']] == [
+        ('main', False),
+        ('feature', False),
+        ('gone', True),
+    ]
+
+
+def test_sidebar_project_folder_is_its_main_checkout(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """A repository's folder is its main checkout, not the Git folder that keys it; Removed folders has none."""
+    web_ = make_web(Agent(TestModel()))
+    repo, feature, gone = tmp_path / 'repo', tmp_path / 'wt' / 'feature', tmp_path / 'gone'
+    repository(repo, linked=feature, branch='feature')
+    gone.mkdir()
+    for title, workspace in [('Feature', feature), ('Gone', gone)]:
+        summary = ConversationSummary(workspace=str(workspace.resolve()), title=title)
+        web_.portal.call(lambda summary=summary: web_.shell.sessions.store.save(summary=summary, messages=[]))
+    gone.rmdir()
+    web_.shell.session.workspace = str(feature.resolve())
+
+    folders = {project['name']: project['folder'] for project in web_.get('/api/sessions').json()}
+    assert folders == {'repo': str(repo.resolve()), 'Removed folders': None}
+
+
+def test_archiving_a_worktree_archives_every_session_in_it(make_web: 'MakeWeb') -> None:
+    """One request archives a group's sessions and lists them no more; ones it refuses stay, with the reasons."""
+    web_ = make_web(Agent(TestModel()))
+    old = [
+        web_.portal.call(
+            lambda title=title: web_.shell.sessions.store.save(
+                summary=ConversationSummary(workspace='/gone', title=title), messages=[]
+            )
+        )
+        for title in ('One', 'Two')
+    ]
+    web_.portal.call(web_.shell.session.commit_messages, list[ModelMessage]())
+    current = web_.shell.session.conversation_id
+
+    def listed() -> list[str]:
+        return [
+            entry['title']
+            for project in web_.get('/api/sessions').json()
+            for worktree in project['worktrees']
+            for entry in worktree['sessions']
+        ]
+
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
+        socket.receive_text()
+        ids = [summary.id for summary in old]
+        assert web_.client.post('/api/sessions/archive', json={'ids': ids}).status_code == 403, 'the token is checked'
+        assert web_.post('/api/sessions/archive', {'ids': ids}).status_code == 204
+        receive_until(socket, SessionsChanged)
+        assert listed() == ['New session']
+        assert web_.post(f'/api/sessions/{old[0].id}/unarchive').status_code == 204
+        receive_until(socket, SessionsChanged)
+        refused = web_.post('/api/sessions/archive', {'ids': [current, old[0].id, 'missing']})
+        assert (refused.status_code, refused.json()['detail']) == (
+            400,
+            f"Archived 1 of 3 sessions. '{current}': The current session cannot be archived. Switch to another one "
+            "first. 'missing': No saved session: missing",
+        )
+        receive_until(socket, SessionsChanged)
+        assert web_.post('/api/sessions/archive', {'ids': ['missing']}).json()['detail'] == (
+            "Archived 0 of 1 sessions. 'missing': No saved session: missing"
+        )
+    assert listed() == ['New session']
+
+
 def test_new_session_offers_every_worktree_of_a_known_repository(
     make_web: 'MakeWeb', tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -984,6 +1176,118 @@ def test_new_session_offers_every_worktree_of_a_known_repository(
     assert shown('q=Main&include_worktrees=true') == [main]
     monkeypatch.setenv('PATH', '')
     assert shown('include_worktrees=true') == [main]
+
+
+def test_new_session_checks_out_a_new_worktree(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """`POST /api/worktrees` checks out a new branch in `.worktrees/`, as `clai2 --worktree` does, and New session lists it.
+
+    Without a branch the name is generated as `--worktree` generates it; Git's refusals come back as the error.
+    """
+    web_ = make_web(Agent(TestModel()))
+    repo = tmp_path / 'repo'
+    repository(repo, linked=tmp_path / 'wt' / 'feature', branch='feature')
+    git(
+        '-C',
+        str(repo),
+        '-c',
+        'user.name=Test',
+        '-c',
+        'user.email=test@example.com',
+        'commit',
+        '--allow-empty',
+        '-m',
+        'two',
+    )
+    main = repo.resolve()
+    summary = ConversationSummary(workspace=str(main), title='Main')
+    web_.portal.call(lambda: web_.shell.sessions.store.save(summary=summary, messages=[]))
+
+    def add(body: dict[str, str]) -> tuple[int, str]:
+        response = web_.post('/api/worktrees', body)
+        return response.status_code, response.json()['root' if response.status_code == 200 else 'detail']
+
+    def output(*args: str) -> str:
+        return subprocess.run(['git', *args], check=True, capture_output=True, text=True).stdout.strip()
+
+    status, root = add({'repo': str(repo), 'branch': 'feature-x', 'base': 'main~1'})
+    assert (status, root) == (200, str(main / '.worktrees' / 'feature-x'))
+    assert output('-C', root, 'branch', '--show-current') == 'feature-x'
+    assert output('-C', root, 'rev-parse', 'HEAD') == output('-C', str(repo), 'rev-parse', 'main~1')
+    assert output('-C', str(repo), 'status', '--porcelain') == '', 'the worktrees folder is excluded'
+    [project] = [p for p in web_.get('/api/sessions?include_worktrees=true').json() if p['name'] == 'repo']
+    assert ('feature-x', root) in [(w['label'], w['root']) for w in project['worktrees']]
+
+    # From inside a checkout, by default from its `HEAD`; a branch with a slash gets a flat folder.
+    (main / 'src').mkdir()
+    status, root = add({'repo': str(main / 'src'), 'branch': 'fix/y'})
+    assert (status, root) == (200, str(main / '.worktrees' / 'fix-y'))
+    assert output('-C', root, 'rev-parse', 'HEAD') == output('-C', str(repo), 'rev-parse', 'HEAD')
+    status, root = add({'repo': str(repo)})
+    assert status == 200 and re.fullmatch(r'worktree-[0-9a-f]{8}', Path(root).name)
+    assert output('-C', root, 'branch', '--show-current') == f'clai-{Path(root).name}'
+
+    plain = tmp_path / 'plain'
+    plain.mkdir()
+    assert add({'repo': str(repo), 'branch': 'feature'}) == (
+        400,
+        'Cannot create worktree: branch feature already exists. Pick another name.',
+    )
+    assert add({'repo': str(repo), 'branch': 'feature/x'}) == (
+        400,
+        f'Cannot create worktree: {main / ".worktrees" / "feature-x"} already exists. Pick another name.',
+    )
+    assert add({'repo': str(repo), 'branch': 'a..b'}) == (
+        400,
+        "Cannot create worktree: fatal: 'a..b' is not a valid branch name",
+    )
+    assert add({'repo': str(repo), 'branch': 'other', 'base': 'nowhere'}) == (
+        400,
+        f'nowhere is not a branch, tag, or commit in {main}.',
+    )
+    assert add({'repo': str(plain), 'branch': 'other'}) == (400, f'{plain} is not in a Git repository.')
+    assert add({'repo': 'relative'}) == (400, "Choose a directory by its absolute path, not 'relative'.")
+
+
+def test_new_session_completes_a_typed_path_with_its_repository_worktrees(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """New session completes a typed path to directories, listing each repository's worktrees before any session.
+
+    A subfolder of a checkout is offered as itself, hidden folders only when typed, and a relative,
+    unreadable, or empty path offers nothing.
+    """
+    web_ = make_web(Agent(TestModel()))
+    fresh, linked = tmp_path / 'fresh', tmp_path / 'fresh-wt'
+    repository(fresh, linked=linked, branch='wt')
+    # Git still lists a locked worktree whose folder is gone; the dialog leaves out a missing one.
+    git('-C', str(fresh), 'worktree', 'add', '--lock', '-b', 'gone', str(tmp_path / 'gone'))
+    shutil.rmtree(tmp_path / 'gone')
+    (fresh / 'src').mkdir()
+    (tmp_path / 'frozen').mkdir()
+    (tmp_path / '.free').mkdir()
+    (tmp_path / 'french.txt').touch()
+    assert not any(p['name'] == 'fresh' for p in web_.get('/api/sessions?include_worktrees=true').json())
+
+    def completed(path: str) -> list[tuple[str, list[tuple[str, str]]]]:
+        response = web_.get(f'/api/directories?path={quote(path)}')
+        assert response.status_code == 200, response.text
+        return [
+            (p['name'], [(w['label'], w['root']) for w in p['worktrees'] if not w['missing']]) for p in response.json()
+        ]
+
+    def at(*parts: str) -> str:
+        return str(tmp_path.resolve().joinpath(*parts))
+
+    repo = ('fresh', [('main', at('fresh')), ('wt', at('fresh-wt'))])
+    assert completed(at('fr')) == [repo, ('frozen', [('frozen', at('frozen'))])]
+    assert completed(at('fresh')) == [repo]
+    [found] = web_.get(f'/api/directories?path={quote(at("fresh-"))}').json()
+    assert (at('gone'), True) in [(w['root'], w['missing']) for w in found['worktrees']]
+    assert completed(at('.f')) == [('.free', [('.free', at('.free'))])]
+    assert completed(at('fresh') + os.sep) == [('src', [('src', at('fresh', 'src'))])]
+    assert completed('fresh') == completed(at('nowhere') + os.sep) == completed(at('a\0', 'b')) == completed('') == []
+    # At most `COMPLETIONS` directories, in name order.
+    for index in range(13):
+        (tmp_path / f'z{index:02}').mkdir()
+    assert [name for name, _ in completed(at('z'))] == [f'z{index:02}' for index in range(12)]
 
 
 def test_a_bare_repository_is_not_a_worktree(tmp_path: Path) -> None:
@@ -1054,6 +1358,33 @@ def test_archived_sessions_leave_the_sidebar_until_it_lists_them(make_web: 'Make
         assert web_.post(f'/api/sessions/{old.id}/unarchive').status_code == 204
         receive_until(socket, SessionsChanged)
     assert listed('/api/sessions') == {'New session': False, 'Stale': False}
+
+
+def test_sessions_carry_their_creation_time(make_web: 'MakeWeb') -> None:
+    """Each row carries its creation time, which later saves keep, so the sidebar's order never changes."""
+    web_ = make_web(Agent(TestModel()))
+    store = web_.shell.sessions.store
+    first = web_.portal.call(
+        lambda: store.save(summary=ConversationSummary(workspace='/x', title='First'), messages=[])
+    )
+    second = web_.portal.call(
+        lambda: store.save(summary=ConversationSummary(workspace='/x', title='Second'), messages=[])
+    )
+    later = web_.portal.call(lambda: store.save(summary=first, messages=[]))
+
+    def entries() -> dict[str, tuple[str, str]]:
+        return {
+            entry['title']: (entry['created_at'], entry['updated_at'])
+            for project in web_.get('/api/sessions').json()
+            for worktree in project['worktrees']
+            for entry in worktree['sessions']
+        }
+
+    listed = entries()
+    assert TypeAdapter(datetime).validate_python(listed['First'][0]) == first.created_at
+    assert TypeAdapter(datetime).validate_python(listed['First'][1]) == later.updated_at
+    assert TypeAdapter(datetime).validate_python(listed['Second'][0]) == second.created_at
+    assert first.created_at is not None and second.created_at is not None and first.created_at < second.created_at
 
 
 def test_a_shell_without_saved_sessions(make_web: 'MakeWeb') -> None:
@@ -1890,6 +2221,13 @@ def test_sessions_continue_in_their_own_directories(
     repo_context = shell.loader._loaded['repo_context']  # pyright: ignore[reportPrivateUsage]
     assert web_.get('/api/state').json()['follows_workspace'] is True
     assert [web_.get(f'/api/sessions/{id}').json()['openable'] for id in (here, there, lost)] == [True, True, False]
+    rows = {
+        entry['id']: entry['openable']
+        for project in web_.get('/api/sessions').json()
+        for worktree in project['worktrees']
+        for entry in worktree['sessions']
+    }
+    assert [rows[id] for id in (here, there, lost)] == [True, True, False], 'each row says what its transcript says'
     assert web_.get(f'/api/sessions/{lost}').json()['missing'] is True
     with web_.client.websocket_connect(
         f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
@@ -1997,6 +2335,7 @@ def test_a_terminal_session_stays_where_it_started(make_web: 'MakeWeb', tmp_path
         'items': [],
         'openable': False,
         'missing': False,
+        'owner_pid': None,
     }
     with pytest.raises(ValueError, match='Select it in /resume to confirm'):
         web_.portal.call(shell.sessions.resume, elsewhere)

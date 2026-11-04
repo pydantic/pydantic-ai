@@ -20,6 +20,7 @@ from rich.console import Console
 
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, Hooks, WrapperCapability
 from pydantic_ai.models import Model
+from pydantic_ai.settings import ModelSettings
 from pydantic_clai2.commands import Commands, added_plugin
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.features import CAPABILITY_REQUIREMENTS
@@ -61,10 +62,10 @@ from pydantic_clai2.plugins import (
     bare_screen,
     collect,
 )
-from pydantic_clai2.plugins._factories import build, scope, settings_capability
-from pydantic_clai2.plugins._git import ADD_USAGE, CHECKOUTS_DIR, checkout_dir, install_git_plugin
 from pydantic_clai2.plugins.compatibility import INCLUDED, Binds, included_by
 from pydantic_clai2.plugins.describe import describe
+from pydantic_clai2.plugins.factories import build, scope, settings_capability
+from pydantic_clai2.plugins.git import ADD_USAGE, CHECKOUTS_DIR, checkout_dir, install_git_plugin
 from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.plugins.process_plugins import LiveRuntime, ProcessPlugins, PromptInputs, handling, same_plugin
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, PluginGuard
@@ -203,6 +204,8 @@ class SessionPlugins(Generic[DepsT]):
         live_id: str | None = None,
         default_model: Callable[[], Awaitable[Model | str | None]] | None = None,
         default_model_name: Callable[[], Awaitable[str | None]] | None = None,
+        resolve_model: Callable[[str], Awaitable[Model | str]] | None = None,
+        model_settings: Callable[[str], ModelSettings | None] | None = None,
     ) -> None:
         """Join `process`, the plugins every live session of this CLAI shares.
 
@@ -241,6 +244,8 @@ class SessionPlugins(Generic[DepsT]):
         self._workspace = workspace
         self._default_model = default_model
         self._default_model_name = default_model_name
+        self._resolve_model = resolve_model
+        self._model_settings = model_settings
         self._project = canonical_plugin_declarations(project)
         self._entries: dict[str, PluginEntry[DepsT]] = {}
         self._loaded: dict[str, LoadedPlugin[DepsT]] = {}
@@ -270,6 +275,8 @@ class SessionPlugins(Generic[DepsT]):
             plugins=self,
             tasks=tasks,
             workspace=workspace,
+            resolve_model=resolve_model,
+            model_settings=model_settings,
         )
         self.live_session = LiveRuntime(
             live_id=live_id or uuid4().hex,
@@ -429,19 +436,19 @@ class SessionPlugins(Generic[DepsT]):
         self._process.join(self)
         failures: list[PluginLoadFailed] = []
         for entry in self._registration_order():
-            # Read afresh: a plugin loaded earlier in this loop may include this one.
-            if entry.declaration.enabled and entry.loaded is None and self._entry(entry.name).included_in is None:
-                try:
-                    await self.load(entry.name, fresh=fresh)
-                except PluginError as exc:
-                    if not _module_absent(entry, exc.error):
-                        failures.append(PluginLoadFailed(plugin=entry.name, error=exc.error))
-                        self._console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
-                # Settings another build saved are expected in a shared database, not a problem to
-                # announce on every start: `/plugins` shows the notice. `load` refreshed the entries.
-                ignored = self._entries[entry.name].ignored
-                if ignored is not None:
-                    _LOGGER.debug('%s', ignored)
+            if not self._loads_at_start(entry):
+                continue
+            try:
+                await self.load(entry.name, fresh=fresh)
+            except PluginError as exc:
+                if not _module_absent(entry, exc.error):
+                    failures.append(PluginLoadFailed(plugin=entry.name, error=exc.error))
+                    self._console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
+            # Settings another build saved are expected in a shared database, not a problem to
+            # announce on every start: `/plugins` shows the notice. `load` refreshed the entries.
+            ignored = self._entries[entry.name].ignored
+            if ignored is not None:
+                _LOGGER.debug('%s', ignored)
         # A process-scoped plugin loaded for this launch alone, as `--web` loads `web`, joins every session.
         for name, loaded in self._process.shared_plugins():
             # After it has started: one that fails to start is not joined.
@@ -451,6 +458,11 @@ class SessionPlugins(Generic[DepsT]):
         # Observers can load after a failing plugin, so report only once startup loading finishes.
         for failure in failures:
             await self.fire(failure)
+
+    def _loads_at_start(self, entry: PluginEntry[DepsT]) -> bool:
+        """Whether `load_all` loads `entry`: enabled, not loaded yet, and not included in a loaded plugin."""
+        # Read afresh: a plugin loaded earlier in this loop may include this one.
+        return entry.declaration.enabled and entry.loaded is None and self._entry(entry.name).included_in is None
 
     async def load(self, name: str, *, fresh: bool = False) -> None:
         """Import, build the plugin, collect its contributions, and fire `session_start`.
@@ -546,6 +558,8 @@ class SessionPlugins(Generic[DepsT]):
             live=self._process.live if process else None,
             default_model=self._default_model,
             default_model_name=self._default_model_name,
+            resolve_model=(lambda name: here().resolve_model(name)) if process else self._resolve_model,
+            model_settings=(lambda name: here().model_settings(name)) if process else self._model_settings,
         )
         return host
 
@@ -811,6 +825,7 @@ class SessionPlugins(Generic[DepsT]):
         _check_not_included(entry)
         _requested('enable', name)
         declaration = entry.declaration.model_copy(update={'enabled': True})
+        self._process.approve(name, declaration)
         self._process.store.save_plugin(declaration, requires=self._requirements(entry))
         await self._load_enabled(entry)
 
@@ -1038,16 +1053,7 @@ class SessionPlugins(Generic[DepsT]):
         if action == 'add' and not rest:
             raise ValueError(ADD_USAGE)
         if action == 'add' and len(rest) == 1:
-            async with install_git_plugin(
-                rest[0], plugins_dir=self.plugins_dir, names=[entry.name for entry in self.entries()]
-            ) as declaration:
-                if any(entry.name == declaration.id for entry in self.entries()):
-                    raise ValueError(f'Plugin {declaration.id} already exists; it has not been changed.')
-                self._process.store.save_plugin(declaration, overwrite=False)
-            _requested('add', declaration.id)
-            await self._load_enabled(self._entry(declaration.id))
-            await self._process.follow(declaration.id, origin=self, again=False)
-            return await self._configure_new(declaration.id, f'Added and loaded {declaration.id}.')
+            return await self._add_git(rest[0])
         if rest:
             rest[0] = canonical_plugin_id(rest[0])
         if action == 'add':
@@ -1075,6 +1081,19 @@ class SessionPlugins(Generic[DepsT]):
         run, past = actions[action]
         await run(name)
         return self._with_notice(name, f'{past} {name}.')
+
+    async def _add_git(self, source: str) -> str:
+        """Back `/plugins add GIT_URL`: check out the repository, save its declaration, and load it."""
+        async with install_git_plugin(
+            source, plugins_dir=self.plugins_dir, names=[entry.name for entry in self.entries()]
+        ) as declaration:
+            if any(entry.name == declaration.id for entry in self.entries()):
+                raise ValueError(f'Plugin {declaration.id} already exists; it has not been changed.')
+            self._process.store.save_plugin(declaration, overwrite=False)
+        _requested('add', declaration.id)
+        await self._load_enabled(self._entry(declaration.id))
+        await self._process.follow(declaration.id, origin=self, again=False)
+        return await self._configure_new(declaration.id, f'Added and loaded {declaration.id}.')
 
     def _with_notice(self, name: str, message: str) -> str:
         """`message`, then the plugin's ignored-settings notice when its last load had one."""

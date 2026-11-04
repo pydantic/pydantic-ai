@@ -128,6 +128,10 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'groq') -> Genera
             ) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
+        if isinstance(cause := e.__cause__, httpx.HTTPStatusError):
+            # A retrying transport raises this for a status it gave up on, and `groq` wraps it as if the connection
+            # had failed, though the provider responded.
+            raise _model_errors.transport_status_error(model_name, cause.response) from e
         raise _model_errors.connection_error(model_name, e.message, e, timeout=isinstance(e, APITimeoutError)) from e
     except APIError as e:
         # The SDK raises the base `APIError` for an error object inside a stream, after the HTTP 200 has already
@@ -850,14 +854,13 @@ class GroqStreamedResponse(StreamedResponse):
 
                     # Handle the tool calls
                     for dtc in choice.delta.tool_calls or []:
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                        for event in self._parts_manager.handle_tool_call_delta_events(
                             vendor_part_id=dtc.index,
                             tool_name=dtc.function.name if dtc.function is not None else None,
                             args=dtc.function.arguments if dtc.function is not None else None,
                             tool_call_id=dtc.id,
-                        )
-                        if maybe_event is not None:
-                            yield maybe_event
+                        ):
+                            yield event
             except APIError as e:
                 # The Groq SDK tries to be helpful by raising an exception when generated tool arguments don't match the schema,
                 # but we'd rather handle it ourselves so we can tell the model to retry the tool call

@@ -138,7 +138,7 @@ async def run_worker(operation: Callable[[], ResultT], *, inline: bool = False) 
         _STOP.reset(token)
 
 
-def _describe(span: telemetry.UiSpan, result: object) -> None:
+def _describe(span: telemetry.UISpan, result: object) -> None:
     """How the menu ended, from its result's shape alone: values can be secrets or prompt text."""
     if isinstance(result, MenuResult | TextInputResult):
         span.set('cancelled', result.cancelled)

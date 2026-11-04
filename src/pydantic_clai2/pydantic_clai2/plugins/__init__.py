@@ -24,9 +24,10 @@ from pydantic_ai.exceptions import PydanticAIDeprecationWarning
 from pydantic_ai.messages import BinaryContent, ModelMessage
 from pydantic_ai.models import Model
 from pydantic_ai.providers import infer_provider_class
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.step_persistence import StepStore
-from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SavedConversation
+from pydantic_ai_harness.step_persistence.conversations import ConversationOrder, ConversationSummary, SavedConversation
 from pydantic_ai_harness.subagents import DelegationOutcome
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
@@ -109,10 +110,17 @@ class SessionCatalog(Protocol):
         ...
 
     async def listing(
-        self, *, query: str = '', limit: int = 200, archived: bool | None = False
+        self,
+        *,
+        query: str = '',
+        limit: int = 200,
+        archived: bool | None = False,
+        order_by: ConversationOrder = 'updated_at',
     ) -> list[ConversationSummary]:
         """Saved conversations from every directory, newest first, matching `query` when it is not empty.
 
+        Newest means most recently active, or with `order_by='created_at'` most recently created, so the
+        conversations listed do not change as older ones are used again.
         Archived ones are left out unless `archived` is `True`, which lists only them, or `None`, which lists both.
         As when `/resume` opens, the newest untitled ones are queued for background naming, which
         calls the naming model, so poll it no more often than a person would look.
@@ -334,6 +342,11 @@ class LiveSession(Protocol):
         """Whether a turn runs in the session now."""
         ...
 
+    @property
+    def busy(self) -> bool:
+        """Whether the session handles input now (a turn, a command, or the terminal's rewind) or has input queued."""
+        ...
+
     def setting(self, key: str, /) -> JsonValue:
         """The effective value of a CLAI setting in the session, as `PluginHost.setting` reads it."""
         ...
@@ -416,8 +429,10 @@ class LiveSessions(Protocol):
     async def open(self, conversation_id: str, /) -> LiveSession:
         """The live session holding a saved conversation, resuming it in a new one, in its own directory, if none does.
 
-        Concurrent calls for one conversation return the same session. Raises `LookupError` for an unknown
-        conversation, `ValueError` when its directory is gone, and `RuntimeError` where CLAI opens no sessions.
+        Concurrent calls for one conversation return the same session. A conversation another process runs
+        continues in a fork of it, reusing one saved before, so the session's conversation ID differs.
+        Raises `LookupError` for an unknown conversation, `ValueError` when its directory is gone, and
+        `RuntimeError` where CLAI opens no sessions.
         Do not await it from `on_session_start`: the new session waits for the plugins still loading.
         """
         ...
@@ -744,7 +759,7 @@ class ModelProvider:
     models: tuple[str, ...] = ()
     """Names without the prefix, offered by `/model add` and `/set model`."""
     settings_from: SettingsProvider | None = None
-    """The provider whose `/model settings` controls these models take; `None` offers the generic ones."""
+    """The provider whose `/model settings` controls, and known context window, these models take; `None` offers the generic ones."""
     resolve_profile: Callable[[str, str], Model] | None = None
     """Build NAME for another account: called as `resolve_profile(NAME, PROFILE)` for `PREFIX@PROFILE:NAME`.
 
@@ -913,6 +928,8 @@ class PluginHost(Generic[DepsT]):
         live: LiveSessions | None = None,
         default_model: Callable[[], Awaitable[Model | str | None]] | None = None,
         default_model_name: Callable[[], Awaitable[str | None]] | None = None,
+        resolve_model: Callable[[str], Awaitable[Model | str]] | None = None,
+        model_settings: Callable[[str], ModelSettings | None] | None = None,
     ) -> None:
         """`settings` is the raw JSON from `plugins add`; validate it with `settings(Model)`.
 
@@ -960,6 +977,8 @@ class PluginHost(Generic[DepsT]):
         self._workspace = workspace
         self._default_model = default_model
         self._default_model_name = default_model_name
+        self._resolve_model = resolve_model
+        self._model_settings = model_settings
         self.live = live
         """Every live session of this CLAI, for a plugin with `scope = 'process'`; `None` for any other.
 
@@ -969,6 +988,17 @@ class PluginHost(Generic[DepsT]):
         that one has closed, the oldest live session). Its other attributes, such as `conversation` and
         `status`, always name the session that loaded it.
         """
+
+    async def resolve_model(self, name: str) -> Model | str:
+        """Resolve a model ID, saved chain, or account through the session's providers.
+
+        A host outside CLAI without a resolver returns the ID unchanged for core to resolve.
+        """
+        return await self._resolve_model(name) if self._resolve_model is not None else name
+
+    def model_settings(self, name: str) -> ModelSettings | None:
+        """The session's defaults and saved settings for this model or chain, without the parent's run overrides."""
+        return self._model_settings(name) if self._model_settings is not None else None
 
     @property
     def workspace(self) -> Path:
@@ -1269,7 +1299,7 @@ class Plugin(Generic[SettingsT, DepsT]):
         return ()
 
     def get_spinners(self) -> Sequence[Spinner]:
-        """Working animations for `/spinner`; build each with `make_spinner`.
+        """Working animations for `/spinner`; build each with `build_spinner`.
 
         A plugin spinner replaces a builtin of the same name, and the user's `spinners.json` replaces
         both. Unloading the plugin removes it; a selected spinner that is gone shows `working`.

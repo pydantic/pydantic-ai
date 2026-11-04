@@ -1,4 +1,4 @@
-"""A deferred capability loaded before a compaction stays loaded after it, or the model is told it isn't (#11264)."""
+"""A deferred capability loaded before a compaction stays loaded after it, or the model is told it isn't (#11264, #11770)."""
 
 from __future__ import annotations
 
@@ -9,9 +9,10 @@ from functools import partial
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
+    CapabilityLoadDeltaPart,
     CompactionPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
@@ -39,14 +40,15 @@ from pydantic_ai_harness.compaction import (
     compact_now,
 )
 from pydantic_ai_harness.compaction._capability_loads import keep_capability_loads
+from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 
 INSTRUCTIONS = 'Call get_forecast with a city name.'
 STATED_INSTRUCTIONS = f'<system><context id="capability:weather">\n{INSTRUCTIONS}\n</context></system>'
 """The capability's instructions in the system voice, as `FunctionModel` receives them."""
 STYLE_INSTRUCTIONS = 'Answer in one sentence.'
 STATED_STYLE_INSTRUCTIONS = f'<system><context id="capability:style">\n{STYLE_INSTRUCTIONS}\n</context></system>'
-SUMMARY = 'The user asked for the weather in Athens; I loaded `weather` and it was sunny.'
-RECORDED = {'pydantic-ai-harness.compaction.recorded-load.v1': True}
+SUMMARY = 'Athens was sunny.'
+"""Short enough that the compacted history, the unloaded-capability note included, is smaller than the original."""
 UNLOADED_NOTE = (
     "Compacting the conversation unloaded these capabilities: 'weather'. Their instructions and tools are "
     'no longer available. Call `load_capability` for any you still need before using its tools.'
@@ -84,14 +86,24 @@ class Style(AbstractCapability[None]):
         return STYLE_INSTRUCTIONS
 
 
-def _agent(model: Model, *capabilities: AbstractCapability[None]) -> Agent[None, str]:
-    return Agent(model, deps_type=type(None), capabilities=list(capabilities))
+def _agent(model: Model, *capabilities: AbstractCapability[None], from_code: bool = False) -> Agent[None, str]:
+    return Agent(
+        model, deps_type=type(None), capabilities=list(capabilities), tools=[open_weather] if from_code else []
+    )
+
+
+def open_weather(ctx: RunContext[None]) -> str:
+    """Loads the weather capability from code, recording a `CapabilityLoadDeltaPart` rather than an exchange."""
+    ctx.load_capability('weather')
+    return 'Opened.'
 
 
 def _first_turn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     step = sum(isinstance(message, ModelResponse) for message in messages)
     if step == 0:
-        return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'weather'})])
+        # The model loads the capability itself, or calls a tool that loads it from code.
+        loader = 'open_weather' if 'open_weather' in {tool.name for tool in info.function_tools} else 'load_capability'
+        return ModelResponse(parts=[ToolCallPart(loader, {'id': 'weather'} if loader == 'load_capability' else {})])
     if step == 1:
         return ModelResponse(parts=[ToolCallPart('get_forecast', {'city': 'Athens'})])
     return ModelResponse(parts=[TextPart('Sunny in Athens.')])
@@ -147,26 +159,17 @@ def _user_texts(messages: Sequence[ModelMessage]) -> list[str]:
     ]
 
 
-def _recorded_returns(messages: Sequence[ModelMessage]) -> list[LoadCapabilityReturnPart]:
-    return [
-        part
-        for message in messages
-        for part in message.parts
-        if isinstance(part, LoadCapabilityReturnPart) and part.metadata == RECORDED
-    ]
+def _load_deltas(messages: Sequence[ModelMessage]) -> list[CapabilityLoadDeltaPart]:
+    return [part for message in messages for part in message.parts if isinstance(part, CapabilityLoadDeltaPart)]
 
 
 def _shape(messages: Sequence[ModelMessage]) -> list[str]:
     """Each message as one line naming its parts, so a snapshot pins where records go and what they hold."""
 
-    def describe(part: object, recorded: bool) -> str:
-        mark = ' [recorded]' if recorded else ''
+    def describe(part: object) -> str:
         match part:
-            case LoadCapabilityCallPart():
-                return f'load_capability({part.capability_id}){mark}'
-            case LoadCapabilityReturnPart():
-                marked = part.metadata == RECORDED
-                return f'load_capability return{" [recorded]" if marked else ""}'
+            case CapabilityLoadDeltaPart():
+                return f'load {part.loaded}'
             case ToolAvailabilityDeltaPart():
                 return f'reveal {part.tools_added}'
             case ToolCallPart():
@@ -186,24 +189,21 @@ def _shape(messages: Sequence[ModelMessage]) -> list[str]:
             case _:  # pragma: no cover
                 return type(part).__name__
 
-    lines: list[str] = []
-    for message in messages:
-        recorded = isinstance(message, ModelResponse) and message.metadata == RECORDED
-        parts = ', '.join(describe(part, recorded) for part in message.parts)
-        lines.append(f'{message.kind}: {parts}')
-    return lines
+    return [f'{message.kind}: {", ".join(describe(part) for part in message.parts)}' for message in messages]
 
 
-async def _first_turn_history() -> list[ModelMessage]:
+async def _first_turn_history(*, from_code: bool = False) -> list[ModelMessage]:
     # The first turn doesn't compact, so the load it made is in the history the next turn compacts.
-    first = await _agent(FunctionModel(_first_turn), Weather()).run('Weather in Athens?')
+    first = await _agent(FunctionModel(_first_turn), Weather(), from_code=from_code).run('Weather in Athens?')
     return first.all_messages()
 
 
-async def _run_second_turn(compaction: AbstractCapability[None]) -> tuple[_LaterTurn, list[ModelMessage]]:
+async def _run_second_turn(
+    compaction: AbstractCapability[None], *, from_code: bool = False
+) -> tuple[_LaterTurn, list[ModelMessage]]:
     second_turn = _LaterTurn()
-    second = await _agent(FunctionModel(second_turn), Weather(), compaction).run(
-        'And in Oslo?', message_history=await _first_turn_history()
+    second = await _agent(FunctionModel(second_turn), Weather(), compaction, from_code=from_code).run(
+        'And in Oslo?', message_history=await _first_turn_history(from_code=from_code)
     )
     return second_turn, second.all_messages()
 
@@ -219,6 +219,7 @@ STRATEGIES = [
         'relevance-dropping',
         partial(RelevanceCompaction[None], FunctionModel(_judge), max_tokens=1, keep_tokens=1),
         id='relevance-dropping',
+        marks=pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY),
     ),
     pytest.param(
         'relevance-summarizing',
@@ -239,16 +240,15 @@ SHAPES = snapshot(
         'summarizing': [
             "request: user 'Weather in Athens?', baseline",
             'request: compaction',
-            'response: load_capability(weather) [recorded]',
-            "request: load_capability return [recorded], reveal ['get_forecast']",
+            "request: load ['weather'], reveal ['get_forecast']",
+            "request: user 'And in Oslo?', baseline, instructions capability:weather",
             "response: get_forecast({'city': 'Oslo'})",
-            'request: get_forecast return, baseline, instructions capability:weather',
+            'request: get_forecast return',
             "response: text 'Sunny in Oslo'",
         ],
         'sliding': [
             "request: user 'Weather in Athens?', baseline",
-            'response: load_capability(weather) [recorded]',
-            "request: load_capability return [recorded], reveal ['get_forecast']",
+            "request: load ['weather'], reveal ['get_forecast']",
             "request: user 'And in Oslo?', instructions capability:weather",
             "response: get_forecast({'city': 'Oslo'})",
             'request: get_forecast return',
@@ -256,8 +256,7 @@ SHAPES = snapshot(
         ],
         'relevance-dropping': [
             "request: user 'Weather in Athens?', baseline",
-            'response: load_capability(weather) [recorded]',
-            "request: load_capability return [recorded], reveal ['get_forecast']",
+            "request: load ['weather'], reveal ['get_forecast']",
             "response: text 'Sunny in Athens.'",
             "request: user 'And in Oslo?', instructions capability:weather",
             "response: get_forecast({'city': 'Oslo'})",
@@ -266,9 +265,46 @@ SHAPES = snapshot(
         ],
         'relevance-summarizing': [
             "request: user 'Weather in Athens?', baseline",
+            "request: load ['weather'], reveal ['get_forecast']",
             'request: compaction',
-            'response: load_capability(weather) [recorded]',
-            "request: load_capability return [recorded], reveal ['get_forecast']",
+            "response: get_forecast({'city': 'Oslo'})",
+            'request: get_forecast return, baseline, instructions capability:weather',
+            "response: text 'Sunny in Oslo'",
+        ],
+    }
+)
+CODE_LOAD_SHAPES = snapshot(
+    {
+        'summarizing': [
+            "request: user 'Weather in Athens?', baseline",
+            'request: compaction',
+            "request: load ['weather'], reveal ['get_forecast']",
+            "request: user 'And in Oslo?', baseline, instructions capability:weather",
+            "response: get_forecast({'city': 'Oslo'})",
+            'request: get_forecast return',
+            "response: text 'Sunny in Oslo'",
+        ],
+        'sliding': [
+            "request: user 'Weather in Athens?', baseline",
+            "request: load ['weather'], reveal ['get_forecast']",
+            "request: user 'And in Oslo?', instructions capability:weather",
+            "response: get_forecast({'city': 'Oslo'})",
+            'request: get_forecast return',
+            "response: text 'Sunny in Oslo'",
+        ],
+        'relevance-dropping': [
+            "request: user 'Weather in Athens?', baseline",
+            "request: load ['weather'], reveal ['get_forecast']",
+            "response: text 'Sunny in Athens.'",
+            "request: user 'And in Oslo?', instructions capability:weather",
+            "response: get_forecast({'city': 'Oslo'})",
+            'request: get_forecast return',
+            "response: text 'Sunny in Oslo'",
+        ],
+        'relevance-summarizing': [
+            "request: user 'Weather in Athens?', baseline",
+            "request: load ['weather'], reveal ['get_forecast']",
+            'request: compaction',
             "response: get_forecast({'city': 'Oslo'})",
             'request: get_forecast return, baseline, instructions capability:weather',
             "response: text 'Sunny in Oslo'",
@@ -327,9 +363,22 @@ class TestCapabilityLoadsAcrossCompaction:
         assert STATED_INSTRUCTIONS in _user_texts(second_turn.requests[0])
         # And the model's call to one of them runs.
         assert messages[-1].parts == [TextPart('Sunny in Oslo')]
-        # The recorded load, marked as the compaction's own, and its reveal sit right after the summary, or ahead
-        # of the kept messages when nothing replaced the removed ones.
+        # The load is recorded again as a delta and its reveal, never as a `load_capability` exchange the model didn't
+        # make. They sit right after the summary, or ahead of the kept messages when nothing replaced the removed ones.
         assert _shape(messages) == SHAPES[name]
+        assert not any(isinstance(part, LoadCapabilityCallPart) for message in messages for part in message.parts)
+
+    @pytest.mark.parametrize(('name', 'make'), STRATEGIES)
+    async def test_a_capability_loaded_from_code_stays_loaded(
+        self, name: str, make: Callable[..., AbstractCapability[None]]
+    ) -> None:
+        second_turn, messages = await _run_second_turn(make(), from_code=True)
+
+        assert second_turn.tools[0] == ['get_forecast', 'load_capability', 'open_weather']
+        assert STATED_INSTRUCTIONS in _user_texts(second_turn.requests[0])
+        assert messages[-1].parts == [TextPart('Sunny in Oslo')]
+        # Recorded again the way it was recorded: a delta, and the reveal of its tools.
+        assert _shape(messages) == CODE_LOAD_SHAPES[name]
 
     @pytest.mark.parametrize(('name', 'make'), STRATEGIES)
     async def test_the_opt_out_unloads_and_says_so(
@@ -345,7 +394,11 @@ class TestCapabilityLoadsAcrossCompaction:
     @pytest.mark.parametrize(
         'compaction',
         [
-            pytest.param(ClearToolResults[None](max_messages=1, keep_pairs=1, clear_tool_inputs=True), id='clear'),
+            pytest.param(
+                ClearToolResults[None](max_messages=1, keep_pairs=1, clear_tool_inputs=True),
+                id='clear',
+                marks=pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY),
+            ),
             pytest.param(
                 ClampOversizedMessages[None](max_part_chars=10, keep_head_chars=1, keep_tail_chars=1), id='clamp'
             ),
@@ -358,7 +411,7 @@ class TestCapabilityLoadsAcrossCompaction:
 
         assert second_turn.tools[0] == ['get_forecast', 'load_capability']
         assert messages[-1].parts == [TextPart('Sunny in Oslo')]
-        assert _recorded_returns(messages) == []
+        assert _load_deltas(messages) == []
 
     async def test_a_recorded_load_is_recorded_again_by_the_next_compaction_and_never_summarized(self) -> None:
         summarizer = _Summarizer()
@@ -376,7 +429,6 @@ class TestCapabilityLoadsAcrossCompaction:
 
         first = await _agent(FunctionModel(load_both), Weather(), Style()).run('Weather in Athens?')
         history = first.all_messages()
-        recorded_ids: list[list[str]] = []
         for city in ['Oslo', 'Paris']:
             later_turn = _LaterTurn(city)
             result = await _agent(FunctionModel(later_turn), Weather(), Style(), compaction).run(
@@ -387,15 +439,20 @@ class TestCapabilityLoadsAcrossCompaction:
             assert later_turn.tools[0] == ['get_forecast', 'load_capability']
             texts = _user_texts(later_turn.requests[0])
             assert texts.index(STATED_INSTRUCTIONS) < texts.index(STATED_STYLE_INSTRUCTIONS)
-            recorded_ids.append([part.tool_call_id for part in _recorded_returns(history)])
+            # Each compaction summarized the earlier records away and recorded the loads anew, right after its summary.
+            assert [delta.loaded for delta in _load_deltas(history)] == [['weather'], ['style']]
+            summary_at = max(
+                index
+                for index, message in enumerate(history)
+                if any(isinstance(part, CompactionPart) for part in message.parts)
+            )
+            assert _shape(history[summary_at + 1 : summary_at + 2]) == [
+                "request: load ['weather'], reveal ['get_forecast'], load ['style']"
+            ]
 
-        # Load state is never summarized, the model's own loads included: the recorded exchanges carry it.
+        # Load state is never summarized, the model's own loads included: the records carry it.
         assert len(summarizer.prompts) > 1
         assert not any('load_capability' in prompt for prompt in summarizer.prompts)
-        # The second compaction summarized the first one's records away and recorded the loads anew.
-        first_ids, second_ids = recorded_ids
-        assert len(first_ids) == len(second_ids) == 2
-        assert set(first_ids).isdisjoint(second_ids)
 
     @pytest.mark.parametrize(
         'capabilities',
@@ -415,6 +472,59 @@ class TestCapabilityLoadsAcrossCompaction:
         assert not any(isinstance(part, LoadCapabilityCallPart) for message in messages for part in message.parts)
         assert UNLOADED_NOTE not in _user_texts(messages)
 
+    async def test_only_a_loads_own_reveal_is_recorded_with_it(self) -> None:
+        # Tools revealed by a search or a tool's `ToolReturn(tools=...)` aren't the load's: they're kept, or not, apart.
+        original: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('Weather in Athens?')]),
+            ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'weather'}, tool_call_id='load')]),
+            ModelRequest(
+                parts=[
+                    LoadCapabilityReturnPart(content={'message': 'loaded'}, tool_call_id='load'),
+                    ToolAvailabilityDeltaPart(tools_added=['found'], tool_call_id='search'),
+                    ToolAvailabilityDeltaPart(tools_added=['get_forecast'], tool_call_id='load'),
+                    ToolAvailabilityDeltaPart(tools_added=['revealed']),
+                ]
+            ),
+            ModelRequest(parts=[UserPromptPart('And in Oslo?')]),
+        ]
+        compacted = [original[0], original[-1]]
+
+        result = keep_capability_loads(original, compacted, kept_from=1, deferred_ids={'weather'})
+
+        assert _shape(result) == snapshot(
+            [
+                "request: user 'Weather in Athens?'",
+                "request: load ['weather'], reveal ['get_forecast']",
+                "request: user 'And in Oslo?'",
+            ]
+        )
+
+    @pytest.mark.parametrize('load_call_id', [pytest.param(None, id='before-request'), pytest.param('tool', id='tool')])
+    async def test_a_reveal_after_a_toolless_load_from_code_is_not_the_loads(self, load_call_id: str | None) -> None:
+        # A load from code without tools leaves only its delta, so the reveal right after it is someone else's.
+        original: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('Weather in Athens?')]),
+            ModelResponse(parts=[TextPart('Sunny.')]),
+            ModelRequest(
+                parts=[
+                    CapabilityLoadDeltaPart(loaded=['style'], tool_call_id=load_call_id),
+                    ToolAvailabilityDeltaPart(tools_added=['found'], tool_call_id='search'),
+                ]
+            ),
+            ModelRequest(parts=[UserPromptPart('And in Oslo?')]),
+        ]
+        compacted = [original[0], original[-1]]
+
+        result = keep_capability_loads(original, compacted, kept_from=1, deferred_ids={'style'})
+
+        assert _shape(result) == snapshot(
+            [
+                "request: user 'Weather in Athens?'",
+                "request: load ['style']",
+                "request: user 'And in Oslo?'",
+            ]
+        )
+
     async def test_compact_now_records_loads_without_a_run(self) -> None:
         history = await _first_turn_history()
         next_prompt = ModelRequest(parts=[UserPromptPart('And in Oslo?')])
@@ -426,8 +536,7 @@ class TestCapabilityLoadsAcrossCompaction:
         )
 
         # There's no registry to check outside a run; the next run ignores a load of a capability it doesn't register.
-        (recorded,) = _recorded_returns(compacted)
-        assert recorded.content == {'message': "Capability 'weather' loaded. Its instructions, if any, follow."}
+        assert [delta.loaded for delta in _load_deltas(compacted)] == [['weather']]
         assert compacted[-1] is next_prompt
 
     async def test_a_history_holding_only_recorded_loads_and_a_summary_is_not_summarized_again(self) -> None:
@@ -484,14 +593,8 @@ class TestCapabilityLoadsAcrossCompaction:
 
         # The recorded load goes after the kept step's tool result, so the call and its result stay together.
         assert compacted[:3] == history[:3]
-        recorded_call, recorded_return = compacted[3:5]
-        (recorded,) = _recorded_returns(compacted)
-        assert recorded_return.parts == [recorded]
-        assert isinstance(recorded_call, ModelResponse) and recorded_call.metadata == RECORDED
-        assert recorded_call.parts == [
-            LoadCapabilityCallPart(args={'id': 'weather'}, tool_call_id=recorded.tool_call_id)
-        ]
-        assert compacted[5:] == history[5:]
+        assert compacted[3].parts == [CapabilityLoadDeltaPart(loaded=['weather'])]
+        assert compacted[4:] == history[5:]
 
     async def test_a_load_after_a_signed_block_opening_the_history_is_recorded_after_it(self) -> None:
         # Anthropic's on-demand compaction leaves a signed block that must stay first in the history.
@@ -523,8 +626,7 @@ class TestCapabilityLoadsAcrossCompaction:
             [
                 'response: compaction (anthropic)',
                 "request: user 'Weather in Athens?'",
-                'response: load_capability(weather) [recorded]',
-                'request: load_capability return [recorded]',
+                "request: load ['weather']",
                 "response: text 'Sunny in Athens.'",
                 "request: user 'And in Oslo?'",
             ]
@@ -540,7 +642,7 @@ class TestCapabilityLoadsAcrossCompaction:
             model=FunctionModel(_summarize),
         )
         # The compaction recorded the load, or noted it was unloaded, itself.
-        assert any('[recorded]' in line or 'unloaded these capabilities' in line for line in _shape(compacted))
+        assert any("load ['weather']" in line or 'unloaded these capabilities' in line for line in _shape(compacted))
 
         again = keep_capability_loads(
             original, compacted, kept_from=len(compacted) - 1, deferred_ids={'weather'}, preserve=preserve

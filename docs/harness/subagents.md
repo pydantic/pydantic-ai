@@ -11,6 +11,8 @@ description: "Let a Pydantic AI agent delegate tasks to named subagents through 
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The parent model calls delegate_task with an agent name and a self-contained task. SubAgents checks that the name is in the roster, that the delegate has calls left in its max_calls budget and that the tree is not deeper than max_depth, then runs that agent, such as researcher, writer or self, in its own run with its own message history and the parent's deps, usage and workspace. The child's output comes back as the tool result; a timeout or an exhausted budget comes back as a steering message, and a child error as a retry.](../img/harness/subagents.svg)
+
 ## The problem
 
 A single agent that does everything accumulates a large tool set and a long context. Splitting the work across specialized sub-agents keeps each context focused, but wiring up delegation by hand means writing a tool per agent, forwarding deps, threading usage limits, and telling the model what it can delegate to.
@@ -51,7 +53,8 @@ A delegate's name -- how the parent model refers to it, and how it is listed in 
 ## Deps, usage, tools, and capabilities
 
 - **Deps are forwarded.** The parent run's `deps` are passed to each sub-agent, so sub-agents share the parent's `AgentDepsT` (enforced by the type signature -- every sub-agent is an `AbstractAgent[AgentDepsT, Any]`).
-- Delegated agents run in the parent's workspace, including wrappers such as `ReadOnlyWorkspace`.
+- Delegated agents inherit the parent's workspace unless `workspace_resolver` selects another directory.
+  Parent read-only restrictions still apply.
 - **Usage is shared by default.** The parent's `usage` is passed to each sub-agent run, so token usage aggregates and a parent `usage_limits` applies across the whole agent tree. Set `forward_usage=False` to give each sub-agent run its own accounting.
 - **The parent's tools are not passed on.** A sub-agent runs with its own tools. To delegate to an agent that has all of the parent's tools and capabilities, use `include_self=True` (see "Delegating to the agent itself" below).
 - **Capabilities can be shared.** `shared_capabilities` are applied to every sub-agent run -- e.g. give all sub-agents a common guardrail, memory, or planning capability without rebuilding each `Agent`.
@@ -77,7 +80,7 @@ agent = Agent(
 - **Delegation depth is capped.** The delegate carries `delegate_task` too, so `max_depth` (default `3`, counting the top-level run) bounds the tree: the top-level run delegates, its delegates delegate once more, and a run at the limit gets neither `delegate_task` nor the sub-agent listing. The limit applies to every delegation through `SubAgents`, including explicit rosters.
 - **Delegates inherit everything, including what may not suit a sub-task.** An `AskUser` capability bound to the agent can prompt the user from inside a delegation, and the delegate returns the agent's own `output_type`, rendered with `str()` (a delegate run that ends with [`DeferredToolRequests`](../deferred-tools.md) or [`PendingModelResponse`](../batch.md#ending-a-run-while-it-waits) returns a steering message instead, as described under failure handling).
 - The deprecated `inherit_tools` does not apply to `self`, whose tools are already the parent's. The name `self` is reserved: an explicit delegate with that name is an error, and a disk definition with that name is skipped with a warning.
-- **On Temporal, delegate to `self` only.** Sub-agents read from `agent_folders` add a toolset at run time, which Temporal refuses, so pass `SubAgents(include_self=True, agent_folders=None)`; see [delegation on Temporal](../durable_execution/temporal.md#harness-workspace-capabilities).
+- **On Temporal, `agent_folders` is not supported.** Sub-agents read from `agent_folders` add a toolset at run time, which Temporal refuses, so pass `agent_folders=None`. When `self` is the only delegate, it runs in the workflow, so register a `Model` instance from `models` with `TemporalDurability(models=...)`. Otherwise delegations run in an activity, which has no access to the parent run's model, so a delegate needs a model of its own or a `models` option; see [delegation on Temporal](../durable_execution/temporal.md#harness-workspace-capabilities).
 
 ## Per-delegate run controls
 
@@ -151,6 +154,49 @@ orchestrator = Agent(
 - **Resolution order.** The key the parent passed, else the delegate's first allowed key (see below), else the delegate's own model, else the parent run's model.
 - **A delegate can be restricted.** `SubAgent(linter, models=['fast'])` pins that delegate to `fast`: the first listed key is what it runs on when the parent passes no `model`, and the others are refused with a `ModelRetry`. The restriction is rendered in the prompt listing (`- linter: Runs the linter (models: fast)`). Restricting to a key the menu does not define is a `ValueError` at construction.
 - **A rejected key costs nothing.** An unknown or unavailable key comes back as a `ModelRetry` listing the valid options, before the delegate's `max_calls` budget is charged.
+
+## Per-delegation working directory
+
+Set `workspace_resolver` to offer `delegate_task(working_directory=...)`. The async callback receives
+the parent `RunContext` and a `DelegationWorkspaceRequest` with the delegate name and requested
+directory, and returns a `Workspace`. The host
+validates the request and decides which delegates may use another workspace. Without this option,
+the tool omits `working_directory` and children inherit the parent's workspace.
+
+```python
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
+from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.subagents import DelegationWorkspaceRequest, SubAgent, SubAgents
+
+workspaces: dict[str, Workspace] = {'/repos/policy': Workspace(LocalWorkspaceBackend('/repos/policy'))}
+
+
+async def resolve_workspace(ctx: RunContext[object], request: DelegationWorkspaceRequest) -> Workspace:
+    if request.agent_name != 'reviewer' or request.directory not in workspaces:
+        raise ModelRetry('Choose the reviewer and a configured directory.')
+    return workspaces[request.directory]
+
+
+reviewer = Agent(name='reviewer', deps_type=object, capabilities=[FileSystem(read_only=True)])
+delegation = SubAgents(
+    agents=[SubAgent(reviewer, read_only=True)],
+    workspace_resolver=resolve_workspace,
+)
+```
+
+The child runs with the returned workspace, so its relative file paths and repository instructions
+use that directory. Read-only restrictions from the parent or `SubAgent(read_only=True)` still apply.
+Also limit the delegate to trusted read-only tools: arbitrary Python tools can bypass the workspace
+API. The resolver must preserve any additional backend restrictions the application requires.
+
+The caller owns the returned workspace and keeps its resources alive until background children
+finish. Managed tasks record the resolved directory in `DelegationTask.working_directory`. On resume,
+omitting the argument resolves that saved directory again; changing it is rejected. The resolver must
+therefore accept its own resolved directory spelling. Older tasks without this field inherit the
+parent workspace. Remote and durable delegations reject directory overrides. This option does not
+change where disk agent definitions are discovered: `SubAgents.workspace` controls that separately.
 
 ## Failure handling
 
@@ -345,6 +391,121 @@ SubAgents(models={'fast': '{{ anthropic:small }}'}, dynamic_agents=DynamicAgents
 
 Task control, remote agents, and created agents are a port of [`subagents-pydantic-ai`](https://github.com/vstorm-co/subagents-pydantic-ai), a community package by [Vstorm](https://vstorm.co/) (MIT licensed).
 
+## Managed delegation sessions
+
+`SubAgents` delegates in the foreground only, unless a caller opens and binds a `DelegationTasks`
+owner. The owner adds `background` and `resume` to the delegate tool's schema, gives every child a
+stable conversation ID, and owns every worker, an asyncio task, until shutdown. No extra agent loop
+is implemented.
+
+Use `DelegationReports` on the parent run to deliver settled background reports through core's
+queued-message API. Each report is the child's output in a `UserPromptPart`, framed as
+`<task_output task_id="..." agent_name="...">` data, with `outcome="..."` added when the task
+didn't succeed, like a background tool's `<tool_result>`. The output was written by a model, so it
+never enters system voice, and a closing tag inside it can't end the frame early. Nothing precedes
+the frame: the acceptance receipt the parent got at launch already said a report would follow.
+
+Reports default to `priority='when_idle'` so active parents finish their current work first. A host
+that starts an idle continuation should use `DelegationReports(..., priority='asap')` and
+`agent.run(None, ...)`: pending reports then enter the first model request, with no synthetic user
+prompt. The host owns wake-up scheduling between runs. A report or question that arrives after a
+run has read its last queued messages is kept for the conversation's next run.
+
+Use `is_task_report(part)` to recognize the output part, or a task's question, which arrives the
+same way framed as `<task_question task_id="..." agent_name="...">`, for example to keep it out of
+a transcript of what the user typed. Like `BackgroundTools` completions, the metadata is never sent
+to the model, but the Vercel AI and AG-UI message conversions omit it: a history that round-trips
+through them returns the report or question as plain user text, and `is_task_report` no longer
+matches it. History passed in `message_history` is trusted as the caller's own, this metadata
+included. Load history from an untrusted client with a UI adapter, which never puts client metadata
+on message content, or pass it through `sanitize_messages`, which resets `TextContent.metadata`.
+
+```python {test="skip"}
+from pathlib import Path
+
+from pydantic_ai import Agent
+from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks, SubAgents
+
+agent = Agent('{{ anthropic:medium }}', capabilities=[SubAgents(include_self=True)])
+tasks = DelegationTasks(directory=Path('.task-history'))
+
+async def converse():
+    async with tasks.opened():
+        with tasks.bind():
+            result = await agent.run(
+                'Delegate an independent investigation in the background.',
+                conversation_id='review',
+                capabilities=[DelegationReports(tasks, conversation_id='review')],
+            )
+            print(result.output)
+            # Keep this owner open across subsequent parent turns.
+```
+
+`opened()` drains workers on exit. A task still running when its process exited is
+loaded as cancelled when the owner next opens; if it was waiting for an answer, its output
+names the question, so the parent can resume it with the answer. Keep workspace and plugin
+resources alive outside that scope. Detached execution is refused for run-owned non-local workspaces;
+foreground delegation still works. `max_depth=4` counts the main run and allows
+three child layers. An explicitly configured non-default `SubAgents.max_depth`
+still takes precedence. Ordinary `SubAgents` retains its original depth default.
+
+`restore(task)` adds a finished `DelegationTask` made elsewhere, such as one imported
+from another agent's session, so the parent can resume it by ID. It works before
+`opened()` too; the owner loads the task when it opens. A task with the same ID that
+has run since, under a different `run_id`, is kept rather than replaced, and
+`restore` returns `False`.
+
+`background(task_id)` releases a foreground waiter without restarting the child.
+`await cancel(task_id)` stops and drains that child and its descendants. A user stop
+blocks model-requested resume until the application explicitly calls
+`await allow_resume(task_id)`. `one_shot` names never resume. `SubAgent(resumable=False)`
+does the same for one delegate, also with the owner `SubAgents(task_control=...)` opens: use
+`one_shot` when the application binds the owner and decides by agent name, and `resumable`
+where the delegate is declared. Either one makes the task one-shot. A resume uses the same
+child ID and its independent history, a new run ID, and the current direct parent.
+A child waits for its own descendants and consumes their reports before its final
+output settles. Reports are routed to the direct parent; an idle parent receives
+pending reports on its next explicitly started run. Enqueue delivery is acknowledged
+only when core emits `EnqueuedMessagesEvent`, and acknowledgements are persisted.
+With task control, a child's `ask_parent` question is routed the same way:
+`questions(conversation_id=...)` lists the children whose question awaits delivery, and
+the observer is notified when one starts waiting, so an application can start its idle
+parent's next run to answer it.
+
+`steer(task_id, text)` sends a running child a user message on its own run's queue
+with `priority='asap'`: the child reads it at its next model request, and one about to
+finish goes on with it instead. It returns `False` when the child is not running, so an
+application can offer to resume it. A message sent before the child's run starts waits
+for it; one sent as the child's final response settles may arrive too late for it to read.
+
+An observer receives `DelegationTaskEvent`, with the task identity and an optional
+correlated child stream event. Events from the child's own stream also carry the
+`model_name` and `context_window` of the model streaming that request, so a UI can
+show the child's context usage. Managed start/end events carry `task_id` and
+`parent_id`. Managed cancellation and uncontained exceptions produce terminal
+outcomes; unmanaged events and exception propagation keep their original contract.
+Metadata and final/interrupted histories are atomically saved under `directory`.
+Pass `step_store` to checkpoint through `StepPersistence` and recover a process-killed
+child's latest frontier. Loading an interrupted record never executes its tools.
+Inspect possible partial effects before an explicit resume. A resume closes out tool
+calls the interruption left unanswered with an `interrupted` tool return, so the child
+sees they did not complete.
+
+Managed children with `forward_usage=True` share live usage accounting and inherit
+parent ceilings. A per-child budget is converted to an absolute ceiling at launch;
+concurrent sibling spend may reach that ceiling earlier, but cannot bypass the
+parent's budget. The ordinary unmanaged per-child accounting contract is unchanged.
+
+`agents`, `aliases`, and `instructions` extend the roster and guidance only inside
+the bound scope; they do not add delegation to an agent without `SubAgents`.
+`SubAgent(read_only=True)` wraps the child's workspace in `ReadOnlyWorkspace`.
+Also give that agent only trusted read-only capabilities: arbitrary Python tools
+can bypass the workspace API. CLAI's Explore and Plan specialists use filesystem
+readers and expose no shell, code execution, or parent plugin tools.
+
+Core's agent/model/tool spans provide execution telemetry; task IDs, parent IDs,
+and child run IDs provide correlation. This owner adds no logging exporter.
+
 ## Discovery
 
 The sub-agents are listed in the system prompt via `get_instructions`, using each agent's `description` (or a `SubAgent(description=...)` override). A sub-agent with no description is listed by name alone.
@@ -371,9 +532,7 @@ Definitions are read at the start of every run from the run's [workspace](https:
 - A sequence of workspace paths, absolute or relative to the working directory, loads from exactly those folders, in order.
 - `None`, the default, disables disk loading, exposing only the explicitly-passed `agents`.
 
-Earlier releases loaded the conventional folders by default. Pass `agent_folders='agents'` to keep doing so.
-
-Until this release, the folders were read from this machine, including the home folder `~/.agents/agents/`. A run without a workspace now fails at its start when given a path sequence. Convention discovery warns once when it skips a folder in the current or home directory that the workspace does not reach, naming the folder and the `workspace=` that reads it.
+Folders are read only through a workspace. A run without a workspace fails at its start when given a path sequence. Convention discovery warns once when it skips a `.agents/` or `.claude/` folder in the current or home directory that the workspace does not reach, naming the folder and the `workspace=` that reads it.
 
 ### Definition format
 
@@ -452,7 +611,7 @@ SubAgents(agent_folders='agents', tool_resolver=resolve)
 
 ### Precedence
 
-When the same name appears in more than one source, the higher-precedence one wins and the others are skipped with a warning: explicitly-passed `agents` first; for convention discovery, the workspace's `.agents/` folder before its `.claude/` folder; and for an explicit path sequence, earlier folders before later ones. A duplicate name within the explicitly-passed `agents` list is still an error.
+When the same name appears in more than one source, the higher-precedence one wins and the others are skipped with a warning: explicitly-passed `agents` first; for convention discovery, the workspace's `.agents/` folder, then `.claude/`, then `.codex/`; and for an explicit path sequence, earlier folders before later ones. A duplicate name within the explicitly-passed `agents` list is still an error.
 
 ## Configuration
 
@@ -473,6 +632,7 @@ SubAgents(
     tool_retries=2,        # extra delegate-tool attempts after a sub-agent error before aborting (None inherits the agent default)
     contain_errors=False,  # default for SubAgent.contain_errors: contain an unexpected crash as a bounded retry
     workspace=None,        # WorkspaceBackend to read agent_folders from instead of the run's workspace
+    workspace_resolver=None,  # async (ctx, request: DelegationWorkspaceRequest) -> Workspace
     include_self=False,    # also list the running agent itself as the delegate `self`
     max_depth=3,           # delegation levels, counting the top-level run
     task_control=None,     # TaskControl -- background tasks, task-control tools, questions, and task events
@@ -625,118 +785,3 @@ TaskControl(
 ::: pydantic_ai_harness.subagents.AgentCreatedEvent
     options:
         inherited_members: true
-
-## Managed delegation sessions
-
-`SubAgents` keeps its existing foreground-only behavior unless a caller explicitly
-opens and binds `DelegationTasks`. This owner adds `background` and `resume` to the
-delegate tool's schema, gives every child a stable conversation ID, and owns every
-worker, an asyncio task, until shutdown. Use `DelegationReports` on the parent run to deliver settled
-background reports through core's queued-message API. Each report is the child's
-output in a `UserPromptPart`, framed as `<task_output task_id="..." agent_name="...">`
-data, with `outcome="..."` added when the task didn't succeed, like a background
-tool's `<tool_result>`. The output was written by a model, so it never enters
-system voice, and a closing tag inside it can't end the frame early. Nothing
-precedes the frame: the acceptance receipt the parent got at launch already said a
-report would follow. Use `is_task_report(part)` to
-recognize the output part, or a task's question, which arrives the same way framed as
-`<task_question task_id="..." agent_name="...">`, for example to keep it out of a transcript of what the
-user typed. Like `BackgroundTools` completions, the metadata is never sent to the
-model, but the Vercel AI and AG-UI message conversions omit it: a history that
-round-trips through them returns the report or question as plain user text, and
-`is_task_report` no longer matches it. History passed in `message_history` is
-trusted as the caller's own, this metadata included. Load history from an untrusted
-client with a UI adapter, which never puts client metadata on message content;
-`sanitize_messages` becomes a
-safe path too once [#10943](https://github.com/pydantic/pydantic-ai/pull/10943) lands; until then it keeps
-`TextContent.metadata`. No extra
-agent loop is implemented. Reports default to `priority='when_idle'`
-so active parents finish their current work first. A host that starts an idle
-continuation should use `DelegationReports(..., priority='asap')` and
-`agent.run(None, ...)`: pending reports then enter the first model request, with
-no synthetic user prompt. The host owns wake-up scheduling between runs. A report or question that arrives after a
-run has read its last queued messages is kept for the conversation's next run.
-
-```python {test="skip"}
-from pathlib import Path
-
-from pydantic_ai import Agent
-from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks, SubAgents
-
-agent = Agent('{{ anthropic:medium }}', capabilities=[SubAgents(include_self=True)])
-tasks = DelegationTasks(directory=Path('.task-history'))
-
-async def converse():
-    async with tasks.opened():
-        with tasks.bind():
-            result = await agent.run(
-                'Delegate an independent investigation in the background.',
-                conversation_id='review',
-                capabilities=[DelegationReports(tasks, conversation_id='review')],
-            )
-            print(result.output)
-            # Keep this owner open across subsequent parent turns.
-```
-
-`opened()` drains workers on exit. A task still running when its process exited is
-loaded as cancelled when the owner next opens; if it was waiting for an answer, its output
-names the question, so the parent can resume it with the answer. Keep workspace and plugin
-resources alive outside that scope. Detached execution is refused for run-owned non-local workspaces;
-foreground delegation still works. `max_depth=4` counts the main run and allows
-three child layers. An explicitly configured non-default `SubAgents.max_depth`
-still takes precedence. Ordinary `SubAgents` retains its original depth default.
-
-`restore(task)` adds a finished `DelegationTask` made elsewhere, such as one imported
-from another agent's session, so the parent can resume it by ID. It works before
-`opened()` too; the owner loads the task when it opens. A task with the same ID that
-has run since, under a different `run_id`, is kept rather than replaced, and
-`restore` returns `False`.
-
-`background(task_id)` releases a foreground waiter without restarting the child.
-`await cancel(task_id)` stops and drains that child and its descendants. A user stop
-blocks model-requested resume until the application explicitly calls
-`await allow_resume(task_id)`. `one_shot` names never resume. `SubAgent(resumable=False)`
-does the same for one delegate, also with the owner `SubAgents(task_control=...)` opens: use
-`one_shot` when the application binds the owner and decides by agent name, and `resumable`
-where the delegate is declared. Either one makes the task one-shot. A resume uses the same
-child ID and its independent history, a new run ID, and the current direct parent.
-A child waits for its own descendants and consumes their reports before its final
-output settles. Reports are routed to the direct parent; an idle parent receives
-pending reports on its next explicitly started run. Enqueue delivery is acknowledged
-only when core emits `EnqueuedMessagesEvent`, and acknowledgements are persisted.
-With task control, a child's `ask_parent` question is routed the same way:
-`questions(conversation_id=...)` lists the children whose question awaits delivery, and
-the observer is notified when one starts waiting, so an application can start its idle
-parent's next run to answer it.
-
-`steer(task_id, text)` sends a running child a user message on its own run's queue
-with `priority='asap'`: the child reads it at its next model request, and one about to
-finish goes on with it instead. It returns `False` when the child is not running, so an
-application can offer to resume it. A message sent before the child's run starts waits
-for it; one sent as the child's final response settles may arrive too late for it to read.
-
-An observer receives `DelegationTaskEvent`, with the task identity and an optional
-correlated child stream event. Managed start/end events carry `task_id` and
-`parent_id`. Managed cancellation and uncontained exceptions produce terminal
-outcomes; unmanaged events and exception propagation keep their original contract.
-Metadata and final/interrupted histories are atomically saved under `directory`.
-Pass `step_store` to checkpoint through `StepPersistence` and recover a process-killed
-child's latest frontier. Loading an interrupted record never executes its tools.
-Inspect possible partial effects before an explicit resume. A resume closes out tool
-calls the interruption left unanswered with an `interrupted` tool return, so the child
-sees they did not complete.
-
-Managed children with `forward_usage=True` share live usage accounting and inherit
-parent ceilings. A per-child budget is converted to an absolute ceiling at launch;
-concurrent sibling spend may reach that ceiling earlier, but cannot bypass the
-parent's budget. The ordinary unmanaged per-child accounting contract is unchanged.
-
-`agents`, `aliases`, and `instructions` extend the roster and guidance only inside
-the bound scope; they do not add delegation to an agent without `SubAgents`.
-`SubAgent(read_only=True)` wraps the child's workspace in `ReadOnlyWorkspace`.
-Also give that agent only trusted read-only capabilities: arbitrary Python tools
-can bypass the workspace API. CLAI's Explore and Plan specialists use filesystem
-readers and expose no shell, code execution, or parent plugin tools.
-
-Core's agent/model/tool spans provide execution telemetry; task IDs, parent IDs,
-and child run IDs provide correlation. This owner adds no logging exporter.

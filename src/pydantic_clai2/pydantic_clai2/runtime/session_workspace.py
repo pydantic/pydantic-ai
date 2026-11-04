@@ -15,7 +15,7 @@ from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings, load_project_settings
 from pydantic_clai2.plugins.loader import SessionPlugins
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.ui.rendering.status import Status
 

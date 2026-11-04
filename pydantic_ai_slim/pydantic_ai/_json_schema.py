@@ -1,16 +1,79 @@
 from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, ClassVar, Literal, TypeAlias
+from typing import Any, ClassVar, Literal, TypeAlias, cast
 
 from pydantic import JsonValue
 
+from ._utils import contains_ref
 from .exceptions import UserError
 
 JsonSchema = dict[str, Any]
 _JsonSchemaNode: TypeAlias = JsonSchema | bool
+
+MAX_INLINED_SCHEMA_VALUES = 250_000
+"""The most JSON values inlining a schema's `$ref`s may copy into it.
+
+Each object, array, string, number, boolean and null in a copied definition counts as one value, as the definition
+is written: what `transform()` adds to a copy is not counted.
+"""
+
+
+class InlinedSchemaTooLargeError(UserError):
+    """A schema whose `$ref`s expand past `MAX_INLINED_SCHEMA_VALUES` once inlined, with `subject` naming it."""
+
+    subject: str
+    """What the schema belongs to, as the message names it."""
+    remedy: str
+    """What the message suggests doing about it."""
+
+    def __init__(self, subject: str, remedy: str = 'Refer to large definitions from fewer places.'):
+        self.subject = subject
+        self.remedy = remedy
+        super().__init__(
+            f'{subject} is too large: its `$ref`s expand to more than {MAX_INLINED_SCHEMA_VALUES:,} JSON values. {remedy}'
+        )
+
+    def __reduce__(self) -> tuple[type[InlinedSchemaTooLargeError], tuple[str, str]]:
+        return self.__class__, (self.subject, self.remedy)
+
+
+@dataclass
+class InlinedValues:
+    """A count of the JSON values that inlining `$ref`s copies into a schema, which stops at `MAX_INLINED_SCHEMA_VALUES`.
+
+    Every copy of a definition counts in full, so the count is the number of values inlining copies, and passing the
+    limit stops the inlining before the rest is built. A string counts as one value, whatever its length.
+    """
+
+    subject: str
+    """What the schema belongs to, as the error names it."""
+    count: int = 0
+
+    def add_copy(self, definition: JsonValue) -> None:
+        """Count one copy of `definition`: every JSON value in it."""
+        values = 0
+        stack = [definition]
+        while stack:
+            value = stack.pop()
+            values += 1
+            if self.count + values > MAX_INLINED_SCHEMA_VALUES:
+                # Stop as soon as the copy passes the limit: a definition can share one object at many places.
+                raise InlinedSchemaTooLargeError(self.subject)
+            if isinstance(value, dict):
+                stack.extend(value.values())
+            elif isinstance(value, list):
+                stack.extend(value)
+        self.add(values)
+
+    def add(self, values: int) -> None:
+        """Count `values` more JSON values, as another copy of a definition counted before adds."""
+        self.count += values
+        if self.count > MAX_INLINED_SCHEMA_VALUES:
+            raise InlinedSchemaTooLargeError(self.subject)
 
 
 def resolve_json_pointer(schema: JsonSchema, ref: str) -> JsonSchema | None:
@@ -90,7 +153,8 @@ class JsonSchemaTransformer(ABC):
         self.defs: dict[str, _JsonSchemaNode] = deepcopy(self.schema.get('$defs', {}))
         self.refs_stack: list[str] = []
         self.recursive_refs = set[str]()
-        self._walked_defs: dict[str, JsonSchema] = {}
+        self._walked_defs: dict[str, tuple[JsonSchema, int]] = {}
+        self._inlined = InlinedValues('JSON schema')
 
     @abstractmethod
     def transform(self, schema: JsonSchema) -> JsonSchema:
@@ -102,6 +166,7 @@ class JsonSchemaTransformer(ABC):
 
         self.recursive_refs.clear()
         self._walked_defs.clear()
+        self._inlined.count = 0
 
         # First, handle everything but $defs:
         schema.pop('$defs', None)
@@ -115,7 +180,7 @@ class JsonSchemaTransformer(ABC):
             # If we are preferring inlined defs and there are recursive refs, we _have_ to use a $defs+$ref structure
             # We try to use whatever the original root key was, but if it is already in use,
             # we modify it to avoid collisions.
-            defs = {key: deepcopy(self._walked_def(key)) for key in self.recursive_refs}
+            defs = {key: self._copy_walked_def(key) for key in self.recursive_refs}
             root_ref = self.schema.get('$ref')
             root_key = (
                 None if root_ref is None else root_ref.removeprefix('#/$defs/').replace('~1', '/').replace('~0', '~')
@@ -156,7 +221,7 @@ class JsonSchemaTransformer(ABC):
                     # `transform()` sees the merged schema, so the result is specific to this reference
                     # site and can't come from (or go into) the shared walked-definition cache.
                     return self._walk_def(key, siblings)
-                return deepcopy(self._walked_def(key))
+                return self._copy_walked_def(key)
 
         # Handle the schema based on its type / structure. Object and array keywords are only walked when `type` is
         # exactly `'object'` or `'array'` respectively, not when it's absent or a list like `['object', 'null']`:
@@ -180,22 +245,31 @@ class JsonSchemaTransformer(ABC):
         # Apply the base transform
         return self.transform(schema)
 
-    def _walked_def(self, key: str) -> JsonSchema:
-        """The definition `key` refers to, walked once per transformer and cached.
+    def _copy_walked_def(self, key: str) -> JsonSchema:
+        """A copy of the definition `key` refers to, walked once per transformer and cached.
 
         Inlining a definition means walking its whole subtree at every reference site, and the result
         is the same at each of them, so the walk is done once and callers get a `deepcopy` of it. This
         also keeps the inlined copies independent of each other: the walk transforms schemas in place,
         so handing out the same object at multiple sites would let each site corrupt the next.
+
+        The cache keeps how many JSON values the walk counted, so each later copy counts as that many again.
         """
-        if (walked := self._walked_defs.get(key)) is None:
-            self._walked_defs[key] = walked = self._walk_def(key, {})
-        return walked
+        if (cached := self._walked_defs.get(key)) is None:
+            start = self._inlined.count
+            walked = self._walk_def(key, {})
+            self._walked_defs[key] = (walked, self._inlined.count - start)
+        else:
+            walked, values = cached
+            self._inlined.add(values)
+        return deepcopy(walked)
 
     def _walk_def(self, key: str, siblings: JsonSchema) -> JsonSchema:
         """Walk the definition `key` refers to, with `$ref` sibling keywords merged over it.
 
-        `key` is a `$defs` name, or else a local JSON pointer (RFC 6901) into the original schema.
+        `key` is a `$defs` name, or else a local JSON pointer (RFC 6901) into the original schema. The merged
+        definition counts toward `MAX_INLINED_SCHEMA_VALUES` before it is walked, and so does each definition the
+        walk copies into it.
         """
         def_schema = self.defs.get(key)
         if def_schema is None:
@@ -211,6 +285,7 @@ class JsonSchemaTransformer(ABC):
                 schema['not'] = {}
         else:
             schema = {**deepcopy(def_schema), **siblings}
+        self._inlined.add_copy(schema)
         walked = self._handle(schema)
         self.refs_stack.pop()
 
@@ -236,6 +311,11 @@ class JsonSchemaTransformer(ABC):
                 handled_pattern_properties[key] = self._handle(value)
             schema['patternProperties'] = handled_pattern_properties
 
+        if (property_names := schema.get('propertyNames')) is not None and self._walks_keyword_subschema(
+            property_names
+        ):
+            schema['propertyNames'] = self._handle(property_names)
+
         return schema
 
     def _handle_array(self, schema: JsonSchema) -> JsonSchema:
@@ -249,7 +329,18 @@ class JsonSchemaTransformer(ABC):
         elif items:
             schema['items'] = self._handle(items)
 
+        if (contains := schema.get('contains')) is not None and self._walks_keyword_subschema(contains):
+            schema['contains'] = self._handle(contains)
+
         return schema
+
+    def _walks_keyword_subschema(self, subschema: _JsonSchemaNode) -> bool:
+        """Whether to walk a `propertyNames` or `contains` subschema.
+
+        Inlining drops `$defs`, so a `$ref` left under either would point at nothing. A subschema without one
+        is left as written, so `transform()` doesn't rewrite a schema that was already valid.
+        """
+        return self.prefer_inlined_defs and contains_ref(subschema)
 
     def _handle_union(self, schema: JsonSchema, union_kind: Literal['allOf', 'anyOf', 'oneOf']) -> JsonSchema:
         try:
@@ -313,17 +404,45 @@ class InlineDefsJsonSchemaTransformer(JsonSchemaTransformer):
     def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
         super().__init__(schema, strict=strict, prefer_inlined_defs=True)
 
-    def _handle_object(self, schema: JsonSchema) -> JsonSchema:
-        schema = super()._handle_object(schema)
-        if (property_names := schema.get('propertyNames')) is not None:
-            schema['propertyNames'] = self._handle(property_names)
-        return schema
-
-    def _handle_array(self, schema: JsonSchema) -> JsonSchema:
-        schema = super()._handle_array(schema)
-        if (contains := schema.get('contains')) is not None:
-            schema['contains'] = self._handle(contains)
-        return schema
+    def _walks_keyword_subschema(self, subschema: _JsonSchemaNode) -> bool:
+        # Unlike the base class, walk one without a `$ref` too: `transform()` is the identity here, so the walk
+        # only collapses single-member unions.
+        return True
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
         return schema
+
+
+DEFINITION_KEYS = ('$defs', 'definitions')
+"""The keys a schema keeps its definitions under: `$defs`, and draft-07 `definitions`."""
+
+
+def split_definitions(schema: JsonSchema) -> tuple[JsonSchema, list[object]]:
+    """A schema without its definitions, and the definitions under `DEFINITION_KEYS`."""
+    root = {key: value for key, value in schema.items() if key not in DEFINITION_KEYS}
+    definitions: list[object] = []
+    for key in DEFINITION_KEYS:
+        group = schema.get(key)
+        if isinstance(group, dict):
+            definitions.extend(cast(dict[str, object], group).values())
+    return root, definitions
+
+
+def inline_objects(schema: object, depth: int = 1) -> Iterator[tuple[JsonSchema, int]]:
+    """Each object with `properties` reached from `schema` through properties, array items and `anyOf`, and its depth.
+
+    The depth is the number of such objects along the path, the object included. `$ref`s aren't followed and
+    definitions aren't entered: providers that limit strict schemas were observed to count this way.
+    """
+    if not isinstance(schema, dict):
+        return
+    node = cast(JsonSchema, schema)
+    properties = node.get('properties')
+    children: list[object] = [node.get('items'), *node.get('anyOf', [])]
+    child_depth = depth
+    if isinstance(properties, dict):
+        yield node, depth
+        children.extend(cast(dict[str, object], properties).values())
+        child_depth = depth + 1
+    for child in children:
+        yield from inline_objects(child, child_depth)

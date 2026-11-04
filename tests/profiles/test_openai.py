@@ -237,6 +237,15 @@ REASONING_CASES = [
         supports_max_reasoning_effort=True,
         supports_context=True,
     ),
+    ReasoningCase(
+        model='gpt-6.1-terra',
+        enabled_by_default=True,
+        can_be_disabled=True,
+        supports_mode=True,
+        supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
+        supports_context=True,
+    ),
     # no reasoning
     ReasoningCase(model='gpt-5-chat'),
     ReasoningCase(model='gpt-4o'),
