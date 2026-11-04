@@ -17,7 +17,11 @@ from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.zai import zai_model_profile
-from pydantic_ai.providers._bedrock_model_names import split_bedrock_model_id
+from pydantic_ai.providers._bedrock_model_names import (
+    _AUTOMATIC_CACHING_CLAUDE_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
+    bedrock_claude_cache_retentions,
+    split_bedrock_model_id,
+)
 
 from .._inline_snapshot import snapshot
 from ..conftest import TestEnv, try_import
@@ -454,6 +458,27 @@ def test_bedrock_provider_model_profile_with_unknown_geo_prefix(env: TestEnv):
     model_name = 'narnia.anthropic.claude-sonnet-4-5-20250929-v1:0'
     profile = provider.model_profile(model_name)
     assert profile is None, f'model_profile returned {profile} for {model_name}'
+
+
+# Prefixes from the automatic-caching list whose Claude models Bedrock doesn't grant the 1-hour cache TTL, each with
+# the reason.
+_AUTOMATIC_CACHING_WITHOUT_ONE_HOUR_CACHE: dict[str, str] = {}
+
+
+def test_bedrock_automatic_caching_claude_models_take_one_hour_cache():
+    """Every Claude model that takes automatic caching on Bedrock also takes the 1-hour cache TTL.
+
+    Automatic caching is the newer feature, so a model added to its list and not to the 1-hour list most likely
+    belongs on both: otherwise `cache='1h'` silently snaps down to `'5m'` for it, as it did for Claude Haiku 5.5.
+    Add its prefix to `_AUTOMATIC_CACHING_WITHOUT_ONE_HOUR_CACHE` with the reason if Bedrock rejects the 1-hour TTL.
+    """
+    missing_one_hour = [
+        prefix
+        for prefix in _AUTOMATIC_CACHING_CLAUDE_MODEL_PREFIXES
+        if prefix not in _AUTOMATIC_CACHING_WITHOUT_ONE_HOUR_CACHE
+        and '1h' not in bedrock_claude_cache_retentions(prefix)
+    ]
+    assert missing_one_hour == []
 
 
 def test_latest_bedrock_model_names_geo_prefixes_are_supported():
@@ -1174,3 +1199,29 @@ def test_bedrock_boolean_defs_preserved(definition: bool):
     original = deepcopy(schema)
     assert BedrockJsonSchemaTransformer(schema).walk() == original
     assert schema == original
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'video'),
+    [
+        ('us.anthropic.claude-sonnet-4-5-20250929-v1:0', False),
+        ('meta.llama4-maverick-17b-instruct-v1:0', False),
+        ('us.mistral.pixtral-large-2502-v1:0', False),
+        ('google.gemma-3-27b-it', False),
+        ('openai.gpt-oss-120b-1:0', False),
+        ('arn:aws:bedrock:us-east-1:123456789012:inference-profile/eu.meta.llama4-scout-17b-instruct-v1:0', False),
+        ('us.amazon.nova-pro-v1:0', True),
+        ('global.amazon.nova-2-lite-v1:0', True),
+        ('amazon.nova-micro-v1:0', False),
+    ],
+)
+def test_only_nova_takes_video(model_name: str, video: bool):
+    """Converse takes the `video` content block only on Amazon Nova, so every other family reports no video.
+
+    Not a VCR test: this pins the provider-level profile resolution, including ARN and geo-prefix forms, against
+    drift, while the multimodal tool-return matrix cassettes cover the wire behavior. Nova Micro is text-only, so
+    it is the expected `False` among the Nova models.
+    """
+    profile = BedrockProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('supports_video_input') is video

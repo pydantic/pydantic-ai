@@ -222,7 +222,7 @@ metadata, so hosts can keep it out of user-prompt listings. Like `BackgroundTool
 metadata is never sent to the model, but the Vercel AI and AG-UI message conversions omit it: a
 history that round-trips through them returns the report as plain user text, and `is_task_report`
 no longer matches it. `message_history` is trusted as the caller's own, metadata included; load untrusted
-client history with a UI adapter (`sanitize_messages` joins once #10943 lands; until then it keeps `TextContent.metadata`).
+client history with a UI adapter or pass it through `sanitize_messages`, which resets `TextContent.metadata`.
 
 ```python
 from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
@@ -281,8 +281,9 @@ Gotchas:
 - Agent `name` must be a valid Python identifier; `WorkflowAgent(agent, name=..., description=...)`
   (from `pydantic_ai_harness.dynamic_workflow`) renames without editing the agent.
 - `task` is keyword-only in the script. A structured `output_type` arrives as a `dict`: `r['field']`.
-- The parent `run(usage_limits=...)` is not forwarded into children; use `sub_agent_usage_limits` or
-  `max_agent_calls`. With shared usage and concurrent fan-out, token limits are best-effort.
+- Without `sub_agent_usage_limits`, children sharing usage run under the parent `run(usage_limits=...)`;
+  with `forward_usage=False` they get pydantic-ai's default `request_limit=50`. For an exact ceiling use
+  `max_agent_calls`. With shared usage and concurrent fan-out, limits are best-effort.
 - Workflows do not nest: do not give catalog agents `DynamicWorkflow`.
 - Sandbox: no third-party imports, no clock/randomness/filesystem/env. A child failure raises
   `RuntimeError` in the script; uncaught, the whole script retries. A child run that ends with

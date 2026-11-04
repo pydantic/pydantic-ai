@@ -311,6 +311,7 @@ a `reason`, and the `message` a run would warn with, for the host to show:
 | `'duplicate_name'` | A `SKILL.md` named like a skill found earlier, with `duplicate_names='keep_first'` |
 | `'not_a_directory'` | A library path that is a file, with `missing_directories='skip'` |
 | `'skill_package'` | A library path that holds a `SKILL.md` itself, with `missing_directories='skip'` |
+| `'flagged'` | A skill whose description or body the `scanner` flagged; see [Scan skills before loading them](#scan-skills-before-loading-them) |
 
 Each `SkillDefinition` has the skill's `name`, `description`, `body`, `path`,
 `directory`, `in_run_workspace`, `model_invocable`, and `user_invocable`. The
@@ -354,24 +355,24 @@ agent = Agent.from_file('agent.yaml', custom_capability_types=[Skills])
 The `skills` extra installs PyYAML. It parses `SKILL.md` frontmatter and YAML
 agent specs.
 
-## Define capabilities in Python
+## Scan skills before loading them
 
-Use Pydantic AI's core `Capability` when your instructions or tools are defined
-in Python instead of a `SKILL.md` package:
+Skills an agent wrote, or that came from a third party, can carry instructions that take effect in a later session. Pass an [`ArtifactScanner`](../artifact_scanning/) to check each skill's description and body for prompt injection, credential exfiltration, HTML comments, and invisible characters before it is offered:
 
 ```python
-from pydantic_ai.capabilities import Capability
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai_harness import ArtifactScanner, Skills
 
-refunds = Capability(
-    id='refunds',
-    description='Use for refund policy questions.',
-    instructions='Check the refund policy before answering.',
-    defer_loading=True,
+agent = Agent(
+    capabilities=[
+        LocalWorkspace('.'),
+        Skills('.agents/skills', scanner=ArtifactScanner()),
+    ],
 )
 ```
 
-`Skills` loads portable Agent Skill packages. It does not replace the core API
-for code-defined capabilities.
+A flagged skill is left out of the catalog with a `UserWarning`, and a zero-duration `artifact_scan flagged` span. `Skills.load()` reports it as a `SkippedSkill` with `reason='flagged'` and the findings in `scan`. Bundled files are not scanned, since `Skills` does not load them. The scanner belongs to the `Skills` it is passed to, so when two combine, a vetted library can go unscanned while an agent-written one is scanned.
 
 ## Configuration
 
@@ -385,16 +386,9 @@ Skills(
     duplicate_names: Literal['error', 'keep_first'] = 'error',
     unknown_names: Literal['error', 'skip'] = 'error',
     workspace: WorkspaceBackend | None = None,
+    scanner: ArtifactScanner | None = None,
 )
 ```
-
-- `directories` accepts one library path or a sequence of paths.
-- `include` exposes only the named skills.
-- `exclude` omits the named skills from the catalog.
-- `missing_directories='skip'` leaves out library paths that do not exist, and warns about and leaves out those that are files or skill packages.
-- `duplicate_names='keep_first'` keeps the first of two skills with one name, with a warning.
-- `unknown_names='skip'` ignores `include` and `exclude` names that no library has.
-- `workspace` reads the libraries from this backend instead of the run's workspace.
 
 Pass at least one library directory, not the path of an individual skill
 package. Malformed frontmatter, invalid UTF-8, and invalid or mismatched names warn and skip that skill. Unknown selections fail at run start, and so do duplicate selected names, missing libraries, and library paths that are files or skill packages, unless `duplicate_names`, `missing_directories`, or `unknown_names` say otherwise.
@@ -407,3 +401,4 @@ Two `Skills` on one agent combine into one catalog.
 - [Adding skills support to an agent](https://agentskills.io/client-implementation/adding-skills-support)
 - [Pydantic AI workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/)
 - [Pydantic AI capabilities overview](https://pydantic.dev/docs/ai/capabilities/overview/)
+- For instructions or tools defined in Python rather than a `SKILL.md` package, use core [`Capability`](https://pydantic.dev/docs/ai/capabilities/overview/) with `defer_loading=True`.

@@ -21,6 +21,7 @@ import pydantic_ai_harness
 import pydantic_ai_harness.compaction as compaction
 from pydantic_ai import Agent, Tool, ToolReturn
 from pydantic_ai._context_size import mark_context_input_tokens
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability, ToolSearch
 from pydantic_ai.exceptions import ModelAPIError, ModelRetry, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import (
@@ -111,7 +112,6 @@ from pydantic_ai_harness.compaction._summarizing_compaction import (
     _KEPT_USER_MESSAGE_METADATA,  # pyright: ignore[reportPrivateUsage]
     SUMMARY_PREFIX,
     _extract_system_prompts,  # pyright: ignore[reportPrivateUsage]
-    _is_kept_user_message,  # pyright: ignore[reportPrivateUsage]
     _is_kept_user_part,  # pyright: ignore[reportPrivateUsage]
     extract_previous_summary,
     format_transcript,
@@ -2759,6 +2759,23 @@ class TestTieredCompaction:
         await cap.before_model_request(_make_ctx(rc.messages), rc)
         assert calls == ['t1', 't2']
 
+    async def test_escalation_survives_an_anchor_that_counts_less_than_the_heuristic(self):
+        # Repetitive tool output: the provider merges a line the 4-characters heuristic counts as ~87
+        # tokens down to ~50. Crediting the reclaim against the anchored baseline must not subtract more
+        # than the anchor ever counted and floor the estimate at 0 -- the text the tier left behind is
+        # still there, so the estimate has to stay above the target and t2 has to run.
+        calls: list[str] = []
+        t1 = _RecordingTier('t1', calls, drop=14)
+        t2 = _RecordingTier('t2', calls)
+        cap = TieredCompaction(tiers=[t1, t2], target_tokens=60)
+        messages: list[ModelMessage] = [_user('inspect the logs')]
+        for i in range(7):
+            messages.extend([_tool_call('grep', f'tc{i}'), _tool_return('grep', f'tc{i}', 'WARN retrying\n' * 25)])
+        messages.append(_assistant_with_usage('done', 400, 10))
+        rc = _make_request_context(messages)
+        await cap.before_model_request(_make_ctx(rc.messages), rc)
+        assert calls == ['t1', 't2']
+
     async def test_full_escalation(self):
         calls: list[str] = []
         t1 = _RecordingTier('t1', calls, drop=1)  # 5 -> 4 messages (~40 tokens) still > 15
@@ -2807,6 +2824,13 @@ class TestTieredCompaction:
 
 
 class TestSummarizingCompactionModel:
+    def test_agent_spec_schema_publishes_its_fields(self):
+        """`EventStreamHandler` carries a forward reference that resolves against the capability's module."""
+        definitions = AgentSpec.model_json_schema_with_capabilities([SummarizingCompaction])['$defs']
+
+        properties = set(definitions['spec_params_SummarizingCompaction']['properties'])
+        assert {'model', 'max_messages', 'max_tokens', 'keep_messages', 'summary_prompt', 'id'} <= properties
+
     async def test_model_inherits_from_the_request_when_none(self):
         comp = SummarizingCompaction(
             max_messages=3, keep_messages=1, preserve_first_user_message=False, incremental=False
@@ -3174,6 +3198,55 @@ class TestPublicPath:
             '</retry_feedback>'
         ]
         assert _summary_text(sent[-1]) == 'the summary'
+
+    async def test_retries_field_absorbs_tool_call_imitations(self):
+        """`retries` raises the summary budget so consecutive tool-call imitations don't kill the run.
+
+        The summary agent is toolless, so an emitted call is an unknown tool, which burns core's
+        retry budget in one strike; at the default of 1 the second imitation raises
+        `UnexpectedModelBehavior` that escapes and kills the parent run, naming a tool the
+        summarizer never declared. The transcript it reads is full of calls to imitate, so a weak
+        summarizer model needs the budget raised from outside.
+        """
+        responses = iter(
+            [
+                ModelResponse(parts=[ToolCallPart('lookup', {'query': 'x'}, tool_call_id='s1')]),
+                ModelResponse(parts=[ToolCallPart('lookup', {'query': 'y'}, tool_call_id='s2')]),
+                ModelResponse(parts=[ToolCallPart('lookup', {'query': 'z'}, tool_call_id='s3')]),
+                ModelResponse(parts=[TextPart(content='the summary')]),
+            ]
+        )
+        summarizer_calls = 0
+
+        def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal summarizer_calls
+            summarizer_calls += 1
+            return next(responses)
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='ok')])
+
+        history: list[ModelMessage] = []
+        for i in range(5):
+            history += [_user(f'q{i}'), _assistant(f'a{i}')]
+        agent = Agent(
+            FunctionModel(respond),
+            capabilities=[
+                SummarizingCompaction(
+                    FunctionModel(summarize),
+                    max_messages=4,
+                    keep_messages=1,
+                    preserve_first_user_message=False,
+                    retries=3,
+                )
+            ],
+        )
+
+        result = await agent.run('next', message_history=history)
+
+        assert result.output == 'ok'
+        # The imitations were retried within the raised budget, not fatal.
+        assert summarizer_calls == 4
 
     async def test_persistently_empty_summary_raises_instead_of_replacing_history(self):
         def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -3828,10 +3901,10 @@ class TestCompactWithSpan:
 # ---------------------------------------------------------------------------
 
 _BRIDGE_ANCHOR = 'produced by a different model'
-"""Stable fragment of the bridge-prefix wording; the full text is provisional (eval-rig pending)."""
+"""A fragment of the bridge-prefix wording, so the tests do not pin the full text."""
 
 _UPDATE_ANCHOR = 'Update it using the conversation above'
-"""Stable fragment of the incremental update instruction; likewise provisional."""
+"""A fragment of the incremental update instruction, so the tests do not pin the full text."""
 
 
 def _pinned_msg(text: str) -> ModelRequest:
@@ -4375,7 +4448,8 @@ class TestKeepUserMessages:
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S1')):
             first = await comp.compact(messages, _make_ctx())
         retained = next(message for message in first if isinstance(message, ModelRequest) and message.run_id == 'run-1')
-        assert retained.metadata == {'source': 'caller', 'pydantic-ai-harness.compaction.kept-user-message.v1': True}
+        # The copy is recognized by the marker on its text; the request's own metadata is left as it was.
+        assert retained.metadata == {'source': 'caller'}
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S2')):
             second = await comp.compact([*first, _user('third'), _assistant('c')], _make_ctx())
         assert sum('first' in text for text in _user_texts(second)) == 1
@@ -4416,13 +4490,44 @@ class TestKeepUserMessages:
         first = await comp.compact(messages, _make_ctx(messages))
         # The next run merges the retained copy with the request after it, as core's history cleanup does.
         continued = repair_messages([*first, _user('third'), _assistant('c'), _user('fourth')])
-        assert not any(isinstance(m, ModelRequest) and _is_kept_user_message(m) for m in continued)
 
         second = await comp.compact(continued, _make_ctx(continued))
 
         # The retained copy isn't summarized again, and it's kept once, not copied a second time.
         assert 'KEPT TURN' not in prompts[1]
         assert sum('KEPT TURN' in text for text in _user_texts(second)) == 1
+
+    async def test_a_turn_marked_only_in_request_metadata_is_summarized_and_bounded(self):
+        """Only the marker on a kept copy's text counts, so request metadata can't keep a turn whole.
+
+        Request metadata isn't trusted as a provenance marker, so a turn marked there is summarized and cut to
+        `keep_user_messages_max_chars` like any other.
+        """
+        prompts: list[str] = []
+        comp = SummarizingCompaction(
+            model=_recording_summarizer(prompts),
+            max_messages=3,
+            keep_messages=1,
+            keep_user_messages=True,
+            keep_user_messages_max_chars=50,
+            bridge_prefix=False,
+        )
+        long_turn = 'MARKED ' + 'x' * 500
+        messages: list[ModelMessage] = [
+            _user('first'),
+            _assistant('r1'),
+            ModelRequest(
+                parts=[UserPromptPart(long_turn)],
+                metadata={'pydantic-ai-harness.compaction.kept-user-message.v1': True},
+            ),
+            _assistant('r2'),
+            _user('third'),
+        ]
+
+        result = await comp.compact(messages, _make_ctx(messages))
+
+        assert long_turn in prompts[0]
+        assert [len(text) for text in _user_texts(result) if text.startswith('MARKED')] == [50]
 
     async def test_retained_user_messages_converge_within_the_tail_budget(self):
         comp = SummarizingCompaction(
@@ -4458,6 +4563,24 @@ class TestKeepUserMessages:
         assert _user_texts(result) == ['xx']
         assert result[-1] is messages[-1]
         assert estimate_token_count(result[1:], len) == 3
+
+    async def test_compacting_its_own_output_again_doesnt_call_the_summarizer(self):
+        """With `keep_tokens`, a prefix of only the summary and kept copies adds nothing, so it isn't summarized again."""
+        prompts: list[str] = []
+        comp = SummarizingCompaction(
+            model=_recording_summarizer(prompts),
+            max_tokens=2,
+            keep_tokens=1,
+            keep_messages=3,
+            keep_user_messages=True,
+            bridge_prefix=False,
+            tokenizer=len,
+        )
+        messages: list[ModelMessage] = [_user('xx'), _assistant('x')]
+        first = await comp.compact(messages, _make_ctx(messages))
+        second = await comp.compact(first, _make_ctx(first))
+        assert len(prompts) == 1
+        assert second is first
 
     async def test_retained_user_cannot_displace_the_token_tail(self):
         comp = SummarizingCompaction(
@@ -5906,8 +6029,12 @@ class TestHarnessData:
         )
         assert tagged.endswith(guidance + '.')
 
-    async def test_harness_data_kept_before_the_upgrade_is_dropped_on_the_next_compaction(self) -> None:
-        """A turn an earlier compaction kept loses its harness data, which is summarized; its user text stays kept."""
+    async def test_a_turn_kept_by_an_earlier_release_is_summarized_again(self) -> None:
+        """Releases before 2.60 marked a kept turn only on its request's metadata, which is no longer read.
+
+        The next compaction treats such a turn like any other: its harness data is summarized as data, and its user
+        text is summarized and kept again, now as a marked copy.
+        """
         background = TextContent(
             '<tool_result tool_name="lookup" tool_call_id="t1">\nresult\n</tool_result>',
             metadata={'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': 't1'},
@@ -5962,7 +6089,7 @@ class TestHarnessData:
         history = (await comp.before_model_request(_make_ctx(rc.messages), rc)).messages
         assert [_part_text(part) for part in user_parts(history)] == ['b', 'd', 'f']
         assert '<harness_data origin="pydantic-ai-harness.background_tools.result.v1">' in captured[0]
-        assert '<message role="user">\nthe real ask' not in captured[0]
+        assert '<message role="user">\nthe real ask' in captured[0]
 
     @pytest.mark.parametrize('mixed', [False, True], ids=['harness-data-only', 'mixed'])
     async def test_first_user_message_preservation_never_keeps_harness_data(self, mixed: bool) -> None:

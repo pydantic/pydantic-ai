@@ -159,6 +159,9 @@ def _map_api_errors(model_name: str) -> Generator[None]:
                 provider_error_type=error_type if isinstance(error_type, str) else None,
             ) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e
+    except httpx2.HTTPStatusError as e:
+        # A retrying transport raises this for a status it gave up on, and `mistralai` lets it through unwrapped.
+        raise _model_errors.transport_status_error(model_name, e.response) from e
     except httpx2.TransportError as e:
         # `mistralai` doesn't wrap connection errors and timeouts in its own exceptions.
         timeout = isinstance(e, httpx2.TimeoutException)

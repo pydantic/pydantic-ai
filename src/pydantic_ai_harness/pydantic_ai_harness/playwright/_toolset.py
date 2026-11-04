@@ -41,7 +41,7 @@ together when it changed. Pinned in the `[playwright]` extra as
   Re-check: `hasattr(playwright.async_api, 'TargetClosedError')` (expect `False`);
   if it becomes `True`, switch to the public import.
 - Missing-binary detection uses `chromium.executable_path` plus an on-disk
-  `os.path.exists` check; the install command is `python -m playwright install
+  existence check; the install command is `python -m playwright install
   chromium`. Verified 2026-08-18. Source:
   <https://playwright.dev/python/docs/browsers#install-browsers>. Re-check:
   confirm `BrowserType.executable_path` exists and `playwright install chromium`
@@ -103,7 +103,6 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import json
-import os
 import re
 import socket
 import sys
@@ -123,22 +122,16 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, ToolReturn
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai_harness._message_text import CHARS_PER_TOKEN
 
 try:
-    # Import-time gate (mirrors `pydantic_ai_harness.exa._toolset`): importing the
-    # capability fails fast with an install hint when the optional dep is absent.
-    # `TargetClosedError` is not re-exported from `playwright.async_api`; the
-    # `playwright._impl._errors` module documents its own classes as stable public
-    # API, and a driver-raised instance only carries `.name` (so isinstance is the
-    # reliable discriminator, not the name attribute).
+    # `TargetClosedError` is not re-exported from `playwright.async_api`; see the module docstring.
     from playwright._impl._errors import TargetClosedError as TargetClosedError
     from playwright.async_api import (
-        Error as _PlaywrightError,
+        Error as PlaywrightError,
         TimeoutError as PlaywrightTimeoutError,
         async_playwright as async_playwright,
     )
-
-    PlaywrightError = _PlaywrightError
 except ImportError as _import_error:
     raise ImportError(
         'playwright is required for PlaywrightBrowser. '
@@ -185,16 +178,15 @@ frames, and an unresponsive one must not consume the action's deadline. Whatever
 was collected before the budget runs out is kept.
 """
 
-_CHARS_PER_TOKEN = 4
-"""Characters-per-token estimate used to turn a token budget into a character cap."""
-
 _PRIVATE_ADDRESS_REASON = 'blocked private or link-local address'
 _UNRESOLVED_REASON = 'host that did not resolve, so the private-address block could not clear it'
 """Why the private-address block refused a URL, shared by the pre-check and the route guard."""
 
 _BLANK_PAGE = 'about:blank'
-_ERROR_PAGE_SCHEME = 'chrome-error://'
 """The blank page a context starts on, and where a disallowed navigation is sent."""
+
+_ERROR_PAGE_SCHEME = 'chrome-error://'
+"""Scheme of Chromium's own error page, where a navigation the browser could not complete lands."""
 
 _MAX_TABS = 8
 """Pages one session keeps open at once.
@@ -678,9 +670,13 @@ class EgressPolicy:
             return _PRIVATE_ADDRESS_REASON
         if host is None:
             return None if request.kind in ('data', 'subresource') else 'URL with no host'
+        return self._domain_reason(host, request.kind)
+
+    def _domain_reason(self, host: str, kind: RequestKind) -> str | None:
+        """Why the domain lists refuse `host` for this kind of request, or `None` if they do not."""
         if self._matches(host, self.blocked_domains):
             return 'domain in blocked_domains'
-        if request.kind in self.allowlist_reach and not self._permitted(host):
+        if kind in self.allowlist_reach and not self._permitted(host):
             return 'domain not in allowed_domains'
         return None
 
@@ -704,12 +700,19 @@ class EgressPolicy:
 
         Asked before `refuse` so that `refuse` stays synchronous: an override needs
         no async machinery, and the lookup a name-based private address requires
-        happens outside it. A host that is already an address needs none.
+        happens outside it. A host that is already an address needs none, and
+        neither does one the domain lists refuse, since `refuse` refuses it
+        whatever the host resolves to. That holds only for this
+        class's own `refuse`: an override may permit what the lists refuse, so its
+        hosts are still resolved. An override that refuses some hosts by name should
+        override this too, returning `False` for them, so they are not looked up.
         """
         if not self.block_private_addresses or request.kind not in self.resolved_kinds:
             return False
         host = _url_host(request.url)
-        return host is not None and not _is_ip_literal(host)
+        if host is None or _is_ip_literal(host):
+            return False
+        return type(self).refuse is not EgressPolicy.refuse or self._domain_reason(host, request.kind) is None
 
     def enforced(self) -> bool:
         """Whether anything is restricted, i.e. whether a route guard is worth installing."""
@@ -1291,7 +1294,7 @@ class PlaywrightBrowserSession:
                 return await pw.chromium.connect_over_cdp(self._cdp_url, timeout=self._launch_timeout_ms)
             except PlaywrightError as exc:
                 raise PlaywrightError(_without_endpoint_credentials(str(exc), self._cdp_url)) from exc
-        if os.path.exists(pw.chromium.executable_path):
+        if await anyio.Path(pw.chromium.executable_path).exists():
             return await pw.chromium.launch(
                 headless=self._headless, chromium_sandbox=self._chromium_sandbox, timeout=self._launch_timeout_ms
             )
@@ -1535,32 +1538,40 @@ class PlaywrightBrowserSession:
         on. A `close()` failure still exits the driver, and when the run is
         already unwinding the teardown error is dropped: the exception the caller
         is carrying is the one worth reporting.
+
+        Teardown is shielded, so a run cancelled by an `anyio` scope still closes
+        Chromium and exits the driver before the cancellation propagates: a
+        cancelled wait for an in-flight page-event task would skip both closes and
+        leave the processes running.
         """
         driver_cm = self._driver_cm
         self._driver_cm = None
         self._driver = None
-        if self._event_tasks:
-            for task in self._event_tasks:
-                task.cancel()
-            await asyncio.gather(*self._event_tasks, return_exceptions=True)
-            self._event_tasks.clear()
-        if driver_cm is None:  # pragma: no cover
-            return
-        try:
-            browser = self._browser
-            if browser is not None:
-                self.page = None
-                self.pages = []
-                self._browser = None
-                try:
-                    await browser.close()
-                finally:
+        # No deadline: the deprecated `TemporalAgent` wrapper runs `wrap_run` in the workflow, where
+        # a deadline becomes a durable timer that breaks replay of earlier histories.
+        with anyio.CancelScope(shield=True):
+            if self._event_tasks:
+                for task in self._event_tasks:
+                    task.cancel()
+                await asyncio.gather(*self._event_tasks, return_exceptions=True)
+                self._event_tasks.clear()
+            if driver_cm is None:  # pragma: no cover
+                return
+            try:
+                browser = self._browser
+                if browser is not None:
+                    self.page = None
+                    self.pages = []
+                    self._browser = None
+                    try:
+                        await browser.close()
+                    finally:
+                        await driver_cm.__aexit__(None, None, None)
+                elif self._driver_entered:
                     await driver_cm.__aexit__(None, None, None)
-            elif self._driver_entered:
-                await driver_cm.__aexit__(None, None, None)
-        except Exception:
-            if exc_type is None:
-                raise
+            except Exception:
+                if exc_type is None:
+                    raise
 
 
 class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
@@ -1684,7 +1695,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
 
     def _truncate_output(self, text: str) -> str:
         """Apply the configured token budget to a model-facing textual result."""
-        return _truncate(text, self._max_content_tokens * _CHARS_PER_TOKEN)
+        return _truncate(text, self._max_content_tokens * CHARS_PER_TOKEN)
 
     def _error(self, message: str) -> str:
         """Bound an error result and record the failure on the operation's span.
@@ -1706,7 +1717,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         result should do. A note too large for the budget on its own wins the
         whole budget: it carries why the result is missing.
         """
-        budget = self._max_content_tokens * _CHARS_PER_TOKEN
+        budget = self._max_content_tokens * CHARS_PER_TOKEN
         separator = '\n\n'
         room = budget - len(note) - len(separator)
         if room <= 0:
@@ -2611,7 +2622,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         if not events:
             return self._truncate_output(f'No {label} recorded.')
         lines = [event.describe() for event in events]
-        budget = self._max_content_tokens * _CHARS_PER_TOKEN
+        budget = self._max_content_tokens * CHARS_PER_TOKEN
         kept: list[str] = []
         used = 0
         for line in reversed(lines):

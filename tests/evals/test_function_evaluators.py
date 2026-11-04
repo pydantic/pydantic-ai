@@ -6,12 +6,14 @@ These run local tasks and evaluators, so there's no provider boundary to record.
 from __future__ import annotations as _annotations
 
 from collections.abc import Awaitable, Generator, Sequence
+from dataclasses import dataclass
 from functools import partial
 from operator import attrgetter
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
+import yaml
 from pydantic_core import PydanticSerializationError
 
 from .._inline_snapshot import snapshot
@@ -22,6 +24,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.test import TestModel
     from pydantic_evals import Case, Dataset
     from pydantic_evals.evaluators import (
+        Equals,
         EvaluationReason,
         EvaluationResult,
         Evaluator,
@@ -70,6 +73,14 @@ class AsyncCallable:
 
     async def _evaluate(self, ctx: EvaluatorContext[str, str, None]) -> EvaluatorOutput:
         return ctx.output == 'HELLO'
+
+
+@dataclass
+class PrefixCheck:
+    prefix: str
+
+    def check(self, ctx: EvaluatorContext[str, str, None]) -> bool:
+        return ctx.output.startswith(self.prefix)  # pragma: no cover
 
 
 class Deferred:
@@ -272,20 +283,235 @@ def test_class_evaluators_are_not_wrapped():
     assert dataset.evaluators[1] == FunctionEvaluator(exact_match)
 
 
-def test_serialization_raises(tmp_path: Path):
-    """A dataset with a function evaluator can't be saved, and no partial files are left behind."""
-    dataset = Dataset(name='unsaveable', cases=[Case(inputs='x', evaluators=[exact_match])])
+@pytest.mark.parametrize('fmt', ['yaml', 'json'])
+async def test_serialization_round_trip(tmp_path: Path, fmt: Literal['yaml', 'json']):
+    """Function evaluators are saved under the function's name, and loaded again by passing the functions back."""
+    dataset = Dataset[str, str, Any](
+        name='round_trip',
+        cases=[
+            Case(
+                name='hello',
+                inputs='hello',
+                expected_output='HELLO',
+                evaluators=[FunctionEvaluator(exact_match, version='2'), Equals('HELLO')],
+            )
+        ],
+        evaluators=[checks, FunctionEvaluator(output_length, evaluation_name='length', version='1')],
+    )
+    path = tmp_path / f'dataset.{fmt}'
+    dataset.to_file(path, custom_evaluator_types=[exact_match, output_length, checks])
+    content = path.read_text()
+
+    # YAML is a superset of JSON, so this reads both formats.
+    data = yaml.safe_load(content)
+    assert (data['evaluators'], data['cases'][0]['evaluators']) == snapshot(
+        (
+            ['checks', {'output_length': {'evaluation_name': 'length', 'version': '1'}}],
+            [{'exact_match': {'version': '2'}}, {'Equals': 'HELLO'}],
+        )
+    )
+
+    loaded = Dataset[str, str, Any].from_file(path, custom_evaluator_types=[exact_match, output_length, checks])
+    assert loaded.evaluators == dataset.evaluators
+    assert loaded.cases[0].evaluators == dataset.cases[0].evaluators
+
+    loaded.to_file(path, custom_evaluator_types=[exact_match, output_length, checks])
+    assert path.read_text() == content
+
+    report = await loaded.evaluate(upper, progress=False)
+    case = report.cases[0]
+    assert {
+        result.name: (result.value, result.evaluator_version)
+        for result in [*case.assertions.values(), *case.scores.values(), *case.labels.values()]
+    } == snapshot(
+        {
+            'exact_match': (True, '2'),
+            'Equals': (True, None),
+            'is_upper': (True, None),
+            'length': (5, '1'),
+            'label': ('shout', None),
+        }
+    )
+
+
+def test_json_schema():
+    """The JSON schema lists each function by name, with its optional `evaluation_name` and `version`."""
+    schema = Dataset[str, str, Any].model_json_schema_with_evaluators([exact_match])
+
+    assert schema['$defs']['Case']['properties']['evaluators']['items']['anyOf'][:2] == snapshot(
+        [{'const': 'exact_match', 'type': 'string'}, {'$ref': '#/$defs/spec_exact_match'}]
+    )
+    assert (schema['$defs']['spec_exact_match'], schema['$defs']['spec_params_exact_match']) == snapshot(
+        (
+            {
+                'additionalProperties': False,
+                'properties': {'exact_match': {'$ref': '#/$defs/spec_params_exact_match'}},
+                'required': ['exact_match'],
+                'title': 'spec_exact_match',
+                'type': 'object',
+            },
+            {
+                'additionalProperties': False,
+                'properties': {
+                    'evaluation_name': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Evaluation Name'},
+                    'version': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Version'},
+                },
+                'title': 'spec_params_exact_match',
+                'type': 'object',
+            },
+        )
+    )
+
+
+def test_from_dict():
+    """Functions are loaded from a dictionary, as done for hosted datasets, alongside evaluator classes."""
+
+    @dataclass
+    class IsHello(Evaluator[str, str, Any]):
+        def evaluate(self, ctx: EvaluatorContext[str, str, Any]) -> bool:
+            return ctx.output == 'hello'  # pragma: no cover
+
+    dataset = Dataset[str, str, Any].from_dict(
+        {
+            'name': 'hosted',
+            'cases': [{'inputs': 'x', 'evaluators': [{'exact_match': {'evaluation_name': 'matches'}}, 'IsHello']}],
+            'evaluators': ['output_length'],
+        },
+        custom_evaluator_types=[IsHello, exact_match, output_length],
+    )
+
+    assert dataset.cases[0].evaluators == [FunctionEvaluator(exact_match, evaluation_name='matches'), IsHello()]
+    assert dataset.evaluators == [FunctionEvaluator(output_length)]
+
+
+@pytest.mark.parametrize(
+    'function',
+    [
+        pytest.param(lambda ctx: True, id='lambda'),  # pyright: ignore[reportUnknownLambdaType, reportUnknownArgumentType]
+        pytest.param(partial(has_prefix, prefix='H'), id='partial'),
+        pytest.param(AsyncCallable(), id='callable-object'),
+        pytest.param(PrefixCheck('H').check, id='bound-method'),
+        pytest.param(['HELLO'].count, id='built-in-bound-method'),
+    ],
+)
+def test_unnamed_function_not_serializable(tmp_path: Path, function: EvaluatorFunc[str, str, Any]):
+    """Only a function with a name can be saved and loaded, and a failed save leaves no files behind."""
+    dataset = Dataset[str, str, Any](name='unsaveable', cases=[Case(inputs='x', evaluators=[function])])
 
     for path in (tmp_path / 'dataset.yaml', tmp_path / 'dataset.json'):
         with pytest.raises(
-            PydanticSerializationError,
-            match=r"Function evaluator 'exact_match' cannot be serialized, as a Python function has no serialized form",
+            PydanticSerializationError, match=r"Function evaluator '[^']+' cannot be serialized, as it is identified"
         ):
             dataset.to_file(path)
     assert list(tmp_path.iterdir()) == []
 
-    with pytest.raises(PydanticSerializationError, match="Function evaluator 'exact_match' cannot be serialized"):
-        dataset.model_dump()
+    with pytest.raises(TypeError, match='cannot be used in `custom_evaluator_types`, as an evaluator function is'):
+        Dataset[str, str, Any].from_dict({'name': 'ds', 'cases': []}, custom_evaluator_types=[function])
+
+
+def test_two_functions_with_one_name_not_serializable(tmp_path: Path):
+    """Two different functions saved under one name could not be told apart when loading, so saving fails."""
+
+    def make_exact_match() -> EvaluatorFunc[str, str, Any]:
+        def exact_match(ctx: EvaluatorContext[str, str, Any]) -> bool:
+            return True  # pragma: no cover
+
+        return exact_match
+
+    dataset = Dataset[str, str, Any](
+        name='clash', cases=[Case(inputs='x', evaluators=[make_exact_match()])], evaluators=[exact_match]
+    )
+    with pytest.raises(PydanticSerializationError, match="Two different evaluator functions are named 'exact_match'"):
+        dataset.to_file(tmp_path / 'dataset.yaml')
+    assert list(tmp_path.iterdir()) == []
+
+    # The same function used in several places is saved under its name each time.
+    Dataset[str, str, Any](
+        name='reused', cases=[Case(inputs='x', evaluators=[exact_match])], evaluators=[exact_match]
+    ).to_file(tmp_path / 'dataset.yaml')
+
+
+def test_duplicate_names():
+    """Functions must have names that are unique among the custom evaluators, but may replace a default evaluator."""
+
+    def make_exact_match() -> EvaluatorFunc[str, str, Any]:
+        def exact_match(ctx: EvaluatorContext[str, str, Any]) -> bool:
+            return True  # pragma: no cover
+
+        return exact_match
+
+    @dataclass
+    class ExactMatch(Evaluator[str, str, Any]):
+        @classmethod
+        def get_serialization_name(cls) -> str:
+            return 'exact_match'
+
+        def evaluate(self, ctx: EvaluatorContext[str, str, Any]) -> bool:
+            return True  # pragma: no cover
+
+    for custom_evaluator_types in ([exact_match, make_exact_match()], [ExactMatch, exact_match]):
+        with pytest.raises(ValueError) as exc_info:
+            Dataset[str, str, Any].from_dict({'name': 'ds', 'cases': []}, custom_evaluator_types=custom_evaluator_types)
+        assert str(exc_info.value) == snapshot(
+            "Duplicate evaluator name: 'exact_match'. An evaluator function is identified by its name, so it must be "
+            'different from the names of the other `custom_evaluator_types`. Rename the function.'
+        )
+
+    # Passing the same function twice is the same mistake as passing a class twice, not a name clash.
+    with pytest.raises(ValueError, match="Duplicate evaluator class name: 'exact_match'"):
+        Dataset[str, str, Any].from_dict({'name': 'ds', 'cases': []}, custom_evaluator_types=[exact_match, exact_match])
+
+    def Equals(ctx: EvaluatorContext[str, str, Any]) -> bool:
+        return True  # pragma: no cover
+
+    dataset = Dataset[str, str, Any].from_dict(
+        {'name': 'ds', 'cases': [], 'evaluators': ['Equals']}, custom_evaluator_types=[Equals]
+    )
+    assert dataset.evaluators == [FunctionEvaluator(Equals)]
+
+
+def test_load_errors():
+    """A function that wasn't passed, or arguments it doesn't take, fail like they do for evaluator classes."""
+    with pytest.raises(ExceptionGroup) as exc_info:
+        Dataset[str, str, Any].from_dict(
+            {
+                'name': 'ds',
+                'cases': [{'inputs': 'x', 'evaluators': ['output_length']}],
+                'evaluators': [{'exact_match': 'matches'}, {'exact_match': {'name': 'matches'}}],
+            },
+            custom_evaluator_types=[exact_match],
+        )
+    assert [str(error) for error in exc_info.value.exceptions] == snapshot(
+        [
+            "Failed to instantiate evaluator 'exact_match' for dataset: an evaluator function only takes the `evaluation_name` and `version` arguments by name",
+            "Failed to instantiate evaluator 'exact_match' for dataset: exact_match() got an unexpected keyword argument 'name'",
+            "Evaluator 'output_length' is not in the provided `custom_evaluator_types`. Valid choices: ['exact_match', 'Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LLMJudge', 'HasMatchingSpan', 'ToolCorrectness', 'TrajectoryMatch', 'ArgumentCorrectness', 'MaxToolCalls', 'MaxModelRequests', 'GEval']. If you are trying to use a custom evaluator, you must include it in the `custom_evaluator_types` argument.",
+        ]
+    )
+
+
+def test_custom_evaluator_types_typing():
+    """`custom_evaluator_types` takes evaluator classes and functions together, type-checked against the dataset."""
+
+    def any_context(ctx: EvaluatorContext) -> bool:
+        return True  # pragma: no cover
+
+    def int_inputs(ctx: EvaluatorContext[int, str, Any]) -> bool:
+        return True  # pragma: no cover
+
+    def list_output(ctx: EvaluatorContext[str, str, Any]) -> list[str]:
+        return []  # pragma: no cover
+
+    data: dict[str, Any] = {'name': 'ds', 'cases': []}
+    Dataset[str, str, Any].from_dict(data, custom_evaluator_types=[Equals, exact_match, output_length])
+    Dataset[str, str, Any].from_dict(data, custom_evaluator_types=(any_context, Equals))
+    custom_evaluator_types: list[type[Evaluator[str, str, Any]] | EvaluatorFunc[str, str, Any]] = [Equals, exact_match]
+    Dataset[str, str, Any].model_json_schema_with_evaluators(custom_evaluator_types)
+
+    Dataset[str, str, Any].from_dict(data, custom_evaluator_types=[int_inputs])  # pyright: ignore[reportArgumentType]
+    Dataset[str, str, Any].from_dict(data, custom_evaluator_types=[list_output])  # pyright: ignore[reportArgumentType]
+    with pytest.raises(TypeError, match=r"Equals\(value='x'\) cannot be used in `custom_evaluator_types`"):
+        Dataset[str, str, Any].from_dict(data, custom_evaluator_types=[Equals('x')])  # pyright: ignore[reportArgumentType]
 
 
 @needs_logfire

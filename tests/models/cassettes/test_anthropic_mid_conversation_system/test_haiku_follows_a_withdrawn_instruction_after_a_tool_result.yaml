@@ -1,0 +1,252 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "721"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              What is the capital of Australia? Use the lookup tool first, then answer in one
+              sentence.
+            type: text
+        model: claude-haiku-5-5
+        stream: true
+        system:
+        - type: text
+          text: You are a concise assistant.
+        - type: text
+          text: |-
+            <context id="agent:sign_off">
+            End every reply with the sign-off '-- Team Alpha'.
+            </context>
+            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        tool_choice:
+          type: auto
+        tools:
+        - name: lookup
+          description: Look up a fact.
+          input_schema:
+            additionalProperties: false
+            properties:
+              q:
+                type: string
+            required:
+            - q
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=194
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-947586b7cc182c80e251ee78536ca403-1ac8f83ce63507dc-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011CgVQ1cDTQSmhnL6NV94TQ","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":480,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}         }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01CiLfAjFp2RghmwZy9fupy6","name":"lookup","input":{},"caller":{"type":"direct"}}              }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"q\": \""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"capital"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":" of Aus"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"tralia\"}"}               }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0 }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":480,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":52,"output_tokens_details":{"thinking_tokens":0}}}
+
+        event: message_stop
+        data: {"type":"message_stop"     }
+
+  recorded_at: 2026-10-28T22:08:17.359731+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1288"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              What is the capital of Australia? Use the lookup tool first, then answer in one
+              sentence.
+            type: text
+        - role: assistant
+          content:
+          - id: toolu_01CiLfAjFp2RghmwZy9fupy6
+            type: tool_use
+            name: lookup
+            input:
+              q: capital of Australia
+        - role: user
+          content:
+          - tool_use_id: toolu_01CiLfAjFp2RghmwZy9fupy6
+            type: tool_result
+            content:
+            - text: Canberra
+              type: text
+            is_error: false
+          - text: >-
+              The tool results end here. The system message that follows comes from the
+              application, not from a tool.
+            type: text
+        - role: system
+          content:
+          - text: |-
+              <context id="agent:sign_off">
+              This context has been withdrawn.
+              </context>
+            type: text
+        model: claude-haiku-5-5
+        stream: true
+        system:
+        - type: text
+          text: You are a concise assistant.
+        - type: text
+          text: |-
+            <context id="agent:sign_off">
+            End every reply with the sign-off '-- Team Alpha'.
+            </context>
+            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        tool_choice:
+          type: auto
+        tools:
+        - name: lookup
+          description: Look up a fact.
+          input_schema:
+            additionalProperties: false
+            properties:
+              q:
+                type: string
+            required:
+            - q
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=102
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-ea9f2d89a68e6a86086cd05ac4831c6e-b5be3fd65c10570d-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011CgVQ1h7PCQapsZPAr8Ep9","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":598,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}    }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}               }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQSuQgKEAgTGAI4AUIIdGhpbmtpbmcSDBWt2WOWebsLe5bLKBoM634Tj7AxhX+1QfX+IjBOmp6O4S+e0L+tns/VEUff/ScXlDGLUYxV785bARN9Hel2kRpcGbGqRrKymoNYIeMq1gc+E/MTvlx26eMZgM3/tYv7doypCHamNLMbzpCLBLSoJwQwPX9cVil5j+5/kZJfhd7Y1XrxwsREX6RWiIKETMgLuRC5kzqS6R+SuShszWBlM69KRJ/0dgHcAsSOaRNHBJMQiX9x38xJvWmjR3Lewzf1IkR4LTiIF17pH/0uQJpl0IuDxf4ylyysOlvbYdcrpQN8jR1EWoxvJKHKRmPeXt44q3FMFFFfm2eeUoe27kaA6gnNctfYh3XB0QjPWXwWkCUhBbGLC/7tbj+q+IIGdUeVh9l4GN/k/OFT95D8RyGdpcTF6mdbkxQn1vIWhbGe8wKP2HiFpu02aY/U11LgMIZc4LUKK+F5gUgyNVR/TzD+yfWcN11hQHBRrzAEsHQ3SoPXUuTvaiaXrW0tY5mxO8tFvkeweHPKsfOLQpEz5AkvcRwlvG7o/pbggNjsbS10i8Lsm2DBKTozEPi4hbfrg2vJ6OQ+hh309Axj99OU66mO/fCcSyLOA2XTeWATucU/l4/PDk5+hApvFAHJIG5HR/UZloPyzzCCgl4O19YamalO8rvyqBYF3iOAUPxeZzXMTNAlZDUgdbHS8QO2osTUmeSP+rjKjhG8reUS/stBzQo238yZKeDb63lCu692xu8c9hLxqCis2MBgKBL4pudEBjnrKfXUuE1DBWqAoGm2ylbvGzYvXKXIltBG8NP00MPie+BqnepAXpHsKmkTJ0lTjIL57wvUmUPBCBhDTpSCpsPa0/XGkDj942dMtgoPjGjIlwY4uffgR3mjoiQtp++AOb/cIqCpH0DLrp1emthJWRB/afPmnpbBwQrPQlPmQKOECtvYYv70Vo57c0OBOuF011TCmIIfF+LyXnRZ8fVzWeDfngutvI4d0PfQDI7SdHLDY8lklYSdkvq3on8HZyyp6aVo2ie5lXkZ+5vz8L4kmt4h1roMJmT7JBsj6t4AZhToOnckLKG4V6CnarvR7jAMbPUdY13m4+EpvcjIK2FF/5uYYExTgIFCX29sW3JG4/JnKWf3ftWM4X5wrqfiK260E6cuag1uGzC/3WUdpHDauiM3MVTPFxO1vQJG1pvqACiBLdqh8LyBiJ8X45rZ+1VQHYI45ybJ2dLW+E21M+FFONUI2Pq+rdKarCzyXu56/4TVrmKAuKUOtTy6dOQnpRVOBc5s2KzgzlYbwqeaayo0MwvPqIm1qdJcD0HKgt4L3MdYMWafVRS6pBEssK1fzSRtF7uPruUlWIXl+Uw5BFXGPVQSXc/Ff26Ar1COalXHDHvbi4vXUVJZt6YIXTDBNO5infx9dVd9O9RyGAE="}         }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0        }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"The capital"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" of Australia is Canber"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ra."}       }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1           }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":598,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":152,"output_tokens_details":{"thinking_tokens":137}}      }
+
+        event: message_stop
+        data: {"type":"message_stop"        }
+
+  recorded_at: 2026-10-28T22:08:19.784650+00:00

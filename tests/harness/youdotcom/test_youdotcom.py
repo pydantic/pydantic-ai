@@ -870,6 +870,17 @@ class TestAgentSpec:
         assert YouSearch[None].from_spec(include_domains=['sec.gov'], id='sec_search').id == 'sec_search'
         assert YouResearch[None].from_spec(research_effort='deep', id='deep_research').id == 'deep_research'
 
+    @pytest.mark.parametrize('capability_type', [YouSearch, YouResearch])
+    def test_from_spec_sets_the_base_capability_fields(
+        self, capability_type: type[YouSearch[None] | YouResearch[None]]
+    ) -> None:
+        """`id`, `description` and `defer_loading` live on `AbstractCapability`, so a spec must name them too."""
+        name = capability_type.get_serialization_name()
+        definitions = AgentSpec.model_json_schema_with_capabilities([capability_type])['$defs']
+        assert {'id', 'description', 'defer_loading'} <= definitions[f'spec_params_{name}']['properties'].keys()
+        capability = capability_type.from_spec(id='second', description='The second one.', defer_loading=True)
+        assert (capability.id, capability.description, capability.defer_loading) == ('second', 'The second one.', True)
+
     def test_agent_loads_from_spec_file(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv('YDC_API_KEY', 'test-key')
         spec = tmp_path / 'agent.yaml'
