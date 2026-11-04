@@ -864,7 +864,11 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             Confirmation message with new hash.
         """
         return await self._write_file(
-            await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem'), path, content, expected_hash=expected_hash
+            await self._scope(ctx.workspace),
+            event_ctx(ctx, 'FileSystem', asks=True),
+            path,
+            content,
+            expected_hash=expected_hash,
         )
 
     async def _write_file_tool_unhashed(self, ctx: RunContext[AgentDepsT], path: str, content: str) -> str:
@@ -875,7 +879,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             path: File path relative to the working directory.
             content: The text content to write.
         """
-        return await self._write_file(await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem'), path, content)
+        return await self._write_file(
+            await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem', asks=True), path, content
+        )
 
     async def _announced_state(
         self, scope: _Scope, resolved: str, path: str, *, exists: bool, expected_hash: str | None
@@ -1039,7 +1045,11 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         """
         edits = normalize_replacements(old_text, new_text, replacements)
         return await self._edit_file(
-            await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem'), path, edits, expected_hash=expected_hash
+            await self._scope(ctx.workspace),
+            event_ctx(ctx, 'FileSystem', asks=True),
+            path,
+            edits,
+            expected_hash=expected_hash,
         )
 
     async def _edit_file_tool_unhashed(
@@ -1066,7 +1076,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             replacements: Replacements to apply in order, instead of a single pair.
         """
         edits = normalize_replacements(old_text, new_text, replacements)
-        return await self._edit_file(await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem'), path, edits)
+        return await self._edit_file(
+            await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem', asks=True), path, edits
+        )
 
     @_recoverable
     async def _edit_file(
@@ -1898,7 +1910,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         Returns:
             Confirmation message.
         """
-        return await self._create_directory(await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem'), path)
+        return await self._create_directory(
+            await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem', asks=True), path
+        )
 
     async def _nearest_existing_is_dir(self, scope: _Scope, path: str) -> bool:
         """Whether the closest existing ancestor of `path` (or the filesystem root) is a directory."""

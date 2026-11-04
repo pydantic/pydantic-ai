@@ -15,6 +15,8 @@ import pytest
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, on_event
+from pydantic_ai.durable_exec import DurableRunContext
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     FunctionToolResultEvent,
@@ -22,7 +24,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai.workspaces import LocalWorkspaceBackend
+from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
 from pydantic_ai_harness.filesystem import (
     MAX_DIFF_SOURCE_CHARS,
     MAX_EVENT_DIFF_CHARS,
@@ -1036,3 +1038,24 @@ class TestFileChangeRequests:
 
         assert (tmp_path / 'direct.txt').read_text() == 'bye\n'
         assert (tmp_path / 'made').is_dir()
+
+
+@pytest.mark.parametrize(
+    'tool_name,args',
+    [
+        ('write_file', {'path': 'note.txt', 'content': 'changed'}),
+        ('edit_file', {'path': 'note.txt', 'old_text': 'original', 'new_text': 'changed'}),
+        ('create_directory', {'path': 'newdir'}),
+    ],
+)
+async def test_change_inside_a_durable_unit_fails_closed(tmp_path: Path, tool_name: str, args: dict[str, str]) -> None:
+    (tmp_path / 'note.txt').write_text('original')
+    ctx = DurableRunContext[None](
+        deps=None, retries={}, max_retries=1, workspace=Workspace(LocalWorkspaceBackend(tmp_path))
+    )
+    toolset = FileSystem[None]().get_toolset()
+    tool = (await toolset.get_tools(ctx))[tool_name]
+    with pytest.raises(UserError, match='cannot ask listeners about a change from inside a durable unit'):
+        await toolset.call_tool(tool_name, args, ctx, tool)
+    assert (tmp_path / 'note.txt').read_text() == 'original'
+    assert not (tmp_path / 'newdir').exists()
