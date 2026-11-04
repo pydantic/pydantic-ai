@@ -646,7 +646,9 @@ class ConversationStore(ABC):
     ) -> None:
         """Replace the record's `title` or `metadata`, or both, keeping its `revision` and `updated_at`.
 
-        Only the fields passed are written, so a concurrent update of the other one isn't undone. A backend that implements this keeps a stored record's `title` and `metadata` when
+        Only the fields passed are written, so a concurrent update of the other one isn't undone.
+
+        A backend that implements this keeps a stored record's `title` and `metadata` when
         [`write_record`][pydantic_ai.conversation_store.ConversationStore.write_record] replaces it, so a
         save that read the record before an update doesn't undo it. The default raises
         `NotImplementedError`, for backends written before conversations had titles.
@@ -655,7 +657,10 @@ class ConversationStore(ABC):
             ConversationConflict: If no record with `expected_revision` is stored, because the
                 conversation was saved, replaced or deleted since it was read.
         """
-        raise NotImplementedError(f"{type(self).__name__} doesn't support updating a conversation's title or metadata.")
+        raise NotImplementedError(
+            f"{type(self).__name__} doesn't implement `write_details`, which `update` needs to change a "
+            "conversation's title or metadata."
+        )
 
     @abstractmethod
     async def delete_record(self, conversation_id: str, *, expected_revision: str) -> None:

@@ -1004,7 +1004,7 @@ async def test_a_backend_without_write_details_says_it_can_t_update() -> None:
     conversation = Conversation()
     await store.save(conversation)
 
-    with pytest.raises(NotImplementedError, match="_OlderStore doesn't support updating"):
+    with pytest.raises(NotImplementedError, match="_OlderStore doesn't implement `write_details`"):
         await store.update(conversation.conversation_id, title='Greetings')
 
 
