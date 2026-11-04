@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
@@ -22,6 +24,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.compaction import ClearToolResults, DeduplicateFileReads
 from pydantic_ai_harness.filesystem import READ_FILE_KIND, FileSystem, ReadFileCallPart, ReadFileReturnPart
+from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 
 READ = '[notes.txt | 1 lines]\n     1\thello\n'
 
@@ -70,6 +73,7 @@ async def _read_repeatedly(
     return requests
 
 
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
 async def test_deduplicate_file_reads_clears_superseded_read_file(tmp_path: Path) -> None:
     requests = await _read_repeatedly(tmp_path, DeduplicateFileReads[object](file_key=_file_key), reads=2)
 
@@ -83,6 +87,7 @@ async def test_deduplicate_file_reads_clears_superseded_read_file(tmp_path: Path
     assert _returns(loaded) == returns
 
 
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
 async def test_clear_tool_results_clears_read_file_and_counts_from_it(tmp_path: Path) -> None:
     requests = await _read_repeatedly(tmp_path, ClearToolResults[object](max_messages=4, keep_pairs=1), reads=3)
 
@@ -210,6 +215,7 @@ async def test_clear_tool_results_keeps_a_typed_result_whose_metadata_cannot_be_
     assert (result.content, result.metadata) == (READ, 'from cache')
 
 
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
 async def test_clear_tool_results_batches_around_a_typed_result_whose_metadata_cannot_be_marked(
     tmp_path: Path,
 ) -> None:
@@ -235,6 +241,7 @@ async def test_clear_tool_results_batches_around_a_typed_result_whose_metadata_c
     assert all(type(part) is ReadFileReturnPart for part in _returns(requests[-1]))
 
 
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
 async def test_clear_tool_results_does_not_count_from_another_strategys_clears(tmp_path: Path) -> None:
     capabilities: list[AbstractCapability[object]] = [
         DeduplicateFileReads[object](file_key=_file_key),
@@ -248,6 +255,7 @@ async def test_clear_tool_results_does_not_count_from_another_strategys_clears(t
     assert [part.content for part in third] == ['[tool result cleared]', READ]
 
 
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
 async def test_clear_tool_results_clears_a_failed_read(tmp_path: Path) -> None:
     (tmp_path / 'notes.txt').write_text('hello\n')
     requests: list[list[ModelMessage]] = []

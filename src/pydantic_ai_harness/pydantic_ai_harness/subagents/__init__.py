@@ -57,7 +57,13 @@ from pydantic_ai_harness.subagents._tasks import (
     DelegationTaskEvent,
     DelegationTasks,
 )
-from pydantic_ai_harness.subagents._toolset import SubAgent, SubAgentToolset
+from pydantic_ai_harness.subagents._toolset import (
+    SELF_AGENT_NAME,
+    DelegationWorkspaceRequest,
+    SubAgent,
+    SubAgentToolset,
+    WorkspaceResolver,
+)
 from pydantic_ai_harness.subagents._transport import (
     InMemoryTransport,
     SubAgentTransport,
@@ -72,6 +78,7 @@ if TYPE_CHECKING:
 __all__ = [
     'MAX_EVENT_TEXT_CHARS',
     'MINIMUM_EFFORT_FLOOR',
+    'SELF_AGENT_NAME',
     'SUB_AGENTS_EVENTS',
     'AgentCreatedEvent',
     'AgentOverride',
@@ -83,6 +90,7 @@ __all__ = [
     'DelegationReports',
     'DelegationTask',
     'DelegationTaskEvent',
+    'DelegationWorkspaceRequest',
     'DelegationTasks',
     'DynamicAgentFactory',
     'DynamicAgentSpec',
@@ -116,6 +124,7 @@ __all__ = [
     'TaskSettledEvent',
     'TaskStartedEvent',
     'ToolResolver',
+    'WorkspaceResolver',
     'clamp_effort',
     'deserialize_message',
     'is_task_report',

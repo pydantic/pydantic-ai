@@ -108,6 +108,10 @@ agent = Agent(model=model, model_settings=bedrock_model_settings)
 
 When `trace` is set to `'enabled'` in the guardrail configuration (as in the example above), the guardrail assessment returned by Bedrock is stored verbatim under the `'trace'` key of [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], e.g. `result.all_messages()[-1].provider_details['trace']`.
 
+### Video input
+
+The Converse API takes video only on Amazon Nova. On every other family, including models that read video on other platforms (Qwen3-VL, Kimi and Nemotron Nano VL reject it on Bedrock, as do Claude, Llama 4 and Pixtral), video in the prompt raises an error, and video a tool returns is replaced by a note saying the model can't read it. A model ID the provider doesn't recognize keeps the default and is sent video.
+
 ### Output token limit
 
 When you don't set [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens], Pydantic AI sends Claude's maximum output, like 64,000 on Claude Sonnet 4.5 or 128,000 on Claude Opus 5.5, as it does on [Anthropic](anthropic.md), so responses are only cut off at the model's own limit. Bedrock's own default can be much lower (4,096 on Claude Opus 5.5), and thinking counts toward it. An inference profile or foundation model ARN counts as the model it names. Models older than Claude Sonnet 4.5, models other than Claude, and models named by an application inference profile ARN get Bedrock's default, so set `max_tokens` yourself for those, or pass the application inference profile ARN as [`bedrock_inference_profile`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_inference_profile] with the base model name.
@@ -132,6 +136,17 @@ To keep forced tool output, turn thinking off with `thinking=False` where the mo
 See AWS's [adaptive thinking documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-adaptive-thinking.html)
 and [forced tool use restrictions](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic-claude-messages-tool-use.html#model-parameters-anthropic-claude-forced-tool-use).
 
+For Claude, Bedrock compiles strict schemas with Anthropic's
+[schema complexity limits](anthropic.md#schema-complexity-limits), which Pydantic AI checks the same way: a bare
+structured `output_type` whose schema is over them keeps tool output, and explicitly strict schemas over them raise a
+[`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] before the request is sent.
+
+Native Output is sent as Converse's `outputConfig`, which a `botocore` released before Bedrock added it rejects before
+sending. That can happen on AWS Lambda, where the runtime's bundled `botocore` can shadow a newer one. With such a
+`botocore`, Pydantic AI treats Native Output as unsupported: a bare structured `output_type` uses the output mode it
+would use for a model without Native Output, and an explicit [`NativeOutput`][pydantic_ai.output.NativeOutput] raises
+a [`UserError`][pydantic_ai.exceptions.UserError] asking you to upgrade `boto3` and `botocore`.
+
 The output mode is chosen on the run's first request and kept for the rest of the run (except behind a
 [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], where each model chooses on every request), so a thinking
 setting that changes from step to step doesn't add or remove the output tool between requests and
@@ -146,6 +161,10 @@ xAI Grok 4.6 and 4.7 (`us.xai.grok-4.6`, `global.xai.grok-4.6`, `us.xai.grok-4.7
 reason, and Pydantic AI keeps forcing tool choice with them, since Converse accepts a forced tool choice with Grok 4.6
 while it reasons. A `thinking` setting does not change this: `tool_choice='required'`, a single forced tool, and
 [`ToolOutput`][pydantic_ai.output.ToolOutput] keep working.
+
+### Claude thinking from other platforms
+
+Claude's thinking signatures and redacted thinking are verified on every platform, so history from [`AnthropicModel`](anthropic.md#history-across-platforms), on the Anthropic API or any other client, continues on a Claude model here with its thinking, and the other way round: for Claude models, `BedrockConverseModel` has the `anthropic` [canonical system](../message-history.md#sending-history-to-another-provider). It recognizes them by the profile's `bedrock_thinking_variant`, which you can set to `'anthropic'` in `profile=` for a model the name doesn't identify, such as an [application inference profile](#using-aws-application-inference-profiles). Other models keep their reasoning to Bedrock.
 
 ### Array constraints in structured output
 

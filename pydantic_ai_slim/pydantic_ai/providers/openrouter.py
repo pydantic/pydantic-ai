@@ -8,9 +8,12 @@ from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS
-from pydantic_ai.profiles import InlineDefsJsonSchemaTransformer, merge_profile
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
-from pydantic_ai.profiles.anthropic import anthropic_model_profile
+from pydantic_ai.profiles.anthropic import (
+    _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES as _ANTHROPIC_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
+    anthropic_model_profile,
+)
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
@@ -20,6 +23,7 @@ from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 try:
     from openai import AsyncOpenAI
@@ -31,7 +35,7 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 
@@ -43,6 +47,13 @@ class OpenRouterModelProfile(OpenAIModelProfile, total=False):
 
     openrouter_supports_cache_control: bool
     """Whether the downstream provider supports explicit `cache_control` breakpoints via OpenRouter."""
+    openrouter_supports_trailing_cache_control: bool
+    """Whether a conversation `cache_control` breakpoint can end the request or sit on a tool result.
+
+    Defaults to `True`. `False` for Gemini routes, where OpenRouter uses only the last breakpoint across message
+    content: a breakpoint on the final content part of the request makes OpenRouter's Google Vertex endpoint bill the
+    prompt twice, and one on a tool result isn't used. There, the last breakpoint goes on the closest earlier user or
+    assistant message instead."""
     openrouter_supports_cache_ttl: bool
     """Whether the downstream provider supports TTL in `cache_control`."""
     openrouter_supports_tool_cache: bool
@@ -54,6 +65,12 @@ class OpenRouterModelProfile(OpenAIModelProfile, total=False):
 
     Anthropic enforces a limit of 4. When set, excess breakpoints are silently removed
     from messages (newest kept first). `None` means no limit."""
+    openrouter_system_messages_precede_generation: bool
+    """Whether the downstream provider keeps a mid-conversation `system` message only right before an assistant turn or at the end of the request.
+
+    OpenRouter turns one anywhere else into user text on Anthropic routes, so `OpenRouterModel` moves each one past
+    the user and tool messages that follow it, as `AnthropicModel` does. Only meaningful together with
+    `supports_inline_system_prompts`."""
     openrouter_supports_forced_tool_choice_with_thinking: bool
     """Deprecated: use [`supports_forced_tool_choice_with_thinking`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice_with_thinking] instead.
 
@@ -160,11 +177,40 @@ https://openrouter.ai/docs/guides/best-practices/reasoning-tokens#changing-effor
 """
 
 
-class OpenRouterProvider(_OpenAICompatibleProvider):
+_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES: dict[str, tuple[str, ...]] = {
+    'anthropic': _ANTHROPIC_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES,
+}
+"""Model-name prefixes, per upstream provider, of the OpenRouter routes that keep a mid-conversation `system` message.
+
+Besides these, every `openai/*` route keeps one except the open-weight `gpt-oss-*` models, which OpenRouter serves from
+other hosts' chat templates. Measured live on Chat Completions (2026-10-30), by whether the prompt cache still hits past
+the message and whether a withdrawal it carries is followed where the same text as a user message is not:
+
+- OpenAI routes keep it where it was sent, from GPT-4o through GPT-6.1, `-pro` variants and o3 included. One `gpt-oss`
+  host dropped it from the prompt altogether.
+- Anthropic routes keep it as a native entry only where Anthropic's own API accepts one, right before an assistant turn
+  or at the end of the request (see `openrouter_system_messages_precede_generation`), and only on the models Anthropic
+  serves the role on, which is the same list as `AnthropicProvider`'s. On Claude Sonnet 4.6, Opus 4.7 and Haiku 4.5,
+  OpenRouter moves it into the top-level system prompt, which busts the cached prefix after it. Claude Sonnet 5 keeps
+  it in place, but Anthropic documents that model as not acting on the entry. This held on every upstream OpenRouter
+  used: Anthropic, Claude Platform on AWS, Amazon Bedrock, Google Vertex AI and Azure.
+- Gemini routes move it into the system instruction, which busts the cached prefix after it.
+
+Mythos isn't routable on OpenRouter and is included on the strength of Anthropic's list.
+"""
+
+
+class OpenRouterProvider(_OpenAISDKProvider):
     """Provider for OpenRouter API."""
 
     @property
     def name(self) -> str:
+        return 'openrouter'
+
+    @property
+    def canonical_system(self) -> str:
+        # Fixed, so a subclass that only renames itself keeps sharing reasoning details. Which upstream verifies
+        # them depends on where OpenRouter routed the request, so no other provider is declared compatible.
         return 'openrouter'
 
     @property
@@ -209,10 +255,9 @@ class OpenRouterProvider(_OpenAICompatibleProvider):
             if provider == 'anthropic':
                 model_name = model_name.replace('.', '-')
             profile = provider_to_profile[provider](model_name)
-        elif provider == 'z-ai' and model_name.lower().startswith('glm-5.3'):
-            # Inline GLM-5.3 schemas without importing Z.AI's native thinking settings.
-            # See https://github.com/pydantic/pydantic-ai/issues/10243.
-            profile = ModelProfile(json_schema_transformer=InlineDefsJsonSchemaTransformer)
+        elif provider == 'z-ai':
+            # Only GLM-5.3's schema fix, without Z.AI's native thinking settings.
+            profile = _glm_5_3_schema_profile(model_name)
 
         if model_name.lower().startswith(_MANDATORY_REASONING_MODEL_PREFIXES.get(provider, ())):
             profile = merge_profile(profile, ModelProfile(thinking_always_enabled=True))
@@ -220,6 +265,10 @@ class OpenRouterProvider(_OpenAICompatibleProvider):
         supports_mid_conversation_effort = model_name.lower().startswith(
             _MID_CONVERSATION_EFFORT_MODEL_PREFIXES.get(provider, ())
         ) and not model_name.lower().endswith('-pro')
+
+        supports_inline_system_prompts = (
+            provider == 'openai' and not model_name.lower().startswith('gpt-oss-')
+        ) or model_name.lower().startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES.get(provider, ()))
 
         # Cache capability flags are set on the gateway layer based on the downstream provider.
         # The TTL / tool-cache / dynamic-instruction flags are kept separate even though they all
@@ -238,8 +287,8 @@ class OpenRouterProvider(_OpenAICompatibleProvider):
         #    accepts `reasoning` universally, so the gate also forces `supports_thinking=True` so the unified `thinking`
         #    setting is always forwarded regardless of the upstream model's own thinking support. OpenRouter only
         #    accepts the older `max_tokens` field, so `openai_chat_supports_max_completion_tokens=False`.
-        #    It also silently transforms mid-conversation system messages rather than handling them natively,
-        #    so `supports_inline_system_prompts=False` selects the deliberate `<system>`-wrapped fallback.
+        #    It keeps mid-conversation system messages only on some routes (see `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES`)
+        #    and moves or rewrites them on the others, so those get the deliberate `<system>`-wrapped fallback.
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
@@ -249,7 +298,8 @@ class OpenRouterProvider(_OpenAICompatibleProvider):
                 openai_chat_supports_file_urls=True,
                 openai_chat_supports_web_search=True,
                 openai_chat_supports_max_completion_tokens=False,
-                supports_inline_system_prompts=False,
+                supports_inline_system_prompts=supports_inline_system_prompts,
+                openrouter_system_messages_precede_generation=provider == 'anthropic',
                 supports_thinking=True,
                 # OpenRouter's own Chat Completions extension: a content-less `system` message carrying a
                 # `configuration_update`. Set here because the upstream provider's own channel isn't what's sent.
@@ -264,6 +314,9 @@ class OpenRouterProvider(_OpenAICompatibleProvider):
                 # Only Anthropic routes take a TTL; Gemini caches at its 5-minute default.
                 supported_cache_retentions=('5m', '1h') if supports_anthropic_cache else (),
                 openrouter_supports_cache_control=supports_cache_control,
+                # On Gemini routes, a breakpoint at the end of the request doubles the billed prompt on OpenRouter's
+                # Google Vertex endpoint, so the message breakpoint goes on an earlier message.
+                openrouter_supports_trailing_cache_control=provider != 'google',
                 openrouter_supports_cache_ttl=supports_anthropic_cache,
                 openrouter_supports_tool_cache=supports_anthropic_cache,
                 openrouter_supports_dynamic_instruction_cache=supports_anthropic_cache,

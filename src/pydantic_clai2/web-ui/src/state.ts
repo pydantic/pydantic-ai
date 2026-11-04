@@ -1,5 +1,7 @@
+import { reloadedFor, reloadedFrom } from './api'
 import type {
   Dialog,
+  ForkEntry,
   Item,
   ItemMessage,
   LiveEntry,
@@ -12,8 +14,8 @@ import type {
   StatusInfo,
   TaskEntry,
   ThemeInfo,
+  TurnSummary,
   UpdateInfo,
-  Usage,
   UsageReport,
 } from './protocol'
 
@@ -25,16 +27,10 @@ export interface NoticeEntry {
   command: string | null
   /** For `/usage` and `/cost`: the figures their text reports, shown as a card. */
   usage: UsageReport | null
-}
-
-export interface TurnSummary {
-  id: string
-  kind: 'turn'
-  outcome: 'completed' | 'failed' | 'cancelled'
-  error: string | null
-  usage: Usage | null
-  /** Seconds the turn took, as this page saw it; `null` when it started before the page connected. */
-  seconds: number | null
+  /** For `/forks`: the rows of its table, shown as a card. */
+  forks: ForkEntry[] | null
+  /** A background `/fork` that ended; `text` is its answer, why it failed, or empty when it was cancelled. */
+  fork: ForkEntry | null
 }
 
 export type Entry = Item | NoticeEntry | TurnSummary
@@ -124,6 +120,8 @@ export interface State {
   version: string | null
   /** `/update` installing a newer CLAI, until the install ends or the new build is back. */
   update: UpdateInfo | null
+  /** The versions the last `/update` this page followed went from and to, once the new build is back. */
+  updated: { from: string; to: string } | null
 }
 
 export const initial: State = {
@@ -143,6 +141,7 @@ export const initial: State = {
   followsWorkspace: false,
   version: null,
   update: null,
+  updated: null,
 }
 
 /**
@@ -287,6 +286,8 @@ export function reduceChat(chat: Chat, message: SessionMessage): Chat {
         level: message.level,
         command: message.command,
         usage: message.usage,
+        forks: message.forks,
+        fork: message.fork,
       }
       return { ...chat, entries: [...chat.entries, notice] }
     }
@@ -315,8 +316,8 @@ function snapshotChat(message: Snapshot, previous: Chat | undefined, notice: Not
 /** Show a snapshot: its session's chat starts over from it, and it carries the page-wide state too. */
 function applySnapshot(state: State, message: Snapshot): State {
   const id = message.session.id
-  // A CLAI that `/update` restarted comes back as a new version, which the page says once it has reconnected.
-  const updated = state.version !== null && message.version !== state.version
+  // A CLAI that `/update` restarted comes back as a new version, whose bundle the page loaded again for: say so once.
+  const updated = state.version === null && message.version === reloadedFor
   const notice: NoticeEntry = {
     id: nextId('notice'),
     kind: 'notice',
@@ -324,6 +325,8 @@ function applySnapshot(state: State, message: Snapshot): State {
     level: 'info',
     command: null,
     usage: null,
+    forks: null,
+    fork: null,
   }
   // A conversation the shown session switched from is watched no more: this one took its place.
   const watched = watchFirst(state.watched.filter((other) => other !== message.replaces), id)
@@ -343,6 +346,7 @@ function applySnapshot(state: State, message: Snapshot): State {
     followsWorkspace: message.follows_workspace,
     version: message.version,
     update: message.update,
+    updated: updated && reloadedFrom !== null ? { from: reloadedFrom, to: message.version } : state.updated,
   }
 }
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterable, Coroutine, Generator, Mapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Coroutine, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field as dataclass_field, replace
@@ -14,11 +14,11 @@ from typing import Any, Generic, TypeVar
 from uuid import uuid4
 
 import anyio
-from typing_extensions import TypeIs
 
 from pydantic_ai import AgentStreamEvent, CapabilityEvent
 from pydantic_ai.agent import AbstractAgent, AgentRunResult, EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, HookTimeoutError
+from pydantic_ai.durable_exec import DurableRunContext
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -41,7 +41,8 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 # toolsets apart from the agent's own in `agent.toolsets`.
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
-from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace
+from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
+from pydantic_ai_harness._models import is_request_response_model
 from pydantic_ai_harness._sub_agent_output import (
     ServingModelRecorder,
     cancel_pending_output,
@@ -83,7 +84,13 @@ from pydantic_ai_harness.subagents._events import (
     bounded_text,
 )
 from pydantic_ai_harness.subagents._models import ModelOption, validate_restriction
-from pydantic_ai_harness.subagents._tasks import NOT_BACKGROUNDABLE, DelegationReports, DelegationTask, DelegationTasks
+from pydantic_ai_harness.subagents._tasks import (
+    NOT_BACKGROUNDABLE,
+    RESUME_DIRECTORY_MISMATCH,
+    DelegationReports,
+    DelegationTask,
+    DelegationTasks,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -129,9 +136,24 @@ CONTROL_TOOL_NAMES = frozenset({'list_tasks', 'message_task', 'answer_task', 'ca
 CREATE_AGENT_TOOL_NAME = 'create_agent'
 
 
-def _backgroundable(ctx: RunContext[AgentDepsT]) -> bool:
+@dataclass(kw_only=True, frozen=True)
+class DelegationWorkspaceRequest:
+    """A delegate's requested working directory, to be resolved by the application."""
+
+    agent_name: str
+    """The delegate whose workspace is being selected."""
+
+    directory: str
+    """The requested path, or the saved resolved path when resuming without a new path."""
+
+
+WorkspaceResolver = Callable[[RunContext[AgentDepsT], DelegationWorkspaceRequest], Awaitable[Workspace]]
+"""Resolve a delegate's requested working directory to a caller-owned workspace."""
+
+
+def _backgroundable(workspace: Workspace) -> bool:
     """Whether a delegation from this run can outlive the tool call: only one in the run's own local workspace can."""
-    return not ctx.workspace.attached or isinstance(ctx.workspace.backend, LocalWorkspaceBackend)
+    return not workspace.attached or isinstance(workspace.backend, LocalWorkspaceBackend)
 
 
 def _vetoed_reply(what: str, event: ParentMessage | AgentCreatedEvent) -> str:
@@ -140,11 +162,6 @@ def _vetoed_reply(what: str, event: ParentMessage | AgentCreatedEvent) -> str:
 
 
 _EventT = TypeVar('_EventT', bound=CapabilityEvent)
-
-
-def _is_request_response_model(model: object) -> TypeIs[Model]:
-    """Narrow a model without losing its provider client type."""
-    return isinstance(model, Model)
 
 
 # Signals that must always reach the parent run, even when a delegate has
@@ -393,6 +410,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         task_control: TaskControl | None = None,
         dynamic_agents: DynamicAgents[AgentDepsT] | None = None,
         created: dict[str, dict[str, SubAgent[AgentDepsT]]] | None = None,
+        workspace_resolver: WorkspaceResolver[AgentDepsT] | None = None,
     ) -> None:
         super().__init__(id=id)
         if dynamic_agents is not None and created is None:
@@ -420,6 +438,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         self._event_stream_handler = event_stream_handler
         self._tool_name = tool_name
         self._contain_errors = contain_errors
+        self._workspace_resolver = workspace_resolver
         self._models: dict[str, ModelOption] = dict(models or {})
         self._include_self = include_self
         self._max_depth = max_depth
@@ -428,11 +447,12 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         # Run-scoped delegation counts, keyed by run_id then sub-agent name.
         # Shared with the capability, which clears each run's entry in wrap_run.
         self._call_counts = call_counts
-        # A delegation to the running agent alone, on its own model, runs the child on the same
-        # durable agent, so under Temporal it runs in the workflow, where the child's model requests
-        # and tools become activities; an activity cannot run an agent (`ctx.model` is unavailable there).
-        # Any other delegate would make its model requests in workflow code, so it stays an activity.
-        self_only = include_self and not self._agents and not self._models
+        # A delegation to the running agent alone, on its own model or a menu option, runs the child on
+        # the same durable agent, so under Temporal it runs in the workflow, where the child's model
+        # requests and tools become activities; an activity cannot run it on the parent run's model
+        # (`ctx.model` is unavailable there). Any other delegate would make its model requests in
+        # workflow code, so it stays an activity.
+        self_only = include_self and not self._agents
         self.add_function(
             self.delegate_task,
             name=tool_name,
@@ -477,6 +497,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             }
         else:
             properties.pop(_MODEL_ARG, None)
+        if self._workspace_resolver is None:
+            properties.pop('working_directory', None)
         if DelegationTasks.current() is None:
             # `SubAgents(task_control=...)` opens an owner for each run, around the tool calls.
             properties.pop('background', None)
@@ -563,6 +585,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         model: str | None = None,
         background: bool = False,
         resume: str | None = None,
+        *,
+        working_directory: str | None = None,
     ) -> str:
         """Delegate a self-contained task to a named sub-agent and return its result.
 
@@ -579,6 +603,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 model. Only offered when a model menu is configured.
             background: Return an acceptance receipt while the child runs, within a task owner.
             resume: Continue the saved child with this ID, within a task owner.
+            working_directory: Start the child in this directory using the configured workspace resolver.
+                On resume, omit it to keep the saved directory, or supply the same resolved directory.
         """
         owner = DelegationTasks.current()
         if owner is not None:
@@ -587,7 +613,14 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             raise ModelRetry('Background execution and resume require an open `DelegationTasks` owner')
         if self._task_control is not None and owner is not None:
             return await self._delegate_controlled(
-                ctx, owner, agent_name, task, model=model, background=background, resume=resume
+                ctx,
+                owner,
+                agent_name,
+                task,
+                model=model,
+                background=background,
+                resume=resume,
+                working_directory=working_directory,
             )
         sub_agent = self._resolve_agent(ctx, agent_name)
 
@@ -600,13 +633,21 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
 
         # Resolved before the call budget is charged, so a bad model key costs nothing.
         key = self._resolve_model_key(agent_name, sub_agent, model)
+        previous = (
+            owner.check_resume(resume, conversation_id=_conversation_id(ctx, owner), agent_name=agent_name)
+            if owner is not None and resume is not None
+            else None
+        )
+        workspace, directory = await self._delegation_workspace(ctx, agent_name, working_directory, previous)
 
         if (exhausted := self._call_budget_message(ctx, agent_name, sub_agent)) is not None:
             return exhausted
         if owner is not None:
 
             async def run(record: DelegationTask) -> str:
-                return await self._run_delegation(ctx, agent_name, sub_agent, task=task, key=key, record=record)
+                return await self._run_delegation(
+                    ctx, agent_name, sub_agent, task=task, key=key, record=record, workspace=workspace
+                )
 
             return await owner.delegate(
                 agent_name=agent_name,
@@ -616,10 +657,37 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 background=background,
                 resume=resume,
                 run=run,
-                backgroundable=_backgroundable(ctx),
+                backgroundable=_backgroundable(workspace),
                 resumable=sub_agent.resumable,
+                working_directory=directory,
             )
-        return await self._run_delegation(ctx, agent_name, sub_agent, task=task, key=key)
+        return await self._run_delegation(ctx, agent_name, sub_agent, task=task, key=key, workspace=workspace)
+
+    async def _delegation_workspace(
+        self,
+        ctx: RunContext[AgentDepsT],
+        agent_name: str,
+        requested: str | None,
+        previous: DelegationTask | None,
+    ) -> tuple[Workspace, str | None]:
+        if previous is not None:
+            if requested is not None and previous.working_directory is None:
+                raise ModelRetry(RESUME_DIRECTORY_MISMATCH)
+            requested = requested if requested is not None else previous.working_directory
+        if requested is None:
+            return ctx.workspace, None
+        if self._workspace_resolver is None:
+            raise ModelRetry('`working_directory` requires `SubAgents(workspace_resolver=...)`.')
+        if isinstance(ctx, DurableRunContext) or ctx.in_durable_context or agent_name in self._remote:
+            raise ModelRetry('`working_directory` is not supported for durable or remote delegations.')
+        workspace = await self._workspace_resolver(
+            ctx, DelegationWorkspaceRequest(agent_name=agent_name, directory=requested)
+        )
+        directory = await workspace.working_dir()
+        if previous is not None and directory != previous.working_directory:
+            # Reject before charging max_calls or publishing task-start events.
+            raise ModelRetry(RESUME_DIRECTORY_MISMATCH)
+        return (ReadOnlyWorkspace(workspace) if ctx.workspace.read_only else workspace), directory
 
     def _resolve_agent(self, ctx: RunContext[AgentDepsT], agent_name: str) -> SubAgent[AgentDepsT]:
         """The delegate `agent_name` names, with the running agent resolved at call time for `include_self`.
@@ -635,8 +703,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         owner = DelegationTasks.current()
         if owner is not None and agent_name in owner.agents:
             return owner.agents[agent_name]
-        # Read only when agents can be created: a durable activity's context may not carry `run_id`.
-        created = self._created.get(ctx.run_id or '', {}) if self._dynamic_agents is not None else {}
+        created = self._created_agents(ctx)
         sub_agent = self._agents.get(agent_name) or created.get(agent_name)
         if sub_agent is None:
             names = [*self._agents, *self._remote, *created]
@@ -655,6 +722,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         model: str | None,
         background: bool,
         resume: str | None,
+        working_directory: str | None,
     ) -> str:
         """Delegate with `SubAgents(task_control=...)`: announce the task, then hand it to the owner."""
         parent_id = DelegationTasks.child_id()
@@ -664,7 +732,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             previous = _resumable_here(owner, resume, conversation_id=conversation_id, agent_name=agent_name)
             if model is None:
                 model = previous.model
-        backgroundable = _backgroundable(ctx)
+        workspace, directory = await self._delegation_workspace(ctx, agent_name, working_directory, previous)
+        backgroundable = _backgroundable(workspace)
         if background and not backgroundable:
             raise ModelRetry(NOT_BACKGROUNDABLE)
         remote = self._remote.get(agent_name)
@@ -727,7 +796,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                     telemetry=self._telemetry(ctx),
                 )
             assert sub_agent is not None
-            return await self._run_controlled(ctx, owner, record, sub_agent, key=key, start=start)
+            return await self._run_controlled(ctx, owner, record, sub_agent, key=key, start=start, workspace=workspace)
 
         after = self._auto_background_after
         async with task_group() as group:
@@ -745,6 +814,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                     backgroundable=backgroundable,
                     task_id=task_id,
                     resumable=resumable,
+                    working_directory=directory,
                 )
             finally:
                 # The timer only counts while this call waits for the task.
@@ -776,6 +846,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         *,
         key: str | None,
         start: TaskRequestEvent,
+        workspace: Workspace,
     ) -> str:
         """Run a local task and report how it settled as task events."""
         link = LocalTaskLink(
@@ -785,7 +856,14 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         task_id, agent_name = record.id, record.agent_name
         async with reporting_settlement(owner, record):
             output = await self._run_delegation(
-                ctx, agent_name, sub_agent, task=record.prompt, key=key, record=record, extra_capabilities=[link]
+                ctx,
+                agent_name,
+                sub_agent,
+                task=record.prompt,
+                key=key,
+                record=record,
+                extra_capabilities=[link],
+                workspace=workspace,
             )
         if record.outcome == 'ok':
             completed = TaskCompletedEvent(task_id=task_id, agent_name=agent_name, output=output)
@@ -807,10 +885,13 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             await owner.notify(record, event)
         return event
 
-    def _telemetry(self, ctx: RunContext[AgentDepsT]) -> TaskTelemetry:
+    def _created_agents(self, ctx: RunContext[AgentDepsT]) -> dict[str, SubAgent[AgentDepsT]]:
+        """The sub-agents this run created with `create_agent`."""
         # Read only when agents can be created: a durable activity's context may not carry `run_id`.
-        created = self._created.get(ctx.run_id or '', {}) if self._dynamic_agents is not None else {}
-        return TaskTelemetry.of(ctx, model_named=frozenset(created))
+        return self._created.get(ctx.run_id or '', {}) if self._dynamic_agents is not None else {}
+
+    def _telemetry(self, ctx: RunContext[AgentDepsT]) -> TaskTelemetry:
+        return TaskTelemetry.of(ctx, model_named=frozenset(self._created_agents(ctx)))
 
     def _owner(self) -> DelegationTasks:
         owner = DelegationTasks.current()
@@ -1006,6 +1087,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         *,
         task: str,
         key: str | None,
+        workspace: Workspace,
         record: DelegationTask | None = None,
         extra_capabilities: Sequence[AbstractCapability[Any]] = (),
     ) -> str:
@@ -1056,30 +1138,10 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         else:
             own_budget = False
             child_usage = None if self._forward_usage else RunUsage()
-            usage_limits = ctx.usage_limits if owner is not None else None
+            # Shared usage is checked against the parent's limits, so they bound the whole tree.
+            usage_limits = ctx.usage_limits if owner is not None or self._forward_usage else None
 
-        # A selected menu option decides the model and how it runs. Without one, a
-        # sub-agent with no model of its own (e.g. one loaded from disk) inherits the
-        # parent run's model, and one that brought its own keeps it. The running agent runs on
-        # the parent run's model, which may be a run-level override of the agent's own.
-        run_model: Model | KnownModelName | str | None
-        settings: ModelSettings | None
-        if key is not None:
-            option = self._models[key]
-            run_model = option.model
-            settings = option.settings
-        else:
-            # `ctx.model` is an `AbstractModel`; only a request-response `Model` can drive a
-            # sub-agent run. When the parent run uses something else (a realtime model), fall
-            # back to `None` so the sub-agent uses its own default rather than being handed a
-            # model it cannot run with.
-            ctx_model = ctx.model
-            run_model = (
-                ctx_model
-                if (is_self or sub_agent.agent.model is None) and _is_request_response_model(ctx_model)
-                else None
-            )
-            settings = None
+        run_model, settings = self._run_model(ctx, sub_agent, key=key, is_self=is_self)
         run = sub_agent.agent.run(
             task,
             deps=ctx.deps,
@@ -1089,7 +1151,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             usage_limits=usage_limits,
             toolsets=toolsets,
             capabilities=capabilities,
-            workspace=ReadOnlyWorkspace(ctx.workspace) if sub_agent.read_only else ctx.workspace,
+            workspace=ReadOnlyWorkspace(workspace) if sub_agent.read_only else workspace,
             event_stream_handler=partial(self._stream_child, owner=owner, record=record)
             if record is not None
             else self._event_stream_handler,
@@ -1140,6 +1202,29 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if ended.cause is not None:
             raise ModelRetry(ended.output) from ended.cause
         return ended.output
+
+    def _run_model(
+        self, ctx: RunContext[AgentDepsT], sub_agent: SubAgent[AgentDepsT], *, key: str | None, is_self: bool
+    ) -> tuple[Model | KnownModelName | str | None, ModelSettings | None]:
+        """The model and settings one delegation runs on.
+
+        A selected menu option decides the model and how it runs. Without one, a
+        sub-agent with no model of its own (e.g. one loaded from disk) inherits the
+        parent run's model, and one that brought its own keeps it. The running agent runs on
+        the parent run's model, which may be a run-level override of the agent's own.
+        """
+        if key is not None:
+            option = self._models[key]
+            return option.model, option.settings
+        # Read only when inherited: a durable activity's context has no `model`.
+        if not (is_self or sub_agent.agent.model is None):
+            return None, None
+        # `ctx.model` is an `AbstractModel`; only a request-response `Model` can drive a
+        # sub-agent run. When the parent run uses something else (a realtime model), fall
+        # back to `None` so the sub-agent uses its own default rather than being handed a
+        # model it cannot run with.
+        ctx_model = ctx.model
+        return (ctx_model if is_request_response_model(ctx_model) else None), None
 
     async def _stream_child(
         self,

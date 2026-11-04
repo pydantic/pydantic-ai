@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Self
@@ -13,7 +13,8 @@ import anyio.lowlevel
 import pytest
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, RunContext, capture_run_messages
-from pydantic_ai.capabilities import AbstractCapability, Hooks, WrapperCapability
+from pydantic_ai.capabilities import AbstractCapability, Hooks, ModelFallback, WrapperCapability
+from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -37,6 +38,18 @@ class _RecordingModel(WrapperModel):
     ) -> ModelResponse:
         self.calls.append(f'{self.name} -> {_describe(self.wrapped)}')
         return await super().request(messages, model_settings, model_request_parameters)
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        self.calls.append(f'{self.name} -> {_describe(self.wrapped)}')
+        async with super().request_stream(messages, model_settings, model_request_parameters, run_context) as stream:
+            yield stream
 
 
 def _describe(model: Model) -> str:
@@ -109,6 +122,30 @@ async def test_a_deferred_capability_does_not_wrap_the_model() -> None:
 
     await agent.run('Hello')
     assert calls == []
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_the_wrapper_applies_to_each_attempt(stream: bool) -> None:
+    """Each attempt is wrapped around the model serving it, including the one `ModelFallback` moved to."""
+    calls: list[str] = []
+
+    def fail(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ModelAPIError('primary', 'down')
+
+    async def fail_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        raise ModelAPIError('primary', 'down')
+        yield  # pragma: no cover
+
+    primary = FunctionModel(fail, stream_function=fail_stream, model_name='primary')
+    backup = TestModel(custom_output_text='backup')
+    agent = Agent(primary, capabilities=[_Wrap('wrapper', calls), ModelFallback(backup)])
+
+    if stream:
+        async with agent.run_stream('Hello') as result:
+            assert await result.get_output() == 'backup'
+    else:
+        assert (await agent.run('Hello')).output == 'backup'
+    assert calls == ['wrapper -> primary', 'wrapper -> test']
 
 
 class _ScopedModel(WrapperModel):
@@ -468,3 +505,68 @@ async def test_a_stream_the_consumer_failed_on_is_recorded_without_entering_the_
                                 raise ValueError('Consumer failed')
     assert events == ['enter', ('stream', True), 'exit']
     assert isinstance(partial := messages[-1], ModelResponse) and partial.state == 'interrupted'
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_each_attempts_wrapper_is_entered_around_its_own_call(stream: bool) -> None:
+    """The failed primary's wrapper and the fallback's are each entered around their own attempt, and only once."""
+    events: list[object] = []
+
+    def fail(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        events.append('primary fails')
+        raise ModelAPIError('primary', 'down')
+
+    async def fail_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        events.append('primary fails')
+        raise ModelAPIError('primary', 'down')
+        yield  # pragma: no cover
+
+    primary = _RecordingLifecycle(events)
+    agent = Agent(
+        FunctionModel(fail, stream_function=fail_stream, model_name='primary'),
+        capabilities=[_ScopedSingleUsePerWrapper(events), ModelFallback(primary)],
+    )
+    if stream:
+        async with agent.run_stream('Hello') as result:
+            assert await result.get_output() == 'success (no tool calls)'
+        served = [('stream', True), ('streamed', True)]
+    else:
+        assert (await agent.run('Hello')).output == 'success (no tool calls)'
+        served = [('request', True)]
+    assert events == [
+        ('enter', 'primary'),
+        *([('stream', True)] if stream else [('request', True)]),
+        'primary fails',
+        ('exit', 'primary'),
+        # The run enters the fallback model once, when it's first attempted, and exits it with the run. Its wrapper is
+        # entered around its own call, leaving the model it wraps to the run.
+        'base enter',
+        ('enter', 'test'),
+        *served,
+        ('exit', 'test'),
+        'base exit',
+    ]
+
+
+class _NamedScopedModel(_ScopedModel):
+    """Records which model it wraps on entry and exit, and refuses being entered twice."""
+
+    async def __aenter__(self) -> Self:
+        assert not self.entered, 'entered twice'
+        self.events.append(('enter', self.wrapped.model_name))
+        self.entered = True
+        await WrapperModel.__aenter__(self)
+        return self
+
+    async def __aexit__(self, *args: Any) -> bool | None:
+        self.events.append(('exit', self.wrapped.model_name))
+        self.entered = False
+        return await WrapperModel.__aexit__(self, *args)
+
+
+@dataclass
+class _ScopedSingleUsePerWrapper(AbstractCapability[Any]):
+    events: list[object]
+
+    def get_wrapper_model(self, model: Model) -> Model | None:
+        return _NamedScopedModel(model, self.events)

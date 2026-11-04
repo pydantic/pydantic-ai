@@ -16,6 +16,7 @@ from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, Proc
 from pydantic_ai.messages import (
     AgentInstructionSource,
     CapabilityInstructionSource,
+    CapabilityLoadDeltaPart,
     CompactionPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
@@ -31,6 +32,7 @@ from pydantic_ai.messages import (
     TextPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
+    ToolReturnPart,
     ToolsetInstructionSource,
     UserPromptPart,
     sanitize_messages,
@@ -72,6 +74,7 @@ def counter_capability() -> Capability[Counter]:
 
 LOAD = ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'counter'}, tool_call_id='load')])
 BUMP = ModelResponse(parts=[ToolCallPart('bump', {}, tool_call_id='bump')])
+LOAD_IN_CODE = ModelResponse(parts=[ToolCallPart('load_in_code', {}, tool_call_id='code_load')])
 
 
 @dataclass
@@ -118,6 +121,16 @@ def scripted_agent(
         return 'bumped'
 
     return agent
+
+
+def load_records(messages: list[ModelMessage]) -> list[CapabilityLoadDeltaPart]:
+    return [
+        part
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, CapabilityLoadDeltaPart)
+    ]
 
 
 def deltas(messages: list[ModelMessage]) -> list[InstructionDeltaPart]:
@@ -358,6 +371,55 @@ async def test_new_instruction_window_keeps_loaded_changes():
 
     second = await scripted_agent(received=received, instructions='Be briefer.').run(
         'Again.', deps=Counter(1), message_history=first.all_messages()
+    )
+    assert received.instructions[-1] != received.instructions[0]
+    assert deltas(second.new_messages()) == []
+    assert received.statements[-1] == loaded_change
+
+
+def code_load_agent(
+    *script: ModelResponse,
+    received: Received,
+    instructions: str = 'Be brief.',
+) -> Agent[Counter, str]:
+    """Like `scripted_agent`, but `load_in_code` loads the capability in code, not through a call/return pair."""
+    agent = scripted_agent(*script, received=received, instructions=instructions)
+
+    @agent.tool
+    def load_in_code(ctx: RunContext[Counter]) -> str:
+        """Load the counting capability."""
+        ctx.load_capability('counter')
+        return 'loaded'
+
+    return agent
+
+
+async def test_code_loaded_capability_survives_new_instruction_window():
+    """A code-loaded block also survives a new instruction window, and a repeat code load is a no-op."""
+    received = Received()
+    first = await code_load_agent(LOAD_IN_CODE, received=received).run('Count.', deps=Counter())
+    loaded_change = received.statements[-1]
+    assert loaded_change == [f'<context id="capability:counter">\n{RULES}\n\nThe count is 0.\n</context>']
+
+    second = await code_load_agent(LOAD_IN_CODE, received=received).run(
+        'Again.', deps=Counter(), message_history=first.all_messages(), instructions='Be briefer.'
+    )
+    assert received.instructions[-1] != received.instructions[0]
+    assert len(load_records(first.new_messages())) == 1
+    assert load_records(second.new_messages()) == []
+    assert deltas(second.new_messages()) == []
+    assert received.statements[-1] == loaded_change
+
+
+async def test_code_loaded_capability_survives_changed_static_instructions():
+    """Changing the agent's static instructions opens the same window, and a code-loaded block survives it."""
+    received = Received()
+    first = await code_load_agent(LOAD_IN_CODE, received=received).run('Count.', deps=Counter())
+    loaded_change = received.statements[-1]
+    assert loaded_change == [f'<context id="capability:counter">\n{RULES}\n\nThe count is 0.\n</context>']
+
+    second = await code_load_agent(received=received, instructions='Be briefer.').run(
+        'Again.', deps=Counter(), message_history=first.all_messages()
     )
     assert received.instructions[-1] != received.instructions[0]
     assert deltas(second.new_messages()) == []
@@ -766,3 +828,79 @@ async def test_a_loaded_capability_made_eager_hands_its_block_to_the_prefix():
         [],
     ]
     assert received.statements[-1][-1] == '<context id="capability:counter">\nThe value is C.\n</context>'
+
+
+async def test_hook_that_adds_a_load_states_the_instructions_with_the_tools():
+    """A `before_model_request` hook that adds a load exchange gets the instructions stated where the tools are revealed.
+
+    The capability is loaded after the request resolved the loaded capabilities' instructions, so its own are
+    resolved once the hooks have run.
+    """
+
+    def tallying_counter() -> Capability[Counter]:
+        capability = counter_capability()
+
+        @capability.tool_plain
+        def tally() -> str:
+            """Tally the count."""
+            return 'tallied'
+
+        return capability
+
+    loaded = await scripted_agent(LOAD, received=Received(), capabilities=[tallying_counter()]).run(
+        'Count.', deps=Counter()
+    )
+    # The exchange a load leaves, without the statement the framework adds after it.
+    exchange = [
+        replace(
+            message,
+            parts=[
+                part
+                for part in message.parts
+                if isinstance(part, LoadCapabilityCallPart | LoadCapabilityReturnPart | ToolAvailabilityDeltaPart)
+            ],
+        )
+        for message in loaded.all_messages()
+        if any(isinstance(part, LoadCapabilityCallPart | LoadCapabilityReturnPart) for part in message.parts)
+    ]
+
+    def preload(messages: list[ModelMessage]) -> list[ModelMessage]:
+        if any(isinstance(part, LoadCapabilityReturnPart) for message in messages for part in message.parts):
+            return messages
+        *earlier, tail = messages
+        return [*earlier, *exchange, tail]
+
+    sent: list[tuple[list[str], list[str]]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        statements = [
+            part.content
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, SystemPromptPart) and '<context' in part.content
+        ]
+        sent.append((sorted(info.model_request_parameters.revealed_tool_names or ()), statements))
+        if len(sent) == 1:
+            # The tool the hook's load revealed can be called on that same request.
+            return ModelResponse(parts=[ToolCallPart('tally', {}, tool_call_id='tally')])
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    agent = Agent(
+        FunctionModel(model_fn, profile=ModelProfile(supports_inline_system_prompts=True)),
+        deps_type=Counter,
+        capabilities=[tallying_counter(), ProcessHistory(preload)],
+    )
+    first = await agent.run('Count.', deps=Counter())
+    statement = f'<context id="capability:counter">\n{RULES}\n\nThe count is 0.\n</context>'
+    assert sent == [(['tally'], [statement]), (['tally'], [statement])]
+    assert any(
+        isinstance(part, ToolReturnPart) and part.content == 'tallied'
+        for message in first.all_messages()
+        for part in message.parts
+    )
+
+    # Stated once: the next run finds the statement in history.
+    second = await agent.run('Again.', deps=Counter(), message_history=first.all_messages())
+    assert [delta.content for delta in deltas(second.all_messages())] == [f'{RULES}\n\nThe count is 0.']
+    assert sent[-1] == (['tally'], [statement])

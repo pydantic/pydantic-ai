@@ -21,8 +21,8 @@ from pydantic_clai2.mcp import (
     TokenStore,
     servers_menu,
 )
-from pydantic_clai2.mcp._runtime import ServerEntry, State
-from pydantic_clai2.mcp._settings import Servers
+from pydantic_clai2.mcp.runtime import ServerEntry, State
+from pydantic_clai2.mcp.settings import Servers
 from pydantic_clai2.plugins.menus import FieldRow, Option, SettingsMenu
 from tests.clai2.conftest import stored_accounts
 from tests.clai2.dialog_script import Answer, Back, Confirm, Finish, Pick, ScriptedDialogs, Type

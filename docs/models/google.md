@@ -71,6 +71,10 @@ See [Google Cloud](google-cloud.md) for Gemini and Claude access, authentication
 - <span id="api-key"></span>[API Key](google-cloud.md#api-key)
 - <span id="customizing-location-or-project"></span>[Customizing Location or Project](google-cloud.md#customizing-location-or-project)
 
+### Switching between the Gemini API and Google Cloud
+
+The Gemini API and Google Cloud reject each other's [thought signatures](https://ai.google.dev/gemini-api/docs/thought-signatures), even though a [`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] is named `google` on either. So when history from one continues on the other, for example in a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] that falls back from Google Cloud to the Gemini API, [`GoogleModel`][pydantic_ai.models.google.GoogleModel] sends the documented `skip_thought_signature_validator` signature in place of the other transport's, which both accept, and thinking as text. It tells the transports apart by the response's [`canonical_system`][pydantic_ai.messages.ModelResponse.canonical_system], which `GoogleModel` always sets: `google` for a Gemini API response and `google-cloud` for a Google Cloud one, whatever the base URL. For history recorded before Pydantic AI stored it, a first-party Gemini API or Google Cloud `provider_url` decides, and one through a proxy URL is still sent with its signatures to a model with the same provider name. Google Cloud and the Pydantic AI Gateway's Google route, which uses Google Cloud, accept each other's signatures. See [Sending history to another provider](../message-history.md#sending-history-to-another-provider).
+
 ### Service tier (`service_tier`, `google_cloud_service_tier`)
 
 The unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] field works on both Google subsystems, with [`google_cloud_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_cloud_service_tier] available for finer Google Cloud routing control. The provider-specific field wins when both are set.
@@ -153,7 +157,14 @@ agent = Agent(model)
 The client the Google providers create, including through the [Gateway](../gateway.md), has a 20-minute timeout, which
 [long decode](#long-decode) needs. For a client you pass, `google-genai` applies the client's read timeout, or 600
 seconds if it has none, to every phase of each request, so give it a read timeout of at least 20 minutes for long-decode
-models.
+models. A client created without a `timeout` has httpx's default of 5 seconds, which is too short for most model
+requests, so the providers warn about it.
+
+`GoogleModel` also tells Google how long each whole request may take, with the `X-Server-Timeout` header: the client's
+read timeout, or 20 minutes if that's longer. A read timeout only bounds the wait between bytes, so a response that
+streams for longer than it isn't cut off by the server. A per-request [`timeout`][pydantic_ai.settings.ModelSettings.timeout]
+doesn't change the header. To set a different server deadline, send the header yourself in
+[`extra_headers`][pydantic_ai.settings.ModelSettings.extra_headers].
 
 The Google providers also accept a legacy `httpx.AsyncClient` during Pydantic AI v2, but emit a deprecation warning. Use `httpx2.AsyncClient` for new code; legacy HTTPX client support will be removed in Pydantic AI v3.
 

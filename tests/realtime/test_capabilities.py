@@ -338,6 +338,34 @@ async def test_deferred_instruction_capability_loads_through_the_tool() -> None:
     assert 'Speak like a pirate at all times.' in str(result_part.content)
 
 
+async def test_load_capability_from_tool_is_rejected_in_a_session() -> None:
+    """Loading a capability from code isn't supported in a session; the model's `load_capability` tool is.
+
+    The `UserError` ends the session, like any other `UserError` a session tool raises.
+    """
+
+    class Pirate(AbstractCapability[None]):
+        id = 'pirate'
+        defer_loading = True
+
+        def get_instructions(self) -> str | None:
+            return 'Speak like a pirate at all times.'  # pragma: no cover
+
+    agent = Agent()
+
+    @agent.tool
+    async def open_case(ctx: RunContext[object]) -> str:
+        ctx.load_capability('pirate')
+        return 'Case opened.'  # pragma: no cover
+
+    model = _RecordingModel(
+        connection_events=[ToolCall(tool_call_id='tc_1', tool_name='open_case', args='{}'), ResponseDone()],
+    )
+
+    with pytest.raises(UserError, match=r'`ctx.load_capability\(\)` is not supported in a realtime session\.'):
+        await _drain(agent, model, capabilities=[Pirate()])
+
+
 async def test_deferred_capability_without_instructions_loads_with_only_the_message() -> None:
     """A deferred capability with nothing to say still loads in a session, with no `instructions` in the return."""
 
@@ -747,6 +775,38 @@ async def test_run_lifecycle_hooks_fire_for_a_session() -> None:
     assert session.result.new_messages() == session.new_messages()
 
 
+async def test_closing_generator_that_owns_a_session_drains_wrap_run() -> None:
+    """Closing a generator suspended inside a session cancels `wrap_run` and finishes its cleanup first."""
+    calls: list[str] = []
+
+    class LifecycleCapability(AbstractCapability[None]):
+        async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[str]:
+            try:
+                return await handler()
+            except asyncio.CancelledError:
+                calls.append('wrap_run:cancelled')
+                raise
+            finally:
+                await asyncio.sleep(0)
+                calls.append('wrap_run:finally')
+
+    agent = Agent(capabilities=[LifecycleCapability()], deps_type=type(None))
+    sessions: list[RealtimeSession] = []
+
+    async def session_owner() -> AsyncGenerator[None]:
+        async with agent.realtime(_RecordingModel(connection_events=[])).session() as session:
+            sessions.append(session)
+            yield
+
+    generator = session_owner()
+    await anext(generator)
+    await generator.aclose()
+    calls.append('closed')
+
+    assert calls == ['wrap_run:cancelled', 'wrap_run:finally', 'closed']
+    assert sessions[0].result is None
+
+
 async def test_wrap_run_recovers_session_error() -> None:
     """`wrap_run` recovery suppresses a session error and supplies `session.result`."""
 
@@ -951,9 +1011,11 @@ async def test_wrap_run_context_is_ambient_throughout_session() -> None:
         async for _ in session:
             pass
 
-    assert seen == [
+    # The instructions are resolved at connect, then again before the tool's result and after the response.
+    assert seen[:2] == [('instructions', 'managed prompt'), ('caller', 'managed prompt')]
+    assert sorted(seen[2:]) == [
         ('instructions', 'managed prompt'),
-        ('caller', 'managed prompt'),
+        ('instructions', 'managed prompt'),
         ('tool', 'managed prompt'),
     ]
     assert ambient.get(None) is None
@@ -1500,6 +1562,22 @@ async def test_capability_with_uncalled_hook_warns() -> None:
         await _drain(Agent[None, str](capabilities=[_ModelRequestCap()], deps_type=type(None)), _RecordingModel())
     assert [str(warning.message) for warning in record] == [
         _uncalled_hooks_warning('`_ModelRequestCap`', '`before_model_request`')
+    ]
+
+
+async def test_prepare_model_request_hook_warns() -> None:
+    """A session makes no model request attempts, so a `prepare_model_request` hook never runs."""
+
+    async def prepare(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
+        return request_context  # pragma: no cover
+
+    with pytest.warns(UserWarning) as record:
+        await _drain(
+            Agent[None, str](capabilities=[Hooks(prepare_model_request=prepare)], deps_type=type(None)),
+            _RecordingModel(),
+        )
+    assert [str(warning.message) for warning in record] == [
+        _uncalled_hooks_warning('`Hooks`', '`prepare_model_request`')
     ]
 
 

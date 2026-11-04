@@ -16,7 +16,7 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.ui import telemetry
 
 if TYPE_CHECKING:
-    from pydantic_clai2.runtime._session import FamilyDefaults
+    from pydantic_clai2.runtime.session import FamilyDefaults
 
 
 @runtime_checkable

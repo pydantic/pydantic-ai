@@ -28,6 +28,7 @@ from pydantic_clai2.commands import Command
 from pydantic_clai2.plugins import (
     CommandEnd,
     ConversationChanged,
+    ForkEnd,
     InstallProgress,
     Plugin,
     PluginHost,
@@ -35,6 +36,7 @@ from pydantic_clai2.plugins import (
     TaskProgress,
     TurnEnd,
 )
+from pydantic_clai2.runtime.permissions import approval_handler
 from pydantic_clai2.ui.browser import open_browser
 
 USAGE = 'Usage: /web [start|stop|status]'
@@ -73,7 +75,7 @@ class WebSettings(BaseModel):
     open_browser: bool = True
     """Open the browser when the server starts."""
     ask_user: bool = True
-    """Answer the model's questions in the browser too, taking over from the `ask_user` plugin while loaded."""
+    """Answer the model's questions and `/permissions` approvals in the browser too, taking over from `ask_user` while loaded."""
 
 
 class WebPlugin(Plugin[WebSettings]):
@@ -100,7 +102,9 @@ class WebPlugin(Plugin[WebSettings]):
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
         observer = Observer(self.service)
-        return (observer, AskUser(answerer=self.service.answerer)) if self.settings.ask_user else (observer,)
+        if not self.settings.ask_user:
+            return (observer,)
+        return (observer, AskUser(answerer=self.service.answerer), approval_handler(self.service.answerer.approve))
 
     def get_commands(self) -> Sequence[Command]:
         return (
@@ -204,6 +208,9 @@ class WebPlugin(Plugin[WebSettings]):
 
     async def on_task_progress(self, event: TaskProgress) -> None:
         self.service.task_progress(event)
+
+    async def on_fork_end(self, event: ForkEnd) -> None:
+        self.service.fork_ended(event)
 
     async def on_install_progress(self, event: InstallProgress) -> None:
         self.service.install_progress(event)

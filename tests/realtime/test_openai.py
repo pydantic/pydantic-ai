@@ -81,7 +81,7 @@ from pydantic_ai.realtime import (
     WebRTCSession,
 )
 from pydantic_ai.realtime._instrumentation import SessionInstrumentation
-from pydantic_ai.realtime._lifecycle import ResponseStarted, UserTurnEnded, UserTurnStarted
+from pydantic_ai.realtime._lifecycle import ResponseEnded, ResponseStarted, StaleEvent, UserTurnEnded, UserTurnStarted
 from pydantic_ai.realtime._openai_protocol import (
     RealtimeHandshakeError,
     _user_content_items,  # pyright: ignore[reportPrivateUsage]
@@ -137,8 +137,11 @@ with try_import() as imports_successful:
     from openai.types.realtime.realtime_audio_config_output import Voice as SDKVoice, VoiceID
 
     from pydantic_ai.models.openai import _map_usage as _map_standard_usage  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.providers import Provider
+    from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
     from pydantic_ai.realtime import openai as rt_openai
     from pydantic_ai.realtime.openai import (
         KnownOpenAIRealtimeVoiceName,
@@ -3082,7 +3085,7 @@ async def test_function_call_only_response_without_usage_finalizes_before_answer
     assert isinstance(tool_result, ModelRequest)
     assert isinstance(tool_result.parts[0], ToolReturnPart)
     assert isinstance(answer, ModelResponse)
-    assert answer.parts == [SpeechPart(speaker='assistant', transcript='Sunny')]
+    assert answer.parts == [SpeechPart(speaker='assistant', transcript='Sunny', id='answer-1', provider_name='openai')]
     assert answer.usage == RequestUsage(output_tokens=3)
 
 
@@ -3131,7 +3134,7 @@ async def test_session_stamps_openai_response_metadata(
     assert response.provider_details == expected_details
     speech = response.parts[0]
     assert isinstance(speech, SpeechPart)
-    assert (speech.id, speech.provider_name) == (None, None)
+    assert (speech.id, speech.provider_name) == ('item-1', 'openai')
 
 
 @pytest.mark.parametrize(
@@ -3176,6 +3179,15 @@ class DroppingWebSocket(FakeWebSocket):
     async def __aiter__(self) -> AsyncIterator[Any]:
         raise rt_openai.websockets.ConnectionClosed(None, None)
         yield  # pragma: no cover  (makes this an async generator)
+
+
+class _DropAfterFrames(FakeWebSocket):
+    """Yields its frames, then drops abnormally."""
+
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        while self._incoming:
+            yield self._incoming.pop(0)
+        raise rt_openai.websockets.ConnectionClosed(None, None)
 
 
 class _DroppableAfterHandshake(FakeWebSocket):
@@ -3692,6 +3704,40 @@ async def test_reconnect_does_not_re_solicit_a_response_that_was_streaming() -> 
     events = [e async for e in conn]
     assert [type(e).__name__ for e in events] == ['RealtimeSessionReconnectEvent', 'RealtimeSessionErrorEvent']
     assert not any(json.loads(frame).get('type') == 'response.create' for frame in replacement.sent)
+
+
+async def test_reconnect_closes_the_reply_it_orphaned() -> None:
+    # The re-dialed socket replays only finalized turns, so a reply that was streaming when the old one dropped is
+    # never continued and its `response.done` never comes (verified live on OpenAI, Azure and xAI). The lifecycle
+    # ends it as lost; the connection also closes it on the codec stream with an interrupted `ResponseDone` ahead
+    # of the reconnect event, the boundary messages queued behind the reply wait for (#7192).
+    created = json.dumps({'type': 'response.created', 'response': {'id': 'resp-1'}})
+    delta = json.dumps({'type': 'response.output_text.delta', 'response_id': 'resp-1', 'delta': 'once upon'})
+    replacements = iter([FakeWebSocket([])])
+
+    async def dial() -> Any:
+        try:
+            return next(replacements)
+        except StopIteration:
+            raise OSError('server is down')
+
+    conn = OpenAIRealtimeConnection(
+        _DropAfterFrames([created, delta]),  # type: ignore[arg-type]
+        dial=dial,
+        reconnect={'base_delay': 0.0, 'max_attempts': 1},
+    )
+
+    frames = [frame async for frame in conn.frames()]
+    reconnect_frame = next(
+        frame for frame in frames if any(isinstance(e, RealtimeSessionReconnectEvent) for e in frame)
+    )
+    assert reconnect_frame == snapshot(
+        [
+            ResponseEnded(response_id='resp-1', status='lost'),
+            StaleEvent(event=ResponseDone(interrupted=True)),
+            RealtimeSessionReconnectEvent(),
+        ]
+    )
 
 
 async def test_reconnect_replay_failure_consumes_an_attempt() -> None:
@@ -4545,10 +4591,24 @@ async def test_custom_provider_base_url_derives_websocket_url(monkeypatch: pytes
     assert fake_connect.headers == {'Authorization': 'Bearer k'}
 
 
-def test_azure_provider_is_rejected() -> None:
-    from pydantic_ai.providers.azure import AzureProvider
+@pytest.mark.parametrize('kind', ['azure', 'renamed-azure', 'compatible-named-azure'])
+def test_azure_provider_is_rejected(kind: str) -> None:
+    """An `AzureProvider`, renamed or not, and any other provider named `azure` are pointed at `AzureRealtimeModel`."""
 
-    provider = AzureProvider(azure_endpoint='https://res.openai.azure.com/openai/v1/', api_key='k')
+    class RenamedAzureProvider(AzureProvider):
+        @property
+        def name(self) -> str:
+            return 'my-azure'
+
+    endpoint = 'https://res.openai.azure.com/openai/v1/'
+    provider: Provider[AsyncOpenAI]
+    if kind == 'azure':
+        provider = AzureProvider(azure_endpoint=endpoint, api_key='k')
+    elif kind == 'renamed-azure':
+        provider = RenamedAzureProvider(azure_endpoint=endpoint, api_key='k')
+        assert provider.name == 'my-azure'
+    else:
+        provider = OpenAICompatibleProvider('azure', base_url=endpoint, api_key='k')
     with pytest.raises(UserError, match='Azure OpenAI is not supported'):
         OpenAIRealtimeModel('gpt-realtime', provider=provider)
 
@@ -5518,15 +5578,6 @@ async def test_a_chat_spans_input_is_the_conversation_ahead_of_its_response(monk
     [(input_messages, response)] = ended
     assert response is not None
     assert [type(message).__name__ for message in input_messages] == ['ModelRequest']
-
-
-class _DropAfterFrames(FakeWebSocket):
-    """Yields its frames after the handshake, then drops abnormally."""
-
-    async def __aiter__(self) -> AsyncIterator[Any]:
-        while self._incoming:
-            yield self._incoming.pop(0)
-        raise rt_openai.websockets.ConnectionClosed(None, None)
 
 
 @pytest.mark.parametrize('transcript', ['Weather?', None])

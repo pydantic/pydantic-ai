@@ -26,12 +26,14 @@ from pydantic_clai2.builtin_plugins.web.app import HEADER, create_app
 from pydantic_clai2.builtin_plugins.web.host_session import HostSessions
 from pydantic_clai2.builtin_plugins.web.protocol import PROTOCOL
 from pydantic_clai2.builtin_plugins.web.service import Observer, WebService
+from pydantic_clai2.commands import Command
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, Transcript
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 
+from .test_live_runtimes import until
 from .test_web import HOSTS, TOKEN, QuestionModel, static_dir
 from .test_web_parts import REQUEST
 
@@ -411,6 +413,102 @@ def test_session_routes(make_fleet: MakeFleet) -> None:
         messages(socket, until=kind('turn_ended', session=q))
 
 
+def test_archiving_closes_an_idle_session_no_browser_shows(make_fleet: MakeFleet) -> None:
+    """An idle session opened earlier closes as it is archived; one a browser shows, or one running, is refused."""
+    gate: list[Gate] = []
+
+    def agents(portal: BlockingPortal) -> dict[str, Agent[None, str]]:
+        gate.append(Gate(portal, 'c'))
+        return {'c': gate[0].agent()}
+
+    fleet = make_fleet(agents)
+    a = fleet.launch.session.conversation_id
+    b = fleet.new('b')
+    c = fleet.new('c')
+    with fleet.socket() as socket:
+        connected(socket)
+        watch(socket, b)
+        messages(socket, until=snapshot_of(b))
+        fleet.post(f'/api/sessions/{b}/input', {'text': 'hi'})
+        messages(socket, until=kind('turn_ended', session=b))
+        # `turn_ended` is sent as the run returns; b handles the turn's end a while longer, so it is not idle yet.
+        fleet.portal.call(until, fleet.launch.process.live, lambda: fleet.runtimes['b'].idle)
+        refused = fleet.post('/api/sessions/archive', {'ids': [b]})
+        assert (refused.status_code, 'is open in another live session' in refused.json()['detail']) == (400, True)
+        refused = fleet.post('/api/sessions/archive', {'ids': [a]})
+        assert (refused.status_code, 'current session cannot be archived' in refused.json()['detail']) == (400, True)
+        fleet.post(f'/api/sessions/{c}/input', {'text': 'go'})
+        fleet.portal.call(gate[0].started.wait)
+        watch(socket, a)
+        messages(socket, until=snapshot_of(a))
+        assert fleet.post('/api/sessions/archive', {'ids': [b]}).status_code == 204
+        assert b not in [session.conversation.conversation_id for session in fleet.service.live.listing()]
+        saved = fleet.portal.call(lambda: fleet.launch.process.conversations.get(conversation_id=b))
+        assert saved.summary.archived_at is not None
+        assert fleet.post('/api/sessions/archive', {'ids': [c]}).status_code == 400, 'a running session stays'
+        fleet.portal.call(gate[0].release.set)
+
+
+def test_archiving_keeps_a_session_whose_background_fork_runs(make_fleet: MakeFleet) -> None:
+    """An unshown session with no turn running stays live while its `/fork` runs, so archiving it is refused."""
+    gate: list[Gate] = []
+
+    def agents(portal: BlockingPortal) -> dict[str, Agent[None, str]]:
+        gate.append(Gate(portal, 'b'))
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            if any(isinstance(part, UserPromptPart) and part.content == 'slow' for part in messages[-1].parts):
+                gate[0].started.set()
+                await gate[0].release.wait()
+            yield 'ok'
+
+        return {'b': Agent(FunctionModel(stream_function=stream), deps_type=type(None))}
+
+    fleet = make_fleet(agents)
+    a = fleet.launch.session.conversation_id
+    b = fleet.new('b')
+    session_b = fleet.service.session(b).session
+    with fleet.socket() as socket:
+        connected(socket)
+        watch(socket, b)
+        fleet.post(f'/api/sessions/{b}/input', {'text': 'hi'})
+        messages(socket, until=kind('turn_ended', session=b))
+        fleet.post(f'/api/sessions/{b}/input', {'text': '/fork slow'})
+        fleet.portal.call(gate[0].started.wait)
+        watch(socket, a)
+        messages(socket, until=snapshot_of(a))
+        assert fleet.post('/api/sessions/archive', {'ids': [b]}).status_code == 400
+        assert session_b in fleet.service.live.listing()
+        assert [fork.status for fork in session_b.forks] == ['running']
+        fleet.portal.call(gate[0].release.set)
+
+
+def test_archiving_keeps_a_session_whose_command_runs(make_fleet: MakeFleet) -> None:
+    """An unshown session running a slow command, with no turn, stays live, so archiving it is refused."""
+    fleet = make_fleet()
+    a = fleet.launch.session.conversation_id
+    b = fleet.new('b')
+    session_b = fleet.service.session(b).session
+    started, release = fleet.portal.call(anyio.Event), fleet.portal.call(anyio.Event)
+
+    async def slow(args: list[str]) -> str:
+        started.set()
+        await release.wait()
+        return 'done'
+
+    fleet.runtimes['b'].commands.register(Command(name='slow', description='Wait to be released', handler=slow))
+    with fleet.socket() as socket:
+        connected(socket)
+        fleet.post(f'/api/sessions/{b}/input', {'text': '/slow'})
+        fleet.portal.call(started.wait)
+        watch(socket, a)
+        messages(socket, until=snapshot_of(a))
+        assert (session_b.running, session_b.watchers) == (False, 0)
+        assert fleet.post('/api/sessions/archive', {'ids': [b]}).status_code == 400
+        assert session_b in fleet.service.live.listing()
+        fleet.portal.call(release.set)
+
+
 def test_open_makes_a_saved_session_live_once(make_fleet: MakeFleet) -> None:
     """Opening a saved session resumes it in its own folder, once; the legacy routes then drive it."""
     fleet = make_fleet()
@@ -503,16 +601,16 @@ def test_a_session_the_browser_opened_keeps_update_menu_and_refuses_its_install(
     assert set(menu_rows(fleet, f'/api/sessions/{b}/commands/update/fields')) == {'version', 'updates.channel'}
     descriptions = {command.name: command.description for command in fleet.runtimes['b'].commands}
     assert (descriptions['update'], descriptions['reload']) == (
-        'Install the newest CLAI from the updates.channel setting (stable or main)',
+        'Show whether a newer CLAI is out on updates.channel (stable or main); /update now installs it',
         'Reload CLAI2 code without restarting',
     )
-    # No terminal shows it, so Update says why, as `/update` typed there would, instead of asking first.
+    # No terminal shows it, so Update says why, as `/update now` typed there would, instead of asking first.
     response = fleet.post(f'/api/sessions/{b}/commands/update/fields/version/action')
-    assert response.status_code == 200, response.text
-    assert response.json()['messages'] == [
+    assert response.status_code == 400, response.text
+    assert response.json()['detail'] == (
         '/reload and /update restart CLAI. Enter them in the session the terminal shows, '
         'or with no terminal, in the session CLAI started with.'
-    ]
+    )
 
 
 def test_the_orchestrator_runs_on_the_saved_default_model(make_fleet: MakeFleet) -> None:
@@ -545,7 +643,13 @@ async def test_a_host_outside_the_loader_is_its_one_session() -> None:
     unwatch()
     assert (session.session_id, session.workspace, session.conversation) == (None, Path.cwd(), host.conversation)
     assert (session.status, session.sessions, session.tasks) == (host.status, None, None)
-    assert (session.running, session.queued, session.watchers, session.interrupt()) == (False, 0, 0, False)
+    assert (session.running, session.busy, session.queued, session.watchers, session.interrupt()) == (
+        False,
+        False,
+        0,
+        0,
+        False,
+    )
     assert (session.queue, session.steer('hi')) == ([], False), 'a bare host queues nothing and steers nothing'
     for change in (lambda: session.edit_queued('q1', 'x'), lambda: session.remove_queued('q1')):
         with pytest.raises(LookupError, match='no longer queued'):

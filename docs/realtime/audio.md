@@ -123,6 +123,42 @@ async def show_captions(session: RealtimeSession) -> None:
         bubbles[update.index] = (update.speaker, update.transcript)
 ```
 
+### Speech timestamps
+
+To line the model's words up with its audio, such as revealing each word as it's spoken, turn on
+[`output_speech_timestamps`][pydantic_ai.realtime.RealtimeModelSettings.output_speech_timestamps].
+Each [`SpeechTimestamp`][pydantic_ai.messages.SpeechTimestamp] gives a piece of text with where it
+starts in the audio of its speech part and how long it takes to say, in milliseconds. They stream as
+[`SpeechPartDelta.timestamps`][pydantic_ai.messages.SpeechPartDelta.timestamps] on the part's `index`:
+
+```python
+from pydantic_ai.messages import PartDeltaEvent, SpeechPartDelta, SpeechTimestamp
+from pydantic_ai.realtime import RealtimeSession
+
+words: dict[int, list[SpeechTimestamp]] = {}
+
+
+async def collect_words(session: RealtimeSession) -> None:
+    async for event in session:
+        if isinstance(event, PartDeltaEvent) and isinstance(event.delta, SpeechPartDelta):
+            words.setdefault(event.index, []).extend(event.delta.timestamps or ())
+```
+
+The offsets count from the start of that part's own audio, like
+[`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms], so show a word once
+the part has played up to its `start_ms`. They can arrive ahead of the audio they describe, so compare
+them with your playback position rather than showing them as they come. Each `SpeechTimestamp`'s
+`granularity` says whether it covers one `'word'` or a `'segment'` of several, and the model profile's
+[`output_speech_timestamp_granularity`][pydantic_ai.realtime.RealtimeModelProfile.output_speech_timestamp_granularity]
+says which a model reports.
+
+The timestamps are also recorded on the [`SpeechPart`][pydantic_ai.messages.SpeechPart] in
+[history](history.md), as its `timestamps`. When the user barges in, those starting at or after where
+playback stopped are dropped, along with the speech they timed.
+[Azure AI Voice Live](azure.md#speech-timestamps) and [ElevenLabs Agents](elevenlabs.md#speech-timestamps) report
+them; on other models, the setting emits an
+[`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning] when the session opens.
+
 ## Input transcription
 
 The shared `input_transcription_model` setting controls whether user speech reaches history as text:

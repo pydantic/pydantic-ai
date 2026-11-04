@@ -21,12 +21,9 @@ nobody at a prompt. Its output is a comment, a pull request or a commit rather t
 on a screen. The engine records the canonical agent session for inspection, and gh-aw can
 collect the session and usage artifacts; [Observability](#observability) covers traces.
 
-Every model vendor ships an action for this shape, each one running that vendor's agent on
-that vendor's models. The difference here is that the agent is yours: your instructions,
-your tools, your [capabilities](../capabilities/overview.md), and [any
-model](../models/overview.md) a string swap away, in a repository you can also run from the
-terminal, serve over a web UI, or call from your own backend. It is the same `Agent` object
-in all of them.
+The agent is your own `Agent` object, with your instructions, tools,
+[capabilities](../capabilities/overview.md), and [any model](../models/overview.md), so the
+same agent can also run from the terminal, a web UI, or your own backend.
 
 The finished repository is
 [dsfaccini/gh-aw-pydantic-ai-demo](https://github.com/dsfaccini/gh-aw-pydantic-ai-demo);
@@ -41,19 +38,21 @@ not what this page builds. Here the agent is a Python
 the inner driver of its copilot engine (and pi on Node); it has no effect on an
 import-based engine like this one, so it is not part of the configuration below.
 
+![A new issue triggers the compiled gh-aw workflow. Its agent job runs the pydantic-ai engine in a container behind an egress firewall: the engine starts clai2 with your agent, named by PAI_AGENT, plus the workflow model and prompt. Model requests go through gh-aw's api-proxy, which holds the provider key, and the agent's GitHub and safe-output tools, such as github_issue_read and safeoutputs_add_comment, come from gh-aw's MCP gateway. After a threat-detection job checks the output, a separate add-comment job posts the comment with its own token.](../img/harness/gh-aw.svg)
+
 ## Prerequisites
 
 - The [`gh` CLI](https://cli.github.com), authenticated with the `repo` and `workflow`
   scopes: `gh auth login --scopes repo,workflow`.
-- Install the gh-aw extension at [v0.91.1](https://github.com/github/gh-aw/releases/tag/v0.91.1)
-  or a newer compatible release: `gh extension install github/gh-aw --pin v0.91.1`.
-  The default stable release is below the runtime floor this engine needs.
-- Existing workflows need a compatible runtime pin and a newly compiled lockfile.
+- Use [gh-aw v1.0.1](https://github.com/github/gh-aw/releases/tag/v1.0.1) or newer with
+  AWF v0.29.0 or newer. That compiler release defaults to AWF v0.29.0.
+- Existing workflows need a compatible runtime build and a newly compiled lockfile.
   Installing a newer `gh aw` CLI locally does not change the runtime an existing lockfile
   selects.
-- The workflow summary is the canonical success/failure report. Categorical summary labels
-  for specific MCP failures and maximum-turn outcomes are removed; MCP startup and
-  request-limit errors retain their CLAI 2 diagnostics and nonzero exit status.
+- The protected-capture runtime rejects workflows with `evals`, whose secondary engine invocation
+  reads `evals.log`. Omit `evals` when using this engine.
+- The workflow summary is the canonical success/failure report. MCP startup and
+  request-limit errors keep their CLAI 2 diagnostics and nonzero exit status.
 - Linux runners. gh-aw's sandbox needs Linux and Docker, so the `macos-*` and `windows-*`
   runner labels are
   [not supported](https://github.github.com/gh-aw/reference/frontmatter/).
@@ -62,6 +61,19 @@ import-based engine like this one, so it is not part of the configuration below.
   when a workflow declares the `create-issue` safe output, and fails compilation if issues
   are off.
 - Actions enabled on the repository (see [Repository settings](#repository-settings)).
+
+Install the current stable compiler, check that it is at least v1.0.1, then compile:
+
+```bash
+gh extension install github/gh-aw
+gh aw version
+gh aw compile
+```
+
+For an existing installation, use `gh extension upgrade gh-aw` before compiling.
+For a fresh installation of the exact tested compiler, use
+`gh extension install github/gh-aw --pin v1.0.1`. To upgrade an explicitly pinned
+installation, use `gh extension upgrade gh-aw --force`.
 
 ## Start from `Coder`, `Researcher`, or your own
 
@@ -152,8 +164,6 @@ def label_catalog() -> list[str]:
     """The labels this repository triages with."""
     return list(LABELS)
 ```
-
-Four things about that module.
 
 - **No model.** The engine always passes `-m` built from the workflow's `engine.model`,
   and an explicit `-m` replaces whatever model a loaded agent declares. Setting a model on
@@ -261,8 +271,6 @@ ${{ steps.sanitized.outputs.text }}
 
 Post your triage as a single comment on that issue.
 ```
-
-Key by key:
 
 - `on: issues: types: [opened]` is the only trigger. `add-comment` posts to the issue
   that triggered the run, and a `workflow_dispatch` run has none, so the workflow declares
@@ -555,32 +563,42 @@ diffs two or more runs when given more than one id. For the raw step output, inc
 engine's own lines, `gh run view <run-id> --log` (add `--attempt N` for an earlier attempt)
 is often quicker.
 
-The headless runner streams model responses so their typed events can be recorded in the
-canonical session. The engine emits `session.init`, `user.message`, `assistant.message`,
-`assistant.reasoning`,
-`tool.execution_start`, `tool.execution_complete`, and `session.result`. The result includes
-reported usage when available; startup failures still record status without usage when none
-is available. If finalizing the recording fails, the launcher reports the error on stderr,
-preserves the CLI exit status, and attempts a status-only result. The inline parser selects
-framed typed events from captured engine stdio,
-and the gh-aw runtime bootstrap writes the canonical stream to `agent-session.jsonl`.
-Errors and calls still pending at interruption remain accurately represented; no tool IDs,
-completions or turns are inferred. A compatible gh-aw
-conclusion collects usage and `aw_session.jsonl`, including gateway and safe-output
-activity. These artifacts complement the Actions summary and run logs.
+The engine records assistant messages, reasoning, tool calls and results, and usage
+from a host-protected capture. Ordinary terminal output and files written by agent tools
+cannot supply canonical session records.
+
+The canonical stream in `agent-session.jsonl` includes `session.init`, `user.message`,
+`assistant.message`, `assistant.reasoning`, `tool.execution_start`,
+`tool.execution_complete`, and `session.result`. The result includes reported usage when
+available; startup failures still record status without usage when none is available.
+If finalizing the recording fails, the launcher reports the error as terminal output,
+preserves the CLI exit status, and attempts a status-only result.
+
+A recording is published only after its authenticity, sequence, and terminal result are
+verified. A missing `session.result`, authenticated sequence gap, or authenticated event
+after the terminal leaves the authenticated prefix in separate parser diagnostics,
+without canonical status or usage. Complete failure recordings retain observed partial
+content and their failure result. An abrupt `SIGTERM` or `SIGKILL` can prevent a terminal
+result; such recordings remain diagnostic-only, including timeout or cancellation cases.
+No tool IDs, completions, or turns are inferred.
+
+gh-aw redacts configured secrets and MCP gateway bearer tokens from session artifacts.
+The engine parser treats runtime `::add-mask::` commands as data. gh-aw applies masks
+from captured output when publishing artifacts, rejecting masks that would change
+event structure, status, or usage.
 
 ### What a working run looks like
 
 The agent step starts `clai2 -a <target> -m <provider:model> -p <prompt>` with the
 generated `Coder` agent or the `PAI_AGENT` target resolved by the engine. The recorder
 captures assistant messages, reasoning, tool calls and results (including native tools),
-and usage. The inline parser selects the framed records from captured engine stdio rather
-than reconstructing a transcript from terminal output.
+and usage. Repository Python imported through
+`PAI_AGENT` and any caller-supplied `PYTHONPATH` are trusted engine configuration.
+Python can import from `PYTHONPATH` before the recorder starts, and `PAI_AGENT` runs in
+the recorder interpreter. Point either setting only at code you trust.
 
 The gh-aw conclusion step gathers the agent session and usage into `aw_session.jsonl` and
-includes gateway and safe-output activity. The gh-aw usage artifact can be downloaded with
-`gh aw logs triage --artifacts all`; raw step output is available through
-`gh run view <run-id> --log` (add `--attempt N` for an earlier attempt).
+includes gateway and safe-output activity; download it with the `gh aw logs` command above.
 
 The comment lands on the issue with a gh-aw footer naming the workflow and linking its run,
 followed by an HTML comment recording the engine, its version and the model.
@@ -634,8 +652,7 @@ cannot read data back out of the project.
 `OTEL_EXPORTER_OTLP_ENDPOINT` is gh-aw's signal that observability is configured, and it is
 what the engine keys on. When it is set, and only then:
 
-- **`logfire` is installed** only when an endpoint is configured, so workflows without
-  observability do not install it.
+- **`logfire` is installed.**
 - **The launcher configures and instruments** before importing your agent, so an agent
   that starts work at import time is already traced. `send_to_logfire` is
   `'if-token-present'` and the console exporter is off. Spans go to the configured
