@@ -11924,3 +11924,61 @@ async def test_dispatch_request_forwards_manage_message_history():
     await response.stream_response(send)
 
     assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
+
+
+async def test_sse_keepalive_comment_emitted_during_silent_tool_call():
+    """Keepalive comments are emitted at the ASGI boundary while a tool call runs silently."""
+
+    async def slow_tool() -> str:
+        await asyncio.sleep(0.3)
+        return 'done'
+
+    agent = Agent(model=TestModel(), tools=[slow_tool])
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Call the slow tool',
+        ),
+    )
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': run_input.model_dump_json().encode('utf-8')}
+
+    starlette_request = Request(
+        scope={
+            'type': 'http',
+            'method': 'POST',
+            'headers': [
+                (b'content-type', b'application/json'),
+            ],
+        },
+        receive=receive,
+    )
+
+    response = await AGUIAdapter.dispatch_request(starlette_request, agent=agent, keepalive_interval=0.1)
+    assert isinstance(response, StreamingResponse)
+
+    chunks: list[bytes] = []
+
+    async def send(data: MutableMapping[str, Any]) -> None:
+        if body := data.get('body'):
+            chunks.append(body)
+
+    await response.stream_response(send)
+
+    keepalive = b': keepalive\n\n'
+    assert keepalive in chunks
+
+    def parse(chunk: bytes) -> dict[str, Any]:
+        return json.loads(chunk.decode('utf-8').removeprefix('data: '))
+
+    event_types = [parse(chunk)['type'] for chunk in chunks if chunk != keepalive]
+    assert event_types[0] == 'RUN_STARTED'
+    assert event_types[-1] == 'RUN_FINISHED'
+
+    # the keepalive comment landed between the tool call and its result, i.e. during the silent tool execution
+    keepalive_index = chunks.index(keepalive)
+    types_before_keepalive = [parse(chunk)['type'] for chunk in chunks[:keepalive_index] if chunk != keepalive]
+    types_from_keepalive = [parse(chunk)['type'] for chunk in chunks[keepalive_index:] if chunk != keepalive]
+    assert 'TOOL_CALL_END' in types_before_keepalive
+    assert 'TOOL_CALL_RESULT' in types_from_keepalive

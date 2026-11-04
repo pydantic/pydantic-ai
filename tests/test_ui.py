@@ -371,6 +371,112 @@ async def test_event_stream_close_finalizes_native_stream_without_protocol_trail
         await finalized.wait()
 
 
+async def test_sse_keepalive_comment_emitted_when_idle_and_preserves_order():
+    """While the source stream is silent, `encode_stream` emits keepalive comments and preserves event order."""
+    run_input = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    release = anyio.Event()
+
+    async def event_generator() -> AsyncIterator[str]:
+        yield 'event-1'
+        await release.wait()
+        yield 'event-2'
+
+    encoded: list[str] = []
+
+    async def consume() -> None:
+        async for chunk in DummyUIEventStream(run_input=run_input).encode_stream(
+            event_generator(), keepalive_interval=0.05
+        ):
+            encoded.append(chunk)
+            if chunk == ': keepalive\n\n':
+                release.set()
+
+    with anyio.fail_after(5):
+        await consume()
+
+    assert encoded[0] == 'event-1'
+    assert encoded[-1] == 'event-2'
+    keepalive_indexes = [index for index, chunk in enumerate(encoded) if chunk == ': keepalive\n\n']
+    assert keepalive_indexes, 'expected at least one keepalive comment during the silent gap'
+    assert encoded.index('event-2') > keepalive_indexes[-1]
+    assert [chunk for chunk in encoded if chunk != ': keepalive\n\n'] == ['event-1', 'event-2']
+
+
+async def test_sse_keepalive_disabled_when_interval_is_none():
+    """`keepalive_interval=None` disables keepalive comments entirely."""
+    run_input = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+
+    async def event_generator() -> AsyncIterator[str]:
+        yield 'event-1'
+        await asyncio.sleep(0.15)
+        yield 'event-2'
+
+    chunks = [
+        chunk
+        async for chunk in DummyUIEventStream(run_input=run_input).encode_stream(
+            event_generator(), keepalive_interval=None
+        )
+    ]
+
+    assert chunks == ['event-1', 'event-2']
+
+
+async def test_sse_keepalive_rejects_non_positive_interval():
+    """Non-positive keepalive intervals are rejected with a `ValueError`."""
+    run_input = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+
+    async def event_generator() -> AsyncIterator[str]:
+        yield 'event-1'  # pragma: no cover
+
+    stream = DummyUIEventStream(run_input=run_input).encode_stream(event_generator(), keepalive_interval=0)
+    with pytest.raises(ValueError, match='`keepalive_interval` must be a positive number of seconds'):
+        await anext(stream)
+
+    stream = DummyUIEventStream(run_input=run_input).encode_stream(event_generator(), keepalive_interval=-1.0)
+    with pytest.raises(ValueError, match='`keepalive_interval` must be a positive number of seconds'):
+        await anext(stream)
+
+
+async def test_sse_keepalive_consumer_disconnect_cancels_source():
+    """A disconnected consumer's cancellation reaches the source stream, as it would without keepalives."""
+    run_input = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    finalized = anyio.Event()
+
+    async def event_generator() -> AsyncIterator[str]:
+        try:
+            yield 'event-1'
+            await asyncio.sleep(30)  # pragma: no cover
+        finally:
+            finalized.set()
+
+    encoded = DummyUIEventStream(run_input=run_input).encode_stream(event_generator(), keepalive_interval=0.05)
+    assert await anext(encoded) == 'event-1'
+    await _utils.aclose_if_supported(encoded)
+
+    with anyio.fail_after(5):
+        await finalized.wait()
+
+
+async def test_dispatch_request_rejects_non_positive_keepalive_interval():
+    """`dispatch_request` validates the keepalive interval eagerly, before a 200 response is committed."""
+
+    async def receive() -> dict[str, str]:  # pragma: no cover
+        return {'type': 'http.disconnect'}
+
+    starlette_request = Request(
+        scope={
+            'type': 'http',
+            'method': 'POST',
+            'headers': [
+                (b'content-type', b'application/json'),
+            ],
+        },
+        receive=receive,
+    )
+    with pytest.raises(ValueError, match='`keepalive_interval` must be a positive number of seconds'):
+        await DummyUIAdapter.dispatch_request(starlette_request, agent=Agent('test'), keepalive_interval=0)
+
+
 async def test_event_stream_error_closes_open_text():
     """A mid-stream error while a text part is open emits `text-end` before the error.
 
