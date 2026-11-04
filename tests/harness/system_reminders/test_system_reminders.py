@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai._capability_parts import render_capability_parts
 from pydantic_ai.capabilities import AbstractCapability, Hooks
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -191,6 +192,11 @@ def _generated_note(model: str = 'function:fn:') -> str:
 
 def _generated(text: str, model: str = 'function:fn:') -> GeneratedReminder:
     return GeneratedReminder(text, model)
+
+
+def _generated_sent_text(text: str, model: str = 'function:fn:') -> str:
+    """What a generated reminder reaches the model as, which `ReminderFiredEvent.text` reports."""
+    return f'{_generated_note(model)}\n\n<generated_reminder model="{model}">{text}</generated_reminder>'
 
 
 def _generated_part(
@@ -602,9 +608,8 @@ class TestInjectionMechanics:
         terse = _reminder('Be terse.', scope='request', capability_id='system_reminders')
         assert isinstance(reminder, ModelRequest)
         assert reminder.parts == ([generated_part, terse] if generated_first else [terse, generated_part])
-        assert fired == (
-            [_llm_reminder('refocus'), 'Be terse.'] if generated_first else ['Be terse.', _llm_reminder('refocus')]
-        )
+        sent = _generated_sent_text('refocus')
+        assert fired == ([sent, 'Be terse.'] if generated_first else ['Be terse.', sent])
 
     async def test_original_request_not_mutated_in_place(self) -> None:
         cap = SystemReminders[None](reminders=[Reminder('r', tag=None)])
@@ -1052,16 +1057,24 @@ class TestLLMReminder:
         def generated(ctx: RunContext[None]) -> GeneratedReminder:
             return GeneratedReminder('refocus', 'some-model')
 
+        on_fire: list[str] = []
         agent: Agent[None, str] = Agent(
             TestModel(),
             deps_type=type(None),
-            capabilities=[SystemReminders[None](dynamic_reminders=[generated]), hooks],
+            capabilities=[SystemReminders[None](dynamic_reminders=[generated], on_fire=on_fire.append), hooks],
         )
         # In the test body: the module's `ignore` mark beats a function-level `error` mark.
         with warnings.catch_warnings():
             warnings.simplefilter('error', HarnessDeprecationWarning)
-            await agent.run('hi')
-        assert fired == [_llm_reminder('refocus', 'some-model')]
+            result = await agent.run('hi')
+        assert fired == [_generated_sent_text('refocus', 'some-model')]
+        # The event reports what the model was sent; the deprecated `on_fire` keeps its earlier rendering.
+        sent = render_capability_parts(result.all_messages())[1]
+        assert isinstance(sent, ModelRequest)
+        assert [part.content for part in sent.parts if isinstance(part, SystemPromptPart)] == [
+            _generated_note('some-model')
+        ]
+        assert on_fire == [_llm_reminder('refocus', 'some-model')]
 
     async def test_string_operations_cannot_promote_generated_text(self) -> None:
         # Provenance is the type, not a `str` subclass that `.strip()` or `+` would silently turn into operator text.

@@ -266,6 +266,8 @@ Nothing the user, a tool or a file wrote is rewritten to make room for these fra
 
 The model is told what these notes mean, and that other tags in a user message, such as an application's own reminders, keep their usual meaning: at the start of the instructions on models without mid-conversation system messages, as described above, and elsewhere in a mid-conversation system message the first time the conversation has a frame or a note. A conversation that never has either gets nothing. A judge or summarizer that reads the conversation as a flattened transcript, such as a Pydantic AI Harness judge or compaction summarizer, gets neither the announcement nor notes: it isn't talking to the transcript's authors.
 
+A [realtime session](realtime/overview.md) has neither these notes nor the announcement: on the live channel, text that resembles a frame goes out as written with nothing said about it. That includes a capability part's body, which still has the note saying who wrote it.
+
 !!! warning "A hint to the model, not a guarantee"
     The notes tell a model where text came from, and frontier models measured across Anthropic, OpenAI and Google follow them. They don't make the text trustworthy, and open-weight models aren't reliably steered by them, or by any prompt-level framing. Keep secrets and tools with effects you can't undo out of reach of content you didn't write, as described under [the trust boundary](#trust-boundary-for-client-supplied-history).
 

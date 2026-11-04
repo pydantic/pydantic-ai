@@ -12,7 +12,7 @@ from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Generic, Literal, TypeAlias, TypeGuard
 
 from pydantic_ai import Agent
-from pydantic_ai._capability_parts import check_operator_text
+from pydantic_ai._capability_parts import check_operator_text, render_capability_part
 from pydantic_ai._framing import neutralize_tags, second_model_prompt
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
@@ -153,10 +153,10 @@ class GeneratedReminder:
 
     def __str__(self) -> str:
         _warn_generated_reminder_rendering('`str()` of a `GeneratedReminder`')
-        return self._fired_text()
+        return self._on_fire_text()
 
-    def _fired_text(self) -> str:
-        """The text `ReminderFiredEvent` and `on_fire` report for this reminder."""
+    def _on_fire_text(self) -> str:
+        """What the deprecated `on_fire` and `__str__` report: an earlier rendering, not what the model is sent."""
         return f'{_LLM_REMINDER_NOTE}\n\n{self._quoted()}'
 
     def _quoted(self) -> str:
@@ -381,10 +381,10 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
                 for key, _ in fired:
                     self._fire_counts[key] = self._fire_counts.get(key, 0) + 1
                 for reminder in reminders:
-                    await ctx.emit(ReminderFiredEvent(text=_fired_text(reminder)))
+                    await ctx.emit(ReminderFiredEvent(text=_sent_text(reminder)))
                 if self.on_fire is not None:
                     for reminder in reminders:
-                        self.on_fire(_fired_text(reminder))
+                        self.on_fire(_on_fire_text(reminder))
         return request_context
 
     def _eligible_static(self, ctx: RunContext[AgentDepsT]) -> list[tuple[int, _StaticText]]:
@@ -663,8 +663,25 @@ class _StaticText:
         return self.text
 
 
-def _fired_text(reminder: str | _StaticText | GeneratedReminder) -> str:
-    return reminder._fired_text() if isinstance(reminder, GeneratedReminder) else str(reminder)  # pyright: ignore[reportPrivateUsage]
+def _on_fire_text(reminder: str | _StaticText | GeneratedReminder) -> str:
+    return reminder._on_fire_text() if isinstance(reminder, GeneratedReminder) else str(reminder)  # pyright: ignore[reportPrivateUsage]
+
+
+def _generated_reminder_part(reminder: GeneratedReminder) -> GeneratedReminderPart:
+    return GeneratedReminderPart(content=reminder.text, source=_REMINDER_MODEL_SOURCE, model=reminder.model)
+
+
+def _sent_text(reminder: str | _StaticText | GeneratedReminder) -> str:
+    """The text the model is sent for a reminder: for a generated one, its note and its framed text."""
+    if not isinstance(reminder, GeneratedReminder):
+        return str(reminder)
+    texts: list[str] = []
+    for part in render_capability_part(_generated_reminder_part(reminder)).parts:
+        content = part.content
+        texts.append(
+            content if isinstance(content, str) else ''.join(i.content for i in content if isinstance(i, TextContent))
+        )
+    return '\n\n'.join(texts)
 
 
 def _reminder_parts(
@@ -692,7 +709,7 @@ def _reminder_parts(
     for text in texts:
         if isinstance(text, GeneratedReminder):
             flush_plain()
-            parts.append(GeneratedReminderPart(content=text.text, source=_REMINDER_MODEL_SOURCE, model=text.model))
+            parts.append(_generated_reminder_part(text))
             continue
         if isinstance(text, _StaticText):
             scope = text.scope

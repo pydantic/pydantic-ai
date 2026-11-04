@@ -534,8 +534,9 @@ def _pending_message_text(pending: PendingMessage) -> str:
     connection delivers on its channel for the operator's own text, as `send(SystemPromptPart(...))` does;
     next to user text they're `<system>`-tagged within the user turn, as `Model.prepare_messages` does for a
     standard run's non-leading system prompts on a model without a system role. A
-    [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] goes as the parts it renders to. Anything else can't
-    cross the live input channel.
+    [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] goes as the parts it renders to, with no lookalike
+    notes, as the live channel has neither those nor their announcement for any text. Anything else can't cross the
+    live input channel.
     """
     error = UserError(
         '`RealtimeSession.enqueue()` and `RunContext.enqueue()` in a realtime session support text prompts '

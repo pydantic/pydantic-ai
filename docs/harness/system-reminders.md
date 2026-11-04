@@ -176,7 +176,7 @@ Without a durability engine, generation runs directly in all three cases, with t
 
 ## Observing reminders
 
-Subscribe to `ReminderFiredEvent` to observe reminders after they are appended:
+Subscribe to `ReminderFiredEvent` to observe reminders after they are appended. Its `text` is what the model is sent: for an `LLMReminder`'s `GeneratedReminder`, the note and the framed text:
 
 ```python
 from pydantic_ai import Agent
