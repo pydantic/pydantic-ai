@@ -124,19 +124,20 @@ ref = result.workspace.ref  # store this, e.g. in your database
 later = agent.run_sync('Which capability would you add next, and where would it live?', workspace=ref)
 ```
 
-The ref holds no credentials, so the process that reattaches needs the key too. Pass `workspace='new'` to start a fresh sandbox even when the message history names one.
+The ref holds no credentials, so the process that reattaches needs them too. Pass `workspace='new'` to start a fresh sandbox even when the message history names one.
 
 `template` and `allow_internet_access` only shape a new sandbox. `sandbox_timeout` also applies when you reattach, and `working_dir` and `env` apply to every command.
 
 Already have an `e2b.AsyncSandbox`? Pass `workspace=E2BSandboxBackend(sandbox=sandbox)` to a run, with `E2BSandboxBackend` from `pydantic_ai_harness.e2b_sandbox`. `E2BSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend.
 
-## Use a different key for each user
+## Use different credentials for each user
 
-`E2BSandbox(api_key=...)` sets one key for the capability, in place of `E2B_API_KEY`. The environment holds one key for the whole process, so it can't serve several users at once. When each user has their own E2B account, supply the workspace from a capability of your own, which reads the key from the run's `deps`:
+`E2BSandbox(client=E2B(api_key=...))` sets one client for the capability, in place of `E2B_API_KEY` and the rest of the environment. The environment holds one key for the whole process, so it can't serve several users at once. When each user has their own E2B account, supply the workspace from a capability of your own, which builds the client from the run's `deps`:
 
 ```python {test="skip"}
 from dataclasses import dataclass
 
+from e2b import E2B
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
@@ -154,7 +155,7 @@ class UsersE2B(AbstractCapability[User]):
     def get_workspace(self, ctx: RunContext[User], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         if ref is not None and ref.provider != 'e2b':
             return None
-        return E2BSandboxBackend(ref=ref, api_key=ctx.deps.e2b_api_key)
+        return E2BSandboxBackend(client=E2B(api_key=ctx.deps.e2b_api_key), ref=ref)
 
 
 agent = Agent('anthropic:claude-opus-5-5', deps_type=User, capabilities=[UsersE2B(), Coder()])
@@ -249,12 +250,12 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder(), 
 
 | Option | What it does |
 | --- | --- |
+| `client` | An `e2b.E2B`, for its API key and other connection settings. Default: `None`, `E2B_API_KEY` and the rest of the environment. See [Use different credentials for each user](#use-different-credentials-for-each-user). |
 | `template` | E2B template name or ID for a new sandbox. Default: `None`, E2B's `base`. An unknown template fails on first use. |
 | `allow_internet_access` | Whether a new sandbox can reach the internet. Default: `True`. |
 | `sandbox_timeout` | Seconds the sandbox lives before E2B pauses it, set on create and on reattach. Default: `3_600` (1 hour, the most E2B's Hobby plan allows). |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the sandbox's own (`/home/user` on the default template, where commands run as `user`); prefer relative paths or set `working_dir` for portable code. Created on a new sandbox; on an attached or caller-supplied sandbox it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Output is decoded as UTF-8 either way; the default template's locale is POSIX, so pass `env={'LC_ALL': 'C.UTF-8'}` if a tool such as `wc -m` should count characters rather than bytes. Nothing from your machine's environment reaches the sandbox. The agent's commands can read these values, and a new sandbox keeps them for every process, so leave out secrets the agent should not see. |
-| `api_key` | The E2B API key. Default: `None`, `E2B_API_KEY`. See [Use a different key for each user](#use-a-different-key-for-each-user). |
 
 `E2BSandbox` needs asyncio: the E2B SDK runs every request on asyncio, so under Trio every operation, including `destroy`, raises `UserError` before it reaches E2B.
 
