@@ -1,0 +1,5 @@
+{
+  "against": "v2.65.0",
+  "reason": "Adds the new `UpdateTools` input to `RealtimeInput`. The session sends it only to a connection whose model's profile sets the new `supports_tool_updates` flag, which defaults to `False`, so an existing connection never receives it.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/12440"
+}
