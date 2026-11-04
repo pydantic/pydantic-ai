@@ -1612,6 +1612,105 @@ def test_durable_journal_written_before_records_loads_completely():
     assert PydanticAIJSONPlainPayloadConverter().from_payload(payload, cast(type, CallToolResult)) == result
 
 
+def _decode_journal_entry(journaled: Any) -> Any:
+    """Decode a durable tool-call result the way the Temporal worker decodes its journal."""
+    from temporalio.api.common.v1 import Payload
+
+    from pydantic_ai.durable_exec.temporal._payload_converter import PydanticAIJSONPlainPayloadConverter
+    from pydantic_ai.durable_exec.temporal._toolset import CallToolResult
+
+    payload = Payload(metadata={'encoding': b'json/plain'}, data=json.dumps(journaled).encode())
+    return PydanticAIJSONPlainPayloadConverter().from_payload(payload, cast(type, CallToolResult))
+
+
+@pytest.mark.parametrize('nested_record', ['missing', 'own digest'])
+def test_tool_call_result_nested_return_cannot_widen_the_record(nested_record: str):
+    """A nested result's own record, which the data around it could have written, can only narrow the outer one.
+
+    Decoded as a journal entry, too: the outer result's record still governs what the nested one rebuilds.
+    """
+    pytest.importorskip('temporalio')
+    from pydantic_ai.durable_exec.temporal._toolset import (
+        CallToolResult,
+        _ToolReturn,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    adapter = TypeAdapter[Any](CallToolResult)
+    lookalike = _dumped_file(DocumentUrl('https://example.com/report.txt', force_download='allow-local'))
+    journaled = adapter.dump_python(
+        _ToolReturn(result=ToolReturn(return_value=[lookalike]), is_tool_return=True), mode='json'
+    )
+    assert journaled['content_file_digests'] == []
+    if nested_record == 'missing':
+        del journaled['result']['content_file_digests']
+    else:
+        journaled['result']['content_file_digests'] = [_file_digest(lookalike)]
+
+    for loaded in (adapter.validate_python(journaled), _decode_journal_entry(journaled)):
+        assert loaded.result.return_value == [lookalike]
+        assert type(loaded.result.return_value[0]) is dict
+
+
+def test_tool_call_result_nested_return_follows_an_unrecorded_outer_one():
+    """Inside a result saved before records existed, a nested result's own record doesn't rebuild anything either."""
+    pytest.importorskip('temporalio')
+    from pydantic_ai.durable_exec.temporal._toolset import (
+        CallToolResult,
+        _ToolReturn,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    adapter = TypeAdapter[Any](CallToolResult)
+    lookalike = _dumped_file(UploadedFile('file-1', 'openai'))
+    journaled = adapter.dump_python(
+        _ToolReturn(result=ToolReturn(return_value=[lookalike]), is_tool_return=True), mode='json'
+    )
+    del journaled['content_file_digests']
+    journaled['result']['content_file_digests'] = [_file_digest(lookalike)]
+
+    loaded = adapter.validate_python(journaled)
+
+    assert loaded.result.return_value == [lookalike]
+    assert type(loaded.result.return_value[0]) is dict
+
+
+@pytest.mark.anyio
+async def test_tool_call_result_mapping_shaped_like_a_tool_return_stays_content():
+    """A tool's mapping whose `kind` is `'tool-return'` comes back as that mapping, not as a `ToolReturn`."""
+    pytest.importorskip('temporalio')
+    from pydantic_ai.durable_exec.temporal._payload_converter import PydanticAIPayloadConverter
+    from pydantic_ai.durable_exec.temporal._toolset import (
+        CallToolResult,
+        TemporalWrapperToolset,
+    )
+
+    lookalike = _dumped_file(DocumentUrl('https://example.com/report.txt', force_download='allow-local'))
+    content = {'kind': 'tool-return', 'return_value': [lookalike], 'content': [lookalike]}
+
+    async def tool_result() -> Any:
+        return content
+
+    result = await TemporalWrapperToolset._wrap_call_tool_result(cast(Any, None), tool_result())  # pyright: ignore[reportPrivateUsage]
+    converter = PydanticAIPayloadConverter()
+    [decoded] = converter.from_payloads(converter.to_payloads([result]), [cast(type, CallToolResult)])
+
+    assert decoded.result == content
+    assert type(decoded.result) is dict
+    assert TypeAdapter[Any](CallToolResult).validate_python(result) == result
+
+
+def test_tool_call_result_without_shape_flag_decodes_as_before():
+    """A tool-call result journaled before the shape flag existed still decodes a `ToolReturn` and content alike."""
+    pytest.importorskip('temporalio')
+
+    tool_return = _decode_journal_entry(
+        {'result': {'return_value': ['done'], 'metadata': {'k': 'v'}, 'kind': 'tool-return'}, 'kind': 'tool_return'}
+    )
+    content = _decode_journal_entry({'result': {'rows': [1, 2]}, 'kind': 'tool_return'})
+
+    assert tool_return.result == ToolReturn(return_value=['done'], metadata={'k': 'v'})
+    assert content.result == {'rows': [1, 2]}
+
+
 def test_tool_return_records_only_the_files_in_its_content():
     """A file the application keeps in `metadata`, or sends as `ToolReturn.content`, doesn't count toward the result's record."""
     uploaded = UploadedFile('file-1', 'openai')
