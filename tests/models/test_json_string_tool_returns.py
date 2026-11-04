@@ -1,13 +1,13 @@
 """`needs_json_string_tool_returns`: a tool's text output goes out as an escaped JSON string field.
 
-Qwen3 Next's profile sets it. These pin which routes resolve it, the bytes each adapter sends, that the cached prefix
-holds as the conversation grows, and that the history keeps the tool's output as returned.
+Qwen3 Next's profile sets it; `tests/profiles/test_resolution_matrix.py` pins which routes resolve it. These pin the
+bytes each adapter sends, that the cached prefix holds as the conversation grows, and that the history keeps the
+tool's output as returned.
 """
 
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -44,15 +44,7 @@ with try_import() as openai_available:
     )
 
     from pydantic_ai.models.openrouter import OpenRouterModel
-    from pydantic_ai.providers.alibaba import AlibabaProvider
-    from pydantic_ai.providers.cerebras import CerebrasProvider
-    from pydantic_ai.providers.fireworks import FireworksProvider
-    from pydantic_ai.providers.nebius import NebiusProvider
-    from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
-    from pydantic_ai.providers.sambanova import SambaNovaProvider
-    from pydantic_ai.providers.together import TogetherProvider
-    from pydantic_ai.providers.vllm import VLLMProvider
 
     from .mock_openai import MockOpenAI, get_mock_chat_completion_kwargs
 
@@ -89,75 +81,6 @@ def history() -> list[ModelMessage]:
 
 class _Sent(Exception):
     """Raised by a fake client once it has captured the request."""
-
-
-def _profile(model_profile: Callable[[str], ModelProfile | None], model_name: str) -> ModelProfile:
-    profile = model_profile(model_name)
-    assert profile is not None
-    return profile
-
-
-def _openai_compatible_profile(provider: str) -> Callable[[str], ModelProfile | None]:
-    # Looked up by name: the provider classes don't exist when `openai` isn't installed, which collection would hit.
-    profiles: dict[str, Callable[[str], ModelProfile | None]] = {
-        'openrouter': OpenRouterProvider.model_profile,
-        'together': TogetherProvider.model_profile,
-        'fireworks': FireworksProvider.model_profile,
-        'nebius': NebiusProvider.model_profile,
-        'alibaba': AlibabaProvider.model_profile,
-        'cerebras': CerebrasProvider.model_profile,
-        'ollama': OllamaProvider.model_profile,
-        'vllm': VLLMProvider.model_profile,
-        'sambanova': SambaNovaProvider.model_profile,
-    }
-    return profiles[provider]
-
-
-@pytest.mark.skipif(not openai_available(), reason='openai not installed')
-@pytest.mark.parametrize(
-    'provider, model_name',
-    [
-        pytest.param('openrouter', 'qwen/qwen3-next-80b-a3b-instruct', id='openrouter'),
-        pytest.param('openrouter', 'qwen/qwen3-next-80b-a3b-thinking', id='openrouter-thinking'),
-        pytest.param('together', 'Qwen/Qwen3-Next-80B-A3B-Instruct', id='together'),
-        pytest.param('fireworks', 'accounts/fireworks/models/qwen3-next-80b-a3b-instruct', id='fireworks'),
-        pytest.param('nebius', 'Qwen/Qwen3-Next-80B-A3B-Instruct', id='nebius'),
-        pytest.param('alibaba', 'qwen3-next-80b-a3b-instruct', id='alibaba'),
-        pytest.param('cerebras', 'qwen-3-next-80b', id='cerebras'),
-        pytest.param('ollama', 'qwen3-next:80b', id='ollama'),
-        pytest.param('vllm', 'Qwen/Qwen3-Next-80B-A3B-Instruct', id='vllm'),
-        pytest.param('sambanova', 'Qwen3-Next-80B-A3B-Instruct', id='sambanova'),
-    ],
-)
-def test_openai_compatible_routes_resolve_the_flag_for_qwen3_next(provider: str, model_name: str):
-    profile = _profile(_openai_compatible_profile(provider), model_name)
-    assert profile.get('needs_json_string_tool_returns') is True
-
-
-@pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')
-def test_bedrock_resolves_the_flag_for_qwen3_next():
-    assert _profile(BedrockProvider.model_profile, 'qwen.qwen3-next-80b-a3b').get('needs_json_string_tool_returns')
-
-
-@pytest.mark.skipif(not groq_available(), reason='groq not installed')
-def test_groq_resolves_the_flag_for_qwen3_next():
-    assert _profile(GroqProvider.model_profile, 'qwen/qwen3-next-80b').get('needs_json_string_tool_returns')
-
-
-@pytest.mark.skipif(not huggingface_available(), reason='huggingface not installed')
-def test_huggingface_resolves_the_flag_for_qwen3_next():
-    profile = _profile(HuggingFaceProvider.model_profile, 'Qwen/Qwen3-Next-80B-A3B-Instruct')
-    assert profile.get('needs_json_string_tool_returns') is True
-
-
-@pytest.mark.skipif(not openai_available(), reason='openai not installed')
-@pytest.mark.parametrize(
-    'model_name',
-    ['qwen/qwen3-235b-a22b-2507', 'qwen/qwen3-coder', 'qwen/qwen3.5-397b-a17b', 'mistralai/mistral-large-2512'],
-)
-def test_other_models_keep_plain_tool_output(model_name: str):
-    profile = _profile(OpenRouterProvider.model_profile, model_name)
-    assert profile.get('needs_json_string_tool_returns', False) is False
 
 
 def _tool_message_texts(messages: list[Any]) -> list[str]:
