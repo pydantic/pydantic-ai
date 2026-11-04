@@ -2265,7 +2265,9 @@ assert any(
 
 ## Recovering a failed run's messages {#recovering-a-failed-run}
 
-A run that raises, whether with [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded], [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], another [`AgentRunError`][pydantic_ai.exceptions.AgentRunError], or an exception from one of your tools, returns no result, but the work it did before the error is still in its messages. The exceptions don't carry those messages, except [`RunCancelled`](#message-history-after-cancellation). To keep them, wrap the run in [`capture_run_messages`][pydantic_ai.capture_run_messages], which records them as the run goes, including the [interrupted](#model-errors) request or response of the step that failed.
+A run that raises, whether with [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded], [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], another [`AgentRunError`][pydantic_ai.exceptions.AgentRunError], or an exception from one of your tools, returns no result, but the work it did before the error is still in its messages. To keep them, wrap the run in [`capture_run_messages`][pydantic_ai.capture_run_messages], which records them as the run goes, including the [interrupted](#model-errors) request or response of the step that failed.
+
+To store the failed turn in a [`ConversationStore`](persistence.md#using-a-conversation-store), use its conversation instead of its messages: an [`AgentRunError`][pydantic_ai.exceptions.AgentRunError] carries it as [`conversation`][pydantic_ai.exceptions.AgentRunError.conversation], and [`capture_run_conversation`][pydantic_ai.agent.capture_run_conversation] captures it for any exception, including one from a tool. Unlike the captured messages, it carries the conversation's revision and knows which messages are new, so `await store.save(...)` appends just the failed turn.
 
 To continue from where the run stopped instead of starting over, pass the captured messages as `message_history` and no new prompt. The new run picks up from the last request, so tool calls that already ran, and any side effects they had, aren't repeated:
 
@@ -2302,7 +2304,7 @@ print(answer('What is the status of order 1234?'))
 
 _(This example is complete, it can be run "as is")_
 
-The resumed run is a new run: its usage, and the [usage limits](#usage-limits) checked against it, start from zero. When a token or cost limit is crossed, the response that crossed it is kept in the captured messages with `state='interrupted'`, so the resumed run doesn't request it again (see [usage limits](#usage-limits)), unless a hook rejected that response with [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] ([#11425](https://github.com/pydantic/pydantic-ai/issues/11425)). To resume later or in another process, [store the messages](message-history.md) and load them back first.
+The resumed run is a new run: given `message_history`, its usage, and the [usage limits](#usage-limits) checked against it, start from zero. Given `conversation=error.conversation` instead, it carries the conversation's usage forward, so its limits are checked against the total of both runs. When a token or cost limit is crossed, the response that crossed it is kept in the captured messages with `state='interrupted'`, so the resumed run doesn't request it again (see [usage limits](#usage-limits)), unless a hook rejected that response with [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] ([#11425](https://github.com/pydantic/pydantic-ai/issues/11425)). To resume later or in another process, [store the messages](message-history.md) and load them back first.
 
 ## Agent Specs
 

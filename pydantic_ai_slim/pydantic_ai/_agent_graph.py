@@ -4857,6 +4857,104 @@ def capture_run_messages() -> Generator[list[_messages.ModelMessage]]:
         _messages_ctx_var.reset(token)
 
 
+class CapturedConversation:
+    """What [`capture_run_conversation`][pydantic_ai.agent.capture_run_conversation] captured."""
+
+    def __init__(self) -> None:
+        self._build: Callable[[], Conversation] | None = None
+        self._ended = False
+        self._conversation: Conversation | None = None
+
+    @property
+    def conversation(self) -> Conversation | None:
+        """The conversation of the first run started in the context, as far as it got, or `None` if none started.
+
+        Built when read, so read it after the run raised: it holds the messages the run got to,
+        including a partial response with `state='interrupted'`, and saving it to a
+        [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] appends just
+        what the run added. After a run that finished, prefer its result's
+        [`conversation`][pydantic_ai.agent.AgentRunResult.conversation], which also carries the
+        tool calls a paused run waits on.
+
+        Once the run has ended, it's built on the first read and the same instance is returned after
+        that, so a [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] that saves
+        it advances the revision every later read sees. A read while the run is still going returns a
+        new snapshot of it so far.
+        """
+        if self._conversation is not None or self._build is None:
+            return self._conversation
+        conversation = self._build()
+        if self._ended:
+            self._conversation = conversation
+        return conversation
+
+
+_captured_conversation: ContextVar[CapturedConversation | None] = ContextVar('_captured_conversation', default=None)
+
+
+@contextmanager
+def capture_run_conversation() -> Generator[CapturedConversation]:
+    """Context manager to get the conversation of a run that raised, so it can still be stored.
+
+    Like [`capture_run_messages`][pydantic_ai.agent.capture_run_messages], it captures the first
+    [`run`][pydantic_ai.agent.AbstractAgent.run], [`run_sync`][pydantic_ai.agent.AbstractAgent.run_sync],
+    [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] or
+    [`iter`][pydantic_ai.agent.Agent.iter] call started inside it, but as a
+    [`Conversation`][pydantic_ai.conversation.Conversation] a
+    [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] can save, whatever the
+    run raised, including an exception from a tool's own code. For errors Pydantic AI raises, an
+    [`AgentRunError`][pydantic_ai.exceptions.AgentRunError] carries the same as its
+    [`conversation`][pydantic_ai.exceptions.AgentRunError.conversation].
+
+    ```python
+    from pydantic_ai import Agent, capture_run_conversation
+    from pydantic_ai.conversation_store import InMemoryConversationStore
+
+    agent = Agent('test')
+    store = InMemoryConversationStore()
+
+
+    @agent.tool_plain
+    def look_up() -> str:
+        raise ConnectionError('The database is down.')
+
+
+    async def main():
+        with capture_run_conversation() as captured:
+            try:
+                await agent.run('Look it up')
+            except ConnectionError:
+                conversation = captured.conversation
+                assert conversation is not None
+                entries = await store.save(conversation)
+                print(len(entries))
+                #> 3
+    ```
+
+    Contexts can be nested: a run is captured by the innermost active context.
+    """
+    captured = CapturedConversation()
+    token = _captured_conversation.set(captured)
+    try:
+        yield captured
+    finally:
+        _captured_conversation.reset(token)
+
+
+def capture_conversation_of(build: Callable[[], Conversation]) -> None:
+    """Let the innermost [`capture_run_conversation`][pydantic_ai.agent.capture_run_conversation] context capture a run starting now, unless it already captured one."""
+    captured = _captured_conversation.get()
+    if captured is not None and captured._build is None:  # pyright: ignore[reportPrivateUsage]
+        captured._build = build  # pyright: ignore[reportPrivateUsage]
+
+
+def end_captured_run(build: Callable[[], Conversation]) -> None:
+    """Tell the context that captured the run with `build` that the run has ended, so its conversation can be kept."""
+    captured = _captured_conversation.get()
+    if captured is not None and captured._build is build:  # pyright: ignore[reportPrivateUsage]
+        captured._ended = True  # pyright: ignore[reportPrivateUsage]
+
+
 def get_captured_run_messages() -> _RunMessages:
     return _messages_ctx_var.get()
 

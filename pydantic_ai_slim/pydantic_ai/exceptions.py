@@ -18,6 +18,7 @@ from ._warnings import (
 )
 
 if TYPE_CHECKING:
+    from .conversation import Conversation
     from .messages import (
         ModelMessage,
         ModelRequestAttempt,
@@ -327,9 +328,24 @@ class AgentRunError(RuntimeError):
     message: str
     """The error message."""
 
+    _conversation: Conversation | None = None
+
     def __init__(self, message: str):
         self.message = message
         super().__init__(message)
+
+    @property
+    def conversation(self) -> Conversation | None:
+        """The conversation of the run that raised this, with the messages it got to, so it can still be stored.
+
+        It includes a partial response with `state='interrupted'`, and saving it to a
+        [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] appends just what the run
+        added. It's set once the error leaves the `run`, `iter` or `run_stream` call or `async with` block,
+        so it's `None` when caught inside an `iter` or `run_stream` block, or if the error didn't come out of
+        an [`Agent`][pydantic_ai.agent.Agent] run. To get the conversation there, or for an exception raised
+        by a tool's own code, use [`capture_run_conversation`][pydantic_ai.agent.capture_run_conversation].
+        """
+        return self._conversation
 
     def __str__(self) -> str:
         return self.message
