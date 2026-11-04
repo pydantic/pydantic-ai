@@ -114,7 +114,7 @@ def test_together_provider_model_profile_v4_point_release_spellings():
     ):
         profile = provider.model_profile(model_name)
         assert profile is not None
-        assert profile['supports_forced_tool_choice'] is False
+        assert profile.get('supports_forced_tool_choice') is False
 
     # Pre-V4 ids keep forced tool choice available.
     v3_2 = provider.model_profile('deepseek-ai/DeepSeek-V3.2')

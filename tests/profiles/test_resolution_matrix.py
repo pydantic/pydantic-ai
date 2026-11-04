@@ -2495,6 +2495,7 @@ def test_sambanova_llama():
     assert _normalize(profile) == snapshot({'json_schema_transformer': InlineDefsJsonSchemaTransformer})
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_gateway_deepseek_v4_point_release_profiles():
     """V4 point-release ids resolve to the same profile as their plain V4 id on every gateway routing to `deepseek_model_profile`."""
     cases = (
@@ -2531,11 +2532,12 @@ def test_gateway_deepseek_v4_point_release_profiles():
             assert _normalize(profile) == expected, (provider.__name__, name)
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_deepseek_v3_2_not_matched_as_v4():
     """`deepseek-v3.2` must not receive the V4 treatment on either gate."""
     profile = DeepSeekProvider(api_key='test').model_profile('deepseek-v3.2')
     assert profile is not None
-    assert profile['supports_forced_tool_choice_with_thinking'] is True
+    assert profile.get('supports_forced_tool_choice_with_thinking') is True
 
     v4_profile = DeepSeekProvider(api_key='test').model_profile('deepseek-v4-flash')
     assert v4_profile is not None
