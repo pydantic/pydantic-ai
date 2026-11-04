@@ -7,6 +7,7 @@ from pathlib import Path, PurePath
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_clai2.builtin_plugins.web.protocol import Project, SessionEntry, SessionState, Worktree
 from pydantic_clai2.plugins import LiveSession
+from pydantic_clai2.runtime.imported_sessions import imported_from
 from pydantic_clai2.runtime.project_identity import (
     MISSING,
     ProjectIdentity,
@@ -42,6 +43,7 @@ def session_entry(
         archived=summary.archived_at is not None,
         # Another CLAI's session shows read-only until the user forks it, as its transcript says.
         openable=openable and state != 'busy',
+        source=imported_from(summary),
     )
 
 

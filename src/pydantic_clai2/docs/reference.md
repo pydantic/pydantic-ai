@@ -2379,7 +2379,8 @@ Plain `/resume` lists them too, beside CLAI's own sessions, in the project they
 were started in, each card saying which agent it comes from, such as **Claude
 Code · to import** for one not imported yet: Enter imports and resumes it, and
 Right previews it. Rename or delete it after importing it. The imported copy
-keeps saying where it came from, also once CLAI renames it. Codex sessions a
+keeps saying where it came from, also once CLAI renames it, and the web UI's
+sidebar shows the same label beside its title. Codex sessions a
 script ran with `codex exec` are not listed, but `--resume-codex SESSION-ID`
 imports one.
 
