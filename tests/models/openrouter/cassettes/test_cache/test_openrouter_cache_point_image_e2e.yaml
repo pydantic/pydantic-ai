@@ -39,7 +39,7 @@ interactions:
       access-control-allow-origin:
       - "*"
       access-control-expose-headers:
-      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      - X-Generation-Id,x-openrouter-error-origin,X-Provider-Name,request-id,cf-ray
       alt-svc:
       - h3=":443"; ma=86400
       connection:
@@ -57,9 +57,9 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1793320339-NubykSbjBdEpgtQKPDsF
+        id: gen-1793763587-pWqhL8od73vAkrHIKmcz
         object: chat.completion
-        created: 1793320339
+        created: 1793763587
         model: anthropic/claude-sonnet-5.5
         provider: Claude Platform on AWS
         system_fingerprint: null
@@ -93,4 +93,4 @@ interactions:
             reasoning_tokens: 0
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-30T00:32:21.192709+00:00
+  recorded_at: 2026-11-04T03:39:48.454810+00:00

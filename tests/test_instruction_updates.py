@@ -1385,10 +1385,10 @@ async def test_instruction_updates_downgraded_empty_block_is_not_sent(case: str,
         with pytest.warns(UserWarning, match='rewriting its prefix instead'):
             # An explicit `max_tokens` keeps this a plain request rather than one streamed behind the scenes.
             await agent.run('Continue.', model_settings={'max_tokens': 1024})
-    # Claude Sonnet 4.5 takes no mid-conversation system messages, so the instructions end with what `<system>` means.
+    # Claude Sonnet 4.5 takes no mid-conversation system messages, so the instructions start with what `<system>` means.
     assert bodies[0]['system'] == [
-        {'type': 'text', 'text': 'Stable.'},
         {'type': 'text', 'text': lookalike_note_announcement(system_role=False)},
+        {'type': 'text', 'text': 'Stable.'},
     ]
 
 

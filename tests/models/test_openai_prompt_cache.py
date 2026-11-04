@@ -444,9 +444,9 @@ async def test_openrouter_unified_cache_adds_cache_control(allow_model_requests:
     await Agent(model, instructions='Stable instructions.', model_settings={'cache': '1h'}).run('Hi')
 
     request = create.call_args.kwargs
-    # Claude Sonnet 4.5 takes no mid-conversation system messages, so the instructions end with the
-    # announcement; the breakpoint goes after the instructions every conversation shares, ahead of it.
-    system_message, announcement = request['messages'][:2]
+    # Claude Sonnet 4.5 takes no mid-conversation system messages, so the instructions start with the
+    # announcement; it never changes, so the breakpoint after the instructions covers it too.
+    announcement, system_message = request['messages'][:2]
     assert system_message == {
         'role': 'system',
         'content': [
