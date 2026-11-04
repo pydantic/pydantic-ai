@@ -12,8 +12,6 @@ from pydantic_graph import GraphBuilder, StepContext
 from pydantic_graph.exceptions import GraphBuildingError
 from pydantic_graph.join import reduce_list_append, reduce_null, reduce_sum
 
-pytestmark = pytest.mark.anyio
-
 
 @dataclass
 class EdgeCaseState:

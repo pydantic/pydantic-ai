@@ -14,13 +14,14 @@ import glob as globlib
 import os
 import pathlib
 
+from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelRetry
 
 from ._backends import filesystem
 from .shared import attach_context, clip, resolve, workspace
 
 
-async def glob_search(pattern: str, path: str = '.') -> str:
+async def glob_search(ctx: RunContext[object], pattern: str, path: str = '.') -> str:
     """Return workspace paths matching a glob `pattern` (supports `**`)."""
     # Claude's `Glob` takes a relative pattern plus a separate `path`; an absolute
     # pattern would be joined as-is and could escape the search root, so reject it.
@@ -31,7 +32,9 @@ async def glob_search(pattern: str, path: str = '.') -> str:
         # per-match resolve() + is_relative_to() below then contains the matches,
         # dropping anything a `..` pattern or an in-workspace symlink points to
         # outside the root (a purely lexical `relative_to` would not catch those).
-        await filesystem().file_info(path)
+        info = await filesystem().file_info(path, workspace=ctx.workspace)
+        if info.startswith('Path not found: '):  # returned, not raised, by the harness
+            return f'error: {info}'
         base = resolve(path)
         ws = pathlib.Path(workspace())
         root = ws.resolve()

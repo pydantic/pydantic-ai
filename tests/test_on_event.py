@@ -3,18 +3,33 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterable, AsyncIterator
+import sys
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from dataclasses import dataclass, replace as dataclasses_replace
-from typing import Any
+from types import AsyncGeneratorType
+from typing import Any, Literal
 
 import pytest
 
-from pydantic_ai import Agent, CapabilityEvent, CustomEvent, RunContext
+from pydantic_ai import (
+    Agent,
+    CapabilityEvent,
+    CustomEvent,
+    DeferredToolRequests,
+    DeferredToolResults,
+    EndStrategy,
+    RunContext,
+    ToolOutput,
+    _agent_graph,
+    _run_context,
+    _tool_execution,
+)
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     AbstractCapability,
     Capability,
     CombinedCapability,
+    HandleDeferredToolCalls,
     Hooks,
     WrapperCapability,
     on_event,
@@ -24,7 +39,7 @@ from pydantic_ai.capabilities._on_event import (
     collect_on_event_methods,
 )
 from pydantic_ai.capabilities.abstract import CapabilityOrdering
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ApprovalRequired, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     FunctionToolCallEvent,
@@ -43,8 +58,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
 from .capability_models import simple_model_function, simple_stream_function
-
-pytestmark = pytest.mark.anyio
 
 
 @dataclass(kw_only=True)
@@ -477,6 +490,84 @@ async def test_stream_listener_exception_fails_run() -> None:
     agent = Agent(FunctionModel(stream_function=_tool_then_text), capabilities=[emitter, Boom()])
     with pytest.raises(RuntimeError, match='listener failed'):
         await agent.run('go')
+
+
+@pytest.mark.parametrize(
+    'end_strategy,tool_path',
+    [
+        ('early', 'function_tool'),
+        ('graceful', 'function_tool'),
+        ('exhaustive', 'function_tool'),
+        # `early` skips function tools once an output tool succeeds, so it has no in-flight tool here.
+        ('graceful', 'function_then_output_tool'),
+        ('exhaustive', 'function_then_output_tool'),
+        ('early', 'approved_deferred_tool'),
+        ('graceful', 'approved_deferred_tool'),
+        ('exhaustive', 'approved_deferred_tool'),
+    ],
+)
+async def test_stream_listener_exception_cancels_in_flight_tool(
+    end_strategy: EndStrategy,
+    tool_path: Literal['function_tool', 'function_then_output_tool', 'approved_deferred_tool'],
+) -> None:
+    """A failing listener cancels the tool that emitted, and the run awaits it before raising.
+
+    Each generator between the listener and the tool has to close the one it reads from. The generators
+    are held here, so the garbage collector can't close a link the code left open.
+    """
+    cleaned_up: list[bool] = []
+    emitter = Capability[Any](id='emitter')
+
+    @emitter.tool
+    async def read_file(ctx: RunContext[Any]) -> str:
+        if tool_path == 'approved_deferred_tool' and not ctx.tool_call_approved:
+            raise ApprovalRequired
+        try:
+            await ctx.emit(FileReadEvent(path='a'))
+            await asyncio.Event().wait()
+        finally:
+            cleaned_up.append(True)
+        return 'unreachable'  # pragma: no cover
+
+    @dataclass
+    class Boom(AbstractCapability[Any]):
+        @on_event(FileReadEvent)
+        async def boom(self, ctx: RunContext[Any], event: FileReadEvent) -> None:
+            raise RuntimeError('listener failed')
+
+    async def approve_all(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        calls = {0: DeltaToolCall(name='read_file', json_args='{}', tool_call_id='call_1')}
+        if tool_path == 'function_then_output_tool':
+            calls[1] = DeltaToolCall(name='final_result', json_args='{"response": 1}', tool_call_id='call_2')
+        yield calls
+
+    agent = Agent(
+        FunctionModel(stream_function=stream_function),
+        output_type=ToolOutput(int),
+        capabilities=[emitter, Boom(), HandleDeferredToolCalls(handler=approve_all)],
+        end_strategy=end_strategy,
+    )
+    event_stream_modules = {_agent_graph.__file__, _tool_execution.__file__, _run_context.__file__}
+    layers: list[AsyncGeneratorType[Any, Any]] = []
+    firstiter, finalizer = sys.get_asyncgen_hooks()
+
+    def track(agen: AsyncGenerator[Any]) -> None:
+        if isinstance(agen, AsyncGeneratorType) and agen.ag_code.co_filename in event_stream_modules:
+            layers.append(agen)
+        if firstiter is not None:  # pragma: no branch
+            firstiter(agen)
+
+    sys.set_asyncgen_hooks(track, finalizer)
+    try:
+        with pytest.raises(RuntimeError, match='listener failed'):
+            await agent.run('go')
+    finally:
+        sys.set_asyncgen_hooks(firstiter, finalizer)
+    assert cleaned_up == [True]
+    assert {'dispatch_event_stream', 'process_tool_calls'} <= {agen.ag_code.co_qualname for agen in layers}
 
 
 async def test_immediate_listener_exception_propagates_to_emitter() -> None:

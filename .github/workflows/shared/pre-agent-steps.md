@@ -29,9 +29,13 @@ pre-agent-steps:
   # collapses the `uv-dynamic-versioning` version to `0.0.1.dev*`, which can't satisfy
   # the shim runner's `pydantic-ai-harness` floor (`pydantic-ai-slim>=2.1.0`) and the
   # agent then exits before logging (surfacing as `ERR_CONFIG`). Restore history + tags
-  # here (still on the open network) so the version resolves to the real `2.x`.
+  # here (still on the open network) so the version resolves to the real `2.x`. The
+  # `clai2-bleeding` tag is mutable, so remove its checkout value before fetching tags.
   - name: Restore full history and tags for dynamic versioning
     run: |
+      if git show-ref --verify --quiet refs/tags/clai2-bleeding; then
+        git tag -d clai2-bleeding
+      fi
       if [ -f "$(git rev-parse --git-dir)/shallow" ]; then
         git fetch --unshallow --tags origin
       else

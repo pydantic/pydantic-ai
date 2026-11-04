@@ -13,6 +13,7 @@ from pydantic_ai._instrumentation import (
     ANY_ADAPTER,
     GEN_AI_PROVIDER_NAME_ATTRIBUTE,
     GEN_AI_REQUEST_MODEL_ATTRIBUTE,
+    record_uncaught_errors,
     server_attributes,
 )
 from pydantic_ai._warnings import CostCalculationFailedWarning
@@ -64,6 +65,11 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
             finish(result)
             return result
 
+    @staticmethod
+    def _recorded_settings(settings: EmbeddingSettings | None) -> dict[str, object]:
+        """The settings recorded on the span: all but the request header and body overrides."""
+        return {key: value for key, value in (settings or {}).items() if key not in ('extra_headers', 'extra_body')}
+
     @contextmanager
     def _instrument(
         self,
@@ -83,8 +89,8 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
             'inputs_count': inputs_count,
         }
 
-        if settings:
-            attributes['embedding_settings'] = json.dumps(self.serialize_any(settings))
+        if recorded_settings := self._recorded_settings(settings):
+            attributes['embedding_settings'] = json.dumps(self.serialize_any(recorded_settings))
 
         if self.instrumentation_settings.include_content:
             attributes['inputs'] = json.dumps(inputs)
@@ -107,7 +113,12 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
 
         record_metrics: Callable[[], None] | None = None
         try:
-            with self.instrumentation_settings.tracer.start_as_current_span(span_name, attributes=attributes) as span:
+            with (
+                self.instrumentation_settings.tracer.start_as_current_span(
+                    span_name, attributes=attributes, record_exception=False, set_status_on_exception=False
+                ) as span,
+                record_uncaught_errors(span, include_content=self.instrumentation_settings.include_content),
+            ):
 
                 def finish(result: EmbeddingResult):
                     # Prepare metric recording closure first so metrics are recorded
@@ -115,7 +126,7 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                     provider_name = attributes[GEN_AI_PROVIDER_NAME_ATTRIBUTE]
                     request_model = attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]
                     response_model = result.model_name or request_model
-                    price_calculation = None
+                    cost = result.usage.cost
 
                     def _record_metrics():
                         metric_attributes = {
@@ -131,21 +142,21 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                         tokens = result.usage.input_tokens or 0
                         if tokens:  # pragma: no branch
                             self.instrumentation_settings.tokens_histogram.record(tokens, token_attributes)
-                            if price_calculation is not None:
-                                self.instrumentation_settings.cost_histogram.record(
-                                    float(price_calculation.total_price),
-                                    metric_attributes,
-                                )
+                            if cost is not None:
+                                self.instrumentation_settings.cost_histogram.record(float(cost), metric_attributes)
 
                     nonlocal record_metrics
                     record_metrics = _record_metrics
 
                     try:
-                        price_calculation = result.cost()
+                        # A cost already on the usage, e.g. reported by the Pydantic AI Gateway, wins over the estimate.
+                        price = cost if cost is not None else result.cost().total_price
+                        # Match best_effort_price's policy while retaining embedding-specific lookup and warnings.
+                        cost = None if cost is None and result.usage.unmeasured_requests and price == 0 else price
                     except LookupError:
                         # The cost of this provider/model is unknown, which is common.
                         pass
-                    except Exception as e:  # pragma: no cover
+                    except Exception as e:
                         warnings.warn(
                             f'Failed to get cost from response: {type(e).__name__}: {e}', CostCalculationFailedWarning
                         )
@@ -158,8 +169,8 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                         'gen_ai.response.model': response_model,
                     }
 
-                    if price_calculation:
-                        attributes_to_set['operation.cost'] = float(price_calculation.total_price)
+                    if cost is not None:
+                        attributes_to_set['operation.cost'] = float(cost)
 
                     embeddings = result.embeddings
                     if embeddings:  # pragma: no branch

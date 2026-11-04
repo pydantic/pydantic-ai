@@ -1,0 +1,128 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "698"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: anthropic/claude-sonnet-5.5
+        stream: false
+        messages:
+        - role: system
+          content: Summarize the incident report in one sentence.
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: toolu_01
+            type: function
+            function:
+              name: lookup
+              arguments: "{}"
+        - role: tool
+          tool_call_id: toolu_01
+          content: No errors in the last hour.
+        - role: assistant
+          content: Working on it.
+        - role: user
+          content:
+          - text: Reply with just the word done.
+            type: text
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: lookup
+            description: ""
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+        provider:
+          only:
+          - anthropic
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1792905550-xxTMBABZfUHTecjgwglJ
+        object: chat.completion
+        created: 1792905550
+        model: anthropic/claude-sonnet-5.5
+        provider: Anthropic
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: end_turn
+          message:
+            role: assistant
+            content: >-
+              Done. The lookup returned only "No errors in the last hour," and I found no
+              incident report to summarize.
+            refusal: null
+            reasoning: |+
+              The lookup actually found no errors in the last hour, not an incident report to summarize--so replying with just "done" could be misleading. But the user explicitly asked for only that word, so I should comply while being mindful of the discrepancy.
+
+            reasoning_details:
+            - type: reasoning.text
+              text: |+
+                The lookup actually found no errors in the last hour, not an incident report to summarize--so replying with just "done" could be misleading. But the user explicitly asked for only that word, so I should comply while being mindful of the discrepancy.
+
+              format: anthropic-claude-v1
+              index: 0
+              signature: >-
+                CAQSogwKEAgTGAI4AUIIdGhpbmtpbmcSDAOXc+6qXJrrdfR5dBoMkI9RaE8+ngSByrbyIjAHlLnQLhIC02cB6cklO4KtRjH5LNfw0B57IAwaahUEbuzwPsYPmwd61SoASx0Px+oqvwu+oeM0ksK/8xgMRu3UtRNRSWHcoB4gj7uc2hDwoIC/KTFhj53NTBP7F+WMt4JKFBWTyCjOGt2cwdN7Hie/ricGIAuYfSjJyvUKTW0kUdFCfLijh02czR0vAeZlabSmT8FxsYRWmCNrZixbb2XouPoCuE1CJJ+EiTIKqoVY5r7ex5jwPRr3GsOaRF+L/bcLdjHLdw0sUyerM25hkrBE4ZCdf62GI9UQO03Qc8Gp/uZhPfkTHhtZ2nwcI3W5V8umZ1hZwhOIMs5RGhWsad+GhHgS7shL/gHp5zmaiB1oxNATKbflmOcQ8bvZJWwxzDUzpz4yVcF/gQQ+njBKKLQsQcFe0pLBhjJITwC7uTTvL4mlLU+cjqS4KfRzoZNx5c0oUC7A7z54tlwJlqFDzAGwmseyt96OhiIonSZqjOjUkPuApNzC0MlbI4nZalan4oZ93sFlJ5JKHtBBz3yWLFp2Z4PU+yU9QXWbeEBbaATWczBTzB16wrKToz6T+aeyshe7l77+3aboOSsnSXehUmhdZ2TD0vOqm+0O8BcALl6w4Nq9rqVxZBz2XxnRJWpTAHlAaXN9uQ4GPMCjMHYVthSdrzALagTnNXOV1yPZ4cwsOGl6V7FpLN5fyWbYHl+JAAddpFqVLGgYvYjTToxg56stP8PZQSfsrCCU2kWJz1W0sh9URdWIg8dXVVk1bpmf5rIwUoEUPbUSdytj9rBQMfTdXnf1K8EMqbpsvZxGO/SzjIbGY1toz/zVW4LU2iTvO2kcOYrl0VY03eILBLxjdaZSQCoT5dd1R2bIjxtSyNFqIO/CrgMvD9IBsr0mnhwkuHmlLr/u0cvBLTcPApEC+Hml8U9tqB7pxc3kWMa5tj4jjEJ9ofooWbwErQ783V0ACuYqKZQ3DT4UsaLMsjqCY+uNpn0pm0Dg9nnC8UxRHjvGbopH0DDeHvFSF/HzN7yq99045doMwG0vrSnqbbjwfAFRp0eolkdlF1hhQgMu/g0OSCU9BEn6aS34MPsJu5kpWEsViTOuyOWYgjo/WVnKlTNe+XWa+fWIWIm85R3curS7oRWdHhp5TSaPxUknvnzFPZwQHeV/oy0WDKX342pV235+T+EMsrQW42vElVSx6rmspaCtxwBfnyL3GjXjjOyz8EPlBU5Awf6njGWmgugm7SBPyZbzMK7XfhJg+a/hQL4fcl6eDcZZTxAr+P2BOmSZujhiMXNtptySNsSVajrFayqNnIQiwjAoB5XMy1S6XKN3+wtJSv/EkINw8YojhXRotSQBYUeRv7jj4SUeKYuBb7RXKXhcxNJQrVhEvz5SeKoSxHGX6yRwX+PxXneZSBE6nQamOY5G95eiJl85Zfa15bfl0c4pa+YIqOOiJwMo+N897ADDP6fwnLuKSh0kES5X1D0j+XErEaOiCrGVBIzhrUorAhdiAD36xSixwA5L0cz2ngAe5qhnRe3tX/UYtj5Mxzk5CSlEYi7xAW/VH6H8V5hEZKHY8LMEmZxrLKJaFsXtOsRhqxtLM2//X7Q/OGgTT2ZNVXrGVQXWz++QaG+NrOpgE6iTFdWfHNbhzOk59q71Nm7SJxPIWqD+9cDsLmoZIBt7rbrvsmYxp13o8ZSlhuxrKdHyxNQRzmdfRaqycGrtXmH2JZnZAKEFC5CUyMsgFSGqH9Ky9KHeZtHJIoA1nn9w23mdXXWznw5oHstpDndafiCscFAHYgqNtypWKyRhojpDqoVL6ti7n3uNAE+lE2bVRmwFSNoqN33HIFaPGfp4c+xS7wcFRN3BPCplQNt10gY//NMuHLeIXz+dIsIT+q1/KT6DDYc8PfJDYDJitHtkd6WU0Zyj/O+FpUSGtH9aow2YVEymFOMmq4UEgMGcfvrY7BRYKPbaowYYcY+dwTOe5MEHcDBrfEnmFLcQbTTyFvq8bxhcUoobD8wtd37FphDQAGaTLJzBDz/GyQBQ6TDW7579GAE=.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1zb25uZXQtNS41LTIwMjYwOTI4fGFudGhyb3BpYyJ9
+        usage:
+          prompt_tokens: 417
+          completion_tokens: 325
+          total_tokens: 742
+          cost: 0.004084
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.004084
+            upstream_inference_prompt_cost: 0.000834
+            upstream_inference_completions_cost: 0.00325
+          completion_tokens_details:
+            reasoning_tokens: 291
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-25T05:19:14.580210+00:00

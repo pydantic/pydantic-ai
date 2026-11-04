@@ -3,15 +3,14 @@ from __future__ import annotations
 import json
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, assert_never
 
 import httpx
 import httpx2
 import pytest
 from inline_snapshot import snapshot
-from typing_extensions import assert_never
 
-from pydantic_ai import Agent, ModelHTTPError
+from pydantic_ai import Agent, ModelHTTPError, ModelNotFoundError
 
 from .conftest import IsStr, TestEnv, try_import
 
@@ -37,7 +36,7 @@ with try_import() as groq_imports:
     from pydantic_ai.models.groq import GroqModel
     from pydantic_ai.providers.groq import GroqProvider
 
-pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+pytestmark = [pytest.mark.vcr]
 
 
 ProviderCase = Literal['openai-responses', 'openai-chat', 'anthropic', 'google', 'bedrock', 'groq']
@@ -89,17 +88,17 @@ CASES = [
     ),
     Case(
         provider='anthropic',
-        model_name='claude-sonet-4-5',
-        expected_request=('claude-sonet-4-5',),
+        model_name='claude-sonet-5-5',
+        expected_request=('claude-sonet-5-5',),
         expected_body=snapshot(
             {
                 'type': 'error',
-                'error': {'type': 'not_found_error', 'message': 'model: claude-sonet-4-5'},
+                'error': {'type': 'not_found_error', 'message': 'model: claude-sonet-5-5'},
                 'request_id': IsStr(),
             }
         ),
         expected_status_code=404,
-        expected_suggestion='anthropic:claude-sonnet-4-5',
+        expected_suggestion='anthropic:claude-sonnet-5-5',
         marks=(pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed'),),
     ),
     Case(
@@ -230,6 +229,8 @@ async def test_model_name_suggestion(case: Case, request: pytest.FixtureRequest,
     assert exc_info.value.status_code == case.expected_status_code
     assert exc_info.value.body == case.expected_body
     assert exc_info.value.suggested_model_id == case.expected_suggestion
+    # Every provider's model-name error is a `ModelNotFoundError`, whatever status it came with.
+    assert isinstance(exc_info.value, ModelNotFoundError)
     assert exc_info.value.__cause__ is not None
     assert str(exc_info.value).endswith(f'. Did you mean {case.expected_suggestion!r}?')
 
@@ -242,4 +243,5 @@ async def test_inferred_model_name_suggestion(allow_model_requests: None, openai
         await Agent('openai:gpt-5.2-proo').run('hello')
 
     assert str(exc_info.value).endswith(". Did you mean 'openai:gpt-5.2-pro'?")
+    assert isinstance(exc_info.value, ModelNotFoundError)
     assert exc_info.value.__cause__ is not None

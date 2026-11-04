@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import json
+from collections.abc import Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import pytest
 from pydantic import JsonValue
+from pytest_mock import MockerFixture
 
 from ..conftest import RequestCapture, try_import
 
 if TYPE_CHECKING:
-    from vcr.cassette import Cassette
+    from cassetter import Cassette
 
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.google import GoogleProvider
@@ -115,6 +118,7 @@ def cache_breakpoints(body: dict[str, JsonValue]) -> tuple[dict[str, JsonValue] 
 
     Where the breakpoints sit is the thing a caching test actually depends on: a breakpoint that
     moves silently re-processes the tail instead of reading from cache, with no error to notice.
+    A block breakpoint is Anthropic's `cache_control` or OpenAI's `prompt_cache_breakpoint`.
     """
     cache_control = body.get('cache_control')
     assert cache_control is None or isinstance(cache_control, dict)
@@ -122,7 +126,8 @@ def cache_breakpoints(body: dict[str, JsonValue]) -> tuple[dict[str, JsonValue] 
     blocks: list[str] = []
     for section in ('system', 'tools'):
         section_blocks = body.get(section)
-        if section_blocks is None:
+        # A plain-string `system` prompt can't carry a breakpoint.
+        if section_blocks is None or isinstance(section_blocks, str):
             continue
         for index, block in enumerate(json_objects(section_blocks)):
             if block.get('cache_control'):
@@ -133,12 +138,43 @@ def cache_breakpoints(body: dict[str, JsonValue]) -> tuple[dict[str, JsonValue] 
     for message_index, message in enumerate(messages):
         assert isinstance(message, dict)
         content = message.get('content')
-        if isinstance(content, str):
+        # An OpenAI assistant turn that only calls tools has no content.
+        if content is None or isinstance(content, str):
             continue
         for block_index, block in enumerate(json_objects(content)):
-            if block.get('cache_control'):
+            if block.get('cache_control') or block.get('prompt_cache_breakpoint'):
                 blocks.append(f'messages[{message_index}].content[{block_index}]')
     return cache_control, blocks
+
+
+def stream_bedrock_converse_mock(mocker: MockerFixture, client: Any) -> None:
+    """Answer `client.converse_stream` with what the mocked `client.converse` returns, as `ConverseStream` events.
+
+    `BedrockConverseModel.request()` streams behind the scenes when it sends a Claude model's maximum output as the
+    default `maxTokens`, so a test that mocks `converse` keeps its mocked responses, and `converse`'s calls keep holding
+    the requests that were sent. Responses can hold text and tool calls.
+    """
+
+    def events(response: dict[str, Any]) -> Iterator[dict[str, Any]]:
+        yield {'messageStart': {'role': 'assistant'}}
+        for index, block in enumerate(response['output']['message']['content']):
+            if 'text' in block:
+                yield {'contentBlockDelta': {'contentBlockIndex': index, 'delta': {'text': block['text']}}}
+            else:
+                tool_use = block['toolUse']
+                start = {'toolUse': {'toolUseId': tool_use['toolUseId'], 'name': tool_use['name']}}
+                yield {'contentBlockStart': {'contentBlockIndex': index, 'start': start}}
+                delta = {'toolUse': {'input': json.dumps(tool_use['input'])}}
+                yield {'contentBlockDelta': {'contentBlockIndex': index, 'delta': delta}}
+            yield {'contentBlockStop': {'contentBlockIndex': index}}
+        yield {'messageStop': {'stopReason': response['stopReason']}}
+        yield {'metadata': {'usage': response['usage']}}
+
+    def converse_stream(**kwargs: Any) -> dict[str, Any]:
+        response = client.converse(**kwargs)
+        return {'stream': events(response), 'ResponseMetadata': response.get('ResponseMetadata', {})}
+
+    mocker.patch.object(client, 'converse_stream', side_effect=converse_stream)
 
 
 @pytest.fixture(scope='function')

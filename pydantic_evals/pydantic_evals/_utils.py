@@ -13,6 +13,12 @@ import anyio
 import logfire_api
 from typing_extensions import ParamSpec, TypeIs
 
+# Optional, not a dependency: it used to arrive only transitively, and AnyIO dropped it in 4.12.
+try:
+    import sniffio as _sniffio
+except ModuleNotFoundError:  # pragma: no cover - exercised by the clean-import test in a subprocess
+    _sniffio = None
+
 _logfire = logfire_api.Logfire(otel_scope='pydantic-evals')
 logfire_api.add_non_user_code_prefix(Path(__file__).parent.absolute())
 
@@ -61,9 +67,10 @@ def get_unwrapped_function_name(func: Callable[..., Any]) -> str:
 
     def _unwrap(f: Callable[..., Any]) -> Callable[..., Any]:
         """Unwraps f, also unwrapping partials, for the sake of getting f's name."""
+        f = inspect.unwrap(f)
         if isinstance(f, partial):
             return _unwrap(f.func)
-        return inspect.unwrap(f)
+        return f
 
     try:
         return _unwrap(func).__name__
@@ -73,6 +80,23 @@ def get_unwrapped_function_name(func: Callable[..., Any]) -> str:
             return f'{type(func).__qualname__}.__call__'
         else:
             raise e
+
+
+def get_function_serialization_name(func: Callable[..., Any]) -> str | None:
+    """Get the name that identifies a function in serialized data, like a dataset file.
+
+    Returns:
+        The function's `__name__`, or `None` if it doesn't have one that identifies it: a lambda has the name
+        `<lambda>` and a `functools.partial` or other callable object has no name, while a bound method's name
+        doesn't identify the instance it's bound to, just like the name of the function a partial wraps doesn't
+        capture its bound arguments.
+    """
+    # Python and built-in bound methods both have a `__self__`, while built-in functions are bound to their module.
+    bound_to = getattr(func, '__self__', None)
+    if bound_to is not None and not inspect.ismodule(bound_to):
+        return None
+    name = getattr(func, '__name__', None)
+    return name if isinstance(name, str) and name.isidentifier() else None
 
 
 _P = ParamSpec('_P')
@@ -89,6 +113,26 @@ def get_event_loop() -> asyncio.AbstractEventLoop:
         event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(event_loop)
     return event_loop
+
+
+def running_on_asyncio() -> bool:
+    """Whether the caller runs on asyncio rather than Trio.
+
+    Inspired by AnyIO's private `current_async_library`. With `sniffio` installed, ask it: Trio records itself
+    there, so the answer holds even for Trio guest mode on an asyncio loop. Without it, Trio cannot be running,
+    because Trio depends on `sniffio`, so a running asyncio loop means asyncio. If Trio ever drops `sniffio`,
+    only guest mode would be misread, as AnyIO would misread it too.
+    """
+    if _sniffio is None:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        return True
+    try:
+        return _sniffio.current_async_library() == 'asyncio'
+    except _sniffio.AsyncLibraryNotFoundError:
+        return False
 
 
 def run_until_complete(coro: Awaitable[T]) -> T:

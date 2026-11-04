@@ -3,10 +3,11 @@ from __future__ import annotations as _annotations
 import argparse
 import functools
 import json
+import shutil
 import sys
 from collections.abc import Sequence
 from contextlib import AsyncExitStack, ExitStack
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,7 @@ from .. import __version__, _display, models, usage as _usage
 from .._run_context import AgentDepsT
 from ..agent import AbstractAgent, Agent
 from ..exceptions import UserError
-from ..messages import FunctionToolCallEvent, FunctionToolResultEvent, ModelMessage, ModelResponse, ToolReturnPart
+from ..messages import FunctionToolCallEvent, FunctionToolResultEvent, ModelMessage, ModelResponse
 from ..models import infer_model, known_model_names
 from ..native_tools import NATIVE_TOOLS_REQUIRING_CONFIG, SUPPORTED_NATIVE_TOOLS
 from ..output import OutputDataT
@@ -125,7 +126,7 @@ def load_agent(agent_path: str) -> Agent[Any, Any] | None:
 
 @cli_agent.system_prompt
 def cli_system_prompt() -> str:
-    now_utc = datetime.now(timezone.utc)
+    now_utc = datetime.now(UTC)
     tzinfo = now_utc.astimezone().tzinfo
     tzname = tzinfo.tzname(now_utc) if tzinfo else ''
     return f"""\
@@ -167,16 +168,21 @@ def _print_intro(
     """
     details = agent._startup_banner_details(model, toolsets)  # pyright: ignore[reportPrivateUsage]
 
-    banner = _display.render_banner(
-        # A loaded agent doesn't always name itself, so fall back to how the user asked for it.
-        name=agent.name or agent_path,
-        model=details.model,
-        output_type=agent.output_type,
-        tools=details.tools,
-        capabilities=details.capabilities,
-        observability=not details.instrumented,
-    )
     try:
+        banner = _display.render_banner(
+            # A loaded agent doesn't always name itself, so fall back to how the user asked for it.
+            name=agent.name or agent_path,
+            model=details.model,
+            output_type=agent.output_type,
+            tools=details.tools,
+            capabilities=details.capabilities,
+            observability=not details.instrumented,
+            logfire_cli_available=shutil.which('uvx') is not None,
+            # The console already knows how wide the terminal is, `COLUMNS` and all, and re-asks it
+            # every time. Without one it answers 80 whether it read that off `COLUMNS` or had nothing
+            # to go on, so the width comes from the stream instead, which tells those two apart.
+            width=console.width if console.is_terminal else _display.terminal_width(console.file),
+        )
         # Rendered by the console but written by hand: a write rich fails on stays in its buffer, so
         # the next thing the session printed would re-emit the banner and fail outside this guard.
         with console.capture() as capture:
@@ -185,8 +191,10 @@ def _print_intro(
             console.print(Text.from_ansi(banner), soft_wrap=True)
         console.file.write(capture.get())
     except Exception:
-        # A terminal whose encoding can't take the logo (`LC_ALL=C`) is no reason to fail a session
-        # before it starts. The chat opens without a header rather than not at all.
+        # Laying the banner out is inside the guard as well as writing it, the way the plain path
+        # has it: `render_banner` reads an output type's own `repr` and the console's width, neither
+        # of which is ours. A terminal whose encoding can't take the logo (`LC_ALL=C`) is no reason
+        # to fail a session before it starts; the chat opens without a header rather than not at all.
         pass
 
 
@@ -600,13 +608,14 @@ async def ask_agent(
                         async with node.stream(agent_run.ctx) as handle_stream:
                             async for event in handle_stream:
                                 if isinstance(event, FunctionToolCallEvent):
-                                    pending_calls[event.tool_call_id] = event.part.tool_name
+                                    # `args_valid is None`: the call won't run, e.g. it was skipped
+                                    # because a final result was already processed.
+                                    if event.args_valid is not None:
+                                        pending_calls[event.tool_call_id] = event.part.tool_name
                                 elif isinstance(event, FunctionToolResultEvent):
-                                    # Pop on any result, not just a `ToolReturnPart`: a call that
-                                    # comes back as a `RetryPromptPart` would otherwise stay pending
-                                    # and pin its indicator for the rest of the run.
-                                    pending_calls.pop(event.tool_call_id, None)
-                                    if isinstance(event.part, ToolReturnPart):
+                                    # Pop on any result, a retried one included: it would otherwise stay
+                                    # pending and pin its indicator for the rest of the run.
+                                    if pending_calls.pop(event.tool_call_id, None) is not None:
                                         content_pieces.append(f'> Called tool `{event.part.tool_name}`.')
                                 calling = [f'> _Calling tool `{name}`…_' for name in pending_calls.values()]
                                 live.update(Markdown('\n\n'.join([*content_pieces, *calling]), code_theme=code_theme))
@@ -615,7 +624,7 @@ async def ask_agent(
             return agent_run.result.all_messages()
     finally:
         if usage is not None:
-            usage.incr(turn_usage)
+            usage.incr(turn_usage)  # usage-attribution: the CLI's own cross-turn total, not a run's usage
 
 
 class CustomAutoSuggest(AutoSuggestFromHistory):

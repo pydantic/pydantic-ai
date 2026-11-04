@@ -1,0 +1,113 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '673'
+      content-type:
+      - application/json
+      host:
+      - chatgpt.com
+      originator:
+      - pydantic-ai
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Process the refund for order-123 using the available capability.
+        role: user
+      - content: I will load the required capability.
+        role: assistant
+      - role: developer
+        tools:
+        - description: Look up the refund policy for an order.
+          name: lookup_refund_policy
+          parameters:
+            additionalProperties: false
+            properties:
+              order_id:
+                type: string
+            required:
+            - order_id
+            type: object
+          strict: true
+          type: function
+        type: additional_tools
+      model: gpt-6-astra
+      reasoning:
+        context: all_turns
+      store: false
+      stream: true
+      tool_choice: auto
+    uri: https://chatgpt.com/backend-api/codex/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_0ce58cef6a8d84b8016ab47088c03087d18b5541e33674219f","object":"response","created_at":1790210184,"status":"in_progress","access_programs":{"cyber":"standard"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-6-astra","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":"3c1123f9-3a6d-464c-9e12-3b7e33e608e5","prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":"scrubbed","service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Look up the refund policy for an order.","name":"lookup_refund_policy","output_schema":null,"parameters":{"type":"object","properties":{"order_id":{"type":"string"}},"required":["order_id"],"additionalProperties":false},"strict":true}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_0ce58cef6a8d84b8016ab47088c03087d18b5541e33674219f","object":"response","created_at":1790210184,"status":"in_progress","access_programs":{"cyber":"standard"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-6-astra","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":"3c1123f9-3a6d-464c-9e12-3b7e33e608e5","prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":"scrubbed","service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Look up the refund policy for an order.","name":"lookup_refund_policy","output_schema":null,"parameters":{"type":"object","properties":{"order_id":{"type":"string"}},"required":["order_id"],"additionalProperties":false},"strict":true}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"fc_0ce58cef6a8d84b8016ab4708a119887d185e8b2ac6d9e212a","type":"function_call","status":"in_progress","arguments":"","call_id":"call_uKp0DesBCuQEmo4lyvoWOfBV","name":"lookup_refund_policy"},"output_index":0,"sequence_number":2}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"{\"","item_id":"fc_0ce58cef6a8d84b8016ab4708a119887d185e8b2ac6d9e212a","obfuscation":"xwvG7F6etZPV36","output_index":0,"sequence_number":3}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"order","item_id":"fc_0ce58cef6a8d84b8016ab4708a119887d185e8b2ac6d9e212a","obfuscation":"BrBbigF2DAg","output_index":0,"sequence_number":4}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"_id","item_id":"fc_0ce58cef6a8d84b8016ab4708a119887d185e8b2ac6d9e212a","obfuscation":"WLYcc1Hg9taHO","output_index":0,"sequence_number":5}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\":\"","item_id":"fc_0ce58cef6a8d84b8016ab4708a119887d185e8b2ac6d9e212a","obfuscation":"NS3dSxc6k1Wue","output_index":0,"sequence_number":6}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"order","item_id":"fc_0ce58cef6a8d84b8016ab4708a119887d185e8b2ac6d9e212a","obfuscation":"Nn7xLiW0tZS","output_index":0,"sequence_number":7}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"-","item_id":"fc_0ce58cef6a8d84b8016ab4708a119887d185e8b2ac6d9e212a","obfuscation":"JjFFVwongAEbp8c","output_index":0,"sequence_number":8}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"123","item_id":"fc_0ce58cef6a8d84b8016ab4708a119887d185e8b2ac6d9e212a","obfuscation":"pLjFJzf1eVpce","output_index":0,"sequence_number":9}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\"}","item_id":"fc_0ce58cef6a8d84b8016ab4708a119887d185e8b2ac6d9e212a","obfuscation":"8BJPoGJvPOI5Pi","output_index":0,"sequence_number":10}
+
+        event: response.function_call_arguments.done
+        data: {"type":"response.function_call_arguments.done","arguments":"{\"order_id\":\"order-123\"}","item_id":"fc_0ce58cef6a8d84b8016ab4708a119887d185e8b2ac6d9e212a","output_index":0,"sequence_number":11}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"fc_0ce58cef6a8d84b8016ab4708a119887d185e8b2ac6d9e212a","type":"function_call","status":"completed","arguments":"{\"order_id\":\"order-123\"}","call_id":"call_uKp0DesBCuQEmo4lyvoWOfBV","name":"lookup_refund_policy"},"output_index":0,"sequence_number":12}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_0ce58cef6a8d84b8016ab47088c03087d18b5541e33674219f","object":"response","created_at":1790210184,"status":"completed","access_programs":{"cyber":"standard"},"background":false,"completed_at":1790210186,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-6-astra","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":"3c1123f9-3a6d-464c-9e12-3b7e33e608e5","prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":"scrubbed","service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Look up the refund policy for an order.","name":"lookup_refund_policy","output_schema":null,"parameters":{"type":"object","properties":{"order_id":{"type":"string"}},"required":["order_id"],"additionalProperties":false},"strict":true}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"attribution":{"items":{"msg_0ce58cef6a8d84b8016ab47088c88087d199e5c64939e8761f":{"cache_write_tokens":0,"cached_tokens":0,"content":[{"cache_write_tokens":0,"cached_tokens":0,"input_tokens":16,"output_tokens":0}],"input_tokens":16,"output_tokens":0},"msg_0ce58cef6a8d84b8016ab47088c8a487d189289d1939d7f9f7":{"cache_write_tokens":0,"cached_tokens":0,"content":[{"cache_write_tokens":0,"cached_tokens":0,"input_tokens":13,"output_tokens":0}],"input_tokens":13,"output_tokens":0},"at_0ce58cef6a8d84b8016ab47088c8f487d1984de5aa46772734":{"cache_write_tokens":0,"cached_tokens":0,"input_tokens":124,"output_tokens":0},"fc_0ce58cef6a8d84b8016ab4708a119887d185e8b2ac6d9e212a":{"cache_write_tokens":0,"cached_tokens":0,"input_tokens":2,"output_tokens":23}}},"input_tokens":155,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":23,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":178},"user":null,"metadata":{}},"sequence_number":13}
+
+    headers:
+      connection:
+      - keep-alive
+      cross-origin-opener-policy:
+      - same-origin-allow-popups
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.01,"max_age":604800}'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=hboAML1fY94LkduwyRahbfk1CSOrP1gPy2dYe09N5oonDHLha6ezP3gTlyqVmCyGyFqOcqLa2ylWZ0IY3C%2B2BmtJggO1VvoxFipNvpjEqHkiAfyxXLlAbInqBddQ"}]}'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
+...

@@ -1,3 +1,7 @@
+---
+description: "Save and load Pydantic Evals datasets as YAML or JSON files, load custom evaluators with custom_evaluator_types, and get IDE autocomplete from a JSON Schema."
+---
+
 # Dataset Serialization
 
 Learn how to save and load datasets in different formats, with support for custom evaluators and IDE integration.
@@ -271,6 +275,8 @@ Custom evaluators must:
 2. Inherit from `Evaluator`
 3. Be passed to both `to_file()` and `from_file()`
 
+[Function evaluators](../evaluators/custom.md#saving-function-evaluators) are saved under the function's name and passed in the same `custom_evaluator_types` list as classes. Only a plain function defined with `def` can be saved: a lambda, bound method, `functools.partial` or other callable has no name that identifies it, so `to_file()` raises an error for a dataset that uses one.
+
 ### Complete Example
 
 ```python
@@ -408,7 +414,7 @@ evaluators:
     max_length: 20
 - LLMJudge:
     rubric: "Response is accurate"
-    model: "openai:gpt-5"
+    model: "{{ openai:medium }}"
     include_input: true
 ```
 
@@ -473,7 +479,7 @@ evaluators:
 
 ### Custom Evaluator Not Found
 
-**Problem**: `ValueError: Unknown evaluator name: 'CustomEvaluator'`
+**Problem**: loading fails with an `ExceptionGroup` (`1 error(s) loading evaluators from registry`) wrapping `ValueError: Evaluator 'CustomEvaluator' is not in the provided custom_evaluator_types. Valid choices: [...]`
 
 **Solution**: Pass `custom_evaluator_types` when loading:
 

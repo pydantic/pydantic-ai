@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Literal, cast
 
+from prefect import task
 from prefect.context import FlowRunContext
 
+from pydantic_ai._utils import now_utc
 from pydantic_ai.agent import EventStreamHandler
-from pydantic_ai.durable_exec._base import BaseDurabilityCapability
+from pydantic_ai.durable_exec._base import BaseDurabilityCapability, conversation_id_from_run_id
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
 from pydantic_ai.durable_exec._operation import (
     DurableOperationId,
@@ -28,6 +31,14 @@ from ._toolset import with_non_retryable_errors
 from ._types import TaskConfig, default_task_config
 
 
+def _next_flow_sequence(context: FlowRunContext, key: str) -> int:
+    """Return the next zero-based count of `key` in this flow attempt; a retry rebuilds it in the same order."""
+    sequence = context.task_run_dynamic_keys.get(key, 0)
+    assert isinstance(sequence, int)
+    context.task_run_dynamic_keys[key] = sequence + 1
+    return sequence
+
+
 @dataclass(init=False, kw_only=True)
 class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     """Capability that makes an agent durable by routing I/O through Prefect tasks.
@@ -44,7 +55,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         codec=IDENTITY_CODEC,  # object-passing: Prefect serializes/caches internally
         unsupported_runtime_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
         wrapped_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
-        toolset_lifecycles={'function': 'enter-always', 'mcp': 'enter-always', 'dynamic': 'enter-never'},
+        toolset_lifecycles={'function': 'enter-always', 'mcp': 'enter-in-durable-unit', 'dynamic': 'enter-never'},
         tool_call_result_upgrade_lenient=True,  # cached payloads may predate value-wrapping
         journal_discovery=True,
         sequential_tools_in_durable_context=False,
@@ -108,6 +119,34 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     @property
     def in_durable_context(self) -> bool:
         return FlowRunContext.get() is not None
+
+    def get_default_run_id(self) -> str | None:
+        context = FlowRunContext.get()
+        if context is None:
+            return None
+        assert context.flow_run is not None
+        return f'{context.flow_run.id}:{_next_flow_sequence(context, "pydantic_ai:default_run_id")}'
+
+    def get_default_conversation_id(self, run_id: str) -> str | None:
+        return conversation_id_from_run_id(run_id) if self.in_durable_context else None
+
+    async def get_run_start_time(self, run_id: str) -> datetime | None:
+        context = FlowRunContext.get()
+        if context is None:
+            return None
+        # A cached task keyed by the run's ID, so a flow retry counts the run's `timeout=` from when it
+        # first started, even when concurrent runs reach this point in a different order. The counter
+        # tells apart runs in one flow that reuse an ID; Prefect rebuilds it in the same order on retry.
+        key = f'pydantic_ai:run_start_time:{run_id}'
+        sequence = _next_flow_sequence(context, key)
+
+        @task
+        async def run_start_time(sequence_key: str, sequence: int) -> datetime:
+            return now_utc()
+
+        return await run_start_time.with_options(name=f'{self.name}__run_start_time', **default_task_config)(
+            key, sequence
+        )
 
     def get_durable_operation_backend(self) -> DurableOperationBackend[TaskConfig]:
         def tool_config(

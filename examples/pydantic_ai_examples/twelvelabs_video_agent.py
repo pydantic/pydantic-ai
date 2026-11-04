@@ -23,6 +23,7 @@ from twelvelabs import AsyncTwelveLabs
 from twelvelabs.types import VideoContext_Url
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Caching
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
@@ -48,6 +49,7 @@ video_agent = Agent(
     ),
     deps_type=Deps,
     retries=2,
+    capabilities=[Caching()],
 )
 
 

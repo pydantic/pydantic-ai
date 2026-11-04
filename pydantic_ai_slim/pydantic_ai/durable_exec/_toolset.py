@@ -1,34 +1,49 @@
 from __future__ import annotations
 
 import copy
+import functools
 import inspect
-from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import KW_ONLY, dataclass, replace
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, TypeAlias, cast
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
+from contextlib import asynccontextmanager
+from dataclasses import KW_ONLY, dataclass, field, replace
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Protocol, Self, TypeAlias, assert_never, cast
 
+import anyio
 from pydantic import Discriminator, Tag, ValidationError
 from pydantic_core import PydanticCustomError, PydanticSerializationError, to_jsonable_python
-from typing_extensions import Self, assert_never
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai._agent_graph import build_validation_context
 from pydantic_ai._cancel import RunCancellation
 from pydantic_ai._enqueue import PendingMessage
+from pydantic_ai._run_context import ToolNamePath, with_tool_name_path, without_tool_name_path
 from pydantic_ai._utils import is_str_dict
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UserError
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelRetry,
+    RunCancelled,
+    RunTimedOut,
+    ToolFailed,
+    UserError,
+)
 from pydantic_ai.messages import InstructionPart, ToolReturn, ToolReturnContent
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
+from ._operation import ToolsetCallToolParams
+
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
     from pydantic_ai.mcp import MCPToolset
 
+    from ._spec import DurabilityEngineSpec
+
 DurableConfig: TypeAlias = Mapping[str, Any]
 ToolConfig: TypeAlias = DurableConfig | Literal[False]
-Lifecycle: TypeAlias = Literal['enter-outside-durable', 'enter-always', 'enter-never']
+Lifecycle: TypeAlias = Literal['enter-outside-durable', 'enter-always', 'enter-never', 'enter-in-durable-unit']
 Instructions: TypeAlias = str | InstructionPart | Sequence[str | InstructionPart] | None
 
 
@@ -65,9 +80,15 @@ def _serializable_validation_input(value: Any) -> Any:
         return {'type': f'{type(value).__module__}.{type(value).__qualname__}', 'repr': representation}
 
 
-def live_validation_context(ctx: RunContext[Any]) -> Any:
-    """Return the run's live validation context for in-process durable units."""
-    return object.__getattribute__(ctx, 'validation_context')
+def unit_validation_context(ctx: RunContext[Any]) -> Any:
+    """The validation context to validate tool arguments with inside a durable unit.
+
+    A context rebuilt without an agent (a toolset used on its own, outside an agent) has no
+    `validation_context` setting to rebuild from, so its arguments validate without one.
+    """
+    if ctx.agent is None and 'validation_context' not in ctx.__dict__:
+        return None
+    return ctx.validation_context
 
 
 def validation_context_from_agent(agent: AbstractAgent[Any, Any] | None) -> ValidationContextResolver:
@@ -94,28 +115,117 @@ class DynamicToolInfo:
 class DynamicToolsResult:
     """Serializable result of the dynamic toolset's tool discovery operation.
 
-    Instructions are collected in the same durable unit (and thus the same single resolution and entry of
-    the inner toolset) as the tools. For an MCP-backed dynamic toolset this means the server is entered
-    once per run step instead of once for tools and again for instructions; the second entry would add a
-    redundant `initialize` round-trip whose `notifications/initialized` races teardown.
+    Instructions are collected in the same durable unit (and thus against the same resolution and entry of
+    the inner toolset) as the tools. For an MCP-backed dynamic toolset this keeps discovery to a single
+    entry of the server rather than one for tools and another for instructions; the second entry would add
+    a redundant `initialize` round-trip whose `notifications/initialized` races teardown.
     """
 
     tools: dict[str, DynamicToolInfo]
     instructions: Instructions
 
 
-async def get_dynamic_tools(toolset: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]) -> DynamicToolsResult:
-    """Resolve a dynamic toolset fresh and collect its tools and instructions in a single entry.
+class RunHeldToolset(Generic[AgentDepsT]):
+    """A toolset held entered for one durable run, entered lazily inside a durable unit.
 
-    Self-contained on purpose: each durable unit (activity/step/task) re-resolves the toolset
-    rather than relying on state left behind by another unit, so replay/recovery in a fresh
-    process stays deterministic.
+    Each durable unit used to enter (and, for a dynamic toolset, build) its own toolset and tear it
+    down again, so anything the toolset cached — such as
+    [`MCPToolset.cache_tools`][pydantic_ai.mcp.MCPToolset.cache_tools] — was discarded before the
+    next unit could use it, and an MCP server saw a fresh session per unit. The run holds one
+    instead: the first durable unit that needs it enters it, where the engine's own retry policy
+    covers a failed connection, and the run exits it at the end. That is the lifecycle a non-durable
+    run gives a toolset.
+
+    A toolset attached to the agent is the same object in the container and in the unit, so the run
+    holds that toolset itself. A [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset] built with
+    `per_run_step=False` is resolved once by the run, which then holds what it resolved: resolving is
+    not connecting — an `MCPToolset` opens nothing until it is entered — but the factory is arbitrary
+    user code that runs in the durable container rather than in a unit, so I/O inside it is not
+    checkpointed and re-runs when the container replays. Like the capability factories that have
+    always run there, it has to be deterministic given the run's dependencies and leave its I/O to
+    the units — which is what the engine docs tell users.
+
+    Only used where the durable unit runs in the same process as the container. Engines that
+    serialize the run context across the boundary never see one and each unit enters its own, as
+    they always have.
     """
+
+    def __init__(self, id: str, toolset: AbstractToolset[AgentDepsT]):
+        self.id = id
+        """The toolset `id` a durable unit looks it up by."""
+        self.toolset = toolset
+        self._entered = False
+
+    @functools.cached_property
+    def _lock(self) -> anyio.Lock:
+        # Created on first use so it binds to the running event loop, and so parallel tool-call
+        # units in one run step can't both enter the toolset.
+        return anyio.Lock()
+
+    async def entered(self) -> AbstractToolset[AgentDepsT]:
+        """Return the toolset the run holds, entering it the first time a unit needs it."""
+        async with self._lock:
+            if not self._entered:
+                await self.toolset.__aenter__()
+                # Only mark it entered once `__aenter__` succeeded, so a failed connection is
+                # retried by the next unit rather than leaving a toolset nothing will exit.
+                self._entered = True
+            return self.toolset
+
+    async def aclose(self, *args: Any) -> None:
+        """Exit the toolset at the end of the run, if any unit entered it.
+
+        Takes the run's own `__aexit__` arguments: the units that used the toolset each returned
+        long ago, so how the run ended is the only thing that can tell a toolset whether to roll
+        back or commit what it did.
+        """
+        async with self._lock:
+            if self._entered:
+                self._entered = False
+                await self.toolset.__aexit__(*args)
+
+
+def _run_held_toolset(
+    toolset: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]
+) -> RunHeldToolset[AgentDepsT] | None:
+    """The toolset this run holds for this one, if it's reachable from this durable unit.
+
+    The run context holds them without their dependencies type, which is the run's own.
+    """
+    held = ctx._run_held_toolsets  # pyright: ignore[reportPrivateUsage]
+    if held is None or toolset.id is None:
+        return None
+    return cast('RunHeldToolset[AgentDepsT] | None', held.get(toolset.id))
+
+
+@asynccontextmanager
+async def toolset_for_unit(
+    toolset: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]
+) -> AsyncGenerator[AbstractToolset[AgentDepsT]]:
+    """Yield the toolset to run one durable unit against.
+
+    Reuses the toolset the run holds entered when the unit can reach it, and otherwise resolves and
+    enters one for this unit alone — the only option when the unit may run in another process, and
+    what every unit did before run-held toolsets existed.
+    """
+    if (held := _run_held_toolset(toolset, ctx)) is not None:
+        yield await held.entered()
+        return
     run_toolset = await toolset.for_run(ctx)
     async with run_toolset:
+        yield run_toolset
+
+
+async def get_dynamic_tools(toolset: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]) -> DynamicToolsResult:
+    """Resolve a dynamic toolset and collect its tools and instructions in a single entry.
+
+    Falls back to resolving the toolset for this unit alone when the run's own resolved toolset
+    isn't reachable, so replay/recovery in a fresh process stays deterministic.
+    """
+    async with toolset_for_unit(toolset, ctx) as run_toolset:
         run_toolset = await run_toolset.for_run_step(ctx)
         tools = await run_toolset.get_tools(ctx)
-        instructions = await run_toolset.get_instructions(ctx)
+        instructions = await run_toolset.get_instructions(without_tool_name_path(ctx))
         return DynamicToolsResult(
             tools={
                 name: DynamicToolInfo(
@@ -129,18 +239,28 @@ async def get_dynamic_tools(toolset: AbstractToolset[AgentDepsT], ctx: RunContex
         )
 
 
-def _dynamic_tool(
+async def _dynamic_tool(
     toolset: AbstractToolset[AgentDepsT],
-    tools: dict[str, ToolsetTool[AgentDepsT]],
+    run_toolset: AbstractToolset[AgentDepsT],
     name: str,
     tool_def: ToolDefinition | None,
+    ctx: RunContext[AgentDepsT],
 ) -> ToolsetTool[AgentDepsT]:
-    tool = tools.get(name)
-    if tool is None:  # pragma: no cover
+    """The tool to call, rebuilt from the definition the discovery unit recorded when there is one.
+
+    A toolset that can build the tool from its definition alone answers without listing its tools;
+    the default implementation lists them, as this always did.
+    """
+    try:
+        if tool_def is None:
+            tool = (await run_toolset.get_tools(ctx))[name]
+        else:
+            tool = await run_toolset.get_tool_for_tool_def(tool_def, ctx)
+    except KeyError as e:  # pragma: no cover
         raise UserError(
             f'Tool {name!r} not found in dynamic toolset {toolset.id!r}. '
             'The dynamic toolset function may have returned a different toolset than expected.'
-        )
+        ) from e
     if tool_def is None:
         return tool
     tool = replace(tool, tool_def=tool_def)
@@ -156,20 +276,18 @@ async def call_dynamic_tool(
     ctx: RunContext[AgentDepsT],
     *,
     tool_def: ToolDefinition | None = None,
-    validation_context: ValidationContextResolver = live_validation_context,
 ) -> Any:
-    """Resolve a dynamic toolset fresh, re-validate the tool args, and call the tool.
+    """Resolve a dynamic toolset, re-validate the tool args, and call the tool.
 
     The args were only parsed (not validated) on the workflow/flow side, where the real tool
     isn't available; validation happens here against the resolved tool's own validator.
     """
-    run_toolset = await toolset.for_run(ctx)
-    async with run_toolset:
+    async with toolset_for_unit(toolset, ctx) as run_toolset:
         run_toolset = await run_toolset.for_run_step(ctx)
-        tools = await run_toolset.get_tools(ctx)
-        tool = _dynamic_tool(toolset, tools, name, tool_def)
-        args = tool.args_validator.validate_python(tool_args, context=validation_context(ctx))
-        return await run_toolset.call_tool(name, args, ctx, tool)
+        tool = await _dynamic_tool(toolset, run_toolset, name, tool_def, ctx)
+        tool_ctx = without_tool_name_path(ctx)
+        args = tool.args_validator.validate_python(tool_args, context=unit_validation_context(tool_ctx))
+        return await run_toolset.call_tool(name, args, tool_ctx, tool)
 
 
 async def validate_dynamic_tool_args(
@@ -179,26 +297,21 @@ async def validate_dynamic_tool_args(
     ctx: RunContext[AgentDepsT],
     *,
     tool_def: ToolDefinition | None = None,
-    validation_context: ValidationContextResolver = live_validation_context,
 ) -> None:
-    """Resolve a dynamic toolset fresh and validate arguments against its real tool."""
-    run_toolset = await toolset.for_run(ctx)
-    async with run_toolset:
+    """Resolve a dynamic toolset and validate arguments against its real tool."""
+    async with toolset_for_unit(toolset, ctx) as run_toolset:
         run_toolset = await run_toolset.for_run_step(ctx)
-        tools = await run_toolset.get_tools(ctx)
-        tool = _dynamic_tool(toolset, tools, name, tool_def)
-        await validate_tool_args(tool, tool_args, ctx, validation_context=validation_context)
+        tool = await _dynamic_tool(toolset, run_toolset, name, tool_def, ctx)
+        await validate_tool_args(tool, tool_args, without_tool_name_path(ctx))
 
 
 async def validate_tool_args(
     tool: ToolsetTool[AgentDepsT],
     tool_args: dict[str, Any],
     ctx: RunContext[AgentDepsT],
-    *,
-    validation_context: ValidationContextResolver = live_validation_context,
 ) -> None:
     """Schema-validate arguments and run the tool's validator inside a durable unit."""
-    args = tool.args_validator.validate_python(tool_args, context=validation_context(ctx))
+    args = tool.args_validator.validate_python(tool_args, context=unit_validation_context(ctx))
     await run_args_validator(tool, args, ctx)
 
 
@@ -260,6 +373,16 @@ class _ToolFailed:
     kind: Literal['tool_failed'] = 'tool_failed'
 
 
+@dataclass
+class _RunCancelled:
+    # A sub-agent run awaited inside the tool cancelled itself; `_ToolCallProcessor._call_tool`
+    # turns the re-raised exception into a failed tool return, as it does in-process.
+    message: str
+    _: KW_ONLY
+    timed_out: bool = False
+    kind: Literal['run_cancelled'] = 'run_cancelled'
+
+
 def _result_discriminator(value: Any) -> str:
     if isinstance(value, ToolReturn) or (is_str_dict(value) and value.get('kind') == 'tool-return'):
         return 'tool-return'
@@ -292,9 +415,22 @@ class _ToolContentResult:
 
 
 CallToolResult = Annotated[
-    _ApprovalRequired | _CallDeferred | _ModelRetry | _ValidationError | _ToolReturn | _ToolContentResult | _ToolFailed,
+    _ApprovalRequired
+    | _CallDeferred
+    | _ModelRetry
+    | _ValidationError
+    | _ToolReturn
+    | _ToolContentResult
+    | _ToolFailed
+    | _RunCancelled,
     Discriminator('kind'),
 ]
+"""The recorded result of a tool call operation, with control-flow signals (`ApprovalRequired`,
+`CallDeferred`, `ModelRetry`, `ToolFailed`, validation errors) carried as data.
+
+Pass it to your codec as the result type. Don't construct or match on its variants, which are
+private. Payloads journaled by earlier versions stay loadable.
+"""
 
 
 async def wrap_tool_call_result(coro: Awaitable[Any]) -> CallToolResult:
@@ -311,6 +447,8 @@ async def wrap_tool_call_result(coro: Awaitable[Any]) -> CallToolResult:
         return _ModelRetry(message=exc.message)
     except ToolFailed as exc:
         return _ToolFailed(message=exc.message)
+    except RunCancelled as exc:
+        return _RunCancelled(message=exc.message, timed_out=isinstance(exc, RunTimedOut))
     except ValidationError as exc:
         return _ValidationError(
             title=exc.title,
@@ -353,7 +491,33 @@ def unwrap_tool_call_result(result: CallToolResult) -> Any:
         raise ModelRetry(result.message)
     if isinstance(result, _ToolFailed):
         raise ToolFailed(result.message)
+    if isinstance(result, _RunCancelled):
+        if result.timed_out:
+            raise RunTimedOut(result.message)
+        raise RunCancelled(result.message)
     assert_never(result)
+
+
+async def revalidate_function_call(
+    toolset: FunctionToolset[Any], params: ToolsetCallToolParams, *, engine_spec: DurabilityEngineSpec
+) -> ToolsetCallToolParams:
+    """Rebuild a function tool call whose arguments crossed a durable boundary as JSON.
+
+    Looks the tool up in `toolset` when it wasn't transported, then validates the arguments
+    against its schema with the context's validation context, so the tool receives the same
+    Python values it would in-process.
+    """
+    tool = params.tool
+    if tool is None:
+        try:
+            tool = (await toolset.get_tools(params.ctx))[params.name]
+        except KeyError as exc:
+            raise UserError(
+                f'Tool {params.name!r} not found in toolset {toolset.id!r}. '
+                f'Removing or renaming tools during an agent run is not supported with {engine_spec.engine_name}.'
+            ) from exc
+    args = tool.args_validator.validate_python(params.tool_args, context=unit_validation_context(params.ctx))
+    return ToolsetCallToolParams(params.name, tool_args=args, ctx=params.ctx, tool=tool)
 
 
 class EnqueueGuard(list[PendingMessage]):
@@ -370,6 +534,25 @@ class EnqueueGuard(list[PendingMessage]):
 
     def append(self, pending: PendingMessage) -> None:
         raise UserError(self._message)
+
+
+@dataclass
+class DispatchSnapshots:
+    """The dispatch-time snapshots a reconstructed durable run context carries outside `RunContext`'s fields.
+
+    `RunContext` derives these from live run state that cannot cross a process boundary, so the
+    Temporal and Render contexts carry the values resolved at dispatch and read them back through
+    property overrides. `dataclasses.replace` rebuilds a context from its instance
+    `__dataclass_fields__` alone, so those contexts add these fields to that set whenever the
+    payload carried them. Otherwise each copy made inside a durable unit, such as a tool's
+    `prepare` context, would lose them. The fields are `repr=False` because `RunContext.__repr__`
+    walks the same instance fields: without it, every reconstructed context would print all four snapshots.
+    """
+
+    available_tool_names: set[str] = field(repr=False)
+    active_capability_ids: set[str] = field(repr=False)
+    _deferred_capability_ids: set[str] = field(repr=False)
+    _tool_names_by_kind: dict[str, str] = field(repr=False)
 
 
 def enqueue_not_supported_message(unit_noun: str, container_noun: str) -> str:
@@ -416,10 +599,12 @@ def cancel_not_supported_message(unit_noun: str, container_noun: str) -> str:
 def guard_run_context(ctx: RunContext[AgentDepsT], *, unit_noun: str, container_noun: str) -> RunContext[AgentDepsT]:
     """Return a copy of `ctx` whose `enqueue()` and `cancel()` raise, for user code in a durable unit.
 
-    Used by the in-process engines (DBOS steps, Prefect tasks) that pass the live context into
-    the durable unit. Temporal reconstructs its context across the activity boundary and installs
-    the enqueue guard in `deserialize_run_context` instead (its `cancel` protection is
-    structural: the live controller is never serialized).
+    Every engine's durable units go through it: on the live context for the in-process engines
+    (DBOS steps, Prefect tasks), and on the reconstructed context for Temporal activities and
+    Render child tasks. Temporal skips it for the units that go through
+    `TemporalDurability._tool_run_context_scope` (function and dynamic toolset activities, MCP
+    tool listing): their context gets the enqueue guard in `deserialize_run_context` instead (its
+    `cancel` protection is structural: the live controller is never serialized).
     """
     return replace(
         ctx,
@@ -443,7 +628,8 @@ def unwrap_recorded_tool_call_result(result: Any) -> Any:
         | _CallDeferred
         | _ModelRetry
         | _ValidationError
-        | _ToolFailed,
+        | _ToolFailed
+        | _RunCancelled,
     ):
         return unwrap_tool_call_result(result)
     return result
@@ -501,6 +687,7 @@ class DurableToolsetBase(WrapperToolset[AgentDepsT]):
         super().__init__(wrapped)
         self._in_durable_context = in_durable_context
         self._lifecycle = lifecycle
+        self._run_held: RunHeldToolset[AgentDepsT] | None = None
         self.durable_registrations = durable_registrations or []
         """Opaque engine handles that must be registered with the engine (e.g. Temporal activities)."""
         self.durable_config = durable_config
@@ -510,36 +697,72 @@ class DurableToolsetBase(WrapperToolset[AgentDepsT]):
     def id(self) -> str | None:
         return self.wrapped.id
 
+    @property
+    def _explicit_id(self) -> str | None:
+        # Forwarded with `id`, so a derived one stays derived through the wrapper.
+        return self.wrapped._explicit_id
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        # Its units (Temporal activities) resolve tools on the registered toolset, which a per-run
+        # replacement cannot reach, so the run must list that same toolset's tools.
         if self._lifecycle == 'enter-outside-durable':
             return self
-        return await super().for_run(ctx)
+        return self._with_wrapped(await self.wrapped.for_run(ctx))
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         if self._lifecycle == 'enter-outside-durable':
             return self
-        return await super().for_run_step(ctx)
+        return self._with_wrapped(await self.wrapped.for_run_step(ctx))
+
+    def _with_wrapped(self, wrapped: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        if wrapped is self.wrapped:
+            return self
+        # Engine wrappers carry registered callbacks that `dataclasses.replace` cannot reconstruct.
+        replacement = copy.copy(self)
+        replacement.wrapped = wrapped
+        replacement._run_held = None
+        return replacement
 
     def visit_and_replace(
         self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
     ) -> AbstractToolset[AgentDepsT]:
         return self
 
+    def _enters_wrapped(self) -> bool:
+        """Whether this wrapper is the one that enters the wrapped toolset around the run.
+
+        `enter-in-durable-unit` hands that to the run's units, but only inside the durable context:
+        outside it there are no units, so the wrapper enters it as `enter-outside-durable` does.
+        """
+        if self._lifecycle == 'enter-always':
+            return True
+        if self._lifecycle == 'enter-never':
+            return False
+        return not self._in_durable_context()
+
+    def _ctx_for_unit(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
+        """Attach the toolset the run holds so a durable unit that can reach it reuses it."""
+        if (held := self._run_held) is None:
+            return ctx
+        existing = ctx._run_held_toolsets or {}  # pyright: ignore[reportPrivateUsage]
+        return replace(ctx, _run_held_toolsets={**existing, held.id: held})
+
     async def __aenter__(self) -> Self:
-        should_enter = self._lifecycle == 'enter-always' or (
-            self._lifecycle == 'enter-outside-durable' and not self._in_durable_context()
-        )
-        if should_enter:
+        if self._enters_wrapped():
             await self.wrapped.__aenter__()
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
-        should_exit = self._lifecycle == 'enter-always' or (
-            self._lifecycle == 'enter-outside-durable' and not self._in_durable_context()
-        )
-        if should_exit:
-            return await self.wrapped.__aexit__(*args)
-        return None
+        try:
+            if self._enters_wrapped():
+                return await self.wrapped.__aexit__(*args)
+            return None
+        finally:
+            # Whichever unit entered the toolset the run holds left it entered for the rest of the
+            # run, so the run is what closes it, passing on how the run ended. Its result is
+            # ignored: a toolset's teardown doesn't get to suppress the run's exception.
+            if (held := self._run_held) is not None:
+                await held.aclose(*args)
 
 
 class DurableFunctionToolset(DurableToolsetBase[AgentDepsT]):
@@ -615,12 +838,14 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
             durable_registrations=durable_registrations,
             durable_config=durable_config,
         )
+        self._dynamic_toolset = wrapped
         self._get_tools_operation = get_tools_operation
         self._call_tool_operation = call_tool_operation
         self._resolve_tool_config = resolve_tool_config
         self._validate_args_operation = validate_args_operation
         self._resolve_validation_config = resolve_validation_config or resolve_tool_config
         self._run_instructions: Instructions = None
+        self._run_tool_name_path: ToolNamePath = ()
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         if not self._in_durable_context():
@@ -629,23 +854,47 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
             # (The wrapped `DynamicToolset` only resolves in `for_run`; delegating the
             # individual methods to the unresolved factory would silently yield no tools.)
             return await self.wrapped.for_run(ctx)
-        # Per-run copy isolates `_run_instructions` from the process-shared instance. The
-        # shallow copy shares the engine-registered operations; this is only state isolation.
+        # Per-run copy isolates `_run_instructions`, `_run_tool_name_path` and `_run_held` from the
+        # process-shared instance. The shallow copy shares the engine-registered operations; this is
+        # only state isolation.
         run_copy = copy.copy(self)
         run_copy._run_instructions = None
+        run_copy._run_tool_name_path = ()
+        run_copy._run_held = None
+        if not self._dynamic_toolset.per_run_step and (toolset_id := self._dynamic_toolset.id) is not None:
+            # `per_run_step=False` is the factory's own statement that one resolution covers the
+            # run, so resolve it here like a non-durable run does, leaving entry to the first
+            # durable unit that needs the toolset. This runs the factory in container code, where
+            # it must be deterministic and leave its I/O to the units. A `per_run_step=True`
+            # factory is re-evaluated per unit as before: its `for_run_step` swaps the inner
+            # toolset in place, which parallel tool-call units must not share.
+            run_copy._run_held = RunHeldToolset(toolset_id, await self._dynamic_toolset.for_run(ctx))
         return run_copy
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        # The per-run copy is stable across steps: resolution happens inside the durable
-        # units per call, so a `per_run_step=True` factory must not be re-evaluated in
-        # workflow/flow code here. (Outside the durable context this wrapper isn't in the
+        # The per-run copy is stable across steps: a `per_run_step=True` factory is re-evaluated
+        # inside the durable units, not in workflow/flow code here, and a `per_run_step=False` one
+        # was resolved once in `for_run`. (Outside the durable context this wrapper isn't in the
         # run's tree at all — `for_run` above replaced it with the resolved toolset.)
         return self
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        result = await self._get_tools_operation(ctx)
+        self._run_tool_name_path = ctx._tool_name_path  # pyright: ignore[reportPrivateUsage]
+        result = await self._get_tools_operation(self._ctx_for_unit(ctx))
         self._run_instructions = result.instructions
         return {name: self._tool_for_info(name, info) for name, info in result.tools.items()}
+
+    def _ctx_for_unit(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
+        """Also attach the tool name path the tools were listed under.
+
+        The validate and call units resolve the tool by listing the toolset again, which re-runs its
+        `prepare`. Only listing carries the path, so without it they would read a different retry
+        count than discovery did, and could drop a tool that discovery listed.
+        """
+        unit_ctx = super()._ctx_for_unit(ctx)
+        if unit_ctx._tool_name_path == self._run_tool_name_path:  # pyright: ignore[reportPrivateUsage]
+            return unit_ctx
+        return with_tool_name_path(unit_ctx, self._run_tool_name_path)
 
     def _tool_for_info(self, name: str, info: DynamicToolInfo) -> ToolsetTool[AgentDepsT]:
         tool = ToolsetTool[AgentDepsT](
@@ -661,7 +910,9 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
         if config is False:
 
             async def args_validator_func(ctx: RunContext[AgentDepsT], **args: Any) -> None:
-                await validate_dynamic_tool_args(self.wrapped, name, args, ctx, tool_def=tool.tool_def)
+                await validate_dynamic_tool_args(
+                    self.wrapped, name, args, self._ctx_for_unit(ctx), tool_def=tool.tool_def
+                )
 
             return replace(tool, args_validator_func=args_validator_func)
         if (operation := self._validate_args_operation) is None:
@@ -672,7 +923,12 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
                 'that only exists inside the durable unit. Remove the `args_validator`, or validate the '
                 'arguments in the tool function itself.'
             )
-        return replace(tool, args_validator_func=_dispatch_args_validator(operation, name, tool, config))
+        dispatch = _dispatch_args_validator(operation, name, tool, config)
+
+        async def dispatch_in_unit(ctx: RunContext[AgentDepsT], **args: Any) -> None:
+            await dispatch(self._ctx_for_unit(ctx), **args)
+
+        return replace(tool, args_validator_func=dispatch_in_unit)
 
     async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> Instructions:
         # Set by `get_tools`, which the framework runs earlier in each step.
@@ -683,11 +939,13 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
     ) -> Any:
         config = self._resolve_tool_config(tool, name)
         if config is False:
-            # The wrapped dynamic toolset is only a construction-time factory; the
-            # per-run resolved copy used for discovery has already exited. Resolve a
-            # fresh copy in flow code for an explicitly inline call.
-            return await call_dynamic_tool(self.wrapped, name, tool_args, ctx, tool_def=tool.tool_def)
-        return await self._call_tool_operation(name, tool_args, ctx=ctx, tool=tool, config=config)
+            # The wrapped dynamic toolset is only a construction-time factory, so an
+            # explicitly inline call resolves one in flow code — reusing the run's resolved
+            # toolset when there is one, like the durable units do.
+            return await call_dynamic_tool(
+                self.wrapped, name, tool_args, self._ctx_for_unit(ctx), tool_def=tool.tool_def
+            )
+        return await self._call_tool_operation(name, tool_args, ctx=self._ctx_for_unit(ctx), tool=tool, config=config)
 
 
 class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
@@ -711,11 +969,35 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
             durable_registrations=durable_registrations,
             durable_config=durable_config,
         )
-        self._mcp_toolset = wrapped
         self._get_tools_operation = get_tools_operation
         self._get_instructions_operation = get_instructions_operation
         self._call_tool_operation = call_tool_operation
         self._resolve_tool_config = resolve_tool_config
+
+    @property
+    def _mcp_toolset(self) -> MCPToolset[AgentDepsT]:
+        # Read through `wrapped` rather than kept apart, so a per-run copy `_with_wrapped` installs
+        # (an `MCPToolset` whose `auth`/`headers` resolve per run) is the one the run calls.
+        return cast('MCPToolset[AgentDepsT]', self.wrapped)
+
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        if not self._in_durable_context():
+            # No durable unit runs outside the durable context, so whatever the lifecycle, the run
+            # calls the wrapped toolset directly — or its per-run copy, when it resolves one.
+            return self._with_wrapped(await self.wrapped.for_run(ctx))
+        if self._lifecycle != 'enter-in-durable-unit' or (toolset_id := self.id) is None:
+            return await super().for_run(ctx)
+        # Per-run copy isolates `_run_held` from the process-shared instance; the shallow copy
+        # shares the engine-registered operations, so this is only state isolation.
+        run_copy = copy.copy(self)
+        # One server session covers the run, the way it does outside a durable container, so the
+        # server is connected to once instead of once per unit and `cache_tools` survives between
+        # units. Entry is refcounted by the toolset itself, so concurrent runs sharing this
+        # process-wide toolset share its session, and it stays open until the last of them ends.
+        # An `MCPToolset` whose `auth`/`headers` resolve per run returns its own copy for the run to
+        # hold, so the session is this run's own and opened with this run's credentials.
+        run_copy._run_held = RunHeldToolset(toolset_id, await self.wrapped.for_run(ctx))
+        return run_copy
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         if not self._in_durable_context() or self._get_tools_operation is None:
@@ -723,7 +1005,8 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
         cache_key = self.id or ''
         if self._mcp_toolset.cache_tools and (cached := ctx._mcp_tool_defs_cache.get(cache_key)) is not None:  # pyright: ignore[reportPrivateUsage]
             return {name: self._mcp_toolset.tool_for_tool_def(tool_def, ctx=ctx) for name, tool_def in cached.items()}
-        tool_defs = await self._get_tools_operation(ctx)
+        # Listing an MCP server reads no retry counts, so its discovery unit gets no name path.
+        tool_defs = await self._get_tools_operation(self._ctx_for_unit(without_tool_name_path(ctx)))
         if self._mcp_toolset.cache_tools:
             ctx._mcp_tool_defs_cache[cache_key] = tool_defs  # pyright: ignore[reportPrivateUsage]
         return {name: self._mcp_toolset.tool_for_tool_def(tool_def, ctx=ctx) for name, tool_def in tool_defs.items()}
@@ -736,7 +1019,7 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
         # Always route through the durable unit: deciding based on locally-cached state (e.g.
         # instructions a warm in-process MCP server already holds) would make the durable
         # schedule depend on process warmth and diverge on replay/recovery (#5884).
-        return await self._get_instructions_operation(ctx)
+        return await self._get_instructions_operation(self._ctx_for_unit(ctx))
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
@@ -746,4 +1029,4 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
         config = self._resolve_tool_config(tool, name)
         if config is False:
             return await self._mcp_toolset.call_tool(name, tool_args, ctx, tool)
-        return await self._call_tool_operation(name, tool_args, ctx=ctx, tool=tool, config=config)
+        return await self._call_tool_operation(name, tool_args, ctx=self._ctx_for_unit(ctx), tool=tool, config=config)

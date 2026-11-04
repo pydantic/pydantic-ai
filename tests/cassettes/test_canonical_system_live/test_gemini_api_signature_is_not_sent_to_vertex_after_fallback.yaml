@@ -1,0 +1,187 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai-dev/locations/global/publishers/google/models/gemini-3-flash-preview:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "868"
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: What is the weather in Paris? Use the tool.
+          role: user
+        - parts:
+          - functionCall:
+              id: call_2035720
+              args:
+                city: Paris
+              name: get_weather
+            thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
+          role: model
+        - parts:
+          - functionResponse:
+              id: call_2035720
+              name: get_weather
+              response:
+                return_value: sunny
+          role: user
+        tools:
+        - functionDeclarations:
+          - description: Get the weather in a city.
+            name: get_weather
+            parameters_json_schema:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+        toolConfig:
+          functionCallingConfig:
+            mode: VALIDATED
+        generationConfig:
+          responseModalities:
+          - TEXT
+          thinkingConfig:
+            include_thoughts: true
+            thinking_level: LOW
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - "509"
+      content-type:
+      - application/json; charset=UTF-8
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            role: model
+            parts:
+            - text: The weather in Paris is sunny.
+          finishReason: STOP
+        usageMetadata:
+          promptTokenCount: 55
+          candidatesTokenCount: 7
+          totalTokenCount: 62
+          trafficType: ON_DEMAND
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 55
+          candidatesTokensDetails:
+          - modality: TEXT
+            tokenCount: 7
+        modelVersion: gemini-3-flash-preview
+        createTime: 2026-10-27T01:26:37.604652Z
+        responseId: zf3fauzzJMTnkNUP6du1qQk
+  recorded_at: 2026-10-27T01:26:38.201370+00:00
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "541"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: What is the weather in Paris? Use the tool.
+          role: user
+        tools:
+        - functionDeclarations:
+          - description: Get the weather in a city.
+            name: get_weather
+            parameters_json_schema:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+        toolConfig:
+          functionCallingConfig:
+            mode: VALIDATED
+        generationConfig:
+          responseModalities:
+          - TEXT
+          thinkingConfig:
+            include_thoughts: true
+            thinking_level: LOW
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=720
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - functionCall:
+                name: get_weather
+                args:
+                  city: Paris
+                id: call_2035720
+              thoughtSignature: >-
+                EmUKYwFpFH0TLqiv8Qv+RjlPkrZA1YAVz9beOT0xUeSje1DbB9cTjsIv0oYDpf9ASUZvf5c5a7ZKwvuEigku6nuV1kC9EsIyMHX+FX77Ppn+SvSI6wmYuTbYkBW4mDfCjKO88fhtMw==
+            role: model
+          finishReason: STOP
+          index: 0
+          finishMessage: Model generated function call(s).
+        usageMetadata:
+          promptTokenCount: 56
+          candidatesTokenCount: 16
+          totalTokenCount: 72
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 56
+          serviceTier: standard
+        modelVersion: gemini-3-flash-preview
+        responseId: zP3fasHNIdmVmtkPnMn_yAw
+  recorded_at: 2026-10-27T01:26:37.086638+00:00
