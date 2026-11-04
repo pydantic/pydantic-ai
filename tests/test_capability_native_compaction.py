@@ -25,6 +25,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     RunContext,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -183,6 +184,32 @@ async def test_native_compaction_compacts_with_the_model_and_keeps_the_turn():
         1,
     )
     assert result.usage.input_tokens == 1054
+
+
+async def test_native_compaction_keeps_the_standing_system_prompt():
+    """The application's system prompt keeps opening the history, so it's still sent, through a second compaction too."""
+    model = CompactingModel('primary')
+    agent = Agent(model, system_prompt='You are a pirate.', capabilities=[NativeCompaction()])
+
+    first = await agent.run('My name is Bob.')
+    second = await agent.run('What is my name?', message_history=first.all_messages(), compact=True)
+    third = await agent.run('And now?', message_history=second.all_messages(), compact=True)
+
+    for result in (second, third):
+        opening = result.all_messages()[0]
+        assert isinstance(opening, ModelRequest)
+        [system_prompt] = opening.parts
+        assert isinstance(system_prompt, SystemPromptPart) and system_prompt.content == 'You are a pirate.'
+        [record] = result.compactions
+        assert record.kept_from == 2
+    # The request sent after each compaction still opens with the system prompt, ahead of the provider's compaction.
+    for sent in model.seen[1:]:
+        opening = sent[0]
+        assert isinstance(opening, ModelRequest) and isinstance(opening.parts[0], SystemPromptPart)
+        assert isinstance(sent[1], ModelResponse) and isinstance(sent[1].parts[0], CompactionPart)
+    # The second compaction was given the system prompt to keep again.
+    compacted_second, _ = model.compacted[1]
+    assert isinstance(compacted_second[0], ModelRequest) and isinstance(compacted_second[0].parts[0], SystemPromptPart)
 
 
 async def test_native_compaction_keeps_a_tool_call_with_its_result():
