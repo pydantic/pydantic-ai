@@ -11,12 +11,22 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness.smart_search._chunks import Chunk
 from pydantic_ai_harness.smart_search._judge import judge
+from pydantic_ai_harness.smart_search._search import Judge
 from pydantic_ai_harness.smart_search._toolset import (
     DEFAULT_CONCURRENCY,
     DEFAULT_THRESHOLD,
     SmartSearchToolset,
     validate_settings,
 )
+
+
+class _OperationToolset(SmartSearchToolset[AgentDepsT]):
+    """Judges through `operation`, `SmartSearch`'s durable `judge` operation."""
+
+    operation: Judge
+
+    async def _judge(self, ctx: RunContext[AgentDepsT], query: str, chunks: list[Chunk]) -> list[float | None]:
+        return await self.operation(ctx, query, chunks)
 
 
 @dataclass
@@ -112,15 +122,16 @@ class SmartSearch(AbstractCapability[AgentDepsT]):
         `capabilities`) asks for the toolset again; a new one would start with an empty `cache_index`.
         """
         if self._toolset is None:
-            self._toolset = SmartSearchToolset[AgentDepsT](
+            toolset = _OperationToolset[AgentDepsT](
                 model=self.model,
                 threshold=self.threshold,
                 concurrency=self.concurrency,
                 cache_index=self.cache_index,
                 guidance=self.guidance,
                 id=self.id or 'smart_search',
-                judge=self._judge,
             )
+            toolset.operation = self._judge
+            self._toolset = toolset
         return self._toolset
 
     @durable_operation('judge')

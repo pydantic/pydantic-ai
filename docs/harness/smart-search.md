@@ -57,6 +57,7 @@ without a workspace fails at its start.
 | `concurrency` | `8` | Snippets judged at once. |
 | `cache_index` | `False` | Keep each searched directory's index in memory between searches; see [Large codebases](#large-codebases). |
 | `guidance` | `None` | Discovery instructions added whenever the tool is offered: `None` for the default, which has the model reach for `smart_search` before exploratory text search, `''` for none. |
+| `id` | `'smart_search'` | Stable identity, under which durable execution records each search's judgments; see [Two of them](#two-of-them). |
 
 ## Tool
 

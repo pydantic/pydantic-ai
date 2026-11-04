@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass
-from functools import cached_property
+from typing import Any, TypeVar
 
 from pydantic_ai.agent.abstract import AgentInstructions
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
-from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._warn import warn_default_changed
@@ -16,7 +16,6 @@ from pydantic_ai_harness.conversation_search._source import HistorySource
 from pydantic_ai_harness.conversation_search._toolset import (
     SCOPE_DEFAULT_CHANGE_IMPACT,
     ConversationSearchToolset,
-    HistorySearch,
     SearchScope,
 )
 
@@ -32,6 +31,18 @@ _CONVERSATION_INSTRUCTIONS = f'{_INSTRUCTIONS_PREFIX}runs in the same conversati
 _ALL_INSTRUCTIONS = f'{_INSTRUCTIONS_PREFIX}runs persisted in the same store.{_INSTRUCTIONS_SUFFIX}'
 """Instruction text under `scope='all'`. Naming the conversation boundary here would talk the
 model out of the cross-conversation recall that opting into `all` exists to enable."""
+
+
+ToolsetT = TypeVar('ToolsetT', bound=ConversationSearchToolset[Any])
+
+
+class _OperationToolset(ConversationSearchToolset[AgentDepsT]):
+    """Searches through `operation`, `ConversationSearch`'s durable `search` operation."""
+
+    operation: Callable[[RunContext[AgentDepsT], str, str | None], Awaitable[str]]
+
+    async def _search(self, ctx: RunContext[AgentDepsT], query: str, run_id: str | None) -> str:
+        return await self.operation(ctx, query, run_id)
 
 
 @dataclass
@@ -149,19 +160,17 @@ class ConversationSearch(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """Provide the `search_conversation_history` tool over the source."""
-        return self._build_toolset(search=self._search)
+        toolset = self._build_toolset(_OperationToolset[AgentDepsT])
+        toolset.operation = self._search
+        return toolset
 
     @durable_operation('search')
-    async def _search(self, query: str, run_id: str | None, conversation_id: str | None) -> str:
-        return await self._requests.search(query, run_id, conversation_id)
+    async def _search(self, ctx: RunContext[AgentDepsT], query: str, run_id: str | None) -> str:
+        toolset = self._build_toolset(ConversationSearchToolset[AgentDepsT])
+        return await toolset.search_conversation_history(ctx, query, run_id)
 
-    @cached_property
-    def _requests(self) -> ConversationSearchToolset[AgentDepsT]:
-        """The toolset whose search reads the source for the durable operation."""
-        return self._build_toolset()
-
-    def _build_toolset(self, search: HistorySearch | None = None) -> ConversationSearchToolset[AgentDepsT]:
-        return ConversationSearchToolset[AgentDepsT](
+    def _build_toolset(self, toolset_type: type[ToolsetT]) -> ToolsetT:
+        return toolset_type(
             self.source,
             tool_id=self.tool_id,
             max_matches=self.max_matches,
@@ -169,7 +178,6 @@ class ConversationSearch(AbstractCapability[AgentDepsT]):
             bm25_k1=self.bm25_k1,
             bm25_b=self.bm25_b,
             scope=self.effective_scope,
-            search=search,
         )
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:

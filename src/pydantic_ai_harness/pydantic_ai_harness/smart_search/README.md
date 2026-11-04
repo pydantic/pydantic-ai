@@ -55,6 +55,7 @@ inside the workspace's working directory. If no source may leave the machine, ju
 | `concurrency` | `8` | Snippets judged at once. |
 | `cache_index` | `False` | Keep each searched directory's index in memory between searches, for the life of the agent. Up to four directories (each with its `glob`) are kept, least recently searched evicted first; later searches re-read every file but only re-index changed ones. |
 | `guidance` | `None` | Discovery instructions added whenever the tool is offered: `None` for the default, which has the model reach for `smart_search` before exploratory text search, `''` for none. |
+| `id` | `'smart_search'` | Stable identity, under which durable execution records each search's judgments; see [Two of them](#two-of-them). |
 
 A search is capped at 200,000 files (counted after `glob`), 50 million lines and 2 GiB of source; past that it asks
 the model to narrow `directory` or `glob`.
