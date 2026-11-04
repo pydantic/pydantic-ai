@@ -1772,7 +1772,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         and moves the current request's ones to the end of the last request.
 
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
-        the profile's `supports_inline_system_prompts` is `False`; on such a profile the instructions end with a
+        the profile's `supports_inline_system_prompts` is `False`; on such a profile the instructions open with a
         sentence saying what the tag means (see `_get_instruction_parts`). Nothing the user or a tool wrote is
         rewritten. A user, tool or file item whose text resembles
         a frame gets a note next to it, and on a profile with inline system messages the first request with a
