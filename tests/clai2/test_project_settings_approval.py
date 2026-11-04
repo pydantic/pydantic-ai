@@ -314,7 +314,11 @@ async def test_project_instructions_only_go_with_a_runs_prompt() -> None:
             return ModelResponse(parts=[ToolCallPart('look', {}, tool_call_id='call')])
         return ModelResponse(parts=[TextPart('ok')])
 
-    agent = Agent(FunctionModel(respond), capabilities=[ProjectInstructions[None](text='Rule.', source='settings')])
+    agent = Agent(
+        FunctionModel(respond),
+        deps_type=type(None),
+        capabilities=[ProjectInstructions[None](text='Rule.', source='settings')],
+    )
 
     @agent.tool_plain
     def look() -> str:
