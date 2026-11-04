@@ -4374,6 +4374,17 @@ from ._tool_search import (  # noqa: E402  (intentional late import: typed subcl
     ToolSearchReturnPart as ToolSearchReturnPart,
 )
 
+Authority: TypeAlias = Literal['operator', 'user', 'none']
+"""How much authority content carries with the model, by who wrote it.
+
+- `'operator'`: the application's own, such as its instructions or files the operator controls.
+- `'user'`: the user's, such as a user's saved notes or uploads.
+- `'none'`: data, such as a tool's output, another model's text or a file someone else wrote.
+
+A [`Workspace`][pydantic_ai.workspaces.Workspace]'s [`authority`][pydantic_ai.workspaces.Workspace.authority] is
+the authority of the files in it.
+"""
+
 
 def _model_request_part_discriminator(v: Any) -> str | None:
     """Callable discriminator for [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart].
