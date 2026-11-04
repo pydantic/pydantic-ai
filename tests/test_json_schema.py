@@ -7,9 +7,10 @@ from copy import deepcopy
 from typing import Any
 
 import pytest
+from pydantic import BaseModel, create_model
 from typing_extensions import TypeAliasType
 
-from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, Tool, UserError
+from pydantic_ai import Agent, ModelMessage, ModelResponse, PromptedOutput, TextPart, Tool, UserError
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchema, JsonSchemaTransformer
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles import ModelProfile
@@ -567,6 +568,27 @@ def test_inlining_past_the_value_limit_is_refused_before_the_request(monkeypatch
         UserError, match=f"^The JSON schema of tool 'look_up' is too large: .* more than {_VALUE_LIMIT:,} JSON values"
     ):
         agent.run_sync('look it up')
+
+
+def test_an_output_schema_past_the_value_limit_is_refused_before_the_request(monkeypatch: pytest.MonkeyPatch):
+    """The schema a prompted output describes is limited the same way, and the error says it is the output's."""
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('{}')])  # pragma: no cover
+
+    monkeypatch.setattr('pydantic_ai._json_schema.MAX_INLINED_SCHEMA_VALUES', _VALUE_LIMIT, raising=False)
+    # Each level refers to the one below twice, so inlining doubles per level.
+    level: type[BaseModel] = create_model('Level0', a=(bool, ...), b=(bool, ...))
+    for i in range(1, _VALUE_LIMIT.bit_length() + 1):
+        level = create_model(f'Level{i}', a=(level, ...), b=(level, ...))
+    agent = Agent(
+        FunctionModel(model_function, profile=meta_model_profile('llama-3.3-70b')), output_type=PromptedOutput(level)
+    )
+
+    with pytest.raises(
+        UserError, match=f'^The output JSON schema is too large: .* more than {_VALUE_LIMIT:,} JSON values'
+    ):
+        agent.run_sync('fill it in')
 
 
 def test_inlining_counts_every_value_of_every_copy(monkeypatch: pytest.MonkeyPatch):

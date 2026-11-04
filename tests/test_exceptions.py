@@ -250,8 +250,8 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         ),
         (lambda: IncompleteToolCall('incomplete'), {'message': 'incomplete', 'body': None}),
         (
-            lambda: InlinedSchemaTooLargeError("The JSON schema of tool 'x'"),
-            {'subject': "The JSON schema of tool 'x'"},
+            lambda: InlinedSchemaTooLargeError("The JSON schema of tool 'x'", 'Leave it out.'),
+            {'subject': "The JSON schema of tool 'x'", 'remedy': 'Leave it out.'},
         ),
     ],
     ids=[

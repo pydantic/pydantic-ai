@@ -3124,7 +3124,11 @@ def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: Tool
     try:
         parameters_json_schema = schema_transformer.walk()
     except InlinedSchemaTooLargeError:
-        raise InlinedSchemaTooLargeError(f'The JSON schema of tool {tool_def.name!r}') from None
+        raise InlinedSchemaTooLargeError(
+            f'The JSON schema of tool {tool_def.name!r}',
+            'Refer to large definitions from fewer places, or leave the tool out of the request with `prepare_tools` '
+            'or a `FilteredToolset`.',
+        ) from None
     return replace(
         tool_def,
         parameters_json_schema=parameters_json_schema,
@@ -3136,7 +3140,10 @@ def _customize_output_object(
     transformer: type[JsonSchemaTransformer], output_object: OutputObjectDefinition
 ) -> OutputObjectDefinition:
     schema_transformer = transformer(output_object.json_schema, strict=output_object.strict)
-    json_schema = schema_transformer.walk()
+    try:
+        json_schema = schema_transformer.walk()
+    except InlinedSchemaTooLargeError:
+        raise InlinedSchemaTooLargeError('The output JSON schema') from None
     return replace(
         output_object,
         json_schema=json_schema,

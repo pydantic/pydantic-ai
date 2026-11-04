@@ -27,17 +27,18 @@ class InlinedSchemaTooLargeError(UserError):
 
     subject: str
     """What the schema belongs to, as the message names it."""
+    remedy: str
+    """What the message suggests doing about it."""
 
-    def __init__(self, subject: str):
+    def __init__(self, subject: str, remedy: str = 'Refer to large definitions from fewer places.'):
         self.subject = subject
+        self.remedy = remedy
         super().__init__(
-            f'{subject} is too large: its `$ref`s expand to more than {MAX_INLINED_SCHEMA_VALUES:,} JSON values. '
-            'Refer to large definitions from fewer places, or leave the schema out of the request: for a tool, with '
-            '`prepare_tools` or a `FilteredToolset`.'
+            f'{subject} is too large: its `$ref`s expand to more than {MAX_INLINED_SCHEMA_VALUES:,} JSON values. {remedy}'
         )
 
-    def __reduce__(self) -> tuple[type[InlinedSchemaTooLargeError], tuple[str]]:
-        return self.__class__, (self.subject,)
+    def __reduce__(self) -> tuple[type[InlinedSchemaTooLargeError], tuple[str, str]]:
+        return self.__class__, (self.subject, self.remedy)
 
 
 @dataclass
