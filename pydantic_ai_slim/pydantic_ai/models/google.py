@@ -480,8 +480,7 @@ def _http_error(
     suggested_model_id = None
     if status == 'NOT_FOUND' and isinstance(message, str) and message.startswith(f'models/{model_name} is not found '):
         suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-    reason = _model_errors.google_error_reason(body)
-    category = _model_errors.google_status_category(status, message, reason)
+    category = _model_errors.google_status_category(status, message, body)
     return ModelHTTPError.for_category(
         category or _model_errors.http_status_category(status_code, message),
         status_code=status_code,
