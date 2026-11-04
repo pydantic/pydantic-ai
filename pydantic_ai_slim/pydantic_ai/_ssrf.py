@@ -564,10 +564,10 @@ async def safe_download(
 
     This function:
     1. Validates the URL protocol (only http/https allowed)
-    2. Resolves the hostname to IP addresses
-    3. Validates that no resolved IP is private (unless allow_local=True)
-    4. Always blocks cloud metadata endpoints
-    5. Validates the hostname against allowed/blocked domain lists
+    2. Validates the hostname against allowed/blocked domain lists
+    3. Resolves the hostname to IP addresses
+    4. Validates that no resolved IP is private (unless allow_local=True)
+    5. Always blocks cloud metadata endpoints
     6. Makes the request to the resolved IP with the Host header set
     7. Manually follows redirects, validating each hop
 
@@ -608,11 +608,13 @@ async def safe_download(
 
     async with create_async_http_client(timeout=timeout) as client:
         while True:
+            # Check domain restrictions on every hop, before resolving, so a rejected host
+            # is rejected for that reason wherever it points
+            hostname, *_ = extract_host_and_port(current_url)
+            _check_domain(hostname, allowed_domains=allowed_domains, blocked_domains=blocked_domains)
+
             # Validate and resolve the current URL
             resolved = await validate_and_resolve_url(current_url, allow_local)
-
-            # Check domain restrictions (on every hop to prevent redirect bypass)
-            _check_domain(resolved.hostname, allowed_domains=allowed_domains, blocked_domains=blocked_domains)
 
             # Build URL with resolved IP
             request_url = build_url_with_ip(resolved)
