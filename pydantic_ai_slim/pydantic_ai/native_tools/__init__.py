@@ -178,18 +178,29 @@ class AnthropicWebSearchToolSettings(TypedDict, total=False):
     """Anthropic-specific settings for [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]."""
 
     response_inclusion: Literal['full', 'excluded']
-    """Whether results consumed by completed code execution calls remain in the response."""
+    """Whether results consumed by completed code execution calls remain in the response.
+
+    This has no effect when the model calls the tool directly, which is the default on models without dynamic
+    filtering and on requests whose citations route the tool to direct calls: direct results are returned in full.
+    """
 
 
 @pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
 class OpenRouterWebSearchToolSettings(TypedDict, total=False):
     """OpenRouter-specific settings for [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]."""
 
-    engine: Literal['auto', 'native', 'exa', 'firecrawl', 'parallel', 'perplexity']
-    """The search engine OpenRouter should use."""
+    engine: Literal['auto', 'native', 'exa', 'firecrawl', 'parallel', 'perplexity'] | str
+    """The search engine OpenRouter should use.
 
-    mode: Literal['instant', 'fast', 'auto', 'deep-lite', 'deep', 'deep-reasoning', 'turbo', 'basic', 'advanced']
-    """The engine-specific search mode."""
+    Other strings are forwarded as they are, so an engine OpenRouter adds later works without a new release.
+    """
+
+    mode: Literal['instant', 'fast', 'auto', 'deep-lite', 'deep', 'deep-reasoning', 'turbo', 'basic', 'advanced'] | str
+    """The search mode, which depends on the engine.
+
+    Exa and Parallel each accept their own set of values, and other engines ignore this option. OpenRouter decides
+    whether a value fits the engine, so it isn't checked here.
+    """
 
     max_results: int
     """The maximum results returned by each search call."""
@@ -203,7 +214,7 @@ class OpenRouterWebSearchToolSettings(TypedDict, total=False):
 
 @pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
 class WebSearchProviderSettings(TypedDict, total=False):
-    """Provider-specific web search settings, indexed by the model system."""
+    """Provider-specific web search settings, keyed by the model class that reads them."""
 
     anthropic: AnthropicWebSearchToolSettings
     openrouter: OpenRouterWebSearchToolSettings
@@ -233,7 +244,7 @@ class WebSearchTool(AbstractNativeTool):
     """
 
     provider_settings: WebSearchProviderSettings | None = None
-    """Provider-specific web search settings, indexed by the model system."""
+    """Provider-specific web search settings, keyed by the model class that reads them."""
 
     search_context_size: Literal['low', 'medium', 'high'] = 'medium'
     """The `search_context_size` parameter controls how much context is retrieved from the web to help the tool formulate a response.
@@ -486,12 +497,16 @@ class AnthropicWebFetchToolSettings(TypedDict, total=False):
     """Whether Anthropic may return cached web content."""
 
     response_inclusion: Literal['full', 'excluded']
-    """Whether results consumed by completed code execution calls remain in the response."""
+    """Whether results consumed by completed code execution calls remain in the response.
+
+    This has no effect when the model calls the tool directly, which is the default on models without dynamic
+    filtering and on requests whose citations route the tool to direct calls: direct results are returned in full.
+    """
 
 
 @pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
 class WebFetchProviderSettings(TypedDict, total=False):
-    """Provider-specific web fetch settings, indexed by the model system."""
+    """Provider-specific web fetch settings, keyed by the model class that reads them."""
 
     anthropic: AnthropicWebFetchToolSettings
 
@@ -513,7 +528,7 @@ class WebFetchTool(AbstractNativeTool):
     """
 
     provider_settings: WebFetchProviderSettings | None = None
-    """Provider-specific web fetch settings, indexed by the model system."""
+    """Provider-specific web fetch settings, keyed by the model class that reads them."""
 
     max_uses: int | None = None
     """If provided, the tool will stop fetching URLs after the given number of uses.
@@ -846,7 +861,7 @@ class OpenRouterAdvisorToolSettings(TypedDict, total=False):
 
 @pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
 class AdvisorProviderSettings(TypedDict, total=False):
-    """Provider-specific advisor settings, indexed by the model system."""
+    """Provider-specific advisor settings, keyed by the model class that reads them."""
 
     openrouter: OpenRouterAdvisorToolSettings
 
@@ -866,7 +881,7 @@ class AdvisorTool(AbstractNativeTool):
     """
 
     provider_settings: AdvisorProviderSettings | None = None
-    """Provider-specific advisor settings, indexed by the model system."""
+    """Provider-specific advisor settings, keyed by the model class that reads them."""
 
     model: AdvisorModelName
     """The advisor model to consult, i.e. the `model` field of the provider's advisor tool definition.

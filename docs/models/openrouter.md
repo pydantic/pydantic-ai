@@ -242,9 +242,31 @@ result = agent.run_sync('What is the latest news in AI?')
 
 ### Web Search Parameters
 
-You can configure search context, approximate user location, domain filters, and a limit on searches with [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]. Use [`OpenRouterWebSearchToolSettings`][pydantic_ai.native_tools.OpenRouterWebSearchToolSettings] under the `openrouter` model-system key for OpenRouter-specific engine options:
+You can configure search context, approximate user location, domain filters, and a limit on searches with [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]:
 
 ```python {title="web_search_openrouter.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.models.openrouter import OpenRouterModel
+from pydantic_ai.native_tools import WebSearchTool
+
+tool = WebSearchTool(
+    search_context_size='high',
+    user_location={'city': 'London', 'country': 'GB'},
+    allowed_domains=['pydantic.dev'],
+    max_uses=1,
+)
+model = OpenRouterModel('openai/gpt-4.1')
+agent = Agent(
+    model,
+    capabilities=[NativeTool(tool)],
+)
+result = agent.run_sync('What is the latest news in AI?')
+```
+
+To pick a search engine and limit what it returns, use [`OpenRouterWebSearchToolSettings`][pydantic_ai.native_tools.OpenRouterWebSearchToolSettings]:
+
+```python {title="web_search_openrouter_engine.py"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.models.openrouter import OpenRouterModel
@@ -260,17 +282,10 @@ tool = WebSearchTool(
             max_characters=5_000,
         )
     },
-    search_context_size='high',
-    user_location={'city': 'London', 'country': 'GB'},
     allowed_domains=['pydantic.dev'],
     max_uses=1,
 )
-model = OpenRouterModel('openai/gpt-4.1')
-agent = Agent(
-    model,
-    capabilities=[NativeTool(tool)],
-)
-result = agent.run_sync('What is the latest news in AI?')
+agent = Agent(OpenRouterModel('openai/gpt-5.2'), capabilities=[NativeTool(tool)])
 ```
 
 Pydantic AI surfaces the per-request web-search count under [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['server_tool_use']['web_search_requests']`.
@@ -297,7 +312,7 @@ for annotation in annotations:
     Models whose downstream provider runs the search natively — OpenAI and Anthropic among them — return no annotations at all, so `provider_details` has no `annotations` entry for those. The normal OpenRouter provider details remain available. Set `provider_settings={'openrouter': OpenRouterWebSearchToolSettings(engine='exa')}` on `WebSearchTool` to use OpenRouter's search engine and receive source annotations.
 
 !!! note "Engine-specific parameters"
-    Engine behavior comes from OpenRouter's [Beta server-tool documentation](https://openrouter.ai/docs/guides/features/server-tools/web-search): native provider search ignores `search_context_size`; `user_location` works only with native search; and domain-filter support varies (native OpenAI ignores `excluded_domains`). The server tool can make zero or several searches when it is available to the model. `max_uses` caps a request when OpenRouter uses a non-native search engine or Anthropic's native search; other native providers, including the OpenAI model in this example, ignore it. OpenRouter does not support [`WebSearchTool.external_web_access`][pydantic_ai.native_tools.WebSearchTool.external_web_access].
+    Engine behavior comes from OpenRouter's [Beta server-tool documentation](https://openrouter.ai/docs/guides/features/server-tools/web-search): native provider search ignores `search_context_size`; `user_location` works only with native search; and domain-filter support varies (native OpenAI ignores `excluded_domains`). The server tool can make zero or several searches when it is available to the model. `max_uses` caps a request when OpenRouter uses a non-native search engine or Anthropic's native search; other native providers, including the OpenAI model in the first example, ignore it. `max_characters` takes precedence over `search_context_size`. OpenRouter does not support [`WebSearchTool.external_web_access`][pydantic_ai.native_tools.WebSearchTool.external_web_access].
 
 ## Advisor
 

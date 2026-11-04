@@ -2482,7 +2482,67 @@ async def test_openrouter_web_search_tool_usage_stream(allow_model_requests: Non
     assert 'annotations' not in stream.response.provider_details
 
 
-async def test_openrouter_web_search_annotations(
+async def test_openrouter_web_search_annotations(allow_model_requests: None, openrouter_api_key: str) -> None:
+    """OpenRouter's `url_citation` annotations surface as the response's `annotations` provider detail.
+
+    Uses a model whose downstream provider has no native search, because OpenRouter only returns
+    annotations when a non-native search engine ran; native provider search returns none.
+    """
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('deepseek/deepseek-chat', provider=provider)
+    agent = Agent(model, capabilities=[NativeTool(WebSearchTool(max_uses=1))])
+
+    result = await agent.run("Use web search to find Pydantic AI's GitHub repository and answer with its URL only.")
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.provider_details is not None
+    annotations = response.provider_details['annotations']
+    assert annotations[0] == snapshot(
+        {
+            'type': 'url_citation',
+            'url_citation': {
+                'end_index': 0,
+                'start_index': 0,
+                'title': 'AI Agent Framework, the Pydantic way',
+                'url': 'https://github.com/pydantic/pydantic-ai',
+                'content': """\
+# pydantic/pydantic-ai
+
+...
+
+- Stars: 19265
+- Forks: 2514
+- Watchers: 19265
+- Open issues: 702
+- License: MIT License
+- Homepage: https://pydantic.dev/pydantic-ai
+- Default branch: main
+- Created: 2024-06-21T15:55:04Z
+
+...
+
+AI Agent Framework, the Pydantic way
+
+...
+
+### Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.\
+""",
+            },
+        }
+    )
+    assert [annotation['url_citation']['url'] for annotation in annotations] == snapshot(
+        [
+            'https://github.com/pydantic/pydantic-ai',
+            'https://pydantic.dev/pydantic-ai',
+            'https://github.com/pydantic/pydantic-ai/releases/tag/v2.0.0',
+            'https://pydantic.dev/docs/ai/overview/',
+            'https://github.com/pydantic/pydantic-ai/tree/refs/tags/v1.44.0',
+        ]
+    )
+
+
+async def test_openrouter_web_search_engine_settings(
     allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture
 ) -> None:
     """OpenRouter sends the selected search engine and returns its `url_citation` annotations."""
