@@ -121,6 +121,7 @@ from contextlib import suppress
 
 import httpx
 import httpx2
+from anthropic import AsyncAnthropic
 from openai.types.chat import ChatCompletionMessage
 
 from pydantic_ai import Agent
@@ -156,7 +157,9 @@ def test_sdk_mock():
 
 async def send_with_beta():
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(lambda request: httpx2.Response(400))) as client:
-        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='secret', http_client=client))
+        # Keep the captured target stable across SDK versions that add or omit this query parameter.
+        sdk_client = AsyncAnthropic(api_key='secret', http_client=client, default_query=dict(beta='true'))
+        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=sdk_client))
         with override_allow_model_requests(True), suppress(ModelHTTPError):
             await Agent(model).run('hi', model_settings=dict(anthropic_betas=[{text!r}]))
 
