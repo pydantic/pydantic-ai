@@ -308,8 +308,9 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     task_control: TaskControl | None = field(default=None, kw_only=True)
     """Let delegations outlive the tool call, and give the model tools to manage them. Off by default.
 
-    See `TaskControl`. Only one `SubAgents` on an agent can set it. Not supported under durable execution,
-    where a run raises a `UserError`.
+    See `TaskControl`. Only one `SubAgents` on an agent can set it. On Temporal and DBOS, each task runs in a durable
+    unit of its own, without questions or messages. Under durable execution, `include_self`, `remote_agents`, other
+    durable engines, and a bound `DelegationTasks` owner raise a `UserError`.
     """
 
     dynamic_agents: DynamicAgents[AgentDepsT] | None = field(default=None, kw_only=True)
@@ -538,9 +539,12 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             self._created.pop(ctx.run_id or '', None)
 
     def _require_durable_support(self, ctx: RunContext[AgentDepsT], owner: DelegationTasks | None) -> None:
-        if self.task_control is not None:
-            raise UserError('`SubAgents` `task_control` is not supported under durable execution.')
-        if self.dynamic_agents is None:
+        if self.task_control is not None and (self.include_self or self.task_control.remote_agents):
+            raise UserError(
+                '`SubAgents` `task_control` is not supported under durable execution with `include_self` or '
+                '`remote_agents`.'
+            )
+        if self.task_control is None and self.dynamic_agents is None:
             return
         durability = BaseDurabilityCapability.from_agent(ctx.agent) if ctx.agent is not None else None
         assert durability is not None, 'Only called in a durable context.'
@@ -550,8 +554,9 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         in_workflow = 'function' not in spec.wrapped_toolset_kinds or spec.tool_config_key == 'temporal'
         if owner is not None or not in_workflow:
             raise UserError(
-                '`SubAgents` `dynamic_agents` is only supported under durable execution on an engine that runs its '
-                'tools in workflow code, such as Temporal or DBOS, outside a `DelegationTasks` owner.'
+                '`SubAgents` `task_control` and `dynamic_agents` are only supported under durable execution on an '
+                'engine that runs its tools in workflow code, such as Temporal or DBOS, outside a `DelegationTasks` '
+                'owner.'
             )
 
     async def _run_plain(
@@ -765,7 +770,9 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             dynamic_agents=self.dynamic_agents,
             created=self._created,
             workspace_resolver=self.workspace_resolver,
-            _record_delegation=self._delegate if self.dynamic_agents is not None else None,
+            _record_delegation=self._delegate
+            if self.dynamic_agents is not None or self.task_control is not None
+            else None,
         )
 
     @durable_operation('delegate')

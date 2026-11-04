@@ -26,7 +26,8 @@ except ImportError:  # pragma: lax no cover
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai_harness.subagents import DynamicAgents, SubAgent, SubAgents
+from pydantic_ai_harness.subagents import DynamicAgents, SubAgent, SubAgents, TaskControl
+from tests.harness.subagents._background import WORKER_CALLS, EventKinds, background_parent, background_worker
 from tests.harness.subagents._dynamic import POET_CALLS, POET_RESULT, creator
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
@@ -214,6 +215,69 @@ async def test_created_agent_survives_replay(client: Client) -> None:
     assert 'agent__dynamic_delegating_agent__capability__sub_agents__delegate' in activities
     replay = await Replayer(
         workflows=[DynamicWorkflow],
+        plugins=[PydanticAIPlugin()],
+        workflow_runner=SandboxedWorkflowRunner(restrictions=_RESTRICTIONS),
+        debug_mode=True,
+    ).replay_workflow(history)
+    assert replay.replay_failure is None
+
+
+background_events = EventKinds()
+background_agent = Agent(
+    background_parent(),
+    name='background_delegating_agent',
+    deps_type=type(None),
+    capabilities=[
+        SubAgents[None](
+            agents=[SubAgent(Agent(FunctionModel(background_worker), name='worker'))], task_control=TaskControl()
+        ),
+        background_events,
+        TemporalDurability[None](activity_config=ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class BackgroundWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[str]:
+        background_events.kinds.clear()
+        result = await background_agent.run(prompt)
+        return [result.output, *background_events.kinds]
+
+
+async def test_background_task_survives_replay(client: Client) -> None:
+    """Every workflow task replays from history, so the task and its events replay in order and its result is reused."""
+    WORKER_CALLS.clear()
+    workflow_id = 'test_subagents_temporal_background'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[BackgroundWorkflow],
+        plugins=[AgentPlugin(background_agent)],
+        workflow_runner=SandboxedWorkflowRunner(restrictions=_RESTRICTIONS),
+        max_cached_workflows=0,
+        debug_mode=True,
+    ):
+        output, *kinds = await client.execute_workflow(
+            BackgroundWorkflow.run,
+            'Delegate it',
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=60),
+        )
+    assert 'from the worker' in output
+    assert kinds == [
+        'sub_agents.task_assigned',
+        'sub_agents.task_started',
+        'sub_agents.task_backgrounded',
+        'sub_agents.task_completed',
+    ]
+    assert WORKER_CALLS == ['worker']
+
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    replay = await Replayer(
+        workflows=[BackgroundWorkflow],
         plugins=[PydanticAIPlugin()],
         workflow_runner=SandboxedWorkflowRunner(restrictions=_RESTRICTIONS),
         debug_mode=True,

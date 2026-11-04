@@ -11,7 +11,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field as dataclass_field, replace
 from functools import partial
 from typing import Any, Generic, TypeVar
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import anyio
 
@@ -313,6 +313,13 @@ async def _send_to_owner(
         await owner.notify(record, event)
 
 
+def _new_task_id(ctx: RunContext[Any]) -> str:
+    """A new task's ID: under durable execution, one replay derives again from the run and the recorded tool call."""
+    if ctx.in_durable_context:
+        return uuid5(NAMESPACE_URL, f'{ctx.run_id}:{ctx.tool_call_id}').hex
+    return uuid4().hex
+
+
 def _emits_events(ctx: RunContext[AgentDepsT]) -> bool:
     """Whether the running tool belongs to a capability, so `ctx.emit` accepts a capability event.
 
@@ -472,8 +479,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         # (`ctx.model` is unavailable there). Any other delegate would make its model requests in
         # workflow code, so it stays an activity. With `dynamic_agents`, the roster and the tools that read it
         # stay in the workflow, and a delegation to any other agent runs in the `delegate` operation's activity,
-        # which carries the parent run's model across.
-        in_workflow = (include_self and not self._agents) or dynamic_agents is not None
+        # which carries the parent run's model across. With `task_control`, the tasks and the tools that read them
+        # stay in the workflow too.
+        in_workflow = (include_self and not self._agents) or dynamic_agents is not None or task_control is not None
         self.add_function(
             self.delegate_task,
             name=tool_name,
@@ -482,10 +490,10 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             metadata={'temporal': False} if in_workflow else None,
         )
         if task_control is not None:
-            self.add_function(self.list_tasks, prepare=self._prepare_control)
-            self.add_function(self.message_task, prepare=self._prepare_control)
-            self.add_function(self.answer_task, prepare=self._prepare_control)
-            self.add_function(self.cancel_task, prepare=self._prepare_control)
+            self.add_function(self.list_tasks, prepare=self._prepare_control, metadata={'temporal': False})
+            self.add_function(self.message_task, prepare=self._prepare_control, metadata={'temporal': False})
+            self.add_function(self.answer_task, prepare=self._prepare_control, metadata={'temporal': False})
+            self.add_function(self.cancel_task, prepare=self._prepare_control, metadata={'temporal': False})
         if dynamic_agents is not None:
             self.add_function(
                 self.create_agent,
@@ -822,7 +830,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 f'{running} tasks are already running, the most allowed at once. Wait for a report, or cancel a '
                 'task, before starting another.'
             )
-        task_id = resume or uuid4().hex
+        task_id = resume or _new_task_id(ctx)
         start_type = TaskAssignedEvent if previous is None else TaskFollowUpEvent
         # The task counts as running while listeners see it, so concurrent delegations can't overrun the limit.
         with owner.starting(conversation_id):
@@ -837,8 +845,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                     prompt=task,
                     parent_task_id=parent_id,
                     depth=_depth.get() + 1,
-                    # The delegating model can only answer from the background.
-                    can_ask_questions=can_ask and backgroundable,
+                    # The delegating model can only answer from the background, and not a durable unit's run.
+                    can_ask_questions=can_ask and backgroundable and not ctx.in_durable_context,
                     forward_events=self._forward_events,
                     usage_limits=ctx.usage_limits,
                 ),
@@ -919,16 +927,20 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         await owner.publish(record, TaskStartedEvent(task_id=record.id, agent_name=record.agent_name))
         task_id, agent_name = record.id, record.agent_name
         async with reporting_settlement(owner, record):
-            output = await self._run_delegation(
-                ctx,
-                agent_name,
-                sub_agent,
-                task=record.prompt,
-                key=key,
-                record=record,
-                extra_capabilities=[link],
-                workspace=workspace,
-            )
+            output = await self._delegate_recorded(ctx, agent_name, record.prompt, key)
+            if output is None:
+                output = await self._run_delegation(
+                    ctx,
+                    agent_name,
+                    sub_agent,
+                    task=record.prompt,
+                    key=key,
+                    record=record,
+                    extra_capabilities=[link],
+                    workspace=workspace,
+                )
+            else:
+                record.outcome = 'ok'
         if record.outcome == 'ok':
             completed = TaskCompletedEvent(task_id=task_id, agent_name=agent_name, output=output)
             return (await owner.publish(record, completed)).output
@@ -1010,6 +1022,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         record = self._visible(ctx, owner, task_id)
         if record.parent_id != DelegationTasks.child_id():
             raise ModelRetry(f'Task {task_id} is steered by the task that started it, {record.parent_id}, not you.')
+        if ctx.in_durable_context:
+            raise ModelRetry(f'Task {task_id} runs in a durable unit of its own, which messages cannot reach.')
         if record.status != 'running':
             raise ModelRetry(
                 f'Task {task_id} has finished ({record.outcome}), and messages only reach running tasks. '
@@ -1067,6 +1081,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         record = self._visible(ctx, owner, task_id)
         if record.status != 'running':
             return f'Task {task_id} already finished ({record.outcome}); there is nothing to cancel.'
+        # A task in a durable unit of its own can only be stopped right away.
+        force = force or ctx.in_durable_context
         event_type = TaskForceCancelEvent if force else TaskCancelRequestEvent
         event = await self._announce(ctx, owner, record, event_type(task_id=task_id, agent_name=record.agent_name))
         if event.vetoed:
