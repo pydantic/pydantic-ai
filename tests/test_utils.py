@@ -1142,8 +1142,18 @@ def test_merge_json_schema_defs_pattern_properties_property_names():
             {'items': [{'$ref': '#/$defs/Item'}, True, False]},
             {'items': [{'$ref': '#/$defs/SchemaB_Item_1'}, True, False]},
         ),
+        (
+            {
+                'oneOf': [{'$ref': '#/$defs/Item'}],
+                'discriminator': {'mapping': {'item': '#/$defs/Item'}, 'propertyName': 'kind'},
+            },
+            {
+                'oneOf': [{'$ref': '#/$defs/SchemaB_Item_1'}],
+                'discriminator': {'mapping': {'item': '#/$defs/SchemaB_Item_1'}, 'propertyName': 'kind'},
+            },
+        ),
     ],
-    ids=['contains', 'if', 'then', 'else', 'dependentSchemas', 'tuple-items'],
+    ids=['contains', 'if', 'then', 'else', 'dependentSchemas', 'tuple-items', 'discriminator-mapping'],
 )
 def test_merge_json_schema_defs_nested_subschemas(body: dict[str, Any], expected_body: dict[str, Any]):
     """Pin ref rewriting directly, including shared defs that transitively depend on a renamed def."""
