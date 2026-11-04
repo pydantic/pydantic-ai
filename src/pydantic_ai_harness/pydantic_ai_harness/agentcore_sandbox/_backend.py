@@ -61,6 +61,7 @@ from pydantic_ai.workspaces import (
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env,
+    check_provider,
     check_timeout,
     command_argv,
     command_deadline,
@@ -287,8 +288,7 @@ async def _complete(call: Callable[[], Awaitable[None]]) -> None:
 
 def split_ref(ref: WorkspaceRef) -> tuple[str, str]:
     """The code interpreter and session id an AgentCore `WorkspaceRef` names."""
-    if ref.provider != PROVIDER:
-        raise ValueError(f'unsupported workspace provider {ref.provider!r}; expected {PROVIDER!r}')
+    check_provider(ref, PROVIDER)
     code_interpreter, _, session_id = ref.id.rpartition('/')
     if not code_interpreter or not session_id:
         raise ValueError(f"AgentCore workspace ref id must be '<code interpreter>/<session id>', got {ref.id!r}")

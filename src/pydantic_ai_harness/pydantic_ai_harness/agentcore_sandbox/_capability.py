@@ -9,7 +9,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._workspace_provider import check_env, check_integer, check_working_dir
+from pydantic_ai_harness._workspace_provider import check_env, check_integer, check_working_dir, reject_defer_loading
 from pydantic_ai_harness.agentcore_sandbox._backend import (
     DEFAULT_CODE_INTERPRETER,
     DEFAULT_SESSION_TIMEOUT,
@@ -66,11 +66,7 @@ class AgentCoreSandbox(AbstractCapability[AgentDepsT]):
     """
 
     def __post_init__(self) -> None:
-        if self.defer_loading:
-            raise UserError(
-                '`AgentCoreSandbox` does not support `defer_loading=True`: '
-                'the workspace is selected before deferred capabilities load.'
-            )
+        reject_defer_loading('AgentCoreSandbox', self.defer_loading)
         check_integer('session_timeout', self.session_timeout)
         if self.session_timeout > MAX_SESSION_TIMEOUT:
             raise UserError(f'session_timeout must be at most {MAX_SESSION_TIMEOUT}, got {self.session_timeout!r}.')
