@@ -22,8 +22,8 @@ Search tools that return only titles and snippets force a second round of
 fetching before the agent can judge a source, while search tools that return
 full page text flood the context with pages the agent will discard. Wiring a
 search API together with a page fetcher, budgeting what each tool returns, and
-prompting the agent to research methodically is boilerplate every research
-agent reinvents.
+prompting the agent to research methodically has to be done for each research
+agent.
 
 `ExaSearch` bundles that plumbing into a single
 [capability](../capabilities/overview.md): the research tools, per-tool
@@ -474,8 +474,7 @@ from pydantic_ai_harness import ExaAgent, ExaSearch
 agent = Agent.from_file('agent.yaml', custom_capability_types=[ExaSearch, ExaAgent])
 ```
 
-Pass `custom_capability_types` so the spec loader knows how to instantiate the
-capabilities. The `client` and `runs` fields are not spec-serializable;
+The `client` and `runs` fields are not spec-serializable;
 spec-loaded instances always build the default client from `EXA_API_KEY`. In
 specs, `output_schema` takes the JSON-schema dict form; Pydantic model
 classes are only available when constructing the capability in Python.

@@ -374,6 +374,43 @@ async def test_sidebar_search_accessible_name(page: Page, web_ui: WebUI) -> None
     await expect(sidebar.get_by_text('Browser Alpha', exact=True)).to_have_count(0)
 
 
+async def test_project_heading_title_is_its_folder(page: Page, web_ui: WebUI) -> None:
+    """A repository's heading shows its main checkout's folder, not the Git folder that keys it."""
+    session = {
+        'id': 's',
+        'title': 'Scratch work',
+        'workspace': '/x/scratch',
+        'updated_at': '2026-01-01T00:00:00Z',
+        'created_at': '2026-01-01T00:00:00Z',
+        'state': 'ready',
+        'owner_pid': None,
+        'messages': 2,
+        'model': None,
+        'current': False,
+        'archived': False,
+        'openable': True,
+    }
+    worktree = {'root': '/x/scratch', 'label': 'main', 'current': True, 'missing': False, 'sessions': [session]}
+
+    async def sessions(route: Route) -> None:
+        await route.fulfill(
+            json=[
+                {
+                    'key': '/x/scratch/.git',
+                    'folder': '/x/scratch',
+                    'name': 'scratch',
+                    'current': True,
+                    'worktrees': [worktree],
+                }
+            ]
+        )
+
+    await page.route('**/api/sessions?*', sessions)
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    heading = page.locator('.sidebar .project-title').filter(has_text='scratch')
+    await expect(heading).to_have_attribute('title', '/x/scratch')
+
+
 async def test_removed_worktrees_fold_after_live_ones_and_archive_as_a_group(page: Page, web_ui: WebUI) -> None:
     """Sessions of removed worktrees wait, closed, in one group after the live ones; a branch archives at once."""
 
@@ -433,7 +470,7 @@ async def test_removed_worktrees_fold_after_live_ones_and_archive_as_a_group(pag
     sidebar = page.locator('.sidebar')
     await sidebar.get_by_role('button', name='Projects', exact=True).click()
     await expect(sidebar.get_by_text('Live work', exact=True)).to_be_visible()
-    fold = sidebar.get_by_role('button', name='Removed worktrees (3)')
+    fold = sidebar.get_by_role('button', name='Removed worktrees (3)', exact=True)
     await expect(fold).to_be_visible()
     await expect(sidebar.get_by_text('Gone one', exact=True)).to_have_count(0)
     await fold.click()
@@ -449,6 +486,35 @@ async def test_removed_worktrees_fold_after_live_ones_and_archive_as_a_group(pag
     await gone.hover()
     await gone.get_by_role('button', name='Session actions').click()
     await expect(sidebar.get_by_role('button', name='Archive all in gone')).to_be_disabled()
+
+
+async def test_row_menus_open_from_the_keyboard_and_by_right_click(page: Page, web_ui: WebUI) -> None:
+    """Tab reaches a heading's `…` button, which shows on focus, and right-click opens the same menu."""
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    await sidebar.get_by_role('button', name='Projects', exact=True).click()
+    head = sidebar.locator('.project-head').first
+    more = head.locator('.session-more')
+    archive_chats = sidebar.get_by_role('button', name='Archive chats')
+    await expect(more).to_have_css('opacity', '0')
+    await sidebar.get_by_role('textbox', name='Search sessions', exact=True).focus()
+    for _ in range(30):
+        await page.keyboard.press('Tab')
+        if await more.evaluate('button => button === document.activeElement'):
+            break
+    await expect(more).to_be_focused()
+    await expect(more).to_have_css('opacity', '1')
+    await page.keyboard.press('Enter')
+    await expect(archive_chats).to_be_visible()
+    await page.keyboard.press('Escape')
+    await expect(archive_chats).to_have_count(0)
+
+    await page.mouse.move(0, 0)
+    await head.click(button='right')
+    await expect(archive_chats).to_be_visible()
+    await page.keyboard.press('Escape')
+    await sidebar.locator('.session').first.click(button='right')
+    await expect(sidebar.get_by_role('button', name='Rename', exact=True)).to_be_visible()
 
 
 async def test_a_million_token_window_reads_in_millions(page: Page, web_ui: WebUI) -> None:
@@ -985,7 +1051,8 @@ async def test_at_mentions_pick_files_from_the_session_folder(page: Page, web_ui
     # A mention typed before more text replaces only itself, the caret stays after it, and the list stays closed.
     await composer.fill('see  and more')
     await composer.evaluate('area => area.setSelectionRange(4, 4)')
-    await page.keyboard.type('@REA')
+    # Entered at once: typed key by key, the list for `@RE` could show first, and Tab waits for the newer one.
+    await page.keyboard.insert_text('@REA')
     await expect(names.first).to_have_text('README.md')
     await composer.press('Tab')
     await expect(composer).to_have_value('see @README.md and more')
@@ -1353,7 +1420,7 @@ async def test_a_session_another_clai_runs_shows_a_ring(page: Page, web_ui: WebU
 async def test_removed_worktrees_fold_away(page: Page, web_ui: WebUI) -> None:
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     sidebar = page.locator('.sidebar')
-    bucket = sidebar.get_by_role('button', name='Removed worktrees (1)')
+    bucket = sidebar.get_by_role('button', name='Removed worktrees (1)', exact=True)
     await expect(bucket).to_have_attribute('aria-expanded', 'false')
     removed = sidebar.get_by_text('Browser Removed', exact=True)
     await expect(removed).to_have_count(0)
@@ -1416,6 +1483,27 @@ async def test_sidebar_keyboard(page: Page, web_ui: WebUI) -> None:
     await expect(heading).to_have_attribute('aria-expanded', 'false')
     await page.keyboard.press('ArrowRight')
     await expect(heading).to_have_attribute('aria-expanded', 'true')
+
+
+@pytest.mark.parametrize(
+    'cache',
+    [
+        pytest.param('{"projects": []}', id='object'),
+        pytest.param('[{}]', id='project'),
+        pytest.param('[{"key": "k", "name": "n", "worktrees": [{"label": "b", "sessions": [{}, {}]}]}]', id='sessions'),
+    ],
+)
+async def test_sidebar_ignores_saved_state_of_another_shape(page: Page, web_ui: WebUI, cache: str) -> None:
+    """A cached list, view, or folding of the wrong shape, as another version might leave, does not break the page."""
+    await page.add_init_script(f"""
+      localStorage.setItem('clai-sidebar-cache', {json.dumps(cache)});
+      localStorage.setItem('clai-sidebar-view', JSON.stringify('nonsense'));
+      localStorage.setItem('clai-sidebar-collapsed', JSON.stringify([1, 2]));
+    """)
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    await expect(sidebar.get_by_role('button', name='Projects', exact=True)).to_have_attribute('aria-pressed', 'true')
+    await expect(sidebar.get_by_text('Browser Alpha', exact=True)).to_be_visible()
 
 
 def git(*args: str) -> str:

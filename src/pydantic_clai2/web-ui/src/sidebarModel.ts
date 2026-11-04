@@ -11,6 +11,7 @@ export type View = 'projects' | 'recent' | 'attention' | 'archived'
 export interface Row extends SessionEntry {
   project: string
   projectName: string
+  projectFolder: string | null
   /** Its worktree's branch, or folder name outside Git. */
   branch: string
   /** Its folder is gone, as with a removed worktree. */
@@ -27,6 +28,8 @@ export const WORKING: readonly Status[] = ['asking', 'queued', 'running', 'busy'
 export interface Section {
   key: string
   name: string
+  /** The project's folder, shown on hover; `null` for a list or removed worktrees. */
+  folder: string | null
   rows: Row[]
   /** Whether the section's rows show their branch, because they come from more than one. */
   branches: boolean
@@ -49,6 +52,7 @@ export function flatten(projects: Project[]): Row[] {
         ...session,
         project: project.key,
         projectName: project.name,
+        projectFolder: project.folder,
         branch: worktree.label,
         missing: worktree.missing,
       })),
@@ -78,13 +82,13 @@ export function sections(rows: Row[], view: View, needsYou: (row: Row) => boolea
   const removed = listed.filter((row) => row.missing)
   const shown = view === 'projects' ? byProject(present) : present.length ? [list(present)] : []
   if (removed.length) {
-    shown.push({ key: REMOVED, name: `Removed worktrees (${removed.length})`, rows: removed, branches: true, kind: 'removed' })
+    shown.push({ key: REMOVED, name: `Removed worktrees (${removed.length})`, folder: null, rows: removed, branches: true, kind: 'removed' })
   }
   return shown
 }
 
 function list(rows: Row[]): Section {
-  return { key: LIST, name: '', rows, branches: false, kind: 'list' }
+  return { key: LIST, name: '', folder: null, rows, branches: false, kind: 'list' }
 }
 
 /** Projects by name, so a project never moves; each keeps its rows newest created first. */
@@ -93,7 +97,7 @@ function byProject(rows: Row[]): Section[] {
   for (const row of rows) {
     let section = found.get(row.project)
     if (section === undefined) {
-      section = { key: row.project, name: row.projectName, rows: [], branches: false, kind: 'project' }
+      section = { key: row.project, name: row.projectName, folder: row.projectFolder, rows: [], branches: false, kind: 'project' }
       found.set(row.project, section)
     }
     section.rows.push(row)
@@ -163,15 +167,49 @@ export function isUnread(row: Row, seen: Seen): boolean {
   return row.messages > 0 && Date.parse(row.updated_at) > Date.parse(seen.sessions[row.id] ?? seen.since)
 }
 
-/** A small JSON value kept in `localStorage`, falling back when it is missing or unreadable. */
-export function stored<T>(key: string, fallback: T): T {
+/**
+ * A small JSON value kept in `localStorage`, falling back when it is missing, unreadable, or not what `valid` accepts:
+ * a value of another shape, written by another version or app, must not break the page on every load.
+ */
+export function stored<T>(key: string, fallback: T, valid: (value: unknown) => value is T): T {
   try {
     const saved = localStorage.getItem(key)
-    return saved === null ? fallback : (JSON.parse(saved) as T)
+    const value: unknown = saved === null ? fallback : JSON.parse(saved)
+    return valid(value) ? value : fallback
   } catch {
     return fallback
   }
 }
+
+const VIEW_NAMES: readonly View[] = ['projects', 'recent', 'attention', 'archived']
+
+export const isView = (value: unknown): value is View => VIEW_NAMES.includes(value as View)
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const hasStrings = (value: Record<string, unknown>, keys: readonly string[]): boolean =>
+  keys.every((key) => typeof value[key] === 'string')
+
+const isSession = (value: unknown): boolean =>
+  isObject(value) && hasStrings(value, ['id', 'title'])
+
+const isWorktree = (value: unknown): boolean =>
+  isObject(value) && hasStrings(value, ['label']) && Array.isArray(value.sessions) && value.sessions.every(isSession)
+
+/** Whether a cached project list has the right types wherever a wrong one would crash rendering before the list is fetched again. */
+export const isList = (value: unknown): value is Project[] =>
+  Array.isArray(value) &&
+  value.every(
+    (project) =>
+      isObject(project) &&
+      hasStrings(project, ['key', 'name']) &&
+      Array.isArray(project.worktrees) &&
+      project.worktrees.every(isWorktree),
+  )
+
+export const isFlags = (value: unknown): value is Record<string, boolean> =>
+  isObject(value) && Object.values(value).every((flag) => typeof flag === 'boolean')
 
 /** Save a small JSON value in `localStorage`; a full or disabled store only loses it. */
 export function keep(key: string, value: unknown): void {

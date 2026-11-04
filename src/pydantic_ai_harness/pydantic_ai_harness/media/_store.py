@@ -17,9 +17,11 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
-from typing import Protocol, TypeGuard, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 import anyio.to_thread
+
+from pydantic_ai_harness._typeguards import is_object_dict
 
 _URI_SCHEME = 'media+sha256://'
 _HEX_RE = re.compile(r'^[0-9a-f]{64}$')
@@ -27,10 +29,7 @@ _HEX_RE = re.compile(r'^[0-9a-f]{64}$')
 _BUSY_TIMEOUT_SECONDS = 30.0
 """How long a connection `SqliteMediaStore` opens waits for another writer, as `SqliteStepStore`'s do."""
 
-# Sentinel: empty, shareable, immutable. Used as the default `context` on every
-# `MediaStore` method. Pulled into a module constant so a default-bound empty
-# context is always the same instance (cheap identity checks, no per-call
-# allocation).
+# Shared immutable empty default for `MediaContext.metadata`.
 _EMPTY_METADATA: Mapping[str, str] = MappingProxyType({})
 
 
@@ -38,10 +37,9 @@ _EMPTY_METADATA: Mapping[str, str] = MappingProxyType({})
 class MediaContext:
     """Per-operation context threaded through `MediaStore` methods + callables.
 
-    Extensible bag -- new use cases (TTL hints, response-header overrides,
-    origin run ids for audit, etc.) add a field here without breaking any
-    method signature or user-supplied callable. Fields default to `None` /
-    empty so callers and resolvers can ignore what they don't care about.
+    New fields can be added without changing any method signature or
+    user-supplied callable. Fields default to `None` or empty, so callers and
+    resolvers can ignore what they don't use.
 
     Conventions:
 
@@ -181,9 +179,7 @@ class MediaStore(Protocol):
     custom `key_strategy` may not.
 
     `public_url(uri)` returns a URL the model can fetch directly, or `None`
-    if the store can't or hasn't been configured to produce one. The forthcoming
-    `MediaExternalizer` capability uses this to rewrite `BinaryContent` parts
-    to `ImageUrl`/`AudioUrl`/etc. before the model sees the message.
+    if the store can't or hasn't been configured to produce one.
     """
 
     async def put(self, data: bytes, *, context: MediaContext = _EMPTY_CONTEXT) -> str: ...  # pragma: no cover
@@ -305,12 +301,8 @@ def _write_atomically(path: Path, data: bytes) -> None:
         tmp.unlink(missing_ok=True)
 
 
-def _is_object_dict(raw: object) -> TypeGuard[dict[object, object]]:
-    return isinstance(raw, dict)
-
-
 def coerce_metadata_mapping(raw: object) -> Mapping[str, str]:
-    if not _is_object_dict(raw):
+    if not is_object_dict(raw):
         raise ValueError(f'metadata payload must be a JSON object, got {type(raw).__name__}')
     out: dict[str, str] = {}
     for key, value in raw.items():
@@ -408,7 +400,12 @@ class SqliteMediaStore:
         conn = sqlite3.connect(
             self._database, isolation_level=None, check_same_thread=False, timeout=_BUSY_TIMEOUT_SECONDS
         )
-        conn.execute('PRAGMA journal_mode=WAL').close()
+        try:
+            # Fails while another connection holds a new database locked, as concurrent first writers can.
+            conn.execute('PRAGMA journal_mode=WAL').close()
+        except BaseException:
+            conn.close()
+            raise
         return conn
 
     def _maybe_close(self, conn: sqlite3.Connection) -> None:

@@ -107,7 +107,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `sessions.naming` | `true` | Name saved sessions in the background using a model. |
 | `sessions.naming_model` | `null` | Naming model override; null uses the current model. |
 | `updates.channel` | `stable` | Where /update looks: stable PyPI releases, or main for the newest CLAI commit on main. |
-| `repo_context.walk_up_root` | `~` | User-only inclusive stop for instruction autoload when the plugin's `walk_up` is on. |
+| `repo_context.walk_up_roots` | `["~"]` | User-only JSON list of inclusive stops for instruction autoload when the plugin's `walk_up` is on; the nearest one containing the workspace applies. |
 | `repo_context.autoload_symlink_roots` | `[]` | User-only JSON list of authorized external instruction-symlink target directories, for autoload only. |
 | `worktrees.remove_commands` | `{}` | User-only repository-to-argv map for confirmed exit cleanup. See [Register a worktree removal command](#register-a-worktree-removal-command). |
 
@@ -417,9 +417,12 @@ so a later change to the repository's declaration does not run until you
 `/plugins remove NAME` (which forgets your approval and restores the project's
 current declaration, off) and enable it again. The approval keeps the file's
 absolute path, so another repository cannot put its own file at the same
-relative path and have it run as the one you approved. An approval saved by an
-older CLAI with a relative path does not load; remove it and enable it again
-from its repository. Project declarations rank just
+relative path and have it run as the one you approved. It also keeps the
+file's contents: once the file changes, as after a pull, the plugin does not
+load until you review it and run `/plugins enable NAME` again. Modules the file
+imports are not covered. An approval saved by an older CLAI with a relative
+path does not load; remove it and enable it again from its repository. One
+saved before CLAI kept the file's contents is asked for again once. Project declarations rank just
 above the built-ins: a project may redeclare `coder` or `repo_context` with
 other options, and that replacement is also off until you enable it.
 
@@ -428,7 +431,10 @@ turn starts and ends; see
 [lifecycle hooks](../PLUGINS.md#lifecycle-hooks-commands-from-settings). It is
 listed as the project plugin `project_hooks` and is off until
 `/plugins enable project_hooks`; unlike a plugin's declaration, any change to
-the table turns it off until you enable it again, and removing the table stops
+the table, or to a program inside the project that a list command runs, such
+as `["./scripts/check.sh"]` (a string command is approved as written),
+turns it off until you enable it again (CLAI checks such a program each time it
+starts it), and removing the table stops
 its commands (the listing keeps `project_hooks` until you remove it).
 
 The project file is read-only from inside CLAI. `/set KEY VALUE` writes your user
@@ -451,22 +457,26 @@ Enable its existing `walk_up` option to read ancestors too:
 
 ```text
 /plugins add repo_context pydantic_clai2.builtin_plugins.repo_context '{"walk_up": true}'
-/set repo_context.walk_up_root /srv/projects
+/set repo_context.walk_up_roots '["~", "/srv/projects"]'
 /set repo_context.autoload_symlink_roots '["~/agent-context"]'
 ```
 
-`walk_up` defaults to `false`; setting a root does not turn it on. When enabled,
-it reads ancestors up to `repo_context.walk_up_root`, inclusive (`~`, your home,
-by default). A root outside the workspace's ancestors leaves only the workspace
-scanned. `repo_context.autoload_symlink_roots` defaults to `[]`; set it to a JSON
-list of directories if your instruction files are symlinks into a shared directory.
+`walk_up` defaults to `false`; setting roots does not turn it on. When enabled,
+it reads ancestors up to the nearest listed root that contains the workspace,
+inclusive: with the list above, a workspace under `/srv/projects` stops there and
+one elsewhere under your home stops at `~`. `repo_context.walk_up_roots` defaults
+to `["~"]`, your home. When no listed root contains the workspace, only the
+workspace is scanned. `repo_context.autoload_symlink_roots` defaults to `[]`; set
+it to a JSON list of directories if your instruction files are symlinks into a
+shared directory.
 
 Both settings are user-only, not plugin JSON options; `.clai/settings.json`
 rejects their fields. Use absolute paths, `~`, or `~/...`, not relative paths,
-`~other-user`, or environment-variable interpolation. Quote paths containing
-spaces, such as `/set repo_context.walk_up_root '/srv/My Projects'`, and
-single-quote the whole JSON list as above. Paths are normalized when used and
-need not exist when saved. Changes apply on the next run, not during a running turn.
+`~other-user`, or environment-variable interpolation. Single-quote each whole
+JSON list as above, which also keeps paths containing spaces in one argument,
+such as `/set repo_context.walk_up_roots '["~", "/srv/My Projects"]'`. Paths are
+resolved, following symlinks, when used and need not exist when saved. Changes
+apply on the next run, not during a running turn.
 
 Authorize a directory holding only trusted instructions, not `/` or all of home:
 repository symlinks can select any readable file beneath it. See
@@ -1264,6 +1274,9 @@ cannot restore are also disabled.
 A press that cancels a running turn, closes completions, or leaves history search
 does not count toward the shortcut. Wait for queued prompts to finish first.
 Typing another key or opening another menu resets the double-Esc sequence.
+
+In the web UI, a prompt's **Edit** and **Retry** buttons rewind to it the same way, between turns,
+and send the edited or unchanged prompt with its images at once.
 
 ### Shell commands with `!`
 
@@ -2257,11 +2270,11 @@ keep the original saved path; resuming does not change directories or migrate
 saved data.
 
 In the browser, <kbd>a</kbd> archives the selected session: it leaves the list and
-the web UI's sidebar, and nothing is deleted. <kbd>h</kbd> lists archived sessions too,
-marked `(archived)`, and searches them; <kbd>a</kbd> on one unarchives it. The current
-session and one running in another CLAI cannot be archived. Resuming an archived
-session, or a new turn in it, unarchives it; `--fork-session` leaves it archived
-and continues in the copy.
+the web UI's sidebar, except its **Archived** view, and nothing is deleted.
+<kbd>h</kbd> lists archived sessions too, marked `(archived)`, and searches them;
+<kbd>a</kbd> on one unarchives it. The current session and one running in another
+CLAI cannot be archived. Resuming an archived session, or a new turn in it,
+unarchives it; `--fork-session` leaves it archived and continues in the copy.
 
 CLAI saves accepted prompts before the first model request and saves the retained
 history after successful, failed, and cancelled turns. `/compact` commits its
@@ -2663,6 +2676,9 @@ many sessions run at once.
   turn here, a hollow ring while another CLAI runs it, **Needs input** while it asks
   you a question, and a bold title while it has changes you have not seen.
   **Attention** (Cmd/Ctrl+Alt+U) lists only those sessions.
+- **Archiving.** A session's menu archives it, or every session of its branch, and a
+  project's menu archives all its chats. The sidebar's **Archived** view lists them
+  with **Unarchive**.
 - **Esc** and the stop button interrupt the session you are looking at, and only it.
 - **Steering and the queue.** As at the terminal's prompt, Enter queues a message
   while a turn runs and Alt+Enter (Option+Enter), or the bolt button, steers the turn
