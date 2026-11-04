@@ -19,18 +19,20 @@ async def compact_with_model(
     instructions_mode: CompactionInstructionsMode | None,
     *,
     focus_as_system_prompt: bool,
+    drop_unsendable_focus: bool = False,
 ) -> CompactionResult | None:
     """Compact `request` with its model's `compact_messages`, keeping the turn being answered.
 
-    `instructions_mode` is how the model's compaction takes instructions, which decides whether a focus is sent or the
-    request left to the next capability. Shared with `OpenAICompaction`, whose stateless mode compacts on any
-    `OpenAIResponsesModel` whatever its profile says.
+    `instructions_mode` is how the model's compaction takes instructions, which decides whether a focus is sent. A
+    focus it can't send leaves the request to the next capability, or, with `drop_unsendable_focus`, is dropped.
+    Shared with `OpenAICompaction`, whose stateless mode compacts on any `OpenAIResponsesModel` whatever its profile
+    says.
     """
     instructions: str | None = None
     if request.focus is not None and (focus := request.focus.strip()):
         if instructions_mode == 'replaces_prompt' or (instructions_mode == 'system_prompt' and focus_as_system_prompt):
             instructions = focus
-        else:
+        elif not drop_unsendable_focus:
             return None
 
     kept_from = _turn_start(request.messages)

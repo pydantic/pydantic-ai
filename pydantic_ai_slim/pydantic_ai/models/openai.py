@@ -7250,7 +7250,9 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
       which this capability serves like [`NativeCompaction`][pydantic_ai.capabilities.NativeCompaction],
       through the [compaction hook](../capabilities/compaction.md#the-compaction-hook), on any
       `OpenAIResponsesModel` whatever its profile's `supports_compaction_on_demand` says. It serves
-      compaction another capability requests too. To compact on demand on any model that supports it,
+      compaction another capability requests too. A focus the model's compaction can't take is
+      dropped, so a focus merged in from elsewhere never stops it compacting at its own trigger.
+      To compact on demand on any model that supports it,
       not only OpenAI's, use [`NativeCompaction`][pydantic_ai.capabilities.NativeCompaction] with a
       trigger of your own instead.
 
@@ -7396,11 +7398,14 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
             # Another model serves this attempt, like a `ModelFallback` candidate: not OpenAI's to compact.
             return None
         # Unlike `NativeCompaction`, whatever the profile's `supports_compaction_on_demand` says: you chose an
-        # OpenAI capability, for a Responses API that may not be OpenAI's own, as with LiteLLM.
+        # OpenAI capability, for a Responses API that may not be OpenAI's own, as with LiteLLM. A focus that can't be
+        # sent is dropped rather than declining: a focus merged in from elsewhere mustn't switch off this
+        # capability's own trigger and leave the context unbounded.
         return await compact_with_model(
             request,
             request.conversation_request.model.profile.get('compaction_instructions'),
             focus_as_system_prompt=False,
+            drop_unsendable_focus=True,
         )
 
     @classmethod
