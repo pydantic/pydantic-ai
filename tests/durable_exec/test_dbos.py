@@ -6603,7 +6603,7 @@ def test_dbos_records_what_a_stream_produced_before_failing(error: ModelAPIError
 
 
 async def test_dbos_durability_compaction_runs_model_calls_as_steps(dbos: DBOS) -> None:
-    """A `compact_history` hook runs in the workflow, and its call through `request.model` is a DBOS step.
+    """A `compact_history` hook runs in the workflow, and its call through `request.conversation_request.model` is a DBOS step.
 
     The model rejects the first attempt for exceeding its context window, so the overflow is compacted and retried
     within the same attempt; a listener cancels the requested compaction of the following step.
@@ -6630,7 +6630,7 @@ async def test_dbos_durability_compaction_runs_model_calls_as_steps(dbos: DBOS) 
 
     class Summarize(AbstractCapability[None]):
         async def compact_history(self, ctx: RunContext[None], request: CompactionRequest) -> CompactionResult | None:
-            summary = await request.model.request(
+            summary = await request.conversation_request.model.request(
                 [ModelRequest(parts=[UserPromptPart('Summarize the conversation.')])],
                 None,
                 ModelRequestParameters(),
