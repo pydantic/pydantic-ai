@@ -314,7 +314,7 @@ def test_capture_stops_the_run_when_it_misses_a_canary_request(tmp_path: Path):
 def test_capture_stops_the_run_when_a_listed_mock_is_gone(
     run: RunCapture, pytester: pytest.Pytester, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """`SDK_MOCKS` entries whose module the tests didn't import are skipped, and one that's gone stops the run."""
+    """`SDK_MOCKS` entries whose module collection didn't import are skipped, and one that's gone stops the run."""
     pytester.makepyfile(unimported_mock='class MockClient:\n    def create(self):\n        pass\n')
     monkeypatch.setattr(
         refactor_capture,

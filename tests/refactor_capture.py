@@ -1,4 +1,4 @@
-"""Record what streamed responses emit and what requests tests send, per test node, to prove a refactor keeps them.
+"""Record what streamed model responses emit and the requests tests send, per test node, to prove a refactor keeps them.
 
 The capture is off unless pytest loads this module as a plugin, `-p tests.refactor_capture --refactor-capture=DIR`, so
 other runs never import it. To compare a base commit with the working tree, run this from the repository root, over
