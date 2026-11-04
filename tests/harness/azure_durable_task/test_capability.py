@@ -210,7 +210,8 @@ class TestAzureDurableTaskDurability:
         assert result.output == 'hello'
         assert durable_worker.activity_calls == ['support__model.request']
 
-    def test_file_system_and_shell_tools(self, durable_worker: InMemoryWorker, tmp_path: Path) -> None:
+    @pytest.mark.parametrize('veto', [False, True])
+    def test_file_system_and_shell_tools(self, durable_worker: InMemoryWorker, tmp_path: Path, veto: bool) -> None:
         agent = Agent(
             scripted_model(WORKSPACE_TOOL_CALLS),
             name='coder',
@@ -221,13 +222,17 @@ class TestAzureDurableTaskDurability:
         @agent.on_event(FileChangeRequestEvent)
         async def record(ctx: RunContext[None], event: FileChangeRequestEvent) -> None:
             requests.append(event.operation)
+            if veto and event.operation == 'edit':
+                event.cancel('denied')
 
         with registered_agent(durable_worker, agent):
             result = run_agent(durable_worker, agent, deps=None)
-        assert 'shell-two' in result.output
+        content = 'one' if veto else 'two'
+        assert f'shell-{content}' in result.output
+        assert ("'note.txt' was not edited: denied" in result.output) is veto
         # The orchestrator, and so its listeners, re-run on every replay.
         assert set(requests) == {'write', 'edit'}
-        assert (tmp_path / 'note.txt').read_text() == 'two'
+        assert (tmp_path / 'note.txt').read_text() == content
 
     @pytest.mark.parametrize('same_agent', [False, True])
     def test_multiple_runs_have_distinct_replay_stable_ids(

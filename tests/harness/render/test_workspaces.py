@@ -108,7 +108,8 @@ async def test_worker_restores_workspace_validation_context(tmp_path: Path) -> N
     assert (tmp_path / 'note.txt').read_text() == 'saved'
 
 
-async def test_file_system_and_shell_tools(tmp_path: Path) -> None:
+@pytest.mark.parametrize('veto', [False, True])
+async def test_file_system_and_shell_tools(tmp_path: Path, veto: bool) -> None:
     runtime = RenderWorkflows[None](Workflows())
     agent = Agent[None, str](
         scripted_model(WORKSPACE_TOOL_CALLS),
@@ -123,13 +124,13 @@ async def test_file_system_and_shell_tools(tmp_path: Path) -> None:
         ctx: RunContext[None], event: FileChangeRequestEvent | FileWrittenEvent | FileEditedEvent | FileReadEvent
     ) -> None:
         events.append(type(event).__name__)
+        if veto and isinstance(event, FileChangeRequestEvent) and event.operation == 'edit':
+            event.cancel('denied')
 
-    assert 'shell-two' in await run_agent_in_task(agent, runtime, RecordingTaskContext())
-    assert events == [
-        'FileChangeRequestEvent',
-        'FileWrittenEvent',
-        'FileChangeRequestEvent',
-        'FileEditedEvent',
-        'FileReadEvent',
-    ]
-    assert (tmp_path / 'note.txt').read_text() == 'two'
+    output = await run_agent_in_task(agent, runtime, RecordingTaskContext())
+    content = 'one' if veto else 'two'
+    assert f'shell-{content}' in output
+    assert ("'note.txt' was not edited: denied" in output) is veto
+    edited = [] if veto else ['FileEditedEvent']
+    assert events == ['FileChangeRequestEvent', 'FileWrittenEvent', 'FileChangeRequestEvent', *edited, 'FileReadEvent']
+    assert (tmp_path / 'note.txt').read_text() == content

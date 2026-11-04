@@ -289,7 +289,7 @@ Provider-specific cache settings, such as `anthropic_cache`, take precedence ove
 
 ## Durable execution
 
-`Coder` works under Temporal, DBOS, Prefect, [Azure Durable Task](azure-durable-task.md), and [Render Workflows](render-workflows.md): attach it next to the workspace and the durability capability, as the [workspace guide](../workspace.md#durable-execution) shows with what works on each engine. On Temporal, `delegate_task` delegates to `self` only; see [delegation on Temporal](../durable_execution/temporal.md#harness-workspace-capabilities).
+`Coder` works under Temporal, DBOS, and Prefect: attach it next to the workspace and the durability capability, as the [workspace guide](../workspace.md#durable-execution) shows with what works on each engine. On Temporal, `delegate_task` delegates to `self` only; see [delegation on Temporal](../durable_execution/temporal.md#harness-workspace-capabilities).
 
 ## Upgrading
 
