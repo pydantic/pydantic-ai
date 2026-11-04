@@ -157,7 +157,7 @@ class UsersE2B(AbstractCapability[User]):
         return E2BSandboxBackend(client=E2B(api_key=ctx.deps.e2b_api_key), ref=ref)
 
 
-agent = Agent('anthropic:claude-opus-5-5', deps_type=User, capabilities=[UsersE2B(), Coder()])
+agent = Agent('{{ anthropic:large }}', deps_type=User, capabilities=[UsersE2B(), Coder()])
 ```
 
 E2B's client falls back to `E2B_API_KEY` when its key is empty or `None`. If that variable is set where your app runs, a user with no key would run on that account, so check for a key before building the client, as above.
