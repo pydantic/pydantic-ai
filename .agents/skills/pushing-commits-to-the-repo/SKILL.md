@@ -50,7 +50,7 @@ Resolve every review thread.
 Douwebot posts as `github-actions[bot]` through the trusted [PR Bots publisher](../../../.github/workflows/bots.yml).
 Verify its successful run and `<!-- douwebot:review run=<id> head=<sha> -->` receipt.
 `CI Review` can use the same bot account but carries a separate gh-aw receipt; it cannot satisfy this bar.
-Associate inline comments with their parent review's commit because GitHub can move a comment's `commit_id` after a push.
+Associate inline comments with the `head=` in their parent review's receipt, or with the comment's `original_commit_id` when the parent has none, because GitHub can move both a review's and a comment's `commit_id` after a push.
 A clean, maintainer-authorized `douwebot:review-agent-config` approval satisfies the same requirement for protected paths.
 A human approval does not substitute for douwebot.
 
@@ -178,7 +178,7 @@ Commit refreshed catalog changes.
 The helper uses at most two requests and verifies completeness before replacing the catalog.
 Never fetch labels individually or pass raw label API responses.
 
-Keep the category label aligned with the PR's purpose (`bug`, `feature`, `docs`, `chore`, `refactor`).
+Keep the category label aligned with the PR's purpose: `bug`, `feature`, `docs`, `chore` or `dependency`. A refactor also carries `refactor`, alongside `chore`.
 Add existing topic labels for every subject materially covered by the final title, body, and diff.
 Ignore incidental references, checklist text, and verification boilerplate when choosing topics.
 Remove topic labels only when the final scope no longer supports those labels.

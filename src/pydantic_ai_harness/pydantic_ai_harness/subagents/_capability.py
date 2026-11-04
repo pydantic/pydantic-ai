@@ -14,7 +14,8 @@ import anyio
 from pydantic_ai._instructions import SourcedInstruction, append_on_change_by_default
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.agent import Agent, AgentRunResult, EventStreamHandler
-from pydantic_ai.capabilities import AbstractCapability, AgentCapability, WrapRunHandler
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability, WrapRunHandler, durable_operation
+from pydantic_ai.durable_exec import BaseDurabilityCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputContext
@@ -24,7 +25,14 @@ from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness._workspace import require_workspace, secondary_workspace, workspace_path
-from pydantic_ai_harness.subagents._control import RUN_OWNER, DynamicAgents, RemoteSubAgent, TaskControl, run_owned
+from pydantic_ai_harness.subagents._control import (
+    RUN_OWNER,
+    DynamicAgents,
+    DynamicAgentSpec,
+    RemoteSubAgent,
+    TaskControl,
+    run_owned,
+)
 from pydantic_ai_harness.subagents._disk import AgentOverride, DiskDefinition, load_definitions
 from pydantic_ai_harness.subagents._models import ModelOption, as_option, model_label, validate_restriction
 from pydantic_ai_harness.subagents._tasks import DelegationTask, DelegationTasks, enqueue_while_open, isolated
@@ -33,6 +41,7 @@ from pydantic_ai_harness.subagents._toolset import (
     CREATE_AGENT_TOOL_NAME,
     DEFAULT_MAX_DEPTH,
     SELF_AGENT_NAME,
+    RecordedDelegation,
     SubAgent,
     SubAgentToolset,
     WorkspaceResolver,
@@ -193,7 +202,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     # field after it, which would take `tool_retries` and `contain_errors` off the positional
     # contract they already have.
     id: str | None = field(default='sub_agents', kw_only=True)
-    """Fixed, since an agent exposes a single delegate tool.
+    """Fixed, since an agent exposes a single delegate tool. Durable execution requires one.
 
     Two `SubAgents` capabilities would register the same `tool_name` and collide. The shared id
     makes them merge instead, unioning their rosters, so a packaged harness that delegates can
@@ -305,7 +314,9 @@ class SubAgents(AbstractCapability[AgentDepsT]):
 
     dynamic_agents: DynamicAgents[AgentDepsT] | None = field(default=None, kw_only=True)
     """Let the model create sub-agents during a run, with a `create_agent` tool. Off by default.
-    Only one `SubAgents` on an agent can set it. Not supported under durable execution, where a run raises a `UserError`."""
+    Only one `SubAgents` on an agent can set it. On Temporal and DBOS, every delegation other than to `self` runs in a
+    durable unit of its own, so recovery rebuilds the created agents and reuses the delegations' results. Other durable
+    engines, and a bound `DelegationTasks` owner under any of them, raise a `UserError`."""
 
     _call_counts: dict[str, dict[str, int]] = field(
         default_factory=dict[str, 'dict[str, int]'], init=False, repr=False, compare=False
@@ -313,10 +324,13 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     """Run-scoped delegation counts (run_id -> name -> count), shared with the
     toolset and cleared per run in `wrap_run`. Backs `SubAgent.max_calls`."""
 
-    _created: dict[str, dict[str, SubAgent[AgentDepsT]]] = field(
-        default_factory=dict[str, 'dict[str, SubAgent[AgentDepsT]]'], init=False, repr=False, compare=False
+    _created: dict[str, dict[str, tuple[DynamicAgentSpec, SubAgent[AgentDepsT]]]] = field(
+        default_factory=dict[str, 'dict[str, tuple[DynamicAgentSpec, SubAgent[AgentDepsT]]]'],
+        init=False,
+        repr=False,
+        compare=False,
     )
-    """Run-scoped sub-agents created with `create_agent` (run_id -> name -> sub-agent), shared with the
+    """Run-scoped sub-agents created with `create_agent` (run_id -> name -> spec and sub-agent), shared with the
     toolset and cleared per run in `wrap_run`."""
 
     def __post_init__(self) -> None:
@@ -502,11 +516,9 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         if self.include_self:
             self._require_bound_to(ctx.agent)
         try:
-            if (self.task_control is not None or self.dynamic_agents is not None) and ctx.in_durable_context:
-                raise UserError(
-                    '`SubAgents` `task_control` and `dynamic_agents` are not supported under durable execution.'
-                )
             owner = DelegationTasks.current()
+            if ctx.in_durable_context:
+                self._require_durable_support(ctx, owner)
             task = owner.delegation_of(ctx.run_id) if owner is not None else None
             if self.task_control is None or self._delegation_off:
                 return await self._run_plain(ctx, handler, owner, task)
@@ -524,6 +536,23 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         finally:
             self._call_counts.pop(ctx.run_id or '', None)
             self._created.pop(ctx.run_id or '', None)
+
+    def _require_durable_support(self, ctx: RunContext[AgentDepsT], owner: DelegationTasks | None) -> None:
+        if self.task_control is not None:
+            raise UserError('`SubAgents` `task_control` is not supported under durable execution.')
+        if self.dynamic_agents is None:
+            return
+        durability = BaseDurabilityCapability.from_agent(ctx.agent) if ctx.agent is not None else None
+        assert durability is not None, 'Only called in a durable context.'
+        spec = durability.engine_spec
+        # Replay rebuilds the roster only if `create_agent` runs in workflow code: an engine that runs function tools
+        # there, or Temporal, which honors the toolset's `{'temporal': False}`.
+        in_workflow = 'function' not in spec.wrapped_toolset_kinds or spec.tool_config_key == 'temporal'
+        if owner is not None or not in_workflow:
+            raise UserError(
+                '`SubAgents` `dynamic_agents` is only supported under durable execution on an engine that runs its '
+                'tools in workflow code, such as Temporal or DBOS, outside a `DelegationTasks` owner.'
+            )
 
     async def _run_plain(
         self,
@@ -736,7 +765,23 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             dynamic_agents=self.dynamic_agents,
             created=self._created,
             workspace_resolver=self.workspace_resolver,
+            _record_delegation=self._delegate if self.dynamic_agents is not None else None,
         )
+
+    @durable_operation('delegate')
+    async def _delegate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        agent_name: str,
+        task: str,
+        model: str | None,
+        spec: DynamicAgentSpec | None,
+        level: int,
+    ) -> RecordedDelegation:
+        """Run a delegation in a durable unit of its own, so recovery reuses its result."""
+        toolset = self._run_toolset if self._per_run else self._toolset
+        assert toolset is not None, 'Only a capability with delegates offers the delegate tool.'
+        return await toolset._run_recorded(ctx, agent_name, task, model, spec, level)  # pyright: ignore[reportPrivateUsage]
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
