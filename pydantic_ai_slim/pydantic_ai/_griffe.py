@@ -27,7 +27,9 @@ def doc_descriptions(
     """Extract the function description and parameter descriptions from a function's docstring.
 
     The function parses the docstring using the specified format (or infers it if 'auto')
-    and extracts both the main description and parameter descriptions. If a returns section
+    and extracts both the main description and parameter descriptions. Recognized admonition
+    sections (e.g. `Warning:` and `Note:`) are included in the main description in source order,
+    while other sections (e.g. `Raises` and `Examples`) keep their current handling. If a returns section
     is present in the docstring, the main description will be formatted as XML.
 
     Returns:
@@ -67,9 +69,17 @@ def doc_descriptions(
             for param in section.value:
                 params.setdefault(param.name.lstrip('*'), param.description)
 
-    main_desc = ''
-    if main := next((p for p in sections if p.kind == DocstringSectionKind.text), None):
-        main_desc = main.value
+    main_desc_parts: list[str] = []
+    text_seen = False
+    for section in sections:
+        if section.kind == DocstringSectionKind.text and not text_seen:
+            main_desc_parts.append(section.value)
+            text_seen = True
+        elif section.kind == DocstringSectionKind.admonition:
+            # Recognized admonition sections (e.g. `Warning:`) reach the model verbatim, in source order;
+            # other sections keep their current handling.
+            main_desc_parts.append(f'{section.value.kind.capitalize()}:\n{section.value.contents}')
+    main_desc = '\n\n'.join(main_desc_parts)
 
     if return_ := next((p for p in sections if p.kind == DocstringSectionKind.returns), None):
         return_statement = return_.value[0]

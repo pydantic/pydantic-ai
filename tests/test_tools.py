@@ -5835,3 +5835,109 @@ def test_enum_member_docstrings_do_not_need_the_enclosing_model_to_opt_in():
             'type': 'string',
         }
     )
+
+
+def test_admonition_sections_reach_tool_description(allow_model_requests):
+    """Recognized admonition sections reach the model instead of being dropped."""
+    test_model = TestModel()
+    agent = Agent(test_model)
+
+    @agent.tool_plain
+    def fetch_ad_rows(account_id: str) -> list[dict[str, str]]:
+        """Fetch ad rows for an account.
+
+        Note: the API caps results at 1000 rows and does not say so.
+
+        Warning:
+            Blank spend means no data, not zero.
+
+        Important:
+            Result rows are capped at 1000.
+
+        Trailing prose after the admonition.
+
+        Args:
+            account_id: The ad account id.
+
+        Raises:
+            ValueError: If account_id is not a UUID.
+        """
+        return []
+
+    agent.run_sync('Fetch my ad rows')
+    descriptions = {t.name: t.description for t in test_model.last_model_request_parameters.function_tools}
+    assert descriptions['fetch_ad_rows'] == (
+        'Fetch ad rows for an account.\n'
+        '\n'
+        'Note: the API caps results at 1000 rows and does not say so.\n'
+        '\n'
+        'Warning:\n'
+        'Blank spend means no data, not zero.\n'
+        '\n'
+        'Important:\n'
+        'Result rows are capped at 1000.'
+    )
+
+
+def test_admonition_sections_reach_tool_description_numpy(allow_model_requests):
+    """NumPy `Warnings` and `Notes` sections are recognized admonitions and reach the model."""
+    test_model = TestModel()
+    agent = Agent(test_model)
+
+    @agent.tool_plain(docstring_format='numpy')
+    def fetch_ad_rows(account_id: str) -> str:
+        """Fetch ad rows for an account.
+
+        Parameters
+        ----------
+        account_id : str
+            The ad account id.
+
+        Warnings
+        --------
+        Blank spend means no data, not zero.
+
+        Notes
+        -----
+        Result rows are capped at 1000.
+        """
+        return 'ok'
+
+    agent.run_sync('Fetch my ad rows')
+    descriptions = {t.name: t.description for t in test_model.last_model_request_parameters.function_tools}
+    assert descriptions['fetch_ad_rows'] == (
+        'Fetch ad rows for an account.\n'
+        '\n'
+        'Warning:\n'
+        'Blank spend means no data, not zero.\n'
+        '\n'
+        'Note:\n'
+        'Result rows are capped at 1000.'
+    )
+
+
+def test_raises_and_examples_sections_still_dropped(allow_model_requests):
+    """`Raises:` and `Examples:` sections keep their current handling and stay out of the tool description."""
+    test_model = TestModel()
+    agent = Agent(test_model)
+
+    @agent.tool_plain
+    def fetch_ad_rows(account_id: str) -> str:
+        """Fetch ad rows for an account.
+
+        Args:
+            account_id: The ad account id.
+
+        Raises:
+            ValueError: If account_id is not a UUID.
+
+        Examples:
+            Fetch rows for an account.
+        """
+        return 'ok'
+
+    agent.run_sync('Fetch my ad rows')
+    descriptions = {t.name: t.description for t in test_model.last_model_request_parameters.function_tools}
+    assert descriptions['fetch_ad_rows'] == 'Fetch ad rows for an account.'
+
+
