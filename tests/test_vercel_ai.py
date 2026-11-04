@@ -14538,20 +14538,30 @@ async def test_conversation_store_failed_regenerate_keeps_the_stored_turn():
     assert record is not None and record.branches == []
 
 
+@pytest.mark.parametrize('manage_message_history', ['client', 'server'])
+async def test_conversation_store_ignores_manage_message_history(manage_message_history: Literal['client', 'server']):
+    """A store holds the history on the server, so the model sees each turn once whatever this says."""
+    agent, requests, _ = server_history_agent()
+    store = InMemoryConversationStore()
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]))
+
+    adapter = VercelAIAdapter(
+        agent,
+        SubmitMessage(id='chat', messages=[_HI, _OK, _AND_NOW]),
+        sdk_version=6,
+        manage_message_history=manage_message_history,
+        conversation_store=store,
+    )
+    _ = [chunk async for chunk in adapter.run_stream()]
+
+    assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
+
+
 async def test_conversation_store_misuse():
     agent, _, _ = server_history_agent()
     store = InMemoryConversationStore()
     run_input = SubmitMessage(id='chat', messages=[_HI])
 
-    assert VercelAIAdapter(agent, run_input).manage_message_history == 'client'
-    assert VercelAIAdapter(agent, run_input, conversation_store=store).manage_message_history == 'server'
-    # A store holds the history on the server, whatever `manage_message_history` says.
-    assert (
-        VercelAIAdapter(
-            agent, run_input, manage_message_history='client', conversation_store=store
-        ).manage_message_history
-        == 'server'
-    )
     adapter = VercelAIAdapter(agent, run_input, conversation_store=store)
     with pytest.raises(UserError, match='Pass either `message_history` or a `conversation_store`, not both'):
         adapter.run_stream_native(message_history=[])

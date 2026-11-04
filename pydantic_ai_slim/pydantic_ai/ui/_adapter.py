@@ -832,7 +832,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     """Who owns the conversation history: the client's messages, or the `message_history` passed to a run method.
 
     With a [`conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store], the history is always
-    held on the server: this is set to `'server'` whatever was passed.
+    held on the server, and this is ignored.
 
     `'client'` (default): the client's messages are the conversation. A `message_history` passed to a
     run method is prepended to them unchanged, which suits server-only context such as a pinned
@@ -869,8 +869,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     """A [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] to load and save the conversation with.
 
     Passing a store means the history is held on the server:
-    [`manage_message_history`][pydantic_ai.ui.UIAdapter.manage_message_history] is ignored and set to
-    `'server'`, whose rules for the client's new turn the adapter follows.
+    [`manage_message_history`][pydantic_ai.ui.UIAdapter.manage_message_history] is ignored, and the
+    adapter follows the `'server'` rules for the client's new turn.
     A run method then loads the conversation the request names
     ([`conversation_id`][pydantic_ai.ui.UIAdapter.conversation_id], or the one passed to it) instead of
     taking `message_history` or `usage`, runs the agent on it and the client's new turn, and saves what the run
@@ -983,11 +983,6 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
     _saved_run: tuple[AgentRunResult[Any], list[ConversationEntry]] | None = field(default=None, init=False, repr=False)
     """The result the last `conversation_store` save stored, with its entries, for `_announce_saved_entries`."""
-
-    def __post_init__(self) -> None:
-        # A store holds the history on the server, so an explicit `'client'` can't be told from the default.
-        if self.conversation_store is not None:
-            self.manage_message_history = 'server'
 
     @classmethod
     async def from_request(
