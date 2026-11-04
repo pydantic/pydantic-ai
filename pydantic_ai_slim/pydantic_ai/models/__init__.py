@@ -1772,8 +1772,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         and moves the current request's ones to the end of the last request.
 
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
-        the profile's `supports_inline_system_prompts` is `False`; on such a profile the instructions open with a
-        sentence saying what the tag means (see `_get_instruction_parts`). Nothing the user or a tool wrote is
+        the profile's `supports_inline_system_prompts` is `False`; a request-scoped one the API clears itself
+        (`supports_request_scoped_system_prompts`) gets the same tags and stays a `SystemPromptPart`. On such a
+        profile the instructions open with a sentence saying what the tag means (see `_get_instruction_parts`).
+        Nothing the user or a tool wrote is
         rewritten. A user, tool or file item whose text resembles
         a frame gets a note next to it, and on a profile with inline system messages the first request with a
         frame or a note gets the announcement (see `_note_lookalike_frames`). It also converts
@@ -1932,6 +1934,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 messages,
                 standing_prompt_count=standing_prompt_count,
                 sealed=self._seals_system_blocks,
+                keep_request_scoped=clears_request_scoped_prompts,
             )
 
         messages = _order_tool_results_by_call(messages)
@@ -2549,8 +2552,12 @@ def _system_prompts_after_user_words(parts: list[ModelRequestPart], *, leading: 
     return [*kept, *moved, *parts[last_user + 1 :]]
 
 
-def _wrapped_system_prompt(part: SystemPromptPart, *, sealed: bool) -> UserPromptPart:
+def _wrapped_system_prompt(
+    part: SystemPromptPart, *, sealed: bool, keep_request_scoped: bool
+) -> SystemPromptPart | UserPromptPart:
     content = frame(SYSTEM_TAG, part.content, seal=FRAME_SEAL if sealed else None)
+    if keep_request_scoped and part.scope == 'request':
+        return replace(part, content=content)
     wrapped_type = _FrameworkUserPromptPart if _is_framework_added(part) else UserPromptPart
     return wrapped_type(content=content, timestamp=part.timestamp)
 
@@ -4247,11 +4254,16 @@ def _request_scoped_tail_texts(messages: Sequence[ModelMessage]) -> tuple[str, .
 
 
 def _wrap_non_leading_system_prompts(
-    messages: list[ModelMessage], *, standing_prompt_count: int, sealed: bool
+    messages: list[ModelMessage], *, standing_prompt_count: int, sealed: bool, keep_request_scoped: bool
 ) -> list[ModelMessage]:
     """Wrap mid-conversation `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s.
 
     `sealed` gives each block the `seal` attribute, for a profile that sets `needs_sealed_system_blocks`.
+
+    `keep_request_scoped` is for a profile whose API clears request-scoped prompts itself. Such a part keeps its place
+    as a `SystemPromptPart`, for the adapter's self-clearing entry, with the tags inside it: as a user part it would
+    stay in every later request, and without them Claude Sonnet 5.5 and Haiku 5.5, told that the application's messages
+    are these blocks, followed it less often (numbers in #11813).
 
     The content goes in as written; a `<system>` tag in text the user or a tool wrote gets a note instead, as the
     announcement at the start of the instructions says.
@@ -4278,7 +4290,7 @@ def _wrap_non_leading_system_prompts(
         start = standing_prompt_count if offset == 0 else 0
         if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts[start:]):
             new_parts = [
-                _wrapped_system_prompt(part, sealed=sealed)
+                _wrapped_system_prompt(part, sealed=sealed, keep_request_scoped=keep_request_scoped)
                 if index >= start and isinstance(part, SystemPromptPart)
                 else part
                 for index, part in enumerate(msg.parts)

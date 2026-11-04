@@ -208,9 +208,10 @@ class ModelProfile(TypedDict, total=False):
     `Model.prepare_messages` leaves a request-scoped part out of every request after its own, and the part
     renders like any other mid-conversation `SystemPromptPart` while it's current.
 
-    Only meaningful together with `supports_inline_system_prompts`, and only set it on a model whose adapter
-    renders a self-clearing entry, currently `AnthropicModel`. On any other adapter, `True` makes every
-    request-scoped part render as a lasting system prompt on every later request.
+    Independent of `supports_inline_system_prompts`: where that's `False`, the entry holds a `<system>` block like the
+    model's other mid-conversation messages. Only set it on a model whose adapter renders a self-clearing entry,
+    currently `AnthropicModel`. On any other adapter, `True` makes every request-scoped part render as a lasting
+    system prompt on every later request.
     """
 
     supports_mid_conversation_effort: bool
