@@ -242,7 +242,7 @@ Available to every test under `tests/models/`. See "Asserting what goes out on t
 ## Assertion Helpers
 
 ### From `conftest.py`
-- `IsNow(tz=timezone.utc)` - datetime made during this test, give or take 10 seconds
+- `IsNow(tz=timezone.utc)` - datetime from the running test, or up to 10 seconds either side of it
 - `IsStr()` - any string, supports `regex=r'...'`
 - `IsDatetime()` - any datetime
 - `IsBytes()` - any bytes
@@ -307,6 +307,7 @@ When `PYTEST_COLLECT_BUDGET_SECONDS` is set (on the same CI leg), a test module 
 - A test still collects its own garbage, so `del obj; gc.collect()` followed by a `weakref` check keeps working.
 - `gc.get_referrers()` and `gc.get_objects()` don't see frozen objects, so a test that needs them to find something created before it must create that object itself, or run them in a subprocess.
 - A leak the suite's `filterwarnings` doesn't ignore fails the test that caused it, in teardown, because each test's own garbage is collected there. Close the resource where it's created.
+- An object that's still referenced when its test ends, such as one a module-scoped fixture holds, can't be blamed that way. If it's dropped later, it's collected after the last test and reported on stderr as `Leaked by a test, and dropped after it ended`, without failing anything.
 
 ## Property tests
 

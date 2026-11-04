@@ -3,7 +3,6 @@ from __future__ import annotations as _annotations
 import ast
 import asyncio
 import dataclasses
-import gc
 import importlib.util
 import logging
 import os
@@ -940,11 +939,6 @@ def prefect_test_server() -> Iterator[None]:
         monkeypatch.setattr(prefect.testing.utilities, '_find_available_port', _reserve_loopback_port)
         with prefect_test_harness(server_startup_timeout=120):
             yield
-    # Prefect's test server leaves client sockets for GC on Python 3.14; collect them here, where the
-    # warning is expected, rather than in whichever test the collector happens to run in.
-    with warnings.catch_warnings():
-        warnings.filterwarnings('ignore', message='unclosed.*socket', category=ResourceWarning)
-        gc.collect()
 
 
 def raise_if_exception(e: Any) -> None:

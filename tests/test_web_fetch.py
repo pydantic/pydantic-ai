@@ -1075,23 +1075,6 @@ def _assert_rejected_before_conversion(html: str) -> None:
     convert_soup.assert_not_called()
 
 
-def _python_calls_converting(html: str) -> int:
-    """How many Python calls, counting each generator resumption, converting `html` takes."""
-    calls = 0
-
-    def count_call(_frame: FrameType, event: str, _arg: object) -> None:
-        nonlocal calls
-        if event == 'call':
-            calls += 1
-
-    sys.setprofile(count_call)
-    try:
-        _convert_html(html)
-    finally:
-        sys.setprofile(None)
-    return calls
-
-
 class TestMarkdownConverter:
     def test_large_well_formed_reference_list_passes_markup_budgets(self):
         """A page with more markup than a 2.9 MB Wikipedia article (~101k parser events) reaches parsing."""
@@ -1626,7 +1609,20 @@ class TestMarkdownConverter:
         """
 
         def calls_at_size(size: int) -> int:
-            return _python_calls_converting(opening + repeated * size + closing)
+            calls = 0
+
+            def count_call(_frame: FrameType, event: str, _arg: object) -> None:
+                nonlocal calls
+                if event == 'call':
+                    calls += 1
+
+            html = opening + repeated * size + closing
+            sys.setprofile(count_call)
+            try:
+                _convert_html(html)
+            finally:
+                sys.setprofile(None)
+            return calls
 
         calls_at_size(10)  # So the first measurement below doesn't include filling caches.
         assert calls_at_size(2000) <= 2.2 * calls_at_size(1000)

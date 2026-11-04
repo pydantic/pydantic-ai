@@ -39,7 +39,10 @@ class Leak:
 
 @pytest.fixture
 def run_session(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunSession:
-    """Run `source` as a test module in a pytest subprocess, under the filters the suite applies to leaks."""
+    """Run `source` as a test module in a pytest subprocess, under the filters the suite applies to leaks.
+
+    Only explicit collections run, so nothing depends on when allocations happen to trigger an automatic one.
+    """
     monkeypatch.setenv('PYTEST_DISABLE_PLUGIN_AUTOLOAD', '1')
     pytester.makepyfile(gc_isolation=Path(gc_isolation.__file__).read_text(encoding='utf-8'))
     pytester.makeini(
@@ -52,7 +55,7 @@ def run_session(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> R
     )
 
     def run(source: str, *args: str) -> pytest.RunResult:
-        pytester.makepyfile(test_session=textwrap.dedent(source))
+        pytester.makepyfile(test_session='import gc\ngc.disable()\n' + textwrap.dedent(source))
         return pytester.runpytest_subprocess('-rA', *args)
 
     return run
@@ -226,31 +229,36 @@ def test_collects():
     ]
 
 
-OUTLIVES_ITS_TEST = (
-    LEAK
-    + """
+@pytest.mark.parametrize(
+    ('held', 'reported'),
+    [
+        pytest.param('Leak()', "RuntimeError('leak finalized')", id='raising-in-del'),
+        pytest.param('[socket.socket()]', 'unclosed <socket', id='resource-warning'),
+    ],
+)
+def test_what_outlives_its_test_is_reported_after_the_last_test_and_fails_nothing(
+    run_session: RunSession, held: str, reported: str
+) -> None:
+    result = run_session(
+        LEAK
+        + f"""
+import socket
+
 held = []
 
 def test_fills_a_cache():
-    held.append(Leak())
+    cycle = [{held}]
+    cycle.append(cycle)
+    held.append(cycle)
 
 def test_clears_it():
     held.clear()
-"""
-)
-
-
-def test_a_sweep_collects_what_outlived_the_test_that_made_it(
-    run_session: RunSession, pytester: pytest.Pytester
-) -> None:
-    pytester.makeconftest('import gc_isolation\ngc_isolation.SWEEP_INTERVAL = 2')
-    result = run_session(OUTLIVES_ITS_TEST + '\ndef test_swept_before():\n    pass\n', *WITH_PLUGIN)
-    assert outcomes(result) == ['ERROR test_swept_before', 'PASSED test_clears_it', 'PASSED test_fills_a_cache']
-
-
-def test_the_end_of_session_collection_reports_what_no_sweep_reached(run_session: RunSession) -> None:
-    result = run_session(OUTLIVES_ITS_TEST, *WITH_PLUGIN)
-    assert 'leak finalized' in result.stderr.str()
+""",
+        *WITH_PLUGIN,
+    )
+    assert outcomes(result) == ['PASSED test_clears_it', 'PASSED test_fills_a_cache']
+    assert result.ret == pytest.ExitCode.OK
+    result.stderr.fnmatch_lines([f'Leaked by a test, and dropped after it ended: {reported}*'])
 
 
 def test_nothing_is_frozen_once_the_tests_are_done(run_session: RunSession, pytester: pytest.Pytester) -> None:
