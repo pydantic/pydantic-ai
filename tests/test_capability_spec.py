@@ -1853,24 +1853,34 @@ def test_model_json_schema_with_capabilities():
                     'additionalProperties': False,
                     'properties': {
                         'engine': {
-                            'enum': ['auto', 'native', 'exa', 'firecrawl', 'parallel', 'perplexity'],
+                            'anyOf': [
+                                {
+                                    'enum': ['auto', 'native', 'exa', 'firecrawl', 'parallel', 'perplexity'],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                            ],
                             'title': 'Engine',
-                            'type': 'string',
                         },
                         'mode': {
-                            'enum': [
-                                'instant',
-                                'fast',
-                                'auto',
-                                'deep-lite',
-                                'deep',
-                                'deep-reasoning',
-                                'turbo',
-                                'basic',
-                                'advanced',
+                            'anyOf': [
+                                {
+                                    'enum': [
+                                        'instant',
+                                        'fast',
+                                        'auto',
+                                        'deep-lite',
+                                        'deep',
+                                        'deep-reasoning',
+                                        'turbo',
+                                        'basic',
+                                        'advanced',
+                                    ],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
                             ],
                             'title': 'Mode',
-                            'type': 'string',
                         },
                         'max_results': {'title': 'Max Results', 'type': 'integer'},
                         'max_total_results': {'title': 'Max Total Results', 'type': 'integer'},
