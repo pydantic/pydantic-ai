@@ -235,7 +235,8 @@ Gotchas:
 - `KEENABLE_API_KEY` switches to the keyed endpoints; `KEENABLE_API_URL` overrides the base URL and must
   be `https://` (plain `http` only on loopback), or `UserError` is raised.
 - Rate limits, 5xx, a 404, a non-JSON body, and an empty page become `ModelRetry`; 401/402/403 stop
-  the run. For tests, pass `client=` a fake satisfying the exported `KeenableClient` protocol.
+  the run. `get_page` reads Keenable's indexed copy, and Keenable documents that an unindexed URL
+  fails to fetch. For tests, pass `client=` a fake satisfying the exported `KeenableClient` protocol.
 - Citations under `metadata['sources']` as `KeenableSource`, like Exa.
 
 ## BrowserUse

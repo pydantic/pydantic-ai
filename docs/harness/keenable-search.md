@@ -131,7 +131,9 @@ Any HTTP error status other than `401`, `402`, and `403` becomes
 [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], as do network failures and
 a `2xx` whose body is not JSON, so the model can wait, rephrase, or try another
 URL rather than abort the run. A `get_page` call that comes back with no
-readable content is a `ModelRetry` too. A `401`, `402`, or `403` propagates as
+readable content is a `ModelRetry` too. `get_page` reads Keenable's indexed copy
+of a page, and Keenable documents that fetching a URL it has not indexed fails;
+the model sees that failure as a `ModelRetry` as well. A `401`, `402`, or `403` propagates as
 `httpx.HTTPStatusError`: a rejected key or an exhausted account is
 configuration the model cannot fix.
 

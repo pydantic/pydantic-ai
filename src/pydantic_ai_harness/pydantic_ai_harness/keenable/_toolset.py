@@ -20,30 +20,12 @@ from pydantic_ai_harness._durable import ToolOperation, raise_retry
 from pydantic_ai_harness._output import truncate_head
 from pydantic_ai_harness._typeguards import is_object_dict, is_object_list
 
-KEENABLE_DEFAULT_BASE_URL = 'https://api.keenable.ai'
-"""Base URL of the hosted Keenable API."""
-
-KEENABLE_REQUEST_TIMEOUT_SECONDS = 30.0
-"""httpx timeout for each connect, read, write, and pool wait of a Keenable HTTP call.
-
-It bounds each of those operations, not the request as a whole.
-"""
-
 KEENABLE_MAX_RESULTS = 50
 """The most results one Keenable search returns; the API rejects a larger `max_results`."""
-
-_API_KEY_ENV = 'KEENABLE_API_KEY'
-_BASE_URL_ENV = 'KEENABLE_API_URL'
-_CLIENT_TITLE = 'Pydantic AI Harness'
 
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
 _SelfT = TypeVar('_SelfT')
-
-# 401/402/403 are authentication, billing, or authorization states the model
-# cannot correct, so they propagate and abort the run instead of becoming a
-# retry prompt that would loop until the retry limit.
-_AUTH_STATUSES = frozenset({401, 402, 403})
 
 
 class KeenableSource(TypedDict):
@@ -51,16 +33,6 @@ class KeenableSource(TypedDict):
 
     url: str
     title: str | None
-
-
-def _source_list(sources: Mapping[str, str | None]) -> list[KeenableSource]:
-    """Convert a `url -> title` mapping into the metadata `sources` list."""
-    return [{'url': url, 'title': title} for url, title in sources.items()]
-
-
-def _one_line(text: object) -> str:
-    """Collapse whitespace, so third-party text can't start a line that looks like another result."""
-    return ' '.join(str(text).split())
 
 
 class KeenableClient(Protocol):
@@ -88,6 +60,14 @@ class HttpKeenableClient:
     rate limits.
     """
 
+    _DEFAULT_BASE_URL = 'https://api.keenable.ai'
+    # An httpx timeout bounds each connect, read, write, and pool wait, not the
+    # request as a whole.
+    _TIMEOUT_SECONDS = 30.0
+    _API_KEY_ENV = 'KEENABLE_API_KEY'
+    _BASE_URL_ENV = 'KEENABLE_API_URL'
+    _CLIENT_TITLE = 'Pydantic AI Harness'
+
     def __init__(self, *, api_key: str | None = None, base_url: str | None = None) -> None:
         """Configure the client.
 
@@ -100,8 +80,8 @@ class HttpKeenableClient:
                 `https`, or plain `http` against loopback, with no query,
                 fragment, or credentials.
         """
-        self._api_key = (api_key if api_key is not None else os.environ.get(_API_KEY_ENV, '')).strip()
-        base = (base_url if base_url is not None else os.environ.get(_BASE_URL_ENV)) or KEENABLE_DEFAULT_BASE_URL
+        self._api_key = (api_key if api_key is not None else os.environ.get(self._API_KEY_ENV, '')).strip()
+        base = (base_url if base_url is not None else os.environ.get(self._BASE_URL_ENV)) or self._DEFAULT_BASE_URL
         base = base.rstrip('/')
         parsed = httpx.URL(base)
         # The base URL is developer-controlled, but a typo should fail here
@@ -109,18 +89,25 @@ class HttpKeenableClient:
         # without echoing the URL: httpx puts the request URL in its error
         # messages, so they would otherwise reach logs and retry prompts.
         if parsed.userinfo:
-            raise UserError(f'{_BASE_URL_ENV} must not contain credentials; pass the API key separately')
+            raise UserError(f'`{self._BASE_URL_ENV}` must not contain credentials; pass the API key separately')
         loopback_http = parsed.scheme == 'http' and parsed.host in {'localhost', '127.0.0.1', '::1'}
         # The endpoint path is appended to the base URL, so a query or fragment,
         # even an empty one that parses as none at all, would land before it.
         if not parsed.host or '?' in base or '#' in base or not (parsed.scheme == 'https' or loopback_http):
             raise UserError(
-                f'{_BASE_URL_ENV} must be an https:// URL with a host and no query or fragment, got {base!r}'
+                f'`{self._BASE_URL_ENV}` must be an https:// URL with a host and no query or fragment, got {base!r}'
             )
         self._base_url = base
 
+    @staticmethod
+    def _string_keyed(payload: object) -> dict[str, object]:
+        """Narrow a decoded JSON value to a string-keyed mapping, or an empty one."""
+        if not is_object_dict(payload):
+            return {}
+        return {str(key): value for key, value in payload.items()}
+
     def _headers(self) -> dict[str, str]:
-        headers = {'X-Keenable-Title': _CLIENT_TITLE}
+        headers = {'X-Keenable-Title': self._CLIENT_TITLE}
         if self._api_key:
             headers['X-API-Key'] = self._api_key
         return headers
@@ -130,37 +117,30 @@ class HttpKeenableClient:
 
     async def search(self, query: str, *, max_results: int) -> list[dict[str, object]]:
         """Search the web via `POST /v1/search`, or `/v1/search/public` when keyless."""
-        async with httpx.AsyncClient(timeout=KEENABLE_REQUEST_TIMEOUT_SECONDS) as client:
+        async with httpx.AsyncClient(timeout=self._TIMEOUT_SECONDS) as client:
             response = await client.post(
                 f'{self._base_url}{self._path("/v1/search", "/v1/search/public")}',
                 json={'query': query, 'max_results': max_results},
                 headers=self._headers(),
             )
         response.raise_for_status()
-        results = _string_keyed(response.json()).get('results')
+        results = self._string_keyed(response.json()).get('results')
         if not is_object_list(results):
             return []
         # `_string_keyed` maps anything that is not an object to `{}`, so filtering
         # on the result drops non-object entries without a second check.
-        return [mapped for mapped in (_string_keyed(entry) for entry in results) if mapped]
+        return [mapped for mapped in (self._string_keyed(entry) for entry in results) if mapped]
 
     async def fetch(self, url: str) -> dict[str, object]:
         """Retrieve a page via `GET /v1/fetch`, or `/v1/fetch/public` when keyless."""
-        async with httpx.AsyncClient(timeout=KEENABLE_REQUEST_TIMEOUT_SECONDS) as client:
+        async with httpx.AsyncClient(timeout=self._TIMEOUT_SECONDS) as client:
             response = await client.get(
                 f'{self._base_url}{self._path("/v1/fetch", "/v1/fetch/public")}',
                 params={'url': url},
                 headers=self._headers(),
             )
         response.raise_for_status()
-        return _string_keyed(response.json())
-
-
-def _string_keyed(payload: object) -> dict[str, object]:
-    """Narrow a decoded JSON value to a string-keyed mapping, or an empty one."""
-    if not is_object_dict(payload):
-        return {}
-    return {str(key): value for key, value in payload.items()}
+        return self._string_keyed(response.json())
 
 
 def validated_budget(name: str, value: object, *, limit: int | None = None) -> int:
@@ -173,9 +153,9 @@ def validated_budget(name: str, value: object, *, limit: int | None = None) -> i
     budget anyone means.
     """
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise ValueError(f'{name} must be a positive integer, got {value!r}')
+        raise ValueError(f'`{name}` must be a positive integer, got {value!r}')
     if limit is not None and value > limit:
-        raise ValueError(f'{name} must be at most {limit}, got {value!r}')
+        raise ValueError(f'`{name}` must be at most {limit}, got {value!r}')
     return value
 
 
@@ -192,13 +172,14 @@ def _recoverable(
     401/402/403 means a bad key or an exhausted account, configuration the
     model cannot fix, so it propagates.
     """
+    auth_statuses = frozenset({401, 402, 403})
 
     @functools.wraps(fn)
     async def wrapper(self: _SelfT, *args: _P.args, **kwargs: _P.kwargs) -> _R:
         try:
             return await fn(self, *args, **kwargs)
         except httpx.HTTPStatusError as error:
-            if error.response.status_code in _AUTH_STATUSES:
+            if error.response.status_code in auth_statuses:
                 raise
             response = error.response
             raise ModelRetry(
@@ -265,6 +246,16 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
         self.add_function(self.web_search, name='web_search')
         self.add_function(self.get_page, name='get_page')
 
+    @staticmethod
+    def _source_list(sources: Mapping[str, str | None]) -> list[KeenableSource]:
+        """Convert a `url -> title` mapping into the metadata `sources` list."""
+        return [{'url': url, 'title': title} for url, title in sources.items()]
+
+    @staticmethod
+    def _one_line(text: object) -> str:
+        """Collapse whitespace, so third-party text can't start a line that looks like another result."""
+        return ' '.join(str(text).split())
+
     @_recoverable
     async def web_search(self, query: str) -> ToolReturn[str]:
         """Search the web and return matching pages, each with a short excerpt.
@@ -282,7 +273,7 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
         # is applied rather than after; otherwise one malformed entry would cost
         # a slot and `web_search` would return fewer results than asked for.
         found = await self._client.search(query, max_results=self._num_results)
-        results = [(url, result) for result in found if (url := _one_line(result.get('url') or ''))]
+        results = [(url, result) for result in found if (url := self._one_line(result.get('url') or ''))]
         results = results[: self._num_results]
         if not results:
             return ToolReturn(f'No results found for {query!r}.', metadata={'sources': []})
@@ -290,14 +281,14 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
         lines: list[str] = []
         sources: dict[str, str | None] = {}
         for index, (url, result) in enumerate(results, start=1):
-            title = _one_line(result.get('title') or '') or None
+            title = self._one_line(result.get('title') or '') or None
             sources[url] = title
             lines.append(f'{index}. {title or url}\n   {url}')
-            excerpt = _one_line(result.get('snippet') or '')[: self._max_snippet_chars]
+            excerpt = self._one_line(result.get('snippet') or '')[: self._max_snippet_chars]
             if excerpt:
                 lines.append(f'   {excerpt}')
 
-        return ToolReturn('\n'.join(lines), metadata={'sources': _source_list(sources)})
+        return ToolReturn('\n'.join(lines), metadata={'sources': self._source_list(sources)})
 
     @_recoverable
     async def get_page(self, url: str) -> ToolReturn[str]:
@@ -316,9 +307,11 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
         if not content:
             raise ModelRetry(f'No readable content at {url!r}. Try a different URL.')
 
+        page_text = truncate_head(content, self._max_page_chars)
+        if len(page_text) > self._max_page_chars:
+            # `truncate_head` returns its marker alone when the marker is longer
+            # than the budget; the budget is a ceiling, so cut the page instead.
+            page_text = content[: self._max_page_chars]
         title = page.get('title') or None
         resolved = str(page.get('url') or url)
-        return ToolReturn(
-            truncate_head(content, self._max_page_chars),
-            metadata={'sources': _source_list({resolved: str(title) if title else None})},
-        )
+        return ToolReturn(page_text, metadata={'sources': self._source_list({resolved: str(title) if title else None})})

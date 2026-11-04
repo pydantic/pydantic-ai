@@ -181,16 +181,16 @@ class TestKeenableSearch:
     @pytest.mark.parametrize(
         ('budgets', 'message'),
         [
-            ({'num_results': 0}, 'num_results must be a positive integer'),
-            ({'num_results': 51}, 'num_results must be at most 50, got 51'),
-            ({'max_snippet_chars': 0}, 'max_snippet_chars must be a positive integer'),
-            ({'max_page_chars': 0}, 'max_page_chars must be a positive integer'),
+            ({'num_results': 0}, '`num_results` must be a positive integer'),
+            ({'num_results': 51}, '`num_results` must be at most 50, got 51'),
+            ({'max_snippet_chars': 0}, '`max_snippet_chars` must be a positive integer'),
+            ({'max_page_chars': 0}, '`max_page_chars` must be a positive integer'),
             # The annotation is advisory; a config-driven caller can pass a float,
             # a string, or a bool, which would otherwise only fail later as a
             # slice bound, or in the bool's case, not fail at all.
-            ({'num_results': 1.5}, 'num_results must be a positive integer, got 1.5'),
-            ({'max_page_chars': '10'}, "max_page_chars must be a positive integer, got '10'"),
-            ({'max_page_chars': True}, 'max_page_chars must be a positive integer, got True'),
+            ({'num_results': 1.5}, '`num_results` must be a positive integer, got 1.5'),
+            ({'max_page_chars': '10'}, "`max_page_chars` must be a positive integer, got '10'"),
+            ({'max_page_chars': True}, '`max_page_chars` must be a positive integer, got True'),
         ],
     )
     def test_budgets_are_validated(self, budgets: _Budgets, message: str):
@@ -319,6 +319,13 @@ class TestKeenableSearchToolset:
         assert len(_text(returned)) == 60
         assert returned.metadata['sources'][0] == KeenableSource(url='https://example.com/one', title=None)
 
+    async def test_get_page_cuts_the_page_when_the_budget_cannot_hold_the_marker(self):
+        client = FakeClient(page={'content': 'x' * 100})
+
+        returned = await _toolset(client, max_page_chars=5).get_page('https://example.com/one')
+
+        assert _text(returned) == 'x' * 5
+
     async def test_get_page_retries_on_empty_content(self):
         client = FakeClient(page={'content': ''})
 
@@ -362,10 +369,10 @@ class TestKeenableSearchToolset:
     @pytest.mark.parametrize(
         ('budgets', 'message'),
         [
-            ({'num_results': -1}, 'num_results must be a positive integer'),
-            ({'num_results': 51}, 'num_results must be at most 50'),
-            ({'max_snippet_chars': 0}, 'max_snippet_chars must be a positive integer'),
-            ({'max_page_chars': -10}, 'max_page_chars must be a positive integer'),
+            ({'num_results': -1}, '`num_results` must be a positive integer'),
+            ({'num_results': 51}, '`num_results` must be at most 50'),
+            ({'max_snippet_chars': 0}, '`max_snippet_chars` must be a positive integer'),
+            ({'max_page_chars': -10}, '`max_page_chars` must be a positive integer'),
         ],
     )
     def test_the_toolset_validates_budgets_when_built_directly(self, budgets: _Budgets, message: str):

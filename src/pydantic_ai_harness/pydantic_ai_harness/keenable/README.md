@@ -6,7 +6,7 @@ of each hit, and full-page retrieval for digging into a specific URL.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/keenable/)
 
-**No API key and no extra install.** Keenable's endpoints are keyless by
+It needs no API key and no extra install: Keenable's endpoints are keyless by
 default, and this capability talks to them over `httpx`, which
 `pydantic-ai-harness` already depends on. `KeenableSearch()` works in a fresh
 environment with no signup and no configuration. The examples use an Anthropic
@@ -105,7 +105,10 @@ not the request as a whole.
 Any HTTP error status other than `401`, `402`, and `403` becomes `ModelRetry`,
 as do network failures and a `2xx` whose body is not JSON, so the model can
 wait, rephrase, or try another URL rather than abort the run. A `get_page` call
-that comes back with no readable content is a `ModelRetry` too. A `401`, `402`,
+that comes back with no readable content is a `ModelRetry` too. `get_page`
+reads Keenable's indexed copy of a page, and Keenable documents that fetching a
+URL it has not indexed fails; the model sees that failure as a `ModelRetry` as
+well. A `401`, `402`,
 or `403` propagates as `httpx.HTTPStatusError`: a rejected key or an exhausted
 account is configuration the model cannot fix.
 
