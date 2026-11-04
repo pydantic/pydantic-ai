@@ -209,7 +209,9 @@ class Coder(CombinedCapability[AgentDepsT]):
             Capability[AgentDepsT](
                 id='coder_instructions',
                 instructions=[
-                    coder_instructions(agency=agency, delegation=delegation is not None)
+                    coder_instructions(
+                        agency=agency, delegate_tool=delegation.tool_name if delegation is not None else None
+                    )
                     + ('\n' + instructions if instructions else ''),
                     # Naming the directory creates a lazily created sandbox, so it comes only with
                     # `RepoContext`, which reads the workspace at run start anyway.

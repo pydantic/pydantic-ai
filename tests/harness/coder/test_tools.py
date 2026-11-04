@@ -16,9 +16,8 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import CacheSetting, ModelSettings
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceBackend
-from pydantic_ai_harness.coder import Coder
+from pydantic_ai_harness.coder import Agency, Coder
 from pydantic_ai_harness.coder._capability import MAX_FILE_TOOL_RETRIES
-from pydantic_ai_harness.coder._instructions import Agency
 from pydantic_ai_harness.subagents import TaskControl
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 
@@ -295,7 +294,7 @@ class TestCoder:
         assert model.last_model_request_parameters is not None
         text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
         tools = {tool.name for tool in model.last_model_request_parameters.function_tools}
-        assert ("Don't spawn sub-agents unless the user asks." in text) is sub_agents
+        assert ("Don't spawn sub-agents with `delegate_task` unless the user or AGENTS.md asks." in text) is sub_agents
         assert ('delegate_task' in tools) is sub_agents
 
     @pytest.mark.parametrize(

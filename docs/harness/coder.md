@@ -181,8 +181,8 @@ everything the agent has -- the same model, workspace, instructions, and capabil
 gate, guardrail, or audit hook bound next to `Coder`, so those see the commands a delegate runs too. A
 delegate can delegate in turn, up to three levels counting the top-level run (`SubAgents.max_depth`).
 
-`Coder`'s instructions tell the agent not to spawn sub-agents unless the user asks, the rule Codex gives its
-models for `spawn_agent`. A delegate explores the project again from a fresh context, so delegation the user did not ask for
+`Coder`'s instructions tell the agent not to spawn sub-agents with `delegate_task` unless the user or `AGENTS.md`
+asks, the rule Codex gives its models for `spawn_agent`. A delegate explores the project again from a fresh context, so delegation the user did not ask for
 multiplies tool calls and cost. To have the agent delegate, ask for it in the prompt, in `AGENTS.md`, or in `instructions=`.
 
 Only what is bound to the `Agent` carries over to a delegate; capabilities, toolsets, instructions, and model

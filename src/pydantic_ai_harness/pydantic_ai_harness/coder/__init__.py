@@ -3,11 +3,12 @@
 from typing import TYPE_CHECKING
 
 from pydantic_ai_harness.coder._capability import FILE_TOOL_NAMES, Coder
+from pydantic_ai_harness.coder._instructions import Agency
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.coder._agent import coder_agent
 
-__all__ = ['FILE_TOOL_NAMES', 'Coder', 'coder_agent']
+__all__ = ['FILE_TOOL_NAMES', 'Agency', 'Coder', 'coder_agent']
 
 
 def __getattr__(name: str) -> object:

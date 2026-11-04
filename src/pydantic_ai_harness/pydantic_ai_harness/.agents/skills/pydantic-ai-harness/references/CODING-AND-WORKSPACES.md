@@ -89,7 +89,10 @@ log's path (`.pydantic-ai-harness/shell/<id>/output.log`), and its commands outl
   `grep(pattern, path='.', glob=None, file_type=None, ignore_case=False, literal=False, context=0)`
 - `shell(command, mode='foreground', timeout=None)` (`mode='background'` too), `delegate_task(agent_name, task)`
 
-Keyword-only options: `instructions=None` (appended to the default guidance),
+Keyword-only options: `instructions=None` (appended to the default guidance), `agency='high'`
+(`'low'` proposes a plan and waits for approval; `'medium'` asks when a choice really matters; `'high'`
+asks only for credentials, approvals, or real ambiguity and measures stated numeric targets; `'max'` never
+asks and also deletes its scratch files; the type is `Agency`),
 `unrestricted_filesystem=False` (`True` sets `FileSystem(root_dir='/', read_only_patterns=[])`),
 `repo_context=True`, `sub_agents=True`, `agent_folders=None`, `task_control=None` (a `TaskControl`
 is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `caching=True`,

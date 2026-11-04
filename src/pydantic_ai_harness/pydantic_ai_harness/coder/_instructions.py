@@ -24,7 +24,7 @@ _READING = (
     "Save effort on repeated work, not on understanding the task. Don't re-read files that haven't changed."
 )
 
-_DELEGATION = "Don't spawn sub-agents unless the user asks."
+_DELEGATION = "Don't spawn sub-agents with `{tool_name}` unless the user or AGENTS.md asks."
 """The rule Codex gives its models for `spawn_agent`. A delegate starts from a fresh context and
 re-explores the project, so unrequested delegation multiplies tool calls and cost."""
 
@@ -37,7 +37,7 @@ _CLEANUP = 'Leave only the requested change; delete your scratch files.'
 _FINISHING = 'Finish long-running work before replying; poll until done or blocked. Stop servers you no longer need.'
 
 
-def coder_instructions(*, agency: Agency, delegation: bool) -> str:
+def coder_instructions(*, agency: Agency, delegate_tool: str | None) -> str:
     """`Coder`'s default guidance for an agency level, with the delegation rule only when it can delegate."""
     autonomous = agency in ('high', 'max')
     checks = [
@@ -54,7 +54,7 @@ def coder_instructions(*, agency: Agency, delegation: bool) -> str:
         _INTRO,
         _AGENCY[agency],
         _READING,
-        *([_DELEGATION] if delegation else []),
+        *([_DELEGATION.format(tool_name=delegate_tool)] if delegate_tool is not None else []),
         ' '.join(checks),
         _FINISHING,
     ]
