@@ -5,9 +5,10 @@ from __future__ import annotations as _annotations
 import asyncio
 import contextvars
 import dataclasses
+import warnings
 import weakref
 from collections import deque
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from copy import copy
 from dataclasses import dataclass, field, replace
 from functools import partial
@@ -21,7 +22,7 @@ from opentelemetry import context as otel_context
 from opentelemetry.context import Context
 from typing_extensions import TypeAliasType
 
-from .. import _agent_graph
+from .. import _agent_graph, _instructions, _system_prompt
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
 from .._framing import SYSTEM_TAG, wrap
 from .._instrumentation import annotate_tool_call_otel_metadata
@@ -36,7 +37,7 @@ from .._tool_execution import (
     cancelled_sub_agent_return,
     tool_bound_retry_part,
 )
-from .._utils import aclose_all, cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata
+from .._utils import aclose_all, cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, now_utc
 from ..conversation import Conversation
 from ..exceptions import (
     ApprovalRequired,
@@ -60,6 +61,7 @@ from ..messages import (
     EnqueuedMessagesEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -123,8 +125,10 @@ from ._instrumentation import (
 from ._lifecycle import LifecycleEvent, ResponseStarted, StaleEvent
 from ._retained_audio import RetainedAudioBudget
 from ._utils import (
+    InstructionChangeContext,
     SystemPromptContext,
     SystemPromptText,
+    render_instruction_change,
     replay_recorded_system_prompts_in_place,
     seed_pcm_audio,
 )
@@ -159,7 +163,8 @@ from .settings import AudioRetention, RealtimeModelSettings
 if TYPE_CHECKING:
     from ..messages import AgentStreamEvent
     from ..models.instrumented import InstrumentationSettings
-    from ..tools import DeferredToolRequests, DeferredToolResults
+    from ..tools import DeferredToolRequests, DeferredToolResults, RunContext
+    from ..toolsets import AbstractToolset
     from .model import RealtimeModel, RealtimeProviderSession
 
 # Session-level events (yielded by `RealtimeSession.__aiter__`).
@@ -688,6 +693,9 @@ class RealtimeSession:
         model_request_parameters: ModelRequestParameters | None = None,
         model_settings: RealtimeModelSettings | None = None,
         wrap_event_stream: Callable[[AsyncIterable[AgentStreamEvent]], AsyncIterable[AgentStreamEvent]] | None = None,
+        _resolve_instructions: Callable[[RunContext[Any], AbstractToolset[Any]], Awaitable[list[InstructionPart]]]
+        | None = None,
+        _appending_system_prompts: Mapping[str, _system_prompt.SystemPromptRunner[Any]] | None = None,
     ) -> None:
         self._connection = connection
         self._tool_manager = tool_manager
@@ -729,6 +737,18 @@ class RealtimeSession:
         self._model_settings = model_settings
         self._wrap_event_stream = wrap_event_stream
         self._instructions = instructions
+        # What the agent's instructions resolve to, re-resolved before each model turn (see `_refresh_instructions`), and
+        # the instruction parts the connection was opened with, which the changes are folded onto.
+        self._resolve_instructions = _resolve_instructions
+        self._appending_system_prompts = dict(_appending_system_prompts or {})
+        self._instruction_prefix: list[InstructionPart] = list(
+            model_request_parameters.instruction_parts or [] if model_request_parameters is not None else []
+        )
+        # The requests the session recorded its instruction changes on, in order.
+        self._instruction_changes: list[ModelRequest] = []
+        self._instruction_refresh_lock = Lock()
+        self._instruction_refresh: asyncio.Task[None] | None = None
+        self._warned_unaddressable_instructions = False
         self._metadata = metadata
         self._agent_description = agent_description
         # All OTel span state and construction lives on the helper; the session hands it the static
@@ -933,11 +953,113 @@ class RealtimeSession:
 
     def _replayable_messages(self) -> Sequence[ModelMessage]:
         """The conversation for a reconnect to replay, with a system prompt sent mid-session kept where it was sent."""
-        messages = self._core.replayable_messages()
+        messages = self._replay_instruction_changes(self._core.replayable_messages())
         if self._opening is not None or any(isinstance(message, ModelRequest) for message in self._seeded):
             # The first request is one the session opened with, so only its standing system prompt is taken for one.
             return messages
         return replay_recorded_system_prompts_in_place(messages)
+
+    def _replay_instruction_changes(self, messages: list[ModelMessage]) -> list[ModelMessage]:
+        """Replace each instruction change the session sent with the system prompt it was sent as.
+
+        The new connection is opened with the instructions this one was, so their changes since have to come back as
+        they were delivered, where they were delivered, unless the connection carries them over itself.
+        """
+        if not self._instruction_changes:
+            return messages
+        replays = self._connection._replays_instruction_changes  # pyright: ignore[reportPrivateUsage]
+        replayed: list[ModelMessage] = []
+        for index, message in enumerate(messages):
+            if not any(message is change for change in self._instruction_changes):
+                replayed.append(message)
+            elif replays:
+                assert isinstance(message, ModelRequest)
+                text = self._render_instruction_change(messages[:index], message)
+                replayed.append(
+                    replace(message, parts=[SystemPromptPart(text, timestamp=message.timestamp or now_utc())])
+                )
+        return replayed
+
+    def _render_instruction_change(self, history: Sequence[ModelMessage], request: ModelRequest) -> str:
+        return render_instruction_change(
+            history,
+            request,
+            prefix=self._instruction_prefix,
+            inline_system=self._profile.get('supports_system_messages', False),
+        )
+
+    def _schedule_instruction_refresh(self) -> None:
+        """Re-resolve the instructions in the background, so a change reaches the model before its next turn."""
+        if self._closed or self._resolve_instructions is None:
+            return
+        task = asyncio.create_task(self._refresh_instructions())
+        self._instruction_refresh = task
+        self._background_tasks.add(task)
+        task.add_done_callback(self._pending_message_task_done)
+
+    async def _await_instruction_refresh(self) -> None:
+        """Wait for the instructions re-resolved after the last response, so the response an input asks for has them."""
+        task = self._instruction_refresh
+        if task is not None and not task.done():
+            # Its failure is the session's, which its done callback parks; this input goes out either way.
+            await asyncio.wait({task})
+
+    async def _refresh_instructions(self) -> None:
+        """Re-resolve the instructions and deliver what changed since the model last received them.
+
+        Run after each response, and before a tool's result asks for the next one, as a standard run resolves them
+        before each request. A change is always delivered as an append, in the system voice, on the channel
+        `send(SystemPromptPart(...), respond=False)` uses: a session can't rewrite the instructions it was opened with.
+        """
+        resolve_instructions = self._resolve_instructions
+        if resolve_instructions is None:
+            # A session built on its own, rather than by an agent, has no instructions of its own to resolve.
+            return
+        async with self._instruction_refresh_lock:
+            async with self._tool_manager_lock:
+                tool_manager = self._tool_manager
+                ctx = tool_manager.ctx
+                # Only cleared on close, which cancels a refresh under way and starts no other.
+                assert ctx is not None
+                history = self._core.conversation_so_far()
+                # As for a tool (see `_execute_tool`): the context is built once at connect.
+                ctx.messages[:] = history
+                run_context = replace(ctx, run_step=max(ctx.run_step, self._tool_run_step))
+            try:
+                current = await resolve_instructions(run_context, tool_manager.toolset)
+                statements = await _system_prompt.reevaluate_dynamic_system_prompts(
+                    list(history), self._appending_system_prompts, run_context
+                )
+            except Exception as e:
+                # An instruction function failed, as it would fail a standard run's request.
+                self._park_error(e)
+                return
+            # Only the changes still in history were delivered: one the provider refused was taken out of it.
+            delivered = [
+                message for message in history if any(message is change for change in self._instruction_changes)
+            ]
+            update = _instructions.session_instruction_update(self._instruction_prefix, delivered, current)
+            if update.unaddressable_changed and not self._warned_unaddressable_instructions:
+                self._warned_unaddressable_instructions = True
+                warnings.warn(
+                    'An instruction without a name of its own changed during a realtime session, which can only deliver '
+                    'changes to instructions it can name, so the model keeps the text the session was opened with. '
+                    'Name the instruction function (`@agent.instructions(name=...)`) or the `InstructionPart`, or give '
+                    'its capability or toolset an `id`.',
+                    UserWarning,
+                    stacklevel=1,
+                )
+            if not statements and not update.parts:
+                return
+            request = self._new_request([*statements, *update.parts])
+            text = self._render_instruction_change(history, request)
+            frame: RealtimeInput = (
+                InstructionChangeContext(wrap(SYSTEM_TAG, text), system_prompt=text)
+                if self._profile.get('supports_system_messages', False)
+                else TextContext(wrap(SYSTEM_TAG, text))
+            )
+            await self._send_frame(frame, request=request)
+            self._instruction_changes.append(request)
 
     async def __aenter__(self) -> RealtimeSession:
         if self._entered or self._closed:
@@ -1159,6 +1281,10 @@ class RealtimeSession:
         # Drop the manager's run context, whose `realtime_session` points back here. `realtime_session` itself
         # stays set, since `after_run` hooks still read it; `ctx.tool_manager.ctx` is `None` from here on.
         self._tool_manager.ctx = None
+        # The instruction resolver closes over that run context too, and the last refresh over the session.
+        self._resolve_instructions = None
+        self._appending_system_prompts = {}
+        self._instruction_refresh = None
 
     async def _record_final_usage(self) -> None:
         """End the provider session, recording the usage it reports only as it ends.
@@ -2154,6 +2280,8 @@ class RealtimeSession:
         """
         self._ensure_not_closed()
         self._start_pump()
+        if any(isinstance(content, (str, CreateResponse, ToolResult)) for content in contents):
+            await self._await_instruction_refresh()
         # Only the closed check is re-taken here, not `_ensure_can_send`: a frame already waiting on
         # the lock when a background failure ends receiving is one already underway, not the "next
         # outbound method" that contract speaks of, and it costs a single frame nobody reads on a
@@ -2594,6 +2722,8 @@ class RealtimeSession:
             # waited for: the result ends it.
             await self._drain_pending_messages('asap', ending=call_part.tool_call_id if response_continues else None)
         failed = result_part.outcome in ERROR_OUTCOMES
+        # The result asks for the next response, so what the tool changed in the instructions goes out ahead of it.
+        await self._refresh_instructions()
         await self._send_tool_result(call_part, output, wire_content, failed=failed)
         return result_part, user_content
 
@@ -3059,6 +3189,7 @@ class RealtimeSession:
         # A run step here is one model response, as on a standard run (see `_execute_tool`).
         self._tool_run_step += 1
         self._check_response_boundary_limits()
+        self._schedule_instruction_refresh()
 
     def _annotate_response(self, response: ModelResponse) -> None:
         """Copy the OTel metadata of the tools it calls onto its tool calls, as the instrumented `chat` span records."""

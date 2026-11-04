@@ -70,6 +70,7 @@ if TYPE_CHECKING:
     from .pydantic_ai_docs import PydanticAIDocs
     from .pylon import Pylon
     from .render import RenderWorkflows
+    from .render_sandbox import RenderSandbox, RenderSandboxBackend
     from .repo_context import RepoContext
     from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
@@ -158,6 +159,8 @@ __all__ = [
     'Pylon',
     'READ_ONLY_TOOL_NAMES',
     'RelevanceCompaction',
+    'RenderSandbox',
+    'RenderSandboxBackend',
     'RenderWorkflows',
     'ReportContextUsage',
     'RepoContext',
@@ -257,6 +260,8 @@ _LAZY_EXPORTS = {
     'Pylon': 'pylon',
     'READ_ONLY_TOOL_NAMES': 'filesystem',
     'RelevanceCompaction': 'compaction',
+    'RenderSandbox': 'render_sandbox',
+    'RenderSandboxBackend': 'render_sandbox',
     'RenderWorkflows': 'render',
     'RepoContext': 'repo_context',
     'ReportContextUsage': 'compaction',

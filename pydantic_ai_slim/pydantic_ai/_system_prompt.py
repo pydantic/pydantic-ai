@@ -132,7 +132,10 @@ async def _reevaluate_request_parts(
                     # To enable dynamic system prompt refs in future runs, use a placeholder string
                     updated_part_content = await runner.run(run_context)
                     part = SystemPromptPart(
-                        updated_part_content or '', dynamic_ref=part.dynamic_ref, metadata=part.metadata
+                        updated_part_content or '',
+                        dynamic_ref=part.dynamic_ref,
+                        metadata=part.metadata,
+                        context_id=runner.context_id,
                     )
 
         reevaluated_message_parts.append(part)

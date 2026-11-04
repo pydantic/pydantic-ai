@@ -56,16 +56,28 @@ def directories_up_to(directory: Path, top: Path | None) -> list[Path]:
     return list(reversed(chain))
 
 
+_INSTRUCTION_NAMES = frozenset({'AGENTS.md', 'CLAUDE.md'})
+"""Names a symlinked instruction file may point to whatever `filenames` holds, so `CLAUDE.md -> AGENTS.md` keeps
+loading when only `CLAUDE.md` is configured."""
+
+
 async def _real_file(
-    workspace: Workspace, path: Path, *, autoload_symlink_roots: Sequence[Path] = ()
+    workspace: Workspace, path: Path, filenames: Sequence[str], *, autoload_symlink_roots: Sequence[Path] = ()
 ) -> tuple[Path, Path] | None:
-    """Return the resolved read/dedup target and display path of an authorized instruction file."""
+    """Return the resolved read/dedup target and display path of an authorized instruction file.
+
+    A same-directory link such as `CLAUDE.md -> AGENTS.md` is labeled by its target's name. Its target must
+    itself be an instruction file, named in `filenames` or one of `AGENTS.md` and `CLAUDE.md`: a repository's
+    `AGENTS.md -> .env` would otherwise send a file the file tools may deny to the model.
+    """
     text = str(path)
     entry = await stat_or_none(workspace, text)
     if entry is None or entry.is_dir:
         return None
     real = Path(await workspace.realpath(text))
     if real.parent == Path(await workspace.realpath(str(path.parent))):
+        if real.name != path.name and real.name not in filenames and real.name not in _INSTRUCTION_NAMES:
+            return None
         return real, path.parent / real.name
     # External targets require explicit authorization; their entry directory still defines their scope.
     if any(real.is_relative_to(root) for root in autoload_symlink_roots):
@@ -96,7 +108,9 @@ async def discover_instruction_files(
     found: list[ContextFile] = []
     for directory in directories_up_to(workspace_dir, home_dir):
         for filename in filenames:
-            candidate = await _real_file(workspace, directory / filename, autoload_symlink_roots=autoload_symlink_roots)
+            candidate = await _real_file(
+                workspace, directory / filename, filenames, autoload_symlink_roots=autoload_symlink_roots
+            )
             if candidate is None:
                 continue
             target, label_path = candidate
@@ -115,7 +129,7 @@ async def discover_instruction_files(
 async def dir_context_file_path(workspace: Workspace, directory: Path, filenames: Sequence[str]) -> Path | None:
     """Return the path of the first existing instruction file in `directory`, without reading it."""
     for filename in filenames:
-        candidate = await _real_file(workspace, directory / filename)
+        candidate = await _real_file(workspace, directory / filename, filenames)
         if candidate is not None:
             _, label_path = candidate
             return label_path

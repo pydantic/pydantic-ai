@@ -1779,15 +1779,18 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         prefix = model_request_parameters.instruction_parts if model_request_parameters is not None else None
         # Asked before the instruction state is projected, which drops the records it's read from.
         first_context_request = _first_context_request(messages, prefix)
-        messages = _drop_capability_load_deltas(messages)
         if _has_instruction_state(messages):
             # The same path choice as the prefix statement in `prepare_request`; on the fallback path
-            # `_wrap_non_leading_system_prompts` below `<system>`-wraps the update.
+            # `_wrap_non_leading_system_prompts` below `<system>`-wraps the update. Projection must run
+            # while the history still carries a code load's `CapabilityLoadDeltaPart`: it's the only
+            # record of that load, and folding it in is what keeps a code-loaded block rendered across
+            # instruction windows. The records go out only after, never in the messages the model sees.
             messages = _project_instruction_state(
                 messages,
                 inline_system=inline_system,
                 prefix=prefix,
             )
+        messages = _drop_capability_load_deltas(messages)
 
         messages = _render_system_prompt_contexts(
             messages,

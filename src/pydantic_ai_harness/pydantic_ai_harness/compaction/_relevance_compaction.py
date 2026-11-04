@@ -244,8 +244,8 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
     preserve_loaded_capabilities: bool = True
     """Keep a deferred capability loaded when the step that loaded it is summarized or dropped.
 
-    Core counts a capability as loaded while its `load_capability` exchange is after the latest
-    compaction, so removing the step would unload it. Each such load is recorded again ahead of the
+    Core counts a capability as loaded while the record of its load is after the latest compaction,
+    so removing the step would unload it. Each such load is recorded again ahead of the
     kept steps instead, and the capability's tools and current instructions are sent again. When
     `False`, those capabilities are unloaded, and a note names them so the model can load the ones
     it still needs.
