@@ -292,7 +292,8 @@ async def test_a_changed_project_plugin_file_waits_for_approval_again(
     loader = plugin_loader(store, load_project_settings(launched), output)
     await loader.load_all()
     assert ran(tmp_path) == []
-    assert 'run /plugins enable helper to approve it as it is now' in output.getvalue()
+    shown = ' '.join(output.getvalue().split())  # The console wraps the long temporary path.
+    assert 'run /plugins enable helper to approve it as it is now' in shown
 
     await loader.command(['enable', 'helper'])
     assert ran(tmp_path) == ['changed']

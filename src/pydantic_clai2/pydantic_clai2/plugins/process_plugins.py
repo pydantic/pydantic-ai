@@ -494,7 +494,7 @@ class ProcessPlugins(Generic[DepsT]):
                     f'Use /plugins remove {name} and approve it again, or give it an absolute path.'
                 )
             if not self.project_files(name, declaration):
-                return import_file(name, path, path.read_bytes())
+                return import_file(name, path)
             source = read_regular_file(path)
             if self.store.approved_sha256(path) != hashlib.sha256(source).hexdigest():
                 raise ValueError(

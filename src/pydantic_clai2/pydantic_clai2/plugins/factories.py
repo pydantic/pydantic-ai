@@ -17,8 +17,11 @@ from pydantic_clai2.plugins import DepsT, NoSettings, Plugin, PluginHost, Plugin
 _FOLDER_PACKAGE = 'pydantic_clai2_plugins'
 
 
-def import_file(name: str, path: Path, source: bytes) -> ModuleType:
-    """Import a drop-in plugin file or package afresh from `source`, its bytes, under a package private to its folder."""
+def import_file(name: str, path: Path, source: bytes | None = None) -> ModuleType:
+    """Import a drop-in plugin file or package afresh, under a package private to its folder.
+
+    `source` is the file's bytes when the caller already read them, so the bytes it checked are the ones run.
+    """
     root = path.parent.parent if path.name == '__init__.py' else path.parent
     namespace = f'{_FOLDER_PACKAGE}_{hashlib.sha256(str(root.resolve()).encode()).hexdigest()[:16]}'
     qualified = f'{namespace}.{name}'
@@ -36,7 +39,8 @@ def import_file(name: str, path: Path, source: bytes) -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     sys.modules[qualified] = module
     try:
-        exec(compile(source, str(path), 'exec'), module.__dict__)  # Explicitly trusted plugin source.
+        code = path.read_bytes() if source is None else source
+        exec(compile(code, str(path), 'exec'), module.__dict__)  # Explicitly trusted plugin source.
     except BaseException:
         sys.modules.pop(qualified, None)
         raise
