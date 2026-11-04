@@ -7,7 +7,7 @@ import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import anyio
 
@@ -587,14 +587,16 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         """Run with an owner of the run's own, which stops every task still running when the run ends."""
         owner = DelegationTasks(max_depth=self.max_depth)
         conversation_id = ctx.conversation_id or ctx.run_id or ''
+        # A question waits for an answer, so the model sees it at its next request. Durable tasks ask none, and their
+        # reports wait for the run to go idle, a point that replay reaches again however fast a recorded task returns.
+        priority: Literal['asap', 'when_idle'] = 'when_idle' if ctx.in_durable_context else 'asap'
         async with owner.opened():
             with (
                 isolated(owner),
                 owner.receiving(
                     conversation_id=conversation_id,
                     parent_id=None,
-                    # A question waits for an answer, so the model sees it at its next request.
-                    enqueue=lambda part: enqueue_while_open(ctx, part, priority='asap'),
+                    enqueue=lambda part: enqueue_while_open(ctx, part, priority=priority),
                 ),
                 owner.publishing(conversation_id=conversation_id, parent_id=None, emit=ctx.emit),
             ):

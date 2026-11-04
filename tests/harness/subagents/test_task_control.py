@@ -2598,6 +2598,36 @@ class TestTaskControlBoundaries:
         assert 'outcome="cancelled"' in task_texts(result.all_messages())[-1]
         assert 'durable__capability__sub_agents.delegate' in {name for name, _ in durability.calls}
 
+    async def test_a_durable_task_reports_when_the_run_goes_idle(self) -> None:
+        completed = anyio.Event()
+
+        class Completed(AbstractCapability[Any]):
+            @on_event(TaskCompletedEvent)
+            async def completed(self, ctx: RunContext[Any], event: TaskCompletedEvent) -> None:
+                completed.set()
+
+        async def after_the_task(messages: list[ModelMessage]) -> ModelResponse:
+            await completed.wait()
+            # The task's worker settles and queues its report.
+            await anyio.wait_all_tasks_blocked()
+            return call('list_tasks')
+
+        parent = Agent(
+            scripted(
+                call('delegate_task', agent_name='researcher', task='Find x.', background=True),
+                after_the_task,
+                text('Waiting.'),
+                text('Done.'),
+            ),
+            name='durable',
+            capabilities=[controlled(), Completed(), RecordingDurability()],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        # Replay may settle the task at another point, so its report waits for the run to go idle.
+        assert result.output == 'Done.'
+        assert task_texts(result.all_messages()[-2:-1])
+
     async def test_a_durable_task_keeps_its_outcome(self) -> None:
         def broken(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             raise UnexpectedModelBehavior('boom')
