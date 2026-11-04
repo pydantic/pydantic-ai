@@ -209,6 +209,23 @@ class TestSnapshotHistorySource:
         assert [[part.part_kind for part in message.parts] for message in history] == [['user-prompt'], ['text']]
         assert 'HERON' in await _search(SnapshotHistorySource(store), 'HERON')
 
+    async def test_a_harness_system_prompt_that_opens_like_a_summary_stays_searchable(self) -> None:
+        """A system prompt a harness capability marked with its `origin`, such as a lasting reminder, is never a summary."""
+        store = InMemoryStepStore()
+        reminder = ModelRequest(
+            parts=[
+                SystemPromptPart(
+                    content=f'{SUMMARY_PREFIX}the KESTREL rule',
+                    metadata={'origin': 'pydantic-ai-harness.system_reminders.reminder.v1'},
+                )
+            ]
+        )
+        prompt = _user('go on')
+        await _seed_run(store, 'r1', [prompt, reminder, _reply('ok')])
+
+        history = await SnapshotHistorySource(store).run_history(run_id='r1')
+        assert history[:2] == [prompt, reminder]
+
     async def test_an_empty_compaction_part_adds_nothing_to_search(self) -> None:
         store = InMemoryStepStore()
         await _seed_run(store, 'r1', [ModelRequest(parts=[CompactionPart(content=''), UserPromptPart('the OSPREY')])])

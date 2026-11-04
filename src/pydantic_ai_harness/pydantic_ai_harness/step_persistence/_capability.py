@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import uuid4
 
+import anyio
+
 from pydantic_ai import CallToolsNode, ModelRequestNode
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.capabilities.abstract import AgentNode, NodeResult, WrapRunHandler
@@ -35,6 +37,10 @@ from pydantic_ai_harness.step_persistence._types import (
 
 def _empty_metadata() -> dict[str, str]:
     return {}
+
+
+def _snapshot_state(messages: list[ModelMessage]) -> SnapshotState:
+    return 'complete' if is_provider_valid(messages) else 'interrupted'
 
 
 def _has_model_response(messages: list[ModelMessage]) -> bool:
@@ -108,23 +114,20 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
     """Identifier for this one `Agent.run` call.
 
     `run_id` is per-call, matching `pydantic_ai.RunContext.run_id`. For
-    multi-turn logical grouping use `conversation_id` on `Agent.run(...)` --
-    that is the pyai-native primitive for it.
+    multi-turn grouping use `conversation_id` on `Agent.run(...)`.
 
     Resolution order (materialised in `for_run`):
 
-    1. **Explicit value** → used as-is. Single-shot use cases:
-       deterministic id for testing, replay, debugging. Reusing the
-       capability across multiple `.run()` calls with the same explicit
-       `run_id` raises `ValueError` in `before_run` -- the tool-effect
-       ledger keys on `(run_id, tool_call_id)` and providers reuse
-       deterministic tool-call ids, so a silent collision would erase
-       the `unknown_after_crash` signal. Use `conversation_id=` on
-       `Agent.run` for multi-turn grouping.
-    2. **`agent_name` set, `run_id` unset** -> path-safe encoding of both values.
+    1. Explicit value -> used as-is, for a deterministic id in testing,
+       replay, or debugging. Reusing the capability across multiple `.run()`
+       calls with the same explicit `run_id` raises `ValueError` in
+       `before_run`: the tool-effect ledger keys on `(run_id, tool_call_id)`
+       and providers reuse deterministic tool-call ids, so a collision would
+       erase the `unknown_after_crash` signal.
+    2. `agent_name` set, `run_id` unset -> path-safe encoding of both values.
        Reusing the capability instance yields distinct ids because the agent
        graph assigns each run its own id.
-    3. **Neither set** -> `ctx.run_id` per `.run()`.
+    3. Neither set -> `ctx.run_id` per `.run()`.
     """
 
     parent_run_id: str | None = None
@@ -493,11 +496,10 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         that rebind happens exactly once, and every later change to
         `ctx.state.message_history` is an in-place mutation (`append` /
         `[:]=` -- the discipline `capture_run_messages` requires, stated in
-        `pydantic_ai._agent_graph`). If core ever rebinds the list mid-run
-        again, this stash silently goes stale and the error-path snapshot
-        persists a pre-failure history while believing it is the at-failure
-        one -- `tests/step_persistence` pins the invariant so that surfaces
-        as a test failure, not silent data loss.
+        `pydantic_ai._agent_graph`). If core rebinds the list mid-run again,
+        this stash goes stale and the error-path snapshot persists a
+        pre-failure history as the at-failure one; `tests/harness/step_persistence`
+        pins the invariant so that surfaces as a test failure.
 
         Re-stashed at every boundary because the first `after_node_run`
         (the `UserPromptNode` boundary) still sees the pre-rebind list; from
@@ -555,14 +557,16 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         tool call is resolved and `interrupted` otherwise. Interrupted
         snapshots stay off the default `latest_snapshot` read path.
         """
-        stashed = live_run_history.get()
-        if stashed is not None:
-            messages, step_index = stashed
-            captured = list(messages)
-            if _has_model_response(captured) or (self.capture_frontier and captured):
-                state: SnapshotState = 'complete' if is_provider_valid(captured) else 'interrupted'
-                await self._save_continuable_snapshot(ctx, captured, step_index, state)
-        await self._record_event(ctx, kind='run_failed', error=repr(error))
+        # Shielded so an `anyio` scope cancelling the run cannot cut these writes. No deadline: under
+        # Temporal, `anyio`'s deadline becomes a durable timer, which breaks replay of earlier histories.
+        with anyio.CancelScope(shield=True):
+            stashed = live_run_history.get()
+            if stashed is not None:
+                messages, step_index = stashed
+                captured = list(messages)
+                if _has_model_response(captured) or (self.capture_frontier and captured):
+                    await self._save_continuable_snapshot(ctx, captured, step_index, _snapshot_state(captured))
+            await self._record_event(ctx, kind='run_failed', error=repr(error))
         raise error
 
     async def before_model_request(
@@ -572,12 +576,8 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
     ) -> ModelRequestContext:
         if self.capture_frontier:
             self._stash_live_history(ctx)
-            await self._save_continuable_snapshot(
-                ctx,
-                list(ctx.messages),
-                ctx.run_step,
-                'complete' if is_provider_valid(ctx.messages) else 'interrupted',
-            )
+            messages = list(ctx.messages)
+            await self._save_continuable_snapshot(ctx, messages, ctx.run_step, _snapshot_state(messages))
         await self._record_event(ctx, kind='model_request_started')
         return request_context
 
@@ -700,27 +700,10 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         self._stash_live_history(ctx)
         messages = list(ctx.messages)
         if self.capture_frontier and isinstance(node, ModelRequestNode):
-            await self._save_continuable_snapshot(
-                ctx, messages, ctx.run_step, 'complete' if is_provider_valid(messages) else 'interrupted'
-            )
+            await self._save_continuable_snapshot(ctx, messages, ctx.run_step, _snapshot_state(messages))
         if isinstance(node, CallToolsNode):
             if isinstance(result, ModelRequestNode):
                 messages = [*messages, result.request]
             if is_provider_valid(messages):
-                await self._save_snapshot(
-                    run_id=self._effective_run_id(ctx),
-                    step_index=ctx.run_step,
-                    messages=messages,
-                    conversation_id=ctx.conversation_id,
-                    parent_run_id=self.parent_run_id,
-                    agent_name=self.agent_name,
-                )
-                await ctx.emit(
-                    SnapshotSaved(
-                        persistence_run_id=self._effective_run_id(ctx),
-                        conversation_id=ctx.conversation_id,
-                        step_index=ctx.run_step,
-                        state='complete',
-                    )
-                )
+                await self._save_continuable_snapshot(ctx, messages, ctx.run_step)
         return result

@@ -2,7 +2,10 @@
 
 from __future__ import annotations as _annotations
 
-from typing import cast
+from collections.abc import Mapping
+from typing import Protocol, cast
+
+import pydantic_core
 
 from ._utils import is_str_dict
 from .exceptions import (
@@ -127,6 +130,31 @@ def openai_compatible_category(
     return http_status_category(status_code, message) if status_code is not None else None
 
 
+_ZAI_QUOTA_CODES = frozenset(
+    {'1113', '1308', '1309', '1310', '1311', '1313', '1314', '1315', '1316', '1317', '1318', '1319', '1320', '1321'}
+)
+"""Z.ai error codes for an exhausted balance or plan limit, see https://docs.z.ai/api-reference/api-code."""
+
+
+def zai_code_category(code: str | None) -> HTTPErrorCategory | None:
+    """The error category for a Z.ai error code, where it differs from the HTTP status's.
+
+    Z.ai sends an exhausted balance or plan limit with a 429, like its transient `1302` rate limit and `1305` overload,
+    so only the code tells them apart.
+    """
+    return ModelQuotaExceededError if code in _ZAI_QUOTA_CODES else None
+
+
+def moonshot_type_category(error_type: str | None) -> HTTPErrorCategory | None:
+    """The error category for a Moonshot AI error `type`, where it differs from the HTTP status's.
+
+    Moonshot sends an exhausted balance or a suspended account as a 429 with the type `exceeded_current_quota_error`,
+    like its `rate_limit_reached_error`, so only the type tells them apart; see
+    https://forum.moonshot.ai/t/429-insufficient-balance/244.
+    """
+    return ModelQuotaExceededError if error_type == 'exceeded_current_quota_error' else None
+
+
 _GOOGLE_CONTEXT_WINDOW_MESSAGES = ('input token count', 'number of tokens allowed')
 """Gemini reports a context window overflow as `INVALID_ARGUMENT`, identifiable only by its message.
 
@@ -135,28 +163,60 @@ variant drops the leading clause.
 """
 
 
-def google_error_reason(details: object) -> str | None:
+def google_error_details(body: object) -> list[dict[str, object]]:
+    """The `details` of a Google API error body, like its `google.rpc.ErrorInfo` and `google.rpc.QuotaFailure`."""
+    error = body.get('error') if is_str_dict(body) else None
+    details = error.get('details') if is_str_dict(error) else None
+    if not isinstance(details, list):
+        return []
+    return [detail for detail in cast(list[object], details) if is_str_dict(detail)]
+
+
+def google_error_reason(body: object) -> str | None:
     """The `reason` of the `google.rpc.ErrorInfo` in a Google API error body, like `'API_KEY_INVALID'`, if any."""
-    error = details.get('error') if is_str_dict(details) else None
-    error_details = error.get('details') if is_str_dict(error) else None
-    if isinstance(error_details, list):
-        for detail in cast(list[object], error_details):
-            if is_str_dict(detail) and isinstance(reason := detail.get('reason'), str):
-                return reason
+    for detail in google_error_details(body):
+        if isinstance(reason := detail.get('reason'), str):
+            return reason
     return None
 
 
-def google_status_category(status: str | None, message: object, reason: str | None = None) -> HTTPErrorCategory | None:
-    """The error category for a Google API error status, like `RESOURCE_EXHAUSTED`.
+def google_exceeds_daily_quota(body: object) -> bool:
+    """Whether a Google API error body's `google.rpc.QuotaFailure` says a daily quota was exceeded.
 
-    Gemini sends `RESOURCE_EXHAUSTED` for both rate limits and exhausted quota, with the same message, so it's
-    always a rate limit. It sends an invalid API key as `INVALID_ARGUMENT`, with the `reason` `API_KEY_INVALID`.
+    Gemini sends a `RESOURCE_EXHAUSTED` with a violation for each quota the request exceeded, like
+    `GenerateRequestsPerMinutePerProjectPerModel-FreeTier` or `GenerateRequestsPerDayPerProjectPerModel-FreeTier`.
+    A daily quota resets at midnight Pacific time, see https://ai.google.dev/gemini-api/docs/rate-limits.
     """
-    if reason == 'API_KEY_INVALID':
+    for detail in google_error_details(body):
+        violations = detail.get('violations')
+        if isinstance(violations, list):
+            for violation in cast(list[object], violations):
+                if (
+                    is_str_dict(violation)
+                    and isinstance(quota_id := violation.get('quotaId'), str)
+                    and 'PerDay' in quota_id
+                ):
+                    return True
+    return False
+
+
+def google_status_category(status: str | None, message: object, body: object) -> HTTPErrorCategory | None:
+    """The error category for a Google API error status, like `RESOURCE_EXHAUSTED`, and the error `body`'s details.
+
+    Gemini sends `RESOURCE_EXHAUSTED` for both per-minute rate limits and the daily quota, with the same message, so
+    only the quotas listed in the body's `google.rpc.QuotaFailure` tell them apart; without them, it's a rate limit.
+    It sends an invalid API key as `INVALID_ARGUMENT`, with the `reason` `API_KEY_INVALID`.
+    """
+    if google_error_reason(body) == 'API_KEY_INVALID':
         return ModelAuthenticationError
     match status:
         case 'RESOURCE_EXHAUSTED':
-            return ModelRateLimitError
+            # The daily quota doesn't reset until midnight Pacific time, so waiting won't help.
+            return ModelQuotaExceededError if google_exceeds_daily_quota(body) else ModelRateLimitError
+        case 'FAILED_PRECONDITION' if isinstance(message, str) and 'billing' in message.lower():
+            # Like `Gemini API free tier is not available in your country. Please enable billing on your project in
+            # Google AI Studio.`; other preconditions, like `User location is not supported`, are rejected requests.
+            return ModelQuotaExceededError
         case 'UNAVAILABLE':
             # Like `The model is overloaded. Please try again later.`
             return ModelOverloadedError if says_overloaded(message) else ModelUnavailableError
@@ -295,3 +355,43 @@ def connection_error(model_name: str, message: str, error: BaseException, *, tim
     """A `ModelConnectionError` (or `ModelTimeoutError`) for a transport `error`, with its phase if known."""
     error_class = ModelTimeoutError if timeout else ModelConnectionError
     return error_class(model_name=model_name, message=message, phase=transport_phase(error))
+
+
+class HTTPStatusResponse(Protocol):
+    """The parts of an `httpx` or `httpx2` response that `transport_status_error` reads."""
+
+    @property
+    def status_code(self) -> int: ...
+
+    @property
+    def headers(self) -> Mapping[str, str]: ...
+
+    @property
+    def content(self) -> bytes: ...
+
+
+def transport_status_error(model_name: str, response: HTTPStatusResponse) -> ModelHTTPError:
+    """The `ModelHTTPError` for an error status the HTTP transport raised before the provider SDK saw the response.
+
+    A retrying transport's `validate_response` raises `HTTPStatusError` for a status it retries, and re-raises it
+    once it runs out of attempts. Most SDKs let that exception through unchanged, and `anthropic` and `groq` wrap it
+    in their connection error, though the provider did respond.
+    """
+    try:
+        content = response.content
+    except RuntimeError:  # `ResponseNotRead`: the transport closed the response without reading its body.
+        content = b''
+    text = content.decode(errors='replace')
+    body: object = None
+    if content:
+        try:
+            body = pydantic_core.from_json(content)
+        except ValueError:
+            body = text
+    return ModelHTTPError.for_category(
+        http_status_category(response.status_code, text),
+        status_code=response.status_code,
+        model_name=model_name,
+        body=body,
+        headers=dict(response.headers),
+    )

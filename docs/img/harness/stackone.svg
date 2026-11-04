@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="717" viewBox="0 0 880 717" role="img" aria-labelledby="t d">
+<title id="t">StackOne: run actions in a user&#x27;s linked business apps</title>
+<desc id="d">Inside your agent, the StackOne capability connects to StackOne&#x27;s MCP endpoint at api.stackone.com/mcp with your API key and an x-account-id header naming one linked account, and StackOne runs actions against that account&#x27;s provider, such as BambooHR or Salesforce. In the default search_execute mode the model sees two tools: one ending in _search_actions that returns action ids, and one ending in _execute_action that runs an action by id. Passing actions switches to individual mode, with one tool per matching action, such as bamboohr_list_employees.</desc>
+<defs><marker id="ai" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#092224"/></marker><marker id="am" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#55726A"/></marker><marker id="al" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#B417B7"/></marker><marker id="al2" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E520E9"/></marker><marker id="ap" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#7B57E8"/></marker><marker id="aa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0E9C86"/></marker><marker id="ac" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E5533D"/></marker><marker id="af" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8FA8A3"/></marker><marker id="ao" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#97998B"/></marker></defs>
+<rect x="0.5" y="0.5" width="879" height="716" rx="16" fill="#FFFFFF" stroke="#E6EAEA"/>
+<text x="32" y="50" font-size="21" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">StackOne: run actions in a user&#x27;s linked business apps</text>
+<text x="32" y="78" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Each instance is scoped to one linked account: an authenticated connection from StackOne to a provider such as</text>
+<text x="32" y="98" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">BambooHR.</text>
+<rect x="32" y="140" width="504" height="226" rx="14" fill="none" stroke="#8FA8A3" stroke-width="1.3" stroke-dasharray="4 4"/>
+<rect x="46" y="132" width="104.7" height="16" rx="4" fill="#FFFFFF"/>
+<text letter-spacing="1.3" x="53" y="144" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">YOUR AGENT</text>
+<rect x="46" y="239" width="84" height="36" rx="18" fill="#092224"/>
+<text x="88" y="262" font-size="13.5" fill="#FBFFEA" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<line x1="134" y1="249" x2="180" y2="249" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="180" y1="265" x2="134" y2="265" stroke="#55726A" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#am)"/>
+<rect x="184" y="162" width="336" height="186" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="198" y="186" font-size="14" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">StackOne()</text>
+<text letter-spacing="1.3" x="198" y="208" font-size="11" fill="#B417B7" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">THE MODEL SEES</text>
+<rect x="198" y="218" width="130.2" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="263.1" y="234.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">*_search_actions</text>
+<rect x="336.2" y="218" width="130.2" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="401.4" y="234.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">*_execute_action</text>
+<rect x="198" y="250" width="107.9" height="24" rx="6" fill="#F2F4EA" stroke="#C8CCB9" stroke-width="1.2"/>
+<text x="252" y="266.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">or, with actions=</text>
+<rect x="313.9" y="250" width="179.3" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="403.6" y="266.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">bamboohr_list_employees</text>
+<text x="198" y="290" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Search first: action ids come back from the search tool</text>
+<text x="198" y="307" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">at run time, and the model passes one to the execute</text>
+<text x="198" y="324.1" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">tool.</text>
+<rect x="636" y="162" width="212" height="106" rx="10" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.4"/>
+<text x="650" y="186" font-size="14" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">StackOne MCP</text>
+<text x="650" y="206" font-size="11.5" fill="#092224" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">api.stackone.com/mcp</text>
+<text x="650" y="226" font-size="11.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">Authorization: Basic</text>
+<text x="650" y="243" font-size="11.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">x-account-id</text>
+<text x="650" y="260" font-size="11" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">?tool-mode=search_execute</text>
+<line x1="524" y1="201" x2="632" y2="201" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<text x="578" y="194" font-size="12" fill="#092224" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">tools/call</text>
+<line x1="632" y1="229" x2="524" y2="229" stroke="#55726A" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#am)"/>
+<text x="578" y="247" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">result</text>
+<rect x="636" y="302" width="212" height="46" rx="10" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.4" stroke-dasharray="5 4"/>
+<text x="650" y="323" font-size="13" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">linked account</text>
+<text x="650" y="341" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">BambooHR, Salesforce, ...</text>
+<line x1="732" y1="272" x2="732" y2="298" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="752" y1="298" x2="752" y2="272" stroke="#55726A" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#am)"/>
+<rect x="32" y="406" width="404" height="136" rx="10" fill="#092224"/>
+<text x="46" y="430" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">StackOne(</tspan></text>
+<text x="46" y="449" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">    account_id=os.environ[</tspan><tspan fill="#FFD4E5">&#x27;STACKONE_ACCOUNT_ID&#x27;</tspan><tspan fill="#FBFFEA">],</tspan></text>
+<text x="46" y="468" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">)</tspan></text>
+<text x="46" y="487" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#8FA8A3"># individual mode, one tool per match</tspan></text>
+<text x="46" y="506" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">StackOne(account_id=</tspan><tspan fill="#FFD4E5">&#x27;hr-account&#x27;</tspan><tspan fill="#FBFFEA">,</tspan></text>
+<text x="46" y="525" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">         actions=[</tspan><tspan fill="#FFD4E5">&#x27;*_list_*&#x27;</tspan><tspan fill="#FBFFEA">])</tspan></text>
+<line x1="248" y1="402" x2="248" y2="351" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<text x="256" y="386" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">API key and account id</text>
+<rect x="462" y="408" width="88.1" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="506.1" y="424.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">account_id</text>
+<text x="564" y="424" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">One linked account per instance. Its id is derived</text>
+<text x="564" y="441.8" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">from it: stackone-&lt;account_id&gt;.</text>
+<rect x="462" y="457.8" width="67.1" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="495.6" y="473.9" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">actions</text>
+<text x="564" y="473.8" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">fnmatch patterns on</text>
+<text x="564" y="491.5" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">{connector}_{action}_{entity}. Passing them</text>
+<text x="564" y="509.2" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">selects individual mode.</text>
+<rect x="462" y="525.2" width="67.1" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="495.6" y="541.4" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">api_key</text>
+<text x="564" y="541.2" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Unset: STACKONE_API_KEY. Sent with the</text>
+<text x="564" y="559" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">account id on every request.</text>
+<rect x="32" y="593" width="816" height="58" rx="10" fill="#F2F4EA" stroke="#C8CCB9" stroke-width="1.4"/>
+<text letter-spacing="1.3" x="46" y="616" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">ACCESS</text>
+<text x="119.1" y="616" font-size="12.5" fill="#092224" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">StackOne decides which actions are enabled for the linked account; treat that as the primary access control. Approval is</text>
+<text x="119.1" y="633.8" font-size="12.5" fill="#092224" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">not on by default: use StackOneToolset(...).approval_required().</text>
+<rect x="32" y="670" width="14" height="14" rx="7" fill="#092224" stroke="#092224" stroke-width="1.2"/>
+<text x="52" y="681" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<rect x="107.4" y="670" width="14" height="14" rx="4" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="127.4" y="681" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">added by StackOne</text>
+<rect x="253.3" y="670" width="14" height="14" rx="4" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.2"/>
+<text x="273.3" y="681" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">StackOne and the linked provider</text>
+</svg>

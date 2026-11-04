@@ -112,14 +112,6 @@ _CANCEL_GRACE_SECONDS = 5.0
 """How long a cancelled or failed inline poll waits for Exa to accept the runs' cancellation."""
 
 
-def _default_runs() -> ExaAgentRuns:
-    """Build the default Agent runs client from the `EXA_API_KEY` environment variable."""
-    return DefaultExa(
-        missing_key_hint='ExaAgent needs an Exa API key: set the EXA_API_KEY environment variable, '
-        'or pass a configured runs client, e.g. ExaAgent(runs=AsyncExa(api_key=...).agent.runs).'
-    )
-
-
 def agent_run_result(
     run: AgentRun, *, output_schema: type[BaseModel] | dict[str, object] | None = None
 ) -> ToolReturn[str]:
@@ -481,8 +473,11 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
 
     @cached_property
     def _default_runs_client(self) -> ExaAgentRuns:
-        """One default client per capability, so its connection pool is reused across requests."""
-        return _default_runs()
+        """One default client per capability, built from `EXA_API_KEY`, so its connection pool is reused."""
+        return DefaultExa(
+            missing_key_hint='ExaAgent needs an Exa API key: set the EXA_API_KEY environment variable, '
+            'or pass a configured runs client, e.g. ExaAgent(runs=AsyncExa(api_key=...).agent.runs).'
+        )
 
     @classmethod
     def from_spec(
@@ -496,6 +491,8 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
         timeout_ms: int = 3_600_000,
         guidance: str | None = None,
         id: str | None = 'exa_agent',
+        description: str | None = None,
+        defer_loading: bool = False,
     ) -> ExaAgent[AgentDepsT]:
         """Construct the capability from serializable spec options.
 
@@ -513,4 +510,6 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
             timeout_ms=timeout_ms,
             guidance=guidance,
             id=id,
+            description=description,
+            defer_loading=defer_loading,
         )

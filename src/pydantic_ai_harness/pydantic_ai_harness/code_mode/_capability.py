@@ -88,9 +88,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
       when the agent needs environment variables, the clock, or filesystem behavior you
       control.
 
-    `mount` exposes selected host directories. The built-in `OSAccess` has an
-    isolated filesystem and environment but uses the host clock by default; custom
-    OS handlers can expose other host resources.
+    The built-in `OSAccess` has an isolated filesystem and environment but uses the
+    host clock by default; custom OS handlers can expose other host resources.
 
     ```python
     from pydantic_monty import MountDir
@@ -243,6 +242,47 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 f"`speculate` accepts a list of tool names or the string 'declared', not {self.speculate!r}. "
                 'To allowlist one tool, pass a one-element list.'
             )
+
+    @classmethod
+    def from_spec(
+        cls,
+        tools: Literal['all'] | Sequence[str] | dict[str, Any] = 'all',
+        max_retries: int = 3,
+        *,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
+        max_tool_calls: int = 100,
+        resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = None,
+        eager: bool = False,
+        speculate: Sequence[str] | Literal['declared'] | None = None,
+        monty_sandbox: str | None = None,
+        dynamic_catalog: bool = True,
+        **kwargs: Any,
+    ) -> CodeMode[Any]:
+        """Build from an agent spec, naming the fields a spec can express.
+
+        Core reads this signature to generate the spec's JSON schema. Inherited, core falls back
+        to the variadic base `from_spec`, because `__init__`'s `AsyncMontyWebsocket` hint is a
+        `TYPE_CHECKING` import, and publishes only the bare `'CodeMode'`. Reading `__init__`
+        would not help: `os_access`, `mount`, `repl_store`, and a `monty_sandbox` factory have
+        no JSON schema, and would drop the keyword form.
+        `**kwargs` reaches `__init__` unchanged, so a spec that set anything else still loads.
+        """
+        return cls(
+            tools,
+            max_retries,
+            id=id,
+            description=description,
+            defer_loading=defer_loading,
+            max_tool_calls=max_tool_calls,
+            resource_limits=resource_limits,
+            eager=eager,
+            speculate=speculate,
+            monty_sandbox=monty_sandbox,
+            dynamic_catalog=dynamic_catalog,
+            **kwargs,
+        )
 
     def get_ordering(self) -> CapabilityOrdering:
         """CodeMode wraps around ToolSearch so that search_tools stays native."""

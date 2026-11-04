@@ -295,14 +295,14 @@ def _build_gateway_provider(
 
     def create_hooked_http_client() -> _HTTPClientT:
         client = create_http_client()
-        _add_request_hook(client, _GatewayRequestHook(config.api_key))
+        _add_request_hook(client, _GatewayRequestHook(config.api_key, config.base_url))
         return client
 
     own_http_client = http_client is None
     if http_client is None:
         http_client = create_hooked_http_client()
     else:
-        _add_request_hook(http_client, _GatewayRequestHook(config.api_key))
+        _add_request_hook(http_client, _GatewayRequestHook(config.api_key, config.base_url))
 
     provider = build_provider(http_client)
     if own_http_client:
@@ -351,13 +351,17 @@ def _set_google_ws_gateway_auth(client: GoogleClient, api_key: str) -> None:
 class _GatewayRequestHook:
     """Request hook for the gateway provider.
 
-    It adds the `"traceparent"` and `"Authorization"` headers to the request. Implemented as a
-    typed callable class (rather than a closure with a marker attribute) so that `_add_request_hook`
-    can dedupe the gateway's own hook via `isinstance` on repeated calls with the same client.
+    It adds the `"traceparent"` and `"Authorization"` headers to requests sent to the Gateway's scheme, host
+    and port, and leaves other requests on a shared client unchanged. Implemented as a typed callable
+    class (rather than a closure with a marker attribute) so that `_add_request_hook` can dedupe the
+    gateway's own hook via `isinstance` on repeated calls with the same client.
     """
 
-    def __init__(self, api_key: str) -> None:
+    def __init__(self, api_key: str, base_url: str) -> None:
         self._api_key = api_key
+        url = httpx2.URL(base_url)
+        # httpx and httpx2 both lowercase the scheme and host, and report a scheme's default port as `None`.
+        self._scheme_host_port = (url.scheme, url.host, url.port)
 
     @overload
     async def __call__(self, request: httpx.Request) -> httpx.Request: ...
@@ -366,6 +370,9 @@ class _GatewayRequestHook:
     async def __call__(self, request: httpx2.Request) -> httpx2.Request: ...
 
     async def __call__(self, request: httpx.Request | httpx2.Request) -> httpx.Request | httpx2.Request:
+        if (request.url.scheme, request.url.host, request.url.port) != self._scheme_host_port:
+            return request
+
         from opentelemetry.propagate import inject
 
         headers: dict[str, Any] = {}

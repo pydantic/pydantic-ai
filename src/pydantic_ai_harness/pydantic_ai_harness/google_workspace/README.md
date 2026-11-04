@@ -4,6 +4,8 @@ Let an agent use Gmail, Calendar, Drive, Docs, Sheets, Slides, Chat, and People 
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+![Inside your agent, the GoogleWorkspace capability opens one connection per selected product to Google's hosted MCP servers, here gmailmcp.googleapis.com and calendarmcp.googleapis.com, with the same OAuth access token. The model sees each server's tools under names that start with the product, such as gmail_search_threads. Your auth function returns the token at the start of each run; the capability does not refresh it, and Google access tokens expire after about an hour.](https://pydantic.dev/docs/ai/img/harness/google-workspace.svg)
+
 ## Install and connect
 
 uv:
@@ -109,6 +111,6 @@ A fixed `auth` is one set of connections shared by every run; see [Per-user cred
 
 ## Telemetry
 
-`GoogleWorkspace` emits no spans of its own. Core's [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) already records each Google Workspace tool call as a tool span, and connecting makes no decision worth a span of its own.
+`GoogleWorkspace` emits no spans of its own. Core's [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) already records each Google Workspace tool call as a tool span.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/google_workspace/)

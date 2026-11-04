@@ -23,6 +23,8 @@ Expose a Pydantic AI agent to editors and terminal UIs over the [Agent Client Pr
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/experimental/acp/)
 
+![An editor such as Zed launches the agent script as a subprocess and talks to it over stdio with ACP JSON-RPC messages. session/new carries the workspace directory, and session_config roots the FileSystem and Shell tools there. session/prompt starts an agent run, and session/update streams its text and tool calls back so the editor shows them as messages and diffs. A tool that requires approval sends session/request_permission and waits as pending until the user allows or rejects it.](https://pydantic.dev/docs/ai/img/harness/acp.svg)
+
 ## The problem
 
 Editors like [Zed](https://zed.dev/docs/ai/external-agents) speak ACP: a stdio JSON-RPC protocol that lets a TUI or editor drive an external coding agent -- streaming its text, rendering its file edits as diffs, and prompting the user to approve sensitive tool calls. To plug a Pydantic AI agent into one of these editors you would otherwise have to implement the ACP server side yourself.
@@ -163,7 +165,7 @@ def delete_file(path: str) -> str:
     ...
 ```
 
-The lifecycle the client sees is `pending` (awaiting approval) → `in_progress` (granted, running) → `completed`/`failed`, so an unapproved action is never shown as already running. "Always allow"/"always reject" decisions are remembered for the session, scoped by default to the exact call (tool name plus arguments) so approving one call never silently approves a different one. Pass `permission_policy` to widen or narrow that scope.
+The lifecycle the client sees is `pending` (awaiting approval) -> `in_progress` (granted, running) -> `completed`/`failed`, so an unapproved action is never shown as already running. "Always allow"/"always reject" decisions are remembered for the session, scoped by default to the exact call (tool name plus arguments) so approving one call does not approve a different one. Pass `permission_policy` to widen or narrow that scope.
 
 ## Rich tool rendering
 
@@ -171,7 +173,7 @@ By default the adapter recognizes the harness `FileSystem` and `Shell` tool call
 
 ## MCP servers
 
-An ACP client may offer MCP servers during session setup. This adapter does not connect them itself; a `session_config` is the place to turn `session.mcp_servers` into Pydantic AI toolsets. If a client sends MCP servers and no `session_config` is installed to consume them, the session request is rejected (rather than silently ignoring them) so the mismatch is visible. The spec expects every agent to accept stdio MCP servers, so an agent meant for arbitrary editors should install a `session_config` that connects them (for example with `pydantic_ai.mcp.MCPToolset`).
+An ACP client may offer MCP servers during session setup. This adapter does not connect them itself; a `session_config` is the place to turn `session.mcp_servers` into Pydantic AI toolsets. If a client sends MCP servers and no `session_config` is installed to consume them, the session request is rejected (rather than ignoring them) so the mismatch is visible. The spec expects every agent to accept stdio MCP servers, so an agent meant for arbitrary editors should install a `session_config` that connects them (for example with `pydantic_ai.mcp.MCPToolset`).
 
 A spec-following client only sends HTTP/SSE MCP servers when the agent advertises support for those transports during `initialize` (stdio servers are not capability-gated). When your `session_config` connects them, say so:
 
@@ -205,7 +207,7 @@ run_acp_stdio_sync(agent, session_store=InMemorySessionStore())
 
 `InMemorySessionStore` keeps sessions for the lifetime of the process. Implement the `SessionStore` protocol (`save`/`load` a `StoredSession`) over a file or database to make them survive a restart -- the stored values are Pydantic models, so they serialize with Pydantic.
 
-Session persistence is for *reopening a conversation*; it is orthogonal to per-run durability. To also make individual turns crash-resilient (or resume a long sub-agent run), add a step-durability capability to the agent -- each ACP turn is one agent run, so the two layers compose with no glue.
+Session persistence is for *reopening a conversation*; it is orthogonal to per-run durability. To also make individual turns resumable after an interruption (or resume a long sub-agent run), add [Step Persistence](../../step_persistence/) to the agent -- each ACP turn is one agent run, so the two compose with no glue.
 
 ## Model selection
 
@@ -231,7 +233,7 @@ Each completed turn reports its token counts (input/output/total, plus cached to
 - **Overwrite diffs.** `write_file` renders an overwrite as if creating a new file (no prior contents), so the diff understates what it replaced.
 - **Live terminal panes.** `acp_terminal` returns a command's captured output; it does not embed a *live* terminal pane in the tool call, which would need the terminal id at call-start, before the command runs.
 - **Images.** Prompt image blocks are off by default and must be enabled via `prompt_capabilities` with a model that accepts them (see [Prompt content types](#prompt-content-types)). The harness `FileSystem.read_file` is text-only, so the agent cannot open image files from the workspace itself.
-- **Slash commands.** The adapter does not yet advertise any commands (`available_commands`), so no slash commands appear in the client. Planned.
+- **Slash commands.** The adapter does not yet advertise any commands (`available_commands`), so no slash commands appear in the client.
 - **MCP servers.** Client-offered MCP servers are surfaced to your `session_config` to turn into toolsets (advertise the transports with `mcp_capabilities`); the adapter does not auto-connect them. Resource metadata is not yet wired end-to-end.
 
 ## API

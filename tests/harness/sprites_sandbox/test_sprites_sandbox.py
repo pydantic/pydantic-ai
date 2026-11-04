@@ -30,6 +30,7 @@ from websockets.exceptions import InvalidMessage, InvalidStatus
 from websockets.http11 import Response
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
@@ -63,6 +64,19 @@ def _caused_by(error: Exception, cause: Exception) -> Exception:
 
 def _handshake(status: int) -> InvalidStatus:
     return InvalidStatus(Response(status, 'status', Headers()))
+
+
+async def test_fake_exec_close_without_stdin_eof_closes_the_pipe(transport: SpriteTransport) -> None:
+    """The fake owns the host pipe even when the SDK never sends EOF; no live request can test this."""
+    transport.names.add('remote')
+    socket = await transport.connect('wss://api.sprites.dev/v1/sprites/remote/exec?cmd=cat')
+    await socket.close()
+    assert socket.process.wait(timeout=1) == -signal.SIGKILL
+    assert socket.process.stdin is not None
+    try:
+        assert socket.process.stdin.closed
+    finally:
+        socket.process.stdin.close()
 
 
 class TestSpritesSandbox:
@@ -1184,3 +1198,26 @@ async def test_trio_is_refused_before_any_sprites_call(transport: SpriteTranspor
     await backend.aclose()
     assert transport.clients == []
     assert transport.created == []
+
+
+def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
+    definitions = AgentSpec.model_json_schema_with_capabilities([SpritesSandbox])['$defs']
+    assert sorted(definitions['spec_params_SpritesSandbox']['properties']) == [
+        'defer_loading',
+        'description',
+        'env',
+        'id',
+        'runtime',
+        'working_dir',
+    ]
+
+
+def test_from_spec_forwards_the_spec_fields() -> None:
+    spec_fields: dict[str, Any] = {
+        'id': 'sandbox',
+        'description': 'a sandbox',
+        'working_dir': '/work',
+        'env': {'FOO': 'bar'},
+        'runtime': 'python',
+    }
+    assert SpritesSandbox[None].from_spec(**spec_fields) == SpritesSandbox[None](**spec_fields)
