@@ -18,9 +18,11 @@ without failing anything. Left to pytest's own end-of-session collection, it wou
 at. Until then it keeps whatever it holds, because collecting it sooner would finalize it in a test. An object in no cycle
 is freed as it's dropped, as ever, freeze or not.
 
-The freeze has one visible side effect: `gc.get_referrers()` and `gc.get_objects()` don't see frozen objects. So it ends
-with the test loop, before session-end hooks. Hypothesis's terminal summary is what imports it in a session that didn't
-already, and that import's `register_random()` check warns if a live object appears to have no referrers.
+The freeze has one visible side effect: `gc.get_referrers()` and `gc.get_objects()` don't see frozen objects. Hypothesis's
+`register_random()` is what notices, because it warns when `gc.get_referrers()` finds nothing holding a random that's still
+referenced. Hypothesis's own random is held by a frozen thread-local, so the first Hypothesis test in a worker would fail
+on that warning, and this plugin ignores it during tests. So the freeze also ends with the test loop, before session-end
+hooks, where those filters don't apply and Hypothesis's terminal summary can be what imports it.
 """
 
 from __future__ import annotations as _annotations
@@ -34,6 +36,12 @@ from typing import cast
 import pytest
 
 PLUGIN_NAME = 'pydantic_ai_gc_isolation'
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    # A random that nothing references still raises `ReferenceError` in `register_random()`: this warning only means that
+    # whatever does reference it isn't visible to `gc.get_referrers()`.
+    config.addinivalue_line('filterwarnings', 'ignore:It looks like `register_random` was passed')
 
 
 @pytest.hookimpl(wrapper=True)

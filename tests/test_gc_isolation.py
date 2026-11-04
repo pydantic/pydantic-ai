@@ -261,6 +261,22 @@ def test_clears_it():
     result.stderr.fnmatch_lines([f'Leaked by a test, and dropped after it ended: {reported}*'])
 
 
+def test_a_hypothesis_test_can_register_its_random_with_its_holder_frozen(run_session: RunSession) -> None:
+    result = run_session(
+        """
+        from hypothesis import given, settings, strategies as st
+
+        # Only a derandomized run registers Hypothesis's random, which is the run that `register_random()` checks.
+        @settings(derandomize=True)
+        @given(st.none())
+        def test_property(value):
+            pass
+        """,
+        *WITH_PLUGIN,
+    )
+    assert outcomes(result) == ['PASSED test_property']
+
+
 def test_nothing_is_frozen_once_the_tests_are_done(run_session: RunSession, pytester: pytest.Pytester) -> None:
     # `gc.get_referrers()` can't see frozen objects, and Hypothesis's terminal summary imports it, whose `register_random()`
     # check then warns that a live object has no referrers.
