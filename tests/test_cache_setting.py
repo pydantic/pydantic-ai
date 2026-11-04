@@ -17,7 +17,7 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Caching
 from pydantic_ai.exceptions import ModelHTTPError, UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.messages import CachePoint, ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models._prompt_cache import (
     excess_cache_points,
@@ -34,10 +34,15 @@ from pydantic_ai.settings import CacheConfig, CacheRetention, CacheSetting, Mode
 from .conftest import try_import
 
 with try_import() as anthropic_imports:
-    from anthropic import AsyncAnthropicBedrock
+    from anthropic import AsyncAnthropicBedrock, omit as OMIT
+    from anthropic.types.beta import BetaTextBlock, BetaUsage
 
+    from pydantic_ai.capabilities.instrumentation import Instrumentation
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.models.instrumented import InstrumentationSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    from .models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
 with try_import() as bedrock_imports:
     from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
@@ -58,6 +63,11 @@ with try_import() as openai_imports:
 with try_import() as google_imports:
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
+
+with try_import() as otel_sdk_imports:
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 
 def _echo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -242,6 +252,115 @@ class TestExcessCachePoints:
     def test_reserved_exceeding_max_raises(self):
         with pytest.raises(UserError, match='Too many cache points for test request'):
             excess_cache_points([], max_points=4, reserved=5, is_cache_point=lambda b: True, description='test request')
+
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+    @pytest.mark.skipif(not otel_sdk_imports(), reason='opentelemetry-sdk not installed')
+    def test_dropped_cache_point_recorded_in_telemetry(self, allow_model_requests: None):
+        """Exceeding the cache-point budget with automatic caching on strips the oldest explicit mark
+        and records the drop as `pydantic_ai.cache.dropped_points` on the model-request span."""
+        tracer_provider = TracerProvider()
+        exporter = InMemorySpanExporter()
+        tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+        client = MockAnthropic.create_mock(
+            completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+        )
+        model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=client))
+        agent = Agent(
+            model,
+            model_settings=ModelSettings(cache=True),
+            capabilities=[Instrumentation(settings=InstrumentationSettings(tracer_provider=tracer_provider))],
+        )
+        agent.run_sync(['a', CachePoint(), 'b', CachePoint(), 'c', CachePoint(), 'd', CachePoint(), 'tail'])
+
+        call_kwargs = get_mock_chat_completion_kwargs(client)[0]
+        assert isinstance(call_kwargs['cache_control'], dict)  # automatic top-level breakpoint present
+        marks = [
+            block['cache_control']
+            for message in call_kwargs['messages']
+            for block in message['content']
+            if 'cache_control' in block
+        ]
+        assert len(marks) == 3  # four explicit marks, the oldest stripped to fit the reduced budget
+
+        spans = [span for span in exporter.get_finished_spans() if span.name.startswith('chat ')]
+        assert len(spans) == 1
+        cache_attributes = {k: v for k, v in spans[0].attributes.items() if k.startswith('pydantic_ai.cache.')}
+        assert cache_attributes == {
+            'pydantic_ai.cache.dropped_points': 1,
+            'pydantic_ai.cache.dropped_points_cause': 'automatic_breakpoint_reservation',
+        }
+        assert ('pydantic_ai.cache.dropped_points', {'count': 1, 'cause': 'automatic_breakpoint_reservation'}) in [
+            (event.name, event.attributes) for event in spans[0].events
+        ]
+
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+    @pytest.mark.skipif(not otel_sdk_imports(), reason='opentelemetry-sdk not installed')
+    def test_no_drop_record_without_automatic_breakpoint(self, allow_model_requests: None):
+        """With explicit marks inside the plain budget and no automatic breakpoint, nothing is dropped or recorded."""
+        tracer_provider = TracerProvider()
+        exporter = InMemorySpanExporter()
+        tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+        client = MockAnthropic.create_mock(
+            completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+        )
+        model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=client))
+        agent = Agent(
+            model, capabilities=[Instrumentation(settings=InstrumentationSettings(tracer_provider=tracer_provider))]
+        )
+        agent.run_sync(['a', CachePoint(), 'b', CachePoint(), 'c', CachePoint(), 'd', CachePoint(), 'tail'])
+
+        call_kwargs = get_mock_chat_completion_kwargs(client)[0]
+        assert call_kwargs['cache_control'] is OMIT  # no automatic top-level breakpoint
+        marks = [
+            block['cache_control']
+            for message in call_kwargs['messages']
+            for block in message['content']
+            if 'cache_control' in block
+        ]
+        assert len(marks) == 4  # all explicit marks preserved
+
+        spans = [span for span in exporter.get_finished_spans() if span.name.startswith('chat ')]
+        assert len(spans) == 1
+        assert [key for key in spans[0].attributes if key.startswith('pydantic_ai.cache.')] == []
+        assert [event for event in spans[0].events if event.name.startswith('pydantic_ai.cache.')] == []
+
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+    @pytest.mark.skipif(not otel_sdk_imports(), reason='opentelemetry-sdk not installed')
+    def test_budget_excess_drop_recorded_without_automatic_caching(self, allow_model_requests: None):
+        """Budget-excess drops without automatic caching are recorded with the `budget_excess` cause."""
+        tracer_provider = TracerProvider()
+        exporter = InMemorySpanExporter()
+        tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+        client = MockAnthropic.create_mock(
+            completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+        )
+        model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=client))
+        agent = Agent(
+            model, capabilities=[Instrumentation(settings=InstrumentationSettings(tracer_provider=tracer_provider))]
+        )
+        prompt = ['a', CachePoint(), 'b', CachePoint(), 'c', CachePoint(), 'd', CachePoint(), 'e', CachePoint(), 'tail']
+        agent.run_sync(prompt)
+
+        call_kwargs = get_mock_chat_completion_kwargs(client)[0]
+        assert call_kwargs['cache_control'] is OMIT
+        marks = [
+            block['cache_control']
+            for message in call_kwargs['messages']
+            for block in message['content']
+            if 'cache_control' in block
+        ]
+        assert len(marks) == 4  # five explicit marks, the oldest stripped
+
+        spans = [span for span in exporter.get_finished_spans() if span.name.startswith('chat ')]
+        assert len(spans) == 1
+        cache_attributes = {k: v for k, v in spans[0].attributes.items() if k.startswith('pydantic_ai.cache.')}
+        assert cache_attributes == {
+            'pydantic_ai.cache.dropped_points': 1,
+            'pydantic_ai.cache.dropped_points_cause': 'budget_excess',
+        }
+        assert ('pydantic_ai.cache.dropped_points', {'count': 1, 'cause': 'budget_excess'}) in [
+            (event.name, event.attributes) for event in spans[0].events
+        ]
 
 
 @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')

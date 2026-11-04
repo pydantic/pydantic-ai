@@ -9,6 +9,7 @@ from functools import cached_property
 from itertools import chain
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, assert_never, cast, overload
 
+from opentelemetry.trace import get_current_span
 from typing_extensions import TypedDict
 
 from ... import UnexpectedModelBehavior, _utils, usage
@@ -3465,6 +3466,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             if not isinstance(message['content'], str)
             for block in reversed(cast('list[BetaContentBlockParam]', message['content']))
         )
+        dropped_points = 0
         for block_dict in excess_cache_points(
             chain(message_blocks, optional_points),
             max_points=max_points,
@@ -3473,6 +3475,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             description='Anthropic request',
         ):
             del block_dict['cache_control']
+            dropped_points += 1
+        if dropped_points:
+            cause = 'automatic_breakpoint_reservation' if automatic_caching else 'budget_excess'
+            # No-op on non-recording spans: `pydantic_ai.cache.*` records land on the model-request span.
+            span = get_current_span()
+            span.set_attribute('pydantic_ai.cache.dropped_points', dropped_points)
+            span.set_attribute('pydantic_ai.cache.dropped_points_cause', cause)
+            span.add_event('pydantic_ai.cache.dropped_points', {'count': dropped_points, 'cause': cause})
 
     def _build_cache_control(self, ttl: Literal['5m', '1h'] = '5m') -> BetaCacheControlEphemeralParam:
         """Build a cache control dict with the given TTL.
