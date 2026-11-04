@@ -277,7 +277,7 @@ async def test_durable_delegate_runs_as_a_child_workflow(client: Client) -> None
         for event in history.events
         if event.HasField('start_child_workflow_execution_initiated_event_attributes')
     ]
-    assert not any(name.startswith('agent__durable_worker__') for name in _activities(history))
+    assert not any('sub_agents' in name for name in _activities(history))
     child_history = await client.get_workflow_handle(child_id).fetch_history()
     assert 'agent__durable_worker__model_request' in _activities(child_history)
 

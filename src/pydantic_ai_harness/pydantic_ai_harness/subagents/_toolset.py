@@ -502,10 +502,18 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
     def _child_workflow_metadata(self) -> dict[str, Any] | None:
         """Run delegations as child workflows when every delegate is durable on the same Temporal or DBOS engine.
 
-        The delegate's own operations then land in the child's history. A delegation that hands the delegate
-        anything from the parent run (itself, its tools, a model option, or shared capabilities) stays as before.
+        The delegate's own operations then land in the child's history. A delegation that relies on the parent run
+        (running itself, its tools, a model option, shared capabilities, an event handler, or a call budget) stays as
+        before.
         """
-        if self._include_self or self._inherit_tools or self._models or self._shared_capabilities:
+        if (
+            self._include_self
+            or self._inherit_tools
+            or self._models
+            or self._shared_capabilities
+            or self._event_stream_handler is not None
+            or any(sub.max_calls is not None for sub in self._agents.values())
+        ):
             return None
         keys = {
             _CHILD_WORKFLOW_KEYS.get(durability.engine_spec.engine_name) if durability is not None else None
