@@ -235,22 +235,26 @@ def _is_container(obj: Any) -> bool:
 def _map_container(container: Any, project: Callable[[Any], Any]) -> Any:
     """Project container items and escape reserved dictionary keys once."""
     if _is_dict(container):
-        result = {key: project(item) for key, item in container.items()}
-        if isinstance(container, _ProjectedDict):
-            return _ProjectedDict(result)
-        if any(isinstance(key, str) and key.startswith(_BINARY_KEY) for key in result):
-            # Escape the whole prefix, including already-prefixed caller keys, to avoid moving
-            # the collision to another ordinary dict. The marker prevents escaping twice.
-            return _ProjectedDict(
-                {
-                    _BINARY_KEY + key if isinstance(key, str) and key.startswith(_BINARY_KEY) else key: item
-                    for key, item in result.items()
-                }
-            )
-        return result
+        return _project_dict(container, project)
     if _is_tuple(container):
         return tuple(project(item) for item in container)
     return [project(item) for item in container]
+
+
+def _project_dict(container: dict[str, Any], project: Callable[[Any], Any]) -> dict[str, Any]:
+    result = {key: project(item) for key, item in container.items()}
+    if isinstance(container, _ProjectedDict):
+        return _ProjectedDict(result)
+    if any(isinstance(key, str) and key.startswith(_BINARY_KEY) for key in result):
+        # Escape the whole prefix, including already-prefixed caller keys, to avoid moving
+        # the collision to another ordinary dict. The marker prevents escaping twice.
+        return _ProjectedDict(
+            {
+                _BINARY_KEY + key if isinstance(key, str) and key.startswith(_BINARY_KEY) else key: item
+                for key, item in result.items()
+            }
+        )
+    return result
 
 
 def _replace_toolset_tools(
