@@ -1376,7 +1376,7 @@ def _retire_task_incidents(client: GitHubClient, issues: list[Issue], *, dry_run
                 print(f'DRY RUN: would retire task incident #{issue.number}: {reason}')
                 continue
             # A run that commented but could not close left its comment; post it once. Incident reuse adds
-            # no comments, so the first page holds it.
+            # no comments, so the first page holds it unless people have left about 100.
             listed = client.request('GET', f'issues/{issue.number}/comments?per_page=100')
             if not isinstance(listed, list):
                 raise ValueError('GitHub returned an invalid comment list')
