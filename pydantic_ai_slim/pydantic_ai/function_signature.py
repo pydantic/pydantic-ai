@@ -173,9 +173,8 @@ class TypeSignature:
         Args:
             owner_name: The owning tool name, used to build prefixed type names
                 for conflicting types (e.g. `get_user_Address`).
-            conflicting_type_names: Set of type names that need tool-name prefixes
-                (from `get_conflicting_type_names`). Only effective when `owner_name`
-                is also provided.
+            conflicting_type_names: The set returned by a `get_conflicting_type_names` call made
+                just before rendering. Only effective when `owner_name` is also provided.
         """
         if owner_name and conflicting_type_names:
             overrides = {n: f'{owner_name}_{n}' for n in conflicting_type_names}
@@ -275,7 +274,7 @@ class FunctionSignature:
             description: Optional docstring to include. Falls back to `self.description`.
             is_async: Override async rendering. If `None`, uses `self.is_async`.
             conflicting_type_names: The set returned by a `get_conflicting_type_names` call made just before rendering.
-                A set from anywhere else gives each name it lists this tool's name as a prefix.
+                Types named by the last such call use those names whenever any non-empty set is passed.
         """
         render_name = name or self.name
         description = description if description is not None else self.description
