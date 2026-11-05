@@ -53,7 +53,7 @@ from .messages import (
 if TYPE_CHECKING:
     from .profiles import ModelProfile
 
-ZERO_WIDTH_JOINER: Final = '‍'
+ZERO_WIDTH_JOINER: Final = '\u200d'
 
 _LITERAL_TOKEN_TAILS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
     ('<', ('start_of_turn>', 'end_of_turn>')),
@@ -76,43 +76,67 @@ _LITERAL_TOKEN_TAILS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
 )
 """The fixed tokens, as their first character and the rest."""
 
-_NAMED_TOKEN_TAILS: Final = (
-    r'\|[^\s<>|\u200b-\u200d\u2060\ufeff]{1,64}\|>'
-    r'|｜[^\s<>｜\u200b-\u200d\u2060\ufeff]{1,64}｜>'
-    r'|\|[a-z_]{1,32}>'
-    r'|[a-z_]{1,32}\|>'
-)
-"""What follows the `<` of a `<|im_start|>`, a `<｜User｜>` or a one-sided `<|turn>` and `<turn|>`, whichever name a template gives it."""
-
-_TOKEN_SHAPES: Final[tuple[tuple[str, str], ...]] = (
-    ('<', _NAMED_TOKEN_TAILS),
-    *((re.escape(first), '|'.join(re.escape(tail) for tail in tails)) for first, tails in _LITERAL_TOKEN_TAILS),
-)
-
-_SPECIAL_TOKEN_START: Final = re.compile('|'.join(f'{first}(?={tails})' for first, tails in _TOKEN_SHAPES))
-"""Only the token's first character is consumed, so overlapping tokens, as in `]~b]~b]`, each get a joiner."""
-
-
-def _joiner_inside_token(joiner: str) -> re.Pattern[str]:
-    return re.compile('|'.join(f'(?<={first}){joiner}(?={tails})' for first, tails in _TOKEN_SHAPES))
-
+_NAME: Final = r'[^\s<>|\u200b-\u200d\u2060\ufeff]'
+_FULL_WIDTH_NAME: Final = r'[^\s<>｜\u200b-\u200d\u2060\ufeff]'
 
 _ZERO_WIDTH_CHARACTER: Final = '[\u200b\u200c\u200d\u2060\ufeff]'
 """What a model writes for the joiner when it copies it: some families reach for another invisible character instead."""
 _ZERO_WIDTH_ESCAPE: Final = r'\\u(?:200[bcdBCD]|2060|[fF][eE][fF][fF])'
 """The same characters, as a model can write them in a tool call's JSON arguments."""
+_JSON_ZERO_WIDTH: Final = f'(?:{_ZERO_WIDTH_CHARACTER}|{_ZERO_WIDTH_ESCAPE})'
+_JSON_GT: Final = r'(?:>|\\u003[eE])'
+"""Some servers re-encode JSON arguments with `<` and `>` escaped, as Go's `json.Marshal` does."""
+_JSON_LT_LOOKBEHINDS: Final = (r'(?<=<)', r'(?<=\\u003c)', r'(?<=\\u003C)')
 
-_JOINER_IN_TEXT: Final = _joiner_inside_token(_ZERO_WIDTH_CHARACTER)
-_JOINER_IN_JSON: Final = _joiner_inside_token(f'(?:{_ZERO_WIDTH_CHARACTER}|{_ZERO_WIDTH_ESCAPE})')
+
+def _token_shapes(gt: str) -> tuple[tuple[str, str], ...]:
+    """Each token's first character and what can follow it, with `gt` matching a `>`."""
+    named = (
+        rf'\|{_NAME}{{1,64}}\|{gt}',  # `<|im_start|>`
+        rf'｜{_FULL_WIDTH_NAME}{{1,64}}｜{gt}',  # `<｜User｜>`
+        rf'\|[a-z_]{{1,32}}{gt}',  # `<|turn>`
+        rf'[a-z_]{{1,32}}\|{gt}',  # `<turn|>`
+    )
+    return (
+        ('<', '|'.join(named)),
+        *(
+            (re.escape(first), '|'.join(re.escape(tail).replace('>', gt) for tail in tails))
+            for first, tails in _LITERAL_TOKEN_TAILS
+        ),
+    )
+
+
+_SPECIAL_TOKEN_START: Final = re.compile('|'.join(f'{first}(?={tails})' for first, tails in _token_shapes('>')))
+"""Only the token's first character is consumed, so overlapping tokens, as in `]~b]~b]`, each get a joiner."""
+
+_JOINER_IN_TEXT: Final = re.compile(
+    '|'.join(f'(?<={first}){_ZERO_WIDTH_CHARACTER}(?={tails})' for first, tails in _token_shapes('>'))
+)
+_JOINER_IN_JSON: Final = re.compile(
+    '|'.join(
+        f'{lookbehind}{_JSON_ZERO_WIDTH}(?={tails})'
+        for first, tails in _token_shapes(_JSON_GT)
+        for lookbehind in (_JSON_LT_LOOKBEHINDS if first == '<' else (f'(?<={first})',))
+    )
+)
 
 _POSSIBLE_JOINER_IN_TEXT: Final = re.compile(rf'(?<=[<\[\]]){_ZERO_WIDTH_CHARACTER}')
 _POSSIBLE_JOINER_IN_JSON: Final = re.compile(
-    rf'(?<=[<\[\]])(?:{_ZERO_WIDTH_CHARACTER}|{_ZERO_WIDTH_ESCAPE}|\\(?:u[0-9a-fA-F]{{0,3}})?$)'
+    '|'.join(
+        rf'{lookbehind}(?:{_JSON_ZERO_WIDTH}|\\(?:u[0-9a-fA-F]{{0,3}})?$)'
+        for lookbehind in (r'(?<=[<\[\]])', *_JSON_LT_LOOKBEHINDS[1:])
+    )
 )
 """Where a joiner has started, also when a chunk ended partway through its escape."""
 
+_LONGEST_TOKEN_START: Final = len(r'\u003c')
+"""How much emitted text the joiner's check has to look back on."""
+
+_PARTIAL_ESCAPE: Final = r'(?:\\(?:u[0-9a-fA-F]{0,3})?)?'
+
 _TOKEN_TAIL_PREFIX: Final = re.compile(
-    r'\|[^\s<>|\u200b-\u200d\u2060\ufeff]{0,64}\|?|｜[^\s<>｜\u200b-\u200d\u2060\ufeff]{0,64}｜?|[a-z_]{1,32}\|?|'
+    rf'\|{_NAME}{{0,64}}(?:\|{_PARTIAL_ESCAPE})?|｜{_FULL_WIDTH_NAME}{{0,64}}(?:｜{_PARTIAL_ESCAPE})?'
+    rf'|[a-z_]{{1,32}}(?:\|{_PARTIAL_ESCAPE})?|(?:start|end)_of_turn{_PARTIAL_ESCAPE}|'
     + '|'.join(
         re.escape(tail[:length])
         for _, tails in _LITERAL_TOKEN_TAILS
@@ -121,7 +145,7 @@ _TOKEN_TAIL_PREFIX: Final = re.compile(
     )
     + '|'
 )
-"""The start of what can follow a joiner in a token, including nothing yet."""
+"""The start of what can follow a joiner in a token, including nothing yet, up to an escaped `>` still arriving."""
 
 _PartT = TypeVar('_PartT')
 
@@ -204,16 +228,15 @@ class _StreamedTextRestorer:
 
     joiner_inside_token: re.Pattern[str]
     possible_joiner: re.Pattern[str]
-    previous_character: str = ''
+    previous: str = ''
     held: str = ''
 
     def feed(self, chunk: str) -> str:
-        window = self.previous_character + self.held + chunk
-        restored = self.joiner_inside_token.sub('', window)
+        restored = self.joiner_inside_token.sub('', self.previous + self.held + chunk)
         hold_from = self._hold_from(restored)
-        text = restored[len(self.previous_character) : hold_from]
+        text = restored[len(self.previous) : hold_from]
         self.held = restored[hold_from:]
-        self.previous_character = text[-1:] or self.previous_character
+        self.previous = (self.previous + text)[-_LONGEST_TOKEN_START:]
         return text
 
     def flush(self) -> str:

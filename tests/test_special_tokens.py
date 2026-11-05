@@ -420,7 +420,7 @@ class _Clean:
         pytest.param({('<|end|>',): 1}, '{"<\u200d|end|>":1}', id='tuple-key-goes-out-as-json-text'),
         pytest.param(
             {'<|end|>': 1, f'<{Z}|end|>': 2},
-            '{"<‍|end|>":1,"<‍|end|>":2}',
+            '{"<\u200d|end|>":1,"<\u200d|end|>":2}',
             id='keys-that-collide-go-out-as-json-text',
         ),
     ],
@@ -678,6 +678,12 @@ def test_parts_the_restore_leaves_alone():
         pytest.param('{"q": "<\\u200D|end|>"}', '{"q": "<|end|>"}', id='json-escape-uppercase'),
         pytest.param(f'{{"q": "<{Z}|end|>"}}', '{"q": "<|end|>"}', id='json-raw'),
         pytest.param('{"q": "\\u200d\\u0041"}', '{"q": "\\u200d\\u0041"}', id='escapes-without-a-token'),
+        pytest.param(
+            f'{{"q": "\\u003c{Z}|im_start|\\u003e"}}', '{"q": "\\u003c|im_start|\\u003e"}', id='escaped-angle-brackets'
+        ),
+        pytest.param(
+            f'{{"q": "\\u003C{Z}start_of_turn\\u003E"}}', '{"q": "\\u003Cstart_of_turn\\u003E"}', id='escaped-upper'
+        ),
         pytest.param('not json \\u0041', 'not json \\u0041', id='escape-in-malformed-args'),
         pytest.param('{"q": "<\\u200d\\uff5cUser\\uff5c>"}', {'q': '<｜User｜>'}, id='the-rest-of-the-token-escaped'),
         pytest.param(
@@ -715,6 +721,25 @@ async def test_streamed_text_split_anywhere(size: int):
     assert ''.join(deltas) == expected
     assert output == expected
     assert result.all_messages()[-1].parts[0] == TextPart(expected)
+
+
+@pytest.mark.parametrize('size', range(1, 14))
+def test_streamed_json_with_escaped_angle_brackets_split_anywhere(size: int):
+    """Events and the final response give one value, for a server that re-encodes arguments with `<` and `>` escaped."""
+    args = f'{{"q": "\\u003c{Z}|im_start|\\u003e and \\u003c\\u200d|end|\\u003e"}}'
+    expected = '{"q": "\\u003c|im_start|\\u003e and \\u003c|end|\\u003e"}'
+    restorer = StreamRestorer()
+    streamed = ''
+    for chunk in _chunks(args, size):
+        event = restorer.restore(PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta=chunk)))
+        assert isinstance(event, PartDeltaEvent)
+        assert isinstance(event.delta, ToolCallPartDelta)
+        streamed += str(event.delta.args_delta)
+    for event in restorer.flush():
+        assert isinstance(event.delta, ToolCallPartDelta)
+        streamed += str(event.delta.args_delta)
+    assert streamed == expected
+    assert restore_special_tokens_in_parts([ToolCallPart('t', args)])[0].args == expected
 
 
 @pytest.mark.parametrize('size', range(1, 12))
