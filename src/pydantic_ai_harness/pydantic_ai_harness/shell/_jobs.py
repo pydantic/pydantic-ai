@@ -64,6 +64,7 @@ clear_logs() {{
 }}
 watch_logs() {{
   trap '__harness_watch_stopped=1; kill "$__harness_sleeper" 2> /dev/null' TERM
+  true 2> /dev/null > "$dir/watch.trapped"
   __harness_notice="[Log exceeded max_log_bytes=$1; earlier output was cleared.]"
   __harness_interval=$2
   while [ -z "$__harness_watch_stopped" ] && [ ! -e "$dir/watch.stop" ] && kill -0 "$$" 2> /dev/null; do
@@ -78,7 +79,11 @@ watch_logs() {{
   clear_logs "$1"
 }}
 stop_watcher() {{
-  [ -z "$watcher" ] || {{ true 2> /dev/null > "$dir/watch.stop"; kill "$watcher" 2> /dev/null; wait "$watcher" 2> /dev/null; }}
+  [ -z "$watcher" ] || {{
+    true 2> /dev/null > "$dir/watch.stop"
+    [ ! -e "$dir/watch.trapped" ] || kill "$watcher" 2> /dev/null
+    wait "$watcher" 2> /dev/null
+  }}
 }}
 unset __harness_stopped
 trap __harness_stopped=1 TERM
@@ -89,7 +94,7 @@ while [ -z "$__harness_stopped" ] && [ ! -e "$dir/launch.ready" ]; do
 done
 if [ "$2" = combined ]; then out="$dir/output.log"; err="$dir/output.log"; else out="$dir/stdout.log"; err="$dir/stderr.log"; fi
 watcher=
-if [ -n "$6" ]; then trap '' TERM; watch_logs "$6" "$7" & watcher=$!; trap __harness_stopped=1 TERM; fi
+if [ -n "$6" ]; then watch_logs "$6" "$7" & watcher=$!; fi
 if [ -n "$4" ]; then
   __harness_limit_files "$4" || {{
     stop_watcher
@@ -114,9 +119,11 @@ running, and a command that reads its own log (a glob over job logs) reaches the
 the log into itself until the disk is full. A log holding no more than the notice is left alone, so a limit below its
 size doesn't clear it at every check. The watcher starts before `max_file_bytes` applies, since `log_clears` keeps
 growing, finishes a clear it has started when the wrapper stops it, and exits once the wrapper is gone (killed on its
-own and reaped). It starts with `TERM` ignored, so a `TERM` sent before its trap is set is lost instead of ending it
-before its last check; the wrapper therefore stops it with `watch.stop` as well as `TERM`. It sleeps in a child it stops
-and reaps itself, so a stopped job leaves no orphan behind; a `sleep` without fractional seconds gets 1.
+own and reaped). The wrapper stops it by creating `watch.stop`, then sending `TERM` to cut its sleep short, but only once
+the watcher has created `watch.trapped` after setting its trap: a `TERM` before the trap would end it before its last
+check. A watcher that gets no `TERM` sees `watch.stop` before its first sleep, or, in a shell that started with `TERM`
+ignored, at its next check. It sleeps in a child it stops and reaps itself, so a stopped job leaves no orphan behind; a
+`sleep` without fractional seconds gets 1.
 
 The `TERM` trap lets the wrapper outlive a `SIGTERM` sent to the whole group long enough to
 publish the command's exit status; the command itself runs with default signal handling, since
@@ -127,10 +134,9 @@ for `launch.ready` first) never starts it and publishes `143` instead. A launche
 before `launch.ready` (a cancelled or timed-out launch) counts as a stop too, so the wrapper
 never waits for it forever.
 
-A `SIGTERM` that lands while the wrapper forks the watcher, or while the command's subshell is
-being forked, before its default signal handling is in place, is lost. `Job.kill` therefore
-creates the job's `stop` file before signalling, and the subshell checks for it once a signal
-would end it.
+A `SIGTERM` that lands while the command's subshell is being forked, before its default signal
+handling is in place, is lost. `Job.kill` therefore creates the job's `stop` file before
+signalling, and the subshell checks for it once a signal would end it.
 """
 
 _SIGNAL_SCRIPT = 'true 2> /dev/null > "$3"; kill -s "$1" -- "$2"'
