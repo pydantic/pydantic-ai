@@ -12,7 +12,7 @@ Start from how a run begins and who is waiting for it:
 
 - **A person is waiting in your web app.** Run the agent inside a route of your application, [stream it to the frontend](#frontend) with a UI adapter, and store each run's [`Conversation`](#state) in your database; the [chat app example](examples/chat-app.md) keeps its history in SQLite. Install `pydantic-ai`; there is nothing else to run.
 - **Nobody is waiting.** A queue, an event or a schedule starts the run, as a job in your task queue or a step in your pipeline, and it usually returns [structured output](output.md) for your code to store. See [how to deploy it](#deploy).
-- **A person is waiting in a terminal.** The run lives as long as the session and its history in local files. Start from [`Agent.to_cli()`](cli.md), or from [`Coder`](harness/coder.md) (Harness) if you are building a coding agent.
+- **A person is waiting in a terminal.** The run lives as long as the session, so there is nothing to host. Start from [`Agent.to_cli()`](cli.md), or from [`Coder`](harness/coder.md) (Harness) if you are building a coding agent; keep the [message history](cli.md#message-history) yourself if a conversation has to outlast the session.
 
 Then decide what a crash costs. A run in flight [dies with the process](#crash), and for most agents starting it again is fine. When a run is long, has side effects you can't repeat, or has to [wait days for an approval](#approval), put it on a [durable execution](durable_execution/overview.md) engine, as the [end-to-end service](#end-to-end) below does with DBOS (`pydantic-ai[dbos]`). [`StepPersistence`](#checkpointer) (Harness) sits between the two.
 
@@ -20,7 +20,7 @@ The rest of the page answers the questions teams ask before shipping an agent, e
 
 | Before you ship, you want to know... | Short answer | Install |
 |---|---|---|
-| [What happens when the process crashes mid-run?](#crash) | The run is lost, and you start it again; if that's too costly, run the agent on a [durable execution](durable_execution/overview.md) engine | `pydantic-ai-slim` with one engine's extra, such as `[dbos]` or `[temporal]` |
+| [What happens when the process crashes mid-run?](#crash) | The run is lost, and you start it again; if that's too costly, run the agent on a [durable execution](durable_execution/overview.md) engine | `pydantic-ai`, or `pydantic-ai-slim` with one engine's extra, such as `[dbos]` or `[temporal]` |
 | [How does a human approve a risky action, and the run resume days later?](#approval) | [Deferred tools](deferred-tools.md) end the run; a later run resumes it | `pydantic-ai` |
 | [How do I keep conversation state?](#state) | Store the run's `Conversation` in your database | `pydantic-ai` |
 | [How do I bound cost and runaway loops?](#cost) | `UsageLimits` per run, `SpendLimits` per day, tenant or month | `pydantic-ai`, and `pydantic-ai-harness` for `SpendLimits` |
