@@ -265,6 +265,7 @@ Use [`UploadedFile`][pydantic_ai.messages.UploadedFile] to reference files that 
 | [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | ✅ via [OpenAI Files API](https://platform.openai.com/docs/api-reference/files) |
 | [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] | ✅ via [OpenAI Files API](https://platform.openai.com/docs/api-reference/files) |
 | [`GoogleModel`][pydantic_ai.models.google.GoogleModel] | ✅ via [Google Files API](https://ai.google.dev/gemini-api/docs/files) |
+| [`GoogleInteractionsModel`][pydantic_ai.models.google_interactions.GoogleInteractionsModel] | ✅ via Google Files API or Google Cloud GCS URIs |
 | [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | ✅ via S3 URLs (`s3://bucket/key`) |
 | [`XaiModel`][pydantic_ai.models.xai.XaiModel] | ✅ via [xAI Files API](https://docs.x.ai/docs/guides/files) |
 | Other models | ❌ Not supported |

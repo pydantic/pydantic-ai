@@ -1070,6 +1070,7 @@ class UploadedFile:
     - [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]
     - [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel]
     - [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Gemini API: [Files API](https://ai.google.dev/gemini-api/docs/files) URIs, Google Cloud: GCS `gs://` URIs)
+    - [`GoogleInteractionsModel`][pydantic_ai.models.google_interactions.GoogleInteractionsModel] (Google Files API or Google Cloud GCS URIs)
     - [`XaiModel`][pydantic_ai.models.xai.XaiModel]
     """
 

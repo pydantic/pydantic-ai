@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import BaseModel
 
@@ -435,3 +437,45 @@ async def test_image_generation_tool_configuration(
         'image_size': '1K',
         'mime_type': 'image/jpeg',
     }
+
+
+@pytest.fixture
+def pptx_content(assets_path: Path) -> BinaryContent:
+    return BinaryContent(
+        (assets_path / 'dummy.pptx').read_bytes(),
+        media_type='application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    )
+
+
+async def test_pptx_input(
+    interactions_model: GoogleInteractionsModel, pptx_content: BinaryContent, allow_model_requests: None
+):
+    result = await Agent(interactions_model).run(['Describe the text on this slide.', pptx_content])
+    assert 'dummy' in result.output.lower()
+
+
+@pytest.mark.parametrize('kind', ['music', 'video'])
+async def test_generated_media(
+    gemini_api_key: str, request_capture: RequestCapture, kind: str, allow_model_requests: None
+):
+    from pydantic_ai.direct import model_request
+    from pydantic_ai.messages import FilePart, ModelRequest
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModelSettings
+
+    model = GoogleInteractionsModel(
+        'lyria-3-clip-preview' if kind == 'music' else 'gemini-omni-1.1-flash',
+        provider=GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=180)),
+    )
+    settings: GoogleInteractionsModelSettings = {
+        'google_response_format': {'type': 'audio'} if kind == 'music' else {'type': 'video', 'resolution': '360p'}
+    }
+    prompt = (
+        'An instrumental acoustic guitar piece.'
+        if kind == 'music'
+        else 'A red ball rolling across a plain white floor, fixed camera.'
+    )
+    response = await model_request(model, [ModelRequest.user_text_prompt(prompt)], model_settings=settings)
+    files = [part for part in response.parts if isinstance(part, FilePart)]
+    assert files and files[0].content.data
+    assert files[0].content.media_type.startswith('audio/' if kind == 'music' else 'video/')
+    assert request_capture.body()['store'] is False

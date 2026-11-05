@@ -558,7 +558,7 @@ class ImageGenerationTool(AbstractNativeTool):
     Supported by:
 
     * OpenAI Responses. Only supported for 'jpeg' and 'webp' output formats. Default: 100.
-    * Google (Vertex AI only). Only supported for 'jpeg' output format. Default: 75.
+    * Google GenerateContent (Vertex AI only). Only supported for 'jpeg' output format. Default: 75.
       Setting this will default `output_format` to 'jpeg' if not specified.
     """
 
