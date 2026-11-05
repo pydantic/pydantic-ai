@@ -184,7 +184,8 @@ class Coder(CombinedCapability[AgentDepsT]):
             choice really matters. `'high'` asks only for credentials, approvals, or
             real ambiguity, and measures results against any numeric target the task
             states. `'max'` never asks, chooses sensible defaults, and also deletes its
-            scratch files, for runs nobody can answer.
+            scratch files, for runs nobody can answer. A delegate run is told to choose
+            sensible defaults and finish, and measures numeric targets, whatever the level.
         unrestricted_filesystem: Let the file tools reach the whole workspace
             filesystem rather than only the working directory.
         repo_context: Include `RepoContext`. Pass `False` when the agent binds its
