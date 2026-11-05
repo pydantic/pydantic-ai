@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 from typing import Any
 
 import pytest
@@ -139,16 +140,15 @@ UNKNOWN_SETTINGS: Any = {
 }
 
 
-@pytest.mark.parametrize('tool_type', [WebSearchTool, WebFetchTool])
-def test_anthropic_ignores_unknown_settings(tool_type: Any) -> None:
-    """Like model settings, options no model reads are ignored rather than rejected or sent."""
-    assert _anthropic_request_tool(tool_type(provider_settings=UNKNOWN_SETTINGS)) == _anthropic_request_tool(
-        tool_type()
-    )
-
-
-@pytest.mark.parametrize(('tool_type', 'kwargs'), [(WebSearchTool, {}), (AdvisorTool, {'model': 'advisor'})])
-def test_openrouter_ignores_unknown_settings(tool_type: Any, kwargs: dict[str, Any]) -> None:
-    """An unknown option can't reach the request, so it can't override a field like `allowed_domains` either."""
-    with_unknown = _openrouter_request_parameters(tool_type(**kwargs, provider_settings=UNKNOWN_SETTINGS))
-    assert with_unknown == _openrouter_request_parameters(tool_type(**kwargs))
+@pytest.mark.parametrize(
+    ('read_request', 'make_tool'),
+    [
+        (_anthropic_request_tool, WebSearchTool),
+        (_anthropic_request_tool, WebFetchTool),
+        (_openrouter_request_parameters, WebSearchTool),
+        (_openrouter_request_parameters, partial(AdvisorTool, model='advisor')),
+    ],
+)
+def test_unknown_settings_are_ignored(read_request: Any, make_tool: Any) -> None:
+    """Like model settings, an unknown option is never sent, so it can't override a field like `allowed_domains`."""
+    assert read_request(make_tool(provider_settings=UNKNOWN_SETTINGS)) == read_request(make_tool())
