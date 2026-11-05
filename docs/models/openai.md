@@ -200,7 +200,7 @@ You can use the unified [`service_tier`][pydantic_ai.settings.ModelSettings.serv
 
 `openai_service_tier` also accepts OpenAI's [`'fast'`](https://developers.openai.com/api/docs/guides/fast-mode), the newer name for `'priority'`, and [`'ultrafast'`](https://developers.openai.com/api/docs/guides/ultrafast-mode), which OpenAI only accepts on the Responses API, over both HTTP and WebSocket, and only on supported models.
 
-OpenAI may serve a request on a different tier than the one requested, for example when a `'priority'` request is downgraded. The tier that actually served the request is stored in `ModelResponse.provider_details['service_tier']`, and the request's cost is calculated at that tier's prices. [genai-prices](https://github.com/pydantic/genai-prices) has no `'ultrafast'` rates yet, so those requests are currently priced at the standard rate, below what OpenAI charges.
+OpenAI may serve a request on a different tier than the one requested, for example when a `'priority'` request is downgraded. The tier that actually served the request is stored in `ModelResponse.provider_details['service_tier']`, and the request's cost is calculated at that tier's prices.
 
 ### Prompt caching
 
