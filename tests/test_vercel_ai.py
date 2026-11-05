@@ -14648,6 +14648,59 @@ async def test_conversation_store_failed_regenerate_keeps_the_stored_turn():
     assert record is not None and record.branches == []
 
 
+@pytest.mark.skipif(not otel_sdk_installed(), reason='`opentelemetry-sdk` is not installed')
+@pytest.mark.parametrize(('resubmission', 'prompt'), _RESUBMISSIONS)
+async def test_conversation_store_failed_resubmission_save_keeps_the_stored_turn_for_a_retry(
+    resubmission: SubmitMessage | RegenerateMessage, prompt: str
+):
+    """A resubmission whose save fails changes nothing stored, so the client's retry stores its turn once."""
+
+    class FailingOnceStore(InMemoryConversationStore):
+        failures = 0
+
+        async def save(
+            self, conversation: Conversation | AgentRunResult[Any], *, scope: str | None = None
+        ) -> list[ConversationEntry]:
+            if self.failures:
+                self.failures -= 1
+                raise RuntimeError(_STORE_SECRET)
+            return await super().save(conversation, scope=scope)
+
+    agent, requests = _store_agent(_keep_last_two)
+    store = FailingOnceStore()
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]))
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI, _OK, _AND_NOW]))
+    before = await store.read_record('chat')
+    before_entries = await store.load_entries('chat')
+    assert before is not None and before_entries is not None
+
+    store.failures = 1
+    with TracerProvider().get_tracer('test').start_as_current_span('request') as span:
+        with pytest.warns(UserWarning, match=rf"conversation 'chat' .*failed: RuntimeError: {_STORE_SECRET}"):
+            failed = await _stored_turn(agent, store, resubmission)
+
+    assert len(requests) == 3  # The run happened, with a history the capability trimmed.
+    assert [chunk.error_text for chunk in failed if isinstance(chunk, ErrorChunk)] == [_SAVE_FAILED]
+    assert not [chunk for chunk in failed if isinstance(chunk, DataChunk) and chunk.type == 'data-conversation-saved']
+    assert isinstance(span, ReadableSpan)
+    assert [(event.name, dict(event.attributes or {})) for event in span.events] == [
+        ('exception', {'exception.type': 'RuntimeError', 'exception.escaped': 'False'})
+    ]
+    assert await store.read_record('chat') == before
+    assert await store.load_entries('chat') == before_entries
+
+    retried = await _stored_turn(agent, store, resubmission)
+
+    assert [chunk for chunk in retried if isinstance(chunk, ErrorChunk)] == []
+    after = await store.read_record('chat')
+    entries = await store.load_entries('chat')
+    assert after is not None and entries is not None
+    assert entries[:2] == before_entries[:2]
+    assert conversation_view([entry.message for entry in entries[2:]]) == [f'user-prompt: {prompt}', 'text: answer 4']
+    assert [entry.id for entry in entries[2:]] == _saved_entry_ids(retried)
+    assert len(after.branches) == 1
+
+
 @pytest.mark.parametrize('manage_message_history', ['client', 'server'])
 async def test_conversation_store_ignores_manage_message_history(manage_message_history: Literal['client', 'server']):
     """A store holds the history on the server, so the model sees each turn once whatever this says."""
