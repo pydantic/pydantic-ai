@@ -448,7 +448,9 @@ def _break_content(content: Any) -> Any:
 
     Hosts join those before tokenizing, unlike the items of a structured value, which keep their JSON punctuation.
     """
-    return _break_sequence(content) if isinstance(content, list | tuple) else _break_value(content)
+    if isinstance(content, list | tuple):
+        return _break_sequence(cast('list[Any] | tuple[Any, ...]', content))
+    return _break_value(content)
 
 
 def _break_sequence(sequence: list[Any] | tuple[Any, ...]) -> Any:
