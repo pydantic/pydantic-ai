@@ -422,6 +422,43 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 
 1. The slug of the gateway endpoint you created in Logfire.
 
+## Routing facts {#routing-facts}
+
+When an agent sends a model request through the Gateway, Pydantic AI adds facts about the agent to the request as headers. The Gateway's Smart routing rules can match on them. The conversation ID also lets the Gateway keep the requests of one conversation on the same provider (session affinity), so that provider's prompt cache keeps serving the conversation.
+
+The [`GatewayRoutingFacts`][pydantic_ai.capabilities.GatewayRoutingFacts] capability sends the headers. Every agent has it by default, and it changes only the requests to a model behind the Gateway: a `gateway/` model string, or a model on a [`gateway_provider`][pydantic_ai.providers.gateway.gateway_provider]. Requests to other models are sent unchanged.
+
+| Header | Value |
+| --- | --- |
+| `x-pydantic-agent-name` | The agent's [`name`][pydantic_ai.agent.Agent.name], or the name inferred from the variable the agent is assigned to, without surrounding whitespace. Left out when the agent has no name, or when the name is longer than 128 characters or has a character outside printable ASCII. |
+| `x-pydantic-agent-step` | The step of the run, from `1` to `10000`. |
+| `x-pydantic-agent-request-kind` | What the request answers: `user_prompt`, `tool_results`, `tool_retry` (the model has to call a tool again), or `output_retry` (the model has to fix its output, also when that output came through an output tool). |
+| `x-pydantic-agent-retry` | For `tool_retry` and `output_retry`, which retry this is, up to `100`. Otherwise `0`. |
+| `x-routing-conversation-id` | The run's [`conversation_id`][pydantic_ai.tools.RunContext.conversation_id]. Left out when it is longer than 128 characters or has a character outside printable ASCII. |
+
+A header you set yourself in the [`extra_headers`][pydantic_ai.settings.ModelSettings.extra_headers] model setting is sent as you set it, and the other headers you set are sent with the routing facts. With [`ModelFallback`](capabilities/model-fallback.md), only the attempts at a model behind the Gateway carry the headers. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] sends one set of settings to every model it tries, so it carries them only when all of its models are behind the Gateway and set the same `extra_headers` of their own. Requests made without an agent, such as through the [direct API](direct.md), and [realtime](realtime/overview.md) sessions don't carry the headers.
+
+The step, request kind and retry headers change from one request to the next. So if you enable [Responses WebSockets](models/openai.md#responses-websockets) on a Gateway model with the `openai_responses_supports_websocket` profile flag, each request after the first has headers that differ from the socket's handshake and is sent over HTTP. To keep using the socket, opt out of the routing facts as shown below.
+
+### Opting out
+
+To send requests through the Gateway without the headers, give the agent a `GatewayRoutingFacts(enabled=False)` capability:
+
+```python {title="routing_facts_opt_out.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import GatewayRoutingFacts
+
+agent = Agent('gateway/{{ openai:medium }}', capabilities=[GatewayRoutingFacts(enabled=False)])
+
+result = agent.run_sync('Where does "hello world" come from?')
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+```
+
+To opt out for one run only, pass it to the run instead, as `agent.run_sync(..., capabilities=[GatewayRoutingFacts(enabled=False)])`. In an [agent spec](agent-spec.md), declare it as `GatewayRoutingFacts: {enabled: false}`.
+
 ## Troubleshooting
 
 ### Unable to calculate spend
