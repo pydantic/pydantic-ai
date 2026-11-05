@@ -6377,6 +6377,10 @@ async def child_workflow_lead_workflow() -> str:
     return (await child_workflow_lead.run('Explain tides.', timeout=3600)).output
 
 
+@pytest.mark.skipif(
+    Version(version('dbos')) < Version('2.27'),
+    reason="`dbos` 2.27 stopped re-running a completed async workflow's body when it is invoked again (dbos-inc/dbos-transact-py#762)",
+)
 async def test_dbos_child_workflow_tool_survives_recovery(dbos: DBOS) -> None:
     """A tool with `child_workflow` metadata runs in its own child workflow, which recovery resumes from its steps."""
     child_workflow_calls.clear()
