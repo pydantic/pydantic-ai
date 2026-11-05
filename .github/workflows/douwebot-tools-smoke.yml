@@ -20,8 +20,9 @@ jobs:
           CACHE_HIT: ${{ steps.tools.outputs.cache-hit }}
           PYTHONPATH: ${{ runner.temp }}/douwebot-tools/python
         run: |
-          test "$CACHE_HIT" != true
-          test "$("$RUNNER_TEMP/douwebot-tools/opencode/node_modules/.bin/opencode" --version)" = '2.2.5'
+          echo "cache-hit=$CACHE_HIT"
+          "$RUNNER_TEMP/douwebot-tools/opencode/node_modules/.bin/opencode" --version
+          node -e 'const p = require(process.env.RUNNER_TEMP + "/douwebot-tools/opencode/node_modules/@opencode/cli/package.json"); if (p.version !== "2.2.5") process.exit(1)'
           "$RUNNER_TEMP/douwebot-tools/bin/rg" --version
           python3 -c 'import pydantic; print(pydantic.__version__); assert pydantic.__version__ == "2.13.4"'
   warm:
@@ -39,6 +40,7 @@ jobs:
           PYTHONPATH: ${{ runner.temp }}/douwebot-tools/python
         run: |
           test "$CACHE_HIT" = true
-          test "$("$RUNNER_TEMP/douwebot-tools/opencode/node_modules/.bin/opencode" --version)" = '2.2.5'
+          "$RUNNER_TEMP/douwebot-tools/opencode/node_modules/.bin/opencode" --version
+          node -e 'const p = require(process.env.RUNNER_TEMP + "/douwebot-tools/opencode/node_modules/@opencode/cli/package.json"); if (p.version !== "2.2.5") process.exit(1)'
           "$RUNNER_TEMP/douwebot-tools/bin/rg" --version
           python3 -c 'import pydantic; print(pydantic.__version__); assert pydantic.__version__ == "2.13.4"'
