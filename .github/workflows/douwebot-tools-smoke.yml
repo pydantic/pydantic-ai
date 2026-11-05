@@ -1,0 +1,44 @@
+name: Temporary douwebot tools smoke
+on:
+  push:
+    branches: [douwebot-opencode-fallback]
+permissions:
+  contents: read
+jobs:
+  cold:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: tools
+        uses: ./.github/actions/setup-douwebot-tools
+        with:
+          save-cache: 'true'
+      - name: Verify cold installation
+        env:
+          CACHE_HIT: ${{ steps.tools.outputs.cache-hit }}
+          PYTHONPATH: ${{ runner.temp }}/douwebot-tools/python
+        run: |
+          test "$CACHE_HIT" != true
+          test "$("$RUNNER_TEMP/douwebot-tools/opencode/node_modules/.bin/opencode" --version)" = '2.2.5'
+          "$RUNNER_TEMP/douwebot-tools/bin/rg" --version
+          python3 -c 'import pydantic; print(pydantic.__version__); assert pydantic.__version__ == "2.13.4"'
+  warm:
+    needs: cold
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: tools
+        uses: ./.github/actions/setup-douwebot-tools
+      - name: Verify warm restoration
+        env:
+          CACHE_HIT: ${{ steps.tools.outputs.cache-hit }}
+          PYTHONPATH: ${{ runner.temp }}/douwebot-tools/python
+        run: |
+          test "$CACHE_HIT" = true
+          test "$("$RUNNER_TEMP/douwebot-tools/opencode/node_modules/.bin/opencode" --version)" = '2.2.5'
+          "$RUNNER_TEMP/douwebot-tools/bin/rg" --version
+          python3 -c 'import pydantic; print(pydantic.__version__); assert pydantic.__version__ == "2.13.4"'

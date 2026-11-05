@@ -688,21 +688,23 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_DIR: pr-head
 
-      - name: Install OpenCode and isolated review tools
-        run: |
-          sudo apt-get update && sudo apt-get install -y ripgrep
-          npm install --global @opencode/cli@2.2.5
-          python3 -m pip install --quiet 'pydantic==2.13.4'
+      - name: Set up OpenCode and review tools
+        uses: ./.github/actions/setup-douwebot-tools
 
       - name: Review with OpenCode Go
-        run: python3 .github/scripts/douwebot_opencode_run.py
+        run: |
+          export PATH="$RUNNER_TEMP/douwebot-tools/bin:$RUNNER_TEMP/douwebot-tools/opencode/node_modules/.bin:$PATH"
+          python3 .github/scripts/douwebot_opencode_run.py
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           REVIEW_PROMPT: *douwebot-prompt
+          PYTHONPATH: ${{ runner.temp }}/douwebot-tools/python
 
       - id: result
         name: Validate completed review
         run: python3 .github/scripts/douwebot_opencode_result.py "$RUNNER_TEMP/douwebot-opencode.ndjson"
+        env:
+          PYTHONPATH: ${{ runner.temp }}/douwebot-tools/python
 
   publish-review:
     name: Publish douwebot review
