@@ -450,6 +450,13 @@ def test_structurally_equal():
     # Different field type — not equal
     assert not ts1.structurally_equal(ts3)
 
+    ts4 = TypeSignature(
+        name='D',
+        fields={'y': TypeFieldSignature(name='y', type=SimpleTypeExpr('int'), required=True)},
+    )
+    # Different field name — not equal
+    assert not ts1.structurally_equal(ts4)
+
 
 def test_schema_nested_object_name_with_digit_prefix():
     """Tool names starting with digits get valid PascalCase TypedDict names with leading underscore."""
@@ -1885,15 +1892,6 @@ class Wrap(TypedDict):
 def t(*, wrap: Wrap) -> Wrap:
     ...\
 """)
-
-
-def test_structurally_equal_compares_field_names_and_required_flags():
-    def user(*, name: str = 'name', required: bool = True) -> TypeSignature:
-        field = TypeFieldSignature(name=name, type=SimpleTypeExpr('str'), required=required)
-        return TypeSignature(name='User', fields={name: field})
-
-    assert not user().structurally_equal(user(name='email'))
-    assert not user().structurally_equal(user(required=False))
 
 
 def test_recursive_types_compare_by_what_is_in_the_cycle():

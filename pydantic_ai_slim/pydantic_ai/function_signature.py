@@ -147,11 +147,9 @@ class TypeSignature:
 
     fields: dict[str, TypeFieldSignature] = field(default_factory=dict[str, TypeFieldSignature])
     kind: Literal['type'] = 'type'
-
-    def __post_init__(self) -> None:
-        # Set by `FunctionSignature.get_conflicting_type_names` when this type's name has to change.
-        # Not a field, as it comes from the signatures being rendered together, not from the type.
-        self._resolved_name: str | None = None
+    # Set by `FunctionSignature.get_conflicting_type_names` when this type's name has to change.
+    # Left out of `__init__`, `repr` and `==`: it comes from the signatures rendered together, not from the type.
+    _resolved_name: str | None = field(default=None, init=False, repr=False, compare=False)
 
     @property
     def display_name(self) -> str:
@@ -199,7 +197,11 @@ class TypeSignature:
         return '\n'.join(lines)
 
     def structurally_equal(self, other: TypeSignature) -> bool:
-        """Compare two TypeSignatures structurally, ignoring descriptions."""
+        """Compare two TypeSignatures structurally, ignoring descriptions.
+
+        Nested types compare by name only, so this can call two types equal that
+        `FunctionSignature.get_conflicting_type_names` keeps apart.
+        """
         if set(self.fields.keys()) != set(other.fields.keys()):
             return False
         for name, f in self.fields.items():
