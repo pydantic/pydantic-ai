@@ -790,6 +790,7 @@ def test_model_json_schema_with_capabilities():
                             'title': 'Max Tokens',
                         },
                         'caching': {
+                            'deprecated': True,
                             'anyOf': [{'enum': ['5m', '1h'], 'type': 'string'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Caching',
@@ -882,11 +883,13 @@ def test_model_json_schema_with_capabilities():
                             'title': 'Max Num Results',
                         },
                         'instructions': {
+                            'deprecated': True,
                             'anyOf': [{'type': 'string'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Instructions',
                         },
                         'retrieval_mode': {
+                            'deprecated': True,
                             'anyOf': [{'enum': ['hybrid', 'semantic', 'keyword'], 'type': 'string'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Retrieval Mode',
@@ -911,29 +914,34 @@ def test_model_json_schema_with_capabilities():
                             'default': None,
                         },
                         'action': {
+                            'deprecated': True,
                             'default': 'auto',
                             'enum': ['generate', 'edit', 'auto'],
                             'title': 'Action',
                             'type': 'string',
                         },
                         'background': {
+                            'deprecated': True,
                             'default': 'auto',
                             'enum': ['transparent', 'opaque', 'auto'],
                             'title': 'Background',
                             'type': 'string',
                         },
                         'input_fidelity': {
+                            'deprecated': True,
                             'anyOf': [{'enum': ['high', 'low'], 'type': 'string'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Input Fidelity',
                         },
                         'moderation': {
+                            'deprecated': True,
                             'default': 'auto',
                             'enum': ['auto', 'low'],
                             'title': 'Moderation',
                             'type': 'string',
                         },
                         'model': {
+                            'deprecated': True,
                             'anyOf': [
                                 {
                                     'enum': ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'],
@@ -955,8 +963,14 @@ def test_model_json_schema_with_capabilities():
                             'default': None,
                             'title': 'Output Format',
                         },
-                        'partial_images': {'default': 0, 'title': 'Partial Images', 'type': 'integer'},
+                        'partial_images': {
+                            'deprecated': True,
+                            'default': 0,
+                            'title': 'Partial Images',
+                            'type': 'integer',
+                        },
                         'quality': {
+                            'deprecated': True,
                             'default': 'auto',
                             'enum': ['low', 'medium', 'high', 'auto'],
                             'title': 'Quality',

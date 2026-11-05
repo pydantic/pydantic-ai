@@ -51,7 +51,8 @@ class NativeTool(AbstractCapability[AgentDepsT]):
                 ' specifying the native tool type (e.g. `kind="web_search"`)'
             )
         # Validation doesn't warn about moved fields, but a spec's author can act on the warning, so build the tool
-        # again outside it. A tool passed in already warned when it was built.
+        # again outside it. A tool passed in already warned when it was built. No user code is on the stack here, so
+        # the warning names `dataclasses.py` as its location; the message names the tool and the field to change.
         if not isinstance(tool, AbstractNativeTool):
             validated = replace(validated)
         return cls(tool=validated)

@@ -68,6 +68,11 @@ def _validate_without_provider_field_warnings(value: Any, handler: core_schema.V
         return handler(value)
 
 
+def _moved_to_provider_settings(system: str, name: str) -> Any:
+    """Mark a field moved into `provider_settings` as deprecated in the JSON schema, for spec authors' editors."""
+    return pydantic.Field(deprecated=f'Use `provider_settings={{"{system}": {{"{name}": ...}}}}` instead.')
+
+
 def _check_moved_fields(
     tool: AbstractNativeTool,
     system: str,
@@ -673,10 +678,7 @@ class ImageGenerationTool(AbstractNativeTool):
     * Google
     """
 
-    provider_settings: ImageGenerationProviderSettings | None = None
-    """Provider-specific image generation settings, keyed by the model class that reads them."""
-
-    action: Literal['generate', 'edit', 'auto'] = 'auto'
+    action: Annotated[Literal['generate', 'edit', 'auto'], _moved_to_provider_settings('openai', 'action')] = 'auto'
     """Whether to generate a new image or edit an existing image.
 
     Deprecated: use `provider_settings.openai.action` instead.
@@ -686,7 +688,9 @@ class ImageGenerationTool(AbstractNativeTool):
     * OpenAI Responses. Default: 'auto'.
     """
 
-    background: Literal['transparent', 'opaque', 'auto'] = 'auto'
+    background: Annotated[
+        Literal['transparent', 'opaque', 'auto'], _moved_to_provider_settings('openai', 'background')
+    ] = 'auto'
     """Background type for the generated image.
 
     Deprecated: use `provider_settings.openai.background` instead.
@@ -696,7 +700,9 @@ class ImageGenerationTool(AbstractNativeTool):
     * OpenAI Responses. 'transparent' is only supported for 'png' and 'webp' output formats.
     """
 
-    input_fidelity: Literal['high', 'low'] | None = None
+    input_fidelity: Annotated[
+        Literal['high', 'low'] | None, _moved_to_provider_settings('openai', 'input_fidelity')
+    ] = None
     """
     Control how much effort the model will exert to match the style and features,
     especially facial features, of input images.
@@ -708,7 +714,7 @@ class ImageGenerationTool(AbstractNativeTool):
     * OpenAI Responses. Default: 'low'.
     """
 
-    moderation: Literal['auto', 'low'] = 'auto'
+    moderation: Annotated[Literal['auto', 'low'], _moved_to_provider_settings('openai', 'moderation')] = 'auto'
     """Moderation level for the generated image.
 
     Deprecated: use `provider_settings.openai.moderation` instead.
@@ -718,7 +724,7 @@ class ImageGenerationTool(AbstractNativeTool):
     * OpenAI Responses
     """
 
-    model: ImageGenerationModelName | None = None
+    model: Annotated[ImageGenerationModelName | None, _moved_to_provider_settings('openai', 'model')] = None
     """The image generation model to use.
 
     Deprecated: use `provider_settings.openai.model` instead.
@@ -752,7 +758,7 @@ class ImageGenerationTool(AbstractNativeTool):
     * Google (Vertex AI only). Default: 'png', or 'jpeg' if `output_compression` is set.
     """
 
-    partial_images: int = 0
+    partial_images: Annotated[int, _moved_to_provider_settings('openai', 'partial_images')] = 0
     """
     Number of partial images to generate in streaming mode.
 
@@ -763,7 +769,9 @@ class ImageGenerationTool(AbstractNativeTool):
     * OpenAI Responses. Supports 0 to 3.
     """
 
-    quality: Literal['low', 'medium', 'high', 'auto'] = 'auto'
+    quality: Annotated[Literal['low', 'medium', 'high', 'auto'], _moved_to_provider_settings('openai', 'quality')] = (
+        'auto'
+    )
     """The quality of the generated image.
 
     Deprecated: use `provider_settings.openai.quality` instead.
@@ -788,6 +796,9 @@ class ImageGenerationTool(AbstractNativeTool):
     * Google image-generation models (Gemini)
     * OpenAI Responses (maps '1:1', '2:3', and '3:2' to supported sizes)
     """
+
+    provider_settings: ImageGenerationProviderSettings | None = None
+    """Provider-specific image generation settings, keyed by the model class that reads them."""
 
     kind: str = 'image_generation'
     """The kind of tool."""
@@ -934,9 +945,6 @@ class FileSearchTool(AbstractNativeTool):
     * xAI (mapped to collections search)
     """
 
-    provider_settings: FileSearchProviderSettings | None = None
-    """Provider-specific file search settings, keyed by the model class that reads them."""
-
     file_store_ids: Sequence[str]
     """The file store IDs to search through.
 
@@ -953,7 +961,7 @@ class FileSearchTool(AbstractNativeTool):
     * xAI (mapped to collections search `limit`, defaults to 10 server-side)
     """
 
-    instructions: str | None = None
+    instructions: Annotated[str | None, _moved_to_provider_settings('xai', 'instructions')] = None
     """Optional instructions that guide how the collections search results are interpreted and ranked.
 
     Deprecated: use `provider_settings.xai.instructions` instead.
@@ -963,7 +971,9 @@ class FileSearchTool(AbstractNativeTool):
     * xAI
     """
 
-    retrieval_mode: Literal['hybrid', 'semantic', 'keyword'] | None = None
+    retrieval_mode: Annotated[
+        Literal['hybrid', 'semantic', 'keyword'] | None, _moved_to_provider_settings('xai', 'retrieval_mode')
+    ] = None
     """The retrieval strategy for the search.
 
     Deprecated: use `provider_settings.xai.retrieval_mode` instead.
@@ -972,6 +982,9 @@ class FileSearchTool(AbstractNativeTool):
 
     * xAI (defaults to `hybrid` server-side)
     """
+
+    provider_settings: FileSearchProviderSettings | None = None
+    """Provider-specific file search settings, keyed by the model class that reads them."""
 
     kind: str = 'file_search'
     """The kind of tool."""
@@ -1061,7 +1074,7 @@ class AdvisorTool(AbstractNativeTool):
     * OpenRouter
     """
 
-    caching: Literal['5m', '1h'] | None = None
+    caching: Annotated[Literal['5m', '1h'] | None, _moved_to_provider_settings('anthropic', 'caching')] = None
     """If provided, caches the advisor context ephemerally with the given TTL. Maps to
     `caching={'type': 'ephemeral', 'ttl': ...}`.
 
