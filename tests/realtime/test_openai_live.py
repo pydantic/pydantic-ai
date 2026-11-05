@@ -99,6 +99,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from ..conftest import IsDatetime, IsNow, legacy_retry_prompt_part, no_leaked_tasks, try_import
+from .simulation._loop import SimulatedLoop
 
 with try_import() as imports_successful:
     import httpx2
@@ -4066,8 +4067,15 @@ async def test_a_backend_request_reported_while_closing_is_held_to_the_request_l
     assert (sessions[0].usage.requests, sessions[0].usage.input_tokens) == (1, 10)
 
 
+@pytest.mark.parametrize(
+    'anyio_backend', [pytest.param(('asyncio', {'loop_factory': SimulatedLoop}), id='virtual-clock')]
+)
 async def test_closing_a_session_whose_socket_drops_finishes_promptly(model: OpenAILiveModel) -> None:
-    """A link that fails while Live is asked to end the session leaves nothing to wait for."""
+    """A link that fails while Live is asked to end the session leaves nothing to wait for.
+
+    On a virtual clock, which only moves when nothing can run, a stalled runner can't use up the deadline, and only
+    waiting out `_END_SESSION_TIMEOUT` can.
+    """
 
     class _DroppingSocket(_FakeWebSocket):
         async def send(self, data: str) -> None:
