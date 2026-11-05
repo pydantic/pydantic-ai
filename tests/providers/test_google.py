@@ -22,7 +22,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai import Agent
     from pydantic_ai.exceptions import UserError
-    from pydantic_ai.models import infer_model
+    from pydantic_ai.models import get_user_agent, infer_model
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import BaseGoogleProvider, GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
@@ -226,6 +226,23 @@ async def test_google_server_timeout_header_respects_caller(allow_model_requests
         await agent.run('What is the capital of France?')
 
     assert [request.headers.get_list('X-Server-Timeout') for request in requests] == [['90'], []]
+
+
+async def test_google_sends_one_user_agent(allow_model_requests: None, provider_factory: GoogleProviderFactory) -> None:
+    """google-genai adds its label to a lowercase `user-agent`; any other casing goes out as a second header."""
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, json=_GEMINI_RESPONSE)
+
+    async with httpx2.AsyncClient(timeout=60, transport=httpx2.MockTransport(handler)) as http_client:
+        agent = Agent(GoogleModel('gemini-2.5-flash', provider=provider_factory(http_client)))
+        await agent.run('What is the capital of France?')
+
+    [user_agent] = requests[0].headers.get_list('user-agent')
+    assert user_agent.startswith('google-genai-sdk/')
+    assert user_agent.endswith(get_user_agent())
 
 
 def test_google_provider_client_headers_have_no_server_timeout(provider_factory: GoogleProviderFactory) -> None:
