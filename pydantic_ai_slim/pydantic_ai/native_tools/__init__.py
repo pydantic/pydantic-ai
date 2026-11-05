@@ -4,7 +4,6 @@ from abc import ABC
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from functools import cache
 from typing import Annotated, Any, Literal, Union
 
 import pydantic
@@ -162,18 +161,7 @@ class AbstractNativeTool(ABC):
         return handler(tools_type)
 
 
-@cache
-def _provider_settings_adapter(settings_type: type[Any]) -> pydantic.TypeAdapter[Any]:
-    return pydantic.TypeAdapter(settings_type)
-
-
-def _validate_provider_settings(settings_type: type[Any], settings: Any) -> None:
-    """Fail fast on an option no adapter would read, instead of silently running without it."""
-    if settings is not None:
-        _provider_settings_adapter(settings_type).validate_python(settings, strict=True)
-
-
-@pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
+@pydantic.with_config(pydantic.ConfigDict(extra='allow'))
 class AnthropicWebSearchToolSettings(TypedDict, total=False):
     """Anthropic-specific settings for [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]."""
 
@@ -185,7 +173,7 @@ class AnthropicWebSearchToolSettings(TypedDict, total=False):
     """
 
 
-@pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
+@pydantic.with_config(pydantic.ConfigDict(extra='allow'))
 class OpenRouterWebSearchToolSettings(TypedDict, total=False):
     """OpenRouter-specific settings for [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]."""
 
@@ -212,7 +200,7 @@ class OpenRouterWebSearchToolSettings(TypedDict, total=False):
     """The maximum content characters returned for each result."""
 
 
-@pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
+@pydantic.with_config(pydantic.ConfigDict(extra='allow'))
 class WebSearchProviderSettings(TypedDict, total=False):
     """Provider-specific web search settings, keyed by the model class that reads them."""
 
@@ -321,9 +309,6 @@ class WebSearchTool(AbstractNativeTool):
 
     kind: str = 'web_search'
     """The kind of tool."""
-
-    def __post_init__(self) -> None:
-        _validate_provider_settings(WebSearchProviderSettings, self.provider_settings)
 
     @property
     def restricting_settings(self) -> frozenset[str]:
@@ -489,7 +474,7 @@ class CodeExecutionTool(AbstractNativeTool):
     """The kind of tool."""
 
 
-@pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
+@pydantic.with_config(pydantic.ConfigDict(extra='allow'))
 class AnthropicWebFetchToolSettings(TypedDict, total=False):
     """Anthropic-specific settings for [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool]."""
 
@@ -504,7 +489,7 @@ class AnthropicWebFetchToolSettings(TypedDict, total=False):
     """
 
 
-@pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
+@pydantic.with_config(pydantic.ConfigDict(extra='allow'))
 class WebFetchProviderSettings(TypedDict, total=False):
     """Provider-specific web fetch settings, keyed by the model class that reads them."""
 
@@ -578,9 +563,6 @@ class WebFetchTool(AbstractNativeTool):
 
     kind: str = 'web_fetch'
     """The kind of tool."""
-
-    def __post_init__(self) -> None:
-        _validate_provider_settings(WebFetchProviderSettings, self.provider_settings)
 
     @property
     def restricting_settings(self) -> frozenset[str]:
@@ -851,7 +833,7 @@ class FileSearchTool(AbstractNativeTool):
     """The kind of tool."""
 
 
-@pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
+@pydantic.with_config(pydantic.ConfigDict(extra='allow'))
 class OpenRouterAdvisorToolSettings(TypedDict, total=False):
     """OpenRouter-specific settings for [`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool]."""
 
@@ -859,7 +841,7 @@ class OpenRouterAdvisorToolSettings(TypedDict, total=False):
     """Whether OpenRouter should include the conversation transcript in the advisor request."""
 
 
-@pydantic.with_config(pydantic.ConfigDict(extra='forbid'))
+@pydantic.with_config(pydantic.ConfigDict(extra='allow'))
 class AdvisorProviderSettings(TypedDict, total=False):
     """Provider-specific advisor settings, keyed by the model class that reads them."""
 
@@ -937,7 +919,6 @@ class AdvisorTool(AbstractNativeTool):
     """The kind of tool."""
 
     def __post_init__(self) -> None:
-        _validate_provider_settings(AdvisorProviderSettings, self.provider_settings)
         if self.max_tokens is not None and self.max_tokens < 1024:
             raise ValueError('AdvisorTool.max_tokens must be at least 1024')
 

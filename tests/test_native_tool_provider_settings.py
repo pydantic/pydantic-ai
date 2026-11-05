@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pydantic import ValidationError
 from typing_extensions import get_type_hints
 
 from pydantic_ai import Agent
@@ -133,37 +132,23 @@ def test_value_openrouter_adds_later_is_forwarded(option: str) -> None:
     assert _openrouter_request_parameters(tool)[option] == 'added-later'
 
 
-@pytest.mark.parametrize(
-    'settings',
-    [
-        pytest.param({'madeup': {}}, id='unknown-key'),
-        pytest.param({'openrouter': {'typo': 1}}, id='unknown-option'),
-        pytest.param({'openrouter': {'response_inclusion': 'full'}}, id='another-providers-option'),
-    ],
-)
-def test_unknown_keys_are_rejected(settings: dict[str, Any]) -> None:
-    with pytest.raises(ValidationError, match='Extra inputs are not permitted'):
-        WebSearchTool(provider_settings=settings)  # pyright: ignore[reportArgumentType]
+UNKNOWN_SETTINGS: Any = {
+    'madeup': {},
+    'anthropic': {'typo': 1},
+    'openrouter': {'typo': 1, 'allowed_domains': ['example.com']},
+}
 
 
-@pytest.mark.parametrize(
-    'settings',
-    [
-        pytest.param({'anthropic': {'response_inclusion': 'nonsense'}}, id='bad-literal'),
-        pytest.param({'openrouter': {'engine': 1}}, id='wrong-type'),
-        pytest.param({'openrouter': {'max_results': '3'}}, id='not-coerced'),
-        pytest.param({'openrouter': {'engine': None}}, id='none-is-not-unset'),
-    ],
-)
-def test_invalid_values_are_rejected(settings: dict[str, Any]) -> None:
-    with pytest.raises(ValidationError):
-        WebSearchTool(provider_settings=settings)  # pyright: ignore[reportArgumentType]
+@pytest.mark.parametrize('tool_type', [WebSearchTool, WebFetchTool])
+def test_anthropic_ignores_unknown_settings(tool_type: Any) -> None:
+    """Like model settings, options no model reads are ignored rather than rejected or sent."""
+    assert _anthropic_request_tool(tool_type(provider_settings=UNKNOWN_SETTINGS)) == _anthropic_request_tool(
+        tool_type()
+    )
 
 
-@pytest.mark.parametrize(
-    ('tool_type', 'kwargs'),
-    [(WebFetchTool, {}), (AdvisorTool, {'model': 'advisor'})],
-)
-def test_every_tool_rejects_unknown_keys(tool_type: Any, kwargs: dict[str, Any]) -> None:
-    with pytest.raises(ValidationError, match='Extra inputs are not permitted'):
-        tool_type(**kwargs, provider_settings={'madeup': {}})
+@pytest.mark.parametrize(('tool_type', 'kwargs'), [(WebSearchTool, {}), (AdvisorTool, {'model': 'advisor'})])
+def test_openrouter_ignores_unknown_settings(tool_type: Any, kwargs: dict[str, Any]) -> None:
+    """An unknown option can't reach the request, so it can't override a field like `allowed_domains` either."""
+    with_unknown = _openrouter_request_parameters(tool_type(**kwargs, provider_settings=UNKNOWN_SETTINGS))
+    assert with_unknown == _openrouter_request_parameters(tool_type(**kwargs))

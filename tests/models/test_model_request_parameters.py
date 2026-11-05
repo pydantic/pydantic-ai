@@ -2,7 +2,7 @@ from dataclasses import replace
 from typing import Literal
 
 import pytest
-from pydantic import TypeAdapter, ValidationError
+from pydantic import TypeAdapter
 
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.native_tools import (
@@ -212,12 +212,14 @@ def test_provider_settings_survive_serialization(tool: AbstractNativeTool):
     assert ta.validate_json(ta.dump_json(params)) == params
 
 
-def test_provider_settings_payload_with_unknown_option_is_rejected():
-    """A payload from a newer version fails loudly, rather than silently dropping the option."""
+def test_provider_settings_payload_with_unknown_option_is_kept():
+    """Like model settings, an option this version doesn't know is kept for a model that reads it, not rejected."""
     payload = {'native_tools': [{'kind': 'web_search', 'provider_settings': {'openrouter': {'future': 1}}}]}
 
-    with pytest.raises(ValidationError, match='Extra inputs are not permitted'):
-        ta.validate_python(payload)
+    params = ta.validate_python(payload)
+
+    assert params.native_tools == [WebSearchTool(provider_settings={'openrouter': {'future': 1}})]  # pyright: ignore[reportArgumentType]
+    assert ta.validate_json(ta.dump_json(params)) == params
 
 
 def test_model_request_parameters_cache_round_trip():
