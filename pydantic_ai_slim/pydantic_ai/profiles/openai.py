@@ -900,7 +900,7 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
 
         return result
 
-    def transform(self, schema: JsonSchema) -> JsonSchema:  # noqa: C901
+    def transform(self, schema: JsonSchema) -> JsonSchema:
         # Remove unnecessary keys
         schema.pop('title', None)
         schema.pop('$schema', None)
@@ -916,22 +916,55 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                 self.is_strict_compatible = False
 
         if schema_ref := schema.get('$ref'):
-            if schema_ref == self.root_ref:
-                schema['$ref'] = '#'
-            elif (
-                self.strict is None
-                and schema_ref.startswith('#/')
-                and not _TOP_LEVEL_DEFINITION_REF.fullmatch(schema_ref)
-            ):
-                # A pointer elsewhere in the schema, like the `#/properties/from` that `zod-to-json-schema`
-                # (used by the MCP TypeScript SDK) emits for a reused subschema, is rejected in strict mode.
-                self.is_strict_compatible = False
-            if len(schema) > 1:
-                # OpenAI Strict mode doesn't support siblings to "$ref", but _does_ allow siblings to "anyOf".
-                # So if there is a "description" field or any other extra info, we move the "$ref" into an "anyOf":
-                schema['anyOf'] = [{'$ref': schema.pop('$ref')}]
+            self._transform_ref(schema, schema_ref)
 
-        # Track strict-incompatible keys
+        self._transform_strict_incompatible_values(schema)
+
+        schema_type = schema.get('type')
+        if 'oneOf' in schema:
+            # OpenAI does not support oneOf in strict mode
+            if self.strict is True:
+                schema['anyOf'] = schema.pop('oneOf')
+            else:
+                self.is_strict_compatible = False
+
+        if schema_type == 'object':
+            self._transform_object(schema)
+
+        if schema_type == 'array':
+            self._check_array_items(schema)
+        return schema
+
+    def _transform_ref(self, schema: JsonSchema, schema_ref: str) -> None:
+        if schema_ref == self.root_ref:
+            schema['$ref'] = '#'
+        elif (
+            self.strict is None and schema_ref.startswith('#/') and not _TOP_LEVEL_DEFINITION_REF.fullmatch(schema_ref)
+        ):
+            # A pointer elsewhere in the schema, like the `#/properties/from` that `zod-to-json-schema`
+            # (used by the MCP TypeScript SDK) emits for a reused subschema, is rejected in strict mode.
+            self.is_strict_compatible = False
+        if len(schema) > 1:
+            # OpenAI Strict mode doesn't support siblings to "$ref", but _does_ allow siblings to "anyOf".
+            # So if there is a "description" field or any other extra info, we move the "$ref" into an "anyOf":
+            schema['anyOf'] = [{'$ref': schema.pop('$ref')}]
+
+    def _transform_strict_incompatible_values(self, schema: JsonSchema) -> None:
+        incompatible_values = self._strict_incompatible_values(schema)
+        description = schema.get('description')
+        if incompatible_values:
+            if self.strict is True:
+                notes: list[str] = []
+                for key, value in incompatible_values.items():
+                    schema.pop(key)
+                    notes.append(f'{key}={value}')
+                notes_string = ', '.join(notes)
+                schema['description'] = notes_string if not description else f'{description} ({notes_string})'
+            elif self.strict is None:  # pragma: no branch
+                self.is_strict_compatible = False
+
+    def _strict_incompatible_values(self, schema: JsonSchema) -> dict[str, Any]:
+        """The keywords in `schema` that strict mode doesn't support, with their values."""
         incompatible_values: dict[str, Any] = {}
         for key in _STRICT_INCOMPATIBLE_KEYS:
             if self._strict_supports_length_constraints and key in ('minLength', 'maxLength'):
@@ -945,73 +978,51 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
         pattern = schema.get('pattern')
         if isinstance(pattern, str) and _regex_contains_lookaround(pattern):
             incompatible_values['pattern'] = pattern
-        description = schema.get('description')
-        if incompatible_values:
-            if self.strict is True:
-                notes: list[str] = []
-                for key, value in incompatible_values.items():
-                    schema.pop(key)
-                    notes.append(f'{key}={value}')
-                notes_string = ', '.join(notes)
-                schema['description'] = notes_string if not description else f'{description} ({notes_string})'
-            elif self.strict is None:  # pragma: no branch
-                self.is_strict_compatible = False
+        return incompatible_values
 
-        schema_type = schema.get('type')
-        if 'oneOf' in schema:
-            # OpenAI does not support oneOf in strict mode
-            if self.strict is True:
-                schema['anyOf'] = schema.pop('oneOf')
+    def _transform_object(self, schema: JsonSchema) -> None:
+        # Always ensure 'properties' key exists - OpenAI drops objects without it
+        if 'properties' not in schema:
+            schema['properties'] = dict[str, Any]()
+
+        if self.strict is True:
+            # additional properties are disallowed
+            schema['additionalProperties'] = False
+
+            # all properties are required
+            schema['required'] = list(schema['properties'].keys())
+
+        elif self.strict is None:
+            if schema.get('additionalProperties', None) not in (None, False):
+                self.is_strict_compatible = False
             else:
-                self.is_strict_compatible = False
-
-        if schema_type == 'object':
-            # Always ensure 'properties' key exists - OpenAI drops objects without it
-            if 'properties' not in schema:
-                schema['properties'] = dict[str, Any]()
-
-            if self.strict is True:
-                # additional properties are disallowed
+                # additional properties are disallowed by default
                 schema['additionalProperties'] = False
 
-                # all properties are required
-                schema['required'] = list(schema['properties'].keys())
+            if 'properties' not in schema or 'required' not in schema:
+                self.is_strict_compatible = False
+            elif any(k not in schema['required'] for k in schema['properties'].keys()):
+                self.is_strict_compatible = False
 
-            elif self.strict is None:
-                if schema.get('additionalProperties', None) not in (None, False):
-                    self.is_strict_compatible = False
-                else:
-                    # additional properties are disallowed by default
-                    schema['additionalProperties'] = False
-
-                if 'properties' not in schema or 'required' not in schema:
-                    self.is_strict_compatible = False
-                else:
-                    required = schema['required']
-                    for k in schema['properties'].keys():
-                        if k not in required:
-                            self.is_strict_compatible = False
-
-        if schema_type == 'array':
-            # OpenAI strict mode requires an array to describe its elements' type via `items`. A bare
-            # `list` produces an empty `items: {}`, `list[Any]` a boolean `items: true`, and a schema
-            # may omit `items` entirely; none of these give the element a type, so they're rejected by
-            # the API in strict mode and there's no way to repair them without inventing an element
-            # type. `items` only types its elements when it's a schema object carrying a type-bearing
-            # keyword (a boolean node, `{}`, or a metadata-only node like `{'description': ...}` does
-            # not).
-            # See https://github.com/pydantic/pydantic-ai/issues/4425
-            items = schema.get('items')
-            has_typed_items = isinstance(items, dict) and any(key in items for key in _TYPE_BEARING_KEYS)
-            if not has_typed_items and not schema.get('prefixItems'):
-                if self.strict is True:
-                    raise UserError(
-                        'OpenAI strict mode requires array items to have a type, but got an untyped array '
-                        '(e.g. a bare `list`). Add a type parameter such as `list[str]`, or set `strict=False`.'
-                    )
-                elif self.strict is None:  # pragma: no branch
-                    self.is_strict_compatible = False
-        return schema
+    def _check_array_items(self, schema: JsonSchema) -> None:
+        # OpenAI strict mode requires an array to describe its elements' type via `items`. A bare
+        # `list` produces an empty `items: {}`, `list[Any]` a boolean `items: true`, and a schema
+        # may omit `items` entirely; none of these give the element a type, so they're rejected by
+        # the API in strict mode and there's no way to repair them without inventing an element
+        # type. `items` only types its elements when it's a schema object carrying a type-bearing
+        # keyword (a boolean node, `{}`, or a metadata-only node like `{'description': ...}` does
+        # not).
+        # See https://github.com/pydantic/pydantic-ai/issues/4425
+        items = schema.get('items')
+        has_typed_items = isinstance(items, dict) and any(key in items for key in _TYPE_BEARING_KEYS)
+        if not has_typed_items and not schema.get('prefixItems'):
+            if self.strict is True:
+                raise UserError(
+                    'OpenAI strict mode requires array items to have a type, but got an untyped array '
+                    '(e.g. a bare `list`). Add a type parameter such as `list[str]`, or set `strict=False`.'
+                )
+            elif self.strict is None:  # pragma: no branch
+                self.is_strict_compatible = False
 
 
 class _OpenAIGuardedJsonSchemaTransformer(OpenAIJsonSchemaTransformer):
