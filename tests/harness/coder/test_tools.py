@@ -269,7 +269,9 @@ class TestCoder:
         )
         assert (await agent.run('Delegate it')).output == 'done'
         assert _PLAN in seen['Delegate it'] and _FINISH not in seen['Delegate it']
+        assert 'Measure results against any numeric target the task states.' not in seen['Delegate it']
         assert _FINISH in seen['Run it'] and _PLAN not in seen['Run it']
+        assert 'Measure results against any numeric target the task states.' in seen['Run it']
 
     async def test_a_delegate_with_task_control_is_also_told_to_finish(self, tmp_path: Path) -> None:
         """Whether a delegate gets `ask_parent` depends on the workspace and sub-agent, so every delegate finishes alone.

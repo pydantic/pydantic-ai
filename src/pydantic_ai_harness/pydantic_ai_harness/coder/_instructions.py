@@ -41,7 +41,7 @@ _DELEGATION = "Don't spawn sub-agents with `{tool_name}` unless the user or AGEN
 re-explores the project, so unrequested delegation multiplies tool calls and cost."""
 
 _TARGETS = 'Measure results against any numeric target the task states.'
-"""From `'high'` up, where the agent decides on its own when the work is good enough."""
+"""Wherever the agent decides on its own when the work is good enough: `'high'`, `'max'`, and every delegate."""
 
 _CLEANUP = 'Leave only the requested change; delete your scratch files.'
 """At `'max'` only: nobody reviews the workspace before the result is used."""
@@ -50,6 +50,21 @@ _FINISHING = (
     'Finish long-running work before replying; poll until done or blocked. '
     'Servers the task needs may keep running; stop the rest.'
 )
+
+
+def _checks(*, measure: bool, cleanup: bool) -> str:
+    return ' '.join(
+        [
+            'If deliverables will run elsewhere, make them self-contained.',
+            *([_TARGETS] if measure else []),
+            'Before finishing, confirm each stated requirement and edge case.',
+            'If inputs seem inconsistent or goals impossible, assume you misread. '
+            'Re-read, and try other interpretations before settling.',
+            "Write checks from the task's stated behavior, not your code.",
+            'Check behavior with heredocs for one-offs, not new files.',
+            *([_CLEANUP] if cleanup else []),
+        ]
+    )
 
 
 def _compose(lead: str, *, context: Sequence[str], checks: str, delegation: Sequence[str], suffix: str) -> str:
@@ -66,23 +81,14 @@ def coder_instructions(
 ) -> tuple[str, str]:
     """The top-level guidance and the delegate guidance.
 
-    They differ in the lead sentence. Non-empty `extra` is appended after a blank line.
+    They differ in the lead sentence. A delegate also measures numeric targets, because it decides on its
+    own when the work is good enough. Non-empty `extra` is appended after a blank line.
     `repo_files` names instruction files already loaded (`None` when none are); `nested_instructions`
     says a subdirectory's files are inlined the first time the model reads there.
     """
-    autonomous = agency in ('high', 'max')
-    checks = ' '.join(
-        [
-            'If deliverables will run elsewhere, make them self-contained.',
-            *([_TARGETS] if autonomous else []),
-            'Before finishing, confirm each stated requirement and edge case.',
-            'If inputs seem inconsistent or goals impossible, assume you misread. '
-            'Re-read, and try other interpretations before settling.',
-            "Write checks from the task's stated behavior, not your code.",
-            'Check behavior with heredocs for one-offs, not new files.',
-            *([_CLEANUP] if agency == 'max' else []),
-        ]
-    )
+    cleanup = agency == 'max'
+    parent_checks = _checks(measure=agency in ('high', 'max'), cleanup=cleanup)
+    delegate_checks = _checks(measure=True, cleanup=cleanup)
     delegation = [_DELEGATION.format(tool_name=delegate_tool)] if delegate_tool is not None else []
     context = [
         *([_REPO_FILES.format(names=', '.join(repo_files))] if repo_files is not None else []),
@@ -90,8 +96,8 @@ def coder_instructions(
     ]
     suffix = '\n' + extra if extra else ''
     return (
-        _compose(_AGENCY[agency], context=context, checks=checks, delegation=delegation, suffix=suffix),
-        _compose(_DELEGATED, context=context, checks=checks, delegation=delegation, suffix=suffix),
+        _compose(_AGENCY[agency], context=context, checks=parent_checks, delegation=delegation, suffix=suffix),
+        _compose(_DELEGATED, context=context, checks=delegate_checks, delegation=delegation, suffix=suffix),
     )
 
 
