@@ -4,7 +4,7 @@ import base64
 import math
 import re
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Generator, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Generator, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -480,8 +480,7 @@ def _http_error(
     suggested_model_id = None
     if status == 'NOT_FOUND' and isinstance(message, str) and message.startswith(f'models/{model_name} is not found '):
         suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-    reason = _model_errors.google_error_reason(body)
-    category = _model_errors.google_status_category(status, message, reason)
+    category = _model_errors.google_status_category(status, message, body)
     return ModelHTTPError.for_category(
         category or _model_errors.http_status_category(status_code, message),
         status_code=status_code,
@@ -1561,6 +1560,11 @@ class GoogleModel(Model[Client]):
             response = {'error': part.model_response_str(wrap_if_error=False)}
         else:
             response = part.model_response_object(wrap_if_error=False)
+            if _utils.contains_ref(response):
+                # Gemini reads a `$ref` key anywhere in `response` as a reference to a named part of the function
+                # response, and rejects the request when none matches. A return value that carries `$ref` as data,
+                # like a JSON Schema or an OpenAPI document, is sent as its JSON text instead.
+                response = {'output': part.model_response_str(wrap_if_error=False)}
             if fallback_refs:
                 response = {'output': [response, *fallback_refs]}
 
@@ -1904,16 +1908,15 @@ class GeminiStreamedResponse(StreamedResponse):
                                 yield event
                         new_request_vendor_part_id = None
                     elif part.function_call:
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                        for event in self._parts_manager.handle_tool_call_delta_events(
                             vendor_part_id=uuid4(),
                             tool_name=part.function_call.name,
                             args=part.function_call.args,
                             tool_call_id=part.function_call.id,
                             provider_name=self.provider_name if provider_details else None,
                             provider_details=provider_details,
-                        )
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
+                        ):
+                            yield event
                     elif part.inline_data is not None:
                         if part.thought:  # pragma: no cover
                             # Per https://ai.google.dev/gemini-api/docs/image-generation#thinking-process:
@@ -1943,36 +1946,8 @@ class GeminiStreamedResponse(StreamedResponse):
                             )
                         yield self._parts_manager.handle_part(vendor_part_id=tool_call_vendor_id, part=tool_call_part)
                     elif part.tool_response:
-                        tool_response_part = _map_tool_response(part.tool_response, self.provider_name)
-                        tool_response_part.provider_details = provider_details
-                        if tool_response_part.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
-                            if part.tool_response.id is None and self._media_processing_tool_call_id is not None:
-                                tool_response_part.tool_call_id = self._media_processing_tool_call_id
-                            elif self._media_processing_tool_call_vendor_id is not None:
-                                # The response can supply an ID omitted by the call; notify stream consumers too.
-                                event = self._parts_manager.handle_tool_call_delta(
-                                    vendor_part_id=self._media_processing_tool_call_vendor_id,
-                                    tool_call_id=tool_response_part.tool_call_id,
-                                )
-                                assert event is not None
-                                yield event
-                            self._media_processing_tool_call_id = None
-                            self._media_processing_tool_call_vendor_id = None
-                            yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_response_part)
-                        elif tool_response_part.tool_name == WebSearchTool.kind:
-                            # Only the response's last web_search return gets the sources, so an earlier one is
-                            # complete once another arrives.
-                            if (previous := self._pending_web_search_return) is not None:
-                                yield self._parts_manager.handle_part(
-                                    vendor_part_id=previous.tool_call_id, part=previous
-                                )
-                            self._pending_web_search_return = tool_response_part
-                            self._reserve_part(tool_response_part)
-                        elif tool_response_part.tool_name == FileSearchTool.kind and tool_response_part.content is None:
-                            self._pending_file_search_returns.append(tool_response_part)
-                            self._reserve_part(tool_response_part)
-                        else:
-                            yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_response_part)
+                        for event in self._handle_tool_response(part.tool_response, provider_details):
+                            yield event
                     elif part.executable_code is not None:
                         part_obj = self._handle_executable_code_streaming(part.executable_code)
                         part_obj.provider_details = provider_details
@@ -2013,6 +1988,37 @@ class GeminiStreamedResponse(StreamedResponse):
                     yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part)
         except (errors.APIError, httpx2.TransportError) as e:
             raise _map_api_error(e, self._model_name, self._model_id_namespace) from e
+
+    def _handle_tool_response(
+        self, tool_response: ToolResponse, provider_details: dict[str, Any] | None
+    ) -> Iterator[ModelResponseStreamEvent]:
+        """Map a native tool response, pairing a media-processing response with its call."""
+        tool_response_part = _map_tool_response(tool_response, self.provider_name)
+        tool_response_part.provider_details = provider_details
+        if tool_response_part.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
+            if tool_response.id is None and self._media_processing_tool_call_id is not None:
+                tool_response_part.tool_call_id = self._media_processing_tool_call_id
+            elif self._media_processing_tool_call_vendor_id is not None:
+                # The response can supply an ID omitted by the call; notify stream consumers too.
+                yield from self._parts_manager.handle_tool_call_delta_events(
+                    vendor_part_id=self._media_processing_tool_call_vendor_id,
+                    tool_call_id=tool_response_part.tool_call_id,
+                )
+            self._media_processing_tool_call_id = None
+            self._media_processing_tool_call_vendor_id = None
+            yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_response_part)
+        elif tool_response_part.tool_name == WebSearchTool.kind:
+            # Only the response's last web_search return gets the sources, so an earlier one is
+            # complete once another arrives.
+            if (previous := self._pending_web_search_return) is not None:
+                yield self._parts_manager.handle_part(vendor_part_id=previous.tool_call_id, part=previous)
+            self._pending_web_search_return = tool_response_part
+            self._reserve_part(tool_response_part)
+        elif tool_response_part.tool_name == FileSearchTool.kind and tool_response_part.content is None:
+            self._pending_file_search_returns.append(tool_response_part)
+            self._reserve_part(tool_response_part)
+        else:
+            yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_response_part)
 
     def _reserve_part(self, part: NativeToolReturnPart) -> None:
         """Reserve the part's slot, but defer its `PartStartEvent` until it's complete.

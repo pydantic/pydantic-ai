@@ -26,7 +26,7 @@ from pydantic_clai2.commands import (
 )
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.builtins import DEFAULT_PLUGINS, STOCK_PLUGINS
-from pydantic_clai2.config.project_settings import ProjectSettings, load_project_settings
+from pydantic_clai2.config.project_settings import ProjectSettings, load_project_settings, with_current_approvals
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins import (
@@ -219,6 +219,7 @@ async def chat(
             project=project,
             transcript=transcript,
             load_plugins=load_plugins,
+            settings_for=settings_for,
         )
     fresh = False
     warming: Thread | None = None
@@ -337,6 +338,7 @@ async def chat(
                             transcript=transcript,
                             load_plugins=load_plugins,
                             workspace=Path(shell.session.workspace),
+                            settings_for=shell.context.settings_for,
                         )
                     )
                 except Exception as exc:  # noqa: BLE001 -- development edits must not discard the conversation.
@@ -384,7 +386,11 @@ def _opener(
     launched_in, launch_project = Path(shell.session.workspace), shell.context.project
 
     def build(directory: Path | None) -> SessionRuntime[DepsT, OutputT]:
-        project = launch_project if directory in (None, launched_in) else load_project_settings(directory)
+        project = (
+            with_current_approvals(launch_project, store=shell.context.store)
+            if directory in (None, launched_in)
+            else load_project_settings(directory, store=shell.context.store)
+        )
         return create_shell(
             agent(),
             deps=deps,
@@ -400,6 +406,7 @@ def _opener(
             workspace=directory or launched_in,
             process=shell.process,
             signals=False,
+            settings_for=settings,
         )
 
     return build

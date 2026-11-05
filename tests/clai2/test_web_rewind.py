@@ -59,6 +59,7 @@ def test_edit_and_retry_replace_a_prompt_and_every_later_turn(make_web: MakeWeb)
         ]:
             refused = web_.post(route, {'text': text})
             assert (refused.status_code, refused.json()) == (status, {'detail': detail})
+        assert web_.post(route, {}).status_code == 422, 'Retry is asked for with `null`, never by leaving `text` out'
         missing = web_.post('/api/rewind/nope', {'text': 'x'})
         assert (missing.status_code, missing.json()) == (
             404,
@@ -84,7 +85,8 @@ def test_edit_and_retry_replace_a_prompt_and_every_later_turn(make_web: MakeWeb)
         assert prompts() == [("A'", [image_id(red)])]
 
         retried = next(item for item in web_.get('/api/state').json()['items'] if item['kind'] == 'user')
-        assert web_.post(f'/api/rewind/{retried["run_id"]}', {'text': "A'"}).status_code == 204
+        # Retry sends the prompt as saved, with its image.
+        assert web_.post(f'/api/rewind/{retried["run_id"]}', {'text': None}).status_code == 204
         settle(socket)
         items = web_.get('/api/state').json()['items']
         assert [(item['kind'], item.get('text')) for item in items] == [
@@ -92,7 +94,7 @@ def test_edit_and_retry_replace_a_prompt_and_every_later_turn(make_web: MakeWeb)
             ('assistant', 'done'),
             ('turn', None),
         ]
-        assert items[0]['run_id'] != retried['run_id']
+        assert items[0]['run_id'] != retried['run_id'] and items[0]['images'] == [image_id(red)]
         web_.post('/api/input', {'text': '/exit'})
         assert running.result(timeout=10) == 'exit'
 

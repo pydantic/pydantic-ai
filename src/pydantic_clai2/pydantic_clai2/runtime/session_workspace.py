@@ -70,7 +70,7 @@ class SessionWorkspace:
             return
         if self.session.running or self.busy():
             raise RuntimeError('Something is running. Switch directories once it ends.')
-        project = load_project_settings(directory)
+        project = load_project_settings(directory, store=self.context.store)
         settings = self.settings(project)
         self.session.workspace = self.status.workspace = str(directory)
         self.context.use_project(project, settings)
