@@ -37,9 +37,8 @@ which `StepPersistence` works alongside.
    `Agent.run(message_history=...)` to continue or fork.
 3. **Tool-effect ledger** -- every tool call's lifecycle (`started`,
    `completed`, `failed`) is recorded against `(run_id, tool_call_id)`.
-   A tool that raises, including `ModelRetry` and `ToolFailed`, is recorded
-   `failed`. A tool that defers with `CallDeferred` or `ApprovalRequired`
-   stays `started`: the call resolves outside the run.
+   A tool that fails, including with `ModelRetry` or `ToolFailed`, is
+   recorded `failed`.
    After a crash, a tool with a `started` record and no terminal update
    should be treated as `unknown_after_crash`: the side effect may or may
    not have happened.

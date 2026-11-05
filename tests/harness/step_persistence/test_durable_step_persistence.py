@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from tests.conftest import detach_dbos_logging, without_admin_server
+from tests.harness.step_persistence._histories import lookup_twice
 
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -16,7 +17,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('dbos not installed', allow_module_level=True)
 
 from pydantic_ai import Agent, AgentStreamEvent, ModelRetry, RunContext
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
@@ -264,16 +265,9 @@ async def test_dbos_planning_events_replay_with_sqlite_step_persistence(dbos: DB
 async def test_dbos_replay_keeps_a_retried_tool_call_failed(dbos: DBOS) -> None:
     """A fork replays the journaled writes, so the retried call stays `failed` and nothing is written twice."""
 
-    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if len(messages) == 1:
-            return ModelResponse(parts=[ToolCallPart('lookup', {'q': 'x'}, tool_call_id='call-1')])
-        if len(messages) == 3:
-            return ModelResponse(parts=[ToolCallPart('lookup', {'q': 'y'}, tool_call_id='call-2')])
-        return ModelResponse(parts=[TextPart('done')])
-
     store = InMemoryStepStore()
     agent = Agent(
-        FunctionModel(model),
+        FunctionModel(lookup_twice),
         name='retried_tool_step_persistence',
         deps_type=type(None),
         capabilities=[StepPersistence[None](store=store), DBOSDurability[None]()],

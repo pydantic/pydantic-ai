@@ -61,6 +61,7 @@ from pydantic_ai_harness.step_persistence import (
 from pydantic_ai_harness.step_persistence._context import current_run_id
 from pydantic_ai_harness.step_persistence._store import _validate_id  # pyright: ignore[reportPrivateUsage]
 from tests.conftest import IsStr, legacy_retry_prompt_part
+from tests.harness.step_persistence._histories import lookup_twice
 
 
 def build_run_context(
@@ -1180,15 +1181,6 @@ class TestStepPersistenceCapability:
 # ---------------------------------------------------------------------------
 # Headline acceptance test
 # ---------------------------------------------------------------------------
-
-
-def lookup_twice(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    """Call `lookup` as `call-1`, call it again as `call-2` once `call-1` is answered, then finish."""
-    if len(messages) == 1:
-        return ModelResponse(parts=[ToolCallPart('lookup', {'q': 'x'}, tool_call_id='call-1')])
-    if len(messages) == 3:
-        return ModelResponse(parts=[ToolCallPart('lookup', {'q': 'y'}, tool_call_id='call-2')])
-    return ModelResponse(parts=[TextPart('done')])
 
 
 async def tool_call_ledger(store: StepStore, tool_call_id: str) -> tuple[list[str], tuple[str, str | None], list[str]]:
