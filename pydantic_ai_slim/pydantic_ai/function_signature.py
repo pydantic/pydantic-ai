@@ -25,7 +25,7 @@ from collections import Counter
 from collections.abc import Iterable, Iterator
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Literal, TypeAlias, assert_never, cast
+from typing import Any, Literal, TypeAlias, assert_never, cast
 
 # Set during rendering and consulted by TypeSignature.display_name. Not being empty means some names had to change,
 # so a type uses the name `get_conflicting_type_names` stored on it. The mapping (e.g. {'User': 'tool_a_User'}) is only
@@ -200,13 +200,16 @@ class TypeSignature:
         return '\n'.join(lines)
 
     def structurally_equal(self, other: TypeSignature) -> bool:
-        """Compare two TypeSignatures structurally, all the way down, ignoring descriptions.
-
-        The two types' own names don't count, but the names of the types nested inside them do,
-        including a type nested inside itself.
-        """
-        classes = _structure_classes(_with_nested_types([self, other]))
-        return _fields_key(self, classes) == _fields_key(other, classes)
+        """Compare two TypeSignatures structurally, ignoring descriptions."""
+        if set(self.fields.keys()) != set(other.fields.keys()):
+            return False
+        for name, f in self.fields.items():
+            other_f = other.fields[name]
+            if f.required != other_f.required:
+                return False
+            if str(f.type) != str(other_f.type):
+                return False
+        return True
 
 
 @dataclass(kw_only=True)
@@ -235,24 +238,6 @@ class FunctionSignature:
     needed to render a function signature. Name and description can be overridden
     at render time (e.g. from a `ToolDefinition`).
     """
-
-    # Names the rendered text relies on, so a type definition can't take them.
-    _RENDERED_TEXT_NAMES: ClassVar[frozenset[str]] = frozenset(
-        {
-            'asyncio',
-            'Any',
-            'Literal',
-            'NotRequired',
-            'TypedDict',
-            'bool',
-            'dict',
-            'float',
-            'int',
-            'list',
-            'str',
-            'tuple',
-        }
-    )
 
     name: str
     description: str | None = None
@@ -290,7 +275,7 @@ class FunctionSignature:
             description: Optional docstring to include. Falls back to `self.description`.
             is_async: Override async rendering. If `None`, uses `self.is_async`.
             conflicting_type_names: The set returned by a `get_conflicting_type_names` call made just before rendering.
-                Names in a set from elsewhere take a tool-name prefix.
+                A set from anywhere else gives each name it lists this tool's name as a prefix.
         """
         render_name = name or self.name
         description = description if description is not None else self.description
@@ -379,9 +364,10 @@ class FunctionSignature:
         # Merge referenced types, deduplicating structurally identical types within this signature.
         # Cross-signature collisions are handled later by get_conflicting_type_names.
         all_referenced = list(param_referenced.values())
+        classes = _structure_classes(_with_nested_types([*all_referenced, *return_referenced.values()]))
         for ret_type in return_referenced.values():
             existing = param_referenced.get(ret_type.name)
-            if existing is not None and existing.structurally_equal(ret_type):
+            if existing is not None and classes[id(existing)] == classes[id(ret_type)]:
                 continue  # already present from param schema
             all_referenced.append(ret_type)
 
@@ -394,15 +380,14 @@ class FunctionSignature:
 
     @staticmethod
     def get_conflicting_type_names(signatures: list[FunctionSignature]) -> frozenset[str]:
-        """Give every type across multiple tool signatures one name and one definition.
+        """Identify TypedDict name conflicts across multiple tool signatures, and name the types involved.
 
         Each signature keeps all its referenced types (so it remains self-contained),
         but identical types (same name and structure all the way down) are unified to
         the same object instance.
 
-        A type keeps its name unless another type or a tool has it, or the rendered text
-        relies on it. Then it takes the name of the first tool using it as a prefix
-        (e.g. `get_user_Address`), and a number if that is taken too.
+        A type keeps its name unless a different type has it too. Then it takes the name of the
+        first tool using it as a prefix (e.g. `get_user_Address`), and a number if that is taken.
 
         The new names are stored on the types, and apply when this set is passed on to
         `FunctionSignature.render(conflicting_type_names=...)`. Render straight after this
@@ -416,12 +401,11 @@ class FunctionSignature:
         FunctionSignature._unify_identical_types(signatures)
         types = FunctionSignature.collect_unique_referenced_types(signatures)
         owners = FunctionSignature._type_owners(signatures)
-        reserved = FunctionSignature._RENDERED_TEXT_NAMES | {sig.name for sig in signatures}
         counts = Counter(t.name for t in types)
-        conflicting = {name for name, count in counts.items() if count > 1 or name in reserved}
+        conflicting = {name for name, count in counts.items() if count > 1}
 
         # Names that stay are taken before any is generated, so a generated name can't take a real one.
-        used = {*reserved, *(counts.keys() - conflicting)}
+        used = counts.keys() - conflicting
         for type_sig in types:
             resolved = None
             if type_sig.name in conflicting:
@@ -437,7 +421,7 @@ class FunctionSignature:
     @staticmethod
     def _unify_identical_types(signatures: list[FunctionSignature]) -> None:
         """Make types with one name and one structure a single object everywhere, keeping the first seen."""
-        # A `$ref` that doesn't resolve leaves a type only an expression names, so start from those as well.
+        # Some types are named by an expression but not listed: an unresolved `$ref`, or a return type `from_schema` merged.
         exprs = [expr for sig in signatures for expr in (*(p.type for p in sig.params.values()), sig.return_type)]
         listed = (t for sig in signatures for t in sig.referenced_types)
         types = _with_nested_types([*listed, *(t for expr in exprs for t in _types_in(expr))])
@@ -939,7 +923,7 @@ def _types_in(expr: TypeExpr) -> Iterator[TypeSignature]:
     """The types an expression names, without looking inside them."""
     if isinstance(expr, TypeSignature):
         yield expr
-    elif isinstance(expr, GenericTypeExpr | UnionTypeExpr):
+    elif isinstance(expr, (GenericTypeExpr, UnionTypeExpr)):
         for child in expr.args if isinstance(expr, GenericTypeExpr) else expr.members:
             yield from _types_in(child)
 
@@ -964,7 +948,7 @@ def _expr_key(expr: TypeExpr, classes: dict[int, object]) -> object:
         return (expr.base, *(_expr_key(arg, classes) for arg in expr.args))
     if isinstance(expr, UnionTypeExpr):
         return ('|', *(_expr_key(member, classes) for member in expr.members))
-    if isinstance(expr, SimpleTypeExpr | LiteralTypeExpr):
+    if isinstance(expr, (SimpleTypeExpr, LiteralTypeExpr)):
         return str(expr)
     assert_never(expr)
 
