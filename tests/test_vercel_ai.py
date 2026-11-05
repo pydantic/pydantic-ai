@@ -14144,6 +14144,13 @@ def _redact_earlier_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
     ]
 
 
+def _redact_earlier_prompts_in_place(messages: list[ModelMessage]) -> list[ModelMessage]:
+    for request in messages[:-1]:
+        if isinstance(request, ModelRequest):
+            request.parts = [UserPromptPart('[redacted]')]
+    return messages
+
+
 def _shout_last_prompt(messages: list[ModelMessage]) -> list[ModelMessage]:
     return [*messages[:-1], replace(messages[-1], parts=[UserPromptPart('SHOUTED')])]
 
@@ -14175,7 +14182,7 @@ _RESUBMISSIONS = [
 ]
 
 
-@pytest.mark.parametrize('process', [_keep_last_two, _redact_earlier_prompts])
+@pytest.mark.parametrize('process', [_keep_last_two, _redact_earlier_prompts, _redact_earlier_prompts_in_place])
 @pytest.mark.parametrize(('resubmission', 'prompt'), _RESUBMISSIONS)
 async def test_conversation_store_resubmission_keeps_a_history_a_capability_rewrote(
     process: Callable[[list[ModelMessage]], list[ModelMessage]],

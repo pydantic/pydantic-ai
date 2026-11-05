@@ -4,6 +4,7 @@ import re
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Mapping, Sequence
+from copy import deepcopy
 from dataclasses import KW_ONLY, Field, dataclass, field, replace
 from functools import cached_property
 from http import HTTPStatus
@@ -1272,7 +1273,11 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         if deferred_tool_results is not None:
             _reject_answers_for_calls_not_pending(turn, deferred_tool_results, waiting_on=waiting_on)
         new_turn = self.sanitize_messages(turn.new_turn, deferred_tool_results=deferred_tool_results)
-        self._resubmitted_turn = replace(turn, new_turn=new_turn) if turn.cut_at is not None else None
+        # A copy of the kept history, since a capability can change the run's messages in place, and the save
+        # compares it with the stored one.
+        self._resubmitted_turn = (
+            replace(turn, history=deepcopy(turn.history), new_turn=new_turn) if turn.cut_at is not None else None
+        )
         if loaded is None:
             return Conversation(messages=new_turn, conversation_id=conversation_id)
         if turn.cut_at is not None:
