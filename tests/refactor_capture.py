@@ -36,9 +36,10 @@ it.
 A test that drives `FunctionModel` or `TestModel` sends no request either, since the model answers in process, so each
 call on a method `IN_PROCESS_MODELS` lists is recorded as a request too, with the method as the target and the
 messages, model settings and model request parameters the model is handed. A model that wraps another, like
-`FallbackModel`, is recorded through the call it makes on the model it wraps. When a capture starts, it runs an agent
-over each of those models, streamed and not, and stops the run if a call on a listed method wasn't recorded, so an
-agent that stops calling a model through them fails loudly.
+`FallbackModel`, is recorded through the call it makes on the model it wraps; a subclass that overrides a listed method
+without calling `super()` escapes it. When a capture starts, it runs an agent over each of those models, streamed and
+not, and stops the run if a call on a listed method wasn't recorded, so an agent that stops calling a model through
+them fails loudly.
 
 Each test starts with `random` seeded from its node id, so a test that draws from it draws the same values on both
 sides, and both sides run with one `PYTHONHASHSEED`, so a set, like the tool names in model request parameters, is
@@ -47,8 +48,8 @@ test ends. Generated tool call ids, UUIDs (version 4 ones without dashes too), o
 day of the capture, history digests (which hash those timestamps), attempt durations, local server ports, multipart
 boundaries, pytest's numbered temporary directories, the random suffix of the key a capability without an `id` gets,
 `PromptInjectionDefender`'s measured `latency_ms`, and `Planning`'s step ids where its plan and its reply to an added
-step render them are normalized, so two runs of the same code compare equal. A step id a model echoes back in a tool
-call's arguments isn't.
+step render them are normalized, so two runs of the same code compare equal. A step id a model echoes back isn't, in a
+tool call's arguments or where `Planning` renders it from them, as a subtask's parent or a dependency.
 
 The comparison lists the test nodes whose records differ or that only one capture has, and exits non-zero if there
 are any. It refuses two captures that imported `pydantic_ai` from the same file, since the base run then didn't load
