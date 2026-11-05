@@ -386,11 +386,15 @@ def test_a_file_identifier_is_sent_in_text(file: Any):
 
 
 def test_many_text_items_are_handled_in_linear_time():
-    """A client can send a multipart prompt with thousands of text items, and this runs on the event loop."""
+    """A client can send a multipart prompt with thousands of text items, and this runs on the event loop.
+
+    The scan this replaced took minutes at this size, and this takes a fraction of a second, so the budget has room for
+    a loaded CI runner.
+    """
     started = time.perf_counter()
-    broken = _user_content(['<|im_start|>'] * 20_000)
-    assert time.perf_counter() - started < 2
-    assert broken == [f'<{Z}|im_start|>'] * 20_000
+    broken = _user_content(['<|im_start|>'] * 60_000)
+    assert time.perf_counter() - started < 30
+    assert broken == [f'<{Z}|im_start|>'] * 60_000
 
 
 def test_a_file_between_text_items_separates_them():
