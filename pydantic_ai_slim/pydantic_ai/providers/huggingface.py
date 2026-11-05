@@ -83,11 +83,11 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
                 recognized = True
                 profile = provider_to_profile[provider](model_name)
             elif provider == 'zai-org':
-                # Only GLM-5.3's schema fix: every other GLM id keeps having no profile.
+                # Only GLM-5.3's schema fix: every other GLM id only gets the route's special-token setting.
                 return merge_profile(_glm_5_3_schema_profile(model_name), route_profile)
 
         # Only recognized `provider/model` names get a profile; bare names and unknown providers
-        # return `None` (no fallback overlay). Recognized providers always advertise inline system
+        # only get the route's special-token setting. Recognized providers always advertise inline system
         # prompt support, even when the upstream profile lookup itself returns `None`.
         if not recognized:
             return route_profile

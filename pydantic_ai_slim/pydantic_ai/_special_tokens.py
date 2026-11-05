@@ -25,7 +25,7 @@ from collections.abc import AsyncIterator, Callable, Sequence
 from copy import copy
 from dataclasses import dataclass, field, replace
 from itertools import groupby
-from typing import TYPE_CHECKING, Any, Final, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Final, TypeAlias, TypeVar, cast
 
 import pydantic_core
 
@@ -37,7 +37,9 @@ from .messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponsePart,
     ModelResponseStreamEvent,
+    MultiModalContent,
     PartDeltaEvent,
     PartStartEvent,
     TextContent,
@@ -61,6 +63,11 @@ _LITERAL_TOKEN_TAILS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
     (
         '[',
         (
+            '|system|]',
+            '|tool|]',
+            '|assistant|]',
+            '|user|]',
+            '|endofturn|]',
             'INST]',
             '/INST]',
             'SYSTEM_PROMPT]',
@@ -150,6 +157,8 @@ _TOKEN_TAIL_PREFIX: Final = re.compile(
 """The start of what can follow a joiner in a token, including nothing yet, up to an escaped `>` still arriving."""
 
 _PartT = TypeVar('_PartT')
+
+_AcceptsStatelessArtifacts: TypeAlias = Callable[[ModelResponse, ModelResponsePart], bool]
 
 
 def break_special_tokens(text: str) -> str:
@@ -360,34 +369,39 @@ async def _restored_events(
 
 
 def break_special_tokens_in_messages(
-    messages: list[ModelMessage], profile: ModelProfile, system: str
+    messages: list[ModelMessage], profile: ModelProfile, accepts_stateless_artifacts: _AcceptsStatelessArtifacts
 ) -> list[ModelMessage]:
     """Break the special tokens in the text of every part that doesn't come from the application itself, if `profile` asks for it.
 
     `SystemPromptPart`s are left alone: they're the application's own channel, like instructions and tool definitions.
-    So is reasoning signed by `system`, the provider this request goes to, which it would reject when changed, and a
-    compaction a provider produced. Reasoning signed by another provider is sent as text, without its signature. Ids,
-    provider details and every other field stay as they are.
+    So is signed reasoning the model accepts, which it would reject when changed, and a compaction a provider produced.
+    Signed reasoning it doesn't accept is sent as text, without its signature. Ids, provider details and every other
+    field stay as they are.
 
     Returns the original list when nothing changed.
     """
     if not profile.get('may_tokenize_special_tokens_in_content', False):
         return messages
-    new_messages = [_break_message(message, system) for message in messages]
+    new_messages = [_break_message(message, accepts_stateless_artifacts) for message in messages]
     return new_messages if any(new is not old for new, old in zip(new_messages, messages)) else messages
 
 
-def _break_message(message: ModelMessage, system: str) -> ModelMessage:
+def _break_message(message: ModelMessage, accepts_stateless_artifacts: _AcceptsStatelessArtifacts) -> ModelMessage:
     if isinstance(message, ModelRequest):
-        request_parts = [_break_part(part, system) for part in message.parts]
+        request_parts = [_break_part(part) for part in message.parts]
         changed = any(new is not old for new, old in zip(request_parts, message.parts))
         return replace(message, parts=request_parts) if changed else message
-    response_parts = [_break_part(part, system) for part in message.parts]
+    response_parts = [
+        part
+        if isinstance(part, ThinkingPart) and part.signature is not None and accepts_stateless_artifacts(message, part)
+        else _break_part(part)
+        for part in message.parts
+    ]
     changed = any(new is not old for new, old in zip(response_parts, message.parts))
     return replace(message, parts=response_parts) if changed else message
 
 
-def _break_part(part: _PartT, system: str) -> _PartT:
+def _break_part(part: _PartT) -> _PartT:
     new_part: Any = part
     if isinstance(part, UserPromptPart):
         content = _break_content(part.content)
@@ -399,7 +413,7 @@ def _break_part(part: _PartT, system: str) -> _PartT:
         new_part = _break_tool_call(cast('BaseToolCallPart[Any]', part))
     elif (
         isinstance(part, TextPart)
-        or (isinstance(part, ThinkingPart) and (part.signature is None or part.provider_name != system))
+        or isinstance(part, ThinkingPart)
         or (isinstance(part, CompactionPart) and part.provider_name is None)
     ):
         content = part.content and break_special_tokens(part.content)
@@ -468,14 +482,14 @@ def _break_items(sequence: list[Any] | tuple[Any, ...]) -> Any:
     return sequence if all(new is old for new, old in zip(items, sequence)) else items
 
 
-def _break_file_identifier(file: Any) -> Any:
+def _break_file_identifier(file: MultiModalContent) -> MultiModalContent:
     """The file with its identifier broken: it's sent in text, which adapters build from it after this pass."""
     identifier = break_special_tokens(file.identifier)
     if identifier == file.identifier:
         return file
     # Not `replace`: these classes have `__init__`s of their own, which read the `identifier` alias.
     broken = copy(file)
-    broken._identifier = identifier
+    broken._identifier = identifier  # pyright: ignore[reportPrivateUsage]
     return broken
 
 
